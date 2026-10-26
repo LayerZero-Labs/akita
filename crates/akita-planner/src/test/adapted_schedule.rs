@@ -364,7 +364,9 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     )
     .expect("one-hot catalog");
-    let final_group = PolynomialGroupLayout::singleton(20);
+    // The frozen nv20x2 skeleton can absorb an nv14 precommit; the nv20x1
+    // skeleton cannot and falls back to a full search.
+    let final_group = PolynomialGroupLayout::new(20, 2);
     let reference = catalog
         .rows()
         .find(|row| {

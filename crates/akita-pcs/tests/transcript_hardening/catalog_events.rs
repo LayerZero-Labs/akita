@@ -458,14 +458,15 @@ where
     }
 }
 
-/// Recursive fp64 dense 23- and 25-variable rows share every other key field,
-/// but the 25-variable row switches to physical L2 one level earlier. Use
-/// these rows to check that representative selection preserves this distinction.
+/// The fp128 bounded-dense 24- and 26-variable rows share every other key
+/// field, but the 26-variable row switches to physical L2 one level earlier.
+/// Use these rows to check that representative selection preserves this
+/// distinction.
 #[test]
-fn norm_route_separates_recursive_fp64_dense_rows() {
-    let scheme = load_workspace_scheme::<
-        akita_config::recursive_commitment::RecursiveCommitmentConfig<fp64::Dense>,
-    >(akita_params::ChunkedWitnessCfg::default_non_chunked())
+fn norm_route_separates_fp128_bounded_dense_rows() {
+    let scheme = load_workspace_scheme::<fp128::DenseBounded>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
     .expect("workspace schedule catalog");
     let single = |num_vars: usize| {
         scheme
@@ -477,9 +478,9 @@ fn norm_route_separates_recursive_fp64_dense_rows() {
                     && profiles.final_group.group.num_polynomials() == 1
                     && profiles.final_group.group.num_vars() == num_vars
             })
-            .unwrap_or_else(|| panic!("recursive fp64 dense {num_vars}-variable row"))
+            .unwrap_or_else(|| panic!("fp128 bounded dense {num_vars}-variable row"))
     };
-    let (small, large) = (single(23), single(25));
+    let (small, large) = (single(24), single(26));
     assert!(log_committed_coeffs(large) <= MAX_LOG_COMMITTED_COEFFS);
     let (small_shape, large_shape) = (schedule_shape(small), schedule_shape(large));
     assert_ne!(small_shape, large_shape);

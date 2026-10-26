@@ -9,7 +9,7 @@ model. Keep the marketing claim separate from audited reality. See
 
 Production Ajtai key sizing uses generated Module-SIS width tables. The
 generator certifies scalar cutoffs `(B, n) -> max m` under
-`Quantum128BitADPS16`, and the checked-in runtime artifact stores the
+`Quantum169BitADPS16`, and the checked-in runtime artifact stores the
 Module-SIS projection:
 
 ```text
@@ -19,14 +19,14 @@ Module-SIS projection:
 
 where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
-The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
+The shipped policy is `Quantum169BitADPS16`. It accepts a row only when the
 complete ADPS16 quantum certificate reports a finite score or a classified
-above-target lower bound of at least 128 bits. The decision threshold is an
+above-target lower bound of at least 169 bits. The decision threshold is an
 explicit estimator configuration value supplied by the policy profile. The
 beta search checks values from 40 through the capped Euclidean baseline and
 stops once the monotone ADPS16 lower bound exceeds the best complete candidate.
 It also returns a classified above-target result once both the best visited
-attack and the lower bound for all unvisited beta values exceed 128 bits. For
+attack and the lower bound for all unvisited beta values exceed 169 bits. For
 `B > 1`, the global infinity estimate includes the Euclidean baseline
 explicitly because `L2 <= B` implies `L-infinity <= B`; the baseline is
 therefore an attack, not only a search cap. The diagnostic compression cells
@@ -59,10 +59,10 @@ attack. Independent high-precision power-series fixtures check the probability
 calculation and integer repetition thresholds. These checks cover numerical
 regressions; they do not certify all floating-point lattice simulation steps.
 
-The estimator hardening described above changes the acceptance model. The
-checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
-and wire tag `1`; evaluator revision `akita-infinity-width-v4`, the regenerated
-table digest, and dependent catalog identities bind the corrected semantics.
+The checked-in SIS table uses policy ID `Quantum169BitADPS16` and wire tag
+`2`. Tag `1` named the retired 128-bit policy and is rejected. Evaluator
+revision `akita-infinity-width-v4`, the regenerated table digest, and dependent
+catalog identities bind the current semantics.
 The q32 Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128
 uses `2^44 - 1`. Within those guards, the audited A cells are the exact
 one-response protocol collisions `4 * ||c||_1 * (2^t - 1)` for reachable
@@ -79,7 +79,7 @@ to the compact runtime table and its policy audit files together.
 The planner has two production tables for the committed A role. The default
 table uses a coefficient `L∞` bound. A separate Euclidean table is available
 only when the selected fold proves a complete physical squared `L2` norm. Both
-tables use the 128 bit quantum ADPS16 policy and have separate digests.
+tables use the 169-bit quantum ADPS16 policy and have separate digests.
 
 For the Euclidean table, the scalar SIS dimensions are `n = rank * D` and
 `m = width * D`. The length bound is the square root of the complete collision
@@ -126,17 +126,42 @@ estimator at verification time.
 
 ### Quantum policy
 
-The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
+The production rule is the ADPS16 quantum LGSA model with a 169-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
 
+The target matches NIST security category 3, the level of ML-DSA-65 and
+ML-KEM-768. Lattice standards state their security as the BKZ block size
+`beta` that the best known attack needs; quantum Core-SVP prices that block
+size at `2^(0.265 * beta)`. The published category 3 block sizes are:
+
+| Standard and assumption | Block size | Quantum Core-SVP bits |
+| --- | --- | --- |
+| ML-DSA-65 forgery (SelfTargetMSIS) | 638 | 169 |
+| ML-KEM-768 key recovery (MLWE) | 626 | 166 |
+| ML-DSA-65 key recovery (MLWE) | 624 | 165 |
+| ML-DSA-65 strong unforgeability (MSIS) | 602 | 159 |
+
+Akita's estimator reproduces the ML-DSA rows: priced as scalar SIS, the
+ML-DSA-65 forgery instance needs block size 638 and costs 169.07 bits, and the
+strong-unforgeability instance needs block size 603 and costs 159.80 bits.
+`crates/akita-sis-estimator/examples/mldsa_calibration.rs` runs that check.
+A 169-bit gate therefore requires every Akita SIS instance to need block size
+at least 638, the largest of these figures. The retired 128-bit gate needed
+484, between ML-DSA-44 (423) and ML-DSA-65.
+
+This target covers lattice hardness only. The Fiat-Shamir grinding target,
+the challenge fields, and the sparse fold challenge entropy floor still provide
+128 bits; see [`sis-nist-level3-policy`](../../../specs/sis-nist-level3-policy.md#non-goals).
+
 The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
 previously evaluated the newer idealized BCSS23 `0.2563 * beta` sieve as an
-independently optimized diagnostic over 6,240 generated rows. Its reusable
-quantum walks assume exponential sieve storage and writable coherent QRAQM;
-zero accepted ADPS16 rows fell below the corresponding 124-bit review line.
-The idealized model therefore remains documented sensitivity evidence rather
-than a production constraint.
+independently optimized diagnostic over 6,240 rows of the retired 128-bit
+table. Its reusable quantum walks assume exponential sieve storage and writable
+coherent QRAQM; zero accepted ADPS16 rows fell below the corresponding 124-bit
+review line. That diagnostic has not been rerun at the 169-bit target. The
+idealized model remains documented sensitivity evidence rather than a
+production constraint.
 
 LGSA is likewise an explicit attacker strategy: rerandomize the q-ary basis so
 BKZ forgets its canonical q-vectors. On representative widened q64 and q128
@@ -153,15 +178,18 @@ probability formula and overstate security; this active-dimension rule is
 regression tested, and integer production bounds use an exact boundary
 comparison. Requests for the unimplemented high-precision backend fail closed.
 
-The complete decision, assumptions, claim language, certificates, and
-implementation acceptance criteria live in
+The estimator, certificate, and table design live in
 [`specs/sis-quantum128-scalar-n-table.md`](../../../specs/sis-quantum128-scalar-n-table.md).
+The NIST category 3 target, its calibration, and the compression ladder it
+requires live in
+[`specs/sis-nist-level3-policy.md`](../../../specs/sis-nist-level3-policy.md).
 
 **Implementation map**
 
 - `crates/akita-params/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
   `physical_l2.rs`, `generated_sis_table/`, and `norm_bound.rs`.
-- `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
+- `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`,
+  `specs/sis-nist-level3-policy.md`.
 - `crates/akita-params/src/sis/generated_sis_table/policy_audit.csv` (canonical
   production table certificate).
 

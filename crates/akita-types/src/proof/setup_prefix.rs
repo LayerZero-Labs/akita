@@ -7,9 +7,7 @@
 use crate::proof::{RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use crate::AkitaSetupSeed;
 use akita_error::AkitaError;
-use akita_params::layout::setup_prefix_slots::{
-    padded_setup_prefix_len, setup_prefix_compression_plan, SetupPrefixSlotId,
-};
+use akita_params::layout::setup_prefix_slots::{padded_setup_prefix_len, SetupPrefixSlotId};
 use akita_params::CommittedGroupParams;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -154,8 +152,12 @@ impl<F: Field + Valid> Valid for SetupPrefixVerifierSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
         self.commitment.check()?;
-        let expected_payload_coefficients =
-            setup_prefix_compression_plan(&self.id.commitment_profile)?.terminal_coefficients();
+        let expected_payload_coefficients = self
+            .id
+            .commitment_profile
+            .outer_compression_plan()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+            .terminal_coefficients();
         if self.commitment.rows.len() != 1 {
             return Err(SerializationError::InvalidData(
                 "setup prefix commitment must contain one compressed payload".into(),

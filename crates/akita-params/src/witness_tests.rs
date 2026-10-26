@@ -36,7 +36,7 @@ fn multi_chunk_profile_grid_roundtrip() {
 fn test_layout(num_chunks: usize) -> (CommittedGroupParams, OpeningClaimsLayout, WitnessLayout) {
     let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
-        32,
+        128,
         2,
         1,
         1,

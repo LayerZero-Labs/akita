@@ -3,8 +3,7 @@ use akita_error::AkitaError;
 use akita_params::SubringCoefficientPackingGeometry;
 pub(super) use akita_prover::backend::*;
 use akita_types::{
-    PreparedSubringCoefficientPackingPoint, RingMultiplierOpeningPoint,
-    SubfieldMultiplierOpeningPoint,
+    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint, SubringCoefficientPackingTables,
 };
 use jolt_field::Field;
 use std::ops::Range;
@@ -86,16 +85,15 @@ impl<F: Field> OpeningFoldPlan<'_, F> {
 /// `[claim][block][extension coordinate][subring coefficient]`.
 #[derive(Debug, Clone, Copy)]
 pub struct SubringCoefficientPackingPlan<'a, E: Field> {
-    /// Canonically split public opening point.
-    pub point: &'a PreparedSubringCoefficientPackingPoint<E>,
+    /// Prover tables built once from the canonically split public opening point.
+    pub tables: &'a SubringCoefficientPackingTables<E>,
 }
 
 impl<E: Field> SubringCoefficientPackingPlan<'_, E> {
     /// Validate the plan at a source kernel boundary.
     pub fn validate<const D: usize>(&self, source_num_vars: usize) -> Result<(), AkitaError> {
-        if self.point.geometry().a_ring_dimension() != D
-            || self.point.source_num_vars() != source_num_vars
-        {
+        let point = self.tables.point();
+        if point.geometry().a_ring_dimension() != D || point.source_num_vars() != source_num_vars {
             return Err(AkitaError::InvalidInput(
                 "coefficient-packing plan disagrees with source geometry or arity".into(),
             ));

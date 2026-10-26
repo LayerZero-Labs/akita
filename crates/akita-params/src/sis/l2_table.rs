@@ -83,7 +83,7 @@ pub fn sis_l2_table_key_for_collision_sq(
     })
 }
 
-/// Minimum module rank under the generated 128-bit quantum ADPS16 Euclidean
+/// Minimum module rank under the generated 169-bit quantum ADPS16 Euclidean
 /// SIS model.
 ///
 /// `key.collision_l2_sq` is the squared norm of the complete scalar collision

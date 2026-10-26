@@ -126,16 +126,8 @@ impl<F: Field + CanonicalEncoding> ValidatedSuccessorHandoffPlan<'_, F> {
         if !p.payload_mode.is_compressed() {
             return Ok(None);
         }
-        let profile = &p.own_group().profile;
-        let count = profile.outer_slice_count.complete_source_coefficients(
-            profile.outer.matrix.output_rank(),
-            profile.outer.matrix.ring_dimension(),
-        )?;
         Ok(Some((
-            CompressionChainPlan::for_complete_source(
-                profile.outer.matrix.sis_modulus_profile(),
-                count,
-            )?,
+            p.own_group().profile.outer_compression_plan()?,
             p.ring_relation_mode,
         )))
     }

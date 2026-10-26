@@ -360,7 +360,12 @@ mod tests {
             ChunkedWitnessCfg::default_non_chunked(),
         )
         .unwrap();
-        let row = catalog.rows().next().unwrap();
+        // The row is replanned under a single-group key, so it must have no
+        // precommitted groups.
+        let row = catalog
+            .rows()
+            .find(|row| row.profiles().precommitteds.is_empty())
+            .unwrap();
         let group = row.profiles().final_group.group;
         let family = crate::generated_families::ALL_GENERATED_FAMILIES
             .iter()
