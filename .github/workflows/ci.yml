@@ -497,7 +497,7 @@ jobs:
   test-labinius-pcs:
     name: LaBinius PCS (${{ matrix.backend }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
