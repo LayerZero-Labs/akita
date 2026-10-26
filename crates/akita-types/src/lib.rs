@@ -39,18 +39,18 @@ pub use ntt_cache::{
     dense_i8_commit_prefers_exact_ifma52, ntt_cache_requires_exactness_tail,
     prepare_compression_ntt_cache, prepare_joined_exact_ntt_cache, prepare_ntt_cache,
     prepare_reduced_compression_ntt_cache, prepared_verifier_ntt_cache_metadata,
-    select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
-    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
-    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata, ProtocolCrtNttParams,
-    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+    select_compression_crt_ntt_params, select_crt_ntt_params, view_riscv64_scalar_q128_cache,
+    NttCacheKey, NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache,
+    PreparedNttTailPairView, PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
+    ProtocolCrtNttParams, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
 pub use proof::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, build_compression_relation_weights,
     build_reduced_compression_relation_weights, build_terminal_response_from_payload,
     canonical_extension_opening_reduction_shape, coefficient_packing_relation_events,
-    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, draw_group_fold_challenges,
-    emit_witness_e_planes, emit_witness_t_planes, generate_relation_rhs,
-    prepare_coefficient_packing_batch_semantics, prepare_opening_point,
+    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, derive_public_matrix_range,
+    draw_group_fold_challenges, emit_witness_e_planes, emit_witness_t_planes,
+    generate_relation_rhs, prepare_coefficient_packing_batch_semantics, prepare_opening_point,
     relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
     relation_rhs_row_count, ring_subfield_packed_extension_opening_point, row_coefficients,
@@ -94,7 +94,9 @@ pub use setup_contribution::{
 pub use stage1_sites::{stage1_child_claims, stage1_range_image};
 pub use stage2_sites::stage2_w_eval;
 pub use stage3_sites::{stage3_claim, stage3_prefix_eval, stage3_public_slot};
-pub use subring_coefficient_packing::PreparedSubringCoefficientPackingPoint;
+pub use subring_coefficient_packing::{
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables,
+};
 pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
     EvaluationTraceGroupParameters, EvaluationTraceInputs,

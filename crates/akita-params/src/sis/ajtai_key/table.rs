@@ -87,30 +87,34 @@ impl SisMatrixRole {
     serde::Deserialize,
 )]
 pub enum SisSecurityPolicyId {
-    /// Corrected ADPS16 quantum LGSA estimator at a 128-bit target.
+    /// Corrected ADPS16 quantum LGSA estimator at a 169-bit target.
+    ///
+    /// The target is the quantum Core-SVP cost of forging ML-DSA-65 (FIPS 204,
+    /// NIST category 3): its UF-CMA `SelfTargetMSIS` instance needs BKZ block
+    /// size 638, priced at 169.07 bits by this same estimator.
     #[default]
-    Quantum128BitADPS16,
+    Quantum169BitADPS16,
 }
 
 impl SisSecurityPolicyId {
     /// Stable wire/catalog tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::Quantum128BitADPS16 => 1,
+            Self::Quantum169BitADPS16 => 2,
         }
     }
 
     /// Descriptive policy name used in diagnostics and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
+            Self::Quantum169BitADPS16 => "Quantum169BitADPS16",
         }
     }
 
     /// Parse the stable wire/catalog tag.
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
-            1 => Some(Self::Quantum128BitADPS16),
+            2 => Some(Self::Quantum169BitADPS16),
             _ => None,
         }
     }
@@ -122,10 +126,11 @@ mod policy_id_tests {
 
     #[test]
     fn policy_has_the_unversioned_stable_tag() {
-        let policy = SisSecurityPolicyId::Quantum128BitADPS16;
-        assert_eq!(policy.tag(), 1);
-        assert_eq!(SisSecurityPolicyId::from_tag(1), Some(policy));
-        assert_eq!(SisSecurityPolicyId::from_tag(2), None);
+        let policy = SisSecurityPolicyId::Quantum169BitADPS16;
+        assert_eq!(policy.tag(), 2);
+        assert_eq!(SisSecurityPolicyId::from_tag(2), Some(policy));
+        // Tag 1 named the retired 128-bit policy and must not alias this one.
+        assert_eq!(SisSecurityPolicyId::from_tag(1), None);
     }
 }
 
@@ -204,7 +209,7 @@ impl SisModulusProfileId {
 
 /// Default policy used by production presets.
 pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
-    SisSecurityPolicyId::Quantum128BitADPS16;
+    SisSecurityPolicyId::Quantum169BitADPS16;
 
 /// Policies with checked-in SIS table support.
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];

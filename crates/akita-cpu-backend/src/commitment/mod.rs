@@ -70,13 +70,13 @@ pub(crate) use stages::{
 pub(crate) use state_policy::{
     CommitmentExecutionOutput, CommitmentStateComponents, CommitmentStatePolicy,
     InnerRelationMaterial, InnerRelationState, InnerRelationStateMaterial,
-    IntoPortableCommitmentState, OuterCompressionMaterial, OuterCompressionState,
-    PortableCompressionStateExport, PortableStatePolicy, ResidentStatePolicy,
-    TerminalTFieldsMessage,
+    OuterCompressionMaterial, OuterCompressionState, PortableCompressionStateExport,
+    PortableStatePolicy, ResidentStatePolicy, TerminalTFieldsMessage,
 };
 
 mod portable;
 mod setup_prefix;
+pub(crate) mod shared_inner;
 pub(crate) use portable::PortableCommitmentHandle;
 pub use setup_prefix::{SetupPrefixProverRegistry, SetupPrefixSlot};
 
@@ -88,3 +88,6 @@ pub(crate) use resources::CommitmentResourceControl;
 pub(crate) use source::{OneHotRepresentation, OneHotType, ShortNormRepresentation, ShortNormType};
 #[cfg(test)]
 pub(crate) use state_policy::{NoRetainedStatePolicy, PortableCommitmentState};
+
+#[cfg(test)]
+pub(crate) use state_policy::IntoPortableCommitmentState;

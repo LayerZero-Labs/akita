@@ -40,7 +40,7 @@ pub use benchmark_support::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
     RelationEvaluatorBenchmarkCase,
 };
-pub use prepared_cache::build_riscv64_terminal_ntt_cache;
+pub use prepared_cache::{build_riscv64_terminal_ntt_cache, TrustedTerminalCache};
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::Stage1Verifier;

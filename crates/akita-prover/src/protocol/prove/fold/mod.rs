@@ -378,7 +378,7 @@ fn prepare_relation_sumcheck<'a, F, E, H>(
     lp: &'a CommittedGroupParams,
     opening_batch: &'a OpeningClaimsLayout,
     opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<'a, E>>,
-    relation_groups: &[crate::backend::PreparedRelationGroupPublic<F, E>],
+    relation_groups: &'a [crate::backend::PreparedRelationGroupPublic<F, E>],
     evaluation_trace_claim_coefficients: &'a [E],
     evaluation_trace_claim: E,
     evaluation_trace_basis: BasisMode,
@@ -403,12 +403,16 @@ where
         OpeningFamily::SubringCoefficientPacking(batch) => {
             let mut authenticated_opening = E::zero();
             let mut weighted_opening_claim = E::zero();
+            let mut tables = Vec::with_capacity(batch.groups().len());
             for semantics in batch.groups() {
                 let group_index = semantics.group_index();
                 let claim_range = semantics.group_claim_range();
                 let group = relation_groups.get(group_index).ok_or_else(|| {
                     AkitaError::Internal("coefficient-packing relation group is missing".into())
                 })?;
+                tables.push(group.coefficient_packing_tables().ok_or_else(|| {
+                    AkitaError::Internal("coefficient-packing relation group has no tables".into())
+                })?);
                 let group_openings = group.scalar_openings();
                 let claim_coefficients = evaluation_trace_claim_coefficients
                     .get(claim_range.clone())
@@ -438,7 +442,10 @@ where
                 ));
             }
             Ok((
-                Stage2OpeningDescription::CoefficientPacking(batch),
+                Stage2OpeningDescription::CoefficientPacking {
+                    semantics: batch,
+                    tables,
+                },
                 weighted_opening_claim,
             ))
         }

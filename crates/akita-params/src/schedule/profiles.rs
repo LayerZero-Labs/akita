@@ -183,6 +183,35 @@ impl GroupCommitPhaseParams {
         )
     }
 
+    /// Compression chain of this group's complete stacked B image.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the image cannot feed the compression ladder.
+    pub fn outer_compression_plan(&self) -> Result<crate::CompressionChainPlan, AkitaError> {
+        let matrix = &self.outer.matrix;
+        crate::CompressionChainPlan::for_image(
+            matrix.sis_modulus_profile(),
+            self.outer_slice_count
+                .logical_output_rows(matrix.output_rank())?,
+            matrix.ring_dimension(),
+        )
+    }
+
+    /// Candidate-aware [`Self::outer_compression_plan`]. `None` means the B
+    /// image cannot feed the compression ladder.
+    pub fn try_outer_compression_plan(
+        &self,
+    ) -> Result<Option<crate::CompressionChainPlan>, AkitaError> {
+        let matrix = &self.outer.matrix;
+        crate::CompressionChainPlan::try_for_image(
+            matrix.sis_modulus_profile(),
+            self.outer_slice_count
+                .logical_output_rows(matrix.output_rank())?,
+            matrix.ring_dimension(),
+        )
+    }
+
     /// The A-role gadget decomposition.
     #[inline]
     #[must_use]

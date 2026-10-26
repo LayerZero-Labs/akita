@@ -264,26 +264,27 @@ where
 }
 
 pub(crate) trait PackingWeightAccessor<E: Field>: Sync {
-    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E>;
+    fn tables(&self) -> &akita_types::SubringCoefficientPackingTables<E>;
 
     fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError>;
 }
 
 struct DirectPackingWeights<'a, E: Field> {
-    point: &'a akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    tables: &'a akita_types::SubringCoefficientPackingTables<E>,
 }
 
 impl<E: Field> PackingWeightAccessor<E> for DirectPackingWeights<'_, E> {
-    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E> {
-        self.point
+    fn tables(&self) -> &akita_types::SubringCoefficientPackingTables<E> {
+        self.tables
     }
 
     #[inline(always)]
     fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
-        let position_weight = *self.point.position_weights().get(position).ok_or_else(|| {
+        let tables = self.tables;
+        let position_weight = *tables.position_weights().get(position).ok_or_else(|| {
             AkitaError::Internal("one-hot packing position has no prepared weight".into())
         })?;
-        let packing_weight = *self.point.packing_weights().get(low_index).ok_or_else(|| {
+        let packing_weight = *tables.packing_weights().get(low_index).ok_or_else(|| {
             AkitaError::Internal("one-hot packing low coordinate has no prepared weight".into())
         })?;
         Ok(position_weight * packing_weight)
@@ -293,15 +294,15 @@ impl<E: Field> PackingWeightAccessor<E> for DirectPackingWeights<'_, E> {
 impl<E: Field> PackingWeightAccessor<E>
     for crate::arithmetic::coefficient_packing::FusedPackingWeights<'_, E>
 {
-    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E> {
-        self.point()
+    fn tables(&self) -> &akita_types::SubringCoefficientPackingTables<E> {
+        self.tables()
     }
 
     #[inline(always)]
     fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
         let index = akita_error::checked::mul_add(
             position,
-            self.point().geometry().subring_embedding_stride(),
+            self.tables().point().geometry().subring_embedding_stride(),
             low_index,
         )
         .ok_or_else(|| AkitaError::Internal("one-hot packing weight index overflow".into()))?;
@@ -324,8 +325,9 @@ where
     I: OneHotIndex,
     W: PackingWeightAccessor<E>,
 {
-    let point = weights.point();
-    let plan = SubringCoefficientPackingPlan { point };
+    let tables = weights.tables();
+    let point = tables.point();
+    let plan = SubringCoefficientPackingPlan { tables };
     for poly in source.polys {
         plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
     }
@@ -587,16 +589,17 @@ where
     E: ExtField<F> + akita_types::FpExtEncoding<F>,
     I: OneHotIndex,
 {
+    let tables = plan.tables;
     let fused_len =
-        crate::arithmetic::coefficient_packing::FusedPackingWeights::<E>::required_len(plan.point)?;
+        crate::arithmetic::coefficient_packing::FusedPackingWeights::<E>::required_len(tables)?;
     let should_prepare =
         akita_error::checked::sum(source.polys.iter().map(|poly| poly.indices.len()))
             .is_some_and(|max_hot| max_hot >= fused_len);
     if should_prepare {
-        let weights = crate::arithmetic::coefficient_packing::FusedPackingWeights::new(plan.point)?;
+        let weights = crate::arithmetic::coefficient_packing::FusedPackingWeights::new(tables)?;
         onehot_coefficient_packing_partials(source, &weights)
     } else {
-        let weights = DirectPackingWeights { point: plan.point };
+        let weights = DirectPackingWeights { tables };
         onehot_coefficient_packing_partials(source, &weights)
     }
 }

@@ -226,9 +226,10 @@ where
                 opening_ring_dim: request.opening_ring_dimension,
                 relation_plan: request.relation_plan,
                 packing_semantics: match plan.linear_terms() {
-                    akita_prover::backend::Stage2OpeningDescription::CoefficientPacking(batch) => {
-                        Some(batch)
-                    }
+                    akita_prover::backend::Stage2OpeningDescription::CoefficientPacking {
+                        semantics,
+                        ..
+                    } => Some(semantics),
                     akita_prover::backend::Stage2OpeningDescription::EvaluationTrace { .. } => None,
                 },
             })?;

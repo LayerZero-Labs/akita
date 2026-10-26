@@ -17,7 +17,11 @@ use akita_types::RingVec;
 use jolt_field::Fp64;
 
 type F = Fp64<4294967197>;
-const D: usize = 64;
+// A compressed q32 image needs a ring dimension divisible by the first
+// ladder map (D=128), and a commitment needs A divisible by B.
+const D: usize = 128;
+/// Variables of the 16-ring-element fixture sources.
+const FIXTURE_NUM_VARS: usize = 4 + D.trailing_zeros() as usize;
 
 fn audited_commit_params(
     slice_count: akita_params::CommitmentSliceCount,
@@ -35,7 +39,7 @@ fn audited_commit_params(
         1,
         1,
         SparseChallengeConfig::production_for_ring_dim(D)
-            .expect("D=64 has a production challenge configuration"),
+            .expect("D has a production challenge configuration"),
     );
     params.own_group_mut().profile.outer_slice_count = slice_count;
     params = params
@@ -246,7 +250,7 @@ fn commitment_request_binds_polynomial_count_in_both_directions() {
     ));
 
     let mut two_polynomials = one_polynomial.clone();
-    two_polynomials.own_group_mut().profile.group = PolynomialGroupLayout::new(10, 2);
+    two_polynomials.own_group_mut().profile.group = PolynomialGroupLayout::new(FIXTURE_NUM_VARS, 2);
     let geometry = akita_params::CommitmentSliceGeometry::try_new(
         two_polynomials.outer_slice_count(),
         two_polynomials.blocks().live_blocks,
@@ -321,9 +325,8 @@ fn commit_fixture_with_profile(
 
 #[test]
 fn every_slice_count_executes_through_the_composite_commitment_pipeline() {
-    const NUM_VARS: usize = 10;
     let setup = AkitaProverSetup::<F>::generate_with_capacity(
-        NUM_VARS,
+        FIXTURE_NUM_VARS,
         1,
         SetupMatrixCapacity {
             num_field_elements: 2_000_000,
@@ -336,10 +339,11 @@ fn every_slice_count_executes_through_the_composite_commitment_pipeline() {
     let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let ctx = OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref())
         .expect("commit context");
-    let evals = (0..1usize << NUM_VARS)
+    let evals = (0..1usize << FIXTURE_NUM_VARS)
         .map(|index| F::from_u64(index as u64 + 1))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
+    let poly =
+        DensePoly::<F>::from_field_evals(FIXTURE_NUM_VARS, &evals).expect("dense polynomial");
 
     for slice_count in akita_params::CommitmentSliceCount::ALL {
         let sliced_params = commitment_params_for_slice_count(slice_count);
@@ -375,14 +379,13 @@ fn every_slice_count_executes_through_the_composite_commitment_pipeline() {
 
 #[test]
 fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
-    const NUM_VARS: usize = 10;
     let canonical = commitment_params_for_slice_count(akita_params::CommitmentSliceCount::ONE);
     let mut packing_plan = canonical.clone();
     packing_plan.own_group_mut().opening.opening_method =
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
-    let group = PolynomialGroupLayout::new(NUM_VARS, 1);
+    let group = PolynomialGroupLayout::new(FIXTURE_NUM_VARS, 1);
     let profile = |params: &CommittedGroupParams| GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
         group,
@@ -416,7 +419,7 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     );
 
     let setup = AkitaProverSetup::<F>::generate_with_capacity(
-        NUM_VARS,
+        FIXTURE_NUM_VARS,
         1,
         SetupMatrixCapacity {
             num_field_elements: 2_000_000,
@@ -428,10 +431,10 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         .unwrap();
     let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let ctx = OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
-    let evaluations = (0..1usize << NUM_VARS)
+    let evaluations = (0..1usize << FIXTURE_NUM_VARS)
         .map(|index| F::from_u64((index * 17 + 9) as u64))
         .collect::<Vec<_>>();
-    let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, &evaluations).unwrap();
+    let polynomial = DensePoly::<F>::from_field_evals(FIXTURE_NUM_VARS, &evaluations).unwrap();
     validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
     let raw = commit_fixture_with_profile(
         std::slice::from_ref(&polynomial),
@@ -471,7 +474,8 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
             );
         source_digits.extend(planes);
     }
-    let rows = raw.1.inner_rows()[0].as_ring_slice::<D>().unwrap();
+    let hint_rows = raw.1.inner_rows().unwrap();
+    let rows = hint_rows[0].as_ring_slice::<D>().unwrap();
     assert_eq!(
         rows.len(),
         canonical.inner().matrix.output_rank() * canonical.blocks().live_blocks
@@ -503,9 +507,8 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
 #[test]
 fn imported_root_outer_image_matches_full_cpu_commitment() {
     type ImportedF = akita_config::proof_optimized::fp32::Field;
-    const NUM_VARS: usize = 10;
     let setup = AkitaProverSetup::<ImportedF>::generate_with_capacity(
-        NUM_VARS,
+        FIXTURE_NUM_VARS,
         1,
         SetupMatrixCapacity {
             num_field_elements: 2_000_000,
@@ -522,10 +525,10 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
         PortableStatePolicy,
     )
     .unwrap();
-    let evals = (0..1usize << NUM_VARS)
+    let evals = (0..1usize << FIXTURE_NUM_VARS)
         .map(|index| ImportedF::from_u64(index as u64 + 1))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<ImportedF>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let poly = DensePoly::<ImportedF>::from_field_evals(FIXTURE_NUM_VARS, &evals).unwrap();
     let sources: [&dyn CommitmentSource<ImportedF>; 1] = [&poly];
 
     for slice_count in [
@@ -571,7 +574,7 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
         );
 
         let short_image = RingVec::from_coeffs_with_ring_dim(
-            outer_image.coeffs()[..outer_image.coeff_len() - D].to_vec(),
+            outer_image.coeffs()[..outer_image.coeff_len() - outer_image.ring_dim()].to_vec(),
             outer_image.ring_dim(),
         )
         .unwrap();
@@ -600,7 +603,7 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
             .is_err());
 
         let small_setup = AkitaProverSetup::<ImportedF>::generate_with_capacity(
-            NUM_VARS,
+            FIXTURE_NUM_VARS,
             1,
             SetupMatrixCapacity::minimum(),
         )

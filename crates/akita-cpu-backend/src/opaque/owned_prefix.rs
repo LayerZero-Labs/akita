@@ -1,6 +1,5 @@
 //! Validated conversion from portable setup artifacts to current-owner handles.
 use super::owned::{CommitmentHandle, CommittedSource, OwnedPolynomials};
-use crate::commitment::{CommitmentExecutor, DenseType, PolynomialType, PortableStatePolicy};
 use crate::{CpuBackend, DensePoly};
 use akita_error::AkitaError;
 use akita_params::sis::{CommittedSourceClass, CommittedSourceContract};
@@ -12,16 +11,18 @@ use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced,
     WithCommitAccumulator,
 };
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+mod streaming;
+use streaming::PrefixSource;
 
 /// Setup-prefix material memoized on the owning backend.
 ///
-/// Both members depend only on the owned setup and the slot id. The retained
-/// source is shared by `Arc`, so the prefix coefficients and their digit-plane
-/// cache survive across proofs instead of being rebuilt per prove call.
+/// Export retains the artifact only. A proof creates its shared source view on
+/// first use; verifier preprocessing never retains polynomial digit caches.
 pub(super) struct CachedSetupPrefix<F: Field> {
     artifact: crate::commitment::SetupPrefixSlot<F>,
-    source: Arc<OwnedPolynomials<DensePoly<F>>>,
+    source: OnceLock<Arc<OwnedPolynomials<DensePoly<F>>>>,
 }
 
 impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
@@ -30,23 +31,16 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
         id: &SetupPrefixSlotId,
     ) -> Result<Arc<OwnedPolynomials<DensePoly<F>>>, AkitaError> {
         let prepared = self.prepared()?;
-        let coefficients = prepared
-            .expanded
-            .shared_matrix()
-            .as_field_slice()
-            .get(..id.n_prefix()?)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup prefix exceeds backend capacity".into())
-            })?
-            .to_vec();
-        let polynomial =
-            DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
+        let polynomial = DensePoly::from_setup_prefix(
+            Arc::clone(&prepared.expanded),
+            id.commitment_profile.group.num_vars(),
+        )?;
         Ok(Arc::new(OwnedPolynomials {
             polynomials: vec![polynomial],
         }))
     }
 
-    /// Return the commitment artifact and retained source for one setup prefix.
+    /// Return the memoized commitment artifact for one setup prefix.
     ///
     /// Export and import deliberately share this path: profiles commonly export
     /// an artifact during setup and import it immediately before proving, so a
@@ -59,27 +53,7 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
     where
         F: Valid + Unreduced + WithCommitAccumulator,
     {
-        let prepared = self.prepared()?;
-        let validated =
-            crate::setup::setup_prefix::validate_setup_prefix_commitment(&prepared.expanded, id)?;
-        self.setup_prefix_cache.get_or_build(id, || {
-            let executor = CommitmentExecutor::cpu(
-                self,
-                prepared,
-                &prepared.expanded,
-                vec![PolynomialType::Dense(DenseType::Coefficients)],
-                PortableStatePolicy,
-            )?;
-            let artifact = crate::setup::setup_prefix::commit_validated_setup_prefix(
-                &prepared.expanded,
-                &executor,
-                validated,
-            )?;
-            Ok(CachedSetupPrefix {
-                artifact,
-                source: self.setup_prefix_source(id)?,
-            })
-        })
+        self.prefix_material_from(PrefixSource::Expanded(&self.prepared()?.expanded), id)
     }
 
     /// Adopt material already committed by a CPU backend in this process.
@@ -89,13 +63,17 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
     ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError> {
         let prepared = self.prepared()?;
         crate::setup::setup_prefix::validate_setup_prefix_commitment(
-            &prepared.expanded,
+            prepared.expanded.shared_matrix().num_field_elements(),
             &artifact.id,
         )?;
         self.setup_prefix_cache.get_or_build(&artifact.id, || {
+            let mut artifact = artifact.clone();
+            artifact
+                .hint
+                .share_inner_rows(&self.setup_prefix_inner_rows)?;
             Ok(CachedSetupPrefix {
-                artifact: artifact.clone(),
-                source: self.setup_prefix_source(&artifact.id)?,
+                artifact,
+                source: OnceLock::new(),
             })
         })
     }
@@ -108,24 +86,7 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
     where
         F: Valid + Unreduced + WithCommitAccumulator,
     {
-        let prepared = self.prepared()?;
-        let mut artifacts = crate::commitment::SetupPrefixProverRegistry::new(
-            prepared.expanded.descriptor().setup_seed.clone(),
-        );
-        for id in ids {
-            let mut artifact = self.setup_prefix_material(id)?.artifact.clone();
-            // Portable public rows take their dimension from the frozen profile,
-            // matching their canonical serialized representation.
-            artifact.commitment.rows = artifact
-                .commitment
-                .rows
-                .into_iter()
-                .map(akita_types::RingVec::into_compact)
-                .collect();
-            artifacts.insert(artifact)?;
-        }
-        artifacts.mark_backend_validated();
-        Ok(artifacts)
+        self.export_prefixes_from(PrefixSource::Expanded(&self.prepared()?.expanded), ids)
     }
 }
 
@@ -153,6 +114,13 @@ where
         id: &SetupPrefixSlotId,
         cached: Arc<CachedSetupPrefix<F>>,
     ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError> {
+        let source = match cached.source.get() {
+            Some(source) => Arc::clone(source),
+            None => {
+                let source = self.setup_prefix_source(id)?;
+                Arc::clone(cached.source.get_or_init(|| source))
+            }
+        };
         let artifact = &cached.artifact;
         let public_commitment = artifact
             .commitment
@@ -175,7 +143,7 @@ where
         )?;
         let committed = Arc::new(CommittedSource {
             commitment_id: self.owner().next_operation_id()?,
-            source: cached.source.clone(),
+            source,
             metadata: akita_prover::SourceMetadata::try_new(
                 1,
                 id.commitment_profile.group.num_vars(),
@@ -308,6 +276,8 @@ mod tests {
                         .is_err());
                 }
                 assert_eq!(first.setup_prefix_cache_len().unwrap(), 0);
+                let materializations =
+                    crate::commitment::shared_inner::SHARED_MATERIALIZATIONS.get();
                 let artifacts = first
                     .export_setup_prefixes(std::slice::from_ref(&id))
                     .unwrap();
@@ -318,6 +288,10 @@ mod tests {
                     .get_or_build(&id, || panic!("export must seed the setup-prefix cache"))
                     .unwrap();
                 let exported = artifacts.get(&id).unwrap();
+                assert!(
+                    cached_after_export.source.get().is_none(),
+                    "export must not prepare or retain a polynomial source"
+                );
                 assert_eq!(cached_after_export.artifact.id, exported.id);
                 assert_eq!(
                     cached_after_export.artifact.commitment.rows[0].coeffs(),
@@ -334,6 +308,14 @@ mod tests {
                 assert_eq!(decoded, artifacts);
                 assert!(!decoded.is_backend_validated());
                 let second = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+                first
+                    .import_setup_prefixes(&artifacts, std::slice::from_ref(&id))
+                    .unwrap();
+                assert_eq!(
+                    crate::commitment::shared_inner::SHARED_MATERIALIZATIONS.get(),
+                    materializations,
+                    "registry export, serialization, and warm import must use shared blocks directly"
+                );
                 let imported_first = first
                     .import_setup_prefixes(&decoded, std::slice::from_ref(&id))
                     .unwrap();
