@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{CanonicalBytes, Prime128OffsetA7F7, Prime32Offset99 as F, Ring};
+use jolt_field::{Prime128OffsetA7F7, Prime32Offset99 as F, Ring};
 
 #[test]
 fn atom_bytes_encode_inline_and_spilled_lengths() {
@@ -65,6 +65,8 @@ fn atom_encodings_and_challenges_match_frozen_bytes() {
     // The challenge depends on the sponge; this value is the Blake2b one.
     #[cfg(feature = "transcript-blake2b")]
     {
+        use jolt_field::CanonicalBytes;
+
         let challenge = ext_challenge::<F, E, _>(
             &mut prover,
             ProtocolSiteId {
