@@ -933,11 +933,10 @@ fn padding_term_matches_its_dense_weights() {
         let padding = PaddingTerm {
             point: (0..shape.num_vars).map(|_| F::random(&mut rng)).collect(),
         };
-        let weights = padding.weights(shape).unwrap();
-        let eq = EqPolynomial::evals(&padding.point).unwrap();
-        assert_eq!(weights, eq[len..], "{len}");
         let mut dense = vec![F::zero(); len];
-        dense.extend(&weights);
+        padding.extend_weights(shape, &mut dense).unwrap();
+        let eq = EqPolynomial::evals(&padding.point).unwrap();
+        assert_eq!(dense[len..], eq[len..], "{len}");
         let point: Vec<F> = (0..shape.num_vars).map(|_| F::random(&mut rng)).collect();
         assert_eq!(
             padding.at(shape, &point).unwrap(),

@@ -6,7 +6,7 @@
 //! little-endian point.
 
 use akita_error::AkitaError;
-use akita_sumcheck::{fold_evals_in_place, SumcheckKernel};
+use akita_sumcheck::SumcheckKernel;
 
 use jolt_zk::whiteout::lift_ct;
 use zeroize::{Zeroize, Zeroizing};
@@ -32,6 +32,12 @@ impl<F: Field> SecretTable<F> {
         table.extend_from_slice(&source.0);
         table.resize(len.max(source.0.len()), F::zero());
         Self(table)
+    }
+
+    /// Wraps a buffer about to hold `e`-derived values, so they are wiped
+    /// with it.
+    fn wrap(values: Vec<F>) -> Self {
+        Self(values)
     }
 
     /// `low + r·(high − low)` over each pair.
@@ -149,10 +155,24 @@ impl<F: Field + Fold + Send> SumcheckKernel<F> for ProductKernel<F> {
 /// `B(x) = γ·eq(τ, x) + S(x)`: the dense part held as its point and the
 /// product of its bound factors (split eq), the sparse part `S = ζ·eq(τ, ·)`
 /// on `I_bin` as its nonzero entries.
+///
+/// `A` and `E` share `A`'s buffer and fold in place ([`fold_in_place`]):
+/// `A` in `[0, len)` and, once the first challenge binds `e`'s digits, `E`
+/// in `[half, half + len)`, where `half` is half the first `A`. No table is
+/// allocated after the kernel is built, and the buffer, which holds `E`, is
+/// wiped when freed.
+///
+/// `E` is constant time in `e`: every read is at a public index, and the
+/// digits enter `F` through [`lift_ct`], which does not branch on their
+/// sign. The first round reads one byte per entry instead of a field
+/// element.
 pub(crate) struct FusedKernel<F: Copy + Send> {
-    pub(crate) a: Vec<F>,
-    pub(crate) e: FusedE<F>,
-    pub(crate) b: SplitB<F>,
+    tables: SecretTable<F>,
+    /// The length of `A`, and of `E` once over `F`.
+    len: usize,
+    /// `e`'s committed digits, until the first challenge binds them.
+    digits: Option<Zeroizing<Vec<i8>>>,
+    b: SplitB<F>,
 }
 
 /// `B = γ·eq(τ, ·) + S`, `S` sparse.
@@ -163,6 +183,8 @@ pub(crate) struct SplitB<F> {
     scale: F,
     /// `S`'s nonzero entries, by increasing index.
     sparse: Vec<(usize, F)>,
+    /// The buffer the next fold of `sparse` writes.
+    spare: Vec<(usize, F)>,
 }
 
 impl<F: JoltField> SplitB<F> {
@@ -185,6 +207,7 @@ impl<F: JoltField> SplitB<F> {
             point: point.to_vec(),
             scale: gamma,
             sparse,
+            spare: Vec::new(),
         }
     }
 
@@ -197,23 +220,45 @@ impl<F: JoltField> SplitB<F> {
     }
 }
 
-/// `E` as committed digits until the first challenge binds it, then over
-/// `F`: the first round reads one byte per entry instead of a field element.
-///
-/// Constant time in `e`: every read is at a public index, and digits enter
-/// `F` through [`lift_ct`], which does not branch on their sign.
-pub(crate) enum FusedE<F: Copy + Send> {
-    Digits(Zeroizing<Vec<i8>>),
-    Field(SecretTable<F>),
+/// Tables shorter than this are folded serially: they cannot pay for a
+/// parallel dispatch, as in `fold_evals_in_place`.
+#[cfg(feature = "parallel")]
+const PARALLEL_FOLD_MIN: usize = 1 << 12;
+
+/// Sets `out[j] = value(j)` for every `j`.
+fn fill<F: Send>(out: &mut [F], value: impl Fn(usize) -> F + Sync) {
+    let set = |(j, slot): (usize, &mut F)| *slot = value(j);
+    #[cfg(feature = "parallel")]
+    if out.len() >= PARALLEL_FOLD_MIN {
+        out.par_iter_mut().enumerate().for_each(set);
+        return;
+    }
+    out.iter_mut().enumerate().for_each(set);
 }
 
-impl<F: Field> FusedE<F> {
-    /// The value a table bound in every variable holds.
-    pub(crate) fn first(&self) -> Option<F> {
-        match self {
-            Self::Digits(digits) => digits.first().map(|&digit| lift_ct(i64::from(digit))),
-            Self::Field(values) => values.first().copied(),
-        }
+/// Folds `values`' pairs into its first `values.len().div_ceil(2)`
+/// entries: entry `i` becomes `low + r·(high − low)` of pair `i` (`high`
+/// zero past the end). Outputs `[s, 2s)` read only `[2s, 4s)`, so the
+/// blocks `s = 1, 2, 4, …` run in that order, each in parallel, and every
+/// input is read before it is overwritten.
+fn fold_in_place<F: Field + Fold>(values: &mut [F], r: F) {
+    let len = values.len();
+    let outputs = len.div_ceil(2);
+    if outputs == 0 {
+        return;
+    }
+    let ctx = F::precompute(r);
+    let high = |input: &[F], index: usize| input.get(index).copied().unwrap_or_default();
+    values[0] = F::fold_one(&ctx, values[0], high(values, 1));
+    let mut start = 1;
+    while start < outputs {
+        let end = (2 * start).min(outputs);
+        let (written, read) = values.split_at_mut(2 * start);
+        let input = &read[..(2 * end).min(len) - 2 * start];
+        fill(&mut written[start..end], |j| {
+            F::fold_one(&ctx, input[2 * j], high(input, 2 * j + 1))
+        });
+        start = end;
     }
 }
 
@@ -223,10 +268,43 @@ fn fused_term<F: Field>(a: F, b: F, e: F) -> F {
 }
 
 impl<F: JoltField + Fold> FusedKernel<F> {
+    /// The kernel of the row weights `a`, `B` and `e`'s committed digits,
+    /// one per weight.
+    pub(crate) fn new(
+        a: Vec<F>,
+        b: SplitB<F>,
+        digits: Zeroizing<Vec<i8>>,
+    ) -> Result<Self, AkitaError> {
+        if digits.len() != a.len() {
+            return Err(AkitaError::Internal(
+                "the fused sumcheck's tables differ in length".into(),
+            ));
+        }
+        Ok(Self {
+            len: a.len(),
+            tables: SecretTable::wrap(a),
+            digits: Some(digits),
+            b,
+        })
+    }
+
+    /// Where `E` starts in the shared buffer.
+    fn half(&self) -> usize {
+        self.tables.len() / 2
+    }
+
+    /// The value `E` holds once bound in every variable.
+    pub(crate) fn e_first(&self) -> Option<F> {
+        match &self.digits {
+            Some(digits) => digits.first().map(|&digit| lift_ct(i64::from(digit))),
+            None => self.tables.get(self.half()).copied(),
+        }
+    }
+
     /// `Σ_i Σ_t` over pairs `i` of `e_t·(a_t + B_t·(e_t + 1))` at
     /// `t = 0..=3`, with `B`'s dense part `scale·eq(τ_k, t)·eq(τ_rest, i)`
     /// and `e_pair(i)` the pair's `(e_0, e_1 − e_0)`.
-    fn dense_evaluations(&self, e_pair: impl Fn(usize) -> (F, F) + Sync) -> [F; 4] {
+    fn dense_evaluations(&self, a: &[F], e_pair: impl Fn(usize) -> (F, F) + Sync) -> [F; 4] {
         let tau = self.b.point.first().copied().unwrap_or_default();
         let (lo, hi, bits) = self.b.rest();
         // eq(τ_k, t)·scale = scale·(1 − τ_k) + t·scale·(2τ_k − 1), with the
@@ -234,7 +312,6 @@ impl<F: JoltField + Fold> FusedKernel<F> {
         let (start, step) = (F::one() - tau, tau + tau - F::one());
         let hi: Vec<F> = hi.iter().map(|value| *value * self.b.scale).collect();
         let mask = (1 << bits) - 1;
-        let a = &self.a;
         cfg_fold_reduce!(
             0..a.len() / 2,
             || [F::zero(); 4],
@@ -290,7 +367,7 @@ impl<F: JoltField + Fold> FusedKernel<F> {
 
 impl<F: JoltField + Fold> SumcheckKernel<F> for FusedKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.a.len().trailing_zeros() as usize
+        self.len.trailing_zeros() as usize
     }
 
     fn round_polynomial(
@@ -299,15 +376,17 @@ impl<F: JoltField + Fold> SumcheckKernel<F> for FusedKernel<F> {
         claim: F,
     ) -> Result<UnivariatePoly<F>, AkitaError> {
         let line = |(low, slope): (F, F), t: i64| low + F::from_i64(t) * slope;
-        let (dense, sparse) = match &self.e {
-            FusedE::Field(e) => {
+        let a = &self.tables[..self.len];
+        let (dense, sparse) = match &self.digits {
+            None => {
+                let e = &self.tables[self.half()..self.half() + self.len];
                 let e_pair = |i: usize| (e[2 * i], e[2 * i + 1] - e[2 * i]);
                 (
-                    self.dense_evaluations(e_pair),
+                    self.dense_evaluations(a, e_pair),
                     self.sparse_evaluations(|i, t| line(e_pair(i), t)),
                 )
             }
-            FusedE::Digits(digits) => {
+            Some(digits) => {
                 let e_pair = |i: usize| {
                     let low = i64::from(digits[2 * i]);
                     (
@@ -316,7 +395,7 @@ impl<F: JoltField + Fold> SumcheckKernel<F> for FusedKernel<F> {
                     )
                 };
                 (
-                    self.dense_evaluations(e_pair),
+                    self.dense_evaluations(a, e_pair),
                     self.sparse_evaluations(|i, t| line(e_pair(i), t)),
                 )
             }
@@ -326,37 +405,41 @@ impl<F: JoltField + Fold> SumcheckKernel<F> for FusedKernel<F> {
     }
 
     fn bind_challenge(&mut self, _round: usize, challenge: F) -> Result<(), AkitaError> {
-        fold_evals_in_place(&mut self.a, challenge);
-        match &mut self.e {
-            FusedE::Field(e) => e.fold(challenge),
-            FusedE::Digits(digits) => {
-                let folded = cfg_into_iter!(0..digits.len() / 2)
-                    .map(|i| {
-                        let low = i64::from(digits[2 * i]);
-                        lift_ct::<F>(low)
-                            + challenge * lift_ct::<F>(i64::from(digits[2 * i + 1]) - low)
-                    })
-                    .collect();
-                self.e = FusedE::Field(SecretTable(folded));
+        let (half, len) = (self.half(), self.len);
+        let tables = &mut self.tables.0;
+        fold_in_place(&mut tables[..len], challenge);
+        match self.digits.take() {
+            None => fold_in_place(&mut tables[half..half + len], challenge),
+            // `E`'s first table over `F` goes to the half of the buffer the
+            // fold of `A` above left unread.
+            Some(digits) => {
+                let ctx = F::precompute(challenge);
+                let digit =
+                    |index: usize| lift_ct::<F>(digits.get(index).copied().map_or(0, i64::from));
+                fill(&mut tables[half..half + len.div_ceil(2)], |i| {
+                    F::fold_one(&ctx, digit(2 * i), digit(2 * i + 1))
+                });
             }
         }
+        self.len = len.div_ceil(2);
         let b = &mut self.b;
         let tau = b.point.first().copied().unwrap_or_default();
         b.scale *= (F::one() - tau) * (F::one() - challenge) + tau * challenge;
         b.point.remove(0);
-        let mut folded: Vec<(usize, F)> = Vec::with_capacity(b.sparse.len());
+        b.spare.clear();
+        b.spare.reserve(b.sparse.len());
         for &(index, value) in &b.sparse {
             let weight = if index % 2 == 0 {
                 F::one() - challenge
             } else {
                 challenge
             };
-            match folded.last_mut() {
+            match b.spare.last_mut() {
                 Some((pair, sum)) if *pair == index / 2 => *sum += weight * value,
-                _ => folded.push((index / 2, weight * value)),
+                _ => b.spare.push((index / 2, weight * value)),
             }
         }
-        b.sparse = folded;
+        std::mem::swap(&mut b.sparse, &mut b.spare);
         Ok(())
     }
 }
