@@ -486,6 +486,29 @@ fn batched_weights_match_h_column_by_column() {
 }
 
 /// The chain relation against its definition: on digits in `{−1, 0}`,
+/// An image takes the fewest chunks of at most 884 coefficients, balanced:
+/// t_p and u_a (1,216) take two of 608, whose first maps are 4,864 `R_16`
+/// columns, well inside the cell's 7,077.
+#[test]
+fn chunks_are_the_fewest_and_balanced() {
+    let profile = Cfg::sis_modulus_profile();
+    let lens = |image_len| {
+        compression::chunks(profile, image_len)
+            .unwrap()
+            .iter()
+            .map(|chunk| chunk.coefficients.len())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(lens(64), [64]);
+    assert_eq!(lens(884), [884]);
+    assert_eq!(lens(885), [443, 442]);
+    assert_eq!(lens(1216), [608, 608]);
+    assert_eq!(lens(1800), [600, 600, 600]);
+    let chunks = compression::chunks(profile, 1216).unwrap();
+    assert_eq!(chunks[1].coefficients, 608..1216);
+    assert_eq!(chunks[0].plan.maps()[0].input_width(), 4_864);
+}
+
 /// `⟨A, ξ⟩ + c = Σ_m w_m·row_m(ξ)(α)` with each row
 /// [`compression::chain_rows`] coefficient by coefficient, and its constant
 /// `−w₂·cm(α)` from a nonzero payload; and Akita's executor's witness
