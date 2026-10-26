@@ -909,9 +909,9 @@ pub(crate) fn find_schedule_in_relation_order(
         // `Some(None)` asks for a final pass without a budget.
         let widened = match (best, padded_setup_limit, setup_field_budget.as_ref()) {
             (None, Some(limit), Some(budget)) => budget.min_rejected().map(|rejected| {
-                rejected
-                    .checked_next_power_of_two()
-                    .filter(|&next| next > limit)
+                // This pass's budget is `limit`, so every recorded rejection exceeds it.
+                debug_assert!(rejected > limit);
+                rejected.checked_next_power_of_two()
             }),
             _ => None,
         };
