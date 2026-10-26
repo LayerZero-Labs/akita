@@ -316,13 +316,17 @@ fn successor_wave(guide_scope: Option<GuideScope>) -> usize {
 /// search; each candidate's opening layout replaces its layout.
 ///
 /// This only fills the memo, whose entries are functions of their keys, so
-/// the traversal selects exactly what it selects without it. A state the
-/// traversal requests but this skipped (a guided prune that the traversal's
-/// frontiers no longer make) is completed by the traversal; a state this
-/// completed but the traversal prunes is wasted work. Every successor is
-/// completed unconstrained by the query budget, which is how a restricted
-/// request first looks it up. An error is left for the traversal to report
-/// if it reaches that state.
+/// the traversal selects exactly what it selects without it. Prunes are
+/// decided against the frontier at the start of the wave; within the wave
+/// the traversal's frontiers only grow, so it may prune a candidate whose
+/// successors were completed here (wasted work, never a different result).
+/// This skips a successor only when it is already completed or claimed by
+/// another thread, when deciding its candidate's edges failed, or when the
+/// traversal's request differs (a query budget that admits no successor);
+/// the traversal completes any skipped successor it needs. Every successor
+/// is completed unconstrained by the query budget, which is how a
+/// restricted request first looks it up. An error is dropped here and
+/// reported by the traversal if it reaches that state.
 #[cfg(feature = "parallel")]
 fn complete_successors(
     ctx: &SuffixCtx<'_>,
@@ -548,6 +552,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     let incoming_setup_prefix = state.topology.incoming_setup_prefix();
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0);
+    #[cfg(feature = "parallel")]
     let _claim = matches!(query_search, QuerySearch::Unconstrained).then(|| memo.claim(&memo_key));
     let candidate_domain = candidates::CandidateDomain::prepare(ctx, state)?;
     let root_level_key = candidate_domain.root_level_key;

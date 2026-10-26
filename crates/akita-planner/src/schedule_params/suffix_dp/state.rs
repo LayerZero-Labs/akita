@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(feature = "parallel")]
 use std::collections::HashSet;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -156,6 +157,7 @@ pub(crate) struct ScheduleMemo {
 struct MemoStates {
     entries: HashMap<ScheduleMemoKey, MemoEntry>,
     /// States some thread is completing now.
+    #[cfg(feature = "parallel")]
     claimed: HashSet<ScheduleMemoKey>,
     direct_insertion_order: VecDeque<ScheduleMemoKey>,
     prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
@@ -264,6 +266,7 @@ impl ScheduleMemo {
         Self {
             states: Mutex::new(MemoStates {
                 entries: HashMap::new(),
+                #[cfg(feature = "parallel")]
                 claimed: HashSet::new(),
                 direct_insertion_order: VecDeque::new(),
                 prefixed_insertion_order: VecDeque::new(),
@@ -294,6 +297,7 @@ impl ScheduleMemo {
     }
 
     /// Records that the caller is completing `key` until the claim drops.
+    #[cfg(feature = "parallel")]
     /// A claim only steers which successors a thread starts; two threads
     /// may still complete one state, to the same result.
     pub(super) fn claim(&self, key: &ScheduleMemoKey) -> MemoClaim<'_> {
@@ -367,11 +371,13 @@ impl ScheduleMemo {
     }
 }
 
+#[cfg(feature = "parallel")]
 pub(super) struct MemoClaim<'a> {
     memo: &'a ScheduleMemo,
     key: ScheduleMemoKey,
 }
 
+#[cfg(feature = "parallel")]
 impl Drop for MemoClaim<'_> {
     fn drop(&mut self) {
         self.memo.states().claimed.remove(&self.key);
