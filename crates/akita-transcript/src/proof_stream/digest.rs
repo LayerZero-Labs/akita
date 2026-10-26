@@ -5,7 +5,7 @@ use jolt_field::CanonicalEncoding;
 use spongefish::{DuplexSpongeInterface, Encoding};
 
 use super::{
-    receive_byte_group, send_byte_group, FieldAtom, ProtocolSiteId, ProverChannel, VerifierChannel,
+    receive_byte_group, send_byte_group, FieldAtom, ProtocolSiteId, ProverSession, VerifierSession,
 };
 use crate::TranscriptSponge;
 
@@ -34,7 +34,7 @@ pub fn field_digest<F: CanonicalEncoding>(values: &[F]) -> [u8; FIELD_DIGEST_BYT
 
 /// Emit the [`field_digest`] of `values` in place of the values themselves.
 pub fn send_field_digest<F: CanonicalEncoding>(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     site: ProtocolSiteId,
     values: &[F],
 ) -> Result<(), AkitaError> {
@@ -43,7 +43,7 @@ pub fn send_field_digest<F: CanonicalEncoding>(
 
 /// Receive a digest emitted by [`send_field_digest`].
 pub fn receive_field_digest(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     site: ProtocolSiteId,
 ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError> {
     receive_byte_group(state, site, FIELD_DIGEST_BYTES)?

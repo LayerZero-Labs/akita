@@ -18,7 +18,10 @@ pub mod lowered;
 pub mod root;
 pub mod root_sumcheck;
 
-pub use root::{prove_root_reduction, prove_root_reduction_bytes, TransparentRootProverOracle};
+pub use root::{
+    prove_root_reduction, prove_root_reduction_bytes, prove_root_reduction_in_session,
+    TransparentRootProverOracle,
+};
 
 pub use limb_commit_kernel::{
     commit_binary_clear_limb_prepared, commit_binary_clear_prepared, PreparedLimbCommitMatrix,

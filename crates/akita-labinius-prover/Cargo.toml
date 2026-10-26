@@ -24,8 +24,9 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false }
 
-[dev-dependencies]
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+
+[dev-dependencies]
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
@@ -66,12 +67,14 @@ labinius = [
   "akita-labinius-verifier/labinius",
 ]
 transcript-blake2b = [
+  "akita-transcript/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",
   "akita-challenges/transcript-blake2b",
   "akita-params/transcript-blake2b",
   "akita-labinius-verifier/transcript-blake2b",
 ]
 transcript-keccak = [
+  "akita-transcript/transcript-keccak",
   "akita-sumcheck/transcript-keccak",
   "akita-challenges/transcript-keccak",
   "akita-params/transcript-keccak",

@@ -21,7 +21,7 @@ use akita_cpu_backend::{
 use akita_error::{checked, AkitaError};
 use akita_labinius_prover::{
     commit_binary_clear_prepared, lowered::encode_image, prove_root_reduction_bytes,
-    PreparedLimbCommitMatrix,
+    prove_root_reduction_in_session, PreparedLimbCommitMatrix,
 };
 use akita_labinius_verifier::{
     channel::ClearChannel,
@@ -174,6 +174,29 @@ impl<P: FieldFamily> Prover<P> {
         Ok(proof)
     }
 
+    /// Open on the caller's native session, then leave it ready for the next
+    /// subprotocol. The grouped PCS discharge uses that same spongefish state.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid statement, source, commitment or proof.
+    pub fn open_in_session<H: SwitchField>(
+        &self,
+        source: &[H::Source],
+        committed: &Committed<P>,
+        statement: &RootStatement<'_, H, P::Challenge>,
+        session: &mut akita_transcript::ProverSession,
+    ) -> Result<(), AkitaError> {
+        prove_root_reduction_in_session::<H, P::Base, P::Challenge, _, _, _>(
+            &self.root,
+            source,
+            &committed.clear,
+            statement,
+            &mut self.opening_oracle(committed, statement.mode()?, true)?,
+            session,
+        )?;
+        Ok(())
+    }
+
     /// A single-use oracle for a root reduction of `committed` over
     /// [`Self::root`].
     ///
@@ -186,6 +209,15 @@ impl<P: FieldFamily> Prover<P> {
         committed: &'a Committed<P>,
         mode: RootOpeningMode,
     ) -> Result<impl RootProverOracle<P::Challenge> + 'a, AkitaError> {
+        self.opening_oracle(committed, mode, false)
+    }
+
+    fn opening_oracle<'a>(
+        &'a self,
+        committed: &'a Committed<P>,
+        mode: RootOpeningMode,
+        same_session: bool,
+    ) -> Result<ProverOracle<'a, P>, AkitaError> {
         let elements = if mode.has_prime() {
             Some(self.elements.as_ref().ok_or_else(|| {
                 AkitaError::InvalidSetup("prime element catalog is missing".into())
@@ -201,6 +233,7 @@ impl<P: FieldFamily> Prover<P> {
             response: None,
             mode,
             order: Order::default(),
+            same_session,
         })
     }
 
@@ -245,6 +278,7 @@ struct ProverOracle<'a, P: FieldFamily> {
     mode: RootOpeningMode,
     response: Option<CommitOutput<P::Base, P::Challenge>>,
     order: Order,
+    same_session: bool,
 }
 
 impl<P: FieldFamily> RootProverOracle<P::Challenge> for ProverOracle<'_, P> {
@@ -254,6 +288,9 @@ impl<P: FieldFamily> RootProverOracle<P::Challenge> for ProverOracle<'_, P> {
         channel: &mut S,
     ) -> Result<(), AkitaError> {
         self.order.take(Order::Image)?;
+        if self.same_session {
+            channel.public(self.row.selection().row_digest.as_bytes())?;
+        }
         bind_image::<P, S>(
             &self.owner.layout,
             layout,
@@ -353,19 +390,6 @@ impl<P: FieldFamily> RootProverOracle<P::Challenge> for ProverOracle<'_, P> {
             return Err(AkitaError::InvalidProof);
         }
         let response = self.response.as_ref().ok_or(AkitaError::InvalidProof)?;
-        let session = bind_opening::<P, S>(
-            self.owner.setup.expanded.descriptor(),
-            self.row,
-            &opening_statement::<P>(
-                &self.owner.layout,
-                self.row,
-                claims,
-                &self.image.commitment,
-                self.prime.as_ref().map(|output| &output.committed_group),
-                &response.committed_group,
-            )?,
-            channel,
-        )?;
         let mut handles = Vec::new();
         handles
             .try_reserve_exact(if self.mode.has_prime() { 3 } else { 2 })
@@ -387,6 +411,30 @@ impl<P: FieldFamily> RootProverOracle<P::Challenge> for ProverOracle<'_, P> {
             )?,
             handles,
             self.owner.scheme.schedules(),
+        )?;
+        if self.same_session {
+            return channel.with_prover_session(|session| {
+                self.owner.scheme.batched_prove_in_session(
+                    &self.owner.setup,
+                    opening,
+                    &self.owner.backend,
+                    session,
+                    BasisMode::Lagrange,
+                )
+            });
+        }
+        let session = bind_opening::<P, S>(
+            self.owner.setup.expanded.descriptor(),
+            self.row,
+            &opening_statement::<P>(
+                &self.owner.layout,
+                self.row,
+                claims,
+                &self.image.commitment,
+                self.prime.as_ref().map(|output| &output.committed_group),
+                &response.committed_group,
+            )?,
+            channel,
         )?;
         session.prove(channel, |session| {
             self.owner.scheme.batched_prove(

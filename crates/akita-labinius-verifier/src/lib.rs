@@ -44,8 +44,8 @@ pub use commitment::BinaryClearCommitment;
 pub use frontend::BinaryEvaluationClaim;
 pub use profile::BinaryClearSetup;
 pub use root::{
-    verify_root_reduction, verify_root_reduction_bytes, RootEvaluationClaims, RootProverOracle,
-    RootVerifierOracle,
+    verify_root_reduction, verify_root_reduction_bytes, verify_root_reduction_in_session,
+    RootEvaluationClaims, RootProverOracle, RootVerifierOracle,
 };
 pub use statement::{PrimeClaim, RootOpeningMode, RootStatement};
 

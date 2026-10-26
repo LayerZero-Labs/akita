@@ -1,6 +1,6 @@
 //! Exact canonical rejection sampling for field challenges.
 
-use super::{ProverChannel, VerifierChannel};
+use super::{ProverSession, VerifierSession};
 use crate::TranscriptSponge;
 use akita_error::AkitaError;
 use jolt_field::CanonicalEncoding;
@@ -77,9 +77,9 @@ fn sample_field<F: CanonicalEncoding>(sponge: &mut TranscriptSponge) -> Result<F
 /// Returns [`AkitaError::InvalidSetup`] when `F` is not certified for exact
 /// sampling, or [`AkitaError::InvalidProof`] when the retry counter is exhausted.
 pub fn prover_field_challenge<F: CanonicalEncoding>(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
 ) -> Result<F, AkitaError> {
-    sample_field(&mut state.duplex_sponge_state)
+    sample_field(&mut state.inner.duplex_sponge_state)
 }
 
 /// Draw one exactly uniform base-field challenge by canonical rejection sampling.
@@ -90,7 +90,7 @@ pub fn prover_field_challenge<F: CanonicalEncoding>(
 /// sampling, or [`AkitaError::InvalidProof`] when the retry counter is exhausted
 /// or the verifier state is already invalid.
 pub fn verifier_field_challenge<F: CanonicalEncoding>(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
 ) -> Result<F, AkitaError> {
     if state.is_invalid() {
         return Err(AkitaError::InvalidProof);

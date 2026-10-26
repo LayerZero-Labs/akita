@@ -44,7 +44,7 @@ mod registry;
 mod root;
 mod suffix;
 
-pub use execution::batched_prove;
+pub use execution::{batched_prove, batched_prove_in_session};
 pub(in crate::protocol::prove) use fold::{prepare_fold, prove_fold, PreparedFold};
 pub(in crate::protocol) use fold_kernels::*;
 pub(crate) use opening_reduction::*;

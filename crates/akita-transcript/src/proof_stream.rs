@@ -6,7 +6,7 @@ use akita_error::{
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use spongefish::{
-    protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState,
+    protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize,
     VerificationError, WithoutInstance,
 };
 use std::marker::PhantomData;
@@ -16,6 +16,8 @@ use crate::TranscriptSponge;
 mod nonce;
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, NonceAtom};
 mod channel;
+mod session;
+pub use session::{absorb_subprotocol_context, ProverChannel, ProverSession};
 mod sampling;
 pub use channel::ProofChannel;
 pub use sampling::{
@@ -23,7 +25,7 @@ pub use sampling::{
     verifier_field_challenge, FIELD_CHALLENGE_BYTES, FIELD_SAMPLING_QUERY_LIMIT,
 };
 mod verifier;
-pub use verifier::VerifierChannel;
+pub use verifier::{VerifierChannel, VerifierSession};
 mod digest;
 pub use digest::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 mod site;
@@ -163,9 +165,6 @@ impl ProtocolSiteId {
     }
 }
 
-/// Spongefish prover state used by Akita.
-pub type ProverChannel = ProverState<TranscriptSponge>;
-
 #[derive(Clone, Copy)]
 struct FramedBytes<'a> {
     bytes: &'a [u8],
@@ -224,7 +223,9 @@ fn domain<'a>(
 /// Returns [`AkitaError::InvalidInput`] when a framed transcript input length exceeds
 /// `u64`.
 pub fn new_prover_channel(session: &[u8], instance: &[u8]) -> Result<ProverChannel, AkitaError> {
-    Ok(domain(session, instance)?.to_prover(TranscriptSponge::default()))
+    Ok(ProverChannel::new(
+        domain(session, instance)?.to_prover(TranscriptSponge::default()),
+    ))
 }
 
 /// Construct a bound verifier channel over one proof byte string.
@@ -377,13 +378,13 @@ impl NargDeserialize for U128Atom {
 }
 
 /// Emit one canonical field atom and absorb the same bytes.
-pub fn send_field<F: CanonicalEncoding>(state: &mut ProverChannel, value: F) {
+pub fn send_field<F: CanonicalEncoding>(state: &mut ProverSession, value: F) {
     state.prover_message(&FieldAtom::new(value));
 }
 
 /// Receive one canonical field atom, rejecting noncanonical representatives.
 pub fn receive_field<F: CanonicalEncoding>(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
 ) -> Result<F, AkitaError> {
     state
         .prover_message::<FieldAtom<F>>()
@@ -391,7 +392,7 @@ pub fn receive_field<F: CanonicalEncoding>(
 }
 
 /// Emit one extension-field proof atom as ordered canonical base coordinates.
-pub fn send_extension<F, E>(state: &mut ProverChannel, value: E)
+pub fn send_extension<F, E>(state: &mut ProverSession, value: E)
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -400,7 +401,7 @@ where
 }
 
 /// Receive one extension-field proof atom from canonical base coordinates.
-pub fn receive_extension<F, E>(state: &mut VerifierChannel<'_>) -> Result<E, AkitaError>
+pub fn receive_extension<F, E>(state: &mut VerifierSession<'_>) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -432,7 +433,7 @@ impl<const N: usize> NargDeserialize for ByteChunk<N> {
 }
 
 fn send_byte_chunks<'a, const N: usize>(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     mut bytes: &'a [u8],
 ) -> &'a [u8] {
     while bytes.len() >= N {
@@ -445,7 +446,7 @@ fn send_byte_chunks<'a, const N: usize>(
 }
 
 fn receive_byte_chunks<const N: usize>(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     len: usize,
     bytes: &mut Vec<u8>,
 ) -> Result<usize, AkitaError> {
@@ -460,7 +461,7 @@ fn receive_byte_chunks<const N: usize>(
 ///
 /// Spongefish absorption is associative, so this emits and absorbs exactly the
 /// same byte string as one-byte messages while avoiding one call per byte.
-pub fn send_bytes(state: &mut ProverChannel, bytes: &[u8]) {
+pub fn send_bytes(state: &mut ProverSession, bytes: &[u8]) {
     let bytes = send_byte_chunks::<BYTE_CHUNK_BYTES>(state, bytes);
     let bytes = send_byte_chunks::<BYTE_TAIL_CHUNK_BYTES>(state, bytes);
     for &byte in bytes {
@@ -469,7 +470,7 @@ pub fn send_bytes(state: &mut ProverChannel, bytes: &[u8]) {
 }
 
 /// Receive an exact schedule-bounded number of bytes in fixed-size chunks.
-pub fn receive_bytes(state: &mut VerifierChannel<'_>, len: usize) -> Result<Vec<u8>, AkitaError> {
+pub fn receive_bytes(state: &mut VerifierSession<'_>, len: usize) -> Result<Vec<u8>, AkitaError> {
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(len)
@@ -484,7 +485,7 @@ pub fn receive_bytes(state: &mut VerifierChannel<'_>, len: usize) -> Result<Vec<
 
 /// Emit a schedule-bounded byte sequence as one diagnostically labelled proof group.
 pub fn send_byte_group(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     site: ProtocolSiteId,
     bytes: &[u8],
 ) -> Result<(), AkitaError> {
@@ -506,7 +507,7 @@ pub fn send_byte_group(
 
 /// Receive an exact schedule-bounded diagnostically labelled proof group.
 pub fn receive_byte_group(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     site: ProtocolSiteId,
     len: usize,
 ) -> Result<Vec<u8>, AkitaError> {
@@ -539,7 +540,7 @@ fn bounded_bytes_sites(site: ProtocolSiteId) -> (ProtocolContextRecord, Protocol
 
 /// Emit a bounded variable byte payload with a `u32` length atom.
 pub fn send_bounded_bytes(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     site: ProtocolSiteId,
     bytes: &[u8],
     max_len: usize,
@@ -561,7 +562,7 @@ pub fn send_bounded_bytes(
 /// Receive a bounded variable byte payload after validating its length
 /// atom and before allocating its body.
 pub fn receive_bounded_bytes(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     site: ProtocolSiteId,
     max_len: usize,
 ) -> Result<Vec<u8>, AkitaError> {
@@ -594,7 +595,7 @@ fn public_bytes_record(
 }
 
 /// Absorb one public byte string and record its diagnostic site.
-pub fn public_bytes<S: ProofChannel>(
+pub fn public_bytes<S: ProofChannel + ?Sized>(
     state: &mut S,
     site: ProtocolSiteId,
     bytes: &[u8],
@@ -609,7 +610,7 @@ pub fn ext_challenge<F, E, S>(state: &mut S, site: ProtocolSiteId) -> Result<E, 
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    S: ProofChannel,
+    S: ProofChannel + ?Sized,
 {
     let mut coefficients = Vec::new();
     coefficients
@@ -673,11 +674,11 @@ impl ProtocolContextRecord {
 
 /// Record prover-side protocol metadata when transcript diagnostics are enabled.
 #[inline(always)]
-pub fn prover_context(state: &mut ProverChannel, record: ProtocolContextRecord) {
+pub fn prover_context(state: &mut ProverSession, record: ProtocolContextRecord) {
     #[cfg(feature = "logging-transcript")]
     {
         crate::logging::record_context(record);
-        crate::logging::record_proof_boundary(record, state.narg_string().len());
+        crate::logging::record_proof_boundary(record, state.inner.narg_string().len());
     }
     #[cfg(not(feature = "logging-transcript"))]
     let _ = (state, record);
@@ -685,13 +686,13 @@ pub fn prover_context(state: &mut ProverChannel, record: ProtocolContextRecord) 
 
 /// Close the final diagnostic proof range at the authoritative argument end.
 #[cfg(feature = "logging-transcript")]
-pub fn finish_proof_ranges(state: &ProverChannel) {
-    crate::logging::finish_proof_ranges(state.narg_string().len());
+pub fn finish_proof_ranges(state: &ProverSession) {
+    crate::logging::finish_proof_ranges(state.inner.narg_string().len());
 }
 
 /// Record verifier-side protocol metadata when transcript diagnostics are enabled.
 #[inline(always)]
-pub fn verifier_context(_state: &mut VerifierChannel<'_>, record: ProtocolContextRecord) {
+pub fn verifier_context(_state: &mut VerifierSession<'_>, record: ProtocolContextRecord) {
     #[cfg(feature = "logging-transcript")]
     crate::logging::record_context(record);
     #[cfg(not(feature = "logging-transcript"))]
@@ -711,8 +712,8 @@ pub struct FoldPreview {
 impl FoldPreview {
     /// Clone the public state and absorb one candidate nonce message.
     #[must_use]
-    pub fn new(state: &ProverChannel, nonce: u32) -> Self {
-        let mut sponge = state.duplex_sponge_state.clone();
+    pub fn new(state: &ProverSession, nonce: u32) -> Self {
+        let mut sponge = state.inner.duplex_sponge_state.clone();
         sponge.absorb(NonceAtom::new(nonce).encode().as_ref());
         Self { sponge }
     }
@@ -731,7 +732,7 @@ impl FoldPreview {
 /// prover side.
 #[must_use]
 pub fn prover_fold_root(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     record: ProtocolContextRecord,
     payload: &[u8],
 ) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
@@ -743,7 +744,7 @@ pub fn prover_fold_root(
 /// Absorb one public fold payload and draw its root live on the
 /// verifier side.
 pub fn verifier_fold_root(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     record: ProtocolContextRecord,
     payload: &[u8],
 ) -> Result<[u8; crate::FOLD_CHALLENGE_SEED_LEN], AkitaError> {
@@ -798,7 +799,7 @@ where
 
 /// Absorb a fixed-count group of public base-field values.
 pub fn public_fields_prover<F>(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     site: ProtocolSiteId,
     values: &[F],
 ) -> Result<(), AkitaError>
@@ -817,7 +818,7 @@ where
 
 /// Absorb a fixed-count group of public base-field values.
 pub fn public_fields_verifier<F>(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     site: ProtocolSiteId,
     values: &[F],
 ) -> Result<(), AkitaError>
@@ -836,7 +837,7 @@ where
 
 /// Emit a fixed-count group of canonical base-field proof atoms.
 pub fn send_field_group<F>(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     site: ProtocolSiteId,
     values: &[F],
 ) -> Result<(), AkitaError>
@@ -855,7 +856,7 @@ where
 
 /// Receive a schedule-fixed group of canonical base-field proof atoms.
 pub fn receive_field_group<F>(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     site: ProtocolSiteId,
     value_count: usize,
 ) -> Result<Vec<F>, AkitaError>
@@ -885,7 +886,7 @@ pub fn public_extensions<F, E, S>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    S: ProofChannel,
+    S: ProofChannel + ?Sized,
 {
     state.context(extension_group_record::<F, E>(
         site,
@@ -931,7 +932,7 @@ pub fn exchange_extension_group<F, E, S>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    S: ProofChannel,
+    S: ProofChannel + ?Sized,
 {
     state.context(extension_group_record::<F, E>(
         site,
@@ -952,10 +953,10 @@ where
 /// and argument string are not mutated.
 #[must_use]
 pub fn preview_grinding_predicate(
-    state: &ProverChannel,
+    state: &ProverSession,
     nonce: u32,
 ) -> [u8; crate::GRINDING_PREDICATE_LEN] {
-    let mut sponge = state.duplex_sponge_state.clone();
+    let mut sponge = state.inner.duplex_sponge_state.clone();
     sponge.absorb(NonceAtom::new(nonce).encode().as_ref());
     let mut predicate = [0u8; crate::GRINDING_PREDICATE_LEN];
     sponge.squeeze(&mut predicate);
@@ -967,7 +968,7 @@ pub fn preview_grinding_predicate(
 /// A zero-bit target is a no-op and does not absorb either record.
 #[must_use]
 pub fn search_grinding_nonce(
-    state: &ProverChannel,
+    state: &ProverSession,
     grind_bits: u8,
     nonce_bits: u8,
 ) -> Option<(u32, [u8; crate::GRINDING_PREDICATE_LEN])> {
@@ -979,7 +980,7 @@ pub fn search_grinding_nonce(
 /// Commit a winning grinding nonce and draw its predicate.
 #[must_use]
 pub fn commit_grinding_nonce(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     nonce_record: ProtocolContextRecord,
     nonce: u32,
     predicate_record: ProtocolContextRecord,
@@ -992,7 +993,7 @@ pub fn commit_grinding_nonce(
 
 /// Receive a grinding nonce and draw its predicate.
 pub fn receive_grinding_nonce(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     nonce_record: ProtocolContextRecord,
     predicate_record: ProtocolContextRecord,
 ) -> Result<(u32, [u8; crate::GRINDING_PREDICATE_LEN]), AkitaError> {

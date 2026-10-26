@@ -9,7 +9,7 @@ pub use akita_types::RingRelationInstance;
 
 pub use prove::execution;
 
-pub use prove::{batched_prove, ProveLevelOutput, SuffixProverState};
+pub use prove::{batched_prove, batched_prove_in_session, ProveLevelOutput, SuffixProverState};
 pub use ring_relation::{
     validate_chunked_witness_cfg, validate_prepared_relation_groups, RingRelationProver,
 };

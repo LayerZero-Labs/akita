@@ -2,7 +2,7 @@
 
 use super::{
     prover_context, prover_field_challenge, verifier_context, verifier_field_challenge,
-    ProtocolContextRecord, ProverChannel, VerifierChannel,
+    ProtocolContextRecord, ProverChannel, ProverSession, VerifierChannel, VerifierSession,
 };
 use akita_error::AkitaError;
 use jolt_field::CanonicalEncoding;
@@ -70,6 +70,52 @@ impl ProofChannel for ProverChannel {
 }
 
 impl ProofChannel for VerifierChannel<'_> {
+    #[inline(always)]
+    fn context(&mut self, record: ProtocolContextRecord) {
+        verifier_context(self, record);
+    }
+
+    fn public<T: Encoding<[u8]> + ?Sized>(&mut self, message: &T) {
+        self.public_message(message);
+    }
+
+    fn exchange<T: Encoding<[u8]> + NargDeserialize>(
+        &mut self,
+        message: &mut T,
+    ) -> Result<(), AkitaError> {
+        *message = self.prover_message::<T>()?;
+        Ok(())
+    }
+
+    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
+        verifier_field_challenge(self)
+    }
+}
+
+impl ProofChannel for ProverSession {
+    #[inline(always)]
+    fn context(&mut self, record: ProtocolContextRecord) {
+        prover_context(self, record);
+    }
+
+    fn public<T: Encoding<[u8]> + ?Sized>(&mut self, message: &T) {
+        self.public_message(message);
+    }
+
+    fn exchange<T: Encoding<[u8]> + NargDeserialize>(
+        &mut self,
+        message: &mut T,
+    ) -> Result<(), AkitaError> {
+        self.prover_message(message);
+        Ok(())
+    }
+
+    fn field_challenge<F: CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
+        prover_field_challenge(self)
+    }
+}
+
+impl ProofChannel for VerifierSession<'_> {
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         verifier_context(self, record);

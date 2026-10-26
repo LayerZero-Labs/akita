@@ -16,7 +16,10 @@ use akita_error::AkitaError;
 use akita_labinius_verifier::{
     channel::ClearChannel,
     lowered::LoweredRootLayout,
-    root::{verify_root_reduction_bytes, RootEvaluationClaims, RootVerifierOracle},
+    root::{
+        verify_root_reduction_bytes, verify_root_reduction_in_session, RootEvaluationClaims,
+        RootVerifierOracle,
+    },
     RootOpeningMode, RootStatement,
 };
 use akita_params::BasisMode;
@@ -99,6 +102,32 @@ impl<P: FieldFamily> Verifier<P> {
         Ok(())
     }
 
+    /// Verify one complete root opening from the caller's session. Later
+    /// messages are left for the caller, which owns the final EOF check.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid statement or rejected opening.
+    pub fn verify_in_session<H: SwitchField>(
+        &self,
+        commitment: &CommittedGroup<P::Base>,
+        statement: &RootStatement<'_, H, P::Challenge>,
+        session: &mut akita_transcript::VerifierSession<'_>,
+    ) -> Result<(), AkitaError> {
+        let result = (|| {
+            verify_root_reduction_in_session::<H, P::Base, P::Challenge, _, _, _>(
+                &self.root,
+                statement,
+                &mut self.opening_oracle(commitment, statement.mode()?, true)?,
+                session,
+            )?;
+            Ok(())
+        })();
+        if result.is_err() {
+            session.invalidate();
+        }
+        result
+    }
+
     /// A single-use oracle for a root reduction of `commitment` over
     /// [`Self::root`].
     ///
@@ -111,6 +140,15 @@ impl<P: FieldFamily> Verifier<P> {
         commitment: &'a CommittedGroup<P::Base>,
         mode: RootOpeningMode,
     ) -> Result<impl RootVerifierOracle<P::Challenge> + 'a, AkitaError> {
+        self.opening_oracle(commitment, mode, false)
+    }
+
+    fn opening_oracle<'a>(
+        &'a self,
+        commitment: &'a CommittedGroup<P::Base>,
+        mode: RootOpeningMode,
+        same_session: bool,
+    ) -> Result<VerifierOracle<'a, P>, AkitaError> {
         let elements = if mode.has_prime() {
             Some(self.elements.as_ref().ok_or_else(|| {
                 AkitaError::InvalidSetup("prime element catalog is missing".into())
@@ -126,6 +164,7 @@ impl<P: FieldFamily> Verifier<P> {
             response: None,
             mode,
             order: Order::default(),
+            same_session,
         })
     }
 }
@@ -139,6 +178,7 @@ struct VerifierOracle<'a, P: FieldFamily> {
     mode: RootOpeningMode,
     response: Option<CommittedGroup<P::Base>>,
     order: Order,
+    same_session: bool,
 }
 
 impl<P: FieldFamily> RootVerifierOracle<P::Challenge> for VerifierOracle<'_, P> {
@@ -148,6 +188,9 @@ impl<P: FieldFamily> RootVerifierOracle<P::Challenge> for VerifierOracle<'_, P> 
         channel: &mut S,
     ) -> Result<(), AkitaError> {
         self.order.take(Order::Image)?;
+        if self.same_session {
+            channel.public(self.row.selection().row_digest.as_bytes())?;
+        }
         bind_image::<P, S>(
             &self.owner.layout,
             layout,
@@ -220,6 +263,13 @@ impl<P: FieldFamily> RootVerifierOracle<P::Challenge> for VerifierOracle<'_, P> 
             self.prime.as_ref(),
             response,
         )?;
+        if self.same_session {
+            return channel.with_verifier_session(|session| {
+                self.owner
+                    .nested
+                    .batched_verify_in_session(session, statement, BasisMode::Lagrange)
+            });
+        }
         let session = bind_opening::<P, S>(
             self.owner.nested.setup().expanded().descriptor(),
             self.row,
