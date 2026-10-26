@@ -1573,7 +1573,8 @@ argument. Raw images cost about 25 KB at the headline, against the paper's
   constraint joins the fused sumcheck on `I_bin`, and item 2 gains the chain
   equations of each image.
 - Images above 512 coefficients are split into ⌈len/512⌉ chunks, each
-  compressed by the existing two-map chain (Q4).
+  compressed by the existing two-map chain (Q4). Since O5 the chunks hold up
+  to 884 coefficients (§5.5, W5c deltas).
 - jolt-zk sends compressed t_p and t_D through a `ResponseProver` hook, so
   I1 holds. The Σ oracle input becomes (σ, cm(t_D), n).
 
@@ -2016,6 +2017,15 @@ code does, and why.
   (`MAX_COMPRESSION_INPUT_BYTES`), each with its own chain, so `cm(t)` is
   `8·⌈len/512⌉` coefficients (Q4). Why: Akita's chain plans stop at that
   cap; the script's `FCHAIN_MAX_IMAGE = 884` has no Akita counterpart.
+  *O5 (jolt D34):* Whiteout's chunks now hold up to 884 coefficients,
+  `CompressionChainPlan::max_certified_source_coefficients`: the largest
+  source whose first map stays inside its rank-one SIS cell (d = 16,
+  7,077 columns; 884 · 128 / 16 = 7,072). The second map's input is the
+  first map's fixed 16-coefficient output (256 columns of 508), so it does
+  not bound the source. `for_certified_source` derives the same two maps
+  under the same certification, without the 8 KiB cap, which still bounds
+  every clear B/D image. `cm(t)` is `8·⌈len/884⌉` coefficients: t_p and
+  u_a (1,216 coefficients each at rank 19) go from three chunks to two.
 - **Rows after reduction.** Paper `02_preliminaries.tex:199-203` and
   `04_protocol.tex:329-330`: the verifier checks `t = G₁ξ₁`,
   `K₁ξ₁ = G₂ξ₂`, `K₂ξ₂ = cm(t)`. Code: `t = G₁ξ₁` coefficient by
@@ -2537,7 +2547,8 @@ The numbering continues the W4 note's A1–A23.
   - **What is sent.** At the cut level's `NextWitnessPayload` site the
     masked prefix sends `cm(u_a)`: Whiteout's chain (§5.4, W5c), u_a cut
     into ⌈1,216/512⌉ = 3 chunks (512, 512, 192 coefficients), each with
-    its own two-map chain, so `cm(u_a)` is 3 × 8 coefficients, 384 B. The
+    its own two-map chain, so `cm(u_a)` is 3 × 8 coefficients, 384 B
+    (O5: two chunks of 884 and 332, 256 B). The
     site, its position (after the commitment to w_k, before the ring
     switch) and its class (public, `exchange_public_all`) are unchanged;
     only the length changes. Every other fold, clear or masked, still
@@ -2660,7 +2671,8 @@ The numbering continues the W4 note's A1–A23.
       rejects with `ResponseRejected("fused sumcheck")`.
     - `honest_masked_prefix_satisfies_its_residual_rows` checks the
       claim's payload is the compression of the opened u_a; jolt's
-      `whiteout_compressed_residual_commitment_is_three_chunk_payloads`
+      `whiteout_compressed_residual_commitment_is_two_chunk_payloads`
+      (three before O5)
       pins its size on muldiv.
   - `tests/masked_prefix.rs` requires `test-support` (it compresses
     through `BackendCompression`); CI runs it in `test-zk` and, with

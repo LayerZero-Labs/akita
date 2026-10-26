@@ -735,8 +735,8 @@ fn item_3_reads_u_a_from_its_compression_witness() {
     });
 }
 
-/// A47, u_a's chain rows: the cut sends `cm(u_a)` with its last
-/// (192-coefficient) chunk's payload moved, and `e`'s `ξ_a` is built from
+/// A47, u_a's chain rows: the cut sends `cm(u_a)` with its last chunk's
+/// payload moved, and `e`'s `ξ_a` is built from
 /// that compression, so u_a, `ξ_a` and Item 3 are honest and only that
 /// chunk's `K₂` row fails. Through the unchecked provers the verifier
 /// rejects at the fused sumcheck, where the chain rows are batched.

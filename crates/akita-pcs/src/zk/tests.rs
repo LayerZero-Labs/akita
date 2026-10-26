@@ -498,7 +498,7 @@ fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
         let stream = akita.expanded().shared_matrix().as_field_slice();
         let profile = Cfg::sis_modulus_profile();
         let mut rng = rand::thread_rng();
-        for image_len in [64, 512, 640] {
+        for image_len in [64, 884, 1216] {
             let image: Vec<F> = (0..image_len).map(|_| F::random(&mut rng)).collect();
             let compressed = akita.compress(&image).unwrap();
             assert_eq!(
@@ -757,7 +757,7 @@ fn rejects_prover_chosen_compressions() {
             Forgery::CancelAt(ALPHA_0),
         ] {
             // The chain relation at a random α, on a non-first chunk.
-            let image_len = 640;
+            let image_len = 1216;
             let forging = Forging {
                 akita: &akita,
                 forgery,
@@ -869,7 +869,7 @@ fn chain_relation_at_a_point_matches_its_dense_weights() {
         let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
         let profile = Cfg::sis_modulus_profile();
         let mut rng = rand::thread_rng();
-        for (image_len, offset) in [(640, 2017), (1100, 3), (1024, 4159), (513, 1)] {
+        for (image_len, offset) in [(640, 2017), (1800, 3), (1024, 4159), (513, 1)] {
             let image: Vec<F> = (0..image_len).map(|_| F::random(&mut rng)).collect();
             let compressed = akita.compress(&image).unwrap();
             let len = compressed.witness.len();

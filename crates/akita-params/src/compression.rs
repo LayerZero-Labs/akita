@@ -688,6 +688,25 @@ mod tests {
         assert!(packed.expand_rows::<64>().is_err());
     }
 
+    /// The q128 first map is certified up to 7,077 `R_16` columns of 128
+    /// bits per source coefficient: 884 coefficients (7,072 columns), not 885
+    /// (7,080). The policy cap stays at 512.
+    #[test]
+    fn certified_source_bound_is_the_first_maps_sis_width() {
+        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        assert_eq!(
+            CompressionChainPlan::max_certified_source_coefficients(profile).unwrap(),
+            884
+        );
+        let plan = CompressionChainPlan::for_certified_source(profile, 884).unwrap();
+        assert_eq!(plan.maps()[0].input_width(), 7_072);
+        assert_eq!(plan.terminal_coefficients() * 16, COMPRESSION_TARGET_BYTES);
+        assert!(CompressionChainPlan::for_certified_source(profile, 885).is_err());
+        assert!(CompressionChainPlan::try_for_complete_source(profile, 513)
+            .unwrap()
+            .is_none());
+    }
+
     #[test]
     fn ladder_geometry_and_complete_image_bound_are_checked() {
         for (profile, field_bytes, dimensions) in [

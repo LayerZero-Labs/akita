@@ -1,6 +1,8 @@
 //! Whiteout's compressed images on Akita (`specs/whiteout-akita.md` §5.4;
 //! Whiteout §2, "Commitment compression"). An image is cut into chunks of
-//! at most Akita's compression input cap, and each chunk runs Akita's
+//! at most the largest source a certified chain compresses (884
+//! coefficients at q128, the paper's `FCHAIN_MAX_IMAGE`; clear B/D images
+//! keep the 8 KiB cap), and each chunk runs Akita's
 //! two-map negative-binary chain: `ξ₁ = Bin(t)`, `j = K₁ξ₁`, `ξ₂ = Bin(j)`,
 //! `cm = K₂ξ₂`, with `K₁` and `K₂` the offset-0 prefix of the setup stream.
 //! A chunk's witness is `ξ₁` then `ξ₂`, each in Akita's bit-major order and
@@ -16,14 +18,14 @@ use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, PackedNegativeBinary, RingRelationMode,
-    SisModulusProfileId, MAX_COMPRESSION_INPUT_BYTES,
+    SisModulusProfileId,
 };
 use akita_types::{
     AkitaExpandedSetup, NegativeBinarySupport, ReducedCompressionRelationWeights, RingVec,
 };
 #[cfg(test)]
 use jolt_algebra::Ring;
-use jolt_algebra::{CanonicalBytes, One, Zero};
+use jolt_algebra::{One, Zero};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{
     lift_ct, CompressedImage, CompressedTarget, ImageCompression, ResponseStatement, WhiteoutError,
@@ -70,23 +72,28 @@ const CHUNK_ROWS: usize = 2;
 /// The setup field elements every chain reads: the chain of a full chunk,
 /// whose maps are the widest.
 pub(crate) fn setup_len(profile: SisModulusProfileId) -> Result<usize, AkitaError> {
-    CompressionChainPlan::for_complete_source(profile, MAX_COMPRESSION_INPUT_BYTES / F::NUM_BYTES)?
-        .max_setup_field_elements()
+    CompressionChainPlan::for_certified_source(
+        profile,
+        CompressionChainPlan::max_certified_source_coefficients(profile)?,
+    )?
+    .max_setup_field_elements()
 }
 
-/// The chunks of an image of `image_len` coefficients.
+/// The chunks of an image of `image_len` coefficients: as many full chunks
+/// as fit, at the largest source a certified chain compresses (not the 8 KiB
+/// cap of clear B/D images), then the rest.
 pub(crate) fn chunks(
     profile: SisModulusProfileId,
     image_len: usize,
 ) -> Result<Vec<Chunk>, AkitaError> {
-    let cap = MAX_COMPRESSION_INPUT_BYTES / F::NUM_BYTES;
+    let cap = CompressionChainPlan::max_certified_source_coefficients(profile)?;
     (0..image_len)
         .step_by(cap)
         .map(|start| {
             let end = (start + cap).min(image_len);
             Ok(Chunk {
                 coefficients: start..end,
-                plan: CompressionChainPlan::for_complete_source(profile, end - start)?,
+                plan: CompressionChainPlan::for_certified_source(profile, end - start)?,
             })
         })
         .collect()
