@@ -1,7 +1,7 @@
 //! Four signed 32-bit lanes; exact rounded-quotient twiddle multiplication.
 
 use super::arithmetic::{Split, Twiddle};
-use super::{TrinomialLimbDomain, DEGREE, LANES};
+use super::{TrinomialLimbDomain, TrinomialLimbSlots, DEGREE, LANES};
 use std::arch::aarch64::*;
 
 #[inline(always)]
@@ -203,6 +203,32 @@ pub(super) fn accumulate(sums: &mut [i64; DEGREE], lhs: &[i32; DEGREE], rhs: &[i
                 vmlal_s32(vld1q_s64(ptr), vget_low_s32(a), vget_low_s32(b)),
             );
             vst1q_s64(ptr.add(2), vmlal_high_s32(vld1q_s64(ptr.add(2)), a, b));
+        }
+    }
+}
+
+/// Retain both halves of a four-lane product across a checkpoint slice.
+pub(super) fn accumulate_batch(
+    sums: &mut [i64; DEGREE],
+    lhs: &[TrinomialLimbSlots],
+    rhs: &[TrinomialLimbSlots],
+) {
+    // SAFETY: Complete four-lane inputs and their two i64 output pairs are
+    // inside their arrays. The caller splits the batch at 128-term
+    // checkpoints, so the existing multiply-add arithmetic cannot overflow.
+    unsafe {
+        for offset in (0..DEGREE).step_by(4) {
+            let ptr = sums.as_mut_ptr().add(offset);
+            let mut low = vld1q_s64(ptr);
+            let mut high = vld1q_s64(ptr.add(2));
+            for (a, b) in lhs.iter().zip(rhs) {
+                let a = vld1q_s32(a.values.as_ptr().add(offset));
+                let b = vld1q_s32(b.values.as_ptr().add(offset));
+                low = vmlal_s32(low, vget_low_s32(a), vget_low_s32(b));
+                high = vmlal_high_s32(high, a, b);
+            }
+            vst1q_s64(ptr, low);
+            vst1q_s64(ptr.add(2), high);
         }
     }
 }

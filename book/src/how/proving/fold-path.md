@@ -5,8 +5,8 @@ opening method for each nonterminal fold.
 
 | Opening method | Production use | EOR |
 |----------------|----------------|-----|
-| `SubringCoefficientPacking` | Required for nonterminal folds at absolute levels 0 and 1 | omitted |
-| `EvaluationTrace` | Later nonterminal folds and the terminal path | required only when the claim field is a proper extension |
+| `SubringCoefficientPacking` | Required at levels 0 and 1 and every multi-chunk fold; optional at later single-chunk folds | omitted |
+| `EvaluationTrace` | Eligible single-chunk folds at level 2 or later and the terminal path | required only when the claim field is a proper extension |
 
 See [Coefficients and evaluation points have different roles](../../foundations/rings-and-fields.md#coefficients-and-evaluation-points-have-different-roles).
 For the packing path, read the three obligations in order: the [direct scalar
@@ -25,8 +25,9 @@ reduce the D input width even though there is no EOR proof to remove.
 
 When `EXT_DEGREE == 1`:
 
-1. `prove_root` or the recursive suffix prepares the scheduled opening.
-2. The schedule dispatches to coefficient packing or evaluation trace.
+1. `prove_root` prepares coefficient packing for every root group.
+2. Recursive folds use packing at level 1 and every multi-chunk fold; later
+   single-chunk folds may dispatch to packing or evaluation trace.
 3. Shared `prove_fold` runs the ring relation, ring switch, and sumchecks.
 4. No EOR payload is produced because the extension degree is one.
 

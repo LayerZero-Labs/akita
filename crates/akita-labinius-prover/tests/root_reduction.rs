@@ -505,18 +505,18 @@ fn shipped_mode_and_field_pair_proof_bytes_are_pinned() {
     for (mode, p128, p64x2) in [
         (
             RootOpeningMode::Binary,
-            "dc071acc86acd10de03fc5afc34a0139ea1822d4e08c8d398aabf6cff7f43395",
-            "23eaf66b23e52632b11d0decb756714700fab003dce5f15ea6f20ef2e6f4c17a",
+            "cf6ba34d0f3d909788f1307441d2ac5440fac03120eca8eda5c298279342c1b7",
+            "d7f8bb3181b7b638b6ad9e3bd7054753d7ae93969efe50398649a81df387d86e",
         ),
         (
             RootOpeningMode::Prime,
-            "948526e4ae1a2985c0e0878ea7112b92a168812c8793b87331e882f4905bd565",
-            "610c4696ff679ee1ee8ffefd195e61e22cac364998b871d3ca3940cd59af7377",
+            "8f275e868110b1d2c2f5ccb046beaee74557b254e5868d791bb2ef1b1c161c55",
+            "2055609c18ac6946ef1da8ae6449ae1dccc4c08b39b8c5c640246768278c429c",
         ),
         (
             RootOpeningMode::Both,
-            "f41a8a4253d4b360c6d3fe2c99c5d6a81768aca27dcf8f78551d9aced8d758f6",
-            "6a65fe1b9dc0a490f7efcd612354bffb51a0ea30b5bb7e8b5d7f7ab99bbdc8b6",
+            "654c14c5a158f8e33c670f3700467bcea61f453d2c41fae879782de234bc8ace",
+            "c6952d93d5d069f9806dfe46da162191771d8362c4429ccbd878001361d36bf3",
         ),
     ] {
         assert_eq!(proof_digest::<P128, P128>(mode), p128, "{mode:?}");

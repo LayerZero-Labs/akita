@@ -125,14 +125,16 @@ fn assert_frozen_skeleton(main: &akita_params::FoldSchedule, adapted: &akita_par
 }
 
 fn scalar_row(group: PolynomialGroupLayout) -> Result<ResolvedScheduleRow, AkitaError> {
-    akita_config::test_support::workspace_schedule_catalog::<Dense>()?
-        .resolve_key(&ScheduleLookupKey::single(group))
-        .cloned()
+    akita_config::test_support::workspace_schedule_catalog::<Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )?
+    .resolve_key(&ScheduleLookupKey::single(group))
+    .cloned()
 }
 
 #[test]
 fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let main_group = PolynomialGroupLayout::singleton(24);
     let main_row = scalar_row(main_group).expect("scalar main row");
     let pre_group = PolynomialGroupLayout::singleton(14);
@@ -198,8 +200,11 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
         Dense::ring_challenge_config,
     )
     .expect("adapted row must pass validated-catalog admission");
-    let catalog = akita_config::TrustedScheduleCatalog::<Dense>::new(catalog)
-        .expect("adapted row must bind to the final dense catalog");
+    let catalog = akita_config::TrustedScheduleCatalog::<Dense>::new(
+        catalog,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("adapted row must bind to the final dense catalog");
     catalog
         .resolve_key(&key)
         .expect("adapted lookup key must resolve from the admitted catalog");
@@ -207,7 +212,7 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
 
 #[test]
 fn adapted_schedule_plans_many_interchangeable_producers() {
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let main_group = PolynomialGroupLayout::singleton(24);
     let main_row = scalar_row(main_group).expect("scalar main row");
     let chunk_profile = scalar_row(PolynomialGroupLayout::singleton(14))
@@ -244,7 +249,7 @@ fn adapted_schedule_plans_many_interchangeable_producers() {
 
 #[test]
 fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let main_group = PolynomialGroupLayout::singleton(14);
     let main_row = scalar_row(main_group).expect("scalar main row");
 
@@ -277,7 +282,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
 
 #[test]
 fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let main_group = PolynomialGroupLayout::singleton(14);
     let main_row = scalar_row(main_group).expect("scalar main row");
     let pre_profile = scalar_row(PolynomialGroupLayout::singleton(32))
@@ -303,16 +308,18 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
 
 #[test]
 fn adapted_schedule_falls_back_to_the_full_search_when_the_frozen_suffix_is_infeasible() {
-    let policy = policy_of::<OneHot>();
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
-        .expect("one-hot catalog");
-    let main_group = PolynomialGroupLayout::singleton(16);
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("one-hot catalog");
+    let main_group = PolynomialGroupLayout::singleton(14);
     let main_row = catalog
         .resolve_key(&ScheduleLookupKey::single(main_group))
         .expect("scalar main row");
     let pre_profile = catalog
         .resolve_key(&ScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(14),
+            PolynomialGroupLayout::singleton(16),
         ))
         .expect("scalar precommit row")
         .profiles()
@@ -353,9 +360,13 @@ fn adapted_schedule_falls_back_to_the_full_search_when_the_frozen_suffix_is_infe
 
 #[test]
 fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
-        .expect("one-hot catalog");
-    let final_group = PolynomialGroupLayout::singleton(20);
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("one-hot catalog");
+    // The frozen nv20x2 skeleton can absorb an nv14 precommit; the nv20x1
+    // skeleton cannot and falls back to a full search.
+    let final_group = PolynomialGroupLayout::new(20, 2);
     let reference = catalog
         .rows()
         .find(|row| {
@@ -373,7 +384,7 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
         precommitteds: reference.profiles().precommitteds.clone(),
     };
     let request = grouped_request::<OneHot>(final_group, &key.precommitteds);
-    let policy = policy_of::<OneHot>();
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
 
     let adapted = find_adapted_schedule(
         main_row,
@@ -401,8 +412,10 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
     type RecursiveOneHot = akita_config::RecursiveCommitmentConfig<OneHot>;
 
     let recursive_catalog =
-        akita_config::test_support::workspace_schedule_catalog::<RecursiveOneHot>()
-            .expect("recursive one-hot catalog");
+        akita_config::test_support::workspace_schedule_catalog::<RecursiveOneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("recursive one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(36);
     let main_row = recursive_catalog
         .resolve_key(&ScheduleLookupKey::single(main_group))
@@ -412,20 +425,23 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
         .recursive_folds
         .iter()
         .any(|fold| fold.params.setup_prefix().is_some()));
-    let pre_profile = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
-        .expect("one-hot catalog")
-        .resolve_key(&ScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(14),
-        ))
-        .expect("standalone precommit row")
-        .profiles()
-        .final_group;
+    let pre_profile = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("one-hot catalog")
+    .resolve_key(&ScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(14),
+    ))
+    .expect("standalone precommit row")
+    .profiles()
+    .final_group;
     let key = ScheduleLookupKey {
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
     let request = grouped_request::<OneHot>(main_group, &key.precommitteds);
-    let policy = policy_of::<RecursiveOneHot>();
+    let policy =
+        policy_of::<RecursiveOneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
 
     let adapted = find_adapted_schedule(
         main_row,
@@ -465,11 +481,15 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
 #[test]
 #[ignore = "manual cold guided-search and full-DP benchmark"]
 fn benchmark_adapted_schedule_against_full_plans() {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
-        .expect("one-hot catalog");
-    let dense_catalog =
-        akita_config::test_support::workspace_schedule_catalog::<Dense>().expect("dense catalog");
-    let policy = policy_of::<OneHot>();
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("one-hot catalog");
+    let dense_catalog = akita_config::test_support::workspace_schedule_catalog::<Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("dense catalog");
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let cases = [
         ("20x1+14x1", (20, 1), &[(14, 1, false)][..], true),
         ("20x2+14x1", (20, 2), &[(14, 1, false)][..], true),
@@ -586,8 +606,11 @@ fn benchmark_adapted_schedule_against_full_plans() {
                     OneHot::ring_challenge_config,
                 )
                 .expect("successful adaptation must pass validated-catalog admission");
-                let admitted = akita_config::TrustedScheduleCatalog::<OneHot>::new(admitted)
-                    .expect("successful adaptation must bind to the final one-hot catalog");
+                let admitted = akita_config::TrustedScheduleCatalog::<OneHot>::new(
+                    admitted,
+                    akita_params::ChunkedWitnessCfg::default_non_chunked(),
+                )
+                .expect("successful adaptation must bind to the final one-hot catalog");
                 admitted
                     .resolve_key(&key)
                     .expect("successful adaptation must resolve from the admitted catalog");
@@ -620,7 +643,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
 #[test]
 #[ignore = "manual interchangeable-producer scaling benchmark"]
 fn benchmark_interchangeable_producer_scaling() {
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let main_group = PolynomialGroupLayout::singleton(24);
     let main_row = scalar_row(main_group).expect("scalar main row");
     let chunk_profile = scalar_row(PolynomialGroupLayout::singleton(14))

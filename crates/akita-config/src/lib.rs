@@ -17,16 +17,10 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 
-/// Define a multi-chunk companion preset that delegates every layout-affecting
-/// parameter to a base `Cfg` and overrides only the multi-chunk witness config
-/// and external schedule family identity.
-///
-/// The companion shares the base's field, dimension schedule, decomposition,
-/// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
-/// same `(num_vars, num_polynomials)` keys as its sibling; the schedules differ
-/// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
-macro_rules! impl_multi_chunk_companion {
-    ($cfg:ty, $base:ty, $profile:expr, $family:literal) => {
+/// Bind a separately named catalog family to the base cryptographic policy.
+/// Geometry is supplied by the catalog's caller, independently of this type.
+macro_rules! impl_catalog_family {
+    ($cfg:ty, $base:ty, $family:literal) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
@@ -59,15 +53,14 @@ macro_rules! impl_multi_chunk_companion {
             fn recursive_setup_planning() -> bool {
                 <$base as $crate::CommitmentConfig>::recursive_setup_planning()
             }
-            fn chunked_witness_cfg() -> akita_params::ChunkedWitnessCfg {
-                $profile.cfg()
-            }
         }
     };
 }
 
 pub mod proof_optimized;
 pub mod recursive_commitment;
+#[cfg(test)]
+mod runtime_chunking_tests;
 #[cfg(test)]
 mod schedule_artifact_tests;
 mod setup_prefix_slots;
@@ -89,12 +82,12 @@ pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
-/// Derive the runtime schedule policy from a preset.
+/// Derive the schedule policy from fixed cryptographic policy and runtime chunking.
 ///
-/// Every validation input is *derived* from the `Cfg` impl, so the `Cfg` impl
-/// stays the one source of truth for each preset's `(dimension schedule, decomposition,
-/// sis_modulus_profile, ...)`.
-pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
+/// `Cfg` owns the field, dimensions, decomposition, security and challenge policy.
+/// Chunking is supplied by the application. Planner entry points and catalog
+/// admission validate the resulting policy before consuming it.
+pub fn policy_of<Cfg: CommitmentConfig>(chunking: ChunkedWitnessCfg) -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
@@ -120,12 +113,12 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         chal_ext_degree: Cfg::EXT_DEGREE,
         inner_basis_range: Cfg::inner_basis_range(),
         opening_basis_range: Cfg::opening_basis_range(),
-        witness_chunk: Cfg::chunked_witness_cfg(),
+        witness_chunk: chunking,
         recursive_setup_planning,
     }
 }
 
-/// A validated schedule catalog bound once to one concrete [`CommitmentConfig`].
+/// A validated catalog bound to a concrete [`CommitmentConfig`] and chunking policy.
 ///
 /// The underlying catalog remains ordinary caller-owned data. This handle is
 /// the capability passed across setup, prover, and verifier crate boundaries so
@@ -155,39 +148,70 @@ impl<Cfg: CommitmentConfig> std::fmt::Debug for TrustedScheduleCatalog<Cfg> {
 }
 
 impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
-    /// Bind an already validated semantic catalog to `Cfg` exactly once.
+    /// Bind a catalog to `Cfg` and an explicit runtime chunking policy.
+    ///
+    /// `chunking` must come from trusted caller configuration, independently of
+    /// the catalog being admitted; do not derive it from `catalog.policy()`.
     ///
     /// # Errors
     ///
-    /// Returns an error when the catalog family, planner policy, challenge
-    /// policy, or concrete field configuration does not match `Cfg`.
-    pub fn new(catalog: ValidatedScheduleCatalog) -> Result<Self, AkitaError> {
-        validate_config_policy::<Cfg>()?;
+    /// Rejects invalid chunking, mismatched policy identity, or invalid rows.
+    pub fn new(
+        catalog: ValidatedScheduleCatalog,
+        chunking: ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError> {
+        validate_config_policy::<Cfg>(chunking)?;
+        let policy = policy_of::<Cfg>(chunking);
         catalog.validate_binding(
             Cfg::schedule_family_name(),
-            &policy_of::<Cfg>(),
+            &policy,
             Cfg::ring_challenge_config,
         )?;
         Ok(Self::from_validated(catalog))
     }
 
-    /// Decode an external artifact and bind it directly to `Cfg`.
+    /// Decode a catalog using caller-selected chunking from trusted preprocessing.
     ///
-    /// This is an application or preprocessing boundary. Proof parsing never
-    /// calls it and no proof field contains these artifact bytes. The artifact
-    /// audit already uses the exact `Cfg` inputs, so construction does not
-    /// repeat the catalog traversal.
+    /// Chunking is an expected policy, not an instruction supplied by a proof.
+    /// Artifact identity and every row are checked against the complete policy.
     ///
     /// # Errors
     ///
-    /// Returns an error for an invalid config, malformed artifact, or catalog
-    /// whose family, policy, rows, or challenge hooks do not match `Cfg`.
-    pub fn from_artifact_bytes(bytes: &[u8]) -> Result<Self, AkitaError> {
-        validate_config_policy::<Cfg>()?;
+    /// Rejects invalid chunking, malformed artifacts, or any policy/row mismatch.
+    pub fn from_artifact_bytes(
+        bytes: &[u8],
+        chunking: ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError> {
+        validate_config_policy::<Cfg>(chunking)?;
+        let policy = policy_of::<Cfg>(chunking);
         let catalog = ValidatedScheduleCatalog::from_artifact_bytes(
             bytes,
             Cfg::schedule_family_name(),
-            &policy_of::<Cfg>(),
+            &policy,
+            Cfg::ring_challenge_config,
+        )?;
+        Ok(Self::from_validated(catalog))
+    }
+
+    /// Load a selected-row verifier view (see
+    /// [`ValidatedScheduleCatalog::to_verifier_view`]) from the application's
+    /// trusted setup path and bind it to this config and caller-selected
+    /// chunking, as for [`Self::from_artifact_bytes`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the config policy is invalid
+    /// or the view is rejected by [`ValidatedScheduleCatalog::from_verifier_view`].
+    pub fn from_verifier_view(
+        bytes: &[u8],
+        chunking: ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError> {
+        validate_config_policy::<Cfg>(chunking)?;
+        let policy = policy_of::<Cfg>(chunking);
+        let catalog = ValidatedScheduleCatalog::from_verifier_view(
+            bytes,
+            Cfg::schedule_family_name(),
+            &policy,
             Cfg::ring_challenge_config,
         )?;
         Ok(Self::from_validated(catalog))
@@ -206,12 +230,14 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
     ///
     /// # Errors
     ///
-    /// Returns an error when a row's polynomial count overflows.
+    /// Returns an error for a selected-row verifier view, which cannot size a
+    /// setup, or when a row's polynomial count overflows.
     pub fn rows_within_setup_capacity(
         &self,
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<Vec<&ResolvedScheduleRow>, AkitaError> {
+        self.catalog.validate_complete()?;
         let mut rows = Vec::new();
         for row in self.rows() {
             if row_fits_setup_capacity(row, max_num_vars, max_num_batched_polys)? {
@@ -299,9 +325,11 @@ impl<Cfg: CommitmentConfig> Deref for TrustedScheduleCatalog<Cfg> {
 ///
 /// Returns [`AkitaError::InvalidSetup`] when the policy domains, declared
 /// extension degree, or concrete field tower disagree.
-pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError> {
+pub fn validate_config_policy<Cfg: CommitmentConfig>(
+    chunking: ChunkedWitnessCfg,
+) -> Result<(), AkitaError> {
+    let policy = policy_of::<Cfg>(chunking);
     Cfg::validate_sis_modulus_profile()?;
-    let policy = policy_of::<Cfg>();
     akita_schedules::validate_policy(&policy)?;
     let actual_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE;
     if Cfg::EXT_DEGREE != actual_degree
@@ -435,16 +463,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Multi-chunk witness layout parameters for schedule planning and (future)
-    /// prover orchestration.
-    ///
-    /// Default is single-chunk ([`ChunkedWitnessCfg::default`]), which leaves
-    /// every schedule byte-identical to the historical layout. Distributed-prover
-    /// presets override this to price the chunked witness layout.
-    fn chunked_witness_cfg() -> ChunkedWitnessCfg {
-        ChunkedWitnessCfg::default()
-    }
-
     /// Whether schedule planning may emit recursive setup-contribution edges.
     ///
     /// Ordinary configs are direct-only. Config adapters that opt into recursive
@@ -571,8 +589,10 @@ mod tests {
 
     #[test]
     fn config_policy_rejects_a_declared_degree_that_disagrees_with_the_tower() {
-        let error = validate_config_policy::<WrongDeclaredExtensionDegree>()
-            .expect_err("declared extension degree must match the concrete tower");
+        let error = validate_config_policy::<WrongDeclaredExtensionDegree>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect_err("declared extension degree must match the concrete tower");
         assert!(error
             .to_string()
             .contains("does not match concrete field tower degree 4"));
@@ -666,8 +686,10 @@ mod fp128_policy_tests {
     fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         num_vars_values: &[usize],
     ) {
-        let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>()
-            .expect("workspace schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace schedule catalog");
         let catalog_max = catalog
             .rows()
             .map(|row| row.profiles().final_group.group.num_vars())
@@ -746,10 +768,14 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_generated_singleton_plans_resolve() {
-        let dense_catalog = crate::test_support::workspace_schedule_catalog::<fp128::Dense>()
-            .expect("dense schedule catalog");
-        let onehot_catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
-            .expect("one-hot schedule catalog");
+        let dense_catalog = crate::test_support::workspace_schedule_catalog::<fp128::Dense>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("dense schedule catalog");
+        let onehot_catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
         let dense_key = PolynomialGroupLayout::singleton(32);
         let onehot_key = PolynomialGroupLayout::new(32, 1);
 
@@ -770,8 +796,10 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_adaptive_onehot_supports_batched_keys() {
-        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
-            .expect("one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
         let key = PolynomialGroupLayout::new(30, 4);
 
         let schedule = catalog
@@ -785,8 +813,10 @@ mod fp128_policy_tests {
 
     #[test]
     fn row_admission_rederives_root_and_terminal_transitions() {
-        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
-            .expect("one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = catalog
             .resolve_key(&ScheduleLookupKey::single(
@@ -794,19 +824,27 @@ mod fp128_policy_tests {
             ))
             .expect("generated row");
 
-        let root_input_error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
-            schedule.root.input_witness_len /= 2;
-        });
+        let root_input_error = mutated_row_admission_error::<fp128::OneHot>(
+            row,
+            |schedule| {
+                schedule.root.input_witness_len /= 2;
+            },
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        );
         assert!(!root_input_error.to_string().is_empty());
-        let transition_error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
-            let alignment = schedule.root.params.d_a().max(schedule.terminal.d_a());
-            schedule.root.output_witness_len -= alignment;
-            if let Some(next) = schedule.recursive_folds.first_mut() {
-                next.input_witness_len -= alignment;
-            } else {
-                schedule.terminal.input_witness_len -= alignment;
-            }
-        });
+        let transition_error = mutated_row_admission_error::<fp128::OneHot>(
+            row,
+            |schedule| {
+                let alignment = schedule.root.params.d_a().max(schedule.terminal.d_a());
+                schedule.root.output_witness_len -= alignment;
+                if let Some(next) = schedule.recursive_folds.first_mut() {
+                    next.input_witness_len -= alignment;
+                } else {
+                    schedule.terminal.input_witness_len -= alignment;
+                }
+            },
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        );
         assert!(
             transition_error.to_string().contains("canonical"),
             "unexpected transition error: {transition_error}"
@@ -815,8 +853,10 @@ mod fp128_policy_tests {
 
     #[test]
     fn row_admission_rederives_recursive_transitions() {
-        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
-            .expect("one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
@@ -828,21 +868,25 @@ mod fp128_policy_tests {
                 (!row.schedule().recursive_folds.is_empty()).then_some(row)
             })
             .expect("recursive generated row");
-        let error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
-            let alignment = schedule.recursive_folds[0].params.d_a().max(
+        let error = mutated_row_admission_error::<fp128::OneHot>(
+            row,
+            |schedule| {
+                let alignment = schedule.recursive_folds[0].params.d_a().max(
+                    if schedule.recursive_folds.len() > 1 {
+                        schedule.recursive_folds[1].params.d_a()
+                    } else {
+                        schedule.terminal.d_a()
+                    },
+                );
+                schedule.recursive_folds[0].output_witness_len -= alignment;
                 if schedule.recursive_folds.len() > 1 {
-                    schedule.recursive_folds[1].params.d_a()
+                    schedule.recursive_folds[1].input_witness_len -= alignment;
                 } else {
-                    schedule.terminal.d_a()
-                },
-            );
-            schedule.recursive_folds[0].output_witness_len -= alignment;
-            if schedule.recursive_folds.len() > 1 {
-                schedule.recursive_folds[1].input_witness_len -= alignment;
-            } else {
-                schedule.terminal.input_witness_len -= alignment;
-            }
-        });
+                    schedule.terminal.input_witness_len -= alignment;
+                }
+            },
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        );
         assert!(
             error.to_string().contains("canonical"),
             "unexpected recursive transition error: {error}"
@@ -852,8 +896,10 @@ mod fp128_policy_tests {
     #[test]
     fn row_admission_rejects_overpadded_setup_prefix() {
         type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
-        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>()
-            .expect("recursive one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("recursive one-hot schedule catalog");
 
         let row = (14..=50)
             .find_map(|num_vars| {
@@ -870,21 +916,25 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(row, |schedule| {
-            let step = schedule
-                .recursive_folds
-                .iter_mut()
-                .find(|fold| fold.params.setup_prefix().is_some())
-                .expect("recursive setup-prefix fold");
-            let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
-            prefix.profile.group = PolynomialGroupLayout::new(
-                prefix.profile.group.num_vars() + 1,
-                prefix.profile.group.num_polynomials(),
-            );
-            step.params
-                .set_setup_prefix(Some(prefix))
-                .expect("valid prefix topology");
-        });
+        let error = mutated_row_admission_error::<RecursiveOneHot>(
+            row,
+            |schedule| {
+                let step = schedule
+                    .recursive_folds
+                    .iter_mut()
+                    .find(|fold| fold.params.setup_prefix().is_some())
+                    .expect("recursive setup-prefix fold");
+                let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
+                prefix.profile.group = PolynomialGroupLayout::new(
+                    prefix.profile.group.num_vars() + 1,
+                    prefix.profile.group.num_polynomials(),
+                );
+                step.params
+                    .set_setup_prefix(Some(prefix))
+                    .expect("valid prefix topology");
+            },
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        );
         assert!(
             error.to_string().contains("setup-prefix geometry"),
             "unexpected setup-prefix error: {error}"
@@ -894,8 +944,10 @@ mod fp128_policy_tests {
     #[test]
     fn row_admission_rejects_setup_prefix_that_omits_real_tail_rings() {
         type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
-        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>()
-            .expect("recursive one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("recursive one-hot schedule catalog");
 
         let row = (14..=50)
             .find_map(|num_vars| {
@@ -912,24 +964,28 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(row, |schedule| {
-            let step = schedule
-                .recursive_folds
-                .iter_mut()
-                .find(|fold| fold.params.setup_prefix().is_some())
-                .expect("recursive setup-prefix fold");
-            let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
-            let blocks = prefix.profile.blocks;
-            let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
-            prefix.profile.blocks = akita_params::BlockGeometry::new(
-                omitted_tail_rings,
-                blocks.positions_per_block,
-                omitted_tail_rings.div_ceil(blocks.positions_per_block),
-            );
-            step.params
-                .set_setup_prefix(Some(prefix))
-                .expect("valid prefix topology");
-        });
+        let error = mutated_row_admission_error::<RecursiveOneHot>(
+            row,
+            |schedule| {
+                let step = schedule
+                    .recursive_folds
+                    .iter_mut()
+                    .find(|fold| fold.params.setup_prefix().is_some())
+                    .expect("recursive setup-prefix fold");
+                let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
+                let blocks = prefix.profile.blocks;
+                let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
+                prefix.profile.blocks = akita_params::BlockGeometry::new(
+                    omitted_tail_rings,
+                    blocks.positions_per_block,
+                    omitted_tail_rings.div_ceil(blocks.positions_per_block),
+                );
+                step.params
+                    .set_setup_prefix(Some(prefix))
+                    .expect("valid prefix topology");
+            },
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        );
         assert!(
             error.to_string().contains("must commit all"),
             "unexpected setup-prefix error: {error}"
@@ -944,8 +1000,10 @@ mod independent_commitment_tests {
 
     #[test]
     fn independent_profile_comes_from_the_scalar_row() {
-        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
-            .expect("one-hot schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("one-hot schedule catalog");
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
         let scalar_row = catalog

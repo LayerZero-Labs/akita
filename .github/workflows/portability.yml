@@ -50,6 +50,8 @@ jobs:
           cargo test --release -p akita-algebra --lib --features labinius-binary binary
           cargo test --release -p akita-algebra --lib --features labinius-trinomial trinomial::limb
           cargo test --release -p akita-algebra --lib ntt
+          # The add-reduce kernels and their tail tests exist only with `parallel`.
+          cargo test --release -p akita-algebra --features parallel --lib ntt::neon
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal::ntt::
           cargo test --release -p akita-cpu-backend --lib wide_mass::tests
@@ -95,10 +97,22 @@ jobs:
           sudo mkdir --parents /opt/intel-sde
           sudo tar --extract --xz --file /tmp/intel-sde.tar.xz --strip-components=1 --directory /opt/intel-sde
           sudo sysctl --write kernel.yama.ptrace_scope=0
-      - name: Run IFMA tests under emulation
+      - name: Run IFMA and limb tests under emulation
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
         run: |
+          rustc --crate-name limb_cpu_check --target x86_64-unknown-linux-gnu -o "$RUNNER_TEMP/limb-cpu-check" - <<'RS'
+          fn main() {
+              assert!(std::is_x86_feature_detected!("avx2"));
+              assert!(std::is_x86_feature_detected!("avx512f"));
+              assert!(std::is_x86_feature_detected!("avx512vl"));
+              assert!(std::is_x86_feature_detected!("avx512bw"));
+              assert!(std::is_x86_feature_detected!("avx512vbmi"));
+              assert!(std::is_x86_feature_detected!("avx512bitalg"));
+          }
+          RS
+          /opt/intel-sde/sde64 -icx -- "$RUNNER_TEMP/limb-cpu-check"
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --no-default-features --features labinius-trinomial --lib limb
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib --features labinius-binary binary
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52 -- --include-ignored
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ntt::avx -- --include-ignored

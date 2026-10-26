@@ -70,7 +70,7 @@ impl NestedOpeningSession {
         let proof_bound = akita_schedules::expanded_schedule_proof_bound(
             &key,
             row.schedule(),
-            &policy_of::<Cfg>(),
+            &policy_of::<Cfg>(crate::shipped::WITNESS_CHUNKING),
         )?;
         let capacity = checked::sum([SESSION_DOMAIN.len(), 32])
             .ok_or_else(|| AkitaError::InvalidInput("session length overflow".into()))?;

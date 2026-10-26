@@ -38,10 +38,10 @@ impl OpeningPurpose {
 }
 
 const fn trace_opening_purpose(
-    early_packing_level: bool,
+    packing_required: bool,
     terminal_seed_is_relevant: bool,
 ) -> Option<OpeningPurpose> {
-    match (early_packing_level, terminal_seed_is_relevant) {
+    match (packing_required, terminal_seed_is_relevant) {
         (true, true) => Some(OpeningPurpose::TerminalOnly),
         (true, false) => None,
         (false, true) => Some(OpeningPurpose::TerminalAndFold),
@@ -96,7 +96,7 @@ pub(crate) const fn state_allows_terminal_seed(
 /// classes. Class multiplicity does not count toward it, so any number of
 /// identical producers fits; three to eight distinct classes do, depending on
 /// the per-class domain sizes. A larger product removes coefficient-packing
-/// root openings for that dimension, as an unsupported dimension does. The root
+/// root openings for that dimension, as an unsupported dimension does. A multi-chunk root
 /// only folds by coefficient packing, so that dimension then offers no root
 /// candidate; other dimensions are unaffected.
 pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
@@ -128,7 +128,6 @@ pub(crate) fn packing_precommit_opening_products(
             .map(|indices| {
                 let profile = &key.precommitteds[indices[0]];
                 crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-                    0,
                     policy.claim_ext_degree,
                     CommitmentRingDims {
                         inner: profile.inner.matrix.ring_dimension(),
@@ -177,7 +176,10 @@ fn opening_work_domain(
     opening_shape: PolynomialGroupLayout,
 ) -> Result<Vec<OpeningWork>, AkitaError> {
     let policy = ctx.policy;
-    let early_packing_level = state.level <= 1;
+    let packing_required = akita_params::fold_requires_coefficient_packing(
+        policy.chunks_at_level(state.level),
+        state.level,
+    );
     let terminal_seed_is_relevant = state_allows_terminal_seed(
         root_level_key.is_some(),
         state.topology.incoming_setup_prefix().is_some(),
@@ -203,7 +205,7 @@ fn opening_work_domain(
             continue;
         }
         let constrained_opening = fold_constraint
-            .map(|constraint| guided_opening(policy, state.level, constraint))
+            .map(|constraint| guided_opening(policy, constraint))
             .transpose()?
             .or_else(|| {
                 guide_terminal.and_then(|terminal| {
@@ -212,7 +214,9 @@ fn opening_work_domain(
                         .map(crate::schedule_params::PlannerOpeningCandidate::evaluation_trace)
                 })
             });
-        let packing_domain = if !early_packing_level {
+        let packing_domain = if state.topology.relation_phase()
+            == super::RingRelationPhase::ReducedEvaluationSuffix
+        {
             Vec::new()
         } else if let Some(opening) = constrained_opening {
             opening
@@ -222,12 +226,11 @@ fn opening_work_domain(
                 .collect()
         } else {
             crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-                state.level,
                 policy.claim_ext_degree,
                 dimensions,
             )?
         };
-        let root_precommit_products = if early_packing_level && !packing_domain.is_empty() {
+        let root_precommit_products = if !packing_domain.is_empty() {
             root_level_key
                 .map(|root_key| {
                     let products = packing_precommit_opening_products(
@@ -276,7 +279,7 @@ fn opening_work_domain(
                 };
                 if let Some(precommitted_class_openings) = precommitted_class_openings {
                     if let Some(purpose) =
-                        trace_opening_purpose(early_packing_level, terminal_seed_is_relevant)
+                        trace_opening_purpose(packing_required, terminal_seed_is_relevant)
                     {
                         trace_work.push(OpeningWork {
                             dimensions,
@@ -316,7 +319,6 @@ fn opening_work_domain(
 
 fn guided_opening(
     policy: &PlannerPolicy,
-    absolute_level: usize,
     constraint: &CommittedGroupParams,
 ) -> Result<crate::schedule_params::PlannerOpeningCandidate, AkitaError> {
     let opening = match constraint.opening_method() {
@@ -328,7 +330,6 @@ fn guided_opening(
         akita_params::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
         } => crate::schedule_params::PlannerOpeningCandidate::coefficient_packing(
-            absolute_level,
             policy.claim_ext_degree,
             constraint.role_dims(),
             challenge_subring_dimension,
@@ -342,11 +343,7 @@ fn guided_opening(
             "adapted opening challenge does not match its main-row guide".into(),
         ));
     }
-    opening.validate_for(
-        absolute_level,
-        policy.claim_ext_degree,
-        constraint.role_dims(),
-    )?;
+    opening.validate_for(policy.claim_ext_degree, constraint.role_dims())?;
     Ok(opening)
 }
 
@@ -632,7 +629,12 @@ impl<'a> CandidateDomain<'a> {
                     };
                     let relation_domain = state
                         .topology
-                        .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
+                        .relation_domain(
+                            state.level,
+                            ctx.policy.witness_chunk_at_level(state.level),
+                            work.opening.method(),
+                            ctx.diagnostics,
+                        )?
                         .filtered(ctx.relation_mode_filter)?;
                     if work.purpose == OpeningPurpose::TerminalAndFold {
                         let views = derive_recursive_candidate_views(
@@ -719,7 +721,6 @@ impl<'a> CandidateDomain<'a> {
     pub(super) fn visit_root_batches(
         &self,
         ctx: &SuffixCtx<'_>,
-        state: SuffixState<'_>,
         open_lb: u32,
         mut visit: impl FnMut(GeneratedCandidates) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
@@ -742,11 +743,6 @@ impl<'a> CandidateDomain<'a> {
             else {
                 continue;
             };
-            let relation_transition = state
-                .topology
-                .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
-                .filtered(ctx.relation_mode_filter)?
-                .only_transition()?;
             for inner_lb in self.inner_basis_range.clone() {
                 let mut dimension_candidates = root_level_candidates_for_prepared_producers(
                     root_key,
@@ -767,11 +763,6 @@ impl<'a> CandidateDomain<'a> {
                 let mut terminal = Vec::new();
                 let mut folds = Vec::new();
                 for (params, next_witness_len) in dimension_candidates {
-                    if params.ring_relation_mode != relation_transition {
-                        return Err(AkitaError::InvalidSetup(
-                            "materialized mode disagrees with relation domain".into(),
-                        ));
-                    }
                     if (!self.adaptation_guided || self.guide_terminal.is_some())
                         && work.purpose.allows_terminal()
                     {
@@ -800,7 +791,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn trace_purpose_separates_early_packing_and_terminal_admission() {
+    fn trace_purpose_separates_required_packing_and_terminal_admission() {
         assert_eq!(
             trace_opening_purpose(true, true),
             Some(OpeningPurpose::TerminalOnly)
@@ -814,5 +805,70 @@ mod tests {
             trace_opening_purpose(false, false),
             Some(OpeningPurpose::FoldOnly)
         );
+    }
+
+    #[test]
+    fn opening_domain_requires_packing_prefix_then_keeps_both_methods_until_cutover() {
+        use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+
+        let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
+        let ctx = SuffixCtx {
+            policy: &policy,
+            challenge_order: policy.transcript_grinding_order().unwrap(),
+            diagnostics: None,
+            ring_challenge_config: &OneHot::ring_challenge_config,
+            key: key.final_group,
+            setup_field_budget: None,
+            root_lookup_key: Some(&key),
+            root_main_constraint: None,
+            adaptation_guide: None,
+            root_source_contract: Some(OneHot::committed_source_contract().unwrap()),
+            precommitted_source_contracts: &[],
+            level_zero_is_root: true,
+            relation_traversal_order: super::super::RelationTraversalOrder::Canonical,
+            relation_mode_filter: super::super::RelationModeFilter::All,
+        };
+        for level in [0, 1, 2, 3] {
+            for relation_phase in [
+                super::super::RingRelationPhase::QuotientPrefix,
+                super::super::RingRelationPhase::ReducedEvaluationSuffix,
+            ] {
+                let state = SuffixState {
+                    input_chunks: None,
+                    level,
+                    current_witness_len: 16_384,
+                    current_lb: 3,
+                    source_moment: None,
+                    dimension_ceiling: CommitmentRingDims::uniform(64),
+                    topology: super::super::SuffixTopology::Direct {
+                        payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
+                        relation_phase,
+                    },
+                };
+                let work = opening_work_domain(
+                    &ctx,
+                    state,
+                    (level == 0).then_some(&key),
+                    None,
+                    None,
+                    None,
+                    key.final_group,
+                )
+                .unwrap();
+                assert_eq!(
+                    work.iter()
+                        .any(|work| !work.opening.is_coefficient_packing()
+                            && work.purpose != OpeningPurpose::TerminalOnly),
+                    level >= 2
+                );
+                assert_eq!(
+                    work.iter()
+                        .any(|work| work.opening.is_coefficient_packing()),
+                    relation_phase == super::super::RingRelationPhase::QuotientPrefix,
+                    "single-chunk fold {level} in {relation_phase:?}",
+                );
+            }
+        }
     }
 }

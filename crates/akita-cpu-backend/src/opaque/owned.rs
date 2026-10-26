@@ -206,39 +206,40 @@ where
                             "source and opening geometry disagree".into(),
                         ));
                     }
-                    let point = PreparedSubringCoefficientPackingPoint::new(
+                    let tables = PreparedSubringCoefficientPackingPoint::new(
                         geometry,
                         plan.basis(),
                         live,
                         plan.positions_per_block(),
                         vars,
                         plan.point(),
-                    )?;
+                    )
+                    .and_then(SubringCoefficientPackingTables::new)?;
                     let batch = <P as RootOpeningSource<F, D>>::opening_batch(&polys)?;
                     let partials =
                         SubringCoefficientPackingBatchKernel::coefficient_packing_partials_batch(
                             backend,
                             prepared,
                             batch,
-                            SubringCoefficientPackingPlan { point: &point },
+                            SubringCoefficientPackingPlan { tables: &tables },
                         )?;
                     let openings = partials
                         .iter()
                         .map(|p| {
                             crate::arithmetic::coefficient_packing_fold::coefficient_packing_scalar_opening::<F, E>(
                                 geometry,
-                                point.num_live_blocks(),
+                                tables.point().num_live_blocks(),
                                 std::slice::from_ref(p),
                                 &[E::one()],
-                                point.live_block_weights(),
-                                point.tail_weights(),
+                                tables.live_block_weights(),
+                                tables.tail_weights(),
                             )
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     return Ok(crate::opaque::prepared_opening::coefficient_packing(
                         binding.clone(),
                         source,
-                        point,
+                        tables,
                         partials,
                         openings,
                     ));

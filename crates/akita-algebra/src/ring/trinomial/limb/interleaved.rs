@@ -1,6 +1,6 @@
 //! Table transform for interleaved binary words with alternating word-bit signs.
 
-use super::{gather, use_neon, TrinomialError, TrinomialLimbDomain, TrinomialLimbSlots};
+use super::{gather, Backend, TrinomialError, TrinomialLimbDomain, TrinomialLimbSlots};
 use super::{DEGREE, LANES, PIECE};
 
 #[cfg(test)]
@@ -23,7 +23,7 @@ impl TrinomialLimbDomain {
         bits: &[u64],
         out: &mut TrinomialLimbSlots,
     ) -> Result<(), TrinomialError> {
-        self.forward_interleaved_bits_backend(bits, out, use_neon())
+        self.forward_interleaved_bits_backend(bits, out, self.backend)
     }
 
     /// Heap bytes occupied by the bit transform lookup tables.
@@ -36,17 +36,75 @@ impl TrinomialLimbDomain {
             .map_or(0, |tables| std::mem::size_of_val(tables.as_ref()))
     }
 
-    pub(super) fn forward_interleaved_bits_backend(
+    /// Transform a batch of four-word sources when source batching is selected.
+    ///
+    /// Source bit `s` of word `c` is coefficient `4*s+c`, with sign `(-1)^s`.
+    /// The remaining 136 coefficient bits are zero. Source and output counts must agree.
+    /// Validate all output primes before mutation or table initialization.
+    /// Return `false` with every output unchanged on an unsupported backend.
+    pub fn try_forward_interleaved_words_batch(
         &self,
-        bits: &[u64],
-        out: &mut TrinomialLimbSlots,
-        neon: bool,
-    ) -> Result<(), TrinomialError> {
-        Self::check_bits(bits)?;
-        self.check_slots(out)?;
-        let mut indices = [0; PIECE];
-        gather::indices(bits, &mut indices);
-        let tables = self.interleaved_first_level.get_or_init(|| {
+        words: &[[u128; 4]],
+        out: &mut [TrinomialLimbSlots],
+    ) -> Result<bool, TrinomialError> {
+        if words.len() != out.len() {
+            return Err(TrinomialError::LimbInput {
+                reason: "source batch and output lengths do not match",
+            });
+        }
+        for output in out.iter() {
+            self.check_slots(output)?;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if self.backend == Backend::Avx512VbmiBatch {
+            if out.is_empty() {
+                return Ok(true);
+            }
+            let tables = self.interleaved_tables();
+            let (sources, words) = words.as_chunks::<4>();
+            let (outputs, out) = out.as_chunks_mut::<4>();
+            for (source, output) in sources.iter().zip(outputs) {
+                // SAFETY: Selection detects AVX2 and AVX-512F/VL/BW/
+                // VBMI/BITALG. Equal counts and every output tag were
+                // validated before the first mutation; arrays are complete.
+                unsafe {
+                    super::source_batch::forward_interleaved_words::<4>(
+                        self,
+                        source,
+                        tables,
+                        output.each_mut().map(|slot| &mut slot.values),
+                    )
+                };
+            }
+            let (sources, remaining_sources) = words.as_chunks::<2>();
+            let (outputs, remaining_outputs) = out.as_chunks_mut::<2>();
+            for (source, output) in sources.iter().zip(outputs) {
+                // SAFETY: Selection detects AVX2 and AVX-512F/VL/BW/
+                // VBMI/BITALG. The validated paired arrays are complete.
+                unsafe {
+                    super::source_batch::forward_interleaved_words::<2>(
+                        self,
+                        source,
+                        tables,
+                        output.each_mut().map(|slot| &mut slot.values),
+                    )
+                };
+            }
+            for (source, output) in remaining_sources.iter().zip(remaining_outputs) {
+                // SAFETY: Selection detects AVX2 and AVX-512F/VL/BW/
+                // VBMI/BITALG. At most one validated complete source remains.
+                unsafe {
+                    super::vbmi::forward_interleaved(self, source, tables, &mut output.values)
+                };
+            }
+            return Ok(true);
+        }
+        let _ = words;
+        Ok(false)
+    }
+
+    fn interleaved_tables(&self) -> &[[[i32; 3 * LANES]; 256]] {
+        self.interleaved_first_level.get_or_init(|| {
             // Four sign phases for each of the three first-level sources.
             // A phase offset of four negates every entry. Allocate in blocks
             // of 24 KiB rather than constructing a 288 KiB stack temporary.
@@ -90,16 +148,38 @@ impl TrinomialLimbDomain {
                 }
             }
             tables
-        });
+        })
+    }
+
+    pub(super) fn forward_interleaved_bits_backend(
+        &self,
+        bits: &[u64],
+        out: &mut TrinomialLimbSlots,
+        backend: Backend,
+    ) -> Result<(), TrinomialError> {
+        let bits = Self::check_bits(bits)?;
+        self.check_slots(out)?;
+        let tables = self.interleaved_tables();
+        #[cfg(target_arch = "x86_64")]
+        match backend {
+            Backend::Avx2 | Backend::Avx512VbmiBatch => {
+                // SAFETY: Selection establishes AVX2; validation precedes this call.
+                unsafe { super::avx2::forward_interleaved(self, bits, tables, &mut out.values) };
+                return Ok(());
+            }
+            Backend::Scalar => {}
+        }
+        let mut indices = [0; PIECE];
+        gather::indices(bits, &mut indices);
         #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-        if neon {
+        if backend == Backend::Neon {
             table_neon(tables, &indices, &mut out.values);
         } else {
             table_scalar(tables, &indices, &mut out.values);
         }
         #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
         table_scalar(tables, &indices, &mut out.values);
-        self.transform(&mut out.values, false, neon, true);
+        self.transform(&mut out.values, false, backend, true);
         Ok(())
     }
 }
@@ -171,6 +251,49 @@ fn table_neon(
                         vaddq_s32(vaddq_s32(a, b), c),
                     );
                 }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(super) unsafe fn table_avx2(
+    tables: &[[[i32; 3 * LANES]; 256]],
+    indices: &[u8; PIECE],
+    values: &mut [i32; DEGREE],
+) {
+    use std::arch::x86_64::*;
+    // SAFETY: Caller detects AVX2. Each load covers eight lanes within a
+    // 24-lane table entry; stores cover disjoint complete output rows.
+    // Centered entries give partial bounds 2h and 3h<=B1, just as table_scalar.
+    unsafe {
+        for t in 0..27 {
+            let rows: [_; 3] = std::array::from_fn(|source| {
+                let phase = (t + source * 27) & 7;
+                (
+                    tables[(phase & 3) * 3 + source][usize::from(indices[t + source * 27])]
+                        .as_ptr(),
+                    _mm256_set1_epi32(if phase & 4 == 0 { 1 } else { -1 }),
+                )
+            });
+            // Source zero enters the first butterfly with b=c=0, so all
+            // three centered branch entries are identical. Reuse its signed
+            // first vector; each branch still adds (source0+source1)+source2.
+            let first = _mm256_sign_epi32(_mm256_loadu_si256(rows[0].0.cast()), rows[0].1);
+            for branch in 0..3 {
+                let second = _mm256_sign_epi32(
+                    _mm256_loadu_si256(rows[1].0.add(branch * LANES).cast()),
+                    rows[1].1,
+                );
+                let third = _mm256_sign_epi32(
+                    _mm256_loadu_si256(rows[2].0.add(branch * LANES).cast()),
+                    rows[2].1,
+                );
+                _mm256_storeu_si256(
+                    values.as_mut_ptr().add((t + branch * 27) * LANES).cast(),
+                    _mm256_add_epi32(_mm256_add_epi32(first, second), third),
+                );
             }
         }
     }

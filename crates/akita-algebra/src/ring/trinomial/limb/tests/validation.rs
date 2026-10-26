@@ -140,10 +140,7 @@ fn limb_cross_prime_slots_are_rejected_without_mutation() {
 
 #[test]
 fn limb_column_rows_reject_wrong_tags_without_mutation() {
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    let backends = [false, true];
-    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-    let backends = [false];
+    let backends = available_backends();
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         let domain = TrinomialLimbDomain::new(prime).unwrap();
         let slots = transform(&domain, &[1; DEGREE]);
@@ -153,18 +150,18 @@ fn limb_column_rows_reject_wrong_tags_without_mutation() {
             .unwrap();
         let wrong = TrinomialLimbDomain::new(other).unwrap().zero_slots();
         for rank in 1..=4 {
-            for neon in backends {
+            for backend in backends.iter().copied() {
                 let mut accumulators = vec![TrinomialLimbAccumulator::new(&domain); rank];
                 for accumulator in &mut accumulators {
                     accumulator
-                        .add_product_backend(&slots, &slots, neon)
+                        .add_product_backend(&slots, &slots, backend)
                         .unwrap();
                 }
                 let original = accumulators.clone();
                 for accumulator in &mut accumulators {
                     for (lhs, rhs) in [(&wrong, &slots), (&slots, &wrong), (&wrong, &wrong)] {
                         assert!(matches!(
-                            accumulator.add_product_backend(lhs, rhs, neon),
+                            accumulator.add_product_backend(lhs, rhs, backend),
                             Err(TrinomialError::LimbInput { .. })
                         ));
                     }
@@ -175,15 +172,33 @@ fn limb_column_rows_reject_wrong_tags_without_mutation() {
                 }
                 let other_domain = TrinomialLimbDomain::new(other).unwrap();
                 let mut mixed = TrinomialLimbAccumulator::new(&other_domain);
-                mixed.add_product_backend(&wrong, &wrong, neon).unwrap();
+                mixed.add_product_backend(&wrong, &wrong, backend).unwrap();
                 let before = mixed.clone();
                 assert!(matches!(
-                    mixed.add_product_backend(&slots, &slots, neon),
+                    mixed.add_product_backend(&slots, &slots, backend),
                     Err(TrinomialError::LimbInput { .. })
                 ));
                 assert_eq!(mixed.sums, before.sums);
                 assert_eq!(mixed.terms, before.terms);
             }
         }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn limb_runtime_dispatch_requires_avx2() {
+    if !std::is_x86_feature_detected!("avx2") {
+        assert_eq!(selected_backend(), Backend::Scalar);
+        assert_eq!(available_backends(), vec![Backend::Scalar]);
+        let domain = TrinomialLimbDomain::new(TrinomialLimbDomain::ADMITTED_PRIMES[0]).unwrap();
+        let input = [1; DEGREE];
+        let mut scalar = domain.zero_slots();
+        let mut selected = domain.zero_slots();
+        domain
+            .forward_centered_backend(&input, &mut scalar, Backend::Scalar)
+            .unwrap();
+        domain.forward_centered(&input, &mut selected).unwrap();
+        assert_eq!(scalar.values, selected.values);
     }
 }

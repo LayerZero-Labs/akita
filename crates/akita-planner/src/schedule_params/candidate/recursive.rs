@@ -400,7 +400,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     request.payload_mode,
                     *transition,
                     source_encoding,
-                    crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
+                    request.policy.witness_chunk_at_level(request.fold_level),
                 )?;
                 params.witness_chunk_ends = core.witness_chunk_ends.clone();
                 candidates.push(params);
@@ -481,7 +481,6 @@ impl RecursiveCandidateContext<'_, '_> {
                 for transition in
                     relation_domain.transitions_in(self.request.relation_traversal_order)
                 {
-                    let mut mode_slices = Vec::with_capacity(base_slice_candidates.len());
                     for base_candidate in base_slice_candidates
                         .iter()
                         .filter(|candidate| candidate.ring_relation_mode == *transition)
@@ -491,22 +490,15 @@ impl RecursiveCandidateContext<'_, '_> {
                             policy.claim_ext_degree,
                             base_candidate.clone(),
                         )?;
-                        if params.compression_sources_supported()? {
-                            mode_slices.push(params);
+                        if !params.compression_sources_supported()? {
+                            continue;
                         }
-                    }
-                    for params in crate::schedule_params::prune_locally_unprofitable_slices(
-                        policy,
-                        &search.opening_layout,
-                        mode_slices,
-                    )? {
-                        let relation_mode = *transition;
                         let Some((score, params, next_witness_len)) =
                             finalize_recursive_level_candidate(policy, search, params)?
                         else {
                             continue;
                         };
-                        if relation_mode == akita_params::RingRelationMode::QuotientLift
+                        if *transition == akita_params::RingRelationMode::QuotientLift
                             && (bounds.score.is_some_and(|bound| bound > score.0)
                                 || bounds
                                     .witness_body
@@ -696,23 +688,15 @@ fn append_selective_l2_candidates(
             .any(|linf| linf.outer_slice_count() == candidate.outer_slice_count())
     });
     for setup_prefix in &search.setup_prefixes {
-        let mut sliced = Vec::with_capacity(base_slices.len());
         for base_candidate in &base_slices {
             let params = attach_recursive_setup_prefix(
                 setup_prefix.as_ref(),
                 policy.claim_ext_degree,
                 base_candidate.clone(),
             )?;
-            if params.compression_sources_supported()? {
-                sliced.push(params);
+            if !params.compression_sources_supported()? {
+                continue;
             }
-        }
-        let retained_slices = crate::schedule_params::prune_locally_unprofitable_slices(
-            policy,
-            &search.opening_layout,
-            sliced,
-        )?;
-        for params in retained_slices {
             let Some((_, params, next_witness_len)) =
                 finalize_recursive_level_candidate(policy, search, params)?
             else {

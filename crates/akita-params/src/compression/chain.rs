@@ -38,6 +38,15 @@ fn complete_source_plan_cache(
     }
 }
 
+fn image_coefficients(
+    source_rows: usize,
+    source_ring_dimension: usize,
+) -> Result<usize, AkitaError> {
+    source_rows
+        .checked_mul(source_ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("compression source shape overflow".into()))
+}
+
 /// Complete checked compression plan for one flat source image.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompressionChainPlan {
@@ -128,6 +137,45 @@ impl CompressionChainPlan {
                 "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
             ))
         })
+    }
+
+    /// Derive the canonical chain for one native B or D image.
+    ///
+    /// Every chain derived from a B or D image goes through this constructor
+    /// or [`Self::try_for_image`], so the ladder's source-dimension rule is
+    /// enforced in one place.
+    pub fn for_image(
+        modulus_profile: SisModulusProfileId,
+        source_rows: usize,
+        source_ring_dimension: usize,
+    ) -> Result<Self, AkitaError> {
+        if !compression_source_ring_dimension_supported(modulus_profile, source_ring_dimension) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression source ring dimension {source_ring_dimension} is not a multiple of the first ladder dimension {}",
+                compression_ring_dimensions(modulus_profile)[0]
+            )));
+        }
+        Self::for_complete_source(
+            modulus_profile,
+            image_coefficients(source_rows, source_ring_dimension)?,
+        )
+    }
+
+    /// Candidate-aware image derivation. `None` means the image cannot be
+    /// compressed: its source exceeds the protocol cap or its ring dimension
+    /// cannot feed the ladder. Malformed shapes remain errors.
+    pub fn try_for_image(
+        modulus_profile: SisModulusProfileId,
+        source_rows: usize,
+        source_ring_dimension: usize,
+    ) -> Result<Option<Self>, AkitaError> {
+        if !compression_source_ring_dimension_supported(modulus_profile, source_ring_dimension) {
+            return Ok(None);
+        }
+        Self::try_for_complete_source(
+            modulus_profile,
+            image_coefficients(source_rows, source_ring_dimension)?,
+        )
     }
 
     /// Candidate-aware derivation. `None` means only that the source exceeds

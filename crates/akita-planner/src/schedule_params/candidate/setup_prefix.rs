@@ -404,7 +404,7 @@ mod tests {
         };
 
         type Recursive = RecursiveCommitmentConfig<OneHot>;
-        let policy = policy_of::<Recursive>();
+        let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
         let n_prefix = 1usize << 14;
         let opening = PlannerOpeningCandidate::evaluation_trace(
             Recursive::ring_challenge_config(64).expect("challenge config"),

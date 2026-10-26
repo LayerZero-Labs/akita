@@ -51,7 +51,10 @@ fn roundtrip(storage: Storage, len: usize) {
     let dense = DensePoly::from_field_evals(NV, &evals).unwrap();
     let point = common::random_point(NV, 0x51b1_0c01);
     let openings = [common::dense_opening_lagrange(&evals, &point)];
-    let scheme = common::load_workspace_scheme::<Cfg>().unwrap();
+    let scheme = common::load_workspace_scheme::<Cfg>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .unwrap();
     let setup = scheme.setup_prover(NV, 1).unwrap();
     let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
     let signed_source = backend.import_source(vec![signed]).unwrap();

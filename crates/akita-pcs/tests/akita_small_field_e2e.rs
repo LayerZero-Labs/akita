@@ -165,7 +165,7 @@ macro_rules! small_field_test {
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let scheme = load_workspace_scheme::<$cfg>()
+                    let scheme = load_workspace_scheme::<$cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
                         .expect("workspace schedule catalog");
                     let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
@@ -332,7 +332,7 @@ scheme.schedules());
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let scheme = load_workspace_scheme::<$cfg>()
+                    let scheme = load_workspace_scheme::<$cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
                         .expect("workspace schedule catalog");
                     let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
@@ -514,7 +514,10 @@ fn fp32_onehot_multi_group() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<SmallCfg>().expect("workspace schedule catalog");
+        let scheme = load_workspace_scheme::<SmallCfg>(
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .expect("workspace schedule catalog");
         let grouped_poly = |params: &CommittedGroupParams, seed: usize| {
             let onehot_k =
                 akita_config::unit_onehot_source_chunk_size::<SmallCfg>().expect("one-hot config");

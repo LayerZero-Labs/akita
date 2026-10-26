@@ -24,11 +24,14 @@ fn w8r2_profiling_key(
 
 #[test]
 fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
-    let base_catalog =
-        akita_config::test_support::workspace_schedule_catalog::<fp128::OneHotMultiChunk>()
-            .expect("base W8R2 catalog");
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<W8R2Cfg>()
-        .expect("recursive W8R2 catalog");
+    let base_catalog = akita_config::test_support::workspace_schedule_catalog::<
+        fp128::OneHotMultiChunk,
+    >(akita_params::MultiChunkProfileId::W8R2.cfg())
+    .expect("base W8R2 catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<W8R2Cfg>(
+        akita_params::MultiChunkProfileId::W8R2.cfg(),
+    )
+    .expect("recursive W8R2 catalog");
     let key = w8r2_profiling_key(&base_catalog);
     let schedule = catalog
         .resolve_key(&key)
@@ -48,7 +51,7 @@ fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
             witness_a.output_rank(),
             witness_a.input_width(),
         ),
-        (128, 3, 2_048),
+        (128, 4, 4_096),
     );
     assert_eq!(
         (
@@ -56,14 +59,14 @@ fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
             prefix_a.output_rank(),
             prefix_a.input_width(),
         ),
-        (128, 4, 2_048),
+        (128, 4, 2_432),
     );
 
     let witness_tail =
-        NttCacheKey::from_matrix_shape(128, 3, 2_048, NttTransformDomain::I16TailBothTransforms)
+        NttCacheKey::from_matrix_shape(128, 4, 4_096, NttTransformDomain::I16TailBothTransforms)
             .expect("valid W8R2 witness tail key");
     let prefix_tail =
-        NttCacheKey::from_matrix_shape(128, 4, 2_048, NttTransformDomain::I16TailBothTransforms)
+        NttCacheKey::from_matrix_shape(128, 4, 2_432, NttTransformDomain::I16TailBothTransforms)
             .expect("valid W8R2 prefix tail key");
     let requirements =
         NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");

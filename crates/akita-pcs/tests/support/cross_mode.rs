@@ -25,7 +25,7 @@ fn planned_row<Base: CommitmentConfig>(
             "cross-mode fixture supports one final group only".into(),
         ));
     }
-    let policy = policy_of::<Base>();
+    let policy = policy_of::<Base>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let final_source_contract = Base::committed_source_contract()?;
     let planned = find_schedule_for_test_relation_mode(
         key,
@@ -78,7 +78,7 @@ pub(crate) fn cross_mode_catalogs<Base: CommitmentConfig>(
         ));
     }
 
-    let policy = policy_of::<Base>();
+    let policy = policy_of::<Base>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let quotient = ValidatedScheduleCatalog::try_new(
         Base::schedule_family_name(),
         [(quotient_profiles.clone(), quotient_schedule)],
@@ -100,8 +100,14 @@ pub(crate) fn cross_mode_catalogs<Base: CommitmentConfig>(
     }
 
     Ok(CrossModeCatalogs {
-        quotient: TrustedScheduleCatalog::<Base>::new(quotient)?,
-        reduced: TrustedScheduleCatalog::<Base>::new(reduced)?,
+        quotient: TrustedScheduleCatalog::<Base>::new(
+            quotient,
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )?,
+        reduced: TrustedScheduleCatalog::<Base>::new(
+            reduced,
+            akita_params::ChunkedWitnessCfg::default_non_chunked(),
+        )?,
         quotient_selection,
         reduced_selection,
     })

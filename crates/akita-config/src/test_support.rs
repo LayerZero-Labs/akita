@@ -21,6 +21,7 @@ pub fn workspace_schedule_artifact_path<Cfg: CommitmentConfig>() -> std::path::P
 
 /// Load this config's checked-in workspace schedule artifact.
 pub fn workspace_schedule_catalog<Cfg: CommitmentConfig>(
+    chunking: akita_params::ChunkedWitnessCfg,
 ) -> Result<crate::TrustedScheduleCatalog<Cfg>, AkitaError> {
     let path = workspace_schedule_artifact_path::<Cfg>();
     let bytes = std::fs::read(&path).map_err(|error| {
@@ -29,7 +30,7 @@ pub fn workspace_schedule_catalog<Cfg: CommitmentConfig>(
             path.display()
         ))
     })?;
-    crate::TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes)
+    crate::TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes, chunking)
 }
 
 /// Minimal setup seed for schedule ring-dimension integration tests.

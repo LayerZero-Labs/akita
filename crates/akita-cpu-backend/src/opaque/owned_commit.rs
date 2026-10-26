@@ -174,8 +174,10 @@ mod tests {
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 const NUM_VARS: usize = 14;
-                let schedules =
-                    akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+                let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
+                    akita_params::ChunkedWitnessCfg::default_non_chunked(),
+                )
+                .unwrap();
                 let layout = OpeningClaimsLayout::new(NUM_VARS, 1).unwrap();
                 let key = ScheduleLookupKey::single(layout.root_final_group_layout().unwrap());
                 let profile = schedules.resolve_key(&key).unwrap().profiles().final_group;

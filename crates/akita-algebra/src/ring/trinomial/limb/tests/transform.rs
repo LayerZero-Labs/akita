@@ -143,58 +143,60 @@ fn limb_single_ones_match_schoolbook() {
     }
 }
 
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 #[test]
-fn limb_neon_matches_scalar_directly() {
+fn limb_all_available_backends_match_scalar_directly() {
+    let backends = available_backends();
     let mut seed = 0x238a_903d_b861_072f;
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         let domain = TrinomialLimbDomain::new(prime).unwrap();
         let half = (prime / 2) as i32;
         for input in [
             random_coefficients(prime, &mut seed),
+            [0; DEGREE],
+            [1; DEGREE],
             [half; DEGREE],
             [-half; DEGREE],
             std::array::from_fn(|i| if i % 2 == 0 { half } else { -half }),
         ] {
             let mut scalar = domain.zero_slots();
-            let mut neon = domain.zero_slots();
             domain
-                .forward_centered_backend(&input, &mut scalar, false)
+                .forward_centered_backend(&input, &mut scalar, Backend::Scalar)
                 .unwrap();
-            domain
-                .forward_centered_backend(&input, &mut neon, true)
-                .unwrap();
-            assert_eq!(scalar.values, neon.values);
             let mut scalar_output = [0; DEGREE];
-            let mut neon_output = [0; DEGREE];
             domain
-                .inverse_centered_backend(&scalar, &mut scalar_output, false)
-                .unwrap();
-            domain
-                .inverse_centered_backend(&neon, &mut neon_output, true)
+                .inverse_centered_backend(&scalar, &mut scalar_output, Backend::Scalar)
                 .unwrap();
             assert_eq!(scalar_output, input);
-            assert_eq!(neon_output, input);
-            domain
-                .inverse_centered_backend(&scalar, &mut neon_output, true)
-                .unwrap();
-            assert_eq!(neon_output, input);
-            domain
-                .inverse_centered_backend(&neon, &mut scalar_output, false)
-                .unwrap();
-            assert_eq!(scalar_output, input);
+            for backend in backends.iter().copied() {
+                let mut actual = domain.zero_slots();
+                domain
+                    .forward_centered_backend(&input, &mut actual, backend)
+                    .unwrap();
+                assert_eq!(
+                    scalar.values, actual.values,
+                    "prime={prime}, backend={backend:?}"
+                );
+                let mut output = [0; DEGREE];
+                domain
+                    .inverse_centered_backend(&actual, &mut output, backend)
+                    .unwrap();
+                assert_eq!(output, input);
+                domain
+                    .inverse_centered_backend(&scalar, &mut output, backend)
+                    .unwrap();
+                assert_eq!(output, input);
+                domain
+                    .inverse_centered_backend(&actual, &mut output, Backend::Scalar)
+                    .unwrap();
+                assert_eq!(output, input);
+            }
         }
         for input in [random_bits(&mut seed), [0; DEGREE], [1; DEGREE]] {
             let bits = packed_bits(&input);
             let mut scalar = domain.zero_slots();
-            let mut neon = domain.zero_slots();
             domain
-                .forward_interleaved_bits_backend(&bits, &mut scalar, false)
+                .forward_interleaved_bits_backend(&bits, &mut scalar, Backend::Scalar)
                 .unwrap();
-            domain
-                .forward_interleaved_bits_backend(&bits, &mut neon, true)
-                .unwrap();
-            assert_eq!(scalar.values, neon.values);
             let signed = std::array::from_fn(|i| {
                 if (i / 4) % 2 == 0 {
                     input[i]
@@ -203,7 +205,55 @@ fn limb_neon_matches_scalar_directly() {
                 }
             });
             assert_eq!(inverse(&domain, &scalar), signed);
-            assert_eq!(inverse(&domain, &neon), signed);
+            for backend in backends.iter().copied() {
+                let mut actual = domain.zero_slots();
+                domain
+                    .forward_interleaved_bits_backend(&bits, &mut actual, backend)
+                    .unwrap();
+                assert_eq!(
+                    scalar.values, actual.values,
+                    "prime={prime}, backend={backend:?}"
+                );
+                let mut output = [0; DEGREE];
+                domain
+                    .inverse_centered_backend(&actual, &mut output, backend)
+                    .unwrap();
+                assert_eq!(output, signed);
+            }
+        }
+        // Arbitrary strict-lazy slots exercise inverse centering independently
+        // of the representatives produced by either forward path.
+        let largest = (prime - 1) as i32;
+        for values in [
+            [largest; DEGREE],
+            [-largest; DEGREE],
+            std::array::from_fn(|i| if i % 2 == 0 { largest } else { -largest }),
+            std::array::from_fn(|_| {
+                (next(&mut seed) % (2 * u64::from(prime) - 1)) as i32 - largest
+            }),
+        ] {
+            let mut slots = domain.zero_slots();
+            slots.values = values;
+            let mut expected = [0; DEGREE];
+            domain
+                .inverse_centered_backend(&slots, &mut expected, Backend::Scalar)
+                .unwrap();
+            let centered = values.map(|v| domain.arithmetic.center(i64::from(v)));
+            let mut expected_transform = centered;
+            domain.transform(&mut expected_transform, true, Backend::Scalar, false);
+            for backend in backends.iter().copied() {
+                let mut actual = [0; DEGREE];
+                domain
+                    .inverse_centered_backend(&slots, &mut actual, backend)
+                    .unwrap();
+                assert_eq!(actual, expected, "prime={prime}, backend={backend:?}");
+                let mut actual_transform = centered;
+                domain.transform(&mut actual_transform, true, backend, false);
+                assert_eq!(
+                    actual_transform, expected_transform,
+                    "prime={prime}, backend={backend:?}"
+                );
+            }
         }
     }
 }

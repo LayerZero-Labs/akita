@@ -228,7 +228,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
-    let policy = policy_of::<OneHot>();
+    let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
     let candidates = derive_fold_candidates(
         RecursiveCandidateRequest {
@@ -291,14 +291,14 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense};
     use akita_params::{InnerCommitSecurityRoute, OpeningMethod};
 
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let dimensions = CommitmentRingDims {
         inner: 256,
         outer: 128,
         opening: 64,
     };
     let opening =
-        PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 64)
+        PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 64)
             .expect("valid packing request")
             .expect("packing geometry");
     let request = RecursiveCandidateRequest {
@@ -429,7 +429,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
 
     let cases = [
         (
-            policy_of::<fp128::Dense>(),
+            policy_of::<fp128::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
             CommitmentRingDims {
                 inner: 128,
                 outer: 128,
@@ -438,7 +438,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
             4,
         ),
         (
-            policy_of::<fp64::Dense>(),
+            policy_of::<fp64::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
             CommitmentRingDims {
                 inner: 256,
                 outer: 128,
@@ -447,24 +447,21 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
             3,
         ),
         (
-            policy_of::<fp32::Dense>(),
+            policy_of::<fp32::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
+            // q32 compression starts at D=128, so a compressed D image needs D=128.
             CommitmentRingDims {
                 inner: 1024,
                 outer: 128,
-                opening: 64,
+                opening: 128,
             },
             3,
         ),
     ];
     for (policy, dimensions, log_basis) in cases {
-        let opening = PlannerOpeningCandidate::coefficient_packing(
-            1,
-            policy.claim_ext_degree,
-            dimensions,
-            64,
-        )
-        .expect("valid packing request")
-        .expect("production packing geometry");
+        let opening =
+            PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 64)
+                .expect("valid packing request")
+                .expect("production packing geometry");
         let derive = |without_bounds| {
             let request = RecursiveCandidateRequest {
                 input_chunks: None,
@@ -516,14 +513,14 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_params::{InnerCommitSecurityRoute, OpeningMethod, ScheduleLookupKey};
 
-    let policy = policy_of::<Dense>();
+    let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let dimensions = CommitmentRingDims {
         inner: 256,
         outer: 128,
         opening: 64,
     };
     let opening =
-        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
+        PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 64)
             .unwrap()
             .unwrap();
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
@@ -624,7 +621,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         precommitteds: vec![frozen_group],
     };
     let precommit_opening =
-        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 128)
+        PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 128)
             .unwrap()
             .unwrap();
     let source_contract = Dense::committed_source_contract().unwrap();
@@ -721,7 +718,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
 
     let precommit_domain = PlannerOpeningCandidate::coefficient_packing_domain(
-        0,
         policy.claim_ext_degree,
         CommitmentRingDims {
             inner: frozen_group.inner.matrix.ring_dimension(),
@@ -928,19 +924,20 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_params::ScheduleLookupKey;
 
-    let mut policy = policy_of::<Dense>();
-    policy.selection_policy =
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6;
+    let mut policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    // Only the V5 root prunes slices locally: there the root's padded
+    // first-direct setup leads the objective.
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     let dimensions = CommitmentRingDims {
-        inner: 256,
+        inner: 1024,
         outer: 128,
         opening: 64,
     };
     let opening =
-        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
+        PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 64)
             .expect("valid final packing opening")
             .expect("final packing geometry");
-    let scalar_key = ScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
+    let scalar_key = ScheduleLookupKey::single(PolynomialGroupLayout::new(20, 2));
     let scalar = crate::planner::root_level_candidates_with_fresh_preparation(
         &scalar_key,
         Dense::committed_source_contract().unwrap(),
@@ -963,7 +960,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         precommitteds: vec![frozen],
     };
     let precommit_opening =
-        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 128)
+        PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 128)
             .expect("valid precommit packing opening")
             .expect("precommit packing geometry");
     let derive = |guide| {
@@ -1025,7 +1022,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_params::ScheduleLookupKey;
 
-    let mut policy = policy_of::<Dense>();
+    let mut policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let dimensions = CommitmentRingDims::uniform(256);
     policy.ring_dimension_schedule = crate::RingDimensionSchedule {
         num_search_levels: 2,
@@ -1070,7 +1067,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, RecursiveCommitmentConfig};
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>();
+    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let dimensions = CommitmentRingDims {
         inner: 128,
         outer: 64,
@@ -1079,11 +1076,11 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
     let challenge = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
     let trace = PlannerOpeningCandidate::evaluation_trace(challenge);
     let exact_packing =
-        PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 128)
+        PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 128)
             .unwrap()
             .unwrap();
     let reduced_packing =
-        PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 64)
+        PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 64)
             .unwrap()
             .unwrap();
     let mut cache = SetupPrefixSearchCache::default();
@@ -1165,7 +1162,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
 fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot};
 
-    let mut policy = policy_of::<OneHot>();
+    let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     policy.claim_ext_degree = 2;
     let mut params = audited_grouped_level_params();
     let mut cache = SetupPrefixSearchCache::default();
@@ -1244,7 +1241,7 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     };
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>();
+    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
     let mut cache = SetupPrefixSearchCache::default();
     for log_prefix in 12..=20 {

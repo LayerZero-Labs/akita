@@ -5,8 +5,11 @@
 //! runs during loading.
 
 use akita_error::AkitaError;
-use akita_params::sis::labinius::LabiniusRootProfile;
+use akita_params::{sis::labinius::LabiniusRootProfile, ChunkedWitnessCfg};
 use std::fmt;
+
+/// Witness chunking of every shipped catalog: each table is one chunk.
+pub const WITNESS_CHUNKING: ChunkedWitnessCfg = ChunkedWitnessCfg::default_non_chunked();
 
 /// One supported geometry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

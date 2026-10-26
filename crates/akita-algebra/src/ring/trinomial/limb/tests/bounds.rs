@@ -148,7 +148,7 @@ fn limb_lazy_forward_levels_match_checked_shadow() {
                 .all(|&v| i64::from(v).abs() < i64::from(prime)));
             let mut actual = domain.zero_slots();
             domain
-                .forward_centered_backend(&input, &mut actual, false)
+                .forward_centered_backend(&input, &mut actual, Backend::Scalar)
                 .unwrap();
             assert_eq!(actual.values, normalized);
         }
@@ -222,7 +222,7 @@ fn limb_lazy_inverse_intermediates_match_checked_shadow() {
             assert!(intermediate_bound < i64::from(i32::MAX));
             assert!(intermediate_bound <= 2 * p);
             let mut actual = initial.map(|v| v as i32);
-            domain.transform(&mut actual, true, false, false);
+            domain.transform(&mut actual, true, Backend::Scalar, false);
             assert_eq!(actual.map(i64::from), shadow);
         }
     }

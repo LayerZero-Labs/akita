@@ -21,7 +21,9 @@ fn batch_case(index: usize) -> (usize, usize) {
 
 fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
-    let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
+    let scheme =
+        load_workspace_scheme::<DenseCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule catalog");
 
     let (num_vars, total_claims) = batch_case(shape_index);
     let opening_batch =

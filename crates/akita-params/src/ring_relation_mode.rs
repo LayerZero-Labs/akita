@@ -115,12 +115,17 @@ impl RelationCandidateTopology {
 
 impl RingRelationPhase {
     /// Legal committed relation modes at this point in the monotone suffix.
-    pub const fn candidate_modes(
+    /// Reduced evaluation is available only to single-chunk folds after the
+    /// required coefficient-packing prefix.
+    pub fn candidate_modes(
         self,
         absolute_level: usize,
+        witness_chunk: crate::ChunkedWitnessCfg,
         topology: RelationCandidateTopology,
     ) -> &'static [RingRelationMode] {
-        let eligible = absolute_level >= 2 && topology.is_direct_evaluation_trace();
+        let eligible =
+            !crate::fold_requires_coefficient_packing(witness_chunk.num_chunks, absolute_level)
+                && topology.is_direct_evaluation_trace();
         match (self, eligible) {
             (Self::QuotientPrefix, true) => &[
                 RingRelationMode::QuotientLift,
@@ -144,6 +149,50 @@ impl RingRelationPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_chunk_folds_require_quotient_lift_even_with_evaluation_trace() {
+        for profile in crate::MultiChunkProfileId::ALL {
+            for topology in [
+                RelationCandidateTopology::DirectEvaluationTrace,
+                RelationCandidateTopology::DirectCoefficientPacking,
+            ] {
+                assert_eq!(
+                    RingRelationPhase::QuotientPrefix.candidate_modes(2, profile.cfg(), topology),
+                    &[RingRelationMode::QuotientLift],
+                    "{profile:?}"
+                );
+                assert!(RingRelationPhase::ReducedEvaluationSuffix
+                    .candidate_modes(2, profile.cfg(), topology)
+                    .is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn single_chunk_folds_allow_reduced_evaluation_after_the_first_two_folds() {
+        for level in [0, 1] {
+            assert_eq!(
+                RingRelationPhase::QuotientPrefix.candidate_modes(
+                    level,
+                    crate::ChunkedWitnessCfg::default_non_chunked(),
+                    RelationCandidateTopology::DirectEvaluationTrace,
+                ),
+                &[RingRelationMode::QuotientLift]
+            );
+        }
+        assert_eq!(
+            RingRelationPhase::QuotientPrefix.candidate_modes(
+                2,
+                crate::ChunkedWitnessCfg::default_non_chunked(),
+                RelationCandidateTopology::DirectEvaluationTrace,
+            ),
+            &[
+                RingRelationMode::QuotientLift,
+                RingRelationMode::ReducedEvaluation
+            ],
+        );
+    }
 
     #[test]
     fn descriptor_tags_are_stable_and_distinct() {

@@ -114,7 +114,7 @@ a malformed evaluation point is `InvalidProof`. The conversion adds no
 message to the reduction and does not split the coordinates into separate
 polynomials.
 
-At geometry `(22,8,128)`, Y has `2^22` digits, W has `2^24` digits, and uP
+At geometry `(22,8,128)`, Y has `2^23` digits, W has `2^24` digits, and uP
 has `2^18` challenge-field elements. The nested element table has `2^18`
 base elements on `Family128` or `2^19` on `Family64`.
 

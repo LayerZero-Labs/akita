@@ -9,13 +9,37 @@ use akita_algebra::{
 use akita_error::AkitaError;
 use akita_labinius_prover::{
     commit_binary_clear, commit_binary_clear_limb_prepared, commit_binary_clear_prepared,
-    PreparedLimbCommitMatrix,
+    limb_commit_kernel::pack_binary_element_bits, PreparedLimbCommitMatrix,
 };
 use common::{clear_setup, clear_setup_with, TestHost, Q};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 const D: usize = 648;
 const K: usize = 4;
+
+#[test]
+fn source_packer_preserves_every_bit_and_rejects_wrong_lengths() {
+    for component in 0..K {
+        for bit in 0..128 {
+            let mut words = [0u128; K];
+            words[component] = 1 << bit;
+            let mut expected = [0u64; 11];
+            let position = K * bit + component;
+            expected[position / 64] = 1 << (position % 64);
+            assert_eq!(
+                pack_binary_element_bits::<BinaryField128>(&words).unwrap(),
+                expected,
+                "component={component}, bit={bit}"
+            );
+        }
+    }
+    for length in [0, 3, 5] {
+        assert!(matches!(
+            pack_binary_element_bits::<BinaryField128>(&vec![0; length]),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+}
 
 /// Decode the defining signed interleaving directly, independently of the
 /// kernel's source packer and transform tables. Reduce the integer convolution
@@ -95,13 +119,69 @@ where
 #[test]
 fn every_limb_prime_matches_the_integer_definition() {
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
-        for (rank, width) in [(1, 1), (2, 3), (4, 2)] {
+        for (rank, width) in [(1, 1), (2, 3), (3, 3), (4, 2)] {
             check::<BinaryField128>(prime, rank, width, 2, false);
         }
         check::<BinaryField192>(prime, 2, 2, 2, false);
         // More than two 128-term accumulator checkpoints, random and extremal.
         check::<BinaryField128>(prime, 1, 257, 1, false);
         check::<BinaryField128>(prime, 1, 257, 1, true);
+    }
+}
+
+#[test]
+fn binary_field192_ragged_columns_match_the_integer_definition() {
+    let run = || check::<BinaryField192>(Q, 1, 3, 9, false);
+    #[cfg(feature = "parallel")]
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap()
+        .install(run);
+    #[cfg(not(feature = "parallel"))]
+    run();
+}
+
+#[test]
+fn ragged_column_blocks_match_unblocked_and_integer_definitions() {
+    const WIDTH: usize = 129;
+    const COLUMNS: usize = 9;
+    // Rank three exercises a two-row tile followed by the odd-row fallback.
+    for rank in [2, 3] {
+        let mut rng = StdRng::seed_from_u64(0x09c0_1129);
+        let matrix: Vec<u32> = (0..rank * WIDTH * D)
+            .map(|_| (rng.next_u64() % u64::from(Q)) as u32)
+            .collect();
+        // Sparse, independently positioned bits keep the integer convolution cheap
+        // while exercising every component, both signs, and the last source bit.
+        let source: Vec<u128> = (0..COLUMNS * WIDTH * K)
+            .map(|index| 1 | (1 << (1 + index % 126)) | (1 << 127))
+            .collect();
+        let prepared = PreparedLimbCommitMatrix::prepare(Q, D, rank, WIDTH, &matrix).unwrap();
+        let expected =
+            integer_definition::<BinaryField128>(Q, &matrix, rank, WIDTH, COLUMNS, &source);
+        // A single column cannot share its matrix stream with another column and
+        // provides the unblocked reference across the 128-term checkpoint.
+        let unblocked: Vec<u32> = source
+            .chunks_exact(WIDTH * K)
+            .flat_map(|column| {
+                commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, 1, column).unwrap()
+            })
+            .collect();
+        assert_eq!(unblocked, expected);
+        let commit = || {
+            commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, COLUMNS, &source)
+                .unwrap()
+        };
+        assert_eq!(commit(), expected);
+        #[cfg(feature = "parallel")]
+        for threads in [1, 2, 4] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            assert_eq!(pool.install(commit), expected, "threads={threads}");
+        }
     }
 }
 
@@ -182,6 +262,18 @@ fn malformed_matrices_and_sources_are_rejected() {
         AkitaError::InvalidInput(_)
     ));
     let prepared = PreparedLimbCommitMatrix::prepare(Q, D, 1, 1, &coefficients).unwrap();
+    assert!(
+        commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, 0, &[])
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, 0, &[0]).unwrap_err(),
+        AkitaError::InvalidSize {
+            expected: 0,
+            actual: 1
+        }
+    );
     assert_eq!(
         commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, 2, &[0; 7]).unwrap_err(),
         AkitaError::InvalidSize {

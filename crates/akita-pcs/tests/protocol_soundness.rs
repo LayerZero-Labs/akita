@@ -199,7 +199,9 @@ where
     Cfg: CommitmentConfig<Field = F> + 'static,
     Cfg::ExtField: ExtField<F> + FpExtEncoding<F> + Unreduced + Fold + AkitaSerialize,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule catalog");
     #[cfg(feature = "logging-transcript")]
     akita_transcript::clear_thread_events();
     let (setup, commitment, proof, point, opening, selection) =
@@ -218,7 +220,7 @@ where
             precommitteds: resolved.profiles().precommitteds.clone(),
         },
         resolved.schedule(),
-        &akita_config::policy_of::<Cfg>(),
+        scheme.schedules().policy(),
     )
     .expect("native proof bound");
     assert!(
@@ -343,10 +345,14 @@ fn fp32_extension_stream_rejects_statement_session_and_proof_mutations() {
 
 #[test]
 fn small_field_dense_uncataloged_roots_fail_fast() {
-    let fp32_catalog = akita_config::test_support::workspace_schedule_catalog::<fp32::Dense>()
-        .expect("fp32 dense catalog");
-    let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>()
-        .expect("fp64 dense catalog");
+    let fp32_catalog = akita_config::test_support::workspace_schedule_catalog::<fp32::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("fp32 dense catalog");
+    let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("fp64 dense catalog");
     for result in [
         fp32_catalog.resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(8),
@@ -364,7 +370,10 @@ fn small_field_dense_uncataloged_roots_fail_fast() {
 
 #[test]
 fn tiny_roots_and_setup_capacities_are_rejected() {
-    let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule catalog");
+    let scheme = load_workspace_scheme::<fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(4));
     assert!(matches!(
         scheme.schedules().resolve_key(&key),

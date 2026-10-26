@@ -53,7 +53,7 @@ fn main() -> Result<(), akita_error::AkitaError> {
         .nth(1)
         .and_then(|value| value.parse().ok())
         .unwrap_or(36);
-    let direct_policy = policy_of::<OneHot>();
+    let direct_policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let direct_key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let direct = find_schedule(
         &direct_key,
@@ -68,7 +68,8 @@ fn main() -> Result<(), akita_error::AkitaError> {
     );
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let recursive_policy = policy_of::<Recursive>();
+    let recursive_policy =
+        policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let scalar_recursive_key =
         ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let scalar_recursive = find_schedule(

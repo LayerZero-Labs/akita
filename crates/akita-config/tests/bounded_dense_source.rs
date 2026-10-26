@@ -22,8 +22,11 @@ fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg>
         .join(akita_params::SCHEDULE_ARTIFACT_SET)
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     let bytes = std::fs::read(path).expect("checked-in schedule artifact");
-    akita_config::TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&bytes)
-        .expect("trusted catalog")
+    akita_config::TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(
+        &bytes,
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("trusted catalog")
 }
 
 /// Root-level quantities the committed-source bound feeds.
@@ -117,8 +120,12 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
 
 #[test]
 fn a_distinct_bound_is_a_distinct_catalog_identity() {
-    let bounded = akita_schedules::policy_digest(&policy_of::<fp128::DenseBounded>());
-    let full = akita_schedules::policy_digest(&policy_of::<fp128::Dense>());
+    let bounded = akita_schedules::policy_digest(&policy_of::<fp128::DenseBounded>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    ));
+    let full = akita_schedules::policy_digest(&policy_of::<fp128::Dense>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    ));
     assert_ne!(
         bounded, full,
         "the committed-source bound must separate two otherwise identical policies"
@@ -136,7 +143,7 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
         full_catalog.catalog_digest(),
     );
     assert_eq!(
-        policy_of::<fp128::DenseBounded>()
+        policy_of::<fp128::DenseBounded>(akita_params::ChunkedWitnessCfg::default_non_chunked())
             .decomposition
             .log_commit_bound,
         fp128::DenseBounded::LOG_COMMIT_BOUND,
@@ -150,8 +157,11 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
         .to_artifact_bytes()
         .expect("bounded artifact");
     assert!(
-        akita_config::TrustedScheduleCatalog::<fp128::Dense>::from_artifact_bytes(&bounded_bytes)
-            .is_err()
+        akita_config::TrustedScheduleCatalog::<fp128::Dense>::from_artifact_bytes(
+            &bounded_bytes,
+            akita_params::ChunkedWitnessCfg::default_non_chunked()
+        )
+        .is_err()
     );
     assert!(full_catalog.resolve_key(&key).is_ok());
 }

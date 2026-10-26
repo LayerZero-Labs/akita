@@ -34,8 +34,9 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};
 use akita_params::{
-    BasisMode, CommitmentPayloadMode, GroupCommitPhaseParams, InnerCommitSecurityRoute,
-    OpeningMethod, PhysicalL2NormProofShape, RingRelationMode,
+    BasisMode, ChunkedWitnessCfg, CommitmentPayloadMode, GroupCommitPhaseParams,
+    InnerCommitSecurityRoute, MultiChunkProfileId, OpeningMethod, PhysicalL2NormProofShape,
+    RingRelationMode,
 };
 use akita_prover::SelectedProverOpeningData;
 use akita_schedules::ResolvedScheduleRow;
@@ -397,7 +398,7 @@ fn first_divergence(
     )
 }
 
-fn check_catalog<Cfg, S>(covered: &mut Vec<String>)
+fn check_catalog<Cfg, S>(covered: &mut Vec<String>, chunking: ChunkedWitnessCfg)
 where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding
@@ -422,7 +423,7 @@ where
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
     S: GroupSource<Cfg>,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
+    let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule catalog");
     let family = Cfg::schedule_family_name();
     for row in representative_rows(scheme.schedules()) {
         let profiles = row.profiles();
@@ -457,12 +458,16 @@ where
     }
 }
 
-/// The fp64 dense 26- and 28-variable single-polynomial rows share every other
-/// key field, but the 28-variable row switches to physical L2 one level
-/// earlier. Both fit the cap, so both must be proved.
+/// The fp128 bounded-dense 24- and 26-variable rows share every other key
+/// field, but the 26-variable row switches to physical L2 one level earlier.
+/// Use these rows to check that representative selection preserves this
+/// distinction.
 #[test]
-fn norm_route_separates_fp64_dense_single_polynomial_rows() {
-    let scheme = load_workspace_scheme::<fp64::Dense>().expect("workspace schedule catalog");
+fn norm_route_separates_fp128_bounded_dense_rows() {
+    let scheme = load_workspace_scheme::<fp128::DenseBounded>(
+        akita_params::ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("workspace schedule catalog");
     let single = |num_vars: usize| {
         scheme
             .schedules()
@@ -473,12 +478,19 @@ fn norm_route_separates_fp64_dense_single_polynomial_rows() {
                     && profiles.final_group.group.num_polynomials() == 1
                     && profiles.final_group.group.num_vars() == num_vars
             })
-            .unwrap_or_else(|| panic!("fp64 dense {num_vars}-variable row"))
+            .unwrap_or_else(|| panic!("fp128 bounded dense {num_vars}-variable row"))
     };
-    let (small, large) = (single(26), single(28));
+    let (small, large) = (single(24), single(26));
     assert!(log_committed_coeffs(large) <= MAX_LOG_COMMITTED_COEFFS);
     let (small_shape, large_shape) = (schedule_shape(small), schedule_shape(large));
     assert_ne!(small_shape, large_shape);
+    let mut without_norm_routes = [small_shape.clone(), large_shape.clone()];
+    for shape in &mut without_norm_routes {
+        for level in &mut shape.levels {
+            level.norm_route = NormRoute::Linf;
+        }
+    }
+    assert_eq!(without_norm_routes[0], without_norm_routes[1]);
     let representatives = representative_rows(scheme.schedules());
     for shape in [small_shape, large_shape] {
         assert!(
@@ -495,17 +507,50 @@ fn prover_and_verifier_emit_identical_event_sequences_for_every_catalog_shape() 
     crate::common::init_rayon_pool();
     crate::common::run_on_large_stack(|| {
         let mut covered = Vec::new();
-        check_catalog::<fp128::Dense, DenseSource>(&mut covered);
-        check_catalog::<fp128::DenseBounded, DenseSource>(&mut covered);
-        check_catalog::<fp128::DenseMultiChunk, DenseSource>(&mut covered);
-        check_catalog::<fp128::OneHot, OneHotSource>(&mut covered);
-        check_catalog::<fp128::OneHotMultiChunk, OneHotSource>(&mut covered);
-        check_catalog::<fp128::OneHotMultiChunkW2R2, OneHotSource>(&mut covered);
-        check_catalog::<fp128::OneHotMultiChunkW4R2, OneHotSource>(&mut covered);
-        check_catalog::<fp32::Dense, DenseSource>(&mut covered);
-        check_catalog::<fp32::OneHot, OneHotSource>(&mut covered);
-        check_catalog::<fp64::Dense, DenseSource>(&mut covered);
-        check_catalog::<fp64::OneHot, OneHotSource>(&mut covered);
+        check_catalog::<fp128::Dense, DenseSource>(
+            &mut covered,
+            ChunkedWitnessCfg::default_non_chunked(),
+        );
+        check_catalog::<fp128::DenseBounded, DenseSource>(
+            &mut covered,
+            ChunkedWitnessCfg::default_non_chunked(),
+        );
+        check_catalog::<fp128::DenseMultiChunk, DenseSource>(
+            &mut covered,
+            MultiChunkProfileId::W8R2.cfg(),
+        );
+        check_catalog::<fp128::OneHot, OneHotSource>(
+            &mut covered,
+            ChunkedWitnessCfg::default_non_chunked(),
+        );
+        check_catalog::<fp128::OneHotMultiChunk, OneHotSource>(
+            &mut covered,
+            MultiChunkProfileId::W8R2.cfg(),
+        );
+        check_catalog::<fp128::OneHotMultiChunkW2R2, OneHotSource>(
+            &mut covered,
+            MultiChunkProfileId::W2R2.cfg(),
+        );
+        check_catalog::<fp128::OneHotMultiChunkW4R2, OneHotSource>(
+            &mut covered,
+            MultiChunkProfileId::W4R2.cfg(),
+        );
+        check_catalog::<fp32::Dense, DenseSource>(
+            &mut covered,
+            ChunkedWitnessCfg::default_non_chunked(),
+        );
+        check_catalog::<fp32::OneHot, OneHotSource>(
+            &mut covered,
+            ChunkedWitnessCfg::default_non_chunked(),
+        );
+        check_catalog::<fp64::Dense, DenseSource>(
+            &mut covered,
+            ChunkedWitnessCfg::default_non_chunked(),
+        );
+        check_catalog::<fp64::OneHot, OneHotSource>(
+            &mut covered,
+            ChunkedWitnessCfg::default_non_chunked(),
+        );
         assert!(!covered.is_empty());
         eprintln!("{} catalog shapes covered", covered.len());
     });
@@ -516,10 +561,22 @@ fn r3_prover_and_verifier_emit_identical_event_sequences() {
     crate::common::init_rayon_pool();
     crate::common::run_on_large_stack(|| {
         let mut covered = Vec::new();
-        check_catalog::<fp128::OneHotMultiChunkW2R3, OneHotSource>(&mut covered);
-        check_catalog::<fp128::OneHotMultiChunkW4R3, OneHotSource>(&mut covered);
-        check_catalog::<fp128::OneHotMultiChunkW8R3, OneHotSource>(&mut covered);
-        check_catalog::<fp128::DenseMultiChunkW8R3, DenseSource>(&mut covered);
+        check_catalog::<fp128::OneHotMultiChunkW2R3, OneHotSource>(
+            &mut covered,
+            MultiChunkProfileId::W2R3.cfg(),
+        );
+        check_catalog::<fp128::OneHotMultiChunkW4R3, OneHotSource>(
+            &mut covered,
+            MultiChunkProfileId::W4R3.cfg(),
+        );
+        check_catalog::<fp128::OneHotMultiChunkW8R3, OneHotSource>(
+            &mut covered,
+            MultiChunkProfileId::W8R3.cfg(),
+        );
+        check_catalog::<fp128::DenseMultiChunkW8R3, DenseSource>(
+            &mut covered,
+            MultiChunkProfileId::W8R3.cfg(),
+        );
         assert!(!covered.is_empty());
         eprintln!("{} R3 catalog shapes covered", covered.len());
     });

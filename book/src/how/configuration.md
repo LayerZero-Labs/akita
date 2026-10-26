@@ -30,6 +30,54 @@ dimension selected by the fold that consumes the prefix.
 - `crates/akita-config/src/proof_optimized/`.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner/config boundary.
 
+### Runtime witness chunking
+
+A deployment can choose how many witness chunks it uses and how many leading
+folds remain chunked without defining another configuration type. For example,
+two chunks across four leading folds use:
+
+```rust
+let chunking = akita_params::ChunkedWitnessCfg {
+    num_chunks: 2,
+    num_activated_levels: 4,
+};
+let policy = akita_config::policy_of::<Config>(chunking);
+```
+
+The same `chunking` value is an explicit argument to
+`TrustedScheduleCatalog::<Config>::from_artifact_bytes` or
+`AkitaCommitmentScheme::<Config>::from_schedule_artifact`. `Config` still fixes
+the field types, decomposition, security policy, and challenge rules. Preset
+chunking values are conveniences for callers generating the packaged fixtures;
+they do not override the runtime argument. These presets live in
+`akita_params::MultiChunkProfileId` (for example, `MultiChunkProfileId::W2R3.cfg()`),
+with packaged inventories selected by `family_row!` in
+`akita-planner/src/generated_families.rs`.
+
+Packaged fixture paths are keyed by family name and contain one geometry per
+name. The remaining geometry-named config types identify these fixed fixtures;
+they are not required to use runtime geometry. Applications can use the same
+base config for multiple catalogs, assigning each its own path and supplying
+its expected geometry explicitly.
+
+The fixture helpers `empty_emit_spec` and `emit_spec_for_family` take explicit
+chunking. Preplans are reused only for matching geometry. Precommitted producer
+profiles remain independently selected: a consumer's geometry does not change
+an already committed producer.
+
+The planner validates geometry and searches for schedules. Catalog admission
+checks the expected policy digest and audits every row, including chunking at
+each fold. A valid chunk count and depth do not guarantee that a particular
+polynomial shape admits a schedule. The catalog retains the exact policy that
+passed validation, so grouped planning can reuse it without reconstructing
+geometry from a preset.
+
+Chunking and the catalog are trusted preprocessing inputs. Proofs select an
+admitted row; they cannot change this policy or supply replacement schedules.
+One verifier binary and one `Config` type can use multiple independently owned
+catalogs with different chunking. No environment variable or process-global
+configuration is consulted by Akita verification.
+
 ### Bounded committed sources
 
 The `fp128::DenseBounded` preset is for dense polynomials whose centered
@@ -146,10 +194,11 @@ witnesses. The choice is independent of raw versus compressed payload and of
 the `L∞` versus `L2` response-security route.
 
 The currently admitted reduced mode is deliberately narrower than its
-algebraic definition. Levels 0 and 1 use quotient lifting. From level 2 onward,
-the planner may choose one monotone reduced-evaluation suffix, but only for
-`EvaluationTrace` openings with direct setup contribution. A reduced fold
-cannot consume an incoming setup prefix, defer the A/B/D setup product to Stage
+algebraic definition. The first two folds and every multi-chunk fold require
+subring packing and quotient lift. At later single-chunk folds, the planner may choose one monotone
+reduced-evaluation suffix, but only for `EvaluationTrace` openings with direct setup contribution. Extension-field roots
+retain packing because their commitments bind canonical coefficients. A reduced
+fold cannot consume an incoming setup prefix, defer the A/B/D setup product to Stage
 3, or switch back to quotient lifting later. These are product-scope admission
 rules, not claims that the excluded combinations are mathematically
 impossible. Runtime schedule validation checks them before proving or
@@ -280,9 +329,9 @@ Runtime expansion never reruns the model. It only checks the frozen schedule.
 
 ### Subring coefficient packing candidates
 
-At absolute fold levels 0 and 1, the planner searches the A ring dimension and
-the challenge subring dimension together. For each pair it derives the packing
-factor from `d_A = k h s`. It rejects unsupported challenge families and
+Within the two-level adaptive dimension prefix, coefficient-packing candidates
+search the A ring dimension and the challenge subring dimension together. For
+each pair the planner derives the packing factor from `d_A = k h s`. It rejects unsupported challenge families and
 invalid D divisibility before it constructs matrices.
 
 The planner does not minimize `s`, `h`, or `d_A` directly. It keeps the same
@@ -293,10 +342,15 @@ prefer the smaller root output witness before the canonical descriptor breaks
 the final tie. This allows a larger A ring to win when its lower module rank
 reduces the complete setup or proof suffix.
 
-Nonterminal folds at levels 0 and 1 require coefficient packing. A state with
-no complete packing assignment is unsupported. Later nonterminal folds and the
-terminal use evaluation trace. The terminal seed is priced separately, so a
-zero EOR packing candidate cannot be mistaken for a terminal opening.
+The first two committed folds require coefficient packing and quotient lift,
+regardless of chunking. Every later multi-chunk fold has the same requirement.
+A three-level multi-chunk profile therefore uses packing at levels 0, 1, and 2,
+with the configured suffix ring dimensions at level 2. A mandatory packing state
+with no complete packing assignment is unsupported. Single-chunk nonterminal
+folds at level 2 or later may choose coefficient packing or evaluation trace
+where their source encoding supports it. The terminal uses evaluation
+trace. Its seed is priced separately, so a zero EOR packing candidate cannot
+be mistaken for a terminal opening.
 
 A clear terminal L2 candidate has no recursive norm proof. The verifier checks
 the decoded response norm directly. The planner may use the certified energy

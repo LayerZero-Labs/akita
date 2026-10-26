@@ -268,13 +268,13 @@ fn binary_proof_bytes_are_pinned_for_both_families() {
     }
     let expected = if akita_params::DEV_PROTOCOL {
         (
-            "203f73fab1aa95a3748a97392072715c4a4ff4e8a5411540d6b5157dd319d4b7",
-            "d910a7c83f1c487ab3f5b30ed533278b19d3c5c6648500599d11ff126853c428",
+            "c902c1cfebc97faf8e1163c066014153b356a4915206330fe1111406b2175f47",
+            "ce13ad581232d0479831514a79e298ff997a13ff7837268067b60429cb879af8",
         )
     } else {
         (
-            "71ad15ec894246122b7e6e69f8730ba606fd3ec782962da9fff17832d1b64ac2",
-            "400d2b65d59cf7ca5135d7303e4f426da8ef275d57252f3093ac26b2910e00d7",
+            "47a50daef14acc96a982bc18312c26229a34f1c55988ed94a16126486eb2992e",
+            "f152060914cd796efb3ca5d6fcc96e03715990b5323a293767b269bb38869f47",
         )
     };
     assert_eq!(

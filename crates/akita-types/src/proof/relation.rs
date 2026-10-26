@@ -246,7 +246,7 @@ pub fn assemble_relation_rhs<F: Field>(
 /// Assemble the mandatory compressed relation RHS.
 ///
 /// B, D, and first-map rows are zero. Only each chain's terminal map row
-/// carries its 128-byte public payload.
+/// carries its 256-byte public payload.
 pub fn assemble_compressed_relation_rhs<F: Field>(
     layout: &RelationRhsLayout,
     group_terminal_payloads: &[&[F]],
