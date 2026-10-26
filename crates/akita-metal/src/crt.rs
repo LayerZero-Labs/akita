@@ -97,19 +97,27 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
         let radix = DeviceBuffer::from_slice(metal.device(), &self.crt_weights::<F>())?;
         let scales = DeviceBuffer::from_slice(metal.device(), &[F::one()])?;
         let mut batch = Batch::new(metal.device())?;
-        batch.dispatch(
-            pipeline,
-            &[
-                Binding::buffer(residues),
-                Binding::buffer(out),
-                Binding::buffer(&self.primes),
-                Binding::buffer(&self.gamma),
-                Binding::buffer(&radix),
-                Binding::buffer(&scales),
-                Binding::value(&shape),
-            ],
-            Grid::linear(coefficients, COEFFICIENT_GROUP),
-        )?;
+        // SAFETY: `rows` makes `residues` exactly `elements` rings of K x D
+        // words, and `out` holds `elements * D` coefficients. Thread
+        // `index < coefficients` reads the residue words
+        // `element * K * D + i * D + coefficient` for `i < K`, `primes[i]`,
+        // `gamma[i * K + j]` and `radix[i]` (buffers of K, K x K and K entries for
+        // this K), and `scales[0]` (one limb). It writes only `out[index]`.
+        unsafe {
+            batch.dispatch_unchecked(
+                pipeline,
+                &[
+                    Binding::buffer(residues),
+                    Binding::buffer(out),
+                    Binding::buffer(&self.primes),
+                    Binding::buffer(&self.gamma),
+                    Binding::buffer(&radix),
+                    Binding::buffer(&scales),
+                    Binding::value(&shape),
+                ],
+                Grid::linear(coefficients, COEFFICIENT_GROUP),
+            )
+        }?;
         Ok(batch.commit_and_wait()?)
     }
 }

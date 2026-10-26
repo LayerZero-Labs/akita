@@ -97,7 +97,7 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
 ```
 
 On success the host reports `Akita-in-Jolt proof OK` with
-`is_valid=true` and `guest_panic=false`.
+`accepted=true` and `guest_panic=false`.
 
 The guest output is a status code: `0` means verification succeeded, `1`
 means input decoding failed, and `2` means the verifier rejected the proof.

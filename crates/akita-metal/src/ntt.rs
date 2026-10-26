@@ -177,16 +177,25 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
             .ok_or_else(|| shape_overflow(rows))?;
         let pipeline = metal.pipeline(&ring_degree_kernel(template, D))?;
         let mut batch = Batch::new(metal.device())?;
-        batch.dispatch(
-            pipeline,
-            &[
-                Binding::buffer(data),
-                Binding::buffer(&self.primes),
-                Binding::buffer(&self.tables),
-                Binding::value(&batch_shape),
-            ],
-            Grid::linear(threads, lanes),
-        )?;
+        // SAFETY: `rows` makes `data` exactly `rows` (element, prime) rows of D
+        // words, and the grid is `rows` full threadgroups of D/2 lanes. Lane `lane`
+        // of row `row` reads and writes `data[row * D + lane]` and
+        // `data[row * D + lane + D/2]`, and reads `primes[row % K]` and words below
+        // D of each table in prime `row % K`'s block of the `[K][7][D]` tables.
+        // Lanes share only the threadgroup array, whose accesses the barriers in
+        // `ntt.h` order.
+        unsafe {
+            batch.dispatch_unchecked(
+                pipeline,
+                &[
+                    Binding::buffer(data),
+                    Binding::buffer(&self.primes),
+                    Binding::buffer(&self.tables),
+                    Binding::value(&batch_shape),
+                ],
+                Grid::linear(threads, lanes),
+            )
+        }?;
         Ok(batch.commit_and_wait()?)
     }
 }
