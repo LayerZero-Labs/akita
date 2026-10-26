@@ -16,7 +16,8 @@ use akita_config::{
     TrustedScheduleCatalog,
 };
 use akita_cpu_backend::{
-    AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
+    custom_source::SignedBlockPoly, AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend,
+    DensePoly, GroupContext,
 };
 use akita_error::{checked, AkitaError};
 use akita_labinius_prover::{
@@ -34,8 +35,11 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
 use akita_types::CommittedGroup;
-use jolt_field::{ExtField, Ring};
+use jolt_field::ExtField;
 use tracing::info_span;
+
+#[cfg(test)]
+mod digit_source_tests;
 
 /// A committed binary message: its public commitment and the prover's state.
 pub struct Committed<P: FieldFamily> {
@@ -135,10 +139,9 @@ impl<P: FieldFamily> Prover<P> {
             private_handle: handle,
         } = info_span!("pcs_image_digit_commitment").in_scope(|| {
             let digits = encode_image(&self.layout, &clear)?;
-            self.commit_table(
-                self.scheme.schedules(),
+            self.commit_digits(
                 self.layout.image_log_len(),
-                digit_table::<P>(&digits)?,
+                &digits,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
         })?;
@@ -204,7 +207,25 @@ impl<P: FieldFamily> Prover<P> {
         })
     }
 
-    /// Commit one dense base-field table under its owning configuration.
+    /// Retain four-bit digit values without widening them to base-field elements.
+    fn commit_digits(
+        &self,
+        log_len: usize,
+        digits: &[u8],
+        context: GroupContext<'_>,
+    ) -> Result<CommitOutput<P::Base, P::Challenge>, AkitaError> {
+        let polynomial = digit_source(digits, log_len)?;
+        let mut polynomials = Vec::new();
+        polynomials
+            .try_reserve_exact(1)
+            .map_err(|_| AkitaError::InvalidInput("table allocation failed".into()))?;
+        polynomials.push(polynomial);
+        let source = self.backend.import_source(polynomials)?;
+        self.backend
+            .commit(self.scheme.schedules(), &source, context)
+    }
+
+    /// Commit one dense full-width prime table under its owning configuration.
     fn commit_table<C: CommitmentConfig<Field = P::Base, ExtField = P::Challenge>>(
         &self,
         catalog: &TrustedScheduleCatalog<C>,
@@ -222,18 +243,25 @@ impl<P: FieldFamily> Prover<P> {
     }
 }
 
-/// Lift stored digits into the nested commitment's base field.
-fn digit_table<P: FieldFamily>(digits: &[u8]) -> Result<Vec<P::Base>, AkitaError> {
+/// Keep the exact full Boolean domain, including all encoded zero slots.
+/// Positive digits must not be recentered: that changes the polynomial.
+fn digit_source(digits: &[u8], log_len: usize) -> Result<SignedBlockPoly, AkitaError> {
+    if checked::pow2(log_len) != Some(digits.len()) {
+        return Err(AkitaError::InvalidInput(
+            "digit table length mismatch".into(),
+        ));
+    }
     let mut table = Vec::new();
     table
         .try_reserve_exact(digits.len())
         .map_err(|_| AkitaError::InvalidInput("digit table allocation failed".into()))?;
-    table.extend(
-        digits
-            .iter()
-            .map(|&digit| P::Base::from_u64(u64::from(digit))),
-    );
-    Ok(table)
+    for &digit in digits {
+        if digit > 15 {
+            return Err(AkitaError::InvalidInput("digit is outside 0..=15".into()));
+        }
+        table.push(digit as i8);
+    }
+    SignedBlockPoly::i8(table, log_len)
 }
 
 /// The nested scheme behind the reduction's ordered prover calls.
@@ -327,10 +355,9 @@ impl<P: FieldFamily> RootProverOracle<P::Challenge> for ProverOracle<'_, P> {
             profiles.push(*prime.committed_group.profile());
         }
         let precommitteds = PrecommittedGroupProfiles::from_profiles(profiles)?;
-        let output = self.owner.commit_table(
-            self.owner.scheme.schedules(),
+        let output = self.owner.commit_digits(
             layout.witness_log_len(),
-            digit_table::<P>(digits)?,
+            digits,
             GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )?;
         exchange_commitment::<P, S>(
