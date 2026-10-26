@@ -1,6 +1,7 @@
 //! CPU backend ownership, setup identity, and proof-session lifecycle.
 
 use crate::arithmetic::CpuPreparedSetup;
+use crate::commitment::shared_inner::InnerRowPool;
 use crate::opaque::owned_prefix::CachedSetupPrefix;
 use crate::opaque::{BackendIdentity, CpuProofSessionHandle, OperationBinding};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
@@ -27,6 +28,13 @@ impl<T> Default for SetupPrefixCache<T> {
 }
 
 impl<T> SetupPrefixCache<T> {
+    pub(super) fn snapshot(&self) -> Result<Vec<Arc<T>>, AkitaError> {
+        self.entries
+            .lock()
+            .map(|entries| entries.values().cloned().collect())
+            .map_err(|_| AkitaError::Internal("setup prefix cache lock poisoned".into()))
+    }
+
     pub(super) fn get_or_build(
         &self,
         id: &SetupPrefixSlotId,
@@ -84,6 +92,8 @@ pub struct CpuBackend<F: Field, E> {
     /// One setup-prefix value is retained per slot for the life of this backend.
     /// Overlapping cold acquisitions may derive duplicate candidates without waiting.
     pub(super) setup_prefix_cache: SetupPrefixCache<CachedSetupPrefix<F>>,
+    // Scoped to this backend's setup seed. Only live, identical ring rows share storage.
+    pub(super) setup_prefix_inner_rows: InnerRowPool<F>,
     extension: PhantomData<fn() -> E>,
 }
 
@@ -129,6 +139,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: Some(CpuPreparedSetup::new(expanded)),
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
+            setup_prefix_inner_rows: InnerRowPool::default(),
             extension: PhantomData,
         })
     }
@@ -290,6 +301,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: None,
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
+            setup_prefix_inner_rows: InnerRowPool::default(),
             extension: PhantomData,
         })
     }

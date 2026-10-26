@@ -474,7 +474,8 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
             );
         source_digits.extend(planes);
     }
-    let rows = raw.1.inner_rows()[0].as_ring_slice::<D>().unwrap();
+    let hint_rows = raw.1.inner_rows().unwrap();
+    let rows = hint_rows[0].as_ring_slice::<D>().unwrap();
     assert_eq!(
         rows.len(),
         canonical.inner().matrix.output_rank() * canonical.blocks().live_blocks
