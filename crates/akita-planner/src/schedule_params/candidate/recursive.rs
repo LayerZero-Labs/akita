@@ -146,7 +146,7 @@ struct RecursiveCandidateContext<'request, 'policy> {
     successor_policy: SuccessorPolicy,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct RecursiveCandidateCore {
     num_ring_elems: usize,
     num_positions_per_block: usize,
@@ -513,6 +513,17 @@ impl RecursiveCandidateContext<'_, '_> {
             else {
                 continue;
             };
+            if self.source_moment.is_none() && request.source_moment.is_some() {
+                if let Some(visits) =
+                    search.recorded_split_visits(request.opening, r, relation_domain, &core)
+                {
+                    for (score, params, next_witness_len) in visits {
+                        visit(score, r, params, next_witness_len);
+                    }
+                    continue;
+                }
+            }
+            let mut recorded = self.source_moment.is_some().then(Vec::new);
             let base_slice_candidates = self.candidates_from_core(&core, relation_domain)?;
             for setup_prefix in &search.setup_prefixes {
                 for transition in
@@ -555,9 +566,15 @@ impl RecursiveCandidateContext<'_, '_> {
                                     .into(),
                             ));
                         }
+                        if let Some(recorded) = recorded.as_mut() {
+                            recorded.push((score, params.clone(), next_witness_len));
+                        }
                         visit(score, r, params, next_witness_len);
                     }
                 }
+            }
+            if let Some(visits) = recorded {
+                search.record_split_visits(request.opening, r, relation_domain, core, visits);
             }
         }
         Ok(())
