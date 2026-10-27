@@ -297,25 +297,31 @@ fn price_planned_fold_candidate(
 }
 
 /// How many candidates of a state's traversal have their successors
-/// completed together. A guided traversal prunes against the frontier its
-/// earlier candidates built, so a candidate whose successors are completed
-/// in a later wave may be pruned before they are.
+/// completed together, once `waves_done` waves have been. A guided
+/// traversal prunes against the frontier its earlier candidates built, so a
+/// candidate whose successors are completed in a later wave may be pruned
+/// before they are.
 ///
-/// Only the root completes one candidate at a time. Its successors are the
-/// largest subtrees, and each already fans out over the pool; pool-width
-/// root waves completed subtrees the ordered traversal then pruned (104
-/// first-level states instead of 66 for the 2^25 response statement, and
-/// 1.5x the states overall). Every other state completes all its
-/// candidates' successors at once: for setup-prefixed states, pool-width
-/// waves completed exactly the same states as one wave on the response
-/// statements and only added barriers (`specs/whiteout-o2b-planner.md`).
-fn successor_wave(guide_scope: Option<GuideScope>) -> usize {
+/// The root's waves double from one candidate up to the pool's width. Its
+/// candidates are in global lower-bound order and its successors are the
+/// largest subtrees: the first completions build the frontier that prunes
+/// most of the rest, so early pool-width waves completed subtrees the
+/// traversal then pruned (1.5x the states of a sequential search for the
+/// 2^25 response statement). Doubling bounds that waste by the last wave
+/// and still fills the pool when many candidates survive (masked catalogs).
+/// Every other state completes all its candidates' successors at once: for
+/// setup-prefixed states, pool-width waves completed the same states as one
+/// wave on the response statements and only added barriers
+/// (`specs/whiteout-o2b-planner.md`).
+fn successor_wave(guide_scope: Option<GuideScope>, waves_done: u32) -> usize {
     #[cfg(feature = "parallel")]
     if matches!(guide_scope, Some(GuideScope::CompleteRoot)) {
-        return 1;
+        return 1usize
+            .checked_shl(waves_done)
+            .map_or(usize::MAX, |wave| wave.min(rayon::current_num_threads()));
     }
     #[cfg(not(feature = "parallel"))]
-    let _ = guide_scope;
+    let _ = (guide_scope, waves_done);
     usize::MAX
 }
 
@@ -465,11 +471,13 @@ pub(super) fn process_candidate_batch(
     let guide_scope = GuideScope::for_state(is_root_level, incoming_setup_prefix);
     let mut traversal =
         candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?.peekable();
+    let mut waves_done = 0;
     while traversal.peek().is_some() {
         let wave: Vec<_> = traversal
             .by_ref()
-            .take(successor_wave(guide_scope))
+            .take(successor_wave(guide_scope, waves_done))
             .collect();
+        waves_done = waves_done.saturating_add(1);
         #[cfg(feature = "parallel")]
         complete_successors(
             ctx,
@@ -571,21 +579,20 @@ pub(crate) fn derive_selected_suffix_schedule(
     let mut frontiers = StateFrontiers::new();
     for open_log_basis in candidate_domain.opening_basis_range.clone() {
         if root_level_key.is_some() {
-            candidate_domain.visit_root_batches(ctx, open_log_basis, |generated| {
-                process_candidate_batch(
-                    ctx,
-                    memo,
-                    state,
-                    depth,
-                    open_log_basis,
-                    opening_layout,
-                    true,
-                    candidate_domain.require_child_fold,
-                    generated,
-                    &mut frontiers,
-                    &query_search,
-                )
-            })?;
+            let generated = candidate_domain.root_candidates(ctx, open_log_basis)?;
+            process_candidate_batch(
+                ctx,
+                memo,
+                state,
+                depth,
+                open_log_basis,
+                opening_layout,
+                true,
+                candidate_domain.require_child_fold,
+                generated,
+                &mut frontiers,
+                &query_search,
+            )?;
         } else {
             let generated = candidate_domain.generate_recursive_for_opening_basis(
                 ctx,

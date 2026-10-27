@@ -766,19 +766,22 @@ impl<'a> CandidateDomain<'a> {
         Ok(GeneratedCandidates { terminal, folds })
     }
 
-    /// Visit one bounded root work batch at a time.
+    /// Every root candidate of one opening basis, in work order and then
+    /// inner-basis order.
     ///
-    /// Root frontiers are shared across visits, so this changes temporary
-    /// ownership only: it preserves every candidate while avoiding one large
-    /// vector spanning the full grouped-opening product.
-    pub(super) fn visit_root_batches(
+    /// The root traverses them as one batch, so its lower-bound order is
+    /// global: the best-bounded candidates complete first and their
+    /// schedules prune the rest (`specs/whiteout-o2b-planner.md`). Each
+    /// opening work is generated independently, on the pool, and joined in
+    /// work order, so the candidates, their order and the first error are
+    /// those of a sequential pass.
+    pub(super) fn root_candidates(
         &self,
         ctx: &SuffixCtx<'_>,
         open_lb: u32,
-        mut visit: impl FnMut(GeneratedCandidates) -> Result<(), AkitaError>,
-    ) -> Result<(), AkitaError> {
+    ) -> Result<GeneratedCandidates, AkitaError> {
         let root_key = self.root_level_key.ok_or_else(|| {
-            AkitaError::InvalidSetup("root batch visitor requires a root lookup key".into())
+            AkitaError::InvalidSetup("root candidates require a root lookup key".into())
         })?;
         let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch is missing its source contract".into())
@@ -790,61 +793,69 @@ impl<'a> CandidateDomain<'a> {
             0,
             root_key.precommitteds.len() + 1,
         )?;
-        for work in &self.opening_work {
-            let Some(preparation) = PreparedRootProducers::prepare(
-                root_key,
-                ctx.precommitted_source_contracts,
-                ctx.policy,
-                work.dimensions,
-                work.opening,
-                &work.precommitted_class_openings,
-                open_lb,
-                masking,
-            )?
-            else {
-                continue;
-            };
-            for inner_lb in self.inner_basis_range.clone() {
-                let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+        let works = crate::schedule_params::map_in_order(
+            self.opening_work.iter().collect(),
+            |work| -> Result<GeneratedCandidates, AkitaError> {
+                let mut terminal = Vec::new();
+                let mut folds = Vec::new();
+                let Some(preparation) = PreparedRootProducers::prepare(
                     root_key,
-                    final_source_contract,
+                    ctx.precommitted_source_contracts,
                     ctx.policy,
                     work.dimensions,
                     work.opening,
-                    &preparation,
-                    inner_lb,
+                    &work.precommitted_class_openings,
                     open_lb,
-                    self.root_main_constraint.map(candidate_layout_guide),
                     masking,
-                )?;
-                if let Some(constraint) = self.root_main_constraint {
-                    dimension_candidates.retain(|(params, _)| {
-                        root_candidate_matches_constraint(params, constraint)
-                    });
-                }
-                let mut terminal = Vec::new();
-                let mut folds = Vec::new();
-                for (params, next_witness_len) in dimension_candidates {
-                    if (!self.adaptation_guided || self.guide_terminal.is_some())
-                        && work.purpose.allows_terminal()
-                    {
-                        terminal.push(params.clone());
-                    }
-                    if (!self.adaptation_guided || self.guide_fold.is_some())
-                        && work.purpose.allows_fold()
-                    {
-                        folds.push(RawFoldCandidate {
-                            params,
-                            next_witness_len,
+                )?
+                else {
+                    return Ok(GeneratedCandidates { terminal, folds });
+                };
+                for inner_lb in self.inner_basis_range.clone() {
+                    let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+                        root_key,
+                        final_source_contract,
+                        ctx.policy,
+                        work.dimensions,
+                        work.opening,
+                        &preparation,
+                        inner_lb,
+                        open_lb,
+                        self.root_main_constraint.map(candidate_layout_guide),
+                        masking,
+                    )?;
+                    if let Some(constraint) = self.root_main_constraint {
+                        dimension_candidates.retain(|(params, _)| {
+                            root_candidate_matches_constraint(params, constraint)
                         });
                     }
+                    for (params, next_witness_len) in dimension_candidates {
+                        if (!self.adaptation_guided || self.guide_terminal.is_some())
+                            && work.purpose.allows_terminal()
+                        {
+                            terminal.push(params.clone());
+                        }
+                        if (!self.adaptation_guided || self.guide_fold.is_some())
+                            && work.purpose.allows_fold()
+                        {
+                            folds.push(RawFoldCandidate {
+                                params,
+                                next_witness_len,
+                            });
+                        }
+                    }
                 }
-                if !terminal.is_empty() || !folds.is_empty() {
-                    visit(GeneratedCandidates { terminal, folds })?;
-                }
-            }
+                Ok(GeneratedCandidates { terminal, folds })
+            },
+        );
+        let mut terminal = Vec::new();
+        let mut folds = Vec::new();
+        for work in works {
+            let work = work?;
+            terminal.extend(work.terminal);
+            folds.extend(work.folds);
         }
-        Ok(())
+        Ok(GeneratedCandidates { terminal, folds })
     }
 }
 
