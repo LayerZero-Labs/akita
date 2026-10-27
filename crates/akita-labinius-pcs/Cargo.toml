@@ -14,12 +14,14 @@ labinius = [
   "akita-labinius-verifier/labinius",
   "akita-labinius-prover/labinius",
 ]
+logging-transcript = ["akita-pcs/logging-transcript"]
 labinius-catalog-gen = [
   "labinius",
   "dep:akita-planner",
   "akita-planner/catalog-gen",
 ]
 transcript-blake2b = [
+  "akita-transcript/transcript-blake2b",
   "akita-config/transcript-blake2b",
   "akita-cpu-backend/transcript-blake2b",
   "akita-labinius-prover/transcript-blake2b",
@@ -34,6 +36,7 @@ transcript-blake2b = [
   "akita-planner?/transcript-blake2b",
 ]
 transcript-keccak = [
+  "akita-transcript/transcript-keccak",
   "akita-config/transcript-keccak",
   "akita-cpu-backend/transcript-keccak",
   "akita-labinius-prover/transcript-keccak",
@@ -62,6 +65,7 @@ parallel = [
 ]
 
 [dependencies]
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra", default-features = false }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
@@ -84,6 +88,9 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 tracing = "0.1"
 
 [dev-dependencies]
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
+] }
 tracing-subscriber = "0.3"
 
 [[bin]]

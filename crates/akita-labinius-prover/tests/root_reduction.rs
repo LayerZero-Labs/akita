@@ -523,3 +523,139 @@ fn shipped_mode_and_field_pair_proof_bytes_are_pinned() {
         assert_eq!(proof_digest::<P64, Ext2<P64>>(mode), p64x2, "{mode:?}");
     }
 }
+
+/// A native borrowed reduction consumes only its own messages. Every opening
+/// mode replays on both shipped field pairs and leaves a following message for
+/// the surrounding protocol.
+fn borrowed_root<F: Field + CanonicalEncoding, E: ExtField<F>>() {
+    use akita_labinius_prover::{prove_root_reduction_in_session, TransparentRootProverOracle};
+    use akita_labinius_verifier::root::verify_root_reduction_in_session;
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
+
+    for mode in MODES {
+        let case = RootCase::<H, F, E>::new(admitted(1, 0x31), mode);
+        let (standalone, _) = case.prove().unwrap();
+        case.verify(&standalone).unwrap();
+        let prove = |prefix: &[u8]| {
+            let mut session =
+                new_prover_channel(b"root-composition-test", b"application-instance").unwrap();
+            session.public_message(prefix);
+            let claims = prove_root_reduction_in_session::<H, F, E, _, _, _>(
+                &case.admitted,
+                &case.source,
+                &case.commitment,
+                &case.statement(mode),
+                &mut TransparentRootProverOracle::<F, E>::new(&case.image),
+                &mut session,
+            )
+            .unwrap();
+            session.public_message(b"suffix");
+            let final_challenge: [u8; 32] = session.verifier_message();
+            session.prover_message(&final_challenge);
+            (session.narg_string().to_vec(), claims, final_challenge)
+        };
+        let (proof, claims, challenge) = prove(b"prefix");
+        let (_, other_claims, _) = prove(b"changed prefix");
+        assert_ne!(claims.response_point, other_claims.response_point);
+        let replay =
+            |proof: &[u8], domain: &[u8], instance: &[u8], prefix: &[u8], suffix: &[u8]| {
+                let mut session = new_verifier_channel(domain, instance, proof)?;
+                session.public_message(prefix);
+                let actual = verify_root_reduction_in_session::<H, F, E, _, _, _>(
+                    &case.admitted,
+                    &case.statement(mode),
+                    &mut TransparentRootVerifierOracle::<F, E>::new(&case.image),
+                    &mut session,
+                )?;
+                assert_eq!(actual, claims);
+                session.public_message(suffix);
+                let expected: [u8; 32] = session.verifier_message()?;
+                let received: [u8; 32] = session.prover_message()?;
+                if received != expected || expected != challenge {
+                    return Err(AkitaError::InvalidProof);
+                }
+                session.check_eof()
+            };
+        let valid = |bytes: &[u8]| {
+            replay(
+                bytes,
+                b"root-composition-test",
+                b"application-instance",
+                b"prefix",
+                b"suffix",
+            )
+        };
+        valid(&proof).unwrap();
+        for (domain, instance, prefix, suffix) in [
+            (
+                b"wrong domain".as_slice(),
+                b"application-instance".as_slice(),
+                b"prefix".as_slice(),
+                b"suffix".as_slice(),
+            ),
+            (
+                b"root-composition-test".as_slice(),
+                b"wrong instance".as_slice(),
+                b"prefix".as_slice(),
+                b"suffix".as_slice(),
+            ),
+            (
+                b"root-composition-test".as_slice(),
+                b"application-instance".as_slice(),
+                b"wrong prefix".as_slice(),
+                b"suffix".as_slice(),
+            ),
+            (
+                b"root-composition-test".as_slice(),
+                b"application-instance".as_slice(),
+                b"prefix".as_slice(),
+                b"wrong suffix".as_slice(),
+            ),
+        ] {
+            assert!(replay(&proof, domain, instance, prefix, suffix).is_err());
+        }
+        // Replay the same reduction under a mismatched public subprotocol
+        // record, while keeping the outer domain and its prefix identical.
+        for (protocol, version) in [
+            (b"wrong-root-protocol".as_slice(), 1),
+            (b"akita/labinius/root-reduction".as_slice(), 2),
+        ] {
+            let mut session =
+                new_verifier_channel(b"root-composition-test", b"application-instance", &proof)
+                    .unwrap();
+            session.public_message(b"prefix");
+            akita_transcript::absorb_subprotocol_context(
+                &mut session,
+                protocol,
+                version,
+                &case.admitted.identity_bytes::<H>().unwrap(),
+            )
+            .unwrap();
+            assert!(
+                akita_labinius_verifier::root::verify_root_reduction::<H, F, E, _, _, _, _>(
+                    &case.admitted,
+                    &case.statement(mode),
+                    &mut TransparentRootVerifierOracle::<F, E>::new(&case.image),
+                    &mut RootSumcheckVerifierChannel::<F>::new(&mut session),
+                )
+                .is_err()
+            );
+        }
+        assert!(valid(&proof[..proof.len() - 33]).is_err());
+        for name in ["fold nonce", "alpha nonce", "response round"] {
+            let (_, start, _) = regions(&case, &proof)
+                .into_iter()
+                .find(|region| region.0 == name)
+                .unwrap();
+            let mut corrupted = proof.clone();
+            corrupted[start] ^= 1;
+            assert!(valid(&corrupted).is_err(), "accepted corrupt {name}");
+        }
+    }
+}
+
+#[test]
+fn borrowed_root_reductions_replay_and_leave_the_session_open() {
+    borrowed_root::<P128, P128>();
+    borrowed_root::<P64, Ext2<P64>>();
+}

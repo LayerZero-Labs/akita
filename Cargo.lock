@@ -115,6 +115,7 @@ dependencies = [
  "akita-prover",
  "akita-schedules",
  "akita-serialization",
+ "akita-transcript",
  "akita-types",
  "akita-verifier",
  "jolt-field",

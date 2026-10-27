@@ -150,6 +150,104 @@ where
         >,
     {
         let started = Instant::now();
+        let proof =
+            self.with_prover_backend(setup, opening, backend, |registry, opening, route| {
+                akita_prover::batched_prove::<Cfg, _>(
+                    setup.expanded.descriptor(),
+                    &self.schedules,
+                    registry,
+                    opening,
+                    session,
+                    basis,
+                    route,
+                )
+            })?;
+        tracing::info!(
+            proof_bytes = proof.len(),
+            elapsed_s = started.elapsed().as_secs_f64(),
+            "akita batched prove complete"
+        );
+        Ok(proof)
+    }
+
+    /// Append a complete multi-group PCS opening to the caller's session.
+    ///
+    /// Applications must create the session with Akita's `new_prover_channel` or
+    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+    /// spongefish states cannot be adopted.
+    ///
+    /// The opening absorbs its public protocol/version/setup/catalog context,
+    /// consumes its exact grinding plan, and returns without finishing the
+    /// session. The caller can then append another subprotocol or message.
+    #[allow(clippy::type_complexity)]
+    pub fn batched_prove_in_session<'a>(
+        &self,
+        setup: &AkitaProverSetup<Cfg::Field>,
+        opening: SelectedProverOpeningData<
+            'a,
+            Cfg::ExtField,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+            Cfg::Field,
+        >,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+        session: &mut akita_transcript::ProverSession,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError>
+    where
+        Cfg::Field: WithCommitAccumulator + 'static,
+        Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+        CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
+            Cfg::Field,
+            Cfg::ExtField,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+        >,
+    {
+        self.with_prover_backend(setup, opening, backend, |registry, opening, route| {
+            akita_prover::batched_prove_in_session::<Cfg, _>(
+                setup.expanded.descriptor(),
+                &self.schedules,
+                registry,
+                opening,
+                session,
+                basis,
+                route,
+            )
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn with_prover_backend<'a, T>(
+        &self,
+        setup: &AkitaProverSetup<Cfg::Field>,
+        opening: SelectedProverOpeningData<
+            'a,
+            Cfg::ExtField,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+            Cfg::Field,
+        >,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+        run: impl FnOnce(
+            &BackendRegistry<'_, Cfg>,
+            SelectedProverOpeningData<
+                'a,
+                Cfg::ExtField,
+                CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+                Cfg::Field,
+            >,
+            &mut FixedFoldRoute,
+        ) -> Result<T, AkitaError>,
+    ) -> Result<T, AkitaError>
+    where
+        Cfg::Field: WithCommitAccumulator + 'static,
+        Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+        CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
+            Cfg::Field,
+            Cfg::ExtField,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+        >,
+    {
         let resolved = self.schedules.resolve_selection(opening.selection())?;
         let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
             resolved.schedule(),
@@ -160,21 +258,7 @@ where
         let mut registry = BackendRegistry::<Cfg>::new()?;
         let root = registry.register(backend, &prefix_slots)?;
         let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        let proof = akita_prover::batched_prove::<Cfg, _>(
-            setup.expanded.descriptor(),
-            &self.schedules,
-            &registry,
-            opening,
-            session,
-            basis,
-            &mut route,
-        )?;
-        tracing::info!(
-            proof_bytes = proof.len(),
-            elapsed_s = started.elapsed().as_secs_f64(),
-            "akita batched prove complete"
-        );
-        Ok(proof)
+        run(&registry, opening, &mut route)
     }
 
     /// Build a verifier for `setup` over this scheme's schedule catalog.

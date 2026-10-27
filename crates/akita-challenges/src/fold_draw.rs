@@ -180,7 +180,7 @@ impl FoldDraw for PreviewFoldDraw<'_> {
 
 /// One group-local fold-root draw against the live prover channel.
 pub struct ProverFoldDraw<'a> {
-    state: &'a mut akita_transcript::ProverChannel,
+    state: &'a mut akita_transcript::ProverSession,
     level: u32,
     group: u32,
 }
@@ -189,7 +189,7 @@ impl<'a> ProverFoldDraw<'a> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
     pub const fn new(
-        state: &'a mut akita_transcript::ProverChannel,
+        state: &'a mut akita_transcript::ProverSession,
         level: u32,
         group: u32,
     ) -> Self {
@@ -216,7 +216,7 @@ impl FoldDraw for ProverFoldDraw<'_> {
 
 /// One group-local fold-root draw against the live verifier channel.
 pub struct VerifierFoldDraw<'a, 'proof> {
-    state: &'a mut akita_transcript::VerifierChannel<'proof>,
+    state: &'a mut akita_transcript::VerifierSession<'proof>,
     level: u32,
     group: u32,
 }
@@ -225,7 +225,7 @@ impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
     pub const fn new(
-        state: &'a mut akita_transcript::VerifierChannel<'proof>,
+        state: &'a mut akita_transcript::VerifierSession<'proof>,
         level: u32,
         group: u32,
     ) -> Self {

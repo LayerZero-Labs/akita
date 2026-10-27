@@ -1,25 +1,38 @@
 use crate::TranscriptSponge;
 use akita_error::AkitaError;
 use spongefish::{Decoding, Encoding, NargDeserialize, VerifierState};
+use std::ops::{Deref, DerefMut};
 
 /// Akita's fail-closed Spongefish verifier state.
 ///
 /// Receipt failures poison this owner permanently. Keeping the underlying
 /// Spongefish state private prevents protocol callers from consuming malformed
 /// input and later obtaining a successful EOF result by ignoring the error.
-pub struct VerifierChannel<'proof> {
+/// This view cannot construct, replace, or finish the caller's session.
+/// Its unsized tail also prevents swapping owner storage through this view.
+///
+/// ```compile_fail
+/// use akita_transcript::{new_verifier_channel, VerifierSession};
+/// fn swap(session: &mut VerifierSession<'_>) {
+///     let mut replacement = new_verifier_channel(b"reset", b"", &[]).unwrap();
+///     std::mem::swap(session, &mut *replacement);
+///     replacement.check_eof().unwrap();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use akita_transcript::VerifierSession;
+/// fn finish(session: &mut VerifierSession<'_>) {
+///     session.check_eof().unwrap();
+/// }
+/// ```
+pub struct VerifierSession<'proof, T: ?Sized = [()]> {
     inner: VerifierState<'proof, TranscriptSponge>,
     invalid: bool,
+    _unsized: T,
 }
 
-impl<'proof> VerifierChannel<'proof> {
-    pub(super) const fn new(inner: VerifierState<'proof, TranscriptSponge>) -> Self {
-        Self {
-            inner,
-            invalid: false,
-        }
-    }
-
+impl<'proof> VerifierSession<'proof> {
     /// Read and absorb one prover message, recording every decoding failure.
     ///
     /// # Errors
@@ -61,19 +74,6 @@ impl<'proof> VerifierChannel<'proof> {
         Ok(self.inner.verifier_message())
     }
 
-    /// Finish only if no earlier receipt failed and no proof bytes remain.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] when an earlier receipt failed or
-    /// proof bytes remain.
-    pub fn check_eof(self) -> Result<(), AkitaError> {
-        if self.invalid {
-            return Err(AkitaError::InvalidProof);
-        }
-        self.inner.check_eof().map_err(|_| AkitaError::InvalidProof)
-    }
-
     pub(super) fn sponge_mut(&mut self) -> &mut TranscriptSponge {
         &mut self.inner.duplex_sponge_state
     }
@@ -85,5 +85,51 @@ impl<'proof> VerifierChannel<'proof> {
     /// Permanently reject this transcript after a semantic protocol failure.
     pub fn invalidate(&mut self) {
         self.invalid = true;
+    }
+}
+
+/// Owner of a verifier session; only this owner may require final EOF.
+pub struct VerifierChannel<'proof> {
+    session: VerifierSession<'proof, [(); 0]>,
+}
+
+impl<'proof> VerifierChannel<'proof> {
+    pub(super) const fn new(inner: VerifierState<'proof, TranscriptSponge>) -> Self {
+        Self {
+            session: VerifierSession {
+                inner,
+                invalid: false,
+                _unsized: [],
+            },
+        }
+    }
+
+    /// Finish only if no earlier receipt failed and no proof bytes remain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when an earlier receipt failed or
+    /// proof bytes remain.
+    pub fn check_eof(self) -> Result<(), AkitaError> {
+        if self.session.invalid {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.session
+            .inner
+            .check_eof()
+            .map_err(|_| AkitaError::InvalidProof)
+    }
+}
+
+impl<'proof> Deref for VerifierChannel<'proof> {
+    type Target = VerifierSession<'proof>;
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+
+impl DerefMut for VerifierChannel<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.session
     }
 }

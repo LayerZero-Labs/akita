@@ -467,3 +467,65 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     assert_eq!((verified_first, verified_second), (live_first, live_second));
     verifier.finish().unwrap();
 }
+
+#[test]
+fn borrowed_grinding_leaves_following_messages_for_the_caller() {
+    let plan = plan();
+    let mut state = new_prover_channel(b"borrowed-grinding", b"fixture").unwrap();
+    let mut prover = ProverGrinding::new_borrowed(&mut state, &plan);
+    let challenge = prover
+        .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
+        .unwrap();
+    prover
+        .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, 7)
+        .unwrap();
+    prover.record_fold_challenges(0, 0, 2).unwrap();
+    prover.finish_opening().unwrap();
+    state.prover_message(&42u32);
+    let proof = state.narg_string();
+    let mut state = new_verifier_channel(b"borrowed-grinding", b"fixture", proof).unwrap();
+    let mut verifier = VerifierGrinding::new_borrowed(&mut state, &plan);
+    assert_eq!(
+        challenge,
+        verifier
+            .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
+            .unwrap()
+    );
+    assert_eq!(
+        verifier
+            .read_fold_response(GrindingSite::FoldResponse { level: 0 })
+            .unwrap(),
+        7
+    );
+    verifier.record_fold_challenges(0, 0, 2).unwrap();
+    verifier.finish_opening().unwrap();
+    assert_eq!(state.prover_message::<u32>().unwrap(), 42);
+    state.check_eof().unwrap();
+}
+
+#[test]
+fn unfinished_borrowed_plan_poisons_the_caller() {
+    let plan = plan();
+    let mut state = new_verifier_channel(b"borrowed-grinding", b"fixture", &[]).unwrap();
+    let verifier = VerifierGrinding::new_borrowed(&mut state, &plan);
+    assert!(verifier.finish_opening().is_err());
+    assert!(state.check_eof().is_err());
+}
+
+#[test]
+fn borrowed_adapters_cannot_finish_the_callers_session() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let plan = GrindingPlan::new(vec![], order).unwrap();
+    let mut prover = new_prover_channel(b"borrowed-grinding", b"fixture").unwrap();
+    assert!(ProverGrinding::new_borrowed(&mut prover, &plan)
+        .finish()
+        .is_err());
+    prover.prover_message(&42u32);
+    let mut verifier =
+        new_verifier_channel(b"borrowed-grinding", b"fixture", prover.narg_string()).unwrap();
+    assert!(VerifierGrinding::new_borrowed(&mut verifier, &plan)
+        .finish()
+        .is_err());
+    assert_eq!(verifier.prover_message::<u32>().unwrap(), 42);
+    verifier.check_eof().unwrap();
+}

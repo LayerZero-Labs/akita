@@ -7,12 +7,16 @@ use akita_transcript::{
     commit_grinding_nonce, ext_challenge, grinding_predicate_accepts, nonce_encoded_len,
     nonce_max_bytes, prover_context, receive_grinding_nonce, search_grinding_nonce,
     verifier_context, FoldPreview, NonceAtom, ProofChannel, ProtocolContextRecord,
-    ProtocolMessageKind, ProtocolSiteId, ProverChannel, VerifierChannel, GRINDING_PREDICATE_LEN,
-    SITE_FAMILY_SUMCHECK,
+    ProtocolMessageKind, ProtocolSiteId, ProverChannel, ProverSession, VerifierChannel,
+    VerifierSession, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 use std::num::NonZeroU8;
+
+#[path = "replay/session.rs"]
+mod session;
+use session::ChannelStorage;
 
 #[derive(Clone, Copy)]
 struct GrindingPlanEntry {
@@ -152,7 +156,7 @@ fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRe
 /// caller drops the error.
 pub trait GrindingReplay {
     /// The role-specific proof channel state.
-    type State: ProofChannel;
+    type State: ProofChannel + ?Sized;
 
     /// Borrow the state for ordinary protocol messages and challenges.
     ///
@@ -248,9 +252,9 @@ pub trait GrindingReplay {
 }
 
 impl GrindingReplay for ProverGrinding<'_> {
-    type State = ProverChannel;
+    type State = ProverSession;
 
-    fn state_mut(&mut self) -> &mut ProverChannel {
+    fn state_mut(&mut self) -> &mut ProverSession {
         &mut self.state
     }
 
@@ -268,9 +272,9 @@ impl GrindingReplay for ProverGrinding<'_> {
 }
 
 impl<'proof> GrindingReplay for VerifierGrinding<'proof, '_> {
-    type State = VerifierChannel<'proof>;
+    type State = VerifierSession<'proof>;
 
-    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
+    fn state_mut(&mut self) -> &mut VerifierSession<'proof> {
         &mut self.state
     }
 
@@ -290,7 +294,7 @@ impl<'proof> GrindingReplay for VerifierGrinding<'proof, '_> {
 
 /// Prover-side state paired with exact grinding-plan progress.
 pub struct ProverGrinding<'plan> {
-    state: ProverChannel,
+    state: ChannelStorage<'plan, ProverChannel>,
     cursor: GrindingPlanCursor<'plan>,
     serialized_nonce_bytes: usize,
     invalid: bool,
@@ -303,7 +307,19 @@ impl<'plan> ProverGrinding<'plan> {
         #[cfg(feature = "logging-transcript")]
         akita_transcript::clear_thread_events();
         Self {
-            state,
+            state: ChannelStorage::Owned(state),
+            cursor: GrindingPlanCursor::new(plan),
+            serialized_nonce_bytes: 0,
+            invalid: false,
+        }
+    }
+
+    /// Borrow a caller's session for exactly one opening's grinding plan.
+    /// This does not clear the caller's diagnostic event log.
+    #[must_use]
+    pub fn new_borrowed(state: &'plan mut ProverSession, plan: &'plan GrindingPlan) -> Self {
+        Self {
+            state: ChannelStorage::Borrowed(state),
             cursor: GrindingPlanCursor::new(plan),
             serialized_nonce_bytes: 0,
             invalid: false,
@@ -440,8 +456,12 @@ impl<'plan> ProverGrinding<'plan> {
         result
     }
 
-    /// Finish plan replay and return the authoritative Spongefish argument.
-    pub fn finish(self) -> Result<Vec<u8>, AkitaError> {
+    /// Complete this opening's plan, leaving the caller's session usable.
+    pub fn finish_opening(self) -> Result<(), AkitaError> {
+        self.check_completion()
+    }
+
+    fn check_completion(&self) -> Result<(), AkitaError> {
         if self.invalid {
             return Err(AkitaError::InvalidInput(
                 "an earlier grinding step failed".into(),
@@ -457,15 +477,27 @@ impl<'plan> ProverGrinding<'plan> {
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
+        Ok(())
+    }
+
+    /// Finish an owned session and return its authoritative argument bytes.
+    /// Borrowed sessions cannot be finished through this adapter.
+    pub fn finish(self) -> Result<Vec<u8>, AkitaError> {
+        self.check_completion()?;
+        let ChannelStorage::Owned(state) = self.state else {
+            return Err(AkitaError::InvalidInput(
+                "cannot finish a borrowed session".into(),
+            ));
+        };
         #[cfg(feature = "logging-transcript")]
-        akita_transcript::finish_proof_ranges(&self.state);
-        Ok(self.state.narg_string().to_vec())
+        akita_transcript::finish_proof_ranges(&state);
+        Ok(state.narg_string().to_vec())
     }
 }
 
 /// Verifier-side state paired with exact grinding-plan progress.
-pub struct VerifierGrinding<'proof, 'plan> {
-    state: VerifierChannel<'proof>,
+pub struct VerifierGrinding<'proof: 'plan, 'plan> {
+    state: ChannelStorage<'plan, VerifierChannel<'proof>>,
     cursor: GrindingPlanCursor<'plan>,
     serialized_nonce_bytes: usize,
     invalid: bool,
@@ -480,12 +512,26 @@ pub struct ProofAcceptance {
     _private: (),
 }
 
-impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
+impl<'proof: 'plan, 'plan> VerifierGrinding<'proof, 'plan> {
     /// Attach a verifier channel to its public grinding plan.
     #[must_use]
     pub const fn new(state: VerifierChannel<'proof>, plan: &'plan GrindingPlan) -> Self {
         Self {
-            state,
+            state: ChannelStorage::Owned(state),
+            cursor: GrindingPlanCursor::new(plan),
+            serialized_nonce_bytes: 0,
+            invalid: false,
+        }
+    }
+
+    /// Borrow a caller's session without taking responsibility for its EOF.
+    #[must_use]
+    pub const fn new_borrowed(
+        state: &'plan mut VerifierSession<'proof>,
+        plan: &'plan GrindingPlan,
+    ) -> Self {
+        Self {
+            state: ChannelStorage::Borrowed(state),
             cursor: GrindingPlanCursor::new(plan),
             serialized_nonce_bytes: 0,
             invalid: false,
@@ -564,9 +610,14 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
         result
     }
 
-    /// Require grinding-plan completion and consume the verifier for EOF.
-    pub fn finish(self) -> Result<ProofAcceptance, AkitaError> {
+    /// Complete this opening's plan without requiring the caller's EOF.
+    pub fn finish_opening(mut self) -> Result<(), AkitaError> {
+        self.check_completion()
+    }
+
+    fn check_completion(&mut self) -> Result<(), AkitaError> {
         if self.invalid || !self.cursor.is_finished() {
+            self.state.invalidate();
             return Err(AkitaError::InvalidProof);
         }
         tracing::info!(
@@ -574,7 +625,19 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
-        self.state.check_eof()?;
+        Ok(())
+    }
+
+    /// Require grinding-plan completion and consume an owned verifier for EOF.
+    /// Borrowed sessions cannot be finished through this adapter.
+    pub fn finish(mut self) -> Result<ProofAcceptance, AkitaError> {
+        self.check_completion()?;
+        let ChannelStorage::Owned(state) = self.state else {
+            return Err(AkitaError::InvalidInput(
+                "cannot finish a borrowed session".into(),
+            ));
+        };
+        state.check_eof()?;
         Ok(ProofAcceptance { _private: () })
     }
 }
@@ -633,7 +696,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    fn state_mut(&mut self) -> &mut ProverChannel {
+    fn state_mut(&mut self) -> &mut ProverSession {
         self.grinding.state_mut()
     }
 
@@ -665,7 +728,7 @@ where
 }
 
 /// Standard-sumcheck channel borrowing a verifier grinding context.
-pub struct GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
+pub struct GrindingSumcheckVerifier<'context, 'proof: 'plan, 'plan, F, E> {
     grinding: &'context mut VerifierGrinding<'proof, 'plan>,
     protocol: akita_params::SumcheckProtocol,
     level: u32,
@@ -673,7 +736,7 @@ pub struct GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'proof, 'plan, F, E> GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
+impl<'context, 'proof: 'plan, 'plan, F, E> GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
@@ -698,7 +761,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
+    fn state_mut(&mut self) -> &mut VerifierSession<'proof> {
         self.grinding.state_mut()
     }
 

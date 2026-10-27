@@ -12,6 +12,14 @@ use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialG
 
 use crate::AkitaVerifier;
 
+struct PreparedOpening<'verifier, 'claims, Cfg: CommitmentConfig> {
+    schedule: &'verifier akita_params::FoldSchedule,
+    opening_batch: akita_params::OpeningClaimsLayout,
+    claims: OpeningClaims<'claims, Cfg::ExtField, &'claims akita_types::Commitment<Cfg::Field>>,
+    grinding_plan: akita_params::GrindingPlan,
+    descriptor_bytes: Vec<u8>,
+}
+
 impl<Cfg> AkitaVerifier<Cfg>
 where
     Cfg: CommitmentConfig,
@@ -29,6 +37,54 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
+        let prepared = self.prepare_opening(statement, basis)?;
+        let state =
+            akita_transcript::new_verifier_channel(session, &prepared.descriptor_bytes, proof)?;
+        let mut grinding = akita_types::VerifierGrinding::new(state, &prepared.grinding_plan);
+        self.verify_prepared(&prepared, basis, &mut grinding)?;
+        grinding.finish().map(|_accepted| ())
+    }
+
+    /// Verify exactly one multi-group opening on the caller's session.
+    ///
+    /// Applications must create the session with Akita's `new_prover_channel` or
+    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+    /// spongefish states cannot be adopted.
+    ///
+    /// Absorbs the native protocol/version and setup/catalog/profile context.
+    /// This checks the opening's grinding plan without requiring stream EOF;
+    /// the caller retains responsibility for final session acceptance.
+    /// Any failure permanently invalidates the caller's verifier session.
+    pub fn batched_verify_in_session(
+        &self,
+        session: &mut akita_transcript::VerifierSession<'_>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError> {
+        let result = (|| {
+            let prepared = self.prepare_opening(statement, basis)?;
+            akita_transcript::absorb_subprotocol_context(
+                session,
+                b"akita-pcs",
+                akita_transcript::PROTOCOL_VERSION,
+                &prepared.descriptor_bytes,
+            )?;
+            let mut grinding =
+                akita_types::VerifierGrinding::new_borrowed(session, &prepared.grinding_plan);
+            self.verify_prepared(&prepared, basis, &mut grinding)?;
+            grinding.finish_opening()
+        })();
+        if result.is_err() {
+            session.invalidate();
+        }
+        result
+    }
+
+    fn prepare_opening<'verifier, 'claims>(
+        &'verifier self,
+        statement: GroupBatchStatement<'claims, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+    ) -> Result<PreparedOpening<'verifier, 'claims, Cfg>, AkitaError> {
         let setup = &self.setup;
         let schedules = &self.schedules;
         let selection = statement.selection();
@@ -99,8 +155,6 @@ where
             schedule,
             basis,
         )?;
-        let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
-        let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
         let raw_groups = claims
             .groups()
             .iter()
@@ -113,20 +167,37 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let raw_claims = OpeningClaims::from_groups(raw_groups)?;
+        Ok(PreparedOpening {
+            schedule,
+            opening_batch,
+            claims: raw_claims,
+            grinding_plan,
+            descriptor_bytes,
+        })
+    }
+
+    fn verify_prepared(
+        &self,
+        prepared: &PreparedOpening<'_, '_, Cfg>,
+        basis: BasisMode,
+        grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    ) -> Result<(), AkitaError> {
+        let setup = &self.setup;
+        let schedule = prepared.schedule;
         let root = verify_root::<Cfg::Field, Cfg::ExtField>(
             setup,
-            &mut grinding,
-            &raw_claims,
-            &opening_batch,
+            grinding,
+            &prepared.claims,
+            &prepared.opening_batch,
             basis,
-            root_params,
+            &schedule.root_fold().params,
             schedule.recursive_folds.first(),
             &schedule.terminal,
         )?;
         verify_suffix::<Cfg::Field, Cfg::ExtField>(
             setup,
             &self.terminal_ntt,
-            &mut grinding,
+            grinding,
             schedule,
             SuffixVerifierState {
                 opening_point: root.challenges,
@@ -138,7 +209,7 @@ where
                 setup_prefix_opening: root.setup_prefix_opening,
             },
         )?;
-        grinding.finish().map(|_accepted| ())
+        Ok(())
     }
 }
 

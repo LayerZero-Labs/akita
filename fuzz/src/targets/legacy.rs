@@ -43,7 +43,7 @@ struct FuzzVerifierChannel<'proof> {
 }
 
 impl<'proof> SumcheckVerifierChannel<'proof, F> for FuzzVerifierChannel<'proof> {
-    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
+    fn state_mut(&mut self) -> &mut akita_transcript::VerifierSession<'proof> {
         &mut self.state
     }
 

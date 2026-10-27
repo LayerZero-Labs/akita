@@ -6,7 +6,7 @@ use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_error::{checked, narrowing::usize_to_u64, AkitaError};
 use akita_transcript::{
     prover_context, receive_extension, send_extension, verifier_context, FieldAtom,
-    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, ProverChannel, VerifierChannel,
+    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, ProverSession, VerifierSession,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly};
@@ -77,7 +77,7 @@ impl SumcheckShape {
 /// Prover-side operations required by the standard sumcheck driver.
 pub trait SumcheckProverChannel<E> {
     /// Borrow the state for public and proof messages.
-    fn state_mut(&mut self) -> &mut ProverChannel;
+    fn state_mut(&mut self) -> &mut ProverSession;
 
     /// Return the complete public identity for one sumcheck record.
     fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId;
@@ -89,7 +89,7 @@ pub trait SumcheckProverChannel<E> {
 /// Verifier-side operations required by the standard sumcheck driver.
 pub trait SumcheckVerifierChannel<'proof, E> {
     /// Borrow the state for public and proof messages.
-    fn state_mut(&mut self) -> &mut VerifierChannel<'proof>;
+    fn state_mut(&mut self) -> &mut VerifierSession<'proof>;
 
     /// Return the complete public identity for one sumcheck record.
     fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId;
@@ -149,7 +149,7 @@ where
 }
 
 fn public_claim_prover<F, E>(
-    state: &mut ProverChannel,
+    state: &mut ProverSession,
     site: ProtocolSiteId,
     claim: E,
 ) -> Result<(), AkitaError>
@@ -175,7 +175,7 @@ where
 }
 
 fn public_claim_verifier<F, E>(
-    state: &mut VerifierChannel<'_>,
+    state: &mut VerifierSession<'_>,
     site: ProtocolSiteId,
     claim: E,
 ) -> Result<(), AkitaError>
@@ -499,7 +499,7 @@ mod tests {
     use akita_algebra::{poly::multilinear_eval, split_eq::GruenSplitEq};
     use akita_transcript::{
         field_challenge_bytes, new_prover_channel, new_verifier_channel, prover_field_challenge,
-        verifier_field_challenge, SITE_FAMILY_SUMCHECK,
+        verifier_field_challenge, ProverChannel, VerifierChannel, SITE_FAMILY_SUMCHECK,
     };
     use jolt_field::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
     use jolt_poly::UnivariatePoly;
@@ -641,7 +641,7 @@ mod tests {
     }
 
     impl SumcheckProverChannel<F> for TestProverChannel {
-        fn state_mut(&mut self) -> &mut ProverChannel {
+        fn state_mut(&mut self) -> &mut ProverSession {
             &mut self.state
         }
 
@@ -683,7 +683,7 @@ mod tests {
     }
 
     impl SumcheckProverChannel<F> for FixedProverChannel {
-        fn state_mut(&mut self) -> &mut ProverChannel {
+        fn state_mut(&mut self) -> &mut ProverSession {
             &mut self.state
         }
 
@@ -711,7 +711,7 @@ mod tests {
     }
 
     impl<'proof> SumcheckVerifierChannel<'proof, F> for FixedVerifierChannel<'proof> {
-        fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
+        fn state_mut(&mut self) -> &mut VerifierSession<'proof> {
             &mut self.state
         }
 
@@ -793,7 +793,7 @@ mod tests {
     }
 
     impl<'proof> SumcheckVerifierChannel<'proof, F> for TestVerifierChannel<'proof> {
-        fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
+        fn state_mut(&mut self) -> &mut VerifierSession<'proof> {
             &mut self.state
         }
 

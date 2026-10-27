@@ -347,3 +347,43 @@ where
     )?;
     Ok((finish_prover(state), claims))
 }
+
+/// Prove one root reduction on a borrowed native session, leaving it open.
+///
+/// Applications must create the session with Akita's `new_prover_channel` or
+/// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+/// spongefish states cannot be adopted.
+///
+/// The protocol version and admitted setup/profile identity are absorbed as
+/// public data before any reduction challenge. The oracle must authenticate
+/// every returned table evaluation on this same session.
+pub fn prove_root_reduction_in_session<H, F, E, const D: usize, M, O>(
+    admitted: &AdmittedRootSetup<D, M>,
+    source: &[H::Source],
+    commitment: &BinaryClearCommitment,
+    statement: &RootStatement<'_, H, E>,
+    oracle: &mut O,
+    session: &mut akita_transcript::ProverSession,
+) -> Result<RootEvaluationClaims<E>, AkitaError>
+where
+    H: SwitchField,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    M: TrinomialModulus,
+    O: RootProverOracle<E>,
+{
+    akita_transcript::absorb_subprotocol_context(
+        session,
+        b"akita/labinius/root-reduction",
+        1,
+        &admitted.identity_bytes::<H>()?,
+    )?;
+    prove_root_reduction::<H, F, E, D, M, O, _>(
+        admitted,
+        source,
+        commitment,
+        statement,
+        oracle,
+        &mut RootSumcheckProverChannel::<F>::new(session),
+    )
+}
