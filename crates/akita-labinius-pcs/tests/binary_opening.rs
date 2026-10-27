@@ -2,6 +2,8 @@
 
 #![cfg(feature = "labinius")]
 
+#[path = "binary_opening/borrowed_session.rs"]
+mod borrowed_session;
 mod common;
 
 use akita_config::SetupRequirements;
