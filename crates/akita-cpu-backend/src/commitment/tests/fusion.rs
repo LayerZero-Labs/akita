@@ -437,7 +437,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     );
     assert_eq!(actual_inner.rows(), expected_inner.rows());
     let portable = actual.prover_state().portable_hint().unwrap();
-    assert_eq!(portable.inner_rows(), actual_inner.rows());
+    assert_eq!(portable.inner_rows().unwrap().as_ref(), actual_inner.rows());
     let compression_plan = plan.compression().unwrap();
     let expected_compression = expected
         .prover_state()
