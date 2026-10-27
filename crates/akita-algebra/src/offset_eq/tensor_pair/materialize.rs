@@ -207,13 +207,16 @@ impl<F: Field> DenseLeftTensorView<'_, F> {
         table.try_reserve_exact(live).map_err(|_| {
             AkitaError::InvalidInput("paired tensor residual table allocation failed".into())
         })?;
-        collect_residual(
+        visit_residual_terms(
             self.family,
             self.destination_axis,
-            &mut table,
             0,
             0,
             F::one(),
+            &mut |offset, weight| {
+                table.push((offset, weight));
+                Ok(())
+            },
         )?;
         self.residual = ResidualTerms::Table(table);
         Ok(())
@@ -247,38 +250,56 @@ impl<F: Field> DenseLeftTensorView<'_, F> {
                     scalar * value
                 })
             }
-            ResidualTerms::Streamed => contract_residual_tensor_axes(
-                equality,
-                self.family,
-                self.destination_axis,
-                0,
-                base,
-                scalar,
-            ),
+            ResidualTerms::Streamed => {
+                let mut value = F::zero();
+                if scalar.is_zero() {
+                    return Ok(value);
+                }
+                visit_residual_terms(
+                    self.family,
+                    self.destination_axis,
+                    0,
+                    base,
+                    scalar,
+                    &mut |index, weight| {
+                        let term = equality.eval(index);
+                        value += if weight == F::one() {
+                            term
+                        } else {
+                            weight * term
+                        };
+                        Ok(())
+                    },
+                )?;
+                Ok(value)
+            }
         }
     }
 }
 
-fn collect_residual<F: Field>(
+/// Walk every nonzero residual term of `family`, skipping `destination_axis`,
+/// and pass each `(right offset, weight)` leaf to `leaf`. Offsets start at
+/// `offset` and weights at `weight`; both table and streaming modes use this
+/// one traversal.
+fn visit_residual_terms<F: Field>(
     family: &EqPairTensorFamily<F>,
     destination_axis: usize,
-    table: &mut Vec<(usize, F)>,
     axis_index: usize,
     offset: usize,
     weight: F,
+    leaf: &mut impl FnMut(usize, F) -> Result<(), AkitaError>,
 ) -> Result<(), AkitaError> {
     if axis_index == family.axes.len() {
-        table.push((offset, weight));
-        return Ok(());
+        return leaf(offset, weight);
     }
     if axis_index == destination_axis {
-        return collect_residual(
+        return visit_residual_terms(
             family,
             destination_axis,
-            table,
             axis_index + 1,
             offset,
             weight,
+            leaf,
         );
     }
     let axis = family
@@ -295,17 +316,12 @@ fn collect_residual<F: Field>(
         let next = checked_axis_offset(offset, axis.right_stride, coordinate, "right")?;
         let weight = if factor == F::one() {
             weight
+        } else if weight == F::one() {
+            factor
         } else {
             weight * factor
         };
-        collect_residual(
-            family,
-            destination_axis,
-            table,
-            axis_index + 1,
-            next,
-            weight,
-        )?;
+        visit_residual_terms(family, destination_axis, axis_index + 1, next, weight, leaf)?;
     }
     Ok(())
 }
@@ -478,66 +494,6 @@ fn dense_left_destination_axis<F: Field>(family: &EqPairTensorFamily<F>) -> Opti
         }
     }
     destination
-}
-
-fn contract_residual_tensor_axes<F: Field>(
-    equality: &OffsetEqWindow<F>,
-    family: &EqPairTensorFamily<F>,
-    destination_axis: usize,
-    axis_index: usize,
-    right_offset: usize,
-    weight: F,
-) -> Result<F, AkitaError> {
-    if weight.is_zero() {
-        return Ok(F::zero());
-    }
-    if axis_index == family.axes.len() {
-        let equality = equality.eval(right_offset);
-        return Ok(if weight == F::one() {
-            equality
-        } else {
-            weight * equality
-        });
-    }
-    if axis_index == destination_axis {
-        return contract_residual_tensor_axes(
-            equality,
-            family,
-            destination_axis,
-            axis_index + 1,
-            right_offset,
-            weight,
-        );
-    }
-    let axis = family
-        .axes
-        .get(axis_index)
-        .ok_or_else(|| AkitaError::Internal("residual tensor recursion axis is absent".into()))?;
-    let mut acc = F::zero();
-    for coordinate in 0..axis.len {
-        let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
-            AkitaError::InvalidInput("residual tensor axis coordinate weight is absent".into())
-        })?;
-        if axis_weight.is_zero() {
-            continue;
-        }
-        let next_weight = if axis_weight == F::one() {
-            weight
-        } else if weight == F::one() {
-            axis_weight
-        } else {
-            weight * axis_weight
-        };
-        acc += contract_residual_tensor_axes(
-            equality,
-            family,
-            destination_axis,
-            axis_index + 1,
-            checked_axis_offset(right_offset, axis.right_stride, coordinate, "right")?,
-            next_weight,
-        )?;
-    }
-    Ok(acc)
 }
 
 fn visit_tensor_coordinates<F: Field>(
