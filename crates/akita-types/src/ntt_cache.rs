@@ -15,6 +15,7 @@ use akita_error::AkitaError;
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use std::marker::PhantomData;
 
 use akita_params::dispatch::compression_ring_dim_supported_for_tier;
 use akita_params::{
@@ -212,6 +213,25 @@ pub fn select_compression_crt_ntt_params<F: Field + CanonicalEncoding, const D: 
         )));
     }
     select_crt_ntt_params_for_modulus::<F, D>()
+}
+
+/// The CRT bases [`select_crt_ntt_params`] can return for field `F`.
+///
+/// The field modulus alone fixes the base. Kernels that branch over a prepared
+/// cache's base guard each arm with these constants, so arms the field can
+/// never take are not monomorphized. Each flag covers its arm of the modulus
+/// selector by bit length: `q <= Q32_MODULUS` has at most 32 bits,
+/// `Q32_MODULUS < q <= Q64_MODULUS` has 32 to 64 bits, and both 128-bit
+/// moduli have more than 64.
+pub struct FieldCrtBases<F>(PhantomData<F>);
+
+impl<F: Field + CanonicalEncoding> FieldCrtBases<F> {
+    /// Whether `F` can select the Q32 base.
+    pub const Q32: bool = F::MODULUS_BITS <= 32;
+    /// Whether `F` can select the Q64 base.
+    pub const Q64: bool = F::MODULUS_BITS >= 32 && F::MODULUS_BITS <= 64;
+    /// Whether `F` can select the Q128 base.
+    pub const Q128: bool = F::MODULUS_BITS > 64;
 }
 
 fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usize>(

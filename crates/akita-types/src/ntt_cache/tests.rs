@@ -189,6 +189,34 @@ fn dense_i8_exact_ifma52_requires_q128_tail_capacity() {
     ));
 }
 
+/// `FieldCrtBases` admits the base the selector returns, so the guarded kernel
+/// arms never drop a reachable base. Only a 32-bit modulus admits two bases:
+/// one above `Q32_MODULUS` selects Q64.
+fn assert_field_crt_bases_admit_selector<F: Field + CanonicalEncoding>(admitted: [bool; 3]) {
+    let selected = match select_crt_ntt_params::<F, 128>().expect("CRT params") {
+        ProtocolCrtNttParams::Q32(_) => 0,
+        ProtocolCrtNttParams::Q64(_) => 1,
+        ProtocolCrtNttParams::Q128(_) => 2,
+    };
+    assert!(admitted[selected]);
+    assert_eq!(
+        admitted,
+        [
+            FieldCrtBases::<F>::Q32,
+            FieldCrtBases::<F>::Q64,
+            FieldCrtBases::<F>::Q128,
+        ]
+    );
+}
+
+#[test]
+fn field_crt_bases_admit_the_selected_base() {
+    assert_field_crt_bases_admit_selector::<Prime32Offset99>([true, true, false]);
+    assert_field_crt_bases_admit_selector::<Prime64Offset59>([false, true, false]);
+    assert_field_crt_bases_admit_selector::<Prime128Offset275>([false, false, true]);
+    assert_field_crt_bases_admit_selector::<Prime128OffsetA7F7>([false, false, true]);
+}
+
 #[test]
 fn q128_a7f7_selector_accepts_d512() {
     assert!(matches!(

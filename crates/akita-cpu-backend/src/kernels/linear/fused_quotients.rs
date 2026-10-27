@@ -792,21 +792,24 @@ fn fused_split_eq_quotients_with_digit_bound<F: Field + CanonicalEncoding, const
             )
         }};
     }
-    match (
-        negacyclic_slot.q32_base(),
-        cyclic_slot.q32_base(),
-        negacyclic_slot.q64_base(),
-        cyclic_slot.q64_base(),
-        negacyclic_slot.q128_base(),
-        cyclic_slot.q128_base(),
-    ) {
-        (Some(neg), Some(cyc), _, _, _, _) => run!(neg, cyc),
-        (_, _, Some(neg), Some(cyc), _, _) => run!(neg, cyc),
-        (_, _, _, _, Some(neg), Some(cyc)) => run!(neg, cyc),
-        _ => Err(AkitaError::InvalidSetup(
-            "cyclic and negacyclic NTT profiles do not match".into(),
-        )),
+    if FieldCrtBases::<F>::Q32 {
+        if let (Some(neg), Some(cyc)) = (negacyclic_slot.q32_base(), cyclic_slot.q32_base()) {
+            return run!(neg, cyc);
+        }
     }
+    if FieldCrtBases::<F>::Q64 {
+        if let (Some(neg), Some(cyc)) = (negacyclic_slot.q64_base(), cyclic_slot.q64_base()) {
+            return run!(neg, cyc);
+        }
+    }
+    if FieldCrtBases::<F>::Q128 {
+        if let (Some(neg), Some(cyc)) = (negacyclic_slot.q128_base(), cyclic_slot.q128_base()) {
+            return run!(neg, cyc);
+        }
+    }
+    Err(AkitaError::InvalidSetup(
+        "cyclic and negacyclic NTT profiles do not match".into(),
+    ))
 }
 
 #[cfg(test)]
