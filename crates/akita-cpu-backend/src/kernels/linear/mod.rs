@@ -16,7 +16,7 @@ use std::array::from_fn;
 use std::mem::size_of;
 use std::ops::Range;
 
-use akita_types::{select_crt_ntt_params, PreparedNttCache, ProtocolCrtNttParams};
+use akita_types::{select_crt_ntt_params, FieldCrtBases, PreparedNttCache, ProtocolCrtNttParams};
 
 mod block_parallel;
 mod capacity;

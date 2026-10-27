@@ -1,31 +1,40 @@
 use super::*;
 
+/// Run `$func` on the prepared base of `$slot`. Only the bases field `$field`
+/// can select are compiled; see [`FieldCrtBases`].
 macro_rules! dispatch_slot {
-    ($slot:expr, $num_rows:expr, $num_cols:expr, $func:ident $(, $arg:expr)*) => {{
+    ($field:ty, $slot:expr, $num_rows:expr, $num_cols:expr, $func:ident $(, $arg:expr)*) => {{
         let nr: usize = $num_rows;
         let nc: usize = $num_cols;
-        if let Some(base) = $slot.q32_base() {
-            let neg = base.negacyclic().ok_or_else(|| {
+        macro_rules! run_base {
+            ($base:expr) => {{
+                let base = $base;
+                let neg = base.negacyclic().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
-            $func(&rows, $($arg,)* base.params())
-        } else if let Some(base) = $slot.q64_base() {
-            let neg = base.negacyclic().ok_or_else(|| {
-                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-                })?;
-                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
-            $func(&rows, $($arg,)* base.params())
-        } else if let Some(base) = $slot.q128_base() {
-            let neg = base.negacyclic().ok_or_else(|| {
-                    AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-                })?;
-                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
-            $func(&rows, $($arg,)* base.params())
-        } else {
-                return Err(AkitaError::InvalidSetup(
-                    "signed-i8 matvec requires a base-profile NTT cache".into(),
-                ));
+                $func(&rows, $($arg,)* base.params())
+            }};
+        }
+        'dispatch: {
+            if FieldCrtBases::<$field>::Q32 {
+                if let Some(base) = $slot.q32_base() {
+                    break 'dispatch run_base!(base);
+                }
+            }
+            if FieldCrtBases::<$field>::Q64 {
+                if let Some(base) = $slot.q64_base() {
+                    break 'dispatch run_base!(base);
+                }
+            }
+            if FieldCrtBases::<$field>::Q128 {
+                if let Some(base) = $slot.q128_base() {
+                    break 'dispatch run_base!(base);
+                }
+            }
+            return Err(AkitaError::InvalidSetup(
+                "signed-i8 matvec requires a base-profile NTT cache".into(),
+            ));
         }
     }};
 }
@@ -48,6 +57,7 @@ pub(crate) fn mat_vec_mul_ntt_blocks_i8<
     validate_i8_log_basis(shape.log_basis)?;
     if matches!(policy, I8CommitPolicy::Dense) && !check_zero && num_rows == 1 {
         return Ok(dispatch_slot!(
+            F,
             slot,
             1usize,
             num_cols,
@@ -86,7 +96,7 @@ pub(crate) fn mat_vec_mul_ntt_blocks_i8<
                     params,
                 )
             }
-            dispatch_slot!(slot, num_rows, num_cols, driver, source, blocks, shape, policy)
+            dispatch_slot!(F, slot, num_rows, num_cols, driver, source, blocks, shape, policy)
         }};
     }
     if check_zero {
@@ -119,6 +129,7 @@ pub fn mat_vec_mul_ntt_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
         )?;
     }
     dispatch_slot!(
+        F,
         slot,
         num_rows,
         num_cols,

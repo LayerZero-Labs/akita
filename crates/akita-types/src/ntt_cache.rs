@@ -15,6 +15,7 @@ use akita_error::AkitaError;
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use std::marker::PhantomData;
 
 use akita_params::dispatch::compression_ring_dim_supported_for_tier;
 use akita_params::{
@@ -214,24 +215,50 @@ pub fn select_compression_crt_ntt_params<F: Field + CanonicalEncoding, const D: 
     select_crt_ntt_params_for_modulus::<F, D>()
 }
 
+/// The CRT bases [`select_crt_ntt_params`] can return for field `F`.
+///
+/// The field modulus alone fixes the base. Kernels that branch over a prepared
+/// cache's base guard each arm with these constants, so arms the field can
+/// never take are not monomorphized. The modulus selector checks the same
+/// flags, so it never returns a base they reject: `q <= Q32_MODULUS` has at
+/// most 32 bits, `Q32_MODULUS < q <= Q64_MODULUS` has 32 to 64 bits, and both
+/// 128-bit moduli have more than 64.
+pub struct FieldCrtBases<F>(PhantomData<F>);
+
+impl<F: Field + CanonicalEncoding> FieldCrtBases<F> {
+    /// Whether `F` can select the Q32 base.
+    pub const Q32: bool = F::MODULUS_BITS <= 32;
+    /// Whether `F` can select the Q64 base.
+    pub const Q64: bool = F::MODULUS_BITS >= 32 && F::MODULUS_BITS <= 64;
+    /// Whether `F` can select the Q128 base.
+    pub const Q128: bool = F::MODULUS_BITS > 64;
+
+    /// The error for a base `F` cannot select, which only a cache or plan
+    /// built for another field can carry.
+    #[must_use]
+    pub fn unselectable_base() -> AkitaError {
+        AkitaError::InvalidSetup("CRT base outside the bases this field can select".into())
+    }
+}
+
 fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     let modulus = field_modulus::<F>()?;
     let a7f7_q128_modulus = u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenne>::OFFSET - 1);
 
-    if modulus <= Q32_MODULUS as u128 {
+    if FieldCrtBases::<F>::Q32 && modulus <= Q32_MODULUS as u128 {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q32_MAX_RING_D)?;
         }
         return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(Q32_PRIMES)));
     }
-    if modulus <= Q64_MODULUS as u128 {
+    if FieldCrtBases::<F>::Q64 && modulus <= Q64_MODULUS as u128 {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q64_MAX_RING_D)?;
         }
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
     }
-    if modulus == Q128_MODULUS || modulus == a7f7_q128_modulus {
+    if FieldCrtBases::<F>::Q128 && (modulus == Q128_MODULUS || modulus == a7f7_q128_modulus) {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
         }
@@ -350,15 +377,16 @@ pub fn centered_quotient_requires_i16_tail_for_field<
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => {
+        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => {
             required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
         }
-        ProtocolCrtNttParams::Q64(params) => {
+        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => {
             required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
         }
-        ProtocolCrtNttParams::Q128(params) => {
+        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => {
             required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
         }
+        _ => return Err(FieldCrtBases::<F>::unselectable_base()),
     }
     .ok_or_else(|| exact_capacity_error::<D>(1, rhs_abs_bound))
 }
@@ -774,13 +802,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 tail,
                 exact,
                 ..
-            } => {
+            } if FieldCrtBases::<F>::Q32 => {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
-            Self::Q32Ifma52 { neg, tail } => {
+            Self::Q32Ifma52 { neg, tail } if FieldCrtBases::<F>::Q32 => {
                 let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
                 if !neg
                     .crt_capacity()
@@ -802,13 +830,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 tail,
                 exact,
                 ..
-            } => {
+            } if FieldCrtBases::<F>::Q64 => {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
-            Self::Q64Ifma52 { neg } => {
+            Self::Q64Ifma52 { neg } if FieldCrtBases::<F>::Q64 => {
                 let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
                 if !neg
                     .crt_capacity()
@@ -826,13 +854,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 tail,
                 exact,
                 ..
-            } => {
+            } if FieldCrtBases::<F>::Q128 => {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
-            Self::Q128Ifma52 { neg, tail } => {
+            Self::Q128Ifma52 { neg, tail } if FieldCrtBases::<F>::Q128 => {
                 let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
                 if !neg
                     .crt_capacity()
@@ -853,6 +881,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 }
             }
             Self::Limbs(neg) => neg.mat_vec_i16(log_basis, num_rows, rhs),
+            _ => Err(FieldCrtBases::<F>::unselectable_base()),
         }
     }
 }
@@ -1212,9 +1241,10 @@ fn prepare_transform_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
         return Ok(PreparedNttCache(prepared));
     }
     let prepared = match selected {
-        ProtocolCrtNttParams::Q32(params) => prepare!(params, Q32),
-        ProtocolCrtNttParams::Q64(params) => prepare!(params, Q64),
-        ProtocolCrtNttParams::Q128(params) => prepare!(params, Q128),
+        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => prepare!(params, Q32),
+        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => prepare!(params, Q64),
+        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => prepare!(params, Q128),
+        _ => return Err(FieldCrtBases::<F>::unselectable_base()),
     };
     prepared.validate()?;
     Ok(PreparedNttCache(prepared))

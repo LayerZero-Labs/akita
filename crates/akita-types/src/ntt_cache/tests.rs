@@ -1,7 +1,10 @@
 use super::*;
 use akita_algebra::CyclotomicRing;
 use core::mem::size_of;
-use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
+use jolt_field::{
+    Fp32, Fp64, Prime128Offset275, Prime24Offset3, Prime32Offset99, Prime40Offset195,
+    Prime56Offset27, Prime64Offset59, Ring,
+};
 
 fn flat_zeros<F: Field, const D: usize>(len: usize) -> akita_params::FlatMatrix<F> {
     akita_params::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])
@@ -187,6 +190,42 @@ fn dense_i8_exact_ifma52_requires_q128_tail_capacity() {
         64,
         true,
     ));
+}
+
+/// The selector returns the base its field's `FieldCrtBases` flags expect.
+/// Only a 32-bit modulus admits two bases: one above `Q32_MODULUS` selects Q64.
+fn assert_field_crt_bases_admit_selector<F: Field + CanonicalEncoding>(
+    admitted: [bool; 3],
+    expected: usize,
+) {
+    let selected = match select_crt_ntt_params::<F, 128>().expect("CRT params") {
+        ProtocolCrtNttParams::Q32(_) => 0,
+        ProtocolCrtNttParams::Q64(_) => 1,
+        ProtocolCrtNttParams::Q128(_) => 2,
+    };
+    assert_eq!(selected, expected);
+    assert_eq!(
+        admitted,
+        [
+            FieldCrtBases::<F>::Q32,
+            FieldCrtBases::<F>::Q64,
+            FieldCrtBases::<F>::Q128,
+        ]
+    );
+}
+
+#[test]
+fn field_crt_bases_admit_the_selected_base() {
+    assert_field_crt_bases_admit_selector::<Prime24Offset3>([true, false, false], 0);
+    assert_field_crt_bases_admit_selector::<Prime32Offset99>([true, true, false], 0);
+    assert_field_crt_bases_admit_selector::<Fp64<{ Q32_MODULUS }>>([true, true, false], 0);
+    // The largest 32-bit prime lies above `Q32_MODULUS` and selects Q64.
+    assert_field_crt_bases_admit_selector::<Fp32<{ u32::MAX - 4 }>>([true, true, false], 1);
+    assert_field_crt_bases_admit_selector::<Prime40Offset195>([false, true, false], 1);
+    assert_field_crt_bases_admit_selector::<Prime56Offset27>([false, true, false], 1);
+    assert_field_crt_bases_admit_selector::<Prime64Offset59>([false, true, false], 1);
+    assert_field_crt_bases_admit_selector::<Prime128Offset275>([false, false, true], 2);
+    assert_field_crt_bases_admit_selector::<Prime128OffsetA7F7>([false, false, true], 2);
 }
 
 #[test]
