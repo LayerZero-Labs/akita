@@ -48,7 +48,9 @@ dependencies = [
  "jolt-field",
  "keccak 0.1.6",
  "num-bigint 0.5.1",
+ "postcard",
  "serde",
+ "serde_json",
  "shake",
  "smallvec",
 ]
