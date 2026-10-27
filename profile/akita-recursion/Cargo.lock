@@ -300,7 +300,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "jolt-field",
- "spongefish",
+ "spongefish 0.7.4",
 ]
 
 [[package]]
@@ -423,9 +423,9 @@ version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
 ]
 
 [[package]]
@@ -434,10 +434,10 @@ version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0",
+ "ark-ff",
  "ark-poly",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-serialize",
+ "ark-std",
  "educe",
  "fnv",
  "hashbrown 0.15.5",
@@ -455,10 +455,10 @@ version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "allocative",
- "ark-ff-asm 0.5.0",
- "ark-ff-macros 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff-asm",
+ "ark-ff-macros",
+ "ark-serialize",
+ "ark-std",
  "arrayvec",
  "digest 0.10.7",
  "educe",
@@ -471,23 +471,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-ff"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7a806ac6c8307b929df4645776290a50ee2aac754ad09d8bdf73391309e43af"
-dependencies = [
- "ark-ff-asm 0.6.0",
- "ark-ff-macros 0.6.0",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
- "digest 0.10.7",
- "educe",
- "num-bigint 0.4.8",
- "num-traits",
- "zeroize",
-]
-
-[[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
@@ -497,32 +480,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-ff-asm"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1479009684adc073dff49a1025d3a7065b317a9ead25aaaca38cdc70058ba8a2"
-dependencies = [
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
-dependencies = [
- "num-bigint 0.4.8",
- "num-traits",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "ark-ff-macros"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0691ed21ef00ef89c1e9bda832eba493dda3ec2f8d892fb25b705f73f06bb8"
 dependencies = [
  "num-bigint 0.4.8",
  "num-traits",
@@ -537,9 +497,9 @@ version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
  "educe",
  "fnv",
  "hashbrown 0.15.5",
@@ -550,8 +510,8 @@ name = "ark-serialize"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
- "ark-serialize-derive 0.5.0",
- "ark-std 0.5.0",
+ "ark-serialize-derive",
+ "ark-std",
  "arrayvec",
  "digest 0.10.7",
  "num-bigint 0.4.8",
@@ -559,32 +519,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-serialize"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a74dd304fd536fb95d0a328e72be759209cc496a9da094c5bc56e5fea4f9e86b"
-dependencies = [
- "ark-serialize-derive 0.6.0",
- "ark-std 0.6.0",
- "digest 0.10.7",
- "num-bigint 0.4.8",
-]
-
-[[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "ark-serialize-derive"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f153690697a2b91e5e1251ff98411ee5371500a111a0fd317a70e588eb300f9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -600,16 +537,6 @@ dependencies = [
  "num-traits",
  "rand 0.8.8",
  "rayon",
-]
-
-[[package]]
-name = "ark-std"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "367c9c827ed431bff6868b7aa926e05b16eb46603cc8b6e768e4a5553fa1d155"
-dependencies = [
- "num-traits",
- "rand 0.8.8",
 ]
 
 [[package]]
@@ -781,10 +708,10 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 [[package]]
 name = "common"
 version = "0.2.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "allocative",
- "ark-serialize 0.5.0",
+ "ark-serialize",
  "serde",
  "syn 3.0.5",
 ]
@@ -963,9 +890,9 @@ checksum = "065945e9fff3c7dac5d6f72f8260eac82ad577e7c7009b6290847d1252d14d78"
 dependencies = [
  "ark-bn254",
  "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
  "bincode 1.3.3",
  "blake2 0.10.6",
  "digest 0.10.7",
@@ -1130,8 +1057,21 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "r-efi",
+ "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "getrandom"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
+dependencies = [
+ "cfg-if",
+ "js-sys",
+ "libc",
+ "r-efi 6.0.0",
  "wasm-bindgen",
 ]
 
@@ -1229,7 +1169,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-akita"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -1248,14 +1188,13 @@ dependencies = [
  "jolt-transcript",
  "rayon",
  "serde",
- "serde_bytes",
  "tracing",
 ]
 
 [[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "jolt-claims",
  "jolt-crypto",
@@ -1274,7 +1213,7 @@ dependencies = [
 [[package]]
 name = "jolt-claims"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "blake2 0.11.0",
  "derive_more",
@@ -1286,6 +1225,7 @@ dependencies = [
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-utils",
+ "rayon",
  "serde",
  "thiserror",
 ]
@@ -1293,7 +1233,7 @@ dependencies = [
 [[package]]
 name = "jolt-claims-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1303,13 +1243,13 @@ dependencies = [
 [[package]]
 name = "jolt-crypto"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "ark-bn254",
  "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
@@ -1324,11 +1264,11 @@ dependencies = [
 [[package]]
 name = "jolt-dory"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "ark-bn254",
  "ark-ec",
- "ark-serialize 0.5.0",
+ "ark-serialize",
  "dory-pcs",
  "jolt-crypto",
  "jolt-field",
@@ -1344,11 +1284,11 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
+ "ark-ff",
+ "ark-serialize",
  "cc",
  "num-traits",
  "rand_core 0.6.4",
@@ -1360,11 +1300,12 @@ dependencies = [
 [[package]]
 name = "jolt-host"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "bincode 2.0.1",
  "common",
  "jolt-field",
+ "jolt-platform",
  "jolt-program",
  "jolt-riscv",
  "postcard",
@@ -1376,7 +1317,7 @@ dependencies = [
 [[package]]
 name = "jolt-kernels"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "jolt-claims",
  "jolt-field",
@@ -1400,7 +1341,7 @@ dependencies = [
 [[package]]
 name = "jolt-kernels-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1410,7 +1351,7 @@ dependencies = [
 [[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "jolt-field",
  "jolt-riscv",
@@ -1421,7 +1362,7 @@ dependencies = [
 [[package]]
 name = "jolt-openings"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
@@ -1439,9 +1380,9 @@ source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#
 dependencies = [
  "ark-bn254",
  "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
  "arrayvec",
  "num-bigint 0.4.8",
  "num-integer",
@@ -1453,7 +1394,7 @@ dependencies = [
 [[package]]
 name = "jolt-platform"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -1463,7 +1404,7 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "jolt-field",
  "jolt-transcript",
@@ -1479,12 +1420,13 @@ dependencies = [
 [[package]]
 name = "jolt-program"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
- "ark-serialize 0.5.0",
+ "ark-serialize",
  "common",
  "jolt-riscv",
  "object",
+ "rayon",
  "serde",
  "thiserror",
 ]
@@ -1492,7 +1434,7 @@ dependencies = [
 [[package]]
 name = "jolt-prover"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "common",
  "jolt-akita",
@@ -1521,7 +1463,7 @@ dependencies = [
 [[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "jolt-field",
  "serde",
@@ -1531,9 +1473,9 @@ dependencies = [
 [[package]]
 name = "jolt-riscv"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
- "ark-serialize 0.5.0",
+ "ark-serialize",
  "serde",
  "strum",
  "thiserror",
@@ -1542,7 +1484,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "bincode 2.0.1",
  "bytemuck",
@@ -1570,7 +1512,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "common",
  "proc-macro2",
@@ -1581,7 +1523,7 @@ dependencies = [
 [[package]]
 name = "jolt-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
@@ -1597,21 +1539,21 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "ark-bn254",
- "ark-ff 0.5.0",
+ "ark-ff",
  "blake2 0.11.0",
  "digest 0.11.3",
+ "getrandom 0.4.3",
  "jolt-field",
- "rand 0.8.8",
- "spongefish",
+ "spongefish 0.8.0",
 ]
 
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "num-traits",
  "rayon",
@@ -1620,10 +1562,11 @@ dependencies = [
 [[package]]
 name = "jolt-verifier"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
- "ark-serialize 0.5.0",
+ "ark-serialize",
  "bincode 2.0.1",
+ "blake2 0.11.0",
  "common",
  "jolt-blindfold",
  "jolt-claims",
@@ -1646,7 +1589,7 @@ dependencies = [
 [[package]]
 name = "jolt-verifier-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1656,7 +1599,7 @@ dependencies = [
 [[package]]
 name = "jolt-witness"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "common",
  "jolt-claims",
@@ -1674,7 +1617,7 @@ dependencies = [
 [[package]]
 name = "jolt-witness-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2120,6 +2063,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "r-efi"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
 name = "rand"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2435,8 +2384,6 @@ name = "spongefish"
 version = "0.7.4"
 source = "git+https://github.com/arkworks-rs/spongefish?rev=ef9741346a150039427d9e0c02d6b2d73e93ec81#ef9741346a150039427d9e0c02d6b2d73e93ec81"
 dependencies = [
- "ark-ff 0.6.0",
- "ark-serialize 0.6.0",
  "blake2 0.11.0",
  "digest 0.11.3",
  "keccak 0.2.2",
@@ -2444,6 +2391,19 @@ dependencies = [
  "rand 0.8.8",
  "sha2",
  "sha3 0.11.0",
+]
+
+[[package]]
+name = "spongefish"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62560b5029264a655fc461a0ecadc4d24862799190897d3225b3272b7a3f13b7"
+dependencies = [
+ "digest 0.11.3",
+ "getrandom 0.4.3",
+ "shake",
+ "turboshake",
+ "zeroize",
 ]
 
 [[package]]
@@ -2539,10 +2499,10 @@ dependencies = [
 [[package]]
 name = "tracer"
 version = "0.2.0"
-source = "git+https://github.com/a16z/jolt?rev=e19eda725fb9af3dc4a7fa51c6307e7cf6922dea#e19eda725fb9af3dc4a7fa51c6307e7cf6922dea"
+source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
 dependencies = [
  "addr2line",
- "ark-serialize 0.5.0",
+ "ark-serialize",
  "clap",
  "common",
  "derive_more",
@@ -2625,6 +2585,17 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "turboshake"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
+dependencies = [
+ "digest 0.11.3",
+ "keccak 0.2.2",
+ "sponge-cursor",
 ]
 
 [[package]]
