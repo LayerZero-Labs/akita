@@ -105,7 +105,7 @@ mod tests {
                             )
                             .expect("materialized witness layout")
                             .live_coeff_len();
-                            let scalar = WitnessLayout::scalar_live_coeff_len(
+                            let scalar = WitnessLayout::measure_live_coeff_len(
                                 &params,
                                 &opening_batch,
                                 relation_geometry.extension_degree(),
@@ -308,7 +308,7 @@ mod tests {
                 }
                 assert_eq!(layout.r_rows()[0].geometry(), opening_geometry);
                 assert_eq!(layout.r_rows()[0].range().len(), 2 * 128);
-                let scalar = WitnessLayout::scalar_live_coeff_len(
+                let scalar = WitnessLayout::measure_live_coeff_len(
                     &params,
                     &opening_batch,
                     relation_geometry.extension_degree(),
@@ -670,7 +670,7 @@ mod tests {
                         WitnessLayout::new(&params, &opening, &geometry, chunks, quotient)
                             .expect("materialized packing layout")
                             .live_coeff_len();
-                    let actual = WitnessLayout::scalar_live_coeff_len(
+                    let actual = WitnessLayout::measure_live_coeff_len(
                         &params,
                         &opening,
                         extension_degree,
@@ -698,7 +698,7 @@ mod tests {
                     WitnessLayout::new(params, &opening, &geometry, chunks, quotient)
                 })
                 .expect_err("materialized layout rejects malformed input");
-            let actual = WitnessLayout::scalar_live_coeff_len(
+            let actual = WitnessLayout::measure_live_coeff_len(
                 params,
                 &opening,
                 extension_degree,
@@ -727,5 +727,66 @@ mod tests {
         let mut malformed = params;
         malformed.own_group_mut().profile.inner.digits.num_digits = 0;
         check(&malformed, 2, 1, quotient);
+    }
+
+    #[test]
+    fn measured_live_length_matches_materialized_setup_prefixed_layout() {
+        use akita_params::layout::setup_prefix_slots::{
+            scheduled_setup_prefix, setup_prefix_precommitted_params,
+        };
+        use akita_params::test_fixtures::{
+            prefix_eligible_level_params, retarget_group_role_dims_wide,
+        };
+        use akita_params::{padded_setup_prefix_len, PolynomialGroupLayout};
+
+        let mut compared = 0;
+        let mut compared_chunked = 0;
+        for natural_len in [65, 129, 256] {
+            let mut params = prefix_eligible_level_params();
+            retarget_group_role_dims_wide(&mut params, 64, 64, 1024);
+            let commitment_params =
+                setup_prefix_precommitted_params(&params, padded_setup_prefix_len(natural_len))
+                    .expect("setup-prefix params");
+            params
+                .set_setup_prefix(Some(scheduled_setup_prefix(natural_len, commitment_params)))
+                .expect("attach setup prefix");
+            let opening_batch = params
+                .opening_layout_for_final_group(PolynomialGroupLayout::new(0, 1))
+                .expect("setup-prefixed opening batch");
+            assert_eq!(opening_batch.num_groups(), 2);
+            for (extension_degree, num_chunks) in [(1, 1), (2, 1), (1, 2), (2, 2), (1, 4)] {
+                let Ok(relation_geometry) =
+                    RelationWitnessGeometry::for_level(&params, &opening_batch, extension_degree)
+                else {
+                    continue;
+                };
+                let quotient_plan = RelationQuotientPlan::quotient_lift(2).unwrap();
+                let materialized = WitnessLayout::new(
+                    &params,
+                    &opening_batch,
+                    &relation_geometry,
+                    num_chunks,
+                    quotient_plan,
+                )
+                .expect("materialized witness layout")
+                .live_coeff_len();
+                let measured = WitnessLayout::measure_live_coeff_len(
+                    &params,
+                    &opening_batch,
+                    extension_degree,
+                    num_chunks,
+                    quotient_plan,
+                )
+                .expect("measured witness length");
+                assert_eq!(measured, materialized);
+                compared += 1;
+                compared_chunked += usize::from(num_chunks > 1);
+            }
+        }
+        assert!(compared > 0, "no setup-prefixed level was laid out");
+        assert!(
+            compared_chunked > 0,
+            "no chunked setup-prefixed level was laid out"
+        );
     }
 }
