@@ -39,7 +39,7 @@ fn params(ring_dimension: usize) -> CommittedGroupParams {
         1,
         1,
         1,
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+        akita_challenges::FoldChallengeFamily::production_for_ring_dim(ring_dimension)
             .expect("challenge config"),
     )
     .with_decomp(8, 32, 2, 2, 2)
@@ -58,9 +58,10 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
         },
         recursive_folds: Vec::new(),
         terminal: TerminalFoldParams {
-            fold_challenge_config:
-                akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
-                    .expect("terminal challenge"),
+            fold_challenge_config: akita_challenges::FoldChallengeFamily::production_for_ring_dim(
+                64,
+            )
+            .expect("terminal challenge"),
             response_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension: 64,

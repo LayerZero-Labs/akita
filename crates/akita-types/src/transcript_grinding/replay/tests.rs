@@ -1,6 +1,6 @@
 use super::*;
 use akita_challenges::{
-    FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw, ProverFoldDraw, SparseChallengeConfig,
+    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, PreviewFoldDraw, ProverFoldDraw,
     VerifierFoldDraw,
 };
 use akita_params::{ChallengeFieldOrder, GrindingRun};
@@ -375,7 +375,7 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
         ChallengeFieldOrder::from_full_capacity(128).unwrap(),
     )
     .unwrap();
-    let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let config = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
     let site = GrindingSite::FoldResponse { level: 3 };
     let nonce = 7;
     let state = new_prover_channel(b"native-fold-transaction", b"fixture").unwrap();

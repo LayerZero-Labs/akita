@@ -1,5 +1,5 @@
 use super::*;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::tail_golomb_rice_low_bits::wire_rice_low_bits;
 use akita_params::test_fixtures::test_lp;
@@ -319,12 +319,12 @@ fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
     let matrix = terminal_matrix_with_bucket(1_428);
     let light = akita_params::sis::certified_terminal_response_linf_cap(
         &matrix,
-        &SparseChallengeConfig::pm1_only(3),
+        &FoldChallengeFamily::pm1_only(3),
     )
     .expect("light challenge cap");
     let heavy = akita_params::sis::certified_terminal_response_linf_cap(
         &matrix,
-        &SparseChallengeConfig::pm1_only(6),
+        &FoldChallengeFamily::pm1_only(6),
     )
     .expect("heavy challenge cap");
     assert!(
@@ -344,7 +344,7 @@ fn terminal_cap_has_exactly_one_implementation() {
     for bucket in [1_428u128, 1_484, 104_244] {
         let matrix = terminal_matrix_with_bucket(bucket);
         for weight in [3usize, 6, 11] {
-            let sparse = SparseChallengeConfig::pm1_only(weight);
+            let sparse = FoldChallengeFamily::pm1_only(weight);
             let mut lp = test_lp();
             lp.own_group_mut().profile.inner.matrix = matrix;
             lp.own_group_mut().opening.fold_challenge_config = sparse;

@@ -14,7 +14,7 @@ use crate::opaque::{
     CpuOuterCommitOperation, NttCacheOwnerId,
 };
 use crate::{AkitaProverSetup, DensePoly};
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::{
     CommittedGroupParams, CompressionChainPlan, RingRelationMode, SetupMatrixCapacity,
@@ -129,7 +129,7 @@ fn distinct_resource_owners_are_prewarmed_and_released_independently() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
@@ -271,7 +271,7 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
@@ -379,7 +379,7 @@ fn resident_state_preflight_rejects_mismatched_plan_metadata() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();

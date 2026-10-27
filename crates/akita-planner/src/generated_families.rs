@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, EmitSpec, PlannerPolicy};
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
 use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId, ScheduleLookupKey};
@@ -280,7 +280,7 @@ pub struct GeneratedFamily {
     pub policy: fn() -> PlannerPolicy,
     /// The family config's declared producer contract (class plus bound).
     pub source_contract: fn() -> Result<CommittedSourceContract, AkitaError>,
-    pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    pub ring_challenge_config: fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
     /// Build one caller requested canonical precommit producer record.
     pub explicit_precommitted_group: ExplicitPrecommittedGroupGenerator,
 }

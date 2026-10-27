@@ -173,7 +173,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
             2,
             8,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            FoldChallengeFamily::pm1_only(3),
         );
         params.own_group_mut().profile.outer_slice_count = outer_slice_count;
         params.with_decomp(1, 64, 2, 2, 2).expect("slice candidate")

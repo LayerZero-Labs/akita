@@ -3,7 +3,7 @@ use crate::commitment::PortableStatePolicy;
 use crate::opaque::CpuBackend;
 use crate::opaque::{ComputeBackendSetup, OperationCtx};
 use crate::{AkitaProverSetup, DensePoly};
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::sis::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
@@ -38,7 +38,7 @@ fn audited_commit_params(
         1,
         1,
         1,
-        SparseChallengeConfig::production_for_ring_dim(D)
+        FoldChallengeFamily::production_for_ring_dim(D)
             .expect("D has a production challenge configuration"),
     );
     params.own_group_mut().profile.outer_slice_count = slice_count;
@@ -153,7 +153,7 @@ fn commit_level_params_reject_log_basis_above_i8_range() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(2, 4, 2, 2, 2)
     .unwrap();

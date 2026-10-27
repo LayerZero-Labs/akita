@@ -3,7 +3,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::{
     gadget_row_scalars, CommitmentPayloadMode, FlatMatrix, GroupCommitPhaseParams,
     GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams, OpenCommitMatrixParams,
@@ -271,7 +271,7 @@ fn compressed_reduced_fixture() -> (
     E,
     usize,
 ) {
-    let root_challenge = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+    let root_challenge = FoldChallengeFamily::production_for_ring_dim(128).unwrap();
     let mut params = akita_params::CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         128,
@@ -292,7 +292,7 @@ fn compressed_reduced_fixture() -> (
     };
     params.own_group_mut().profile.group = PolynomialGroupLayout::new(10, 1);
 
-    let frozen_challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let frozen_challenge = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
     let mut frozen = akita_params::CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         64,

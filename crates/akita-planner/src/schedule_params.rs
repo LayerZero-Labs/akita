@@ -29,7 +29,7 @@ pub(crate) fn direct_setup_scan_work_elements(
         .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan work overflow".into()))
 }
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
@@ -581,7 +581,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
-    &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>;
+    &'a dyn Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>;
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 

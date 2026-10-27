@@ -261,7 +261,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+    use akita_challenges::{FoldChallengeFamily, SparseChallenge};
     use akita_params::{
         gadget_row_scalars, CommittedGroupParams, OpenCommitMatrixParams, OpeningClaimsLayout,
         PolynomialGroupLayout, SisModulusProfileId,
@@ -330,7 +330,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+            FoldChallengeFamily::production_for_ring_dim(128).unwrap(),
         )
         .with_decomp(4, 4, 2, 2, 2)
         .unwrap();
@@ -338,7 +338,7 @@ mod tests {
             challenge_subring_dimension: 64,
         };
         params.own_group_mut().opening.fold_challenge_config =
-            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+            FoldChallengeFamily::production_for_ring_dim(64).unwrap();
         let batch =
             OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(9, 2)]).unwrap();
         let geometry = RelationWitnessGeometry::for_level(&params, &batch, 2).unwrap();
@@ -459,7 +459,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::production_for_ring_dim(256).unwrap(),
+            FoldChallengeFamily::production_for_ring_dim(256).unwrap(),
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
@@ -467,7 +467,7 @@ mod tests {
             challenge_subring_dimension: 64,
         };
         params.own_group_mut().opening.fold_challenge_config =
-            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+            FoldChallengeFamily::production_for_ring_dim(64).unwrap();
         params.open_matrix = OpenCommitMatrixParams::new_unchecked(
             params.open().matrix.security_policy(),
             params.open().matrix.sis_table_key().table_digest,
