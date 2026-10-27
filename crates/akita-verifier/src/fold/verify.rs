@@ -47,6 +47,10 @@ where
 
     /// Verify exactly one multi-group opening on the caller's session.
     ///
+    /// Applications must create the session with Akita's `new_prover_channel` or
+    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+    /// spongefish states cannot be adopted.
+    ///
     /// Absorbs the native protocol/version and setup/catalog/profile context.
     /// This checks the opening's grinding plan without requiring stream EOF;
     /// the caller retains responsibility for final session acceptance.

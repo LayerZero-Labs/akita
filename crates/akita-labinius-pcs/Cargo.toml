@@ -14,6 +14,7 @@ labinius = [
   "akita-labinius-verifier/labinius",
   "akita-labinius-prover/labinius",
 ]
+logging-transcript = ["akita-pcs/logging-transcript"]
 labinius-catalog-gen = [
   "labinius",
   "dep:akita-planner",

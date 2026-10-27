@@ -172,6 +172,10 @@ where
 
     /// Append a complete multi-group PCS opening to the caller's session.
     ///
+    /// Applications must create the session with Akita's `new_prover_channel` or
+    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+    /// spongefish states cannot be adopted.
+    ///
     /// The opening absorbs its public protocol/version/setup/catalog context,
     /// consumes its exact grinding plan, and returns without finishing the
     /// session. The caller can then append another subprotocol or message.

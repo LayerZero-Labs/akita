@@ -218,6 +218,9 @@ fn domain<'a>(
 
 /// Construct a bound prover channel.
 ///
+/// Applications composing borrowed openings must start here with their application
+/// instance bytes; arbitrary external spongefish states cannot be adopted.
+///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidInput`] when a framed transcript input length exceeds
@@ -229,6 +232,9 @@ pub fn new_prover_channel(session: &[u8], instance: &[u8]) -> Result<ProverChann
 }
 
 /// Construct a bound verifier channel over one proof byte string.
+///
+/// Applications composing borrowed openings must start here with the same application
+/// instance bytes as the prover; arbitrary external spongefish states cannot be adopted.
 ///
 /// # Errors
 ///

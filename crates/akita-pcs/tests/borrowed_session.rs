@@ -145,16 +145,16 @@ fn borrowed_multi_group_opening_preserves_the_callers_session() {
         assert_eq!(state.prover_message::<[u8; 32]>().unwrap(), challenge);
         state.check_eof().unwrap();
 
-        for (session, domain, prefix) in [
+        for (session, instance, prefix) in [
             (
-                b"wrong-suite".as_slice(),
+                b"wrong-session".as_slice(),
                 b"outer".as_slice(),
                 b"prefix".as_slice(),
             ),
-            (b"borrowed-test", b"wrong-domain", b"prefix"),
+            (b"borrowed-test", b"wrong-instance", b"prefix"),
             (b"borrowed-test", b"outer", b"wrong-prefix"),
         ] {
-            let mut state = new_verifier_channel(session, domain, &proof).unwrap();
+            let mut state = new_verifier_channel(session, instance, &proof).unwrap();
             state.public_message(prefix);
             assert!(verifier
                 .batched_verify_in_session(&mut state, statement(), BasisMode::Lagrange)

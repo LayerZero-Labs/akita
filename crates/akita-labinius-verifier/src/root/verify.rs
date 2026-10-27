@@ -241,8 +241,13 @@ where
 }
 
 /// Verify one root reduction on a borrowed native session without requiring EOF.
+///
 /// The same public protocol/version/setup identity precedes all its challenges.
 /// A failed opening permanently invalidates the caller's verifier session.
+///
+/// Applications must create the session with Akita's `new_prover_channel` or
+/// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+/// spongefish states cannot be adopted.
 pub fn verify_root_reduction_in_session<H, F, E, const D: usize, M, O>(
     admitted: &AdmittedRootSetup<D, M>,
     statement: &RootStatement<'_, H, E>,

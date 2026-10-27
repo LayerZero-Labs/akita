@@ -177,6 +177,10 @@ impl<P: FieldFamily> Prover<P> {
     /// Open on the caller's native session, then leave it ready for the next
     /// subprotocol. The grouped PCS discharge uses that same spongefish state.
     ///
+    /// Applications must create the session with Akita's `new_prover_channel` or
+    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+    /// spongefish states cannot be adopted.
+    ///
     /// # Errors
     /// Returns an error for an invalid statement, source, commitment or proof.
     pub fn open_in_session<H: SwitchField>(

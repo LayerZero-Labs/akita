@@ -273,6 +273,10 @@ where
 
 /// Append a multi-group opening to a caller-owned Spongefish session.
 ///
+/// Applications must create the session with Akita's `new_prover_channel` or
+/// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+/// spongefish states cannot be adopted.
+///
 /// Absorbs the native protocol version and complete setup/catalog/profile
 /// descriptor before any opening challenge. Completion checks this opening's
 /// grinding plan and leaves the caller's session available for its next message.

@@ -105,6 +105,10 @@ impl<P: FieldFamily> Verifier<P> {
     /// Verify one complete root opening from the caller's session. Later
     /// messages are left for the caller, which owns the final EOF check.
     ///
+    /// Applications must create the session with Akita's `new_prover_channel` or
+    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+    /// spongefish states cannot be adopted.
+    ///
     /// # Errors
     /// Returns an error for an invalid statement or rejected opening.
     pub fn verify_in_session<H: SwitchField>(

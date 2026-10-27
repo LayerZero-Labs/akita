@@ -350,6 +350,10 @@ where
 
 /// Prove one root reduction on a borrowed native session, leaving it open.
 ///
+/// Applications must create the session with Akita's `new_prover_channel` or
+/// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
+/// spongefish states cannot be adopted.
+///
 /// The protocol version and admitted setup/profile identity are absorbed as
 /// public data before any reduction challenge. The oracle must authenticate
 /// every returned table evaluation on this same session.
