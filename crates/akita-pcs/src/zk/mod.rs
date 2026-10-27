@@ -68,7 +68,7 @@ use compression::BackendCompression;
 use compression::Chains;
 pub use residual::{ResidualMatrices, ResidualShape};
 use rounds::{
-    ClearProverRounds, ClearVerifierRounds, FusedE, FusedKernel, ProductKernel, SecretTable, SplitB,
+    ClearProverRounds, ClearVerifierRounds, FusedKernel, ProductKernel, SecretTable, SplitB,
 };
 use rows::{
     batch_rows, batch_target, batch_weight_at, ceil_log2, row_variables, zk_error, PaddingTerm,
@@ -248,8 +248,9 @@ where
         {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
-        // `e`'s digits and every table derived from them are wiped when
-        // freed (`Zeroizing`, `SecretTable`), and enter `F` through `lift_ct`.
+        // `e`'s digits and every table derived from them, but the committed
+        // polynomial, are wiped when freed (`Zeroizing`, `SecretTable`), and
+        // enter `F` through `lift_ct`.
         let mut committed = Zeroizing::new(Vec::with_capacity(shape.padded_len()));
         committed.extend_from_slice(digits.committed);
         committed.extend_from_slice(digits.padding);
@@ -258,15 +259,12 @@ where
         }
         committed.resize(shape.padded_len(), 0);
 
-        // 1. Commit to e.
-        let e = SecretTable::padded(
-            cfg_iter!(committed)
-                .map(|&digit| lift_ct::<F>(i64::from(digit)))
-                .collect(),
-            0,
-        );
-        let poly = DensePoly::from_field_evals(shape.num_vars, &e[..]).map_err(zk_error)?;
-        drop(e);
+        // 1. Commit to e. Its field form moves into the committed
+        // polynomial, which the backend owns and frees unwiped.
+        let e: Vec<F> = cfg_iter!(committed)
+            .map(|&digit| lift_ct::<F>(i64::from(digit)))
+            .collect();
+        let poly = DensePoly::from_field_evals(shape.num_vars, e).map_err(zk_error)?;
         let source = side.backend.import_source(vec![poly]).map_err(zk_error)?;
         let output = side
             .backend
@@ -341,17 +339,19 @@ where
         )
         .map_err(zk_error)?;
         grinding.finish().map_err(zk_error)?;
+        drop(session);
 
         // 5. The fused range-and-relation sumcheck, with the binary
         // constraint on the compression digits.
         let gamma: F = transcript.challenge();
         let zeta: F = transcript.challenge();
         let support = chains.support(shape.padded_len()).map_err(zk_error)?;
-        let mut fused = FusedKernel {
-            a: batch.a,
-            b: SplitB::new(&range.point, gamma, zeta, support.intervals()),
-            e: FusedE::Digits(committed),
-        };
+        let mut fused = FusedKernel::new(
+            batch.a,
+            SplitB::new(&range.point, gamma, zeta, support.intervals()),
+            committed,
+        )
+        .map_err(zk_error)?;
         let claim = batch.b + gamma * range.range_image;
         let point = prove_single::<F, F, AkitaError, _>(
             &mut FusedRounds(&mut fused),
@@ -361,10 +361,10 @@ where
         .map_err(zk_error)?
         .challenges;
         let v = fused
-            .e
-            .first()
+            .e_first()
             .ok_or_else(|| zk_error(AkitaError::Internal("a bound table is empty".into())))?;
         transcript.send(&v);
+        drop(fused);
 
         // 6. Open E(r) = v.
         let group =

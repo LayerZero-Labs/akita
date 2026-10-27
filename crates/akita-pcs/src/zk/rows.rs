@@ -144,17 +144,26 @@ impl PaddingTerm<F> {
         .map(Some)
     }
 
-    /// The term's weights on `e`'s padding entries.
-    pub(crate) fn weights(&self, shape: ResponseShape) -> Result<Vec<F>, AkitaError> {
+    /// Appends the term's weights on `e`'s padding entries to `a`, the
+    /// weights of `e`'s `shape.len` live entries, filling it to exactly
+    /// `shape.padded_len()` entries.
+    pub(crate) fn extend_weights(
+        &self,
+        shape: ResponseShape,
+        a: &mut Vec<F>,
+    ) -> Result<(), AkitaError> {
         if self.point.len() != shape.num_vars {
             return Err(AkitaError::InvalidInput("padding point width".into()));
+        }
+        if a.len() != shape.len {
+            return Err(AkitaError::Internal("row weights length".into()));
         }
         let half = shape.num_vars / 2;
         let (lo, hi) = (eq_table(&self.point[..half]), eq_table(&self.point[half..]));
         let mask = (1 << half) - 1;
-        Ok((shape.len..shape.padded_len())
-            .map(|j| lo[j & mask] * hi[j >> half])
-            .collect())
+        a.reserve_exact(shape.padded_len() - shape.len);
+        a.extend((shape.len..shape.padded_len()).map(|j| lo[j & mask] * hi[j >> half]));
+        Ok(())
     }
 
     /// The term's weight at `point`: `Σ_{j ≥ len} eq(τ_pad, j)·eq(point, j)`.
@@ -247,11 +256,8 @@ pub(crate) fn batch_rows<const D: usize>(
     claims: ProductClaims<F>,
     chains: &Chains<'_>,
 ) -> Result<BatchedRows<F>, ZkError> {
-    let (mut a, _) = statement.weigh(&weights.rows, alpha)?;
-    if a.len() != shape.len {
-        return Err(zk_error(AkitaError::Internal("row weights length".into())));
-    }
-    a.extend(padding.weights(shape).map_err(zk_error)?);
+    let (mut a, _) = statement.weigh(&weights.rows, alpha, shape.padded_len())?;
+    padding.extend_weights(shape, &mut a).map_err(zk_error)?;
     chains
         .accumulate(alpha, &weights.chains, &mut a)
         .map_err(zk_error)?;
