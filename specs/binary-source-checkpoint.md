@@ -374,7 +374,19 @@ binary evaluation. It is essential: the first identity alone does not constrain
 the claimed value v. ∎
 
 The analogous prime rows use the **full** response, not its lowest digit.
-For each fixed prime point and admitted component functional L_P, authenticate
+Put S_E=E[Z]/Phi and unpack each response or source column into M scalar
+components v_r in S_E, undoing signed packing. For each prime plane, fix public
+row weights e_r in E before the fold challenge and define
+
+```text
+L_P : S_E^M -> S_E,       L_P(v) = sum_r e_r v_r.
+```
+
+This map is S_E-linear: for every s in S_E,
+`L_P(s v)=sum_r e_r s v_r=s L_P(v)`. This linearity, as well as additivity,
+is a hypothesis of prime-row extraction and of Theorem 8. The coefficient
+functional `<omega,->` is applied only after the plane has been authenticated;
+it must not replace L_P in the fold equation. Authenticate
 
 ```text
 L_P(z) = sum_b c_b EP_b in E[Z]/Phi,
@@ -382,12 +394,35 @@ vP = sum_b eq(rho_col,b) <omega,EP_b>.
 ```
 
 EP is fixed behind D before c. Subtraction gives
-`L_P(a_b)=s_b EP_b`; the P-unit condition proves
-`EP_b=L_P(Dec_P(f*_b))`. The second row proves the prime terminal value. General
-functionals may use several component planes; each is fixed and accounted for
-in the same way. The descriptor caps all planes, including different polynomials
-and distinct points, and D admission uses that actual maximum. No bounded
-integer lift of a general EP field value is required for this cancellation.
+`L_P(a_b)=s_b EP_b`. Since `a_b=s_b Dec_P(f*_b)` in scalar components,
+S_E-linearity gives `s_b L_P(Dec_P(f*_b))=s_b EP_b`. The P-unit condition
+then permits cancellation, proving `EP_b=L_P(Dec_P(f*_b))`. Only now does
+the second row apply omega to prove the prime terminal value.
+
+A general E-linear coefficient functional with weights W[r,t] must first be
+decomposed as `W[r,t]=sum_alpha e_(alpha,r) omega_(alpha,t)`. Each alpha defines
+an S_E-linear plane `L_(P,alpha)(v)=sum_r e_(alpha,r) v_r`; the final value is
+`sum_alpha <omega_alpha,L_(P,alpha)(v)>`. Such a decomposition always exists,
+for example by taking one plane per row with row-selector weights, but its
+plane count must fit the descriptor's cap. All weights are public and fixed
+before c, and every EP plane is bound by D. The descriptor caps all planes,
+including different polynomials and distinct points, and D admission uses that
+actual maximum. No bounded integer lift of a general EP field value is required
+for this cancellation.
+
+**Why scalar-algebra linearity is necessary.** Let L_bad(v) be the constant
+coefficient of the first unpacked component, embedded as a constant in S_E.
+It is E-linear but not S_E-linear. Take the allowed singleton challenge
+`c=epsilon Z`, where epsilon in {-1,1} is its deterministic sign, and `c'=0`.
+For one source ring element take `z=epsilon iota(Z)`, `z'=0`, `T=A*1 mod q`,
+and `EP=0`. Both A relations hold: `A z=iota(c) T mod q` and
+`A z'=iota(c') T mod q`. Both erroneous prime fold rows also hold, since
+`L_bad(z)=L_bad(z')=0=c EP=c' EP`; the claimed terminal value can be zero.
+Nevertheless `s=epsilon Z`, `a=epsilon iota(Z)` extract `f*=1`, and
+`L_bad(Dec_P(f*))=1 != EP`. Indeed `L_bad(s*1)=0` whereas
+`s L_bad(1)=epsilon Z`. Thus even a unit s cannot justify the inference for
+this functional. Using the first component itself as L_P instead forces
+`EP=1`, after which a constant-coefficient omega correctly returns one.
 
 ## 6. Conditional application agreement
 
@@ -512,7 +547,8 @@ implementation; P3 adds no alternative setup API.
 ## 8. Checkpoint construction and composition
 
 **Theorem 8 (mixed-root checkpoint).** Under the Section 1 ordinary-suffix
-hypotheses, exact samplers, and the fixed-source checks in Theorems 1–7, the
+hypotheses, exact samplers, the S_E-linear prime planes defined in Section 5,
+and the fixed-source checks in Theorems 1–7, the
 binary root supplies the same weak-opening/candidate-comparison interface as
 an ordinary root. Replacing its successor-source checkpoint by the checkpoint
 at J preserves the suffix tree size Tree0. One application segment satisfying

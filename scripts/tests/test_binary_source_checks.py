@@ -197,6 +197,81 @@ class BinarySourceArithmeticTests(unittest.TestCase):
                 self.assertEqual([v + 2 * k for v, k in zip(terminal, carry)], actual)
 
 
+class BinarySourcePrimeExtractionTests(unittest.TestCase):
+    def test_linear_plane_extracts_before_coefficient_weights(self):
+        degree, modulus = checks.SCALAR_DEGREE, checks.P
+        rng = random.Random(278)
+        sources = [[rng.randrange(-4, 4) for _ in range(degree)] for _ in range(4)]
+        other_columns = [[rng.randrange(-4, 4) for _ in range(degree)]
+                         for _ in range(4)]
+        row_weights = [2, 3, 5, 7]
+        omega = [rng.randrange(modulus) for _ in range(degree)]
+
+        def plane(components):
+            return [sum(e * v[t] for e, v in zip(row_weights, components)) % modulus
+                    for t in range(degree)]
+
+        expected = plane(sources)
+        # Either deterministic sign of the singleton support must work.
+        for sign in (-1, 1):
+            s = [0, sign] + [0] * (degree - 2)
+            # Z^(-1) = -Z^(d-1)-Z^(d/2-1) modulo Z^d+Z^(d/2)+1.
+            inverse = [0] * degree
+            inverse[degree - 1] = inverse[degree // 2 - 1] = -sign
+            self.assertEqual(checks.ring_product(s, inverse, -1),
+                             [1] + [0] * (degree - 1))
+            response = [[x + y for x, y in zip(checks.ring_product(s, f, -1), other)]
+                        for f, other in zip(sources, other_columns)]
+            neighbor = other_columns  # c'=0; all other fold coordinates are fixed.
+            difference = [[x - y for x, y in zip(z, z_prime)]
+                          for z, z_prime in zip(response, neighbor)]
+            left = [(x - y) % modulus for x, y in zip(plane(response), plane(neighbor))]
+            right = [x % modulus for x in checks.ring_product(s, expected, -1)]
+            self.assertEqual(left, right)
+            extracted = [[x % modulus for x in checks.ring_product(inverse, a, -1)]
+                         for a in difference]
+            extracted_plane = [x % modulus for x in checks.ring_product(inverse, left, -1)]
+            self.assertEqual(extracted_plane, plane(extracted))
+            self.assertEqual(extracted_plane, expected)
+            self.assertEqual(checks.dot(omega, extracted_plane) % modulus,
+                             sum(e * checks.dot(omega, f)
+                                 for e, f in zip(row_weights, sources)) % modulus)
+
+    def test_constant_coefficient_functional_does_not_extract(self):
+        degree = checks.SCALAR_DEGREE
+        zero = [0] * degree
+        one = [1] + [0] * (degree - 1)
+        matrix_entry = list(range(checks.D))
+        image = matrix_entry  # T=A*1, with all coefficients already below q.
+        for sign in (-1, 1):
+            c = [0, sign] + [0] * (degree - 2)
+            c_prime = zero
+            z_scalar = c
+            z_prime_scalar = zero
+            ep = zero
+            z = [0] * checks.D
+            z[4] = -sign  # epsilon*iota(Z) = -epsilon*Y^4.
+            self.assertEqual([x % checks.Q for x in checks.ring_product(matrix_entry, z)],
+                             [x % checks.Q for x in checks.ring_product(z, image)])
+            self.assertEqual(checks.ring_product(matrix_entry, [0] * checks.D),
+                             [0] * checks.D)
+            # The invalid map is E-linear but not linear over E[Z]/Phi.
+            bad_z = [z_scalar[0]] + [0] * (degree - 1)
+            bad_z_prime = [z_prime_scalar[0]] + [0] * (degree - 1)
+            self.assertEqual(bad_z, checks.ring_product(c, ep, -1))
+            self.assertEqual(bad_z_prime, checks.ring_product(c_prime, ep, -1))
+            inverse = [0] * degree
+            inverse[degree - 1] = inverse[degree // 2 - 1] = -sign
+            extracted = checks.ring_product(inverse, z_scalar, -1)
+            self.assertEqual(extracted, one)
+            bad_extracted = [extracted[0]] + [0] * (degree - 1)
+            self.assertNotEqual(bad_extracted, ep)
+            self.assertNotEqual(bad_z, checks.ring_product(c, bad_extracted, -1))
+            # Keeping the component as a plane instead forces EP=1.
+            self.assertEqual(z_scalar, checks.ring_product(c, one, -1))
+            self.assertEqual(one[0], 1)  # Constant-coefficient omega is applied last.
+
+
 class BinarySourceAdjointTests(unittest.TestCase):
     def test_small_exhaustive_and_full_degree_random(self):
         self.assertEqual(checks.check_adjoint(), 1605)
