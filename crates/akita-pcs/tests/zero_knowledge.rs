@@ -993,8 +993,9 @@ fn one_shot_fold_response_replays_without_a_nonce() {
 }
 
 /// W2b: groups at masked levels. The priced search offloads level 0's setup
-/// to a level-1 setup prefix from 37 variables on: below that the residual's
-/// Σ-bound setup (`specs/whiteout-akita.md` §5.5.2) is at least the root's.
+/// to a level-1 setup prefix from 35 variables on: below that the residual's
+/// Σ-bound setup (`specs/whiteout-akita.md` §5.5.2, §5.5.3) is at least the
+/// root's.
 /// The root here also folds one precommitted dense group, the shape of
 /// Jolt's untrusted advice. These tests only plan, so they take the priced
 /// row; the proving tests offload a 31-variable row instead.
@@ -1091,13 +1092,14 @@ fn masked_levels_admit_a_hiding_precommitted_group_and_a_public_setup_prefix() {
     });
 }
 
-/// The headline shape, Jolt's one-hot root at 36 variables: the priced
-/// zero-knowledge row keeps the cut level direct, since level 2's Σ-bound
-/// residual setup is at least the root's; one variable more, the root's
-/// setup outgrows it and the row offloads to a public setup prefix at the
-/// cut level. Admission accepts both.
+/// Jolt's one-hot root: with the residual over `R_128`
+/// (`specs/whiteout-akita.md` §5.5.3) the priced zero-knowledge row keeps the
+/// cut level direct up to 34 variables, where level 2's Σ-bound residual
+/// setup is at least the root's; from 35 variables, the headline's 36
+/// included, the root's setup outgrows it and the row offloads to a public
+/// setup prefix at the cut level. Admission accepts both.
 #[test]
-fn the_cut_level_offloads_the_root_setup_from_37_variables() {
+fn the_cut_level_offloads_the_root_setup_from_35_variables() {
     on_large_stack(|| {
         let cut_prefix = |num_vars| {
             let planned = akita_planner::find_zk_schedule(
@@ -1115,8 +1117,8 @@ fn the_cut_level_offloads_the_root_setup_from_37_variables() {
                 .setup_prefix()
                 .map(|prefix| prefix.profile.randomness_columns)
         };
-        assert_eq!(cut_prefix(36), None);
-        assert_eq!(cut_prefix(37), Some(0));
+        assert_eq!(cut_prefix(34), None);
+        assert_eq!(cut_prefix(35), Some(0));
     });
 }
 

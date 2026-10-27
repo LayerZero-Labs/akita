@@ -204,16 +204,17 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
 const FP128_DENSE_ZK_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(14)];
 
 /// The headline zero-knowledge row (`specs/whiteout-akita.md` §3.5): 36:1.
-/// Its cut level is direct: the residual's Σ-bound setup at level 2 is at
-/// least the root's, so offloading level 0's setup saves none (§5.5.2).
+/// Its cut level consumes level 0's setup as a public setup prefix: over
+/// `R_128` the residual's Σ-bound setup at level 2 is below the root's
+/// (§5.5.3).
 const FP128_ONEHOT_RECURSIVE_ZK_KEYS: &[PolynomialGroupLayout] = onehot_keys![(36, 1)];
 
 /// Response schedules of Whiteout's response proof (`specs/whiteout-akita.md`
-/// §5.2), one per `e` length `2^ν`: `ν = 24` for the single-group
+/// §5.2), one per `e` length `2^ν`: `ν = 23` for the single-group
 /// end-to-end statement and `ν = 27` for the multi-group one and the
 /// headline.
 const FP128_RESPONSE_DIGITS_RECURSIVE_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(24),
+    PolynomialGroupLayout::singleton(23),
     PolynomialGroupLayout::singleton(27),
 ];
 

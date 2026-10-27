@@ -399,6 +399,19 @@ pub const MASKED_LOG_BASIS: u32 = 3;
 /// (`specs/whiteout-akita.md` §4.8.1).
 pub const RESIDUAL_RANDOMNESS_LOG_BASIS: u32 = 4;
 
+/// Ring dimension the zero-knowledge planner gives the level after the cut,
+/// whose A and B matrices are the residual commitment `A_a` and
+/// `[B_a | B′_a]` (`d_A = d_B = d_D`).
+///
+/// It is the whole after-cut dimension domain, and it is exempt from the
+/// planner's monotone dimension ceiling: the residual ring may be larger
+/// than the cut level's. Module-SIS hardness at the Σ radius fixes
+/// `rank · d`, not `d`, so a larger ring keeps u_a's size and divides the
+/// residual's setup and `N·z` work by about `d / 64`. Admission does not
+/// require this dimension; it prices whatever residual a row holds
+/// (`specs/whiteout-akita.md` §5.5.3).
+pub const RESIDUAL_RING_DIMENSION: usize = 128;
+
 /// The honest-fold sizing inputs of one group a masked level folds, read
 /// from its scheduled parameters.
 ///
