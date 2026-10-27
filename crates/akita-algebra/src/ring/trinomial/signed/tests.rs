@@ -4,7 +4,7 @@ use super::{signed_trinomial_product, signed_trinomial_remainder};
 use crate::ring::trinomial::{MinusTrinomial, PlusTrinomial, TrinomialModulus};
 
 const D: usize = 648;
-const BA: i128 = 7_126_704;
+const MATRIX_BOUND: i128 = 7_126_704;
 
 // Independent long division, rather than the closed monomial folding used
 // by the production reducer. Test inputs keep every operation in range.
@@ -35,7 +35,8 @@ fn reference_product<M: TrinomialModulus>(left: &[i128], right: &[i128]) -> Vec<
 fn exact_centered_products_match_independent_integer_long_division() {
     let mut rng = StdRng::seed_from_u64(0x0051_676e_6564);
     for _ in 0..8 {
-        let a: [i32; D] = std::array::from_fn(|_| rng.gen_range(-(BA as i32)..=BA as i32));
+        let a: [i32; D] =
+            std::array::from_fn(|_| rng.gen_range(-(MATRIX_BOUND as i32)..=MATRIX_BOUND as i32));
         let digits: [i8; D] = std::array::from_fn(|_| rng.gen_range(-4..=3));
         let sources: [i64; D] = std::array::from_fn(|_| rng.gen_range(-2340..=2340));
         let signed_bits: [i8; D] = std::array::from_fn(|t| {
@@ -68,7 +69,7 @@ fn exact_centered_products_match_independent_integer_long_division() {
             signed_trinomial_product::<D, MinusTrinomial>(&a128, &digits.map(i128::from)).unwrap()
         );
     }
-    for a in [-BA, BA] {
+    for a in [-MATRIX_BOUND, MATRIX_BOUND] {
         for z in [-2340i64, 2340] {
             assert_eq!(
                 signed_trinomial_product::<D, MinusTrinomial>(&[a; D], &[z; D])
@@ -155,7 +156,7 @@ fn q24_residual_and_projection_bounds_are_exact_and_fit_accumulators() {
     const BT: i128 = 9_586_980;
     const GAMMA: i128 = 92;
     const C: i128 = 256;
-    assert_eq!(BA, ((Q - 1) / 2) as i128);
+    assert_eq!(MATRIX_BOUND, ((Q - 1) / 2) as i128);
     assert_eq!(BT, 4 * ((8i128.pow(8) - 1) / 7));
     for (m, expected_lr, expected_uj) in [
         (
@@ -174,12 +175,12 @@ fn q24_residual_and_projection_bounds_are_exact_and_fit_accumulators() {
             7_358_785_256_352_039_741_271_572_480,
         ),
     ] {
-        let lr = 972 * m * BA * BZ + C * GAMMA * BT;
+        let lr = 972 * m * MATRIX_BOUND * BZ + C * GAMMA * BT;
         assert_eq!(lr, expected_lr);
         // Even an unreduced convolution accumulated across all m products,
         // the reduced sum, and the full residual fit signed 64-bit storage.
         // The exact integer kernels themselves use checked signed 128 bits.
-        assert!(D as i128 * m * BA * BZ < i128::from(i64::MAX));
+        assert!(D as i128 * m * MATRIX_BOUND * BZ < i128::from(i64::MAX));
         assert!(lr < i128::from(i64::MAX));
         assert!(lr < i128::MAX);
         let uj = (Q - 1) * 1944 * u128::try_from(lr).unwrap();
