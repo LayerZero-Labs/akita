@@ -21,8 +21,8 @@ the feature does not select the extension or change the ordinary protocol.
 
 The profile fixes nothing else. The accepted response interval follows from
 the geometry, and the proof prime is admitted separately; neither is a profile
-field. There is one profile and one commitment modulus; adding either needs a
-new enum variant.
+field. There is one selectable root profile. The additional q24 commitment
+modulus identity below has offline certificates but no selectable root profile.
 
 `q = 2^25 + 14561 = 1 + 23328 * 1439` is prime and congruent to one modulo
 `23328 = lcm(1944, 3888, 5832, 7776)`. The limb transform of
@@ -505,6 +505,86 @@ sample numbers, domination, budget and missing-cell rejections, the
 derivation-bias boundary against big-integer evaluation, both no-wrap
 inequalities, the unit condition for the four primes above, and the parity
 closed forms.
+
+## q24 binary-source SIS certificate
+
+The opt-in commitment identity `LabiniusCommitmentModulus::Q24Minus2523807`
+is `q = 2^24 - 2,523,807 = 14,253,409`. The offline estimator uses
+`AkitaModulusProfileId::Q24Minus2523807`, label `q24`. The q25 data, runtime
+cells and digest remain unchanged. No catalog or protocol selects q24 here.
+
+The artifact
+`crates/akita-sis-estimator/data/q24_commitment_prime_infinity_width.csv`
+uses the same `local-minimum+proven-pruned-certification` mode, quantum
+ADPS16/LGSA model, 169-bit policy and 6,400,000,000,000 ring-column search
+cap as q25. Local-minimum search discovers a boundary; proven-pruned search
+certifies it. An optimizer probe is never an admission certificate.
+
+For `D = 648`, scalarization is `n = rank * 648`, `m = width * 648`.
+The requested widths 4096, 8192 and 16384 are ring columns, corresponding
+to 2,654,208, 5,308,416 and 10,616,832 scalar columns. The three bounds
+are exactly `eta = 4 * (2w) * 4095` for weights 46, 64 and 77. They are
+source-comparison bounds, not honest response radii.
+
+Every entry below applies separately to **each** width in
+`{4096, 8192, 16384}`. The independently evaluated 27 fixed-width cells,
+including rejected rank-two cells, are recorded in
+`crates/akita-sis-estimator/data/q24_infinity_cells.csv`.
+
+| Rank | eta | Quantum bits | Certificate status | Clears 128 bits |
+| --- | --- | --- | --- | --- |
+| 2 | 1,506,960 | 126.14 | Finite attack, beta 476 | No |
+| 2 | 2,096,640 | 119.78 | Finite attack, beta 452 | No |
+| 2 | 2,522,520 | 116.60 | Finite attack, beta 440 | No |
+| 3 | 1,506,960 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 3 | 2,096,640 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 3 | 2,522,520 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 4 | 1,506,960 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 4 | 2,096,640 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 4 | 2,522,520 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+
+All six rank-three/four width certificates reach the search cap with
+`AtLeast` status and no rejected successor. Their `above-target:169.07`
+values are certified lower bounds, not actual attack optima; 638 is a
+block-size threshold, not a selected optimal attack. Under the width
+search's monotone-prefix precondition, they cover all requested widths.
+The exact cutoff above the cap remains unknown. Rank three therefore has
+certificate support for the 128-bit planning target. Rank two fails that
+target at every requested cell; this conclusion comes from its finite
+fixed-width attacks, not merely failure of the stronger 169-bit policy.
+
+The completed reference discovery runs at pinned lattice-estimator revision
+`c667a48546f140c3a5454c7503c3ca44a264cce2` used the same quantum ADPS16,
+LGSA, infinity norm and scalarization. Rust's quantum local-minimum
+cross-check reproduces 126.14 bits/beta 476 at rank two, eta 1,506,960,
+widths 4096 and 8192; 212.795 bits/beta 803 at rank three with the same
+bound and widths; and 197.425 bits/beta 745 at rank three, eta 2,522,520,
+width 4096. These discovery values agree with the certified lower bounds,
+but are not certificates. The reference chose zeta 1; the finite Rust
+rank-two certificate chooses zeta 0 with the same bits and beta. The
+quantum reduction exponent is 0.265 per block dimension; using the default
+classical exponent 0.292 would price a different model.
+
+**The structured-ring assumption remains open.** The estimator prices
+module/ring SIS for the degree-648 trinomial ring as unstructured SIS over
+`Z_q`. It does not assess attacks using the ring structure. These
+certificates establish parameter support in that model, not full protocol
+security, extractor-time admission, or whole-schedule admission.
+
+Regenerate both q24 artifacts, with cells in parallel, using:
+
+```bash
+rtk cargo run -p akita-sis-estimator --release --no-default-features \
+  --features labinius-sis,parallel --example labinius_infinity_width_table -- --q24
+```
+
+The optional `--output-dir PATH` after `--q24` chooses a comparison directory.
+The `labinius_width_table` integration tests regenerate both CSV files
+byte for byte, retain the unchanged q25 regeneration test, and compare
+quantum discovery with the five reference cells. Without `parallel`, the
+same generation and tests run serially. Offline lookup uses
+`q24_certified_rows` or `certified_max_width`; runtime root-profile and
+catalog integration remain separate work.
 
 ## What admission does not establish
 
