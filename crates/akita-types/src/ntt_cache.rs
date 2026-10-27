@@ -232,6 +232,13 @@ impl<F: Field + CanonicalEncoding> FieldCrtBases<F> {
     pub const Q64: bool = F::MODULUS_BITS >= 32 && F::MODULUS_BITS <= 64;
     /// Whether `F` can select the Q128 base.
     pub const Q128: bool = F::MODULUS_BITS > 64;
+
+    /// The error for a base `F` cannot select, which only a cache or plan
+    /// built for another field can carry.
+    #[must_use]
+    pub fn unselectable_base() -> AkitaError {
+        AkitaError::InvalidSetup("CRT base outside the bases this field can select".into())
+    }
 }
 
 fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usize>(
@@ -370,15 +377,16 @@ pub fn centered_quotient_requires_i16_tail_for_field<
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => {
+        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => {
             required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
         }
-        ProtocolCrtNttParams::Q64(params) => {
+        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => {
             required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
         }
-        ProtocolCrtNttParams::Q128(params) => {
+        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => {
             required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(&params, 1, rhs_abs_bound)
         }
+        _ => return Err(FieldCrtBases::<F>::unselectable_base()),
     }
     .ok_or_else(|| exact_capacity_error::<D>(1, rhs_abs_bound))
 }
@@ -1232,9 +1240,10 @@ fn prepare_transform_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
         return Ok(PreparedNttCache(prepared));
     }
     let prepared = match selected {
-        ProtocolCrtNttParams::Q32(params) => prepare!(params, Q32),
-        ProtocolCrtNttParams::Q64(params) => prepare!(params, Q64),
-        ProtocolCrtNttParams::Q128(params) => prepare!(params, Q128),
+        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => prepare!(params, Q32),
+        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => prepare!(params, Q64),
+        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => prepare!(params, Q128),
+        _ => return Err(FieldCrtBases::<F>::unselectable_base()),
     };
     prepared.validate()?;
     Ok(PreparedNttCache(prepared))
