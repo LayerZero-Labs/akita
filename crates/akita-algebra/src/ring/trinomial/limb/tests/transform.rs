@@ -44,7 +44,16 @@ fn limb_admitted_primes_equal_split_primes_enumeration() {
             .find(|&candidate| is_prime(candidate))
             .unwrap()
     });
-    let enumerated = [commitment, p26, p27, p28];
+    // Largest splitting prime whose centered window fits eight balanced
+    // base-8 digits: h <= 3*(8^8-1)/7 = 7_190_235.
+    let q24 = (1..=14_380_470 / 23_328)
+        .rev()
+        .map(|k| 23_328 * k + 1)
+        .find(|&candidate| is_prime(candidate))
+        .unwrap();
+    assert_eq!(q24, 14_253_409);
+    assert_eq!(q24, 1 + 23_328 * 611);
+    let enumerated = [q24, commitment, p26, p27, p28];
     assert_eq!(enumerated, TrinomialLimbDomain::ADMITTED_PRIMES);
     for prime in enumerated {
         assert_eq!(TrinomialLimbDomain::new(prime).unwrap().prime(), prime);
@@ -274,5 +283,66 @@ fn limb_equivalent_representatives_invert_identically() {
                 };
         }
         assert_eq!(inverse(&domain, &slots), inverse(&domain, &equivalent));
+    }
+}
+
+#[test]
+fn q24_primitive_root_has_exact_transform_order() {
+    let arithmetic = arithmetic::Arithmetic { prime: 14_253_409 };
+    // 1944 = 2^3 * 3^5; excluding order divisors 1944/2 and 1944/3
+    // while checking r^1944=1 proves exact order.
+    let root = arithmetic.pow(19, (arithmetic.prime - 1) / 1944);
+    assert_eq!(root, 13_979_858);
+    assert_eq!(arithmetic.pow(root, 1944), 1);
+    assert_eq!(arithmetic.pow(root, 972), arithmetic.prime - 1);
+    assert_eq!(arithmetic.pow(root, 648), 6_877_823);
+    assert_ne!(arithmetic.pow(root, 648), 1);
+    // The common conductor multiple is 23328 = 2^5 * 3^6.
+    let common_root = arithmetic.pow(19, (arithmetic.prime - 1) / 23_328);
+    assert_eq!(common_root, 13_834_210);
+    assert_eq!(arithmetic.pow(common_root, 23_328), 1);
+    assert_ne!(arithmetic.pow(common_root, 11_664), 1);
+    assert_ne!(arithmetic.pow(common_root, 7_776), 1);
+}
+
+#[test]
+fn limb_balanced_digits_and_signed_sources_match_integer_products() {
+    use crate::ring::trinomial::{signed::signed_trinomial_product, MinusTrinomial};
+
+    let mut seed = 0x21af_8acd_0236_4219;
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let domain = TrinomialLimbDomain::new(prime).unwrap();
+        let half = (prime / 2) as i32;
+        for matrix in [
+            [half; DEGREE],
+            [-half; DEGREE],
+            random_coefficients(prime, &mut seed),
+        ] {
+            for source in [
+                [-4i8; DEGREE],
+                [3i8; DEGREE],
+                std::array::from_fn(|i| if (i / 4) % 2 == 0 { 1 } else { -1 }),
+                std::array::from_fn(|_| (next(&mut seed) % 8) as i8 - 4),
+            ] {
+                let reference =
+                    signed_trinomial_product::<DEGREE, MinusTrinomial>(&matrix, &source).unwrap();
+                let expected = reference.map(|value| centered(value, prime));
+                let mut accumulator = TrinomialLimbAccumulator::new(&domain);
+                let left = transform(&domain, &matrix);
+                let right = transform(&domain, &source.map(i32::from));
+                // Cross a checkpoint to compare accumulated kernels too.
+                for _ in 0..129 {
+                    accumulator.add_product(&left, &right).unwrap();
+                }
+                let mut sum = domain.zero_slots();
+                accumulator.finish(&mut sum).unwrap();
+                assert_eq!(
+                    inverse(&domain, &sum),
+                    reference.map(|v| centered(129 * v, prime))
+                );
+                assert_product(&domain, &matrix, &source.map(i32::from));
+                assert_eq!(schoolbook(&matrix, &source.map(i32::from), prime), expected);
+            }
+        }
     }
 }
