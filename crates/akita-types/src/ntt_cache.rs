@@ -219,10 +219,10 @@ pub fn select_compression_crt_ntt_params<F: Field + CanonicalEncoding, const D: 
 ///
 /// The field modulus alone fixes the base. Kernels that branch over a prepared
 /// cache's base guard each arm with these constants, so arms the field can
-/// never take are not monomorphized. Each flag covers its arm of the modulus
-/// selector by bit length: `q <= Q32_MODULUS` has at most 32 bits,
-/// `Q32_MODULUS < q <= Q64_MODULUS` has 32 to 64 bits, and both 128-bit
-/// moduli have more than 64.
+/// never take are not monomorphized. The modulus selector checks the same
+/// flags, so it never returns a base they reject: `q <= Q32_MODULUS` has at
+/// most 32 bits, `Q32_MODULUS < q <= Q64_MODULUS` has 32 to 64 bits, and both
+/// 128-bit moduli have more than 64.
 pub struct FieldCrtBases<F>(PhantomData<F>);
 
 impl<F: Field + CanonicalEncoding> FieldCrtBases<F> {
@@ -246,19 +246,19 @@ fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usiz
     let modulus = field_modulus::<F>()?;
     let a7f7_q128_modulus = u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenne>::OFFSET - 1);
 
-    if modulus <= Q32_MODULUS as u128 {
+    if FieldCrtBases::<F>::Q32 && modulus <= Q32_MODULUS as u128 {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q32_MAX_RING_D)?;
         }
         return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(Q32_PRIMES)));
     }
-    if modulus <= Q64_MODULUS as u128 {
+    if FieldCrtBases::<F>::Q64 && modulus <= Q64_MODULUS as u128 {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q64_MAX_RING_D)?;
         }
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
     }
-    if modulus == Q128_MODULUS || modulus == a7f7_q128_modulus {
+    if FieldCrtBases::<F>::Q128 && (modulus == Q128_MODULUS || modulus == a7f7_q128_modulus) {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
         }
@@ -802,13 +802,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 tail,
                 exact,
                 ..
-            } => {
+            } if FieldCrtBases::<F>::Q32 => {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
-            Self::Q32Ifma52 { neg, tail } => {
+            Self::Q32Ifma52 { neg, tail } if FieldCrtBases::<F>::Q32 => {
                 let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
                 if !neg
                     .crt_capacity()
@@ -830,13 +830,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 tail,
                 exact,
                 ..
-            } => {
+            } if FieldCrtBases::<F>::Q64 => {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
-            Self::Q64Ifma52 { neg } => {
+            Self::Q64Ifma52 { neg } if FieldCrtBases::<F>::Q64 => {
                 let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
                 if !neg
                     .crt_capacity()
@@ -854,13 +854,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 tail,
                 exact,
                 ..
-            } => {
+            } if FieldCrtBases::<F>::Q128 => {
                 let neg = neg.as_deref().ok_or_else(|| {
                     AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
                 })?;
                 mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
             }
-            Self::Q128Ifma52 { neg, tail } => {
+            Self::Q128Ifma52 { neg, tail } if FieldCrtBases::<F>::Q128 => {
                 let rhs_abs_bound = validate_i16_rhs(log_basis, rhs)?;
                 if !neg
                     .crt_capacity()
@@ -881,6 +881,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 }
             }
             Self::Limbs(neg) => neg.mat_vec_i16(log_basis, num_rows, rhs),
+            _ => Err(FieldCrtBases::<F>::unselectable_base()),
         }
     }
 }
