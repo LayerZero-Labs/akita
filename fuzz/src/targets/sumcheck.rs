@@ -51,7 +51,7 @@ struct ProverChannel<F, E> {
 impl<F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckProverChannel<E>
     for ProverChannel<F, E>
 {
-    fn state_mut(&mut self) -> &mut ProverState {
+    fn state_mut(&mut self) -> &mut akita_transcript::ProverSession {
         &mut self.state
     }
 
@@ -76,7 +76,7 @@ struct VerifierChannel<'proof, F, E> {
 impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckVerifierChannel<'proof, E>
     for VerifierChannel<'proof, F, E>
 {
-    fn state_mut(&mut self) -> &mut VerifierState<'proof> {
+    fn state_mut(&mut self) -> &mut akita_transcript::VerifierSession<'proof> {
         &mut self.state
     }
 
