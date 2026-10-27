@@ -1,5 +1,7 @@
 //! Shared Akita wire values and protocol math.
 
+#[cfg(feature = "labinius-trinomial")]
+pub mod binary_source;
 mod eor_sites;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
