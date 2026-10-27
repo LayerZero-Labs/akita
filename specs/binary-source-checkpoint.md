@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | active |
 | Created | 2026-10-27 |
-| Scope | P3 mathematical checkpoint; proposed binary root, not production admission |
+| Scope | Mathematical checkpoint for the proposed binary root; not production admission |
 
 ## Blockers and corrections
 
@@ -33,17 +33,18 @@ points need an explicit correction before implementation admission:
    other entries zero: g[1294]=-1, so g*reverse(v) has coefficient -1 at
    degree 1941.
 
-These are resolved here at the mathematical interface. P10 must check the
-checkpoint placement and the implemented adjoint against that interface. This
-record does not certify the new modulus, the ordinary suffix widths, or a
+These are resolved here at the mathematical interface. Production admission must
+check the checkpoint placement and the implemented adjoint against that interface.
+This record does not certify the new modulus, the ordinary suffix widths, or a
 complete implementation. Its tests are arithmetic evidence, not a security
 certificate.
 
 ## 1. Scope, notation, and inherited hypotheses
 
 This document specifies the binary-root replacement in one ordinary grouped
-opening on the caller's transcript. The protocol and index-map companion is
-`specs/binary-source-groups.md`, owned separately by P1. New behavior is selected
+opening on the caller's transcript. The proposed companion protocol and index-map
+specification is `specs/binary-source-groups.md`; it does not yet exist.
+New behavior is selected
 explicitly under the existing default-off `labinius*` features. Merely enabling
 those features must preserve unselected setup, commitment, proof bytes, and
 transcript state. No runtime code or application proof helper is introduced here.
@@ -294,9 +295,9 @@ the preceding argument applies. The same comparison applies across different
 opening points or repeated occurrences of one commitment, provided their
 manifest, setup view and source interpretation coincide.
 
-For a fixed other-coordinate slice, two different challenges suffice for the
-combiner. An unextractable slice contains at most one challenge, of uniform
-mass 1/|S46|. The indexed extraction error is the sum over coordinates; the
+With all other coordinates fixed, two different challenges suffice for the
+combiner. An unextractable set of answers contains at most one challenge, of
+uniform mass 1/|S46|. The indexed extraction error is the sum over coordinates; the
 standard flat indexed combiner uses 1+I children. This is precisely the indexed
 stage hypothesis of the composition interface in Section 1. ∎
 
@@ -454,9 +455,9 @@ Akita supplies no booleanity, zero-support, or prime-claim fusion helper.
 The required domain contains every coefficient that enters A: coordinates
 128..161, unused payload positions, padding carriers, partial last components,
 and padded ring rows. MLE-only slots 162..255 and 648..1023 are instead zero by
-definition and need no application assertion. P1 owns the precise bidirectional
-index map and any explicit kernel permutation. The theorem needs that map as
-an interface, not a new implementation here.
+definition and need no application assertion. The source descriptor must specify
+the precise bidirectional index map and any explicit kernel permutation.
+This map is a hypothesis of the agreement theorem.
 
 **Corollary 6 (payload plus zero support).** Payload booleanity together with
 zero on every other committed coefficient implies Theorem 5, with no additional
@@ -541,8 +542,8 @@ product claim uses W above and a prefix claim consumed by the next ordinary
 level. Comparison with the canonical setup occurrence must either identify
 that source or output an ordinary binding collision. This is the required
 setup interface; changing a stream label without authenticating its source is
-not an implementation of the theorem. P2 owns the arithmetic and typed-stream
-implementation; P3 adds no alternative setup API.
+not an implementation of the theorem. The arithmetic and typed-stream
+implementation must satisfy this setup interface.
 
 ## 8. Checkpoint construction and composition
 
@@ -654,8 +655,8 @@ source argument or a proof about a second opening is not sufficient. A separate
 opening would require a second extraction/comparison argument and its tree cost.
 The field-switch adapter likewise must supply its actual fixed-source defect
 argument; its familiar low/high disjoint-coordinate observation does not replace
-a proof for an arbitrary application relation. P10 validates each supplied
-application interface against these three conditions.
+a proof for an arbitrary application relation. Production admission must validate
+each supplied application interface against these three conditions.
 
 ## 9. Error ledger and standard profile
 
@@ -698,8 +699,8 @@ ideal-hash charge per type with Qh hash queries and V digest positions is
 `(binom(Qh,2)+Qh V)/2^256`, summed over types. The first term covers distinct
 preimages colliding; the second covers a fresh hash answer hitting a previously
 used digest. Under their complement expansion is unique and precedes the
-challenge query. It is not multiplied by Q again. P10 must enumerate which hash
-roles are used and avoid counting the same role twice.
+challenge query. It is not multiplied by Q again. The admission certificate must
+enumerate which hash roles are used and avoid counting the same role twice.
 
 Caller-owned stages are separate ledger entries but part of the same Q and
 checkpoint: a multiple-point H=GF(2^128) reduction contributes
@@ -732,7 +733,7 @@ response, SIS, extension-field, Q and tree-time admission. In particular its
 four-digit positive response reach fails at n=26. It is not needed merely to
 name the standard per-address profile 128-bit FS.
 
-## 10. Executable checks and P10 handoff
+## 10. Executable checks and admission criteria
 
 `scripts/binary_source_checks.py` and
 `scripts/tests/test_binary_source_checks.py` independently compute the constants,
@@ -740,17 +741,19 @@ use exhaustive coefficient kernels and small-degree adjoint identities, and
 exercise reproducible full-degree random adjoints. Optional full checks are
 selected by the script flag. Tests include negative controls for invalid bounds
 and transpose conventions. Run the repository Python unittest discovery,
-documentation guardrails, typo checker, and the local slice hygiene check.
+documentation guardrails, and typo checker.
 
-P10 admission remains responsible for:
+Production admission requires:
 
 - Matching the emitted transcript to the pre-J checkpoint and every fixation in
   Theorem 8, with exactly one caller application checkpoint and fresh J per trial.
-- Instantiating P1's index map, complete signed-bit/zero coverage contract,
-  source ownership and prime-plane cap; no unconditional agreement output.
-- Comparing P2's trinomial kernels, unit admissions, challenge sampler and typed
+- Instantiating the source descriptor's index map, complete signed-bit/zero
+  coverage contract, source ownership and prime-plane cap; no unconditional
+  agreement output.
+- Comparing the trinomial kernels, unit admissions, challenge sampler and typed
   setup streams with these identities, including zero virtual slots and negative
-  coefficients; validating the Stage-3 prefix handoff without online A scans.
+  coefficients; authenticating the Stage-3 prefix at the next level without
+  online A scans.
 - Certifying q24 rank/width/radius and all ordinary induced instances at their
   maximum plane counts and extractor budgets, with structured-ring assumptions
   stated explicitly; no reuse of q25 evidence as a q24 certificate.
@@ -761,6 +764,3 @@ P10 admission remains responsible for:
 - Completing malformed-input, no-panic, runtime selection, unselected-byte and
   caller-transcript tests, plus independent security review of the implemented
   compiler and the concrete application-segment interface.
-
-No changes to other slices, public signatures, Cargo features, or main-branch
-extension seams are needed for these three P3 deliverables.
