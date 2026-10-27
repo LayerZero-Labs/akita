@@ -242,10 +242,7 @@ where
                     let scalar = std::mem::replace(scalar, A::zero()).finish();
                     if !scalar.is_zero() {
                         let functional = class.chunk::<BASE_D>(base_idx)?;
-                        term.add_product(
-                            MulBaseUnreduced::dot_base(functional, ring.coefficients()),
-                            scalar,
-                        );
+                        term.add_product(eval_ring_at_pows_fast(ring, functional), scalar);
                     }
                 }
             }

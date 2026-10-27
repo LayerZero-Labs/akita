@@ -6,6 +6,8 @@ use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::SetupIndexWeightMle;
 #[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
+#[cfg(test)]
+use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::ring::evaluate_power_sequence_mle;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SETUP_SUMCHECK_DEGREE};
@@ -269,11 +271,10 @@ where
                 .e_in
                 .get(..entries.len())
                 .ok_or(AkitaError::InvalidProof)?;
-            let entry_rows = entries
-                .iter()
-                .map(|entry| entry.coefficients().as_slice())
-                .collect::<Vec<_>>();
-            let inner = E::weighted_dot_base_rows(&entry_rows, inner_weights, eq_y);
+            let mut inner = E::zero();
+            for (entry, &weight) in entries.iter().zip(inner_weights) {
+                inner += eval_ring_at_pows_fast(entry, eq_y) * weight;
+            }
             let outer_weight = eq_setup_idx
                 .e_out
                 .get(outer_idx)
@@ -289,7 +290,7 @@ mod tests {
     use super::*;
 
     use akita_types::AkitaSetupDescriptor;
-    use jolt_field::{MulBaseUnreduced, Prime128OffsetA7F7};
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
     const RING_D: usize = 64;
@@ -332,7 +333,7 @@ mod tests {
             .enumerate()
             .map(|(index, ring)| {
                 eq_setup.eval_at(index).expect("setup equality entry")
-                    * MulBaseUnreduced::dot_base(&eq_y, ring.coefficients())
+                    * eval_ring_at_pows_fast(ring, &eq_y)
             })
             .sum::<F>();
         assert_eq!(
