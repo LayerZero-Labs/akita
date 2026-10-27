@@ -1,6 +1,8 @@
 use super::*;
+use std::collections::hash_map::DefaultHasher;
 #[cfg(feature = "parallel")]
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Result of the suffix DP at one state. Each selection objective retains the
@@ -148,12 +150,18 @@ impl ScheduleMemoKey {
 /// Completed suffix states, shared by the search's worker threads.
 ///
 /// An entry is the state's result as a function of its key alone, so which
-/// thread computes it, and when, never changes what a reader sees.
+/// thread computes it, and when, never changes what a reader sees. The
+/// states are split over [`MEMO_SHARDS`] locks by key hash: one lock
+/// serialized every worker's lookups (about a tenth of the pool's time was
+/// spent waiting on it in `specs/whiteout-o2b-planner.md`'s profile).
 pub(crate) struct ScheduleMemo {
-    states: Mutex<MemoStates>,
+    shards: Box<[Mutex<MemoStates>]>,
     pub(super) setup_prefixes: SetupPrefixSearchCache,
 }
 
+const MEMO_SHARDS: usize = 64;
+
+#[derive(Default)]
 struct MemoStates {
     entries: HashMap<ScheduleMemoKey, MemoEntry>,
     /// States some thread is completing now.
@@ -177,6 +185,9 @@ const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 393_216;
 const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
     MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
+// Each shard holds its share of each quota.
+const MAX_DIRECT_ENTRIES_PER_SHARD: usize = MAX_DIRECT_SUFFIX_CACHE_ENTRIES / MEMO_SHARDS;
+const MAX_PREFIXED_ENTRIES_PER_SHARD: usize = MAX_PREFIXED_SUFFIX_CACHE_ENTRIES / MEMO_SHARDS;
 const MAX_SECOND_CHANCE_PROBES: usize = 16;
 
 #[cfg(test)]
@@ -231,7 +242,10 @@ fn memo_cache_pressure() {
             );
         }
     }
-    assert_eq!(memo.len(), MAX_SUFFIX_SEARCH_CACHE_ENTRIES);
+    // Each shard evicts at its own share of the quota, so a shard that
+    // hashes more keys than its share evicts before the memo as a whole is
+    // full: the total is bounded by the quota, not equal to it.
+    assert!(memo.len() <= MAX_SUFFIX_SEARCH_CACHE_ENTRIES);
     eprintln!(
         "multi={multi}, memo_entries={}, key_bytes={}",
         memo.len(),
@@ -264,35 +278,43 @@ pub(super) fn evict_suffix_entry(
 impl ScheduleMemo {
     pub(crate) fn new() -> Self {
         Self {
-            states: Mutex::new(MemoStates {
-                entries: HashMap::new(),
-                #[cfg(feature = "parallel")]
-                claimed: HashSet::new(),
-                direct_insertion_order: VecDeque::new(),
-                prefixed_insertion_order: VecDeque::new(),
-            }),
+            shards: (0..MEMO_SHARDS)
+                .map(|_| Mutex::new(MemoStates::default()))
+                .collect(),
             setup_prefixes: SetupPrefixSearchCache::default(),
         }
     }
 
-    fn states(&self) -> MutexGuard<'_, MemoStates> {
-        self.states.lock().unwrap_or_else(PoisonError::into_inner)
+    fn states(&self, key: &ScheduleMemoKey) -> MutexGuard<'_, MemoStates> {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        // The remainder is below `MEMO_SHARDS`, so it fits `usize`.
+        let shard = (hasher.finish() % MEMO_SHARDS as u64) as usize;
+        self.shards[shard]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn all_states(&self) -> impl Iterator<Item = MutexGuard<'_, MemoStates>> {
+        self.shards
+            .iter()
+            .map(|shard| shard.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
-        self.states().entries.len()
+        self.all_states().map(|states| states.entries.len()).sum()
     }
 
     #[cfg(test)]
     pub(super) fn contains(&self, key: &ScheduleMemoKey) -> bool {
-        self.states().entries.contains_key(key)
+        self.states(key).entries.contains_key(key)
     }
 
     /// Whether `key` is completed, or some thread is completing it.
     #[cfg(feature = "parallel")]
     pub(super) fn is_completed_or_claimed(&self, key: &ScheduleMemoKey) -> bool {
-        let states = self.states();
+        let states = self.states(key);
         states.entries.contains_key(key) || states.claimed.contains(key)
     }
 
@@ -301,7 +323,7 @@ impl ScheduleMemo {
     /// A claim only steers which successors a thread starts; two threads
     /// may still complete one state, to the same result.
     pub(super) fn claim(&self, key: &ScheduleMemoKey) -> MemoClaim<'_> {
-        self.states().claimed.insert(key.clone());
+        self.states(key).claimed.insert(key.clone());
         MemoClaim {
             memo: self,
             key: key.clone(),
@@ -309,7 +331,7 @@ impl ScheduleMemo {
     }
 
     pub(super) fn get(&self, key: &ScheduleMemoKey) -> Option<Arc<SuffixResult>> {
-        self.states().entries.get_mut(key).map(|entry| {
+        self.states(key).entries.get_mut(key).map(|entry| {
             entry.referenced = true;
             Arc::clone(&entry.result)
         })
@@ -321,7 +343,7 @@ impl ScheduleMemo {
         result: Arc<SuffixResult>,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) {
-        let mut states = self.states();
+        let mut states = self.states(&key);
         let MemoStates {
             entries,
             direct_insertion_order,
@@ -336,14 +358,11 @@ impl ScheduleMemo {
             return;
         }
         let (insertion_order, capacity) = if key.is_direct() {
-            (
-                &mut *direct_insertion_order,
-                MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
-            )
+            (&mut *direct_insertion_order, MAX_DIRECT_ENTRIES_PER_SHARD)
         } else {
             (
                 &mut *prefixed_insertion_order,
-                MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
+                MAX_PREFIXED_ENTRIES_PER_SHARD,
             )
         };
         if insertion_order.len() >= capacity {
@@ -357,12 +376,18 @@ impl ScheduleMemo {
                 referenced: false,
             },
         );
+        drop(states);
+        // Diagnostics only (`diagnostics` is `None` outside a captured
+        // planner run): totals need every shard's lock, so a search pays it
+        // per insert only when it asked for diagnostics.
         if let Some(diagnostics) = diagnostics {
-            diagnostics.record_memo_occupancy(
-                entries.len(),
-                direct_insertion_order.len(),
-                prefixed_insertion_order.len(),
-            );
+            let (mut total, mut direct, mut prefixed) = (0, 0, 0);
+            for states in self.all_states() {
+                total += states.entries.len();
+                direct += states.direct_insertion_order.len();
+                prefixed += states.prefixed_insertion_order.len();
+            }
+            diagnostics.record_memo_occupancy(total, direct, prefixed);
         }
     }
 
@@ -380,7 +405,7 @@ pub(super) struct MemoClaim<'a> {
 #[cfg(feature = "parallel")]
 impl Drop for MemoClaim<'_> {
     fn drop(&mut self) {
-        self.memo.states().claimed.remove(&self.key);
+        self.memo.states(&self.key).claimed.remove(&self.key);
     }
 }
 
