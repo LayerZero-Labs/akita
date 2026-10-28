@@ -1,5 +1,8 @@
 //! Protocol commitment/opening wrapper types.
 
+mod kind;
+pub use kind::CommittedGroupKind;
+
 use crate::proof::{RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use akita_params::sis::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisModulusProfileId,
@@ -54,6 +57,7 @@ pub struct CommittedGroup<F: Field> {
     pub profile: GroupCommitPhaseParams,
     /// Terminal compressed `p_F` payload.
     pub commitment: Commitment<F>,
+    kind: CommittedGroupKind,
 }
 
 impl<F: Field> CommittedGroup<F> {
@@ -62,7 +66,15 @@ impl<F: Field> CommittedGroup<F> {
         Self {
             profile,
             commitment,
+            kind: CommittedGroupKind::Ordinary,
         }
+    }
+
+    /// Extension seam: identify the source relation bound by this commitment.
+    ///
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub fn kind(&self) -> &CommittedGroupKind {
+        &self.kind
     }
 
     /// Borrow the exact frozen commitment profile.
