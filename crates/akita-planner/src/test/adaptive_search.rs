@@ -3,6 +3,9 @@ use super::*;
 mod relation_cutover;
 #[path = "adaptive_search/selective_l2.rs"]
 mod selective_l2;
+#[cfg(feature = "catalog-gen")]
+#[path = "adaptive_search/setup_budget.rs"]
+mod setup_budget;
 fn onehot_group(num_vars: usize, num_polynomials: usize) -> PolynomialGroupLayout {
     PolynomialGroupLayout::new(num_vars, num_polynomials)
 }
