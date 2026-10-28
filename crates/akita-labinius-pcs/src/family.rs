@@ -122,7 +122,7 @@ macro_rules! digit_family {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
                 <$preset>::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> SisModulusProfileId {
@@ -161,7 +161,7 @@ macro_rules! digit_family {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
                 <$element_preset>::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> SisModulusProfileId {

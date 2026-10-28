@@ -16,7 +16,7 @@ fn portable_fragments_match_complete_cpu_witness_in_both_modes() {
             1,
             2,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeFamily::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();

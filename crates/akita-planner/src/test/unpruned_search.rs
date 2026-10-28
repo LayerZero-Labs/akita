@@ -20,7 +20,7 @@ use suffix::visit_suffixes;
 
 struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
-    ring_challenge_config: &'a dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: &'a dyn Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -163,7 +163,7 @@ pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     source_contract: akita_params::sis::CommittedSourceContract,
-    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
 ) -> Result<OracleSearchResult, AkitaError> {
     key.validate()?;
     akita_schedules::planner_support::validate_policy(policy)?;

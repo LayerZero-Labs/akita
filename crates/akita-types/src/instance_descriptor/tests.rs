@@ -1,5 +1,5 @@
 use super::*;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::{
     ChallengeFieldOrder, CommittedGroupParams, FoldParams, FoldSchedule, GrindingPlan, GrindingRun,
     GrindingSite, InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection,
@@ -11,7 +11,7 @@ use jolt_field::Prime32Offset99;
 const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
 
 fn sample_schedule() -> FoldSchedule {
-    let sparse = SparseChallengeConfig::pm1_only(3);
+    let sparse = FoldChallengeFamily::pm1_only(3);
     let mut committed =
         CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 4, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
@@ -336,7 +336,7 @@ fn terminal_topology_changes_plan_binding() {
 fn terminal_sparse_sampler_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    second.terminal.fold_challenge_config = SparseChallengeConfig::pm1_only(4);
+    second.terminal.fold_challenge_config = FoldChallengeFamily::pm1_only(4);
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),
         PlanSection::from_schedule(sample_selection(), &second)

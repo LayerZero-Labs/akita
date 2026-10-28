@@ -110,7 +110,7 @@ pub(super) fn retain(
 
 #[test]
 fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
-    let challenge = SparseChallengeConfig::pm1_only(3);
+    let challenge = FoldChallengeFamily::pm1_only(3);
     let mut params = CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q32Offset99,
         64,

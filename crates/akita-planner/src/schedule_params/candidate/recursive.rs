@@ -616,6 +616,7 @@ fn append_selective_l2_candidates(
         return Ok(());
     };
     let Some(l2_challenge) = akita_challenges::selective_l2_challenge_config(dimensions.d_a())
+        .map(akita_challenges::FoldChallengeFamily::SignedSparse)
     else {
         return Ok(());
     };

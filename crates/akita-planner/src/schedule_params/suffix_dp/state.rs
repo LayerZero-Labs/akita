@@ -340,7 +340,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) challenge_order: akita_params::ChallengeFieldOrder,
     pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     pub(crate) ring_challenge_config:
-        &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+        &'a dyn Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,

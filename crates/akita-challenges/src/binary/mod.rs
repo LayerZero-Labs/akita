@@ -6,6 +6,7 @@
 
 mod combinatorics;
 mod profile;
+pub(crate) mod root_family;
 mod sampler;
 mod sign;
 

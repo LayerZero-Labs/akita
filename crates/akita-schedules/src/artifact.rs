@@ -2,7 +2,7 @@
 
 mod verifier_view;
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::{
     digest_descriptor_bytes, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
@@ -170,7 +170,7 @@ impl ValidatedScheduleCatalog {
         family_name: impl Into<String>,
         rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
     ) -> Result<Self, AkitaError> {
         let family_name = family_name.into();
         validate_family_name(&family_name)?;
@@ -247,7 +247,7 @@ impl ValidatedScheduleCatalog {
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
     ) -> Result<Self, AkitaError> {
         if bytes.is_empty() || bytes.len() > MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES {
             return Err(AkitaError::InvalidSetup(format!(
@@ -366,7 +366,7 @@ impl ValidatedScheduleCatalog {
         &self,
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
     ) -> Result<(), AkitaError> {
         if self.family_name != expected_family_name {
             return Err(AkitaError::InvalidSetup(format!(
@@ -793,9 +793,9 @@ fn catalog_digest(
 
 fn validate_schedule_challenge_hooks(
     schedule: &FoldSchedule,
-    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: &impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
 ) -> Result<(), AkitaError> {
-    let validate = |actual: SparseChallengeConfig,
+    let validate = |actual: FoldChallengeFamily,
                     method: akita_params::OpeningMethod,
                     ring_dimension: usize,
                     uses_l2: bool,
@@ -803,14 +803,14 @@ fn validate_schedule_challenge_hooks(
         let expected = match method {
             akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
-            } => SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension)
+            } => FoldChallengeFamily::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} uses unsupported challenge subring D={challenge_subring_dimension}"
                     ))
                 })?,
             akita_params::OpeningMethod::EvaluationTrace if uses_l2 => {
-                akita_challenges::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
+                akita_challenges::selective_l2_challenge_config(ring_dimension).map(akita_challenges::FoldChallengeFamily::SignedSparse).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} has no selective L2 challenge config for D={ring_dimension}"
                     ))
@@ -886,6 +886,30 @@ mod tests {
     struct TestRawArtifact<'a> {
         #[serde(borrow)]
         rows: Vec<&'a RawValue>,
+    }
+
+    #[test]
+    fn signed_sparse_selector_preserves_legacy_json_and_postcard_bytes() {
+        for sparse in [
+            akita_challenges::SparseChallengeConfig::pm1_only(0),
+            akita_challenges::SparseChallengeConfig::pm1_only(3),
+            akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+            akita_challenges::SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+        ] {
+            let family = FoldChallengeFamily::SignedSparse(sparse);
+            let old_json = serde_json::to_vec(&sparse).unwrap();
+            assert_eq!(serde_json::to_vec(&family).unwrap(), old_json);
+            assert_eq!(
+                serde_json::from_slice::<FoldChallengeFamily>(&old_json).unwrap(),
+                family,
+            );
+            let old_postcard = postcard::to_allocvec(&sparse).unwrap();
+            assert_eq!(postcard::to_allocvec(&family).unwrap(), old_postcard);
+            assert_eq!(
+                postcard::from_bytes::<FoldChallengeFamily>(&old_postcard).unwrap(),
+                family,
+            );
+        }
     }
 
     #[test]

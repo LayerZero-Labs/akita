@@ -1,6 +1,6 @@
 //! Build one fully sized successor, including its setup-prefix group and D input.
 use super::geometry::{rebuild_group_output_matrices, universal_fold_digit_depth, FoldDigitInputs};
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::{FoldParams, OpeningClaimsLayout};
 use akita_schedules::PlannerPolicy;
@@ -39,7 +39,7 @@ pub(super) fn build_successor(
     successor_witness
         .own_group_mut()
         .opening
-        .fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(
+        .fold_challenge_config = FoldChallengeFamily::production_for_ring_dim(
         challenge_subring_dimension,
     )
     .ok_or_else(|| {

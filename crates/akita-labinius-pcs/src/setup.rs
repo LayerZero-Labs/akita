@@ -16,10 +16,10 @@ const ROOT_MATRIX_SEED_DOMAIN: &[u8] = b"akita/labinius/root-matrix-seed/v1";
 /// The matrix seed is `Blake2b-256(LP(domain) || LP(nested_seed))`, with `LP`
 /// the u64 little-endian length prefix and the seed in its canonical
 /// compressed encoding, and it keeps the nested seed's derivation algorithm.
-/// The matrix is the `Prime128Offset275` stream of that seed reduced modulo
-/// `q`, for every proof-field family: the stream field fixes the reduction
-/// bias, and the label keeps the matrix from being a reduced prefix of the
-/// nested Akita setup matrix.
+/// The matrix uses an exact typed q-uniform stream, for every proof-field
+/// family. `Prime128Offset275` remains the validated field descriptor of the
+/// legacy adapter and does not supply q candidates. The labelled seed and
+/// typed q domain separate this matrix from the nested ordinary setup stream.
 ///
 /// # Errors
 ///

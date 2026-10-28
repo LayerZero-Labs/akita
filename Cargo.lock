@@ -48,7 +48,9 @@ dependencies = [
  "jolt-field",
  "keccak 0.1.6",
  "num-bigint 0.5.1",
+ "postcard",
  "serde",
+ "serde_json",
  "shake",
  "smallvec",
 ]
@@ -192,6 +194,7 @@ dependencies = [
  "rand 0.8.8",
  "serde",
  "sha3 0.12.0",
+ "shake",
 ]
 
 [[package]]

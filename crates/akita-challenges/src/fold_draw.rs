@@ -1,7 +1,6 @@
 //! Fold-challenge preview drawing for prover-side Fiat–Shamir grinding.
 
-use crate::sampler::MAX_STACK_RING_DIM;
-use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
+use crate::{Challenges, FoldChallengeFamily, OperatorNormRejection};
 use akita_error::AkitaError;
 use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
 
@@ -69,7 +68,7 @@ pub trait FoldDraw {
         group_index: usize,
         num_live_blocks: usize,
         num_claims: usize,
-        cfg: &SparseChallengeConfig,
+        cfg: &(impl Copy + Into<FoldChallengeFamily>),
         rejection: Option<OperatorNormRejection>,
     ) -> Result<Challenges, AkitaError> {
         if let FoldChallengeDrawDomain::SubringCoefficientPacking {
@@ -87,19 +86,8 @@ pub trait FoldDraw {
                 ));
             }
         }
-        if ring_d > MAX_STACK_RING_DIM {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring dimension {ring_d} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
-            )));
-        }
-        cfg.validate_dyn(ring_d).map_err(|e| {
-            AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}"))
-        })?;
-        if let Some(rejection) = rejection {
-            rejection
-                .validate(ring_d, cfg)
-                .map_err(|error| AkitaError::InvalidInput(error.into()))?;
-        }
+        let cfg = (*cfg).into();
+        cfg.validate_draw(ring_d, rejection)?;
         if num_live_blocks == 0 || num_claims == 0 {
             return Err(AkitaError::InvalidInput(
                 "fold challenges require positive num_live_blocks and claims".to_string(),
@@ -126,9 +114,7 @@ pub trait FoldDraw {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
         let seed = self.absorb_and_squeeze(&absorb_buf)?;
-        let challenges = crate::sampler::sample_indexed_challenges_from_seed(
-            &seed, ring_d, total, cfg, rejection,
-        )?;
+        let challenges = cfg.sample_indexed(&seed, ring_d, total, rejection)?;
         #[cfg(feature = "logging-transcript")]
         self.record_challenge_range(group_index, total);
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
@@ -253,6 +239,7 @@ impl FoldDraw for VerifierFoldDraw<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SparseChallengeConfig;
 
     #[derive(Default)]
     struct CapturingDraw {

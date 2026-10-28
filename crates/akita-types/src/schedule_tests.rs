@@ -30,7 +30,7 @@ use crate::{
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
     TerminalLevelProof, TerminalResponse,
 };
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::nonterminal_level_layout;
@@ -170,7 +170,7 @@ fn recursive_schedule(
     let mut successor = committed_params(successor_ring_dimension);
     if offload {
         successor.own_group_mut().opening.fold_challenge_config =
-            SparseChallengeConfig::production_for_ring_dim(successor_ring_dimension)
+            FoldChallengeFamily::production_for_ring_dim(successor_ring_dimension)
                 .expect("production setup-prefix challenge");
     }
     let incoming_setup_prefix = offload.then(|| {
@@ -203,7 +203,7 @@ fn recursive_schedule(
             output_witness_len: successor_ring_dimension,
         }],
         terminal: TerminalFoldParams {
-            fold_challenge_config: SparseChallengeConfig::pm1_only(3),
+            fold_challenge_config: FoldChallengeFamily::pm1_only(3),
             response_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension: successor_ring_dimension,
@@ -477,7 +477,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let precommitted_group = PolynomialGroupLayout::new(9, 1);
     let mut group_params = producer.clone();
     group_params.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
+        FoldChallengeFamily::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group uses a production ring dimension");
     let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = &group_params.inner().matrix;
@@ -540,7 +540,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let prefix_ring_slots = n_prefix / 64;
     let mut consumer = committed_params_with_geometry(64, prefix_ring_slots, 64);
     consumer.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(64)
+        FoldChallengeFamily::production_for_ring_dim(64)
             .expect("production setup-prefix challenge");
     provision_setup_prefix_capacity(&mut consumer, n_prefix);
     let commitment_params = akita_params::setup_prefix_precommitted_params(&consumer, n_prefix)
@@ -564,7 +564,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 
 #[test]
 fn terminal_projection_preserves_the_fixed_inner_matrix() {
-    let sparse = SparseChallengeConfig::pm1_only(3);
+    let sparse = FoldChallengeFamily::pm1_only(3);
     let mut committed = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
@@ -721,7 +721,7 @@ fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
 #[test]
 fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
-    let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
@@ -772,7 +772,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
 #[test]
 fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
     const D: usize = 64;
-    let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
     let num_claims = 3;
 
     for log_basis in 2..=6 {
@@ -835,7 +835,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 #[test]
 fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
-    let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
@@ -1347,7 +1347,7 @@ fn schedule_row_identity_binds_main_opening_method() {
             challenge_subring_dimension: 64,
         };
     successor.own_group_mut().opening.fold_challenge_config =
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        akita_challenges::FoldChallengeFamily::production_for_ring_dim(64).unwrap();
     let profiles = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
@@ -1367,7 +1367,7 @@ fn schedule_row_identity_binds_main_opening_method() {
         .own_group_mut()
         .opening
         .fold_challenge_config =
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        akita_challenges::FoldChallengeFamily::production_for_ring_dim(64).unwrap();
     assert_ne!(
         digest,
         akita_params::schedule_row_digest(&profiles, &changed)

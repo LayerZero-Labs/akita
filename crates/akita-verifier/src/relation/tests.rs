@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_challenges::{Challenges, FoldChallengeFamily, SparseChallenge};
 use akita_params::{
     CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout,
     OuterCommitMatrixParams, RingOpeningPoint, SisModulusProfileId,
@@ -17,8 +17,8 @@ type MixedF = Prime128OffsetA7F7;
 const D_INNER: usize = 128;
 const D_PROJECTED: usize = 64;
 
-fn fold_challenge_config() -> SparseChallengeConfig {
-    SparseChallengeConfig::pm1_only(1)
+fn fold_challenge_config() -> FoldChallengeFamily {
+    FoldChallengeFamily::pm1_only(1)
 }
 
 struct MixedRelationFixture {

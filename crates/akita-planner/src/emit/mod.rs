@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
 use akita_params::ScheduleLookupKey;
@@ -137,7 +137,7 @@ pub struct EmitSpec {
     /// Exact schedules already planned by the caller, audited against `policy` on emission.
     pub preplanned: Vec<(ScheduleLookupKey, FoldSchedule)>,
     pub output_path: PathBuf,
-    pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    pub ring_challenge_config: fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
 }
 
 // Schedule search is memory bound. Keep the default below host-wide

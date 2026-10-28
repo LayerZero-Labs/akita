@@ -22,9 +22,10 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 serde = { version = "1", features = ["derive"] }
 blake2 = "0.11.0"
 sha3 = "0.12.0"
+shake = { version = "0.1.0", optional = true }
 
 [features]
-labinius-sis = ["akita-challenges/labinius-challenges"]
+labinius-sis = ["akita-challenges/labinius-challenges", "dep:shake"]
 # Selects the dev protocol: every wire-format change `dev` carries that `main`
 # does not, together. Off by default. Schedules priced for it live in
 # `artifacts/schedules-dev`. See docs/branches.md.

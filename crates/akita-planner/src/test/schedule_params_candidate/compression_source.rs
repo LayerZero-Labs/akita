@@ -14,7 +14,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
 
     let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let dimensions = CommitmentRingDims::uniform(256);
-    let challenge = SparseChallengeConfig::production_for_ring_dim(dimensions.d_a())
+    let challenge = FoldChallengeFamily::production_for_ring_dim(dimensions.d_a())
         .expect("production challenge for candidate A dimension");
     let num_claims = 1;
     let width_s = 8;

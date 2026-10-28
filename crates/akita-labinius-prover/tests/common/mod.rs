@@ -133,9 +133,8 @@ pub(crate) fn host_mle<H: SwitchField>(source: &[H::Source], point: &[H]) -> H {
         })
 }
 
-/// The shipped profile at sixteen cells. The matrix is the reduced public
-/// prefix of the Akita setup stream over `Prime128Offset275` for every proof
-/// field pair: a 64-bit stream fails the derivation-bias check.
+/// The shipped profile at sixteen cells. The matrix uses the typed exact
+/// q-uniform setup stream independently of the proof field pair.
 pub(crate) fn admitted(log_fold_width: u32, seed: u8) -> Admitted {
     Admitted::derive::<Prime128Offset275>(
         PROFILE,
