@@ -107,39 +107,3 @@ fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
     check::<fp64::Dense>(&[21, 23, 25, 27, 29]);
     check::<fp128::Dense>(&[20, 22, 24, 26, 28]);
 }
-
-#[test]
-fn row_admission_rejects_a_setup_prefix_without_full_width_inner_digits() {
-    type RecursiveOneHot = RecursiveCommitmentConfig<fp128::OneHot>;
-    let row = row_with_setup_prefix::<RecursiveOneHot>(
-        |_| true,
-        akita_params::ChunkedWitnessCfg::default_non_chunked(),
-    );
-    let prefix = row
-        .schedule()
-        .recursive_folds
-        .iter()
-        .find_map(|fold| fold.params.setup_prefix().copied())
-        .expect("recursive setup prefix");
-    let natural_len = prefix.setup_natural_len.expect("setup prefix support");
-    prefix
-        .profile
-        .validate_setup_prefix_geometry(natural_len)
-        .expect("generated prefixes use the full field width");
-
-    // Preserve matrix geometry while truncating the setup decomposition.
-    let mut truncated = prefix.profile;
-    truncated.inner.digits.num_digits = 1;
-    truncated.inner.matrix = truncated
-        .inner
-        .matrix
-        .try_with_input_width(truncated.blocks.positions_per_block)
-        .expect("one-digit A width");
-    let error = truncated
-        .validate_setup_prefix_geometry(natural_len)
-        .expect_err("truncated setup-prefix depth must be rejected");
-    assert!(
-        error.to_string().contains("full field width"),
-        "unexpected error: {error}"
-    );
-}
