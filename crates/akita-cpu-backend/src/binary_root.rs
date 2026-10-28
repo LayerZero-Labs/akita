@@ -18,7 +18,7 @@ use akita_params::{RelationPolynomial, RelationRowGeometry};
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
 use akita_types::native_root_relation::{binary_commitment_group, NativeRootGroup};
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
-use jolt_field::{CanonicalEncoding, Field, One, Prime128Offset275, Prime128OffsetA7F7};
+use jolt_field::{CanonicalEncoding, Field, One, Prime128Offset275, Prime128OffsetA7F7, Ring};
 
 use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
 
@@ -74,7 +74,7 @@ impl BinaryRootRelation {
         response
             .try_reserve_exact(count)
             .map_err(|_| invalid("binary response allocation failed"))?;
-        response.resize(count, [0; D]);
+        response.resize(count, [0i128; D]);
         for (polynomial_sources, (polynomial_challenges, output)) in
             sources.chunks_exact(columns * rows).zip(
                 embedded
@@ -288,7 +288,7 @@ impl BinaryRootRelation {
         row: usize,
     ) -> Result<[Prime128Offset275; D], AkitaError> {
         let row = self.rows.get(row).ok_or(AkitaError::InvalidProof)?;
-        Ok(row.remainder.map(signed_field::<Prime128Offset275>))
+        Ok(row.remainder.map(Prime128Offset275::from_i128))
     }
 
     /// Assemble typed public A rows against successor segments 0 and 1.
@@ -305,19 +305,19 @@ impl BinaryRootRelation {
             .iter()
             .map(|row| {
                 row.iter()
-                    .map(|coefficients| coefficients.map(signed_field::<E>))
+                    .map(|coefficients| coefficients.map(E::from_i128))
                     .collect()
             })
             .collect::<Vec<Vec<_>>>();
         let challenges = self
             .embedded_challenges
             .iter()
-            .map(|coefficients| coefficients.map(signed_field::<E>))
+            .map(|coefficients| coefficients.map(E::from_i128))
             .collect::<Vec<_>>();
         let residuals = self
             .rows
             .iter()
-            .map(|row| row.remainder.map(signed_field::<E>))
+            .map(|row| row.remainder.map(E::from_i128))
             .collect::<Vec<_>>();
         binary_commitment_group(descriptor.clone(), &matrix, &challenges, 0, 1, &residuals)
     }
@@ -388,17 +388,8 @@ fn embed_challenges(
 }
 
 fn auxiliary_ring(coefficients: &[i128; D]) -> Result<AuxiliaryRing, AkitaError> {
-    AuxiliaryRing::from_coefficients(coefficients.map(signed_field::<Prime128OffsetA7F7>))
+    AuxiliaryRing::from_coefficients(coefficients.map(Prime128OffsetA7F7::from_i128))
         .map_err(|error| invalid(&error.to_string()))
-}
-
-fn signed_field<F: Field>(value: i128) -> F {
-    let magnitude = F::from_u128_reduced(value.unsigned_abs());
-    if value < 0 {
-        -magnitude
-    } else {
-        magnitude
-    }
 }
 
 fn lift_auxiliary(

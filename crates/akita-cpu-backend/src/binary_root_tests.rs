@@ -155,7 +155,7 @@ fn q24_root_matches_integer_fold_division_and_coefficient_repacking() {
                 relation
                     .residual_in_proof_field(polynomial * 2 + row)
                     .unwrap(),
-                remainder.map(signed_field::<Prime128Offset275>)
+                remainder.map(Prime128Offset275::from_i128)
             );
         }
     }
@@ -170,7 +170,7 @@ fn q24_root_matches_integer_fold_division_and_coefficient_repacking() {
             assert_eq!(
                 plan.recompose_coefficient(&table, 0, element, coefficient)
                     .unwrap(),
-                signed_field::<Prime128Offset275>(value)
+                Prime128Offset275::from_i128(value)
             );
         }
     }

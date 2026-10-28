@@ -57,11 +57,7 @@ fn ordinary_product(left: &[i128; 8], right: &[i128; 8]) -> Vec<E> {
     for exponent in (8..15).rev() {
         product[exponent - 8] -= product[exponent];
     }
-    product[..8]
-        .iter()
-        .copied()
-        .map(signed_field::<E>)
-        .collect()
+    product[..8].iter().copied().map(E::from_i128).collect()
 }
 
 fn mixed_root() -> (NativeRootRelation<E>, Vec<i8>) {
@@ -99,7 +95,7 @@ fn mixed_root() -> (NativeRootRelation<E>, Vec<i8>) {
             terms: vec![NativeRootTerm {
                 segment: 2,
                 element: 0,
-                multiplier: multiplier.iter().copied().map(signed_field::<E>).collect(),
+                multiplier: multiplier.iter().copied().map(E::from_i128).collect(),
             }],
             target: ordinary_product(&multiplier, &ordinary),
         }],
