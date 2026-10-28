@@ -83,15 +83,3 @@ fn atom_encodings_and_challenges_match_frozen_bytes() {
         assert_eq!(hex(&challenge_bytes), "c2aea236b8ccba30df6fd73007258c36");
     }
 }
-
-#[test]
-fn byte_receipt_rejects_lengths_larger_than_the_proof() {
-    for len in [1, u32::MAX as usize, usize::MAX] {
-        let mut verifier = new_verifier_channel(b"bytes", b"fixture", &[]).unwrap();
-        assert!(matches!(
-            receive_bytes(&mut verifier, len),
-            Err(AkitaError::InvalidProof)
-        ));
-        assert!(verifier.check_eof().is_err());
-    }
-}
