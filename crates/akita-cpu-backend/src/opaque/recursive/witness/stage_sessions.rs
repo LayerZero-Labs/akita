@@ -1,6 +1,7 @@
 use super::handles_and_relation::ConsumerRelationWitness;
 use crate::opaque::sumcheck::{digit_range, relation_range_image};
 use akita_error::AkitaError;
+use akita_prover::backend::RelationCompiler;
 use digit_range::DigitRangeProver;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
@@ -350,8 +351,7 @@ where
                 "Stage 2 plan disagrees with its witness manifest".into(),
             ));
         }
-        let weights =
-            crate::opaque::relation_weights::compile_stage2_weights(&prepared.expanded, &plan)?;
+        let weights = prepared.compile_relation(&plan)?;
         let additional = (!weights.linear.is_empty() || !weights.binary_intervals.is_empty())
             .then(|| {
                 relation_range_image::AdditionalRelationTerms::new(

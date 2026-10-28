@@ -9,7 +9,7 @@ mod relation;
 
 pub use handoff::*;
 pub use relation::{
-    EvaluationTraceDescription, PhysicalL2WeightRequest, RelationWeightRequest,
+    EvaluationTraceDescription, PhysicalL2WeightRequest, RelationCompiler, RelationWeightRequest,
     Stage2OpeningDescription, ValidatedRelationSessionPlan,
 };
 
