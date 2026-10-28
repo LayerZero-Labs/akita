@@ -433,7 +433,7 @@ mod tests {
         assert!(plan.repack(&[&[], &[]]).is_err());
         let mut bad = vec![0; 2 * 4 * 648];
         bad[0] = 4;
-        assert!(plan.repack(&[&bad, &vec![0; 32]]).is_err());
+        assert!(plan.repack(&[&bad, &[0; 32]]).is_err());
         assert!(plan.validate_digit_table::<F>(&[]).is_err());
         let segment = RootRepackingSegment {
             geometry: RelationRowGeometry::native(8).unwrap(),
