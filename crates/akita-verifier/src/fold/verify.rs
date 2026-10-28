@@ -8,7 +8,7 @@ use akita_serialization::{AkitaSerialize, Valid};
 use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 use akita_params::{validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile};
-use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims};
 
 use crate::AkitaVerifier;
 
@@ -158,14 +158,8 @@ where
         let raw_groups = claims
             .groups()
             .iter()
-            .map(|group| {
-                PolynomialGroupClaims::new(
-                    group.point().to_vec(),
-                    group.evaluations().to_vec(),
-                    group.commitment().commitment(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|group| group.map_commitment(|&commitment| commitment.commitment()))
+            .collect();
         let raw_claims = OpeningClaims::from_groups(raw_groups)?;
         Ok(PreparedOpening {
             schedule,

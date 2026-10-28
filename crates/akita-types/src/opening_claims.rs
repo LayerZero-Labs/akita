@@ -1,5 +1,8 @@
 //! Public opening claims and layout-only opening geometry.
 
+mod kind;
+pub use kind::GroupClaimKind;
+
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::CommittedGroup;
@@ -14,6 +17,7 @@ pub struct PolynomialGroupClaims<'a, F: Clone, C = ()> {
     point: OpeningPoints<'a, F>,
     evaluations: Vec<F>,
     commitment: C,
+    kind: GroupClaimKind,
 }
 
 impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
@@ -32,6 +36,7 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
             point: point.into(),
             evaluations,
             commitment,
+            kind: GroupClaimKind::Ordinary,
         })
     }
 
@@ -53,6 +58,25 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
     /// Group commitment.
     pub fn commitment(&self) -> &C {
         &self.commitment
+    }
+
+    /// Extension seam: retain the group relation kind while converting payloads.
+    ///
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub fn kind(&self) -> &GroupClaimKind {
+        &self.kind
+    }
+
+    /// Extension seam: change the commitment representation without losing claims.
+    ///
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub fn map_commitment<D>(&self, map: impl FnOnce(&C) -> D) -> PolynomialGroupClaims<'a, F, D> {
+        PolynomialGroupClaims {
+            point: self.point.clone(),
+            evaluations: self.evaluations.clone(),
+            commitment: map(&self.commitment),
+            kind: self.kind.clone(),
+        }
     }
 
     /// Number of evaluations in this group.
@@ -317,6 +341,7 @@ mod tests {
             point: vec![F::zero()].into(),
             evaluations: vec![],
             commitment: (),
+            kind: GroupClaimKind::Ordinary,
         });
         assert!(matches!(
             claims.check(),
