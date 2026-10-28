@@ -1,5 +1,6 @@
 //! Commitment execution and persistence admission at the owning backend boundary.
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, SourceHandle};
+use super::owned_kind::SourceGroupKind;
 use crate::commitment::{AcceptedReach, CommitmentExecutor, GroupContext, PortableStatePolicy};
 use crate::opaque::CpuBackend;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
@@ -81,6 +82,9 @@ where
     F::Wide: From<F>,
     E: FpExtEncoding<F> + 'static,
 {
+    /// Extension seam: dispatch commitment by the source's explicitly selected group kind.
+    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    ///
     /// Commit an imported immutable source under the producer schedule family
     /// `family`, retaining its exact source and parameters.
     ///
@@ -102,6 +106,20 @@ where
                 "source belongs to another backend".into(),
             ));
         }
+        match source.storage.group_kind() {
+            SourceGroupKind::Ordinary => self.commit_ordinary(family, source, context),
+        }
+    }
+
+    fn commit_ordinary<Cfg>(
+        &self,
+        family: &TrustedScheduleCatalog<Cfg>,
+        source: &SourceHandle<F, E>,
+        context: GroupContext<'_>,
+    ) -> Result<CommitOutput<F, E>, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         let prepared = self.prepared()?;
         let executor = CommitmentExecutor::cpu(
             self,

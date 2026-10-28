@@ -1,4 +1,5 @@
 //! Reusable source and commitment ownership. No proof state lives in these objects.
+use super::owned_kind::SourceGroupKind;
 use super::source::{
     prepare_and_evaluate_opening_group, scalar_opening_from_folded_ring,
     PreparedExtensionOpeningGroup,
@@ -84,6 +85,11 @@ where
 // This object-safe interface never leaves the CPU crate. It retains one whole
 // homogeneous group while allowing different representations in one proof.
 pub(super) trait PrivateSource<F: Field + CanonicalEncoding, E: Field>: Send + Sync {
+    /// Extension seam: select source-group interpretation without changing ordinary sources.
+    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    fn group_kind(&self) -> SourceGroupKind {
+        SourceGroupKind::Ordinary
+    }
     fn commitment_sources(&self) -> Vec<&dyn CommitmentSource<F>>;
     fn dense_polynomials(&self) -> Result<Vec<crate::DensePoly<F>>, AkitaError>;
     #[cfg(feature = "response-model-diagnostics")]

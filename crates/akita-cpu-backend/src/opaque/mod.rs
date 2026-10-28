@@ -15,6 +15,7 @@ mod openings;
 pub(crate) mod operation_plans;
 mod owned;
 mod owned_commit;
+mod owned_kind;
 mod owned_prefix;
 pub(crate) mod plans;
 mod prepared_opening;
