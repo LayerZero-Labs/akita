@@ -13,6 +13,11 @@ use jolt_field::Field;
 use super::TrinomialModulus;
 use crate::offset_eq::eq_eval_at_index;
 
+/// An internal bound failure: unreachable for inputs that passed validation.
+fn internal(what: &str) -> AkitaError {
+    AkitaError::Internal(format!("trinomial adjoint: {what} out of bounds"))
+}
+
 /// A checked coefficient-adjoint shape; the modulus sign is part of its type.
 #[derive(Clone, Copy, Debug)]
 pub struct TrinomialAdjoint<const D: usize, M: TrinomialModulus> {
@@ -53,13 +58,16 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
             *slot = value;
         }
         for l in D..self.product_len {
-            let high = *g.get(l - D / 2).ok_or(AkitaError::InvalidProof)?;
-            let low = *g.get(l - D).ok_or(AkitaError::InvalidProof)?;
-            *g.get_mut(l).ok_or(AkitaError::InvalidProof)? = if M::MIDDLE_COEFFICIENT < 0 {
-                high - low
-            } else {
-                -high - low
-            };
+            let high = *g
+                .get(l - D / 2)
+                .ok_or_else(|| internal("extended row index"))?;
+            let low = *g.get(l - D).ok_or_else(|| internal("extended row index"))?;
+            *g.get_mut(l).ok_or_else(|| internal("extended row index"))? =
+                if M::MIDDLE_COEFFICIENT < 0 {
+                    high - low
+                } else {
+                    -high - low
+                };
         }
         Ok(g)
     }
@@ -76,7 +84,9 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
             });
         }
         let g = self.extend_row(rho)?;
-        let (g0, tail) = g.split_at_checked(D).ok_or(AkitaError::InvalidProof)?;
+        let (g0, tail) = g
+            .split_at_checked(D)
+            .ok_or_else(|| internal("extended row split"))?;
         let mut g1 = field_buffer(D)?;
         for (slot, &value) in g1.iter_mut().zip(tail) {
             *slot = value;
@@ -89,9 +99,13 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
         let high = exact_convolution(&g1, &reversed)?;
         let mut h = field_buffer(D)?;
         for (s, slot) in h.iter_mut().enumerate() {
-            *slot = *low.get(D - 1 + s).ok_or(AkitaError::InvalidProof)?;
+            *slot = *low
+                .get(D - 1 + s)
+                .ok_or_else(|| internal("low convolution index"))?;
             if s > 0 {
-                *slot += *high.get(s - 1).ok_or(AkitaError::InvalidProof)?;
+                *slot += *high
+                    .get(s - 1)
+                    .ok_or_else(|| internal("high convolution index"))?;
             }
         }
         Ok(h)
@@ -143,14 +157,20 @@ fn karatsuba<F: Field>(lhs: &[F], rhs: &[F]) -> Result<Vec<F>, AkitaError> {
             for (j, &b) in rhs.iter().enumerate() {
                 #[cfg(test)]
                 MULTIPLICATIONS.with(|count| count.set(count.get() + 1));
-                *output.get_mut(i + j).ok_or(AkitaError::InvalidProof)? += a * b;
+                *output
+                    .get_mut(i + j)
+                    .ok_or_else(|| internal("schoolbook output index"))? += a * b;
             }
         }
         return Ok(output);
     }
     let half = n / 2;
-    let (a0, a1) = lhs.split_at_checked(half).ok_or(AkitaError::InvalidProof)?;
-    let (b0, b1) = rhs.split_at_checked(half).ok_or(AkitaError::InvalidProof)?;
+    let (a0, a1) = lhs
+        .split_at_checked(half)
+        .ok_or_else(|| internal("Karatsuba split"))?;
+    let (b0, b1) = rhs
+        .split_at_checked(half)
+        .ok_or_else(|| internal("Karatsuba split"))?;
     let mut a_sum = field_buffer(n - half)?;
     let mut b_sum = field_buffer(n - half)?;
     for (slot, &value) in a_sum.iter_mut().zip(a1) {
@@ -176,7 +196,9 @@ fn karatsuba<F: Field>(lhs: &[F], rhs: &[F]) -> Result<Vec<F>, AkitaError> {
     }
     for (offset, values) in [(0, &low), (half, &middle), (2 * half, &high)] {
         for (i, &value) in values.iter().enumerate() {
-            *output.get_mut(offset + i).ok_or(AkitaError::InvalidProof)? += value;
+            *output
+                .get_mut(offset + i)
+                .ok_or_else(|| internal("Karatsuba output index"))? += value;
         }
     }
     Ok(output)
