@@ -219,8 +219,16 @@ fn cold_setup_prefix_rayon_acquisitions_complete() {
                         let actual = backend.prepare_setup_prefix(&id).unwrap();
                         assert_eq!(actual.public, expected.public);
                         assert_eq!(
-                            actual.commitment_handle.committed.retained,
-                            expected.commitment_handle.committed.retained
+                            actual
+                                .commitment_handle
+                                .committed
+                                .ordinary_retained()
+                                .unwrap(),
+                            expected
+                                .commitment_handle
+                                .committed
+                                .ordinary_retained()
+                                .unwrap()
                         );
                     });
                 });

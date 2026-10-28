@@ -54,7 +54,9 @@ where
         )?;
         let (recomputed, retained) =
             executor.execute_full_via_outer_image(self, committed.parameters, &sources, None)?;
-        if recomputed.commitment != committed.public || retained != committed.retained {
+        if recomputed.commitment != committed.public
+            || &retained != committed.ordinary_retained()?
+        {
             return Err(AkitaError::InvalidInput(
                 "transferred commitment does not match backend setup".into(),
             ));
@@ -70,7 +72,7 @@ where
                 // so the admitting contract carries over unchanged.
                 producer_contract: committed.producer_contract,
                 public: committed.public.clone(),
-                retained,
+                retained: Some(retained),
             }),
         })
     }
@@ -163,7 +165,7 @@ where
                 parameters: *committed_group.profile(),
                 producer_contract,
                 public: committed_group.commitment().clone(),
-                retained: prover_state,
+                retained: Some(prover_state),
             }),
         };
         Ok(CommitOutput {
@@ -234,15 +236,18 @@ mod tests {
 
                 assert_eq!(actual.committed_group, expected.committed_group);
                 assert_eq!(
-                    actual.private_handle.committed.retained,
-                    expected.prover_state
+                    actual.private_handle.committed.ordinary_retained().unwrap(),
+                    &expected.prover_state
                 );
 
                 let receiving_backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();
                 let transferred = receiving_backend
                     .import_commitment(&actual.private_handle)
                     .unwrap();
-                assert_eq!(transferred.committed.retained, expected.prover_state);
+                assert_eq!(
+                    transferred.committed.ordinary_retained().unwrap(),
+                    &expected.prover_state
+                );
                 assert_eq!(
                     actual.private_handle.producer_contract(),
                     Cfg::committed_source_contract().unwrap()

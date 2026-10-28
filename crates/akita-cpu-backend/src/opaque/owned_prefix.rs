@@ -183,7 +183,7 @@ where
             parameters: id.commitment_profile,
             producer_contract,
             public: Commitment::new(public_commitment),
-            retained: artifact.hint.clone(),
+            retained: Some(artifact.hint.clone()),
         });
         Ok(PreparedSetupPrefix {
             public: artifact.verifier_slot(),
@@ -248,7 +248,7 @@ where
                         expected.coeffs() != actual.coeffs()
                             || (actual.ring_dim() != 0 && actual.ring_dim() != expected.ring_dim())
                     })
-                || slot.commitment_handle.committed.retained != artifact.hint
+                || slot.commitment_handle.committed.ordinary_retained()? != &artifact.hint
             {
                 return Err(AkitaError::InvalidSetup(
                     "setup prefix artifact differs from its committed source".into(),

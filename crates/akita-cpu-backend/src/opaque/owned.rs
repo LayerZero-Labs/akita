@@ -62,8 +62,20 @@ pub(super) struct CommittedSource<F: Field + CanonicalEncoding, E: Field> {
     pub(super) parameters: GroupCommitPhaseParams,
     pub(super) producer_contract: sis::CommittedSourceContract,
     pub(super) public: Commitment<F>,
-    pub(super) retained: crate::commitment::PortableCommitmentHandle<F>,
+    pub(super) retained: Option<crate::commitment::PortableCommitmentHandle<F>>,
 }
+impl<F: Field + CanonicalEncoding, E: Field> CommittedSource<F, E> {
+    /// Extension seam: admit ordinary relation material only for commitments that retain it.
+    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    pub(super) fn ordinary_retained(
+        &self,
+    ) -> Result<&crate::commitment::PortableCommitmentHandle<F>, AkitaError> {
+        self.retained.as_ref().ok_or_else(|| {
+            AkitaError::InvalidInput("commitment has no ordinary relation material".into())
+        })
+    }
+}
+
 /// Public commitment and the reusable private handle used for proving.
 pub struct CommitOutput<F: Field + CanonicalEncoding, E: Field> {
     pub committed_group: CommittedGroup<F>,
