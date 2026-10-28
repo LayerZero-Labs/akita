@@ -15,6 +15,9 @@ use shake::Shake256;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
+mod range;
+pub use range::derive_public_matrix_range;
+
 /// Versioned derivation algorithm for the public field stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicMatrixDerivation {
@@ -243,10 +246,7 @@ pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
     cfg_chunks_mut!(data, id.derivation.page_field_elements())
         .enumerate()
         .for_each(|(page_index, coeffs)| {
-            let mut page_rng = SetupSeedPageXof::new::<F>(id, page_index);
-            for coeff in coeffs.iter_mut() {
-                *coeff = F::random(&mut page_rng);
-            }
+            range::fill_page(id, page_index, 0, coeffs);
         });
 
     FlatMatrix::from_flat_data(data)
