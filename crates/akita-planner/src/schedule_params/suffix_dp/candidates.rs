@@ -16,8 +16,8 @@ use crate::{
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide,
-    FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide,
-    SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
+    FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveFoldWork, RelationSearchDomain,
+    SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -577,6 +577,12 @@ impl<'a> CandidateDomain<'a> {
         })
     }
 
+    /// Generate one opening basis's candidates for a recursive state.
+    ///
+    /// Each request (inner basis, opening work, payload mode) is generated
+    /// independently of the others, so the requests run in parallel and are
+    /// joined in request order: the candidates, their order and the first
+    /// error in request order are those of one sequential pass.
     pub(super) fn generate_recursive_for_opening_basis(
         &self,
         ctx: &SuffixCtx<'_>,
@@ -598,6 +604,7 @@ impl<'a> CandidateDomain<'a> {
             return Ok(GeneratedCandidates { terminal, folds });
         }
 
+        let mut requests = Vec::new();
         for inner_lb in self.inner_basis_range.clone() {
             for work in &self.opening_work {
                 for &payload_mode in state
@@ -651,80 +658,29 @@ impl<'a> CandidateDomain<'a> {
                             ctx.policy.witness_chunk_at_level(state.level),
                             work.opening.method(),
                             ctx.diagnostics,
-                        )?
-                        .filtered(ctx.relation_mode_filter)?;
-                    if work.purpose == OpeningPurpose::TerminalAndFold {
-                        let views = derive_recursive_candidate_views(
-                            request,
-                            self.fold_policy,
-                            relation_domain,
-                        )?;
-                        terminal.extend(views.terminal.into_iter().filter_map(|params| {
-                            (!self.adaptation_guided
-                                || self.guide_terminal.is_some_and(|guide| {
-                                    terminal_candidate_matches_guide(&params, guide)
-                                }))
-                            .then_some(params)
-                        }));
-                        for (candidate, next_witness_len) in views.folds {
-                            if !relation_domain.admits(candidate.ring_relation_mode) {
-                                return Err(AkitaError::InvalidSetup(
-                                    "combined recursive view emitted a fold outside its relation domain"
-                                        .into(),
-                                ));
-                            }
-                            if self.adaptation_guided
-                                && !self.guide_fold.is_some_and(|guide| {
-                                    recursive_candidate_matches_guide(&candidate, guide)
-                                })
-                            {
-                                continue;
-                            }
-                            folds.push(RawFoldCandidate {
-                                params: candidate,
-                                next_witness_len,
-                            });
-                        }
-                        continue;
-                    }
-                    if work.purpose.allows_terminal() {
-                        terminal.extend(
-                            derive_terminal_candidates(request)?
-                                .into_iter()
-                                .filter_map(|params| {
-                                    (!self.adaptation_guided
-                                        || self.guide_terminal.is_some_and(|guide| {
-                                            terminal_candidate_matches_guide(&params, guide)
-                                        }))
-                                    .then_some(params)
-                                }),
-                        );
-                    }
-                    if !work.purpose.allows_fold() {
-                        continue;
-                    }
-                    let fold_work = if let Some(natural_len) = incoming_setup_prefix {
-                        RecursiveFoldWork::setup_prefixed(setup_prefixes, natural_len)
-                    } else {
-                        RecursiveFoldWork::direct(relation_domain)
-                    };
-                    let level_candidates =
-                        derive_fold_candidates(request, fold_work, self.fold_policy)?;
-                    for (candidate, next_witness_len) in level_candidates {
-                        if self.adaptation_guided
-                            && !self.guide_fold.is_some_and(|guide| {
-                                recursive_candidate_matches_guide(&candidate, guide)
-                            })
-                        {
-                            continue;
-                        }
-                        folds.push(RawFoldCandidate {
-                            params: candidate,
-                            next_witness_len,
-                        });
-                    }
+                        )
+                        .and_then(|domain| domain.filtered(ctx.relation_mode_filter));
+                    requests.push(
+                        relation_domain
+                            .map(|relation_domain| (request, work.purpose, relation_domain)),
+                    );
                 }
             }
+        }
+        let generated = crate::schedule_params::map_in_order(requests, |request| {
+            let (request, purpose, relation_domain) = request?;
+            self.generate_for_request(
+                request,
+                purpose,
+                relation_domain,
+                incoming_setup_prefix,
+                setup_prefixes,
+            )
+        });
+        for request in generated {
+            let request = request?;
+            terminal.extend(request.terminal);
+            folds.extend(request.folds);
         }
         if !masking.allows_terminal() {
             terminal.clear();
@@ -733,19 +689,109 @@ impl<'a> CandidateDomain<'a> {
         Ok(GeneratedCandidates { terminal, folds })
     }
 
-    /// Visit one bounded root work batch at a time.
+    fn generate_for_request(
+        &self,
+        request: RecursiveCandidateRequest<'_>,
+        purpose: OpeningPurpose,
+        relation_domain: RelationSearchDomain,
+        incoming_setup_prefix: Option<usize>,
+        setup_prefixes: &SetupPrefixSearchCache,
+    ) -> Result<GeneratedCandidates, AkitaError> {
+        let mut terminal = Vec::new();
+        let mut folds = Vec::new();
+        if purpose == OpeningPurpose::TerminalAndFold {
+            let views =
+                derive_recursive_candidate_views(request, self.fold_policy, relation_domain)?;
+            terminal.extend(views.terminal.into_iter().filter_map(|params| {
+                (!self.adaptation_guided
+                    || self
+                        .guide_terminal
+                        .is_some_and(|guide| terminal_candidate_matches_guide(&params, guide)))
+                .then_some(params)
+            }));
+            for (candidate, next_witness_len) in views.folds {
+                if !relation_domain.admits(candidate.ring_relation_mode) {
+                    return Err(AkitaError::InvalidSetup(
+                        "combined recursive view emitted a fold outside its relation domain".into(),
+                    ));
+                }
+                if self.adaptation_guided
+                    && !self
+                        .guide_fold
+                        .is_some_and(|guide| recursive_candidate_matches_guide(&candidate, guide))
+                {
+                    continue;
+                }
+                folds.push(RawFoldCandidate {
+                    params: candidate,
+                    next_witness_len,
+                });
+            }
+            return Ok(GeneratedCandidates { terminal, folds });
+        }
+        if purpose.allows_terminal() {
+            terminal.extend(derive_terminal_candidates(request)?.into_iter().filter_map(
+                |params| {
+                    (!self.adaptation_guided
+                        || self
+                            .guide_terminal
+                            .is_some_and(|guide| terminal_candidate_matches_guide(&params, guide)))
+                    .then_some(params)
+                },
+            ));
+        }
+        if !purpose.allows_fold() {
+            return Ok(GeneratedCandidates { terminal, folds });
+        }
+        let fold_work = if let Some(natural_len) = incoming_setup_prefix {
+            RecursiveFoldWork::setup_prefixed(setup_prefixes, natural_len)
+        } else {
+            RecursiveFoldWork::direct(relation_domain)
+        };
+        for (candidate, next_witness_len) in
+            derive_fold_candidates(request, fold_work, self.fold_policy)?
+        {
+            if self.adaptation_guided
+                && !self
+                    .guide_fold
+                    .is_some_and(|guide| recursive_candidate_matches_guide(&candidate, guide))
+            {
+                continue;
+            }
+            folds.push(RawFoldCandidate {
+                params: candidate,
+                next_witness_len,
+            });
+        }
+        Ok(GeneratedCandidates { terminal, folds })
+    }
+
+    /// Every root candidate of one opening basis, in work order and then
+    /// inner-basis order.
     ///
-    /// Root frontiers are shared across visits, so this changes temporary
-    /// ownership only: it preserves every candidate while avoiding one large
-    /// vector spanning the full grouped-opening product.
-    pub(super) fn visit_root_batches(
+    /// The root traverses them as one batch, so its lower-bound order is
+    /// global: the best-bounded candidates complete first and their
+    /// schedules prune the rest. Whenever the search returns a plan, the
+    /// plan does not depend on the traversal order: the least complete
+    /// schedule is never pruned (a prune needs a strictly better completed
+    /// incumbent) and never displaced (every frontier dominance implies a
+    /// score no worse), so every order selects it
+    /// (`jolt:specs/whiteout-o2b-planner.md`). Errors are not covered: an
+    /// internal-invariant or overflow error raised while exploring a
+    /// candidate that one order prunes and another explores (`child_choice`,
+    /// `PendingQueryEdge::new`, a successor's search) makes success, and
+    /// which error is reported, depend on the order. By inspection they are
+    /// unreachable for well-formed input. Each
+    /// opening work is generated independently, on the pool, and joined in
+    /// work order, so the candidates, their order and the first error are
+    /// those of a sequential pass.
+    pub(super) fn root_candidates(
         &self,
         ctx: &SuffixCtx<'_>,
         open_lb: u32,
-        mut visit: impl FnMut(GeneratedCandidates) -> Result<(), AkitaError>,
-    ) -> Result<(), AkitaError> {
+    ) -> Result<GeneratedCandidates, AkitaError> {
         let root_key = self.root_level_key.ok_or_else(|| {
-            AkitaError::InvalidSetup("root batch visitor requires a root lookup key".into())
+            AkitaError::InvalidSetup("root candidates require a root lookup key".into())
         })?;
         let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch is missing its source contract".into())
@@ -757,61 +803,69 @@ impl<'a> CandidateDomain<'a> {
             0,
             root_key.precommitteds.len() + 1,
         )?;
-        for work in &self.opening_work {
-            let Some(preparation) = PreparedRootProducers::prepare(
-                root_key,
-                ctx.precommitted_source_contracts,
-                ctx.policy,
-                work.dimensions,
-                work.opening,
-                &work.precommitted_class_openings,
-                open_lb,
-                masking,
-            )?
-            else {
-                continue;
-            };
-            for inner_lb in self.inner_basis_range.clone() {
-                let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+        let works = crate::schedule_params::map_in_order(
+            self.opening_work.iter().collect(),
+            |work| -> Result<GeneratedCandidates, AkitaError> {
+                let mut terminal = Vec::new();
+                let mut folds = Vec::new();
+                let Some(preparation) = PreparedRootProducers::prepare(
                     root_key,
-                    final_source_contract,
+                    ctx.precommitted_source_contracts,
                     ctx.policy,
                     work.dimensions,
                     work.opening,
-                    &preparation,
-                    inner_lb,
+                    &work.precommitted_class_openings,
                     open_lb,
-                    self.root_main_constraint.map(candidate_layout_guide),
                     masking,
-                )?;
-                if let Some(constraint) = self.root_main_constraint {
-                    dimension_candidates.retain(|(params, _)| {
-                        root_candidate_matches_constraint(params, constraint)
-                    });
-                }
-                let mut terminal = Vec::new();
-                let mut folds = Vec::new();
-                for (params, next_witness_len) in dimension_candidates {
-                    if (!self.adaptation_guided || self.guide_terminal.is_some())
-                        && work.purpose.allows_terminal()
-                    {
-                        terminal.push(params.clone());
-                    }
-                    if (!self.adaptation_guided || self.guide_fold.is_some())
-                        && work.purpose.allows_fold()
-                    {
-                        folds.push(RawFoldCandidate {
-                            params,
-                            next_witness_len,
+                )?
+                else {
+                    return Ok(GeneratedCandidates { terminal, folds });
+                };
+                for inner_lb in self.inner_basis_range.clone() {
+                    let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+                        root_key,
+                        final_source_contract,
+                        ctx.policy,
+                        work.dimensions,
+                        work.opening,
+                        &preparation,
+                        inner_lb,
+                        open_lb,
+                        self.root_main_constraint.map(candidate_layout_guide),
+                        masking,
+                    )?;
+                    if let Some(constraint) = self.root_main_constraint {
+                        dimension_candidates.retain(|(params, _)| {
+                            root_candidate_matches_constraint(params, constraint)
                         });
                     }
+                    for (params, next_witness_len) in dimension_candidates {
+                        if (!self.adaptation_guided || self.guide_terminal.is_some())
+                            && work.purpose.allows_terminal()
+                        {
+                            terminal.push(params.clone());
+                        }
+                        if (!self.adaptation_guided || self.guide_fold.is_some())
+                            && work.purpose.allows_fold()
+                        {
+                            folds.push(RawFoldCandidate {
+                                params,
+                                next_witness_len,
+                            });
+                        }
+                    }
                 }
-                if !terminal.is_empty() || !folds.is_empty() {
-                    visit(GeneratedCandidates { terminal, folds })?;
-                }
-            }
+                Ok(GeneratedCandidates { terminal, folds })
+            },
+        );
+        let mut terminal = Vec::new();
+        let mut folds = Vec::new();
+        for work in works {
+            let work = work?;
+            terminal.extend(work.terminal);
+            folds.extend(work.folds);
         }
-        Ok(())
+        Ok(GeneratedCandidates { terminal, folds })
     }
 }
 

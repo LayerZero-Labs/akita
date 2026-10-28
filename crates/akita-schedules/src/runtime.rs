@@ -882,27 +882,13 @@ pub fn planned_next_witness_len(
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
-    if params.setup_prefix().is_none() {
-        return Ok(Some(WitnessLayout::scalar_live_coeff_len(
-            params,
-            &opening_batch,
-            extension_degree,
-            num_chunks,
-            quotient_plan,
-        )?));
-    }
-    let relation_geometry =
-        akita_params::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
-    Ok(Some(
-        WitnessLayout::new(
-            params,
-            &opening_batch,
-            &relation_geometry,
-            num_chunks,
-            quotient_plan,
-        )?
-        .live_coeff_len(),
-    ))
+    Ok(Some(WitnessLayout::measure_live_coeff_len(
+        params,
+        &opening_batch,
+        extension_degree,
+        num_chunks,
+        quotient_plan,
+    )?))
 }
 
 #[cfg(test)]

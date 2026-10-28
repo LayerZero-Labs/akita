@@ -485,7 +485,7 @@ fn chunk_padding_preserves_semantic_ranges_and_tail_ownership() {
             .start
             .is_multiple_of(params.successor_block_len.unwrap_or(1)));
         assert_eq!(
-            WitnessLayout::scalar_live_coeff_len(
+            WitnessLayout::measure_live_coeff_len(
                 &params,
                 &opening,
                 1,
