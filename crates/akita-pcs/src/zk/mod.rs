@@ -29,8 +29,9 @@ use std::sync::Arc;
 
 use akita_algebra::EqPolynomial;
 use akita_config::{derive_digit_range_grinding_plan, CommitmentConfig, SetupRequirements};
+use akita_cpu_backend::custom_source::SignedBlockPoly;
 use akita_cpu_backend::standalone::DigitRangeProver;
-use akita_cpu_backend::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
+use akita_cpu_backend::{AkitaProverSetup, CpuBackend, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{
     BasisMode, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -45,12 +46,10 @@ use akita_types::{
     ProverGrinding, RingVec, VerifierGrinding,
 };
 use akita_verifier::{AkitaVerifier, Stage1Verifier};
-use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{One, Prime128OffsetA7F7};
 use jolt_sumcheck::{prove_single, verify_single, SingleFormat, SingleInstance};
 use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
 use jolt_zk::masking::ZkError;
-use jolt_zk::whiteout::lift_ct;
 use jolt_zk::whiteout::{
     CompressedImage, ImageCompression, ResponseLayout, ResponseProver, ResponseStatement,
     ResponseWitness, WhiteoutError,
@@ -248,9 +247,9 @@ where
         {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
-        // `e`'s digits and every table derived from them, but the committed
-        // polynomial, are wiped when freed (`Zeroizing`, `SecretTable`), and
-        // enter `F` through `lift_ct`.
+        // `e`'s digits and every table derived from them are wiped when
+        // freed (`Zeroizing`, `SecretTable`, `SignedBlockPoly`), and enter
+        // `F` through `lift_ct`.
         let mut committed = Zeroizing::new(Vec::with_capacity(shape.padded_len()));
         committed.extend_from_slice(digits.committed);
         committed.extend_from_slice(digits.padding);
@@ -259,12 +258,9 @@ where
         }
         committed.resize(shape.padded_len(), 0);
 
-        // 1. Commit to e. Its field form moves into the committed
-        // polynomial, which the backend owns and frees unwiped.
-        let e: Vec<F> = cfg_iter!(committed)
-            .map(|&digit| lift_ct::<F>(i64::from(digit)))
-            .collect();
-        let poly = DensePoly::from_field_evals(shape.num_vars, e).map_err(zk_error)?;
+        // 1. Commit to e. The backend keeps the digits as `i8` until the
+        // opening, read in constant time (`SignedBlockPoly`).
+        let poly = SignedBlockPoly::i8(committed.to_vec(), shape.num_vars).map_err(zk_error)?;
         let source = side.backend.import_source(vec![poly]).map_err(zk_error)?;
         let output = side
             .backend

@@ -296,8 +296,9 @@ pub struct ReducedCompressionRelationWeights<E: Field> {
 }
 
 impl<E: Field> ReducedCompressionRelationWeights<E> {
-    /// Add the complete reduced F/H ring-relation table to one checked padded
-    /// Stage-2 destination.
+    /// Add the complete reduced F/H ring-relation table's entries
+    /// `[start, start + destination.len())` of the checked padded Stage-2
+    /// domain to `destination`; every event must lie in that window.
     ///
     /// Linear recomposition events retain their canonical sparse alpha
     /// windows. Each universal compression-map column is read from its typed
@@ -307,27 +308,25 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
     pub fn accumulate_dense<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
+        start: usize,
         destination: &mut [E],
     ) -> Result<(), AkitaError>
     where
         F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        if destination.len() != self.linear.physical_field_len {
-            return Err(AkitaError::InvalidSize {
-                expected: self.linear.physical_field_len,
-                actual: destination.len(),
-            });
-        }
-        self.linear.accumulate_dense(destination)?;
+        self.linear.accumulate_dense(start, destination)?;
         for event in &self.maps {
-            let columns = CompressionMapColumns::new(setup, &event.span, destination.len())?;
+            let columns =
+                CompressionMapColumns::new(setup, &event.span, self.linear.physical_field_len)?;
             let point = ResidueKernelPoint::new(self.alpha, columns.ring_dimension)?;
             for column in 0..columns.input_width {
                 let (physical, coefficients) = columns.column(column)?;
                 let kernel = point.kernel(coefficients)?;
-                for (weight, kernel) in destination
-                    .get_mut(physical)
+                for (weight, kernel) in physical
+                    .start
+                    .checked_sub(start)
+                    .and_then(|offset| destination.get_mut(offset..offset + physical.len()))
                     .ok_or_else(|| {
                         AkitaError::Internal(
                             "reduced compression column span exceeds the dense weight table".into(),
@@ -800,7 +799,7 @@ mod tests {
             row_weight * expected
         );
         let mut dense = vec![F::zero(); 2048];
-        program.accumulate_dense(&setup, &mut dense).unwrap();
+        program.accumulate_dense(&setup, 0, &mut dense).unwrap();
         assert_eq!(
             akita_algebra::poly::multilinear_eval(&dense, &point).unwrap(),
             row_weight * expected

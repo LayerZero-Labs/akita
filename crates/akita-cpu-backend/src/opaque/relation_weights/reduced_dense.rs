@@ -449,7 +449,7 @@ where
             opening_ring_dim,
             compilation.physical_field_len,
         )?;
-        compression.accumulate_dense(setup, &mut dense)?;
+        compression.accumulate_dense(setup, 0, &mut dense)?;
     }
     Ok(
         crate::opaque::RelationWeightDescription::ReducedEvaluations {

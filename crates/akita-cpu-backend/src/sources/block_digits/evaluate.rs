@@ -36,7 +36,7 @@ where
                 let ring = source.values(index)?;
                 for (k, coefficient) in acc.iter_mut().enumerate() {
                     let value = ring.coeff(k);
-                    if value != F::zero() {
+                    if !<S::Values<'_> as RingValues<F, D>>::SKIPS_ZEROS || value != F::zero() {
                         *coefficient += scalar * value;
                     }
                 }
