@@ -216,8 +216,11 @@ SIS security, whole-schedule grinding security or application agreement.
 
 The canonical fixture is
 [binary_source_end_to_end.rs](../crates/akita-pcs/tests/binary_source_end_to_end.rs).
-Its measured proof sizes are 75,702 bytes for the binary-only opening and
-89,811 bytes for the mixed opening. It exercises the caller's prefix and
+With the current protocol, its measured proof sizes are 75,702 bytes for the
+binary-only opening and 89,811 bytes for the mixed opening. With `dev-protocol`
+enabled, including under `--all-features`, the fixture selects the existing dev
+suffix catalog and produces 70,610-byte and 84,791-byte proofs respectively.
+It exercises the caller's prefix and
 post-verification squeeze, commitment serialization, kind consistency,
 statement mutations, malformed proof bytes, truncation and trailing bytes.
 A test-only backend alters T, Z, U, K, K_val, KA or padding before outgoing
