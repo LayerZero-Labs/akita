@@ -933,7 +933,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 dependencies = [
  "cc",
  "num-traits",
@@ -946,7 +946,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-blake2"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 dependencies = [
  "digest 0.11.3",
 ]
@@ -954,17 +954,17 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 
 [[package]]
 name = "jolt-inlines-ntt"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 dependencies = [
  "num-traits",
 ]

@@ -9,11 +9,11 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "cba8c9538d38c1d5e1235f790036c9bc69c466d7", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "5c47103148c0c1ec846c0e869d66164aeec00b2a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "cba8c9538d38c1d5e1235f790036c9bc69c466d7", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "5c47103148c0c1ec846c0e869d66164aeec00b2a", default-features = false }
 thiserror = "2.0"
 
 [lints]

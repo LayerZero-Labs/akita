@@ -713,7 +713,7 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 dependencies = [
  "cc",
  "num-traits",
@@ -726,7 +726,7 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -740,7 +740,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=cba8c9538d38c1d5e1235f790036c9bc69c466d7#cba8c9538d38c1d5e1235f790036c9bc69c466d7"
+source = "git+https://github.com/a16z/jolt?rev=5c47103148c0c1ec846c0e869d66164aeec00b2a#5c47103148c0c1ec846c0e869d66164aeec00b2a"
 dependencies = [
  "num-traits",
 ]
