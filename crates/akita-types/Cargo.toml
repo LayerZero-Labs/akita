@@ -50,6 +50,7 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
 ]
 labinius-trinomial = [
+  "akita-algebra/labinius-binary",
   "akita-challenges/labinius-challenges",
   "akita-algebra/labinius-trinomial",
   "akita-params/labinius-trinomial",

@@ -331,3 +331,6 @@ mod mixed;
 
 #[path = "binary_root/quotient_tests.rs"]
 mod quotient;
+
+#[path = "binary_root/evaluation_tests.rs"]
+mod evaluation_tests;

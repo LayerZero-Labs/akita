@@ -25,7 +25,9 @@ use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
 const D: usize = 648;
 type AuxiliaryRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
 
+mod evaluation;
 mod quotient;
+pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
 pub use quotient::BinaryQuotientWitness;
 
 /// An integer identity `sum A*z - sum iota(c)*T = remainder + Psi*quotient`.
