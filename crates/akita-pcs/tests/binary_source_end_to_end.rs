@@ -120,7 +120,11 @@ fn binary_and_ordinary_groups_share_one_opening() {
 
 fn run_fixture(mixed: bool) {
     let catalog = TrustedScheduleCatalog::<BinaryTestSuffix>::from_artifact_bytes(
-        include_bytes!("../../../artifacts/schedules-labinius/labinius_fp128_digits_b4.aks"),
+        if akita_params::DEV_PROTOCOL {
+            include_bytes!("../../../artifacts/schedules-labinius-dev/labinius_fp128_digits_b4.aks")
+        } else {
+            include_bytes!("../../../artifacts/schedules-labinius/labinius_fp128_digits_b4.aks")
+        },
         ChunkedWitnessCfg::default_non_chunked(),
     )
     .unwrap();
