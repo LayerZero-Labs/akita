@@ -204,6 +204,63 @@ only by a `const fn` from a `&'static` list. It MUST NOT have a deserializer, a
 compile-fail test MUST verify this. An anchor read from storage voids every
 guarantee of this specification.
 
+### Release structure
+
+A release is generated from a release description stored in the repository.
+The trust anchor and Jolt program preprocessing are not part of a release;
+they refer to it.
+
+```text
+release                                   identified by bundle_id
+├── release description                   input, under params/<release>/
+│   ├── seed                              fixes the public matrix
+│   ├── packaging header                  name, kind, generator version, targets
+│   └── parameter set (one or more, each named)
+│       ├── CommitmentConfig              field, decomposition, SIS tables
+│       ├── catalog                       enumerated rows; catalog_digest()
+│       ├── chunking policy
+│       ├── set limits                    max_num_vars, max_num_polys
+│       └── commitment profile universe   only for sets that admit program rows
+├── generated release files               listed in the manifest
+│   ├── commitment registry               one commitment per (stream, profile)
+│   ├── prover hints                      one per commitment
+│   ├── catalogs and catalog views
+│   └── optional: matrix pages, page hashes, terminal caches
+└── manifest                              bundle_id = H(tag || manifest)
+    ├── packaging header and stream identities
+    ├── commitment registry triples       (stream_id, profile_key,
+    │                                      commitment_digest)
+    ├── set records                       one per parameter set
+    └── file list                         (name, length, file_hash) per file
+
+trust anchor                              compiled into each binary
+└── (bundle_id, set name) pairs
+
+Jolt ProgramPreprocessing                 one per program; covered by
+├── program commitments                   preprocessing_digest
+├── bundle_id and set names
+└── program rows                          planned for this program
+```
+
+The terms used above are defined as follows, in addition to (Definitions):
+
+- A **schedule row** specifies how polynomials of one shape are committed and
+  opened: the complete fold schedule, and which levels use which setup-prefix
+  commitment. `PlanSection` binds the row used by a proof.
+- A **commitment profile** is the complete recipe of one setup-prefix
+  commitment: group shape, block layout, inner and outer matrix parameters,
+  and route. It excludes `natural_len`.
+- **Set limits** are the largest shapes a parameter set supports. They are
+  upper bounds; the setup actually constructed is sized from the admitted rows.
+- **Program bounds** are the shapes a single Jolt program requires. They MUST
+  NOT exceed the set limits.
+
+Between production releases, the seed and the commitment algorithm identity
+are normally unchanged; parameter sets, catalogs, set limits, and commitment
+profile universes are what typically change. Commitments to profiles that
+already existed are then byte-identical, and their commitment digests are
+unchanged. A change of seed changes every commitment.
+
 ### Encodings and hashes
 
 Every hash defined in this specification is computed over fully specified
@@ -262,12 +319,13 @@ profile_key = H(tag("akita/preprocessing/profile/v1") || profile_descriptor)
 ```
 
 `p` is the output of the existing
-`GroupCommitPhaseParams::append_descriptor_bytes`: version, group shape, block layout, outer slice count, and the inner and outer
-matrix descriptors. On the L-infinity route the inner matrix descriptor writes
-its table digest directly; on the L2 route it first writes the string
-`akita-l2-route-v1`. Because these two layouts can coincide as raw bytes, the
-leading `route` byte is REQUIRED to make the interpretation unambiguous. The
-corresponding encoders in `akita-params` become public.
+`GroupCommitPhaseParams::append_descriptor_bytes`: version, group shape, block
+layout, outer slice count, and the inner and outer matrix descriptors. On the
+L-infinity route the inner matrix descriptor writes its table digest directly;
+on the L2 route it first writes the string `akita-l2-route-v1`. Because these
+two layouts can coincide as raw bytes, the leading `route` byte is REQUIRED to
+make the interpretation unambiguous. The corresponding encoders in
+`akita-params` become public.
 
 **Commitment payload and commitment digest.**
 
@@ -392,6 +450,19 @@ used by its admitted rows. Matrix files contain complete pages. The manifest
 records the usable element count of each stream separately. A loader that
 requires a range ending within a page MUST authenticate the whole page before
 truncating it.
+
+### Responsibilities by party
+
+Only the generator computes setup-prefix commitments. Every other party loads
+commitments and verifies them against a manifest that its binary trusts
+through the anchor.
+
+| Party | Computes | Loads and verifies | Never |
+|---|---|---|---|
+| Generator and CI | The matrix and page hashes; every commitment and its hints; every commitment digest, file hash, and set record; the manifest and `bundle_id`; the known-answer digest on every supported instruction set | The merge check regenerates each published release and requires identical bytes | Reads an ambient cache, a previous bundle, or the candidate under audit |
+| Prover | The matrix prefix for its rows; Jolt program rows, once per program; commitment digests at protocol Stage 3 of every proof; a slot, only if its hints fail verification | The manifest against the anchor; the set record against its compiled code; the registry, hint, and catalog files it uses; each commitment digest from the loaded payload | Uses a file that did not match the manifest |
+| Verifier | The matrix prefix for its admitted rows; the terminal NTT cache; commitment digests at protocol Stage 3 of every proof | The manifest against the anchor; the set record against its compiled code; the catalog and the registry entries its rows use; each commitment digest; Jolt program rows against the set limits and the commitment profile universe | Computes a commitment, loads hints, or plans a row |
+| Guest | Commitment digests at protocol Stage 3 of every proof | At startup, the embedded manifest, set record, catalog view, and registry entries, with the same loader as the host; large embedded files (matrix prefix, terminal caches) rely on the approval of the image; embedded inner program rows are admitted | Reads preprocessing from its input, or plans a row |
 
 ### Admission and matrix capacity
 
