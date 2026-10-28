@@ -185,8 +185,8 @@ Unsupported geometries produce typed errors.
 
 The fixture uses 128-bit words, eight padded carriers, `M = 4` scalar rows,
 `C = 2` columns and `m = 1` degree-648 source row. The challenge operator bound
-is `Gamma = 92`. The matrix bound is `BA = 7,126,704`, the response bound is
-`BZ = 2,340`, and the enforced image magnitude is `BT = 9,586,980`.
+is `Gamma = 92`. The matrix bound is `B_A = 7,126,704`, the response bound is
+`B_Z = 2,340`, and the enforced image magnitude is `B_T = 9,586,980`.
 
 The admission implementations are
 [BinaryQuotientBounds](../crates/akita-types/src/binary_source/quotient.rs) and
@@ -196,9 +196,9 @@ threshold. For `P = 340282366920938463463374607431768211181`:
 
 | Quantity | Fixture result |
 | --- | ---: |
-| Honest KA bound `ceil(BA (972 m BZ + C Gamma) / q)` | 1,137,332 |
+| Honest KA bound `ceil(B_A (972 m B_Z + C Gamma) / q)` | 1,137,332 |
 | KA digits; enforced BKA | 8; 9,586,980 |
-| `LR = 972 m BA BZ + C Gamma BT` | 16,211,309,718,240 |
+| `LR = 972 m B_A B_Z + C Gamma B_T` | 16,211,309,718,240 |
 | `LR + q BKA` | 152,858,456,733,060 |
 | Quotient margin `P - (LR + q BKA)` | 340282366920938463463374454573311478121 |
 | Honest K bound; enforced BK | 4,440; 76,695,844 |
