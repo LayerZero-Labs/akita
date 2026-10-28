@@ -8,7 +8,9 @@
 //! config dispatch stay with the scheme crate until the verifier-facing
 //! config boundary is extracted.
 
+mod admission;
 mod challenges;
+mod ordinary_root;
 mod relation_instance;
 mod root;
 mod suffix;

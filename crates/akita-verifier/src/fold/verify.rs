@@ -97,15 +97,10 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let final_descriptor = *final_group.commitment().profile();
         for group in claims.groups() {
-            let committed = group.commitment();
-            let descriptor = committed.profile();
-            descriptor.validate_frozen_precommit(Cfg::decomposition().field_bits())?;
-            let plan = descriptor.outer_compression_plan()?;
-            if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
-                return Err(AkitaError::InvalidInput(
-                    "commitment length does not match its compression chain".to_string(),
-                ));
-            }
+            super::admission::validate_group_payload(
+                group.commitment(),
+                Cfg::decomposition().field_bits(),
+            )?;
         }
         let batch_profile = CommittedGroupBatchProfile {
             final_group: final_descriptor,
@@ -155,6 +150,7 @@ where
             schedule,
             basis,
         )?;
+        let grinding_plan = claims.root_grinding_plan(grinding_plan, schedule)?;
         let raw_groups = claims
             .groups()
             .iter()

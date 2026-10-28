@@ -65,6 +65,37 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Extension seam: prepare a native group's public payload and opaque private state.
+    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    fn prepare_root_group(
+        &self,
+        _session: &Self::ProofSessionHandle,
+        _context: &super::ProofContext,
+        _handle: &Self::CommitmentHandle,
+        _request: &dyn std::any::Any,
+    ) -> Result<(Vec<F>, Box<dyn std::any::Any + Send + Sync>), AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not prepare native root groups".into(),
+        ))
+    }
+
+    /// Extension seam: construct one admitted native root after the response challenge.
+    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    #[allow(clippy::too_many_arguments)]
+    fn build_root_group(
+        &self,
+        _session: &Self::ProofSessionHandle,
+        _context: &super::ProofContext,
+        _preparation: &dyn std::any::Any,
+        _challenges: &akita_challenges::Challenges,
+        _logical_len: usize,
+        _destination_ring_dimension: usize,
+    ) -> Result<Option<Self::WitnessHandle>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not build native root groups".into(),
+        ))
+    }
+
     /// Extension seam: import a coefficient table into the admitted root scope.
     /// Native root producers attach through https://github.com/LayerZero-Labs/akita/issues/285.
     fn import_root_witness(

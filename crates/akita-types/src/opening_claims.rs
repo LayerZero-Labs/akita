@@ -1,6 +1,7 @@
 //! Public opening claims and layout-only opening geometry.
 
 mod kind;
+mod root_schedule;
 pub use kind::GroupClaimKind;
 
 use crate::proof::scheme::OpeningPoints;
