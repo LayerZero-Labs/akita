@@ -1,5 +1,9 @@
 use super::*;
-use akita_algebra::{eq_poly::EqPolynomial, offset_eq::OffsetEqWindow, ring::ResidueKernelPoint};
+use akita_algebra::{
+    eq_poly::EqPolynomial,
+    offset_eq::OffsetEqWindow,
+    ring::{eval_flat_ring_at_pows_fast, ResidueKernelPoint},
+};
 use jolt_field::{ExtField, Unreduced, Zero};
 
 #[derive(Clone, Debug)]
@@ -142,11 +146,12 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
         // Rayon costs more than it saves in multi-threaded verification.
         let column_evaluations = if low_offset == 0 {
             let kernel = residue_point.field_kernel(&low_equality)?;
-            let coefficients = (0..columns.input_width)
-                .map(|column| Ok(columns.column(column)?.1))
+            let values = (0..columns.input_width)
+                .map(|column| {
+                    let (_, coefficients) = columns.column(column)?;
+                    Ok(eval_flat_ring_at_pows_fast(coefficients, &kernel))
+                })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            let mut values = vec![E::zero(); coefficients.len()];
-            E::dot_base_rows(&kernel, &coefficients, &mut values);
             ReducedCompressionColumnEvaluations::Aligned(values)
         } else {
             let first_len = ring_dimension.checked_sub(low_offset).ok_or_else(|| {
@@ -182,14 +187,15 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
                 })?);
             let first_kernel = residue_point.field_kernel(&first_equality)?;
             let second_kernel = residue_point.field_kernel(&second_equality)?;
-            let coefficients = (0..columns.input_width)
-                .map(|column| Ok(columns.column(column)?.1))
+            let values = (0..columns.input_width)
+                .map(|column| {
+                    let (_, coefficients) = columns.column(column)?;
+                    Ok([
+                        eval_flat_ring_at_pows_fast(coefficients, &first_kernel),
+                        eval_flat_ring_at_pows_fast(coefficients, &second_kernel),
+                    ])
+                })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            let mut first = vec![E::zero(); coefficients.len()];
-            let mut second = vec![E::zero(); coefficients.len()];
-            E::dot_base_rows(&first_kernel, &coefficients, &mut first);
-            E::dot_base_rows(&second_kernel, &coefficients, &mut second);
-            let values = first.into_iter().zip(second).map(|(a, b)| [a, b]).collect();
             ReducedCompressionColumnEvaluations::Split(values)
         };
         Ok(Self {

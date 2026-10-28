@@ -187,6 +187,12 @@ jobs:
           scripts/check-external-schedule-artifacts.sh
           cargo test --release -p akita-config --test trusted_schedule_artifact
       - name: Regenerate schedule artifacts in temporary storage
+        # Planning measured about 18 minutes on CI with two workers, and runner
+        # variance alone has moved this step by about 1.3x. The bound stops a
+        # runaway search. Growth in search size (states, candidates,
+        # descriptors) fails the --planner-cost-baseline check instead; slower
+        # per-candidate pricing is caught only by this timeout.
+        timeout-minutes: 35
         env:
           AKITA_SCHEDULE_GEN_JOBS: 2
         run: |
@@ -196,7 +202,8 @@ jobs:
             --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
             --catalog-baseline artifacts/schedule-catalog.tsv \
             --require-catalog-baseline-match \
-            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv"
+            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv" \
+            --planner-cost-baseline artifacts/schedule-planner-cost.tsv
           diff -ru artifacts/schedules "$artifact_dir"
       - name: Direct modeled SIS cost for every schedule
         run: |

@@ -34,23 +34,3 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-
-# Jolt's `jolt-akita` pins Akita by git rev; build it against this checkout so the
-# profile graph carries one Akita and one `jolt-field` identity.
-[patch."https://github.com/LayerZero-Labs/akita.git"]
-akita-algebra = { path = "../../crates/akita-algebra" }
-akita-challenges = { path = "../../crates/akita-challenges" }
-akita-config = { path = "../../crates/akita-config" }
-akita-cpu-backend = { path = "../../crates/akita-cpu-backend" }
-akita-error = { path = "../../crates/akita-error" }
-akita-params = { path = "../../crates/akita-params" }
-akita-pcs = { path = "../../crates/akita-pcs" }
-akita-planner = { path = "../../crates/akita-planner" }
-akita-prover = { path = "../../crates/akita-prover" }
-akita-schedules = { path = "../../crates/akita-schedules" }
-akita-serialization = { path = "../../crates/akita-serialization" }
-akita-setup = { path = "../../crates/akita-setup" }
-akita-sumcheck = { path = "../../crates/akita-sumcheck" }
-akita-transcript = { path = "../../crates/akita-transcript" }
-akita-types = { path = "../../crates/akita-types" }
-akita-verifier = { path = "../../crates/akita-verifier" }
