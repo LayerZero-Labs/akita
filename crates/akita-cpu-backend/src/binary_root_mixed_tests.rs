@@ -22,7 +22,7 @@ fn compact_fixture() -> Fixture {
     })]];
     let mut source = [0; D];
     source[0] = 1;
-    source[10] = -1;
+    source[6] = -1;
     let remainder = divide(reference(&matrix[0][0], &source)).0;
     let image = remainder
         .map(|value| Q24Image::from_residue(value.rem_euclid(i128::from(Q24)) as u32).unwrap());

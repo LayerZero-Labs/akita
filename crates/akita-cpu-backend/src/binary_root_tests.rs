@@ -62,7 +62,7 @@ fn fixture() -> Fixture {
     let sources = (0..4)
         .map(|element| {
             std::array::from_fn(|i| {
-                if (i + element * 7) % 31 == 0 {
+                if i < 4 * 128 && (i + element * 7) % 31 == 0 {
                     if (i / 4) % 2 == 0 {
                         1
                     } else {
