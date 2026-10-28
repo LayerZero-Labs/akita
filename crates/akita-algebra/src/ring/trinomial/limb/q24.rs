@@ -63,8 +63,10 @@ const Q: u64 = Q24 as u64;
 const MAX_PRODUCT: u128 = (Q as u128 - 1) * (Q as u128 - 1);
 // q - 1 + 2^15 (q - 1)^2 < 2^63: no u64 lane wraps between reductions.
 const _: () = assert!(Q as u128 - 1 + Q24_REDUCTION_TERMS as u128 * MAX_PRODUCT < 1 << 63);
-// Every three-byte offset word decodes inside (-q, q).
-const _: () = assert!(IMAGE_OFFSET < Q24 as i32 && (1 << 24) - 1 - IMAGE_OFFSET < Q24 as i32);
+// Every three-byte offset word decodes inside (-q, q): the smallest word decodes to
+// -IMAGE_OFFSET and the largest to 2^24 - 1 - IMAGE_OFFSET.
+const _: () = assert!(IMAGE_OFFSET < Q24 as i32);
+const _: () = assert!((1 << 24) - 1 - IMAGE_OFFSET < Q24 as i32);
 
 /// The kernel for one accumulator, fixed at construction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

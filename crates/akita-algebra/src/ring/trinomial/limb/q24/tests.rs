@@ -75,10 +75,7 @@ fn finish_reference(accumulator: &TrinomialLimbAccumulator) -> [i32; DEGREE] {
 fn assert_lane_bound(accumulator: &TrinomialQ24Accumulator) {
     let bound = (P as u128 - 1) + accumulator.terms as u128 * MAX_PRODUCT;
     assert!(bound < 1 << 63);
-    assert!(accumulator
-        .sums
-        .iter()
-        .all(|&sum| u128::from(sum) <= bound));
+    assert!(accumulator.sums.iter().all(|&sum| u128::from(sum) <= bound));
 }
 
 #[test]
@@ -133,8 +130,9 @@ fn q24_rejects_other_primes_and_bad_batches_without_changes() {
     for mut accumulator in accumulators() {
         accumulator.add_product(&packed, &packed);
         let before = (accumulator.sums, accumulator.terms);
+        let one = std::slice::from_ref(&packed);
         assert!(accumulator
-            .add_product_batch(&[packed.clone(), packed.clone()], &[packed.clone()])
+            .add_product_batch(&[packed.clone(), packed.clone()], one)
             .is_err());
         assert_eq!((accumulator.sums, accumulator.terms), before);
         assert!(accumulator.finish(&mut foreign_out).is_err());
@@ -241,7 +239,10 @@ fn q24_extremal_residues_cross_reduction_boundaries() {
             assert_lane_bound(accumulator);
             if terms == BLOCK - 1 {
                 // The largest raw lane just before a reduction.
-                assert_eq!(u128::from(accumulator.sums[0]), (BLOCK as u128 - 1) * MAX_PRODUCT);
+                assert_eq!(
+                    u128::from(accumulator.sums[0]),
+                    (BLOCK as u128 - 1) * MAX_PRODUCT
+                );
             }
             assert_eq!(finish_q24(accumulator), exact, "{:?}", accumulator.backend);
         }
