@@ -360,6 +360,8 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Extension seam: evaluate each native row using its explicit polynomial identity.
+/// https://github.com/LayerZero-Labs/akita/issues/285
 fn evaluate_quotient_tail<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     prepared_point: &PreparedLiftedRelationPoint<E>,
@@ -397,13 +399,10 @@ where
         }
         let row_dimension = family.geometry().polynomial_modulus_dimension();
         let role_factors = prepared_point.for_dimension(row_dimension)?;
-        let denominator = role_factors
-            .powers
-            .last()
-            .copied()
-            .ok_or(AkitaError::InvalidProof)?
-            * prepared_point.alpha()
-            + E::one();
+        let denominator = family
+            .geometry()
+            .polynomial()
+            .evaluate_modulus_with_powers(prepared_point.alpha(), &role_factors.powers)?;
         let row_weight = evaluator
             .eq_tau1
             .get(row)
