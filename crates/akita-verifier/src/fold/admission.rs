@@ -1,4 +1,5 @@
 use akita_error::AkitaError;
+use akita_types::opening_claims::GroupClaimKind;
 use akita_types::CommittedGroup;
 use jolt_field::Field;
 
@@ -6,6 +7,7 @@ use jolt_field::Field;
 /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
 pub(super) fn validate_group_payload<F: Field>(
     committed: &CommittedGroup<F>,
+    _kind: &GroupClaimKind,
     field_bits: u32,
 ) -> Result<(), AkitaError> {
     let descriptor = committed.profile();

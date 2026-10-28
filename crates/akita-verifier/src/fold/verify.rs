@@ -99,6 +99,7 @@ where
         for group in claims.groups() {
             super::admission::validate_group_payload(
                 group.commitment(),
+                group.kind(),
                 Cfg::decomposition().field_bits(),
             )?;
         }
@@ -149,6 +150,7 @@ where
             selection,
             schedule,
             basis,
+            Ok,
         )?;
         let grinding_plan = claims.root_grinding_plan(grinding_plan, schedule)?;
         let raw_groups = claims

@@ -38,5 +38,10 @@ where
                 terminal,
             )
         }
+        // A dependency may expose another kind without enabling this crate's handler.
+        #[allow(unreachable_patterns)]
+        _ => Err(AkitaError::InvalidInput(
+            "root group kind is not enabled in this protocol engine".into(),
+        )),
     }
 }

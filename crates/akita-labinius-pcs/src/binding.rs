@@ -292,6 +292,7 @@ pub(crate) fn bind_opening<P: FieldFamily, S: ClearChannel>(
         row.selection(),
         row.schedule(),
         BasisMode::Lagrange,
+        Ok,
     )?;
     public_length_prefixed(channel, &descriptor)?;
     let mut bytes = Vec::new();

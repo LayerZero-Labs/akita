@@ -236,11 +236,13 @@ where
 {
     /// Extension seam: combine direct public linear weights with the ordinary range-image relation.
     /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Sparse negative-binary weights optionally add per-address `w(w+1)` predicates.
     #[allow(clippy::too_many_arguments)]
     fn begin_root_relation(
         &self,
         _witness: &Self::WitnessHandle,
         _weights: Vec<E>,
+        _negative_binary_weights: Vec<(usize, E)>,
         _claim: E,
         _stage1_point: &[E],
         _range_image_evaluation: E,

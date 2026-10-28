@@ -42,6 +42,7 @@ where
             selection,
             resolved.schedule(),
             basis,
+            Ok,
         )?;
     let grinding_plan = claims
         .opening_claims()
@@ -99,5 +100,10 @@ where
                 handoff,
             )
         }
+        // A dependency may expose another kind without enabling this crate's handler.
+        #[allow(unreachable_patterns)]
+        _ => Err(AkitaError::InvalidInput(
+            "root group kind is not enabled in this protocol engine".into(),
+        )),
     }
 }

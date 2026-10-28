@@ -18,6 +18,9 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
+/// Extension seam: bind the selected root and suffix plan in the canonical descriptor.
+/// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+///
 /// Construct the canonical [`AkitaInstanceDescriptor`] bytes and grinding plan.
 ///
 /// Both `batched_prove` (prover) and `batched_verify` (verifier) call this
@@ -41,6 +44,7 @@ pub fn transcript_instance_descriptor<F, Cfg>(
     selection: OpeningScheduleSelection,
     schedule: &FoldSchedule,
     basis: BasisMode,
+    select_plan: impl FnOnce(GrindingPlan) -> Result<GrindingPlan, AkitaError>,
 ) -> Result<(GrindingPlan, Vec<u8>), AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -56,7 +60,10 @@ where
             "native field-challenge sampling budget is not certified".into(),
         ));
     }
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch)?;
+    let grinding_plan = select_plan(derive_transcript_grinding_plan::<Cfg>(
+        schedule,
+        opening_batch,
+    )?)?;
     let instance_descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
         SetupSection::from_parts(
