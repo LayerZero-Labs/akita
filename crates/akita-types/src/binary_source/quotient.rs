@@ -52,18 +52,18 @@ impl BinaryQuotientBounds {
             FoldChallengeFamily::BinaryRoot.weight(),
         )?;
         let gamma = u128::from(challenge.multiplication_linf_operator_bound());
-        let ba = CANONICAL_IMAGE_WINDOW.1 as u128;
-        let bz = u128::from(BINARY_RESPONSE_INTERVAL.0.unsigned_abs());
-        let bt = u128::from(ENFORCED_IMAGE_WINDOW.0.unsigned_abs());
+        let matrix_bound = CANONICAL_IMAGE_WINDOW.1 as u128;
+        let response_bound = u128::from(BINARY_RESPONSE_INTERVAL.0.unsigned_abs());
+        let image_bound = u128::from(ENFORCED_IMAGE_WINDOW.0.unsigned_abs());
         let q = u128::from(BINARY_SOURCE_Q);
         let response_mass = 972u128
             .checked_mul(source_rows as u128)
-            .and_then(|mass| mass.checked_mul(bz))
+            .and_then(|mass| mass.checked_mul(response_bound))
             .ok_or_else(overflow)?;
         let column_mass = (columns as u128).checked_mul(gamma).ok_or_else(overflow)?;
         let numerator = response_mass
             .checked_add(column_mass)
-            .and_then(|mass| mass.checked_mul(ba))
+            .and_then(|mass| mass.checked_mul(matrix_bound))
             .ok_or_else(overflow)?;
         let honest_carry_bound = (numerator / q)
             .checked_add(u128::from(!numerator.is_multiple_of(q)))
@@ -75,8 +75,8 @@ impl BinaryQuotientBounds {
             return Err(overflow());
         }
         let residual_bound = response_mass
-            .checked_mul(ba)
-            .zip(column_mass.checked_mul(bt))
+            .checked_mul(matrix_bound)
+            .zip(column_mass.checked_mul(image_bound))
             .and_then(|(response, image)| response.checked_add(image))
             .ok_or_else(overflow)?;
         let no_wrap_bound = q
