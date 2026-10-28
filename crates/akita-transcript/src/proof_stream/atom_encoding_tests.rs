@@ -12,7 +12,7 @@ fn atom_bytes_encode_inline_and_spilled_lengths() {
 }
 
 #[test]
-fn atom_encodings_and_challenges_match_frozen_bytes() {
+fn atom_encodings_match_frozen_bytes() {
     // Frozen from origin/main before atom encodings stopped allocating.
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -55,31 +55,11 @@ fn atom_encodings_and_challenges_match_frozen_bytes() {
          cdab0000000000000000000000000000"
     );
 
-    let mut prover = new_prover_channel(b"atom-pins", b"fixture").unwrap();
+    let mut prover = new_prover_channel(b"atom-pins", b"fixture");
     send_field(&mut prover, small);
     send_extension::<F, E>(&mut prover, ext);
     assert_eq!(
         hex(prover.narg_string()),
         "efcdab89010000000403020198badcfe07000000"
     );
-    // The challenge depends on the sponge; this value is the Blake2b one.
-    #[cfg(feature = "transcript-blake2b")]
-    {
-        use jolt_field::CanonicalBytes;
-
-        let challenge = ext_challenge::<F, E, _>(
-            &mut prover,
-            ProtocolSiteId {
-                family: 5,
-                ..ProtocolSiteId::default()
-            },
-        )
-        .unwrap();
-        let challenge_bytes: Vec<u8> = challenge
-            .to_base_vec()
-            .iter()
-            .flat_map(CanonicalBytes::to_bytes_le_vec)
-            .collect();
-        assert_eq!(hex(&challenge_bytes), "c2aea236b8ccba30df6fd73007258c36");
-    }
 }

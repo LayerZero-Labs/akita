@@ -177,7 +177,7 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
                     AkitaError::Internal("root commitment compression plan has no final map".into())
                 })?
                 .ring_dimension();
-            akita_transcript::public_fields_prover(
+            akita_transcript::public_fields(
                 grinding.state_mut(),
                 akita_types::FoldSite::RootCommitment {
                     group: group_index,

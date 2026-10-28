@@ -7,9 +7,8 @@ use akita_sumcheck::{
     verify_sumcheck_rounds, SumcheckRole, SumcheckShape, SumcheckVerifierChannel,
 };
 use akita_transcript::{
-    field_challenge_bytes, new_prover_channel, new_verifier_channel, prover_field_challenge,
-    public_bytes, verifier_context, verifier_field_challenge, ProtocolContextRecord,
-    ProtocolMessageKind, ProtocolSiteId, VerifierChannel, SITE_FAMILY_SUMCHECK,
+    ext_challenge, new_prover_channel, new_verifier_channel, public_bytes, ProtocolSiteId,
+    VerifierChannel, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalBytes, Prime128Offset275 as F, Ring};
 
@@ -30,11 +29,9 @@ pub fn transcript_labels(data: &[u8]) {
     let split = data.len().min(255);
     let (label, bytes) = data.split_at(split);
 
-    let Ok(mut transcript) = new_prover_channel(b"akita-fuzz", label) else {
-        return;
-    };
+    let mut transcript = new_prover_channel(b"akita-fuzz", label);
     let _ = public_bytes(&mut transcript, ProtocolSiteId::default(), bytes);
-    let _: F = prover_field_challenge(&mut transcript).unwrap();
+    let _: F = ext_challenge(&mut transcript, ProtocolSiteId::default()).unwrap();
 }
 
 struct FuzzVerifierChannel<'proof> {
@@ -59,18 +56,7 @@ impl<'proof> SumcheckVerifierChannel<'proof, F> for FuzzVerifierChannel<'proof> 
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
         let site = self.sumcheck_site(invocation, round, SumcheckRole::Challenge);
-        verifier_context(
-            &mut self.state,
-            ProtocolContextRecord::new(
-                site.to_bytes(),
-                ProtocolMessageKind::Challenge as u32,
-                0,
-                0,
-                field_challenge_bytes::<F>(),
-            ),
-        );
-        let challenge =
-            verifier_field_challenge(&mut self.state).map_err(|_| AkitaError::InvalidProof)?;
+        let challenge = ext_challenge::<F, _>(&mut self.state, site)?;
         self.challenges += 1;
         Ok(challenge)
     }
@@ -85,9 +71,7 @@ pub fn sumcheck_rounds(data: &[u8]) {
     let Ok(shape) = SumcheckShape::new(num_rounds, degree_bound) else {
         return;
     };
-    let Ok(state) = new_verifier_channel(b"fuzz/sumcheck-rounds", b"fixture", data) else {
-        return;
-    };
+    let state = new_verifier_channel(b"fuzz/sumcheck-rounds", b"fixture", data);
     let mut channel = FuzzVerifierChannel {
         state,
         challenges: 0,

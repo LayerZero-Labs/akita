@@ -1,6 +1,7 @@
 use super::*;
 use crate::backend::OperationCtx;
 use crate::backend::{EvaluationTraceDescription, Stage2OpeningDescription};
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
 
@@ -73,6 +74,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -342,7 +344,7 @@ fn prepare_physical_l2_batch<F, E>(
 ) -> Result<Option<PhysicalL2ProverReplay<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F> + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize + ChallengeCodec,
 {
     let Some(mut replay) = physical_l2 else {
         return Ok(None);
@@ -350,7 +352,7 @@ where
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     let eta = grinding
-        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2VirtualBatch { level })?;
+        .grinded_ext_challenge::<E>(akita_params::GrindingSite::L2VirtualBatch { level })?;
     (replay.claim, replay.batching) =
         batch_l2_virtual_evaluations(eta, &replay.virtual_evaluations);
     Ok(Some(replay))
@@ -363,14 +365,14 @@ fn prepare_stage2_compression<F, E, H>(
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F> + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize + ChallengeCodec,
 {
     if !rs.compressed {
         return Ok(E::zero());
     }
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::CompressionBinary { level })
+    grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::CompressionBinary { level })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -610,6 +612,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -741,7 +744,7 @@ where
     let physical_l2 = prepare_physical_l2_batch::<F, E>(grinding, level, physical_l2)?;
     let compression = prepare_stage2_compression::<F, E, _>(grinding, level, &mut rs)?;
     let batching_coeff =
-        grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch {
+        grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::Stage2Batch {
             level: fold_level,
         })?;
     let (linear_terms, scalar_opening_claim) = prepare_relation_sumcheck::<F, E, _>(

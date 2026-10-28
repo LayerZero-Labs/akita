@@ -8,6 +8,7 @@ use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
 use akita_params::{OpeningClaimsLayout, TerminalFoldParams};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{prepare_opening_point, FpExtEncoding, RingVec};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
@@ -21,7 +22,12 @@ pub(super) fn verify_terminal_suffix<F, E>(
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     if current_state.witness_len != scheduled.input_witness_len
         || current_state.setup_prefix_opening.is_some()
@@ -40,7 +46,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields_verifier(
+    akita_transcript::public_fields(
         grinding.state_mut(),
         akita_types::FoldSite::TerminalTFields { level }.id()?,
         current_state.witness.coeffs(),

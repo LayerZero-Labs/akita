@@ -12,21 +12,57 @@ which bytes are absorbed and when each challenge is drawn.
 
 ## The transcript layer
 
-Production uses Spongefish's prover and verifier states. Its domain
-separator includes a backend-specific protocol tag, the caller's length-framed
-session bytes, and canonical instance bytes. The selected backend is BLAKE2b
-or Keccak; each has its own protocol tag.
+Production uses Spongefish v0.8.0 prover and verifier states through Jolt's
+`jolt-transcript` crate. The selected sponge is BLAKE2b or Keccak. Each state
+starts from three inputs:
 
-Akita pins Spongefish v0.7.4. Its digest bridge encodes squeeze counters as
-fixed-width `u64` values, so Blake2b transcript bytes do not depend on whether
-the implementation uses 32-bit or 64-bit pointers. Akita keeps a known-answer
-vector for this boundary.
+1. A session identifier derived with SHAKE128 from Akita's protocol tag.
+   The tag names the protocol version (currently 8), the sponge, the field
+   challenge codec, and the proof-of-work encoding. Changing any of them
+   changes every challenge.
+2. The caller's session bytes, with a `u64` little-endian length prefix.
+3. The canonical instance descriptor bytes, also length-prefixed.
+
+The length prefixes keep the session and the descriptor apart: the session
+`ab` with descriptor `c` differs from session `a` with descriptor `bc`. Akita
+keeps a known-answer vector for each sponge.
 
 Every logical message or challenge has a fixed public diagnostic context
 record. Proof values use prover emission and verifier receipt, derived
 or public values use public messages, and verifier challenges use
 verifier messages. Field atoms are canonical. The one variable-size terminal
 payload carries a checked length atom before its body.
+
+### Field challenges
+
+A field challenge message draws all of its elements from one squeeze. For a
+prime field with a $b$-bit modulus $p$, each candidate is $\lceil b/8\rceil$
+little-endian bytes masked to $b$ bits. A candidate below $p$ is accepted; any
+other is skipped. An extension element takes its coordinates from consecutive
+accepted candidates. Accepted values are exactly uniform.
+
+The squeeze has a fixed length that depends only on the field and the number
+of elements. It holds enough spare candidates that running out has
+probability at most $2^{-161}$. A message that runs out is an error for both
+parties, so the verifier rejects. The distance from uniform for the whole
+message is therefore at most $2^{-161}$, and the soundness argument charges
+at most $2^{-160}$ per message. Drawing several challenges in one message
+shares that budget rather than paying it per element.
+
+The codec covers the fields of every production configuration: the
+128-bit prime field, the degree-2 tower over the 64-bit prime, and the
+degree-4 tower over the 32-bit prime. `ChallengeCodec` is a sealed trait, so
+a configuration whose field has no codec does not compile.
+
+### Rejecting a proof
+
+A verifier failure poisons the Spongefish state. This covers malformed proof
+bytes, failed checks, and errors such as an oversized group record that the
+protocol code routes through `ProofChannel::guard`. Every later read and fold
+root draw fails, and the final end-of-proof check fails, even if a caller
+ignores the error that reported the first failure. Acceptance requires that end-of-proof check: the
+whole proof is consumed, nothing is left over, and the state is not
+poisoned.
 
 Production absorbs and squeezes are positional. Context records and callsite
 labels are diagnostics and do not enter sponge bytes. The backend-specific
@@ -133,9 +169,9 @@ Implementation:
 ## AkitaInstanceDescriptor
 
 Before replay, both parties construct an `AkitaInstanceDescriptor` from the
-validated public configuration. The shared
-`bind_transcript_instance_descriptor` helper binds its canonical bytes
-through spongefish's `DomainSeparator.instance(...)`.
+validated public configuration. The shared `transcript_instance_descriptor`
+helper builds it, and its canonical bytes become the instance input of the
+Spongefish state.
 
 The descriptor records the following identities:
 
@@ -256,16 +292,19 @@ chooses the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$, which
 keeps the chance per query at most $2^{-128}$. The calculation uses integers
 and the actual prime power, including the deficit below a power of two.
 
-At a protected query with grinding target $g>0$, the prover searches a
-nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
-canonical nonce, then produces a separate 32-byte predicate. Diagnostic
-metadata records the grinding site without changing the sponge. The predicate
-passes when its first $g$ low-order bits are zero.
+At a protected query with grinding target $g>0$, the prover searches for the
+least nonce below $2^{g+7}$ that passes. Each attempt absorbs the canonical
+nonce, one byte per prover message, then squeezes $\lceil g/8\rceil$ check
+bytes. The attempt passes when the low $g$ bits of those bytes, read little
+endian, are zero. Diagnostic metadata records the grinding site without
+changing the sponge. The search and check are Jolt's `grind` and
+`check_grind`; the largest target either accepts is 25 bits.
 
-The verifier repeats that predicate check. Only after it passes does replay
-draw the protocol challenge from the advanced transcript. The predicate is
-not reused as the challenge. A zero-bit target consumes no proof bits and
-leaves the transcript unchanged at that site.
+The verifier repeats the check. Only after it passes does replay draw the
+protocol challenge, in one message, from the advanced transcript. The check
+bytes are not reused as the challenge. Each protected site grinds once, even
+when its message holds several challenges. A zero-bit target consumes no
+proof bits and leaves the transcript unchanged at that site.
 
 The additional seven nonce bits provide room for honest search beyond the
 expected $2^g$ attempts. Storage is self-delimiting and canonical; the semantic
@@ -346,7 +385,7 @@ the winning nonce to replay, or returns an error if the bounded search is
 exhausted.
 
 The verifier reconstructs the challenges for that nonce and enforces the
-response bounds. This is separate from the proof-of-work predicate. The
+response bounds. This is separate from the proof-of-work check. The
 [PCS binding chapter](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces)
 explains why adversarial nonce trials must be included in random-oracle query
 accounting.
@@ -384,10 +423,12 @@ nonce encoding are documented in
   canonical serialization, and version validation.
 - `crates/akita-transcript/src/proof_stream.rs` owns state construction,
   context framing, canonical atom codecs, bounded bytes, and EOF-compatible
-  proof transport.
+  proof transport. Field challenges and proof of work come from
+  `jolt-transcript`; `crates/akita-transcript/src/grinding.rs` records the
+  parts of that proof-of-work format the grinding plan binds.
 - `crates/akita-params/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-types/src/transcript_grinding/replay.rs` couples
-  nonce transport, predicate checks, challenges, and plan progress.
+  nonce transport, proof-of-work checks, challenges, and plan progress.
 - `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse
   challenge streams.
 - `crates/akita-verifier/src/fold/mod.rs` and

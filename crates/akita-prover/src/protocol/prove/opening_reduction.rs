@@ -1,4 +1,5 @@
 use super::*;
+use akita_transcript::ChallengeCodec;
 use jolt_poly::UnivariatePoly;
 pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
     pub(crate) reduction: ExtensionOpeningReduction<E>,
@@ -25,7 +26,13 @@ pub(crate) fn prove_extension_opening_reduction<F, E, B>(
 where
     F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
     <F as Unreduced>::Wide: From<F>,
-    E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize + 'static,
+    E: ExtField<F>
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + AkitaSerialize
+        + 'static
+        + ChallengeCodec,
     B: crate::backend::OpaqueEorKernel<F, E>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>()?;

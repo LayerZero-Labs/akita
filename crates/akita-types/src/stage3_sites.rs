@@ -72,7 +72,7 @@ where
     Ok(value)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "prover"))]
 mod tests {
     use super::*;
     use crate::{ProverGrinding, VerifierGrinding};
@@ -93,14 +93,14 @@ mod tests {
         let slot = b"canonical setup slot";
         let claim = E::from_u64(17);
         let prefix_eval = E::from_u64(29);
-        let state = new_prover_channel(b"native-stage3", b"fixture").unwrap();
+        let state = new_prover_channel(b"native-stage3", b"fixture");
         let mut prover = ProverGrinding::new(state, &plan);
         stage3_public_slot(&mut prover, 3, slot).unwrap();
         stage3_claim::<F, E, _>(&mut prover, 3, claim).unwrap();
         stage3_prefix_eval::<F, E, _>(&mut prover, 3, prefix_eval).unwrap();
         let proof = prover.finish().unwrap();
 
-        let state = new_verifier_channel(b"native-stage3", b"fixture", &proof).unwrap();
+        let state = new_verifier_channel(b"native-stage3", b"fixture", &proof);
         let mut verifier = VerifierGrinding::new(state, &plan);
         stage3_public_slot(&mut verifier, 3, slot).unwrap();
         assert_eq!(

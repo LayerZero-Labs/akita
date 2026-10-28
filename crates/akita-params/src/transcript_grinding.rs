@@ -7,19 +7,20 @@ use akita_transcript::nonce_max_bytes;
 
 mod challenge_order;
 pub use akita_transcript::{
-    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
+    GRINDING_CHECK_MAX_BYTES, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
     MAX_GRINDING_BITS,
 };
-pub use challenge_order::{grind_bits_for_loss, ChallengeFieldOrder};
+pub use challenge_order::ChallengeFieldOrder;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
 pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
+const _: () = assert!(TRANSCRIPT_SECURITY_BITS as u32 == jolt_transcript::SECURITY_BITS);
 /// Packed width of the existing fold-response search nonce.
 pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 /// Exclusive upper bound for the existing fold-response search.
 pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
-pub const GRINDING_ENCODING_VERSION: u16 = 3;
+pub const GRINDING_ENCODING_VERSION: u16 = 4;
 /// Query catalog and loss-policy revision.
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 4;
 /// Indexed fold-coordinate oracle revision.
@@ -39,7 +40,7 @@ fn active_grinding_policy_bytes() -> [u8; GRINDING_POLICY_BYTES] {
     out[2..4].copy_from_slice(&TRANSCRIPT_SECURITY_BITS.to_le_bytes());
     out[4] = GRINDING_NONCE_SLACK_BITS;
     out[5] = MAX_GRINDING_BITS;
-    out[6] = GRINDING_PREDICATE_BYTES;
+    out[6] = GRINDING_CHECK_MAX_BYTES;
     out[7] = GRINDING_LITTLE_ENDIAN_BIT_ORDER;
     out[8] = FOLD_RESPONSE_NONCE_BITS;
     out[9..13].copy_from_slice(&FOLD_RESPONSE_ATTEMPTS.to_le_bytes());
@@ -429,7 +430,7 @@ impl GrindingRun {
                 "special grinding sites cannot be proof-of-work runs".into(),
             ));
         }
-        let grind_bits = grind_bits_for_loss(loss_factor, challenge_order)?;
+        let grind_bits = challenge_order.grind_bits(loss_factor)?;
         let nonce_bits = if grind_bits == 0 {
             0
         } else {
@@ -586,7 +587,7 @@ impl GrindingPlanAccumulator {
         })?;
         run.validate()?;
         if run.kind() == GrindingQueryKind::ProofOfWork
-            && run.grind_bits != grind_bits_for_loss(run.loss_factor, self.challenge_order)?
+            && run.grind_bits != self.challenge_order.grind_bits(run.loss_factor)?
         {
             return Err(AkitaError::InvalidSetup(
                 "proof-of-work run target does not match its loss and challenge order".into(),

@@ -11,6 +11,7 @@ use akita_params::{
     RelationWitnessGeometry, SetupContributionMode, TerminalFoldParams,
 };
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, OpeningClaims, PolynomialGroupClaims, RingVec,
@@ -92,13 +93,18 @@ fn prepare_fold_replay<'a, F, E>(
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     let payload_geometry = lp.outer_payload_geometry()?;
     if current_state.witness.coeff_len() != payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields_verifier(
+    akita_transcript::public_fields(
         grinding.state_mut(),
         akita_types::FoldSite::WitnessCommitment {
             level,
@@ -286,7 +292,12 @@ pub(super) fn verify_suffix<F, E>(
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     for (offset, step) in schedule.recursive_folds.iter().enumerate() {
         let level = u32::try_from(offset + 1).map_err(|_| AkitaError::InvalidProof)?;

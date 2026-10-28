@@ -1,6 +1,6 @@
-use spongefish::{Encoding, NargDeserialize, VerificationError};
+use spongefish::{Encoding, FromNarg, NargReader, VerificationError};
 
-/// Canonical unsigned LEB128 nonce used by grinding messages.
+/// Canonical unsigned LEB128 nonce used by fold-response messages.
 ///
 /// The encoding is self-delimiting and rejects overflow and redundant terminal
 /// zero groups. Schedule-dependent range checks remain at the grinding-plan
@@ -33,7 +33,7 @@ impl NonceAtom {
     }
 }
 
-impl Encoding<[u8]> for NonceAtom {
+impl Encoding for NonceAtom {
     fn encode(&self) -> impl AsRef<[u8]> {
         let mut value = self.0;
         let mut encoded = NonceEncoding {
@@ -55,23 +55,20 @@ impl Encoding<[u8]> for NonceAtom {
     }
 }
 
-impl NargDeserialize for NonceAtom {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> Result<Self, VerificationError> {
-        let mut remaining = *buf;
+impl FromNarg for NonceAtom {
+    fn from_narg(reader: &mut NargReader<'_>) -> Result<Self, VerificationError> {
         let mut value = 0u32;
         for index in 0..nonce_max_bytes(u32::BITS as u8) {
-            let (&byte, tail) = remaining.split_first().ok_or(VerificationError)?;
+            let [byte] = reader.take_array::<1>()?;
             let payload = byte & 0x7f;
             if index == 4 && payload > 0x0f {
                 return Err(VerificationError);
             }
             value |= u32::from(payload) << (index * 7);
-            remaining = tail;
             if byte & 0x80 == 0 {
                 if index != 0 && payload == 0 {
                     return Err(VerificationError);
                 }
-                *buf = remaining;
                 return Ok(Self(value));
             }
         }
@@ -122,26 +119,26 @@ mod tests {
             let suffix = [0xa5, 0x5a];
             let mut argument = encoded.clone();
             argument.extend_from_slice(&suffix);
-            let mut cursor = argument.as_slice();
-            let decoded = NonceAtom::deserialize_from_narg(&mut cursor).unwrap();
+            let mut reader = NargReader::new(&argument);
+            let decoded = reader.read::<NonceAtom>().unwrap();
             assert_eq!(decoded.into_inner(), value);
             assert_eq!(decoded.encode().as_ref(), encoded);
-            assert_eq!(cursor, suffix);
+            assert_eq!(reader.take_array::<2>().unwrap(), suffix);
+            assert!(reader.is_empty());
         }
     }
 
     #[test]
-    fn rejects_noncanonical_or_overflowing_encodings_transactionally() {
+    fn rejects_noncanonical_or_overflowing_encodings_and_poisons() {
         for malformed in [
             &[0x80, 0x00][..],
             &[0xff, 0xff, 0xff, 0xff, 0x10][..],
             &[0xff, 0xff, 0xff, 0xff, 0x80][..],
             &[0x80][..],
         ] {
-            let mut cursor = malformed;
-            let original = cursor;
-            assert!(NonceAtom::deserialize_from_narg(&mut cursor).is_err());
-            assert_eq!(cursor, original);
+            let mut reader = NargReader::new(malformed);
+            assert!(reader.read::<NonceAtom>().is_err());
+            assert!(reader.is_poisoned());
         }
     }
 }

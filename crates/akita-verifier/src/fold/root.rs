@@ -6,6 +6,7 @@ use akita_params::{
     SetupContributionMode, TerminalFoldParams,
 };
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::Commitment;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
@@ -24,7 +25,12 @@ pub(super) fn verify_root<F, E>(
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     root_lp.validate_opening_batch(opening_batch)?;
     for group_index in 0..opening_batch.num_groups() {
@@ -50,7 +56,7 @@ where
             .last()
             .ok_or(AkitaError::InvalidProof)?
             .ring_dimension();
-        akita_transcript::public_fields_verifier(
+        akita_transcript::public_fields(
             grinding.state_mut(),
             akita_types::FoldSite::RootCommitment {
                 group: group_index,

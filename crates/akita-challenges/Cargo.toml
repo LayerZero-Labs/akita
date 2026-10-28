@@ -11,7 +11,7 @@ readme = "../../README.md"
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 serde = { version = "1", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9470792dc0112b6d606d9351ebbe455dd58407d3", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -23,11 +23,13 @@ smallvec = { version = "1.15.2", features = ["const_generics"] }
 shake = "0.1.0"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["jolt-field/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
+# Prover-only fold-response previews, which copy the public sponge state.
+prover = ["akita-transcript/prover"]
 
 [lints]
 workspace = true
