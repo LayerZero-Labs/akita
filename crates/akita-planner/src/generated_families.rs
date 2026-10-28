@@ -14,6 +14,7 @@ use std::any::TypeId;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
+use crate::emit::{PlannerCost, PreplannedSchedule};
 use crate::{find_schedule, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
@@ -28,7 +29,7 @@ struct ScalarPreplan {
     source: TypeId,
     chunking: ChunkedWitnessCfg,
     key: PolynomialGroupLayout,
-    result: OnceLock<Result<FoldSchedule, AkitaError>>,
+    result: OnceLock<Result<(FoldSchedule, PlannerCost), AkitaError>>,
 }
 
 /// Exact scalar schedules already needed while preparing one generator run.
@@ -75,16 +76,24 @@ impl GenerationPreplans {
         preplanned
             .result
             .get_or_init(|| {
-                find_schedule(
-                    &ScheduleLookupKey::single(key),
-                    Cfg::committed_source_contract()?,
-                    &[],
-                    &policy_of::<Cfg>(chunking),
-                    Cfg::ring_challenge_config,
-                )
-                .map(|planned| planned.schedule)
+                // Preplans run before row materialization, so they always
+                // record their search work for the row that reuses them.
+                let (planned, diagnostics) = crate::diagnostics::capture(true, || {
+                    find_schedule(
+                        &ScheduleLookupKey::single(key),
+                        Cfg::committed_source_contract()?,
+                        &[],
+                        &policy_of::<Cfg>(chunking),
+                        Cfg::ring_challenge_config,
+                    )
+                });
+                let planner_cost = diagnostics
+                    .map(|diagnostics| diagnostics.planner_cost())
+                    .unwrap_or_default();
+                planned.map(|planned| (planned.schedule, planner_cost))
             })
             .clone()
+            .map(|(schedule, _)| schedule)
     }
 
     /// Return an exact scalar result previously planned for `family`.
@@ -93,7 +102,7 @@ impl GenerationPreplans {
         family: &GeneratedFamily,
         key: PolynomialGroupLayout,
         chunking: ChunkedWitnessCfg,
-    ) -> Option<FoldSchedule> {
+    ) -> Option<PreplannedSchedule> {
         let source = (family.scalar_plan_source)();
         self.scalar
             .lock()
@@ -106,7 +115,11 @@ impl GenerationPreplans {
             })
             .and_then(|preplanned| preplanned.result.get())
             .and_then(|result| result.as_ref().ok())
-            .cloned()
+            .map(|(schedule, planner_cost)| PreplannedSchedule {
+                key: ScheduleLookupKey::single(key),
+                schedule: schedule.clone(),
+                planner_cost: *planner_cost,
+            })
     }
 
     /// Copy exact producer results into a completed spec before rendering.
@@ -114,10 +127,7 @@ impl GenerationPreplans {
         spec.preplanned = spec
             .keys
             .iter()
-            .filter_map(|key| {
-                self.scalar_for_family(family, *key, spec.policy.witness_chunk)
-                    .map(|schedule| (ScheduleLookupKey::single(*key), schedule))
-            })
+            .filter_map(|key| self.scalar_for_family(family, *key, spec.policy.witness_chunk))
             .collect();
     }
 }

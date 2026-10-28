@@ -381,6 +381,7 @@ where
     }
 
     /// Validate a complete portable-export route before commitment arithmetic.
+    #[cfg(test)]
     pub(crate) fn preflight_portable_export(
         &self,
         plan: &CommitmentExecutionPlan,
@@ -1445,7 +1446,7 @@ mod tests {
         let hint = output.prover_state();
 
         assert_eq!(output.terminal_payload(), &expected_payload);
-        assert_eq!(hint.inner_rows(), expected_rows);
+        assert_eq!(hint.inner_rows().unwrap().as_ref(), expected_rows);
         assert_eq!(
             hint.outer_compression_witness(plan.compression().unwrap())
                 .unwrap()

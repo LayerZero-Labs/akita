@@ -293,7 +293,20 @@ pub(super) fn process_candidate_batch(
         let natural_len = active_setup_field_len(&candidate, opening_layout)?;
         price_terminal_candidate(ctx, state, query_search, &candidate, natural_len, frontiers)?;
     }
-    let candidates_with_source = attach_source_moments(ctx, state, is_root_level, generated.folds)?;
+    let folds = match ctx.setup_field_budget {
+        // A fold whose own level setup exceeds the budget fits no schedule.
+        Some(budget) => {
+            let mut admitted = Vec::with_capacity(generated.folds.len());
+            for candidate in generated.folds {
+                if budget.admits(level_setup_field_elements(&candidate.params)?) {
+                    admitted.push(candidate);
+                }
+            }
+            admitted
+        }
+        None => generated.folds,
+    };
+    let candidates_with_source = attach_source_moments(ctx, state, is_root_level, folds)?;
     // Complete-root candidates are traversed in exact lower-bound order.
     // Recursive states do not have that global admission rule and retain
     // local Pareto pruning.
@@ -354,8 +367,11 @@ pub(crate) fn derive_selected_suffix_schedule(
         diagnostics.record_suffix_call(relation_phase);
     }
     let memo_key = state.memo_key(policy);
-    // Memo entries remain budget-independent objective optima. A restricted
-    // caller reuses that result when it fits its exact root prefix; otherwise
+    // Memo entries are objective optima under the context's setup budget,
+    // independent of any root query-prefix restriction. The setup budget is
+    // not part of the memo key, so a memo must not outlive its budget; the V6
+    // planner builds a fresh memo for every budget pass. A restricted caller
+    // reuses the cached result when it fits its exact root prefix; otherwise
     // it recomputes this state locally and never replaces the primary entry.
     if let QuerySearch::Restricted(prefix) = &query_search {
         let cached = memo.get(&memo_key).cloned().map_or_else(
