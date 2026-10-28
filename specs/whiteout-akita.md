@@ -1861,11 +1861,12 @@ planner call it.
   now 19 × `R_64` (jolt D29). `e` grows from `ν = 23` to `24` at the
   single-group statement and stays at 27 for the multi-group statement and
   the headline.
-- **The cut no longer offloads below 37 variables** (35 after O6, §5.5.3). Level 2's Σ-bound
+- **The cut no longer offloads below 37 variables** (since O6 the search never offloads into the cut level, §5.5.3). Level 2's Σ-bound
   `[B_a | B′_a]` setup (9.6M–16.3M field elements) is at least the root's,
   so the priced search keeps the cut level direct at 31:1 + 14:1 and at the
   36:1 headline; the first offloading shape is 37:1
-  (`the_cut_level_offloads_the_root_setup_from_35_variables` since O6). To keep the
+  (`the_cut_level_offloads_the_root_setup_from_37_variables`; replaced by
+  `the_priced_search_never_offloads_into_the_cut_level` in O6). To keep the
   masked Stage 3 (W2b) proved end to end, the multi-group test instance
   plans its 31:1 + 14:1 row with
   `akita_planner::find_zk_schedule_offloading_at_cut_for_test`
@@ -1901,7 +1902,8 @@ planner call it.
   `cells_match_the_certified_csv_and_the_current_radius` and
   `the_binding_rank_grows_with_width_and_covers_no_empty_matrix`
   (akita-params), the frontier admission cases for a forced offload, and
-  `the_cut_level_offloads_the_root_setup_from_35_variables`.
+  `the_cut_level_offloads_the_root_setup_from_37_variables` (replaced in
+  O6, §5.5.3).
 
 **Follow-up option: the residual at a larger ring (estimate, not built).**
 The paper sizes these matrices over a larger ring to cut verifier work
@@ -2027,32 +2029,47 @@ exception adds one fixed tuple at one level.
 |---|---|---|---|---|---|---|---|
 | dense 14:1 | (256, 64, 64) | 18 × 1,024 → 9 × 1,024 | 19 × 5,794 → 10 × 1,473 | 610 → 321 | 7,045,504 → 1,885,440 | 65,536 → 32,768 | 94,500 → 91,973 |
 | one-hot 31:1 + 14:1 | (128, 64, 64) | 19 × 4,096 → 10 × 2,048 | 19 × 7,906 → 10 × 4,161 | 610 → 321 | 9,613,696 → 5,326,080 | 4,194,304 | 96,244 → 98,293 |
-| one-hot 36:1 | (512, 64, 64), Stage 3 | 19 × 8,192 → 10 × 8,192 | 19 × 13,378 → 10 × 11,841 | 610 → 321 | 16,777,216 | 16,777,216 → 8,388,608 | 101,672 → 105,053 |
+| one-hot 36:1 | (128, 64, 64) | 19 × 8,192 → 10 × 2,048 | 19 × 13,378 → 10 × 10,881 | 610 → 321 | 16,777,216 | 16,777,216 | 101,672 → 103,365 |
 
-(dev set: 89,466 → 87,941, 92,212 → 94,261, 96,638 → 101,021.) Every row's
+(dev set: 89,466 → 87,941, 92,212 → 94,261, 96,638 → 98,331.) Every row's
 cut level has a role ring below 128, so every row uses the exception
 (`checked_in_zk_rows_commit_the_residual_at_its_sigma_binding_ranks`).
 
-- The planner re-selects the rows under the cheaper residual. The dense
-  root changes, and the headline now offloads the root's setup at the cut:
-  its level-1 setup prefix is public, w_k grows from 10.75M to 36.86M
-  coefficients, and its residual work stays about where it was. The first
-  offloading one-hot shape is 35:1
-  (`the_cut_level_offloads_the_root_setup_from_35_variables`, was 37).
-- Modeled bytes count raw u_a (1,280 coefficients instead of 1,216) and the
-  headline's extra Stage 3. Whiteout sends `cm(u_a)` compressed (A47), in 2
-  chunks of 640 coefficients.
+- The planner re-selects the rows under the cheaper residual: the dense
+  root and the headline's level 1 change, and w_k falls at the headline
+  from 10.75M to 8.40M coefficients. Residual work (`rank × width × d`
+  over both matrices) falls to 0.37×, 0.54× and 0.63× of the d = 64 rows.
+- Modeled bytes count raw u_a: 1,280 coefficients instead of 1,216. Whiteout
+  sends `cm(u_a)` compressed (A47), in 2 chunks of 640 coefficients.
 - `e` falls from `ν = 24` to `23` at the single-group statement, so the
   response-digits family's key 24 becomes 23 (that family's 27 row is
   unchanged). No other catalog row moves.
 
-**Open: the 36:1 row is unprovable.** With its cut offloaded, w_k is
-36.86M coefficients and Whiteout's `e` needs ν = 29, which
-`MAX_RESPONSE_NUM_VARS = 27` refuses (fail-closed). Before O6 the row
-proves. Keeping the edge into the cut level direct in the priced search
-(offload only under `CutOffload::Forced`) makes the d = 128 row prove
-(w_k 8.4M). The decision is open (jolt `specs/whiteout-o6-d128.md`,
-"Open issue").
+**The cut level is never offloaded** (`CutOffload::Direct`). The priced
+search drops the offloaded edge into the cut level: the cut level never
+consumes a setup prefix outside the test-support entry
+`find_zk_schedule_offloading_at_cut_for_test`.
+
+- *Why.* A setup prefix at the cut level puts the parent's response and
+  inner digits into w_k, and w_k is the residual commitment's input, so it
+  becomes part of the Σ-protocol's private vector `s` and of the response
+  vector `e`. The planner's objective (setup first, then proof bytes and
+  work) prices none of that.
+- *What happened without it.* The `R_128` residual made the offload win on
+  setup from 35 variables. The 36:1 row then had w_k = 36.86M coefficients
+  and `e` with ν = 29, which jolt-zk's `MAX_RESPONSE_NUM_VARS = 27`
+  (jolt D27) refuses: the row could not be proved, though nothing unsound
+  was accepted. The pre-O6 planner had the same exposure from 37
+  variables.
+- *With it.* The 36:1 row has its cut direct (w_k 8.40M), and
+  `every_checked_in_zk_row_fits_the_response_bound` checks every
+  checked-in ZK row's `e` against the bound through jolt-zk's own response
+  layout. The bound itself is statement-dependent (it counts the pads), so
+  it is a test over the checked-in rows, not a plan-time rejection.
+  `the_priced_search_never_offloads_into_the_cut_level` pins the direct cut
+  at 36 and 37 variables.
+- *Masked Stage 3 at the cut.* It stays supported and proved end to end on
+  the forced 31:1 + 14:1 row, as since W5e; production rows do not use it.
 
 **Not done.** d = 256 (blocker (3) and its rerun gate), and P9.
 
