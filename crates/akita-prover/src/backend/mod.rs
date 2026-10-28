@@ -96,3 +96,6 @@ where
         + TerminalCommitmentMaterialKernel<F, B::CommitmentMaterialHandle>,
 {
 }
+
+#[cfg(feature = "labinius-trinomial")]
+pub use plans::NativeRootRelationRequest;

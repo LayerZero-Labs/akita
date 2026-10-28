@@ -456,3 +456,6 @@ impl<E: Field> RelationMatrixEvaluator<E> {
         Ok(&context.witness_layout)
     }
 }
+
+#[cfg(feature = "labinius-trinomial")]
+pub(crate) mod native_root;

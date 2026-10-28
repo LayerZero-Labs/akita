@@ -104,3 +104,9 @@ pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "labinius-trinomial")]
+pub mod native_root;
+
+#[cfg(feature = "labinius-trinomial")]
+pub mod binary_root;

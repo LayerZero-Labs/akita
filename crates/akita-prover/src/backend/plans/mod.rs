@@ -538,3 +538,6 @@ impl ValidatedTerminalZEncodingPlan {
         self.payload_bytes
     }
 }
+
+#[cfg(feature = "labinius-trinomial")]
+pub use relation::NativeRootRelationRequest;

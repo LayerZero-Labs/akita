@@ -45,3 +45,6 @@ pub use relation::{RelationMatrixEvaluator, Stage2RelationWeights};
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::Stage1Verifier;
 pub use verifier::AkitaVerifier;
+
+#[cfg(feature = "labinius-trinomial")]
+pub use relation::native_root::MixedRootRelationWeights;
