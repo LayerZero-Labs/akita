@@ -65,6 +65,20 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Extension seam: import a coefficient table into the admitted root scope.
+    /// Native root producers attach through https://github.com/LayerZero-Labs/akita/issues/285.
+    fn import_root_witness(
+        &self,
+        _session: &Self::ProofSessionHandle,
+        _context: &super::ProofContext,
+        _digits: Vec<i8>,
+        _destination_ring_dimension: usize,
+    ) -> Result<Self::WitnessHandle, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not import root witnesses".into(),
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn begin_recursive_witness(
         &self,
@@ -128,6 +142,20 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Extension seam: range-check an admitted coefficient table independently of its native ring.
+    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    fn begin_root_digit_range(
+        &self,
+        _witness: &Self::WitnessHandle,
+        _domain: akita_params::FlatBooleanDomain,
+        _equality_point: &[E],
+        _range: akita_params::DigitRangePlan,
+    ) -> Result<Self::Stage1SessionHandle, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not range-check native root witnesses".into(),
+        ))
+    }
+
     fn begin_stage1(
         &self,
         relation_handle: &Self::RelationHandle,
@@ -175,6 +203,23 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Extension seam: combine direct public linear weights with the ordinary range-image relation.
+    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    #[allow(clippy::too_many_arguments)]
+    fn begin_root_relation(
+        &self,
+        _witness: &Self::WitnessHandle,
+        _weights: Vec<E>,
+        _claim: E,
+        _stage1_point: &[E],
+        _range_image_evaluation: E,
+        _batching: E,
+    ) -> Result<Self::Stage2SessionHandle, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not compile native root relations".into(),
+        ))
+    }
+
     fn begin_stage2(
         &self,
         relation_handle: Self::RelationHandle,
