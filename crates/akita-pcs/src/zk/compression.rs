@@ -429,16 +429,19 @@ impl<'a> Chains<'a> {
             .evaluate_at_point(self.setup, point)
     }
 
-    /// Adds `⟨weights, chain rows at α⟩`'s weights to `a` over the padded
-    /// `e`.
+    /// `⟨weights, chain rows at α⟩`'s weights over `e` padded to
+    /// `padded_len`, on `window`, which must hold every chain's digits.
     pub(crate) fn accumulate(
         &self,
         alpha: F,
         weights: &[F],
-        a: &mut [F],
-    ) -> Result<(), AkitaError> {
-        self.relation(alpha, weights, a.len())?
-            .accumulate_dense(self.setup, a)
+        padded_len: usize,
+        window: std::ops::Range<usize>,
+    ) -> Result<Vec<F>, AkitaError> {
+        let mut a = vec![F::zero(); window.len()];
+        self.relation(alpha, weights, padded_len)?
+            .accumulate_dense(self.setup, window.start, &mut a)?;
+        Ok(a)
     }
 
     /// Where `ξ` sits in `e` padded to `padded_len`: the binary constraint's

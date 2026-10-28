@@ -4,6 +4,7 @@
 //! batched weights against `H` contracted column by column through the
 //! statement's own row maps (W5-b).
 
+use super::rows::BatchWeights;
 use super::*;
 use akita_config::policy_of;
 use akita_config::proof_optimized::fp128::ResponseDigits;
@@ -24,6 +25,20 @@ use jolt_zk::whiteout::{CompressedImage, CompressedTarget};
 use rand::RngCore;
 
 type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
+
+/// `A` written out, read in uneven ranges that cross the end of `e` and the
+/// chains' window. The ranges must agree with one fill of the whole table.
+fn dense(a: &BatchWeights) -> Vec<F> {
+    let mut whole = vec![F::zero(); a.len()];
+    a.fill(0, &mut whole).unwrap();
+    let mut ranged = vec![F::zero(); a.len()];
+    for (index, chunk) in ranged.chunks_mut(977).enumerate() {
+        a.fill(index * 977, chunk).unwrap();
+    }
+    assert_eq!(whole, ranged);
+    assert!(a.fill(1, &mut whole).is_err());
+    whole
+}
 
 /// A response prover whose catalog holds the planner's response schedule for
 /// `e` of `len` entries.
@@ -418,7 +433,7 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
 
         let batch =
             batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains).unwrap();
-        assert_eq!(multilinear_eval(&batch.a, &r).unwrap(), contracted);
+        assert_eq!(multilinear_eval(&dense(&batch.a), &r).unwrap(), contracted);
         let at = |weights: &RowWeights<F>| {
             batch_weight_at(statement, shape, alpha, weights, &padding, &chains, &r).unwrap()
         };
@@ -430,7 +445,10 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
         let weights = RowWeights::new(statement, &eta, &product_point, &chains).unwrap();
         let batch =
             batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains).unwrap();
-        assert_eq!(at(&weights), multilinear_eval(&batch.a, &r).unwrap());
+        assert_eq!(
+            at(&weights),
+            multilinear_eval(&dense(&batch.a), &r).unwrap()
+        );
         assert_eq!(
             batch_target(statement, alpha, &weights, claims, &chains).unwrap(),
             batch.b
@@ -571,8 +589,9 @@ fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
                     payload: &compressed.payload,
                 }],
             );
-            let mut a = vec![F::zero(); padded_len];
-            chains.accumulate(alpha, &weights, &mut a).unwrap();
+            let a = chains
+                .accumulate(alpha, &weights, padded_len, 0..padded_len)
+                .unwrap();
             let constant = chains.constant(alpha, &weights).unwrap();
             assert_ne!(constant, F::zero());
             let actual: F = a
@@ -814,8 +833,10 @@ fn rejects_prover_chosen_compressions() {
             let row_value = |row: usize, alpha: F| {
                 let mut weights = vec![F::zero(); 4];
                 weights[2 + row] = F::one();
-                let mut a = vec![F::zero(); compressed.witness.len().next_power_of_two()];
-                chains.accumulate(alpha, &weights, &mut a).unwrap();
+                let padded = compressed.witness.len().next_power_of_two();
+                let a = chains
+                    .accumulate(alpha, &weights, padded, 0..padded)
+                    .unwrap();
                 a.iter()
                     .zip(&compressed.witness)
                     .map(|(a, &x)| *a * F::from_i64(i64::from(x)))
@@ -909,8 +930,17 @@ fn chain_relation_at_a_point_matches_its_dense_weights() {
             let weights: Vec<F> = (0..rows).map(|_| F::random(&mut rng)).collect();
             let alpha = F::random(&mut rng);
             let padded = (offset + len).next_power_of_two();
-            let mut a = vec![F::zero(); padded];
-            chains.accumulate(alpha, &weights, &mut a).unwrap();
+            let a = chains
+                .accumulate(alpha, &weights, padded, 0..padded)
+                .unwrap();
+            // A window holding the chain's digits reads the same weights.
+            let window = chains
+                .accumulate(alpha, &weights, padded, offset..offset + len)
+                .unwrap();
+            assert_eq!(window, a[offset..offset + len]);
+            assert!(chains
+                .accumulate(alpha, &weights, padded, offset + 1..offset + len)
+                .is_err());
             let point: Vec<F> = (0..padded.trailing_zeros())
                 .map(|_| F::random(&mut rng))
                 .collect();
@@ -933,8 +963,11 @@ fn padding_term_matches_its_dense_weights() {
         let padding = PaddingTerm {
             point: (0..shape.num_vars).map(|_| F::random(&mut rng)).collect(),
         };
-        let mut dense = vec![F::zero(); len];
-        padding.extend_weights(shape, &mut dense).unwrap();
+        let weights = padding.weights(shape).unwrap();
+        let mut dense = vec![F::zero(); shape.padded_len()];
+        for (j, dst) in dense.iter_mut().enumerate().skip(len) {
+            *dst = weights.at(j);
+        }
         let eq = EqPolynomial::evals(&padding.point).unwrap();
         assert_eq!(dense[len..], eq[len..], "{len}");
         let point: Vec<F> = (0..shape.num_vars).map(|_| F::random(&mut rng)).collect();

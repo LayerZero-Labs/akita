@@ -12,7 +12,7 @@ use akita_types::NegativeBinarySupport;
 use jolt_algebra::{JoltField, Zero};
 use jolt_poly::EqPolynomial;
 use jolt_zk::masking::ZkError;
-use jolt_zk::whiteout::{ResponseRows, ResponseStatement};
+use jolt_zk::whiteout::{ResponseRows, ResponseStatement, ResponseWeights};
 
 use super::compression::Chains;
 use super::F;
@@ -62,9 +62,72 @@ pub(crate) struct ProductClaims<F> {
 }
 
 /// `⟨A, e⟩ = b`, with `A` over the padded `e`.
-pub(crate) struct BatchedRows<F> {
-    pub(crate) a: Vec<F>,
+pub(crate) struct BatchedRows {
+    pub(crate) a: BatchWeights,
     pub(crate) b: F,
+}
+
+/// `A` over the padded `e`, written by range ([`Self::fill`]) from its
+/// factors: jolt-zk's row weights on `e`, the chains' weights on their
+/// digits, and the padding term past `e`'s end. No table of `e`'s length
+/// is held: the fused sumcheck streams `A` for its first rounds
+/// ([`super::rounds::FusedKernel`]).
+pub(crate) struct BatchWeights {
+    shape: ResponseShape,
+    rows: ResponseWeights<F>,
+    /// The chains' weights on `[chains_start, chains_start + chains.len())`.
+    chains_start: usize,
+    chains: Vec<F>,
+    padding: PaddingWeights,
+}
+
+impl BatchWeights {
+    /// The padded length of `e`.
+    pub(crate) fn len(&self) -> usize {
+        self.shape.padded_len()
+    }
+
+    /// Writes `A[start..start + out.len()]`.
+    pub(crate) fn fill(&self, start: usize, out: &mut [F]) -> Result<(), AkitaError> {
+        let end = start
+            .checked_add(out.len())
+            .filter(|&end| end <= self.len())
+            .ok_or_else(|| AkitaError::Internal("row weights range".into()))?;
+        let live = self.shape.len.clamp(start, end);
+        let (rows, padding) = out.split_at_mut(live - start);
+        if !rows.is_empty() {
+            self.rows
+                .fill(start, rows)
+                .map_err(|error| AkitaError::Internal(error.to_string()))?;
+        }
+        for (j, dst) in (live..end).zip(padding) {
+            *dst = self.padding.at(j);
+        }
+        let chains_end = self.chains_start + self.chains.len();
+        let (lo, hi) = (start.max(self.chains_start), end.min(chains_end));
+        if lo < hi {
+            for (dst, weight) in out[lo - start..hi - start]
+                .iter_mut()
+                .zip(&self.chains[lo - self.chains_start..hi - self.chains_start])
+            {
+                *dst += *weight;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `eq(τ_pad, j)`, from the tables of `τ_pad`'s low and high halves.
+pub(crate) struct PaddingWeights {
+    lo: Vec<F>,
+    hi: Vec<F>,
+    bits: usize,
+}
+
+impl PaddingWeights {
+    pub(crate) fn at(&self, j: usize) -> F {
+        self.lo[j & ((1 << self.bits) - 1)] * self.hi[j >> self.bits]
+    }
 }
 
 /// Row indices: Items 2, 3 and 5 in [`ResponseRows`] order, the product
@@ -144,26 +207,17 @@ impl PaddingTerm<F> {
         .map(Some)
     }
 
-    /// Appends the term's weights on `e`'s padding entries to `a`, the
-    /// weights of `e`'s `shape.len` live entries, filling it to exactly
-    /// `shape.padded_len()` entries.
-    pub(crate) fn extend_weights(
-        &self,
-        shape: ResponseShape,
-        a: &mut Vec<F>,
-    ) -> Result<(), AkitaError> {
+    /// The term's weight `eq(τ_pad, j)` on each padding entry `j` of `e`.
+    pub(crate) fn weights(&self, shape: ResponseShape) -> Result<PaddingWeights, AkitaError> {
         if self.point.len() != shape.num_vars {
             return Err(AkitaError::InvalidInput("padding point width".into()));
         }
-        if a.len() != shape.len {
-            return Err(AkitaError::Internal("row weights length".into()));
-        }
-        let half = shape.num_vars / 2;
-        let (lo, hi) = (eq_table(&self.point[..half]), eq_table(&self.point[half..]));
-        let mask = (1 << half) - 1;
-        a.reserve_exact(shape.padded_len() - shape.len);
-        a.extend((shape.len..shape.padded_len()).map(|j| lo[j & mask] * hi[j >> half]));
-        Ok(())
+        let bits = shape.num_vars / 2;
+        Ok(PaddingWeights {
+            lo: eq_table(&self.point[..bits]),
+            hi: eq_table(&self.point[bits..]),
+            bits,
+        })
     }
 
     /// The term's weight at `point`: `Σ_{j ≥ len} eq(τ_pad, j)·eq(point, j)`.
@@ -255,14 +309,32 @@ pub(crate) fn batch_rows<const D: usize>(
     padding: &PaddingTerm<F>,
     claims: ProductClaims<F>,
     chains: &Chains<'_>,
-) -> Result<BatchedRows<F>, ZkError> {
-    let (mut a, _) = statement.weigh(&weights.rows, alpha, shape.padded_len())?;
-    padding.extend_weights(shape, &mut a).map_err(zk_error)?;
-    chains
-        .accumulate(alpha, &weights.chains, &mut a)
+) -> Result<BatchedRows, ZkError> {
+    let (rows, _) = statement.weigh(&weights.rows, alpha)?;
+    if rows.len() != shape.len {
+        return Err(zk_error(AkitaError::Internal("row weights length".into())));
+    }
+    let support = chains.support(shape.padded_len()).map_err(zk_error)?;
+    let digits = support.intervals();
+    let window = match (
+        digits.iter().map(|d| d.start).min(),
+        digits.iter().map(|d| d.end).max(),
+    ) {
+        (Some(start), Some(end)) => start..end,
+        _ => 0..0,
+    };
+    let chains_start = window.start;
+    let chain_weights = chains
+        .accumulate(alpha, &weights.chains, shape.padded_len(), window)
         .map_err(zk_error)?;
     Ok(BatchedRows {
-        a,
+        a: BatchWeights {
+            shape,
+            rows,
+            chains_start,
+            chains: chain_weights,
+            padding: padding.weights(shape).map_err(zk_error)?,
+        },
         b: batch_target(statement, alpha, weights, claims, chains)?,
     })
 }

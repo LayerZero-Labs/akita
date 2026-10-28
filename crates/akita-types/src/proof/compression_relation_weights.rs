@@ -191,15 +191,20 @@ impl<E: Field> CompressionRelationWeights<E> {
     #[cfg(test)]
     pub(crate) fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
         let mut weights = vec![E::zero(); self.physical_field_len];
-        self.accumulate_dense(&mut weights)?;
+        self.accumulate_dense(0, &mut weights)?;
         Ok(weights)
     }
 
-    fn accumulate_dense(&self, weights: &mut [E]) -> Result<(), AkitaError> {
-        if weights.len() != self.physical_field_len {
+    /// Adds the table's entries `[start, start + weights.len())` to
+    /// `weights`. Every event must lie in that window.
+    fn accumulate_dense(&self, start: usize, weights: &mut [E]) -> Result<(), AkitaError> {
+        if start
+            .checked_add(weights.len())
+            .is_none_or(|end| end > self.physical_field_len)
+        {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len,
-                actual: weights.len(),
+                actual: start.saturating_add(weights.len()),
             });
         }
         for event in &self.events {
@@ -214,8 +219,10 @@ impl<E: Field> CompressionRelationWeights<E> {
                         "compression event alpha span exceeds the power table".into(),
                     )
                 })?;
-            let target = weights
-                .get_mut(event.physical_start..event.physical_start + event.coefficient_count)
+            let target = event
+                .physical_start
+                .checked_sub(start)
+                .and_then(|offset| weights.get_mut(offset..offset + event.coefficient_count))
                 .ok_or_else(|| {
                     AkitaError::Internal(
                         "compression event physical span exceeds the dense weight table".into(),
