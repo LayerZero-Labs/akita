@@ -27,9 +27,9 @@ struct Stage1ProveOutput<E: Field> {
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
 }
 
-struct Stage2ProveOutput<E: Field> {
-    challenges: Vec<E>,
-    witness_evaluation: E,
+pub(in crate::protocol::prove) struct Stage2ProveOutput<E: Field> {
+    pub(in crate::protocol::prove) challenges: Vec<E>,
+    pub(in crate::protocol::prove) witness_evaluation: E,
 }
 
 pub(in crate::protocol::prove) struct PreparedFold<
@@ -743,5 +743,5 @@ where
     })
 }
 
-mod sumcheck;
+pub(in crate::protocol::prove) mod sumcheck;
 use sumcheck::{prove_stage1, prove_stage2, prove_stage3};

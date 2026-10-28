@@ -187,7 +187,7 @@ where
         rs.digit_range_equality_low_variable_count,
     )?;
     let physical_plan = PhysicalResponsePlan::new(lp, plan)?;
-    let mut equality_coordinates = equality_point.clone().into_coordinates();
+    let equality_coordinates = equality_point.clone().into_coordinates();
     let stage1_plan = crate::backend::ValidatedStage1Plan::new(
         plan.digit_range_plan(),
         domain,
@@ -195,246 +195,24 @@ where
         physical_plan.clone(),
         rs.witness_len,
     );
-    let mut session_handle = crate::backend::OpaqueStage1Kernel::begin_stage1(
+    let session_handle = crate::backend::OpaqueStage1Kernel::begin_stage1(
         ctx.backend(),
         &rs.relation_handle,
         &stage1_plan,
     )?;
-    let product_count = plan.digit_range_plan().product_stage_arities().len();
-    let rounds = domain.num_vars();
-    let mut claim = E::zero();
-    for stage_index in 0..product_count {
-        let shape = plan
-            .digit_range_plan()
-            .stage_shape(rounds, stage_index)
-            .ok_or_else(|| AkitaError::Internal("stage 1 product stage shape is missing".into()))?;
-        let step = crate::backend::Stage1Step::Product(stage_index);
-        let stage = u32::try_from(stage_index)
-            .map_err(|_| AkitaError::Internal("stage 1 product stage index exceeds u32".into()))?;
-        let mut kernel = Stage1EqSumcheck {
-            backend: ctx.backend(),
-            session: &mut session_handle,
-            step,
-            equality_point: &equality_coordinates,
-            claim,
-            degree: shape.sumcheck_proof.1,
-            next_round: 0,
-            field: std::marker::PhantomData,
-        };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
-            grinding,
-            akita_params::SumcheckProtocol::Stage1,
-            level,
-            stage,
-        );
-        let (challenges, _output_claim) = akita_sumcheck::prove_eq_factored_sumcheck::<F, E, _, _>(
-            &mut kernel,
-            &mut channel,
-            akita_sumcheck::SumcheckShape::new(rounds, shape.sumcheck_proof.1)?,
-            0,
-        )?;
-        let crate::backend::Stage1PublicTransition::ProductChildClaims(mut child_claims) =
-            crate::backend::OpaqueStage1Kernel::stage1_public_transition(
-                ctx.backend(),
-                &mut session_handle,
-                step,
-            )?
-        else {
-            return Err(AkitaError::Internal(
-                "stage 1 product transition did not return child claims".into(),
-            ));
-        };
-        if child_claims.len() != shape.child_claims {
-            return Err(AkitaError::Internal(
-                "stage 1 product child claim count differs from stage shape".into(),
-            ));
-        }
-        akita_types::stage1_child_claims::<F, E, _>(grinding, level, stage, &mut child_claims)?;
-        let gamma = grinding.grinded_ext_challenge::<F, E>(
-            akita_params::GrindingSite::Stage1InterstageBatch { level, stage },
-        )?;
-        let weights = plan
-            .digit_range_plan()
-            .interstage_batch_weights(gamma, child_claims.len());
-        claim = plan
-            .digit_range_plan()
-            .batch_claims(&weights, &child_claims)?;
-        crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
-            ctx.backend(),
-            &mut session_handle,
-            crate::backend::Stage1Transition::ProductBatch(stage_index),
-            gamma,
-        )?;
-        equality_coordinates = challenges;
-    }
-
-    let final_point;
-    let (range_image_evaluation, norm_proof) = if physical_plan.is_some() {
-        let step = crate::backend::Stage1Step::FusedRangeNorm;
-        let crate::backend::Stage1PublicTransition::PhysicalL2Claims {
-            response_l2_sq,
-            mut subclaims,
-        } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
-            ctx.backend(),
-            &mut session_handle,
-            step,
-        )?
-        else {
-            return Err(AkitaError::Internal(
-                "stage 1 fused range-norm transition did not return physical L2 claims".into(),
-            ));
-        };
-        let physical = physical_plan.as_ref().ok_or_else(|| {
-            AkitaError::Internal("stage 1 fused range-norm execution has no physical plan".into())
-        })?;
-        if subclaims.len()
-            != physical.shape().subclaim_count().ok_or_else(|| {
-                AkitaError::Internal("stage 1 physical L2 subclaim count overflow".into())
-            })?
-        {
-            return Err(AkitaError::Internal(
-                "stage 1 physical L2 subclaim count differs from plan".into(),
-            ));
-        }
-        akita_types::l2_prefix::<F, E, _>(grinding, level, response_l2_sq, &mut subclaims)?;
-        let norm_claim = if subclaims.is_empty() {
-            E::from_u128(response_l2_sq)
-        } else {
-            let gamma = grinding.grinded_ext_challenge::<F, E>(
-                akita_params::GrindingSite::L2SubclaimBatch { level },
-            )?;
-            crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
-                ctx.backend(),
-                &mut session_handle,
-                crate::backend::Stage1Transition::L2SubclaimBatch,
-                gamma,
-            )?;
-            let mut power = E::one();
-            subclaims.iter().fold(E::zero(), |sum, &subclaim| {
-                let next = sum + power * subclaim;
-                power *= gamma;
-                next
-            })
-        };
-        let merge = grinding
-            .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2NormMerge { level })?;
-        crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
-            ctx.backend(),
-            &mut session_handle,
-            crate::backend::Stage1Transition::RangeNormMerge,
-            merge,
-        )?;
-        claim += merge * norm_claim;
-        let mut kernel = Stage1StandardSumcheck {
-            backend: ctx.backend(),
-            session: &mut session_handle,
-            step,
-            claim,
-            rounds,
-            degree: plan.digit_range_plan().leaf_degree() + 1,
-            next_round: 0,
-            field: std::marker::PhantomData,
-        };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
-            grinding,
-            akita_params::SumcheckProtocol::PhysicalL2,
-            level,
-            0,
-        );
-        let (point, output_claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
-            &mut kernel,
-            &mut channel,
-            akita_sumcheck::SumcheckShape::new(rounds, plan.digit_range_plan().leaf_degree() + 1)?,
-            0,
-        )?;
-        claim = output_claim;
-        final_point = point;
-        let crate::backend::Stage1PublicTransition::Final {
-            range_image_evaluation,
-            mut virtual_evaluations,
-        } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
-            ctx.backend(),
-            &mut session_handle,
-            step,
-        )?
-        else {
-            return Err(AkitaError::Internal(
-                "stage 1 fused range-norm transition did not return final evaluations".into(),
-            ));
-        };
-        if virtual_evaluations.len() != physical.shape().virtual_evaluation_count() {
-            return Err(AkitaError::Internal(
-                "stage 1 physical L2 virtual evaluation count differs from plan".into(),
-            ));
-        }
-        akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
-        (
-            range_image_evaluation,
-            Some((response_l2_sq, virtual_evaluations)),
-        )
-    } else {
-        let step = crate::backend::Stage1Step::RangeLeaf;
-        let stage = u32::try_from(product_count)
-            .map_err(|_| AkitaError::Internal("stage 1 leaf stage index exceeds u32".into()))?;
-        let mut kernel = Stage1EqSumcheck {
-            backend: ctx.backend(),
-            session: &mut session_handle,
-            step,
-            equality_point: &equality_coordinates,
-            claim,
-            degree: plan.digit_range_plan().leaf_degree(),
-            next_round: 0,
-            field: std::marker::PhantomData,
-        };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
-            grinding,
-            akita_params::SumcheckProtocol::Stage1,
-            level,
-            stage,
-        );
-        let (point, output_claim) = akita_sumcheck::prove_eq_factored_sumcheck::<F, E, _, _>(
-            &mut kernel,
-            &mut channel,
-            akita_sumcheck::SumcheckShape::new(rounds, plan.digit_range_plan().leaf_degree())?,
-            0,
-        )?;
-        claim = output_claim;
-        final_point = point;
-        let crate::backend::Stage1PublicTransition::Final {
-            range_image_evaluation,
-            virtual_evaluations,
-        } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
-            ctx.backend(),
-            &mut session_handle,
-            step,
-        )?
-        else {
-            return Err(AkitaError::Internal(
-                "stage 1 range-leaf transition did not return final evaluations".into(),
-            ));
-        };
-        if !virtual_evaluations.is_empty() {
-            return Err(AkitaError::Internal(
-                "stage 1 range-leaf transition returned physical L2 virtual evaluations".into(),
-            ));
-        }
-        (range_image_evaluation, None)
-    };
-    let final_claims =
-        crate::backend::OpaqueStage1Kernel::finish_stage1(ctx.backend(), session_handle)?;
-    if final_claims.final_claim() != claim || final_claims.point() != final_point {
-        return Err(AkitaError::Internal(
-            "stage 1 backend final claim or point differs from sumcheck output".into(),
-        ));
-    }
-    let stage1_point = final_claims.point().to_vec();
-    akita_types::stage1_range_image::<F, E, _>(
+    let Stage1SessionOutput {
+        point: stage1_point,
+        range_image_evaluation,
+        norm_proof,
+    } = prove_stage1_session::<F, E, B>(
+        ctx.backend(),
+        session_handle,
+        plan.digit_range_plan(),
+        domain,
+        equality_coordinates,
+        physical_plan.as_ref(),
         grinding,
         level,
-        u32::try_from(product_count).map_err(|_| {
-            AkitaError::Internal("stage 1 range-image stage index exceeds u32".into())
-        })?,
-        range_image_evaluation,
     )?;
     let physical_l2 = match physical_plan {
         Some(physical_plan) => {
@@ -475,6 +253,269 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
+    })
+}
+
+/// Authenticated Stage 1 range-image output and optional physical norm claims.
+pub(in crate::protocol::prove) struct Stage1SessionOutput<E: Field> {
+    pub(in crate::protocol::prove) point: Vec<E>,
+    pub(in crate::protocol::prove) range_image_evaluation: E,
+    pub(in crate::protocol::prove) norm_proof: Option<(u128, Vec<E>)>,
+}
+
+/// Extension seam: run shared Stage 1 transport for an admitted backend session.
+/// Native root orchestration attaches through
+/// https://github.com/LayerZero-Labs/akita/issues/285.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::prove) fn prove_stage1_session<F, E, B>(
+    backend: &B,
+    mut session_handle: B::Stage1SessionHandle,
+    digit_range: akita_params::DigitRangePlan,
+    domain: akita_params::FlatBooleanDomain,
+    mut equality_coordinates: Vec<E>,
+    physical_plan: Option<&PhysicalResponsePlan>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
+    level: u32,
+) -> Result<Stage1SessionOutput<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Send + Sync + 'static,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + Send + Sync + 'static,
+    B: crate::backend::OpaqueStage1Kernel<F, E>,
+{
+    let product_count = digit_range.product_stage_arities().len();
+    let rounds = domain.num_vars();
+    let mut claim = E::zero();
+    for stage_index in 0..product_count {
+        let shape = digit_range
+            .stage_shape(rounds, stage_index)
+            .ok_or_else(|| AkitaError::Internal("stage 1 product stage shape is missing".into()))?;
+        let step = crate::backend::Stage1Step::Product(stage_index);
+        let stage = u32::try_from(stage_index)
+            .map_err(|_| AkitaError::Internal("stage 1 product stage index exceeds u32".into()))?;
+        let mut kernel = Stage1EqSumcheck {
+            backend,
+            session: &mut session_handle,
+            step,
+            equality_point: &equality_coordinates,
+            claim,
+            degree: shape.sumcheck_proof.1,
+            next_round: 0,
+            field: std::marker::PhantomData,
+        };
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_params::SumcheckProtocol::Stage1,
+            level,
+            stage,
+        );
+        let (challenges, _output_claim) = akita_sumcheck::prove_eq_factored_sumcheck::<F, E, _, _>(
+            &mut kernel,
+            &mut channel,
+            akita_sumcheck::SumcheckShape::new(rounds, shape.sumcheck_proof.1)?,
+            0,
+        )?;
+        let crate::backend::Stage1PublicTransition::ProductChildClaims(mut child_claims) =
+            crate::backend::OpaqueStage1Kernel::stage1_public_transition(
+                backend,
+                &mut session_handle,
+                step,
+            )?
+        else {
+            return Err(AkitaError::Internal(
+                "stage 1 product transition did not return child claims".into(),
+            ));
+        };
+        if child_claims.len() != shape.child_claims {
+            return Err(AkitaError::Internal(
+                "stage 1 product child claim count differs from stage shape".into(),
+            ));
+        }
+        akita_types::stage1_child_claims::<F, E, _>(grinding, level, stage, &mut child_claims)?;
+        let gamma = grinding.grinded_ext_challenge::<F, E>(
+            akita_params::GrindingSite::Stage1InterstageBatch { level, stage },
+        )?;
+        let weights = digit_range.interstage_batch_weights(gamma, child_claims.len());
+        claim = digit_range.batch_claims(&weights, &child_claims)?;
+        crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
+            backend,
+            &mut session_handle,
+            crate::backend::Stage1Transition::ProductBatch(stage_index),
+            gamma,
+        )?;
+        equality_coordinates = challenges;
+    }
+
+    let final_point;
+    let (range_image_evaluation, norm_proof) = if physical_plan.is_some() {
+        let step = crate::backend::Stage1Step::FusedRangeNorm;
+        let crate::backend::Stage1PublicTransition::PhysicalL2Claims {
+            response_l2_sq,
+            mut subclaims,
+        } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
+            backend,
+            &mut session_handle,
+            step,
+        )?
+        else {
+            return Err(AkitaError::Internal(
+                "stage 1 fused range-norm transition did not return physical L2 claims".into(),
+            ));
+        };
+        let physical = physical_plan.as_ref().ok_or_else(|| {
+            AkitaError::Internal("stage 1 fused range-norm execution has no physical plan".into())
+        })?;
+        if subclaims.len()
+            != physical.shape().subclaim_count().ok_or_else(|| {
+                AkitaError::Internal("stage 1 physical L2 subclaim count overflow".into())
+            })?
+        {
+            return Err(AkitaError::Internal(
+                "stage 1 physical L2 subclaim count differs from plan".into(),
+            ));
+        }
+        akita_types::l2_prefix::<F, E, _>(grinding, level, response_l2_sq, &mut subclaims)?;
+        let norm_claim = if subclaims.is_empty() {
+            E::from_u128(response_l2_sq)
+        } else {
+            let gamma = grinding.grinded_ext_challenge::<F, E>(
+                akita_params::GrindingSite::L2SubclaimBatch { level },
+            )?;
+            crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
+                backend,
+                &mut session_handle,
+                crate::backend::Stage1Transition::L2SubclaimBatch,
+                gamma,
+            )?;
+            let mut power = E::one();
+            subclaims.iter().fold(E::zero(), |sum, &subclaim| {
+                let next = sum + power * subclaim;
+                power *= gamma;
+                next
+            })
+        };
+        let merge = grinding
+            .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2NormMerge { level })?;
+        crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
+            backend,
+            &mut session_handle,
+            crate::backend::Stage1Transition::RangeNormMerge,
+            merge,
+        )?;
+        claim += merge * norm_claim;
+        let mut kernel = Stage1StandardSumcheck {
+            backend,
+            session: &mut session_handle,
+            step,
+            claim,
+            rounds,
+            degree: digit_range.leaf_degree() + 1,
+            next_round: 0,
+            field: std::marker::PhantomData,
+        };
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_params::SumcheckProtocol::PhysicalL2,
+            level,
+            0,
+        );
+        let (point, output_claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
+            &mut kernel,
+            &mut channel,
+            akita_sumcheck::SumcheckShape::new(rounds, digit_range.leaf_degree() + 1)?,
+            0,
+        )?;
+        claim = output_claim;
+        final_point = point;
+        let crate::backend::Stage1PublicTransition::Final {
+            range_image_evaluation,
+            mut virtual_evaluations,
+        } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
+            backend,
+            &mut session_handle,
+            step,
+        )?
+        else {
+            return Err(AkitaError::Internal(
+                "stage 1 fused range-norm transition did not return final evaluations".into(),
+            ));
+        };
+        if virtual_evaluations.len() != physical.shape().virtual_evaluation_count() {
+            return Err(AkitaError::Internal(
+                "stage 1 physical L2 virtual evaluation count differs from plan".into(),
+            ));
+        }
+        akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
+        (
+            range_image_evaluation,
+            Some((response_l2_sq, virtual_evaluations)),
+        )
+    } else {
+        let step = crate::backend::Stage1Step::RangeLeaf;
+        let stage = u32::try_from(product_count)
+            .map_err(|_| AkitaError::Internal("stage 1 leaf stage index exceeds u32".into()))?;
+        let mut kernel = Stage1EqSumcheck {
+            backend,
+            session: &mut session_handle,
+            step,
+            equality_point: &equality_coordinates,
+            claim,
+            degree: digit_range.leaf_degree(),
+            next_round: 0,
+            field: std::marker::PhantomData,
+        };
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_params::SumcheckProtocol::Stage1,
+            level,
+            stage,
+        );
+        let (point, output_claim) = akita_sumcheck::prove_eq_factored_sumcheck::<F, E, _, _>(
+            &mut kernel,
+            &mut channel,
+            akita_sumcheck::SumcheckShape::new(rounds, digit_range.leaf_degree())?,
+            0,
+        )?;
+        claim = output_claim;
+        final_point = point;
+        let crate::backend::Stage1PublicTransition::Final {
+            range_image_evaluation,
+            virtual_evaluations,
+        } = crate::backend::OpaqueStage1Kernel::stage1_public_transition(
+            backend,
+            &mut session_handle,
+            step,
+        )?
+        else {
+            return Err(AkitaError::Internal(
+                "stage 1 range-leaf transition did not return final evaluations".into(),
+            ));
+        };
+        if !virtual_evaluations.is_empty() {
+            return Err(AkitaError::Internal(
+                "stage 1 range-leaf transition returned physical L2 virtual evaluations".into(),
+            ));
+        }
+        (range_image_evaluation, None)
+    };
+    let final_claims = crate::backend::OpaqueStage1Kernel::finish_stage1(backend, session_handle)?;
+    if final_claims.final_claim() != claim || final_claims.point() != final_point {
+        return Err(AkitaError::Internal(
+            "stage 1 backend final claim or point differs from sumcheck output".into(),
+        ));
+    }
+    let stage1_point = final_claims.point().to_vec();
+    akita_types::stage1_range_image::<F, E, _>(
+        grinding,
+        level,
+        u32::try_from(product_count).map_err(|_| {
+            AkitaError::Internal("stage 1 range-image stage index exceeds u32".into())
+        })?,
+        range_image_evaluation,
+    )?;
+    Ok(Stage1SessionOutput {
+        point: stage1_point,
+        range_image_evaluation,
+        norm_proof,
     })
 }
 
@@ -540,30 +581,52 @@ where
             }),
         binary_batching,
     );
-    let mut session_handle = crate::backend::OpaqueStage2Kernel::begin_stage2(
+    let session_handle = crate::backend::OpaqueStage2Kernel::begin_stage2(
         ctx.backend(),
         rs.relation_handle,
         relation_plan,
     )?;
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    let claim =
-        crate::backend::OpaqueStage2Kernel::stage2_input_claim(ctx.backend(), &session_handle)?;
+    prove_stage2_session::<F, E, B>(
+        ctx.backend(),
+        session_handle,
+        grinding,
+        level,
+        domain.num_vars(),
+        batching_coeff * range_image_evaluation
+            + relation_claim
+            + trace_opening_claim
+            + physical_l2_claim,
+    )
+}
+
+/// Extension seam: run shared Stage 2 transport for an admitted backend session.
+/// Native relation compilers attach through
+/// https://github.com/LayerZero-Labs/akita/issues/285.
+pub(in crate::protocol::prove) fn prove_stage2_session<F, E, B>(
+    backend: &B,
+    mut session_handle: B::Stage2SessionHandle,
+    grinding: &mut akita_types::ProverGrinding<'_>,
+    level: u32,
+    expected_num_rounds: usize,
+    expected_claim: E,
+) -> Result<Stage2ProveOutput<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+    B: crate::backend::OpaqueStage2Kernel<F, E>,
+{
+    let claim = crate::backend::OpaqueStage2Kernel::stage2_input_claim(backend, &session_handle)?;
     let num_rounds =
-        crate::backend::OpaqueStage2Kernel::stage2_num_rounds(ctx.backend(), &session_handle)?;
-    if num_rounds != domain.num_vars()
-        || claim
-            != batching_coeff * range_image_evaluation
-                + relation_claim
-                + trace_opening_claim
-                + physical_l2_claim
-    {
+        crate::backend::OpaqueStage2Kernel::stage2_num_rounds(backend, &session_handle)?;
+    if num_rounds != expected_num_rounds || claim != expected_claim {
         return Err(AkitaError::Internal(
             "stage 2 backend round count or input claim differs from relation plan".into(),
         ));
     }
     let mut kernel = Stage2Sumcheck::<F, E, B> {
-        backend: ctx.backend(),
+        backend,
         session: &mut session_handle,
         claim,
         rounds: num_rounds,
@@ -581,8 +644,7 @@ where
         akita_sumcheck::SumcheckShape::new(num_rounds, 3)?,
         0,
     )?;
-    let final_output =
-        crate::backend::OpaqueStage2Kernel::finish_stage2(ctx.backend(), session_handle)?;
+    let final_output = crate::backend::OpaqueStage2Kernel::finish_stage2(backend, session_handle)?;
     if claim != final_output.final_claim() {
         return Err(AkitaError::Internal(
             "stage 2 backend final claim differs from sumcheck output".into(),
