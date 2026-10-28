@@ -50,6 +50,8 @@ fn euclidean_width_goldens_match_current_l2_table_replay() {
     }
 }
 
+/// Extension seam: q24 exclusion from native Euclidean runtime profiles for
+/// <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[test]
 fn euclidean_width_goldens_match_checked_in_l2_table() {
     use akita_params::sis::{

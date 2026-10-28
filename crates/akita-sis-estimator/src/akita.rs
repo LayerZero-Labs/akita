@@ -21,6 +21,9 @@ pub enum AkitaModulusProfileId {
     /// protocol uses non-native cyclotomic degrees.
     #[cfg(feature = "labinius-sis")]
     Q25Plus14561,
+    /// Extension seam: q24 modulus variant registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Binary-source commitment prime `2^24 - 2523807`.
     #[cfg(feature = "labinius-sis")]
     Q24Minus2523807,
@@ -32,6 +35,9 @@ pub enum AkitaModulusProfileId {
 }
 
 impl AkitaModulusProfileId {
+    /// Extension seam: q24 parsing match-arm registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Parse a profile label such as `"q32"`.
     ///
     /// # Errors
@@ -54,6 +60,9 @@ impl AkitaModulusProfileId {
         }
     }
 
+    /// Extension seam: q24 modulus match-arm registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Return the exact modulus for this profile.
     #[must_use]
     pub fn modulus(self) -> BigUint {
@@ -73,6 +82,9 @@ impl AkitaModulusProfileId {
         }
     }
 
+    /// Extension seam: q24 label match-arm registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Return the stable lowercase table label for this profile.
     #[must_use]
     pub const fn label(self) -> &'static str {
