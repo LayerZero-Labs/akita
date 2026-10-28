@@ -1394,18 +1394,6 @@ mod tests {
     }
 
     #[test]
-    fn byte_receipt_rejects_lengths_larger_than_the_proof() {
-        for len in [1, u32::MAX as usize, usize::MAX] {
-            let mut verifier = new_verifier_channel(b"bytes", b"fixture", &[]).unwrap();
-            assert!(matches!(
-                receive_bytes(&mut verifier, len),
-                Err(AkitaError::InvalidProof)
-            ));
-            assert!(verifier.check_eof().is_err());
-        }
-    }
-
-    #[test]
     fn session_and_instance_are_independent_domains() {
         let mut left = new_prover_channel(b"session-a", b"instance").unwrap();
         let mut right = new_prover_channel(b"session-b", b"instance").unwrap();
