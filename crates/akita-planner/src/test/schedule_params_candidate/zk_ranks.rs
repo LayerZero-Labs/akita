@@ -75,22 +75,37 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
 /// after the cut) with A_a and [B_a | B′_a] at least at their Σ-binding
 /// ranks, from the Σ-binding table, at both families, and lists both
 /// matrices among its SIS occurrences at the Σ radius, which
-/// `catalog_security` estimates.
+/// `catalog_security` estimates. O6: the residual is over
+/// `R_{RESIDUAL_RING_DIMENSION}`, above a role ring of the cut level on
+/// every row (the ceiling exception, `specs/whiteout-akita.md` §5.5.3).
 #[test]
 fn checked_in_zk_rows_commit_the_residual_at_its_sigma_binding_ranks() {
     use akita_params::sis::sigma_binding::{sigma_binding_min_rank, sigma_binding_radius};
+    use akita_params::zk::RESIDUAL_RING_DIMENSION;
     use akita_params::ScheduleSisBound;
 
-    fn check<Cfg: CommitmentConfig>() -> usize {
+    /// The rows, and those whose cut level has a role ring below the
+    /// residual's.
+    fn check<Cfg: CommitmentConfig>() -> (usize, usize) {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),
         )
         .unwrap();
+        let mut above_the_cut_ring = 0;
         for row in catalog.rows() {
             let schedule = row.schedule();
-            let residual = schedule.recursive_folds[ZK_CUT_LEVEL as usize]
+            let after_cut = &schedule.recursive_folds[ZK_CUT_LEVEL as usize].params;
+            assert_eq!(
+                after_cut.role_dims(),
+                CommitmentRingDims::uniform(RESIDUAL_RING_DIMENSION)
+            );
+            let cut = schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1]
                 .params
-                .own_group();
+                .role_dims();
+            if cut.d_a().min(cut.d_b()).min(cut.d_d()) < RESIDUAL_RING_DIMENSION {
+                above_the_cut_ring += 1;
+            }
+            let residual = after_cut.own_group();
             let inner = &residual.profile.inner.matrix;
             let outer = &residual.profile.outer.matrix;
             for (rank, width, d, modulus) in [
@@ -128,12 +143,15 @@ fn checked_in_zk_rows_commit_the_residual_at_its_sigma_binding_ranks() {
             );
         }
         let rows = catalog.rows().len();
-        rows
+        (rows, above_the_cut_ring)
     }
-    assert_eq!(check::<akita_config::ZkCommitmentConfig<fp128::Dense>>(), 1);
+    assert_eq!(
+        check::<akita_config::ZkCommitmentConfig<fp128::Dense>>(),
+        (1, 1)
+    );
     assert_eq!(
         check::<akita_config::ZkCommitmentConfig<RecursiveCommitmentConfig<fp128::OneHot>>>(),
-        2
+        (2, 2)
     );
 }
 

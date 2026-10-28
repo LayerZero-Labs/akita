@@ -6,15 +6,22 @@
 
 use crate::instance::*;
 use akita_config::proof_optimized::fp128;
-use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{
+    derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig,
+    ResolvedScheduleRow,
+};
 use akita_error::AkitaError;
-use akita_params::{ChunkedWitnessCfg, ProtocolSiteId};
+use akita_params::zk::AdmittedZkSchedule;
+use akita_params::{ChunkedWitnessCfg, CompressionChainPlan, ProtocolSiteId};
 use akita_pcs::zk::{
     AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualOpening, ResidualShape,
     UncheckedResponseProver,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_types::{AkitaSponge, PROOF_STREAM_PROTOCOL};
+use akita_types::{
+    AkitaSponge, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims, RingVec, PROOF_STREAM_PROTOCOL,
+};
 use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{derive_public_matrix_prefix, sample_box_digits, PublicMatrixSeed};
 use jolt_transcript::{Channel, ProverTranscript, SiteId, TranscriptEvent, VerifierTranscript};
@@ -28,6 +35,190 @@ use jolt_zk::whiteout::{
 };
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
+
+/// The public stream `A_p` is cut from.
+pub(crate) fn pad_stream() -> Vec<F> {
+    public_stream(1 << 21, 21)
+}
+
+/// The public stream `A_D` is cut from.
+pub(crate) fn v_stream() -> Vec<F> {
+    public_stream(1 << 21, 31)
+}
+
+/// `A_p`'s hiding randomness columns over the residual's ring.
+pub(crate) fn pad_randomness_columns<C: CommitmentConfig>(shape: &ResidualShape) -> usize {
+    akita_params::zk::hiding_randomness_columns(
+        akita_params::zk::ImageShape {
+            rows: PAD_RANK,
+            ring_dim: shape.ring_dim(),
+            modulus: C::sis_modulus_profile(),
+        },
+        akita_params::zk::DigitAlphabet {
+            log_basis: PAD_RANDOMNESS_LOG_BASIS,
+        },
+    )
+    .unwrap()
+}
+
+/// The Σ setup's public inputs besides the residual matrices: the residual
+/// shape, the pad layout and the harness's pad and `V` commitments.
+pub(crate) struct SigmaPublic<'a> {
+    pub(crate) shape: &'a ResidualShape,
+    pub(crate) layout: &'a PadLayout,
+    pub(crate) pad_stream: &'a [F],
+    pub(crate) v_stream: &'a [F],
+    pub(crate) pad_randomness_columns: usize,
+}
+
+impl SigmaPublic<'_> {
+    pub(crate) fn pad_commitment<const D: usize>(&self) -> LatticePadCommitment<F, D> {
+        LatticePadCommitment::new(
+            PadPlacement::new(self.layout).unwrap(),
+            self.pad_stream,
+            PAD_RANK,
+            self.pad_randomness_columns,
+        )
+        .unwrap()
+    }
+
+    /// The Σ setup over `blocks` of the residual, cut from `stream`, with
+    /// u_a's compressed payload (and image, on the prover's side), and the
+    /// pad image.
+    pub(crate) fn sigma<const D: usize>(
+        &self,
+        u_a_payload: &[F],
+        u_a: Option<&[F]>,
+        stream: &[F],
+        pad_image: BlockTarget<F, D>,
+    ) -> Result<SigmaSetup<F, D>, Failure> {
+        let blocks =
+            self.shape
+                .blocks::<D>(&self.shape.matrices::<D>(stream)?, u_a_payload, u_a)?;
+        let pads = self.pad_commitment::<D>();
+        let v_matrix = SigmaSetup::v_matrix_of(&blocks, &pads, V_RANK, self.v_stream)?;
+        Ok(SigmaSetup::new(
+            self.shape.segments(),
+            blocks,
+            &pads,
+            pad_image,
+            v_matrix,
+        )?)
+    }
+
+    /// e's variable count, from the public Σ setup over the residual
+    /// matrices cut from `stream`: jolt-zk's response layout, refused above
+    /// `MAX_RESPONSE_NUM_VARS`.
+    pub(crate) fn response_num_vars(&self, stream: &[F]) -> Result<usize, WhiteoutError> {
+        with_ring_dim!(self.shape.ring_dim(), D, {
+            let sigma = self
+                .sigma::<D>(
+                    &[],
+                    None,
+                    stream,
+                    BlockTarget::Compressed {
+                        payload: Vec::new(),
+                        image: None,
+                    },
+                )
+                .unwrap();
+            let layout = sigma.response_layout(&CompressionShape::<ResponseCfg>::default())?;
+            Ok(AkitaResponseProver::<ResponseCfg>::num_vars(&layout).unwrap())
+        })
+    }
+}
+
+/// e's variable count for `row` of `scheme`'s catalog, from public data
+/// alone: one masked claim per group, each group stated with a zero
+/// commitment of its profile's payload shape (the counting replay reads
+/// only the statement's shape), and the harness's pad and `V` commitments.
+/// `Err` when jolt-zk refuses `e` (`WhiteoutError::ResponseTooLarge`).
+pub(crate) fn row_response_num_vars<C: CommitmentConfig<Field = F, ExtField = F>>(
+    scheme: &AkitaCommitmentScheme<C>,
+    row: &ResolvedScheduleRow,
+) -> Result<usize, WhiteoutError> {
+    let profiles = row.profiles();
+    let groups: Vec<CommittedGroup<F>> = profiles
+        .precommitteds
+        .iter()
+        .chain([&profiles.final_group])
+        .map(|profile| {
+            let outer = &profile.outer.matrix;
+            let source = profile
+                .outer_slice_count
+                .complete_source_coefficients(outer.output_rank(), outer.ring_dimension())
+                .unwrap();
+            let payload = CompressionChainPlan::for_complete_source(
+                outer.sis_table_key().modulus_profile,
+                source,
+            )
+            .unwrap()
+            .terminal_coefficients();
+            CommittedGroup::new(
+                *profile,
+                Commitment::new(RingVec::from_coeffs(vec![F::zero(); payload])),
+            )
+        })
+        .collect();
+    let claims = OpeningClaims::from_groups(
+        groups
+            .iter()
+            .map(|group| {
+                let layout = group.profile.group;
+                PolynomialGroupClaims::new(
+                    vec![F::zero(); layout.num_vars()],
+                    vec![F::zero(); layout.num_polynomials()],
+                    group,
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap();
+    let max_num_vars = groups
+        .iter()
+        .map(|group| group.profile.group.num_vars())
+        .max()
+        .unwrap();
+    let max_num_polys = groups
+        .iter()
+        .map(|group| group.profile.group.num_polynomials())
+        .sum();
+    let setup = scheme.setup_prover(max_num_vars, max_num_polys).unwrap();
+    let verifier = scheme
+        .verifier(
+            scheme
+                .setup_verifier_for_schedule(
+                    &setup,
+                    row.schedule(),
+                    &claims.committed_layout().unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+    let layout = counting_layout(
+        &verifier,
+        GroupBatchStatement::new(row.selection(), claims).unwrap(),
+        &vec![0; COUNTING_BYTES],
+    );
+    let shape = ResidualShape::new(
+        AdmittedZkSchedule::new(
+            row.schedule(),
+            C::committed_source_contract().unwrap(),
+            C::EXT_DEGREE,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    SigmaPublic {
+        shape: &shape,
+        layout: &layout,
+        pad_stream: &pad_stream(),
+        v_stream: &v_stream(),
+        pad_randomness_columns: pad_randomness_columns::<C>(&shape),
+    }
+    .response_num_vars(setup.expanded.shared_matrix.as_field_slice())
+}
 
 /// The response proof's schedule family.
 pub(crate) type ResponseCfg = RecursiveCommitmentConfig<fp128::ResponseDigits>;
@@ -153,31 +344,17 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             .unwrap(),
         )
         .unwrap();
-        let pad_randomness_columns = akita_params::zk::hiding_randomness_columns(
-            akita_params::zk::ImageShape {
-                rows: PAD_RANK,
-                ring_dim: shape.ring_dim(),
-                modulus: C::sis_modulus_profile(),
-            },
-            akita_params::zk::DigitAlphabet {
-                log_basis: PAD_RANDOMNESS_LOG_BASIS,
-            },
-        )
-        .unwrap();
+        let pad_randomness_columns = pad_randomness_columns::<C>(&shape);
         let mut harness = Self {
             instance,
             layout,
             shape,
-            pad_stream: public_stream(1 << 21, 21),
-            v_stream: public_stream(1 << 21, 31),
+            pad_stream: pad_stream(),
+            v_stream: v_stream(),
             pad_randomness_columns,
             response: None,
         };
-        let num_vars = with_ring_dim!(
-            harness.shape.ring_dim(),
-            D,
-            harness.response_num_vars::<D>()
-        );
+        let num_vars = harness.response_num_vars();
         harness.response = Some(response_prover(num_vars));
         harness
     }
@@ -207,14 +384,19 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         self.response.as_ref().unwrap()
     }
 
+    /// The Σ setup's public inputs besides the residual matrices.
+    pub(crate) fn public(&self) -> SigmaPublic<'_> {
+        SigmaPublic {
+            shape: &self.shape,
+            layout: &self.layout,
+            pad_stream: &self.pad_stream,
+            v_stream: &self.v_stream,
+            pad_randomness_columns: self.pad_randomness_columns,
+        }
+    }
+
     pub(crate) fn pad_commitment<const D: usize>(&self) -> LatticePadCommitment<F, D> {
-        LatticePadCommitment::new(
-            PadPlacement::new(&self.layout).unwrap(),
-            &self.pad_stream,
-            PAD_RANK,
-            self.pad_randomness_columns,
-        )
-        .unwrap()
+        self.public().pad_commitment()
     }
 
     /// The Σ setup over `blocks` of the residual, with u_a's compressed
@@ -226,38 +408,14 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         stream: &[F],
         pad_image: BlockTarget<F, D>,
     ) -> Result<SigmaSetup<F, D>, Failure> {
-        let blocks =
-            self.shape
-                .blocks::<D>(&self.shape.matrices::<D>(stream)?, u_a_payload, u_a)?;
-        let pads = self.pad_commitment::<D>();
-        let v_matrix = SigmaSetup::v_matrix_of(&blocks, &pads, V_RANK, &self.v_stream)?;
-        Ok(SigmaSetup::new(
-            self.shape.segments(),
-            blocks,
-            &pads,
-            pad_image,
-            v_matrix,
-        )?)
+        self.public().sigma(u_a_payload, u_a, stream, pad_image)
     }
 
     /// e's variable count, from the public Σ setup alone.
-    pub(crate) fn response_num_vars<const D: usize>(&self) -> usize {
-        let stream = self.instance.setup.expanded.shared_matrix.as_field_slice();
-        let sigma = self
-            .sigma::<D>(
-                &[],
-                None,
-                stream,
-                BlockTarget::Compressed {
-                    payload: Vec::new(),
-                    image: None,
-                },
-            )
-            .unwrap();
-        let layout = sigma
-            .response_layout(&CompressionShape::<ResponseCfg>::default())
-            .unwrap();
-        AkitaResponseProver::<ResponseCfg>::num_vars(&layout).unwrap()
+    pub(crate) fn response_num_vars(&self) -> usize {
+        self.public()
+            .response_num_vars(self.instance.setup.expanded.shared_matrix.as_field_slice())
+            .unwrap()
     }
 
     /// The verifier's replay of the pad image, the masked claims, the prefix

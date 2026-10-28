@@ -992,25 +992,25 @@ fn one_shot_fold_response_replays_without_a_nonce() {
     });
 }
 
-/// W2b: groups at masked levels. The priced search offloads level 0's setup
-/// to a level-1 setup prefix from 37 variables on: below that the residual's
-/// Σ-bound setup (`specs/whiteout-akita.md` §5.5.2) is at least the root's.
-/// The root here also folds one precommitted dense group, the shape of
-/// Jolt's untrusted advice. These tests only plan, so they take the priced
-/// row; the proving tests offload a 31-variable row instead.
+/// W2b: groups at masked levels. The production search never offloads into
+/// the cut level (`specs/whiteout-akita.md` §5.5.3), so these planning tests
+/// take the row that offloads level 0's setup to a level-1 setup prefix
+/// (`find_zk_schedule_offloading_at_cut_for_test`), as the proving tests do
+/// at 31 variables. The root here also folds one precommitted dense group,
+/// the shape of Jolt's untrusted advice.
 type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
 const MULTI_NV: usize = 37;
 
-/// The planner's row for one `MULTI_NV`-variable one-hot polynomial beside
-/// one precommitted dense polynomial committed under [`zk_row`]'s hiding
-/// root profile.
+/// The planner's row, offloading at the cut, for one `MULTI_NV`-variable
+/// one-hot polynomial beside one precommitted dense polynomial committed
+/// under [`zk_row`]'s hiding root profile.
 fn multi_group_zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
     let precommitted = zk_row().0.final_group;
     let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(MULTI_NV),
         precommitteds: vec![precommitted],
     };
-    let planned = akita_planner::find_zk_schedule(
+    let planned = akita_planner::find_zk_schedule_offloading_at_cut_for_test(
         &key,
         RecCfg::committed_source_contract().unwrap(),
         &[Cfg::committed_source_contract().unwrap()],
@@ -1091,15 +1091,14 @@ fn masked_levels_admit_a_hiding_precommitted_group_and_a_public_setup_prefix() {
     });
 }
 
-/// The headline shape, Jolt's one-hot root at 36 variables: the priced
-/// zero-knowledge row keeps the cut level direct, since level 2's Σ-bound
-/// residual setup is at least the root's; one variable more, the root's
-/// setup outgrows it and the row offloads to a public setup prefix at the
-/// cut level. Admission accepts both.
+/// Jolt's one-hot root: the production zero-knowledge search keeps the
+/// edge into the cut level direct at every size, the 36:1 headline and
+/// 37 variables included, where the setup alone would favour offloading
+/// the root's setup at the cut (`specs/whiteout-akita.md` §5.5.3).
 #[test]
-fn the_cut_level_offloads_the_root_setup_from_37_variables() {
+fn the_priced_search_never_offloads_into_the_cut_level() {
     on_large_stack(|| {
-        let cut_prefix = |num_vars| {
+        for num_vars in [36, 37] {
             let planned = akita_planner::find_zk_schedule(
                 &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars)),
                 RecCfg::committed_source_contract().unwrap(),
@@ -1110,13 +1109,14 @@ fn the_cut_level_offloads_the_root_setup_from_37_variables() {
             )
             .unwrap();
             assert_eq!(admit_multi(&planned.schedule), Ok(zk()));
-            planned.schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1]
-                .params
-                .setup_prefix()
-                .map(|prefix| prefix.profile.randomness_columns)
-        };
-        assert_eq!(cut_prefix(36), None);
-        assert_eq!(cut_prefix(37), Some(0));
+            assert!(
+                planned.schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1]
+                    .params
+                    .setup_prefix()
+                    .is_none(),
+                "{num_vars} variables"
+            );
+        }
     });
 }
 

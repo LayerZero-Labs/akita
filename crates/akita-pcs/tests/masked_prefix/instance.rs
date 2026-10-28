@@ -288,29 +288,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         bytes: &[u8],
         statement: GroupBatchStatement<'_, F, F>,
     ) -> PadLayout {
-        let mut transcript =
-            VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, bytes);
-        let mut view = CommittedPadsView::counting();
-        let claims = view
-            .channel(&mut transcript)
-            .exchange_private_base(&mut vec![F::zero(); self.groups.len()])
-            .unwrap();
-        let prefix = self
-            .verifier
-            .count_masked_prefix(
-                &mut transcript,
-                &mut view,
-                statement,
-                (claims.start..claims.start + claims.len)
-                    .map(|slot| AffineRow::masked(F::zero(), PadIndex(slot)))
-                    .collect(),
-                &CompressionShape::<C>::default(),
-                BASIS,
-            )
-            .unwrap();
-        let mut shape = OperandShapeDomain::new(view.used());
-        prefix.shape(&mut shape).unwrap();
-        shape.layout().unwrap()
+        counting_layout(&self.verifier, statement, bytes)
     }
 
     /// Sends the masked claims, proves the masked prefix with `claims` as
@@ -455,6 +433,38 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
 }
 
 /// Each claim over its own pad, in the order the claims were sent.
+/// The pad layout `verifier`'s counting replay of `statement` over `bytes`
+/// gives: one masked slot per statement claim, the prefix's message slots,
+/// then its auxiliary slots. Only the statement's shape is read.
+pub(crate) fn counting_layout<C: CommitmentConfig<Field = F, ExtField = F>>(
+    verifier: &AkitaVerifier<C>,
+    statement: GroupBatchStatement<'_, F, F>,
+    bytes: &[u8],
+) -> PadLayout {
+    let mut transcript =
+        VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, bytes);
+    let mut view = CommittedPadsView::counting();
+    let claims = view
+        .channel(&mut transcript)
+        .exchange_private_base(&mut vec![F::zero(); statement.claims().num_groups()])
+        .unwrap();
+    let prefix = verifier
+        .count_masked_prefix(
+            &mut transcript,
+            &mut view,
+            statement,
+            (claims.start..claims.start + claims.len)
+                .map(|slot| AffineRow::masked(F::zero(), PadIndex(slot)))
+                .collect(),
+            &CompressionShape::<C>::default(),
+            BASIS,
+        )
+        .unwrap();
+    let mut shape = OperandShapeDomain::new(view.used());
+    prefix.shape(&mut shape).unwrap();
+    shape.layout().unwrap()
+}
+
 pub(crate) fn own_pads(claims: Vec<F>) -> Vec<AffineRow<F>> {
     claims
         .into_iter()
@@ -463,11 +473,10 @@ pub(crate) fn own_pads(claims: Vec<F>) -> Vec<AffineRow<F>> {
         .collect()
 }
 
-/// The recursive one-hot root of the multi-group instance. At this size the
-/// priced zero-knowledge search keeps the cut level direct, since the
-/// residual's Σ-bound setup outweighs the root's (`specs/whiteout-akita.md`
-/// §5.5.2); the instance plans the admitted row that offloads at the cut
-/// (W2b's masked Stage 3).
+/// The recursive one-hot root of the multi-group instance. The production
+/// zero-knowledge search keeps the cut level direct
+/// (`specs/whiteout-akita.md` §5.5.3); the instance plans the admitted row
+/// that offloads at the cut (W2b's masked Stage 3).
 pub(crate) type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
 pub(crate) const MULTI_NV: usize = 31;
 

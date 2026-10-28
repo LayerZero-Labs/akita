@@ -192,6 +192,18 @@ fn opening_work_domain(
         vec![constraint.role_dims()]
     } else if let Some(terminal) = guide_terminal {
         vec![CommitmentRingDims::uniform(terminal.d_a())]
+    } else if crate::schedule_params::LevelMasking::at(
+        ctx.zk.map(|zk| zk.schedule),
+        state.level,
+        1,
+    )?
+    .opens_residual()
+    {
+        // The residual commitment's own domain, exempt from the ceiling the
+        // cut level sets (`specs/whiteout-akita.md` §5.5.3).
+        vec![CommitmentRingDims::uniform(
+            akita_params::zk::RESIDUAL_RING_DIMENSION,
+        )]
     } else {
         dimension_candidates(policy, state.level, state.dimension_ceiling)?
     };

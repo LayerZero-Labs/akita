@@ -1847,7 +1847,7 @@ planner call it.
   residual; with a Σ-bound residual a terminal at level 1 is cheaper, and
   only `admit` caught it ("reaches the terminal witness").
 - **Rows.** Every checked-in residual is at `d = 64` (the dimension ceiling
-  allows no larger ring there), at exactly its binding ranks, and every Σ
+  allows no larger ring there; O6 moves it to 128, §5.5.3), at exactly its binding ranks, and every Σ
   occurrence estimates at 128.26 bits (`catalog_security --details`):
 
   | row | A_a before → after | [B_a \| B′_a] before → after | r_a cols | setup fields | modeled proof bytes |
@@ -1861,11 +1861,12 @@ planner call it.
   now 19 × `R_64` (jolt D29). `e` grows from `ν = 23` to `24` at the
   single-group statement and stays at 27 for the multi-group statement and
   the headline.
-- **The cut no longer offloads below 37 variables.** Level 2's Σ-bound
+- **The cut no longer offloads below 37 variables** (since O6 the search never offloads into the cut level, §5.5.3). Level 2's Σ-bound
   `[B_a | B′_a]` setup (9.6M–16.3M field elements) is at least the root's,
   so the priced search keeps the cut level direct at 31:1 + 14:1 and at the
   36:1 headline; the first offloading shape is 37:1
-  (`the_cut_level_offloads_the_root_setup_from_37_variables`). To keep the
+  (`the_cut_level_offloads_the_root_setup_from_37_variables`; replaced by
+  `the_priced_search_never_offloads_into_the_cut_level` in O6). To keep the
   masked Stage 3 (W2b) proved end to end, the multi-group test instance
   plans its 31:1 + 14:1 row with
   `akita_planner::find_zk_schedule_offloading_at_cut_for_test`
@@ -1901,7 +1902,8 @@ planner call it.
   `cells_match_the_certified_csv_and_the_current_radius` and
   `the_binding_rank_grows_with_width_and_covers_no_empty_matrix`
   (akita-params), the frontier admission cases for a forced offload, and
-  `the_cut_level_offloads_the_root_setup_from_37_variables`.
+  `the_cut_level_offloads_the_root_setup_from_37_variables` (replaced in
+  O6, §5.5.3).
 
 **Follow-up option: the residual at a larger ring (estimate, not built).**
 The paper sizes these matrices over a larger ring to cut verifier work
@@ -1946,6 +1948,130 @@ commitment, scale as `n × (input coefficients) / d`, so they fall by about
   search domain bounded; that needs confirming before lifting it.
   `d = 128` is the smaller step: rank 10, about half the residual setup,
   and only blocker (1) at the rows whose level-1 `d_B` is 128.
+
+#### 5.5.3 O6: the residual commitment over `R_128`
+
+The follow-up option above, at its smaller step (jolt
+`specs/whiteout-o6-d128.md`, paper delta D35). The planner gives the level
+after the cut the ring dimension
+`akita_params::zk::RESIDUAL_RING_DIMENSION = 128` (`d_A = d_B = d_D`),
+exempt from the monotone dimension ceiling the cut level sets. d = 256
+waits for the post-O6 rerun (jolt `specs/whiteout-optimization-campaign.md`,
+decision O6).
+
+**What changed.**
+
+- `opening_work_domain` (`akita-planner/src/schedule_params/suffix_dp/candidates.rs`):
+  at a level whose `LevelMasking` is `AfterCut`, the dimension domain is
+  `{uniform(128)}` instead of `dimension_candidates(policy, level,
+  ceiling)`. That is blocker (1) and the `d_B` ceiling exception of §5.5.2
+  in one rule. Blocker (3), the presets' B domain `{64, 128}`, does not bind
+  at d = 128.
+- The rule reads only the zero-knowledge search's cut (`SuffixCtx::zk`),
+  which no clear search sets, and no `PlannerPolicy` field, so no policy
+  digest, clear schedule, clear catalog or descriptor changes (C0). The
+  domain is a constant of the zero-knowledge opening, beside
+  `RESIDUAL_RANDOMNESS_LOG_BASIS`.
+- Levels after the residual keep the monotone ceiling from the residual's
+  dims down (`suffix_dimensions = [64]`).
+- `ZkOpeningSchedule::admit` is unchanged: it never compared a level's ring
+  with its predecessor's, and it prices whatever residual a row holds
+  (`residual_binding` at the row's own `d`). A d = 64 residual stays
+  admissible, as it is secure.
+
+**Why lifting the ceiling there is correct.** The ceiling is a rule of the
+planner's search domain, not of the protocol:
+
+1. *No check reads it.* `RingDimensionSchedule` enters only the planner
+   (`dimension_candidates`, `initial_dimension_ceiling`, the memo key) and
+   the policy digest. `FoldSchedule::validate_structure`, the catalog's row
+   admission, `ZkOpeningSchedule::admit`, the prover and the verifier never
+   compare a level's ring dimensions with its predecessor's.
+2. *The interface between levels is dimension-generic.* A level's output
+   is a flat coefficient vector. The predecessor's Stage 2 geometry takes
+   the successor's ring dimension as a parameter
+   (`validate_stage2_successor_capacity`,
+   `RelationAddressGeometry::new_with_coefficient_block`,
+   `witness_commitment_domain_len` pads the live length to whole
+   `R_{d_succ}` elements with zeros). Nothing there assumes
+   `d_succ ≤ d_pred`; the successor's commitment is computed in its own
+   ring from that vector.
+3. *In zero knowledge the after-cut level is never folded* (§4.8.1, "Stopping
+   at the cut"): both roles stop after the cut level's Stage 2
+   (`finish_through(cut_level)`). Its parameters describe the residual
+   commitment `(A_a, [B_a | B′_a], r_a)` and nothing else; its D matrix, fold
+   challenge family and every later level are planned but never executed.
+4. *The Σ-protocol is native over `R_{64m}`* (jolt `whiteout-sigma.md` §0;
+   paper `02_preliminaries.tex:69-77`, "Several ring dimensions"). Restriction
+   of scalars along `R_64 ↪ R_128`, `X ↦ Y^2`, makes every `R_128`-linear map
+   `R_64`-linear, preserves coefficient norms, and turns multiplication by a
+   challenge `c` into multiplication by `c(Y^2)`, which has the same ℓ1 norm.
+   So `‖(c − c′)v‖_∞ ≤ 2κ₁‖v‖_∞` holds verbatim, `Γ_Δ = 106` and
+   `R_Σ = 8κ₁B(10) ≈ 2^47.82` are unchanged, and the binding reduction of
+   `05_security.tex:31-46` applies to the `R_128` matrices as stated.
+   `ResidualShape::new` already accepts any `d_A = d_B` that is a multiple
+   of 64. The paper itself chooses larger rings for these matrices
+   (`06_evaluation.tex:124-133`).
+5. *Hardness is priced at the row's own `d`.* The planner asks the
+   Σ-binding table at `d = 128` (`sigma_bound_inner_matrix`, the
+   `[B | B′]` fixed point), `admit` re-checks it, and
+   `FoldSchedule::sis_occurrences` lists both residual matrices at `R_Σ`
+   for `catalog_security --check`.
+
+The ceiling's other role, bounding the audited search, is unaffected: the
+exception adds one fixed tuple at one level.
+
+**Rows** (default set; rank × width in `R_d` columns, d = 64 → 128; all at
+`R_Σ`, every SIS occurrence 128.26 bits or more by `catalog_security
+--check`):
+
+| row | cut level dims (A, B, D) | A_a | [B_a \| B′_a] | r_a | setup fields | first direct | modeled bytes |
+|---|---|---|---|---|---|---|---|
+| dense 14:1 | (256, 64, 64) | 18 × 1,024 → 9 × 1,024 | 19 × 5,794 → 10 × 1,473 | 610 → 321 | 7,045,504 → 1,885,440 | 65,536 → 32,768 | 94,500 → 91,973 |
+| one-hot 31:1 + 14:1 | (128, 64, 64) | 19 × 4,096 → 10 × 2,048 | 19 × 7,906 → 10 × 4,161 | 610 → 321 | 9,613,696 → 5,326,080 | 4,194,304 | 96,244 → 98,293 |
+| one-hot 36:1 | (128, 64, 64) | 19 × 8,192 → 10 × 2,048 | 19 × 13,378 → 10 × 10,881 | 610 → 321 | 16,777,216 | 16,777,216 | 101,672 → 103,365 |
+
+(dev set: 89,466 → 87,941, 92,212 → 94,261, 96,638 → 98,331.) Every row's
+cut level has a role ring below 128, so every row uses the exception
+(`checked_in_zk_rows_commit_the_residual_at_its_sigma_binding_ranks`).
+
+- The planner re-selects the rows under the cheaper residual: the dense
+  root and the headline's level 1 change, and w_k falls at the headline
+  from 10.75M to 8.40M coefficients. Residual work (`rank × width × d`
+  over both matrices) falls to 0.37×, 0.54× and 0.63× of the d = 64 rows.
+- Modeled bytes count raw u_a: 1,280 coefficients instead of 1,216. Whiteout
+  sends `cm(u_a)` compressed (A47), in 2 chunks of 640 coefficients.
+- `e` falls from `ν = 24` to `23` at the single-group statement, so the
+  response-digits family's key 24 becomes 23 (that family's 27 row is
+  unchanged). No other catalog row moves.
+
+**The cut level is never offloaded** (`CutOffload::Direct`). The priced
+search drops the offloaded edge into the cut level: the cut level never
+consumes a setup prefix outside the test-support entry
+`find_zk_schedule_offloading_at_cut_for_test`.
+
+- *Why.* A setup prefix at the cut level puts the parent's response and
+  inner digits into w_k, and w_k is the residual commitment's input, so it
+  becomes part of the Σ-protocol's private vector `s` and of the response
+  vector `e`. The planner's objective (setup first, then proof bytes and
+  work) prices none of that.
+- *What happened without it.* The `R_128` residual made the offload win on
+  setup from 35 variables. The 36:1 row then had w_k = 36.86M coefficients
+  and `e` with ν = 29, which jolt-zk's `MAX_RESPONSE_NUM_VARS = 27`
+  (jolt D27) refuses: the row could not be proved, though nothing unsound
+  was accepted. The pre-O6 planner had the same exposure from 37
+  variables.
+- *With it.* The 36:1 row has its cut direct (w_k 8.40M), and
+  `every_checked_in_zk_row_fits_the_response_bound` checks every
+  checked-in ZK row's `e` against the bound through jolt-zk's own response
+  layout. The bound itself is statement-dependent (it counts the pads), so
+  it is a test over the checked-in rows, not a plan-time rejection.
+  `the_priced_search_never_offloads_into_the_cut_level` pins the direct cut
+  at 36 and 37 variables.
+- *Masked Stage 3 at the cut.* It stays supported and proved end to end on
+  the forced 31:1 + 14:1 row, as since W5e; production rows do not use it.
+
+**Not done.** d = 256 (blocker (3) and its rerun gate), and P9.
 
 A31's last question has the same kind of answer for the ℓ2 route: A's ℓ2
 collision radius is priced by `akita_schedules::selective_l2_inner_matrix`,

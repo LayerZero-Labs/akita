@@ -208,7 +208,13 @@ fn child_requests(
         params.payload_mode,
         edges.natural_setup_field_len,
     )
-    .filter(|_| guided_successor_is_offloaded != Some(false) && offload_search_enabled);
+    .filter(|_| {
+        guided_successor_is_offloaded != Some(false)
+            && offload_search_enabled
+            && !ctx
+                .zk
+                .is_some_and(|zk| zk.forbids_offload_from(state.level))
+    });
     Ok(Some(ChildRequests {
         query,
         input_chunks: candidate.chunk_shape.map(Arc::new),
