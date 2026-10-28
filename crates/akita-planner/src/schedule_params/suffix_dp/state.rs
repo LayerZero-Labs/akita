@@ -461,12 +461,20 @@ impl ZkSearch {
     /// Whether the edge from `level` into the next one must offload the
     /// parent's setup to a setup prefix the cut level consumes.
     pub(crate) fn forces_offload_from(self, level: usize) -> bool {
-        matches!(self.cut_offload, CutOffload::Forced)
-            && level + 1 == self.schedule.cut_level() as usize
+        matches!(self.cut_offload, CutOffload::Forced) && self.enters_cut_from(level)
+    }
+
+    /// Whether the edge from `level` into the next one must stay direct.
+    pub(crate) fn forbids_offload_from(self, level: usize) -> bool {
+        matches!(self.cut_offload, CutOffload::Direct) && self.enters_cut_from(level)
+    }
+
+    fn enters_cut_from(self, level: usize) -> bool {
+        level + 1 == self.schedule.cut_level() as usize
     }
 }
 
-/// Whether the cut level's setup prefix is a cost choice or forced.
+/// Whether the cut level consumes a setup prefix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     not(feature = "zk"),
@@ -476,12 +484,16 @@ impl ZkSearch {
     )
 )]
 pub(crate) enum CutOffload {
-    /// The search offloads into the cut level only where that lowers the
-    /// first direct setup, as for a clear schedule.
-    Priced,
+    /// The edge into the cut level is direct: the cut level never consumes a
+    /// setup prefix. A setup prefix there adds the parent's response and
+    /// inner digits to w_k, which the planner's objective does not price:
+    /// they grow the Σ-protocol's private vector and with it the response
+    /// vector `e`, past `jolt_zk::whiteout::MAX_RESPONSE_NUM_VARS` on the
+    /// 36:1 headline over an `R_128` residual
+    /// (`specs/whiteout-akita.md` §5.5.3).
+    Direct,
     /// Test support: the edge into the cut level is offloaded only (no
-    /// direct candidate), so a test can prove a masked Stage 3 at a
-    /// statement size where the priced search keeps the cut level direct.
+    /// direct candidate), so a test can prove a masked Stage 3 at the cut.
     #[cfg_attr(
         all(feature = "zk", not(feature = "test-support")),
         expect(

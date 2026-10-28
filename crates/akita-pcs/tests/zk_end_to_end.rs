@@ -252,6 +252,34 @@ fn honest_proofs_verify_end_to_end() {
     });
 }
 
+/// Every checked-in zero-knowledge row of both families, in this build's
+/// artifact set (the dev set under `dev-protocol`), gives a response vector
+/// `e` that jolt-zk accepts: at most `MAX_RESPONSE_NUM_VARS` variables, the
+/// bound D27's soundness ledger is priced at. The statement is the
+/// harness's (one masked claim per group, its pad and `V` commitments). A
+/// row whose cut level offloads a setup prefix grew `e` past the bound
+/// (`specs/whiteout-akita.md` §5.5.3).
+#[test]
+fn every_checked_in_zk_row_fits_the_response_bound() {
+    on_large_stack(|| {
+        fn check<C: CommitmentConfig<Field = F, ExtField = F>>() -> usize {
+            let catalog = akita_config::test_support::workspace_schedule_catalog::<C>(
+                akita_params::ChunkedWitnessCfg::default_non_chunked(),
+            )
+            .unwrap();
+            let scheme = akita_pcs::AkitaCommitmentScheme::new(catalog.clone());
+            for row in catalog.rows() {
+                let num_vars = row_response_num_vars(&scheme, row).unwrap();
+                assert!(num_vars <= jolt_zk::whiteout::MAX_RESPONSE_NUM_VARS as usize);
+            }
+            let rows = catalog.rows().len();
+            rows
+        }
+        assert_eq!(check::<Cfg>(), 1);
+        assert_eq!(check::<RecCfg>(), 2);
+    });
+}
+
 /// HT1, the public-site allowlist: every byte the verifier receives is in
 /// exactly one class (masked slot, randomized commitment, public
 /// challenge-derived data, Σ message, response proof), every masked class

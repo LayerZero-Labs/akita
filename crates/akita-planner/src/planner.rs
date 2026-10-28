@@ -855,8 +855,11 @@ pub fn find_schedule_for_test_relation_mode(
 /// modeled cap, gives the level's witness-carrying B slices and its D image
 /// hiding randomness sized by
 /// [`akita_params::zk::hiding_randomness_columns`], and admits only the ℓ∞
-/// route. A masked level may consume a setup prefix, which carries no
-/// randomness, and the root may fold precommitted groups, sized without
+/// route. A masked level below the cut may consume a setup prefix, which
+/// carries no randomness; the cut level never does, since its prefix would
+/// grow w_k, and with it the Σ-protocol's response, without a price in the
+/// search (`specs/whiteout-akita.md` §5.5.3). The root may fold
+/// precommitted groups, sized without
 /// their producer contracts; each frozen precommitted profile must already
 /// carry its masked B randomness. The result carries `zk` and passes
 /// [`akita_params::zk::ZkOpeningSchedule::admit`].
@@ -882,20 +885,18 @@ pub fn find_zk_schedule(
         ring_challenge_config,
         super::schedule_params::ZkSearch {
             schedule: zk,
-            cut_offload: super::schedule_params::CutOffload::Priced,
+            cut_offload: super::schedule_params::CutOffload::Direct,
         },
     )
 }
 
 /// [`find_zk_schedule`] whose cut level consumes the root's setup as a
-/// setup prefix even where a direct cut level costs less: the search
-/// drops the direct edge into the cut level and keeps every other rule
-/// (the offloaded edge must still lower the first direct setup). Test
-/// support only: the
-/// result is a legitimate statement (it passes the same
-/// [`akita_params::zk::ZkOpeningSchedule::admit`]), but not the priced
-/// optimum, so a test can prove a masked Stage 3 at a size the priced search
-/// no longer offloads at (`specs/whiteout-akita.md` §5.5.2).
+/// setup prefix: the search drops the direct edge into the cut level and
+/// keeps every other rule (the offloaded edge must still lower the first
+/// direct setup). Test support only: the result is a legitimate statement
+/// (it passes the same [`akita_params::zk::ZkOpeningSchedule::admit`]), but
+/// [`find_zk_schedule`] never plans it, so a test can prove a masked
+/// Stage 3 at the cut (`specs/whiteout-akita.md` §5.5.2, §5.5.3).
 ///
 /// # Errors
 ///
