@@ -33,8 +33,8 @@ pub struct BinaryOpening<B, P> {
 }
 impl<B, P> BinaryOpening<B, P> {
     /// Integration constructor: call only after authenticating both readings
-    /// and consuming all terminal claims in the bound session. P1 does not run
-    /// a verifier; callers cannot obtain authentication by calling this method.
+    /// and consuming all terminal claims in the bound session. This constructor
+    /// does not run a verifier; calling it does not authenticate the readings.
     pub fn from_authenticated_readings(
         binary_reading: B,
         prime_reading: P,

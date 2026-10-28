@@ -20,11 +20,12 @@ selected. It returns separate binary and prime readings; their agreement
 requires a proof supplied by the application.
 
 This is a **design**, with protocol implementation and certification pending.
-P1 supplies only the descriptor, addressing, cap validation and agreement
-interface. It does not select or execute a new prover/verifier path. The
-checkpoint soundness argument belongs in `specs/binary-source-checkpoint.md`,
-which the separate proof slice supplies. This specification states the
-protocol contract, not a completed security proof or production admission.
+The source contract API supplies only the descriptor, addressing, cap validation
+and agreement interface. It does not select or execute a new prover/verifier
+path. The checkpoint soundness argument belongs in
+`specs/binary-source-checkpoint.md`, which supplies the separate checkpoint
+proof. This specification states the protocol contract, not a completed security
+proof or production admission.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are interpreted as
 specified by BCP 14, RFC 2119 and RFC 8174, only when capitalized.
@@ -66,12 +67,13 @@ certifying a parameter set. Existing feature and crate names are retained.
 
 ### Non-goals
 
-P1 does not wire a root relation into proving or verification, add arithmetic
-kernels, certify q24 SIS, implement a challenge sampler or setup stream, or
-supply an application proof. Akita supplies no booleanity, zero-support or
-prime-claim-fusion helpers. Unsupported non-power-of-two word widths are
-rejected rather than implicitly repacked. The existing LaBinius implementation
-continues to be described by its live specifications until a later migration.
+The source contract API does not wire a root relation into proving or
+verification, add arithmetic kernels, certify q24 SIS, implement a challenge
+sampler or setup stream, or supply an application proof. Akita supplies no
+booleanity, zero-support or prime-claim-fusion helpers. Unsupported
+non-power-of-two word widths are rejected rather than implicitly repacked. The
+existing LaBinius implementation continues to be described by its live
+specifications until a later migration.
 
 ## Evaluation
 
@@ -97,10 +99,11 @@ continues to be described by its live specifications until a later migration.
 
 Descriptor and addressing tests live with `akita-types` and run with its default
 features and with `labinius-trinomial`. Test doubles exercise the integration
-trait; Akita MUST NOT ship a production implementation of that trait. Future
-P2c/P4 wiring MUST add ordinary-byte stability, mixed-group transcript replay,
-malformed input and pending-claim consumption tests. Existing ordinary and
-LaBinius tests continue to apply to their respective live paths.
+trait; Akita MUST NOT ship a production implementation of that trait.
+Integrating the root ring switch and grouped opening MUST add ordinary-byte
+stability, mixed-group transcript replay, malformed input and pending-claim
+consumption tests. Existing ordinary and LaBinius tests continue to apply to
+their respective live paths.
 
 Run `./scripts/check-doc-guardrails.sh` for this specification. Use the current
 workflow and repository instructions for the workspace feature matrices.
@@ -110,10 +113,11 @@ Schedule artifacts MUST NOT change merely because descriptor types exist.
 
 Dense packing uses all 128 payload coordinates of a carrier, including for bit
 and byte sources. The point cap limits source-plane growth before allocation.
-No performance or proof-size measurements are claimed by P1. The design keeps
-an explicit linear verifier weight term in the number of carriers per column;
-it does not claim a logarithmic online verifier. All q24 ranks, digit depths,
-suffix dimensions and proof sizes require later admission and measurement.
+The source contract API makes no performance or proof-size measurement claims.
+The design keeps an explicit linear verifier weight term in the number of
+carriers per column; it does not claim a logarithmic online verifier. All q24
+ranks, digit depths, suffix dimensions and proof sizes require later admission
+and measurement.
 
 ## Design
 
@@ -334,23 +338,23 @@ An extension E/F adds its coordinate planes; tensor rank adds one plane per
 component. A general four-component functional can require four components.
 
 The group manifest MUST state polynomial owners and all plane multiplicities.
-P1 adopts a conservative aggregate budget: both distinct prime points and
-unique `(polynomial, point, tensor_component)` planes MUST be at most five.
-Tensor components are numbered 0 through 3; polynomial indices must belong to
-the descriptor's ordered manifest. Duplicate requests for that exact triple
+The group manifest adopts a conservative aggregate budget: both distinct prime
+points and unique `(polynomial, point, tensor_component)` planes MUST be at most
+five. Tensor components are numbered 0 through 3; polynomial indices must belong
+to the descriptor's ordered manifest. Duplicate requests for that exact triple
 reuse the existing plane. Distinct owners or components consume distinct planes
 even at identical points. No polynomial receives a separate five-plane quota.
 Validation returns the shared plane index for each request in manifest order.
 
-P1 bounds validation input at 4096 plane requests and rejects excess before
+Prime-plane validation bounds input at 4096 requests and rejects excess before
 allocation. Points are canonical base-field coordinate vectors; wrong point
 counts or coordinates outside `[0,P)` are typed validation errors. Different
 polynomials and tensor components MUST NOT receive implicit free planes through
 point deduplication. Both cap violations are typed errors. These conservative
 bounds are API admission limits, not a certificate. Production admission MUST
-certify D and every widened ordinary instance for the declared maximum. A
-caller needing more points supplies its own reduction or selects a separately
-certified profile.
+certify D and every widened ordinary instance for the declared maximum. A caller
+needing more points supplies its own reduction or selects a separately certified
+profile.
 
 When one polynomial has several binary claims, reduce them in H before field
 switching using independent H batching scalars and a degree-two sumcheck.
@@ -497,11 +501,12 @@ this contract.
 
 ## Execution
 
-P2c must use the descriptor's exact coefficient/index maps and group ownership
-when adding mixed native rings, root relations and ordinary repacking. P4 must
-bind canonical bytes and claim manifests at transcript order 0, construct one
-ordinary grouped proof, consume all terminals and preserve the caller session.
-Subsequent slices supply carries, projections, setup offloading, plane support
+The mixed-ring root relations and root ring switch must use the descriptor's
+exact coefficient/index maps and group ownership when repacking into ordinary
+rings. The grouped opening that consumes this descriptor must bind canonical
+bytes and claim manifests at transcript order 0, construct one ordinary grouped
+proof, consume all terminals and preserve the caller session. Further protocol
+implementation supplies carries, projections, setup offloading, plane support
 and certified planning. Certification and the written checkpoint are release
 gates even when arithmetic and descriptor tests pass.
 
@@ -519,4 +524,4 @@ gates even when arithmetic and descriptor tests pass.
   [root sumcheck](labinius-root-sumcheck.md),
   [root reduction](labinius-root-reduction.md) and
   [PCS](labinius-pcs.md).
-- `specs/binary-source-checkpoint.md`, Theorems 7 and 8 (P3 companion, integrated separately).
+- `specs/binary-source-checkpoint.md`, Theorems 7 and 8 (checkpoint proof, integrated separately).
