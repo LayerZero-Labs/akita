@@ -771,7 +771,17 @@ impl<'a> CandidateDomain<'a> {
     ///
     /// The root traverses them as one batch, so its lower-bound order is
     /// global: the best-bounded candidates complete first and their
-    /// schedules prune the rest (`specs/whiteout-o2b-planner.md`). Each
+    /// schedules prune the rest. Whenever the search returns a plan, the
+    /// plan does not depend on the traversal order: the least complete
+    /// schedule is never pruned (a prune needs a strictly better completed
+    /// incumbent) and never displaced (every frontier dominance implies a
+    /// score no worse), so every order selects it
+    /// (`jolt:specs/whiteout-o2b-planner.md`). Errors are not covered: an
+    /// internal-invariant or overflow error raised while exploring a
+    /// candidate that one order prunes and another explores (`child_choice`,
+    /// `PendingQueryEdge::new`, a successor's search) makes success, and
+    /// which error is reported, depend on the order. By inspection they are
+    /// unreachable for well-formed input. Each
     /// opening work is generated independently, on the pool, and joined in
     /// work order, so the candidates, their order and the first error are
     /// those of a sequential pass.

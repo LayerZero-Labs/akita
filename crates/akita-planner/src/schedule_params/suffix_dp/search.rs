@@ -312,7 +312,7 @@ fn price_planned_fold_candidate(
 /// Every other state completes all its candidates' successors at once: for
 /// setup-prefixed states, pool-width waves completed the same states as one
 /// wave on the response statements and only added barriers
-/// (`specs/whiteout-o2b-planner.md`).
+/// (`jolt:specs/whiteout-o2b-planner.md`).
 fn successor_wave(guide_scope: Option<GuideScope>, waves_done: u32) -> usize {
     #[cfg(feature = "parallel")]
     if matches!(guide_scope, Some(GuideScope::CompleteRoot)) {

@@ -153,7 +153,7 @@ impl ScheduleMemoKey {
 /// thread computes it, and when, never changes what a reader sees. The
 /// states are split over [`MEMO_SHARDS`] locks by key hash: one lock
 /// serialized every worker's lookups (about a tenth of the pool's time was
-/// spent waiting on it in `specs/whiteout-o2b-planner.md`'s profile).
+/// spent waiting on it in `jolt:specs/whiteout-o2b-planner.md`'s profile).
 pub(crate) struct ScheduleMemo {
     shards: Box<[Mutex<MemoStates>]>,
     pub(super) setup_prefixes: SetupPrefixSearchCache,
