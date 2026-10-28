@@ -49,7 +49,10 @@ logging-transcript = [
   "akita-params/logging-transcript",
   "akita-transcript/logging-transcript",
 ]
-labinius-trinomial = ["akita-algebra/labinius-trinomial"]
+labinius-trinomial = [
+  "akita-algebra/labinius-trinomial",
+  "akita-params/labinius-trinomial",
+]
 
 [dev-dependencies]
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [

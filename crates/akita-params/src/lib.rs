@@ -61,15 +61,18 @@ pub use layout::{
     DigitRangePlan, FlatBooleanDomain, FlatMatrix, GadgetDigits, GroupOpenPhaseParams,
     GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningClaimsLayout, OpeningMethod,
     OuterRoleParams, PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
-    RelationAddressGeometry, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
-    RelationRowGeometry, RelationWitnessGeometry, RingMatrixView, RingOpeningPoint, RingRole,
-    RoleParams, SetupMatrixCapacity, SetupPrefixSlotId, SetupProjectionGeometry, Stage1StageShape,
-    SubringCoefficientPackingGeometry, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponseShape, DEV_PROTOCOL, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, RECOMPUTE_LAST_BLOCK, SCHEDULE_ARTIFACT_SET,
-    SCHEDULE_CATALOG_SNAPSHOT, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS, TERMINAL_BLOCK_DIGEST_BYTES,
+    RelationAddressGeometry, RelationGroupRows, RelationPolynomial, RelationPolynomialKind,
+    RelationRhsLayout, RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
+    RingMatrixView, RingOpeningPoint, RingRole, RoleParams, SetupMatrixCapacity, SetupPrefixSlotId,
+    SetupProjectionGeometry, Stage1StageShape, SubringCoefficientPackingGeometry,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape, DEV_PROTOCOL,
+    EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
+    RECOMPUTE_LAST_BLOCK, SCHEDULE_ARTIFACT_SET, SCHEDULE_CATALOG_SNAPSHOT,
+    SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_COMMITMENT_RING_DIMS, TERMINAL_BLOCK_DIGEST_BYTES,
 };
+#[cfg(feature = "labinius-trinomial")]
+pub use layout::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
 pub use proof_size::{nonterminal_level_layout, NonterminalLevelLayout};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
