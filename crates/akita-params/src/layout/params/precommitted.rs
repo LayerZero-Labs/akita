@@ -105,7 +105,8 @@ pub struct GroupOpeningPlan {
     /// Procedure used to reduce and open the group's coefficients.
     pub opening_method: OpeningMethod,
     /// Sparse fold-challenge family certified for this group's A ring or subring.
-    /// Extension seam: challenge selection for binary source groups (tracking issue pending).
+    /// Extension seam: challenge selection for binary source groups
+    /// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub fold_challenge_config: FoldChallengeFamily,
     /// Opening basis used by the shared D matrix for fresh `e_hat` digits.
     pub log_basis_open: u32,

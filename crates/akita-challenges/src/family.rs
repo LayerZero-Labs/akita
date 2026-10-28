@@ -3,7 +3,8 @@
 use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 
-/// Extension seam: challenge selection for binary source groups (tracking issue pending).
+/// Extension seam: challenge selection for binary source groups
+/// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
 ///
 /// The selected family owns its identity, validation and indexed sampling.
 /// Serialization preserves the existing signed-sparse configuration representation.

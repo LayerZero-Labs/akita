@@ -105,7 +105,8 @@ pub struct TerminalFoldParams {
     /// Response basis and depth this terminal fold was planned against.
     pub fold: crate::GadgetDigits,
     /// Fold-challenge family for the terminal response.
-    /// Extension seam: challenge selection for binary source groups (tracking issue pending).
+    /// Extension seam: challenge selection for binary source groups
+    /// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub fold_challenge_config: akita_challenges::FoldChallengeFamily,
     /// Shape of the clear terminal response payload.
     pub response_shape: TerminalResponseShape,
