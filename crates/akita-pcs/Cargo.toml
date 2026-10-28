@@ -28,6 +28,15 @@ features = ["parallel", "transcript-blake2b"]
 ignored = ["akita-setup"]
 
 [features]
+labinius-trinomial = [
+  "akita-algebra/labinius-trinomial",
+  "akita-algebra/labinius-binary",
+  "akita-challenges/labinius-challenges",
+  "akita-cpu-backend/labinius-trinomial",
+  "akita-prover/labinius-trinomial",
+  "akita-types/labinius-trinomial",
+  "akita-verifier/labinius-trinomial",
+]
 default = ["parallel", "transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

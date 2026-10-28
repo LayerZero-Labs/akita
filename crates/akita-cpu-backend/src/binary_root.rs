@@ -63,6 +63,20 @@ impl BinaryRootRelation {
         challenges: &Challenges,
         family: FoldChallengeFamily,
     ) -> Result<Self, AkitaError> {
+        Self::probe(descriptor, matrix, sources, images, challenges, family)?
+            .ok_or_else(|| invalid("binary response exceeds its four-digit interval"))
+    }
+
+    /// Probe one honest fold; a clipped bounded response rejects only this nonce.
+    /// All source/challenge geometry and arithmetic failures remain errors.
+    pub fn probe(
+        descriptor: &BinarySourceDescriptor,
+        matrix: &[Vec<[i128; D]>],
+        sources: &[[i128; D]],
+        images: &[[Q24Image; D]],
+        challenges: &Challenges,
+        family: FoldChallengeFamily,
+    ) -> Result<Option<Self>, AkitaError> {
         let (polynomials, columns, rows) = dimensions(descriptor, matrix)?;
         let expected = checked::product([polynomials, columns, rows])
             .ok_or_else(|| invalid("binary source count overflow"))?;
@@ -101,7 +115,15 @@ impl BinaryRootRelation {
                 }
             }
         }
-        Self::from_response(descriptor, matrix, response, images, challenges, family)
+        let (low, high) = BINARY_RESPONSE_INTERVAL;
+        if response
+            .iter()
+            .flatten()
+            .any(|&coefficient| coefficient < i128::from(low) || coefficient > i128::from(high))
+        {
+            return Ok(None);
+        }
+        Self::from_response(descriptor, matrix, response, images, challenges, family).map(Some)
     }
 
     /// Validate a supplied bounded response and compute source-independent rows.

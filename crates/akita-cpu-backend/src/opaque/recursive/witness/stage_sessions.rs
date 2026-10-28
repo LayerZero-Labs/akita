@@ -561,3 +561,7 @@ where
 #[cfg(test)]
 #[path = "stage_sessions_dense_tests.rs"]
 mod dense_relation_tests;
+
+#[cfg(feature = "labinius-trinomial")]
+#[path = "native_session.rs"]
+mod native_session;

@@ -102,6 +102,10 @@ pub(super) trait PrivateSource<F: Field + CanonicalEncoding, E: Field>: Send + S
     fn group_kind(&self) -> SourceGroupKind {
         SourceGroupKind::Ordinary
     }
+    #[cfg(feature = "labinius-trinomial")]
+    fn binary_source(&self) -> Option<&super::binary_source::BinarySourceStorage> {
+        None
+    }
     fn commitment_sources(&self) -> Vec<&dyn CommitmentSource<F>>;
     fn dense_polynomials(&self) -> Result<Vec<crate::DensePoly<F>>, AkitaError>;
     #[cfg(feature = "response-model-diagnostics")]

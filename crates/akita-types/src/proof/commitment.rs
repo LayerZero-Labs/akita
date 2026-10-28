@@ -1,9 +1,11 @@
 //! Protocol commitment/opening wrapper types.
 
+#[cfg(feature = "labinius-trinomial")]
+mod binary;
 mod kind;
 /// Extension seam: validate and encode each commitment kind at one wire boundary.
 /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
-mod wire;
+pub(crate) mod wire;
 pub use kind::CommittedGroupKind;
 
 use crate::proof::RingVec;

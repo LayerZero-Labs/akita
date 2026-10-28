@@ -150,9 +150,8 @@ where
             selection,
             schedule,
             basis,
-            Ok,
+            |plan| claims.root_grinding_plan(plan, schedule),
         )?;
-        let grinding_plan = claims.root_grinding_plan(grinding_plan, schedule)?;
         let raw_groups = claims
             .groups()
             .iter()

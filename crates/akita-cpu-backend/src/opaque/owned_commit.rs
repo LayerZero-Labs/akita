@@ -110,6 +110,10 @@ where
         }
         match source.storage.group_kind() {
             SourceGroupKind::Ordinary => self.commit_ordinary(family, source, context),
+            #[cfg(feature = "labinius-trinomial")]
+            SourceGroupKind::Binary => {
+                super::binary_source::commit_binary_source(self, family, source, context)
+            }
         }
     }
 

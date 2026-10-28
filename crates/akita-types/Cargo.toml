@@ -54,6 +54,7 @@ labinius-trinomial = [
   "akita-challenges/labinius-challenges",
   "akita-algebra/labinius-trinomial",
   "akita-params/labinius-trinomial",
+  "akita-params/labinius-sis",
 ]
 
 [dev-dependencies]

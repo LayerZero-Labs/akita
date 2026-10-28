@@ -26,6 +26,20 @@ where
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
 {
     match claims.groups().first().map(|group| group.kind()) {
+        #[cfg(feature = "labinius-trinomial")]
+        Some(akita_types::opening_claims::GroupClaimKind::Binary { .. }) => {
+            if basis != BasisMode::Lagrange {
+                return Err(AkitaError::InvalidProof);
+            }
+            super::binary_root::verify_root(
+                setup,
+                grinding,
+                claims,
+                opening_batch,
+                root_lp,
+                next_fold_params,
+            )
+        }
         Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
             super::ordinary_root::verify_root(
                 setup,

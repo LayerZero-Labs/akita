@@ -5,4 +5,6 @@
 /// Feature enablement does not select a group kind.
 pub(super) enum SourceGroupKind {
     Ordinary,
+    #[cfg(feature = "labinius-trinomial")]
+    Binary,
 }

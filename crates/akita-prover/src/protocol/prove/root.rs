@@ -42,11 +42,12 @@ where
             selection,
             resolved.schedule(),
             basis,
-            Ok,
+            |plan| {
+                claims
+                    .opening_claims()
+                    .root_grinding_plan(plan, resolved.schedule())
+            },
         )?;
-    let grinding_plan = claims
-        .opening_claims()
-        .root_grinding_plan(grinding_plan, resolved.schedule())?;
     Ok((resolved, claims, grinding_plan, descriptor_bytes))
 }
 
@@ -85,6 +86,22 @@ where
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
     match claims.groups().first().map(|group| group.kind()) {
+        #[cfg(feature = "labinius-trinomial")]
+        Some(akita_types::opening_claims::GroupClaimKind::Binary { .. }) => {
+            super::binary_root::prove_root(
+                expanded,
+                prefix_slots,
+                backend,
+                claims,
+                layout,
+                handles,
+                schedule,
+                proof_session,
+                grinding,
+                basis,
+                handoff,
+            )
+        }
         Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
             super::ordinary_root::prove_root(
                 expanded,

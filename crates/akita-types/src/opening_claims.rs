@@ -1,5 +1,7 @@
 //! Public opening claims and layout-only opening geometry.
 
+#[cfg(feature = "labinius-trinomial")]
+mod binary;
 mod kind;
 mod root_schedule;
 pub use kind::GroupClaimKind;

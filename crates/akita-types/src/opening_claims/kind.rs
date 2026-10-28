@@ -7,4 +7,12 @@
 pub enum GroupClaimKind {
     /// The ordinary negacyclic-ring opening relation.
     Ordinary,
+    /// A binary terminal supplied by the caller's frontend.
+    #[cfg(feature = "labinius-trinomial")]
+    Binary {
+        /// Frozen binary A/B contract, retained when mapping commitment payloads.
+        manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
+        /// The caller's binary terminal evaluation.
+        claim: crate::binary_source::BinaryTerminalClaim,
+    },
 }
