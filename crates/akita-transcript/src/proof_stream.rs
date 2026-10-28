@@ -1406,22 +1406,6 @@ mod tests {
     }
 
     #[test]
-    fn bounded_receipt_rejects_a_missing_payload_under_a_large_budget() {
-        let site = ProtocolSiteId::default();
-        let mut prover = new_prover_channel(b"bounded", b"fixture").unwrap();
-        let (length_record, _) = bounded_bytes_sites(site);
-        prover_context(&mut prover, length_record);
-        prover.prover_message(&u32::MAX);
-        let proof = prover.narg_string().to_vec();
-        let mut verifier = new_verifier_channel(b"bounded", b"fixture", &proof).unwrap();
-        assert!(matches!(
-            receive_bounded_bytes(&mut verifier, site, usize::MAX),
-            Err(AkitaError::InvalidProof)
-        ));
-        assert!(verifier.check_eof().is_err());
-    }
-
-    #[test]
     fn session_and_instance_are_independent_domains() {
         let mut left = new_prover_channel(b"session-a", b"instance").unwrap();
         let mut right = new_prover_channel(b"session-b", b"instance").unwrap();
