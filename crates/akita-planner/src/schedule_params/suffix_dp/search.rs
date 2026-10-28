@@ -14,6 +14,7 @@ struct OpeningSearch<'a> {
 struct ChildPlan<'a> {
     chunk_shape: Option<akita_params::WitnessChunkShape>,
     params: &'a CommittedGroupParams,
+    fold_cost: akita_params::FoldChallengeCost,
     next_witness_len: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
 
@@ -49,10 +50,13 @@ fn plan_candidate_children(
     plan: ChildPlan<'_>,
 ) -> Result<PlannedChildren, AkitaError> {
     let state = search.state;
-    let Some(child_query_search) =
-        search
-            .query_search
-            .child(ctx, state, search.opening_layout, plan.params)?
+    let Some(child_query_search) = search.query_search.child(
+        ctx,
+        state,
+        search.opening_layout,
+        plan.params,
+        plan.fold_cost,
+    )?
     else {
         return Ok(PlannedChildren {
             direct: None,
@@ -150,6 +154,7 @@ fn price_planned_fold_candidate(
     let PlannedFoldCandidate {
         chunk_shape,
         params,
+        fold_cost,
         next_witness_len,
         opening_reduction_bytes: _,
         next_source_moment,
@@ -226,6 +231,7 @@ fn price_planned_fold_candidate(
         ChildPlan {
             chunk_shape,
             params: &params,
+            fold_cost,
             next_witness_len,
             next_source_moment,
 
@@ -240,6 +246,7 @@ fn price_planned_fold_candidate(
         search.opening_layout,
         LevelCandidateEdge {
             params: &params,
+            fold_cost,
             natural_setup_field_len: natural_len,
             require_child_fold: search.require_child_fold,
         },

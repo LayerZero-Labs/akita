@@ -111,9 +111,9 @@ fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
             a_output_raw: 2_048,
             b_input_raw: 1_441_792,
             b_output_raw: 128,
-            d_input_raw: 720_896,
+            d_input_raw: 1_441_792,
             d_output_raw: 128,
-            next_witness: 21_851_776,
+            next_witness: 22_575_488,
         }
     );
 

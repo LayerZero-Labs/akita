@@ -12,7 +12,7 @@ use akita_transcript::{
     GRINDING_NONCE_SLACK_BITS, SITE_FAMILY_SUMCHECK,
 };
 #[cfg(feature = "prover")]
-use akita_transcript::{prover_context, FoldPreview, ProverChannel, ProverTranscript};
+use akita_transcript::{prover_context, FoldPreview, FoldWork, ProverChannel, ProverTranscript};
 use std::marker::PhantomData;
 
 #[derive(Clone, Copy)]
@@ -55,6 +55,22 @@ impl<'a> GrindingPlanCursor<'a> {
     #[cfg(feature = "prover")]
     fn peek(&self) -> Option<GrindingPlanEntry> {
         let run = *self.plan.runs().get(self.run_index)?;
+        Some(GrindingPlanEntry {
+            site: run.site(),
+            grind_bits: run.grind_bits(),
+            nonce_bits: run.nonce_bits(),
+        })
+    }
+
+    /// Entry of the run after the current one, when the cursor sits at the
+    /// start of a single-entry run.
+    #[cfg(feature = "prover")]
+    fn peek_following(&self) -> Option<GrindingPlanEntry> {
+        let current = self.plan.runs().get(self.run_index)?;
+        if self.run_offset != 0 || current.multiplicity() != 1 {
+            return None;
+        }
+        let run = *self.plan.runs().get(self.run_index.checked_add(1)?)?;
         Some(GrindingPlanEntry {
             site: run.site(),
             grind_bits: run.grind_bits(),
@@ -234,7 +250,7 @@ impl GrindingReplay for ProverGrinding<'_> {
     }
 
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let result = self.grind_query_inner(site);
+        let result = self.grind_query_inner(site, GrindingQueryKind::ProofOfWork);
         if result.is_err() {
             self.poison();
         }
@@ -255,7 +271,7 @@ impl<'proof> GrindingReplay for VerifierGrinding<'proof, '_> {
     }
 
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let result = self.grind_query_inner(site);
+        let result = self.grind_query_inner(site, GrindingQueryKind::ProofOfWork);
         if result.is_err() {
             self.poison();
         }
@@ -287,8 +303,27 @@ impl<'plan> ProverGrinding<'plan> {
         }
     }
 
-    fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork)?;
+    fn grind_query_inner(
+        &mut self,
+        site: GrindingSite,
+        kind: GrindingQueryKind,
+    ) -> Result<(), AkitaError> {
+        self.proof_of_work(site, kind, |state, bits| {
+            state.grind(bits).map_err(|_| {
+                AkitaError::Internal("transcript proof of work failed to find a nonce".into())
+            })
+        })
+    }
+
+    /// Consume the next proof-of-work entry and let `work` produce it on the
+    /// live channel: a fresh search, or a nonce already found on a preview.
+    fn proof_of_work(
+        &mut self,
+        site: GrindingSite,
+        kind: GrindingQueryKind,
+        work: impl FnOnce(&mut ProverChannel, u32) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let entry = next_entry(&mut self.cursor, site, kind)?;
         let bits = pow_bits(entry).ok_or_else(|| {
             AkitaError::Internal("grinding entry nonce width differs from grind_bits + 7".into())
         })?;
@@ -299,9 +334,7 @@ impl<'plan> ProverGrinding<'plan> {
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
         let start = self.state.narg_string().len();
         prover_context(&mut self.state, nonce_record);
-        self.state.grind(bits).map_err(|_| {
-            AkitaError::Internal("transcript proof of work failed to find a nonce".into())
-        })?;
+        work(&mut self.state, bits)?;
         prover_context(&mut self.state, check_record);
         let nonce_bytes = self.state.narg_string().len() - start;
         self.serialized_nonce_bytes = self
@@ -313,13 +346,15 @@ impl<'plan> ProverGrinding<'plan> {
         Ok(())
     }
 
-    /// Emit the next scheduled fold-response nonce as a canonical message.
+    /// Emit the accepted fold-response nonce as a canonical message, then the
+    /// fold's proof of work found on its preview, which protects every
+    /// fold-challenge message drawn after it.
     pub fn commit_fold_response(
         &mut self,
         site: GrindingSite,
-        counter: u32,
+        work: FoldWork,
     ) -> Result<(), AkitaError> {
-        let result = self.commit_fold_response_inner(site, counter);
+        let result = self.commit_fold_response_inner(site, work);
         self.invalid |= result.is_err();
         result
     }
@@ -327,8 +362,9 @@ impl<'plan> ProverGrinding<'plan> {
     fn commit_fold_response_inner(
         &mut self,
         site: GrindingSite,
-        counter: u32,
+        work: FoldWork,
     ) -> Result<(), AkitaError> {
+        let counter = work.nonce();
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
         if !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidInput(
@@ -355,11 +391,20 @@ impl<'plan> ProverGrinding<'plan> {
             encoded_bytes = nonce_encoded_len(counter),
             "native fold response nonce"
         );
-        Ok(())
+        self.proof_of_work(
+            GrindingSite::FoldChallengeWork {
+                level: site.level(),
+            },
+            GrindingQueryKind::FoldChallengeWork,
+            |state, _bits| work.commit(state),
+        )
     }
 
     /// Preview a fold-response candidate from the current public state
-    /// without advancing either the live state or the grinding plan.
+    /// without advancing either the live state or the grinding plan: absorb
+    /// the candidate nonce, then run the fold's proof of work. Pass the
+    /// accepted preview's [`FoldPreview::take_work`] to
+    /// [`commit_fold_response`](Self::commit_fold_response).
     pub fn preview_fold_response(
         &self,
         site: GrindingSite,
@@ -385,7 +430,24 @@ impl<'plan> ProverGrinding<'plan> {
                 "fold-response preview nonce exceeds scheduled bit width".into(),
             ));
         }
-        Ok(FoldPreview::new(&self.state, counter))
+        let work_site = GrindingSite::FoldChallengeWork {
+            level: site.level(),
+        };
+        let work = self
+            .cursor
+            .peek_following()
+            .filter(|work| work.site == work_site)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "fold-response preview is not followed by the fold proof of work".into(),
+                )
+            })?;
+        let bits = pow_bits(work).ok_or_else(|| {
+            AkitaError::Internal("grinding entry nonce width differs from grind_bits + 7".into())
+        })?;
+        let mut preview = FoldPreview::new(&self.state, counter);
+        preview.grind(bits)?;
+        Ok(preview)
     }
 
     /// Consume the plan entries for one sparse fold group.
@@ -462,8 +524,12 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
         }
     }
 
-    fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork)?;
+    fn grind_query_inner(
+        &mut self,
+        site: GrindingSite,
+        kind: GrindingQueryKind,
+    ) -> Result<(), AkitaError> {
+        let entry = next_entry(&mut self.cursor, site, kind)?;
         let bits = pow_bits(entry).ok_or(AkitaError::InvalidProof)?;
         if bits == 0 {
             return Ok(());
@@ -478,7 +544,8 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
         Ok(())
     }
 
-    /// Receive the next scheduled fold-response nonce.
+    /// Receive the next scheduled fold-response nonce, then check the fold's
+    /// proof of work.
     pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let result = self.read_fold_response_inner(site);
         if result.is_err() {
@@ -505,6 +572,12 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
             .serialized_nonce_bytes
             .checked_add(nonce_encoded_len(counter))
             .ok_or(AkitaError::InvalidProof)?;
+        self.grind_query_inner(
+            GrindingSite::FoldChallengeWork {
+                level: site.level(),
+            },
+            GrindingQueryKind::FoldChallengeWork,
+        )?;
         Ok(counter)
     }
 

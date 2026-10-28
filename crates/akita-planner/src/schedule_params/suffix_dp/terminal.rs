@@ -117,6 +117,7 @@ pub(crate) fn terminal_direct_suffix_cost(
                     || l2_matrix.output_rank() < terminal_params.inner.matrix.output_rank()
                 {
                     terminal_params.inner.matrix = l2_matrix;
+                    terminal_params.fold_challenge_config = l2_challenge;
                     sparse_challenge_config = l2_challenge;
                 }
             }
@@ -153,6 +154,7 @@ pub(crate) fn terminal_direct_suffix_cost(
         terminal_params.response_l2_sq_cap(),
     )?;
     let direct = CandidateTerminalResponse {
+        fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)?,
         params: terminal_params,
         sparse_challenge_config,
         input_witness_len,

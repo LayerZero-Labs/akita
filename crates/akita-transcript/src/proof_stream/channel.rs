@@ -1,7 +1,7 @@
 //! Role-generic access to one end of the proof channel.
 
 use super::{invalid_proof, prover_context, reject, verifier_context, ProtocolContextRecord};
-use crate::{ProverChannel, VerifierChannel, FOLD_CHALLENGE_SEED_LEN};
+use crate::{ProverChannel, VerifierChannel};
 use akita_error::AkitaError;
 use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
 use spongefish::{Encoding, FromNarg, Transcript};
@@ -37,13 +37,20 @@ pub trait ProofChannel {
     /// `2^-161`). A verifier failure poisons the transcript.
     fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError>;
 
-    /// Squeeze one fold-root seed.
+    /// Squeeze one challenge message of exactly `len` bytes and decode it.
+    ///
+    /// The length must be fixed by public data, never by squeezed values.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidProof`] when the verifier transcript is
-    /// already rejected. The prover never fails.
-    fn seed(&mut self) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError>;
+    /// Returns the error of `decode` on the prover. On the verifier, returns
+    /// [`AkitaError::InvalidProof`] when the transcript is already rejected or
+    /// `decode` fails; a failure poisons the transcript.
+    fn challenge_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
+    ) -> Result<T, AkitaError>;
 
     /// Return `result` unchanged. On the verifier, an error first rejects the
     /// transcript, so a caller that drops the error still cannot accept.
@@ -77,8 +84,12 @@ impl ProofChannel for ProverChannel {
         })
     }
 
-    fn seed(&mut self) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        Ok(self.verifier_message())
+    fn challenge_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
+    ) -> Result<T, AkitaError> {
+        self.verifier_message_as(len, decode)
     }
 
     fn guard<T>(&mut self, result: Result<T, AkitaError>) -> Result<T, AkitaError> {
@@ -105,9 +116,15 @@ impl ProofChannel for VerifierChannel<'_> {
         VerifierTranscript::field_challenges(self, len).map_err(invalid_proof)
     }
 
-    fn seed(&mut self) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+    fn challenge_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
+    ) -> Result<T, AkitaError> {
         Transcript::check(self, || true).map_err(invalid_proof)?;
-        Ok(self.verifier_message())
+        let result = self.verifier_message_as(len, decode);
+        Transcript::check(self, || result.is_ok()).map_err(invalid_proof)?;
+        result
     }
 
     fn guard<T>(&mut self, result: Result<T, AkitaError>) -> Result<T, AkitaError> {

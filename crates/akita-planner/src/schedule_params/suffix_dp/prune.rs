@@ -5,7 +5,7 @@ use akita_params::{active_setup_field_len, OpeningClaimsLayout};
 
 use crate::schedule_params::{level_setup_field_elements, pareto};
 
-type LevelFrontierEntry = ([usize; 6], OnceCell<Vec<u8>>, super::PlannedFoldCandidate);
+type LevelFrontierEntry = ([usize; 7], OnceCell<Vec<u8>>, super::PlannedFoldCandidate);
 
 pub(super) fn level_candidates(
     opening_layout: &OpeningClaimsLayout,
@@ -33,6 +33,10 @@ pub(super) fn level_candidates(
                 .checked_mul(params.role_dims().d_d())
                 .ok_or_else(|| AkitaError::InvalidSetup("D output dimension overflow".into()))?,
             candidate.opening_reduction_bytes,
+            // The fold proof of work grows with the level's live challenges,
+            // which the coordinates above do not see. The objective pays its
+            // nonce bytes, so wider nonces of the same byte length tie.
+            candidate.fold_cost.nonce_max_bytes(),
         ];
         let descriptor = OnceCell::new();
         pareto::insert(

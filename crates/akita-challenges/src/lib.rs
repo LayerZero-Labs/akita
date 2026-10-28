@@ -11,8 +11,8 @@
 //!   over live or preview state.
 //! - [`Challenges`] — sampled folding challenges in claim-major block order.
 //!
-//! Sampling uses the signed-sparse path in a private `sampler` submodule. The
-//! SHAKE256-backed XOF cursor is crate-internal and not part of the public API.
+//! - [`SparseChallengeStream`] — the fixed-length message layout and decoder
+//!   for one group's challenges.
 
 mod challenge;
 mod challenges;
@@ -34,6 +34,7 @@ pub use config::{
 #[cfg(feature = "prover")]
 pub use fold_draw::PreviewFoldDraw;
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, ProverFoldDraw,
-    VerifierFoldDraw,
+    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw,
+    ProverFoldDraw, VerifierFoldDraw,
 };
+pub use sampler::SparseChallengeStream;

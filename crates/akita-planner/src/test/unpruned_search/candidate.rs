@@ -171,6 +171,7 @@ pub(super) fn terminal(
         )? {
             if l2_matrix.output_rank() < terminal_params.inner.matrix.output_rank() {
                 terminal_params.inner.matrix = l2_matrix;
+                terminal_params.fold_challenge_config = l2_challenge;
                 sparse_challenge_config = l2_challenge;
             }
         }
@@ -223,6 +224,7 @@ pub(super) fn terminal(
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
         terminal: Arc::new(CandidateTerminalResponse {
+            fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)?,
             params: terminal_params,
             sparse_challenge_config,
             input_witness_len,
@@ -294,9 +296,11 @@ pub(in crate::schedule_params) fn prepend_fold(
     )?;
     let edge_grinding_cost = akita_params::transcript_grinding_cost_for_planner_edge(
         params,
+        akita_params::FoldChallengeCost::new(params, &opening_layout)?,
         relation_geometry,
         &opening_layout,
         successor,
+        child.folds.is_empty().then_some(child.terminal.fold_cost),
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         u32::try_from(level)
@@ -387,9 +391,11 @@ pub(in crate::schedule_params) fn prepend_root(
     )?;
     let root_grinding_cost = akita_params::transcript_grinding_cost_for_planner_edge(
         root_params,
+        akita_params::FoldChallengeCost::new(root_params, &opening_layout)?,
         relation_geometry,
         &opening_layout,
         successor,
+        suffix.folds.is_empty().then_some(suffix.terminal.fold_cost),
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         0,

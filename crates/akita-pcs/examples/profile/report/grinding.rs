@@ -31,6 +31,7 @@ pub(super) fn emit_grinding_plan_report(label: &str, plan: &GrindingPlan) {
             GrindingQueryKind::ProofOfWork => "proof_of_work",
             GrindingQueryKind::FoldResponse => "fold_response",
             GrindingQueryKind::FoldChallengeGroup => "fold_challenge_group",
+            GrindingQueryKind::FoldChallengeWork => "fold_challenge_work",
         };
         let run_nonce_bits = u64::from(run.nonce_bits()) * run.multiplicity();
         tracing::info!(
@@ -88,6 +89,7 @@ fn site_report(site: GrindingSite) -> SiteReport {
             group: Some(group),
             ..plain("fold_challenge", "challenge_group")
         },
+        GrindingSite::FoldChallengeWork { .. } => plain("fold_challenge", "proof_of_work"),
         GrindingSite::RingSwitchAlpha { .. } => plain("ring_switch", "alpha"),
         GrindingSite::Tau0Point { .. } => plain("ring_switch", "tau0_point"),
         GrindingSite::Tau1Point { .. } => plain("ring_switch", "tau1_point"),

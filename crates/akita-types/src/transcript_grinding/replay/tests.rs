@@ -1,13 +1,19 @@
 use super::*;
 use akita_challenges::{
-    FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw, ProverFoldDraw, SparseChallengeConfig,
-    VerifierFoldDraw,
+    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, PreviewFoldDraw, ProverFoldDraw,
+    SparseChallengeConfig, VerifierFoldDraw,
 };
 use akita_params::{ChallengeFieldOrder, GrindingRun};
-use akita_transcript::{new_prover_channel, new_verifier_channel, ProverTranscript};
+use akita_transcript::{new_prover_channel, new_verifier_channel, FoldPreview, ProverTranscript};
 use jolt_field::Prime128Offset275 as F;
 use jolt_transcript::Probe;
 use spongefish::Encoding;
+
+/// The fold proof of work at `level`, priced for `loss` challenges against a
+/// `2^128` set.
+fn fold_work(level: u32, loss: u64) -> GrindingRun {
+    GrindingRun::fold_challenge_work(level, loss, 128).unwrap()
+}
 
 fn plan() -> GrindingPlan {
     GrindingPlan::new(
@@ -19,6 +25,7 @@ fn plan() -> GrindingPlan {
             )
             .unwrap(),
             GrindingRun::fold_response(0),
+            fold_work(0, 2),
             GrindingRun::fold_challenge_group(0, 0, 2).unwrap(),
         ],
         ChallengeFieldOrder::from_full_capacity(128).unwrap(),
@@ -34,13 +41,18 @@ fn grinding_roundtrip_uses_inline_canonical_nonces_and_eof() {
     let prover_challenge = prover
         .grinded_ext_challenge::<F>(GrindingSite::EvaluationBatch { level: 0 })
         .unwrap();
+    let work = prover
+        .preview_fold_response(GrindingSite::FoldResponse { level: 0 }, 7)
+        .unwrap()
+        .take_work()
+        .unwrap();
     prover
-        .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, 7)
+        .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, work)
         .unwrap();
     prover.record_fold_challenges(0, 0, 2).unwrap();
     let proof = prover.finish().unwrap();
 
-    // One PoW nonce and one response nonce; public context records occupy
+    // Two PoW nonces and one response nonce; public context records occupy
     // no argument bytes.
     assert!(proof.len() <= plan.nonce_max_bytes());
     let state = new_verifier_channel(b"native-grinding", b"fixture", &proof);
@@ -207,8 +219,9 @@ fn grinding_sumcheck_rejects_unscheduled_invocation() {
 
 #[test]
 fn grinding_rejects_out_of_range_response_and_incomplete_plan() {
+    // A one-challenge fold against a 2^128 set needs no work.
     let plan = GrindingPlan::new(
-        vec![GrindingRun::fold_response(0)],
+        vec![GrindingRun::fold_response(0), fold_work(0, 1)],
         ChallengeFieldOrder::from_full_capacity(128).unwrap(),
     )
     .unwrap();
@@ -225,20 +238,45 @@ fn grinding_rejects_out_of_range_response_and_incomplete_plan() {
         preview_prover.preview_fold_response(GrindingSite::FoldResponse { level: 1 }, 0),
         Err(AkitaError::InvalidInput(_))
     ));
-    preview_prover
+    let mut preview = preview_prover
         .preview_fold_response(GrindingSite::FoldResponse { level: 0 }, 0)
         .unwrap();
+    let work = preview.take_work().unwrap();
+    assert!(matches!(preview.take_work(), Err(AkitaError::Internal(_))));
     preview_prover
-        .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, 0)
+        .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, work)
         .unwrap();
     preview_prover.finish().unwrap();
 
+    // Work committed at a site the plan does not expect is rejected and
+    // poisons the replay.
     let state = new_prover_channel(b"native-grinding", b"fixture");
     let mut prover = ProverGrinding::new(state, &plan);
+    let work = prover
+        .preview_fold_response(GrindingSite::FoldResponse { level: 0 }, 0)
+        .unwrap()
+        .take_work()
+        .unwrap();
+    assert!(matches!(
+        prover.commit_fold_response(GrindingSite::FoldResponse { level: 1 }, work),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(prover.finish(), Err(AkitaError::InvalidInput(_))));
+
+    // Work whose response nonce exceeds the scheduled width is rejected and
+    // poisons the replay. The preview refuses such a nonce, so the work is
+    // built on a bare preview.
+    let state = new_prover_channel(b"native-grinding", b"fixture");
+    let mut prover = ProverGrinding::new(state, &plan);
+    let mut preview = FoldPreview::new(
+        &new_prover_channel(b"native-grinding", b"fixture"),
+        akita_params::FOLD_RESPONSE_ATTEMPTS,
+    );
+    preview.grind(0).unwrap();
     assert!(matches!(
         prover.commit_fold_response(
             GrindingSite::FoldResponse { level: 0 },
-            akita_params::FOLD_RESPONSE_ATTEMPTS,
+            preview.take_work().unwrap(),
         ),
         Err(AkitaError::InvalidInput(_))
     ));
@@ -261,6 +299,27 @@ fn grinding_rejects_out_of_range_response_and_incomplete_plan() {
             assert!(verifier.state_mut().prover_message::<u8>().is_err());
             assert!(matches!(verifier.finish(), Err(AkitaError::InvalidProof)));
         }
+    }
+}
+
+#[test]
+fn grinding_preview_requires_the_fold_proof_of_work_next() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    for runs in [
+        vec![GrindingRun::fold_response(0)],
+        vec![GrindingRun::fold_response(0), fold_work(1, 2)],
+        vec![
+            GrindingRun::fold_response(0),
+            GrindingRun::fold_challenge_group(0, 0, 2).unwrap(),
+        ],
+    ] {
+        let plan = GrindingPlan::new(runs, order).unwrap();
+        let state = new_prover_channel(b"native-grinding", b"fixture");
+        let prover = ProverGrinding::new(state, &plan);
+        assert!(matches!(
+            prover.preview_fold_response(GrindingSite::FoldResponse { level: 0 }, 0),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 }
 
@@ -371,101 +430,61 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     let plan = GrindingPlan::new(
         vec![
             GrindingRun::fold_response(3),
+            fold_work(3, 4),
             GrindingRun::fold_challenge_group(3, 0, 2).unwrap(),
             GrindingRun::fold_challenge_group(3, 1, 2).unwrap(),
         ],
         ChallengeFieldOrder::from_full_capacity(128).unwrap(),
     )
     .unwrap();
+    assert_eq!(plan.runs()[1].grind_bits(), 2);
     let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let family =
+        FoldChallengeFamily::new(FoldChallengeDrawDomain::EvaluationTrace, 64, config, None)
+            .unwrap();
+    // Group 0 has two blocks and one claim; group 1 one block and two claims.
+    let draw = |draw: &mut dyn FnMut(usize, usize, usize) -> akita_challenges::Challenges| {
+        (draw(0, 2, 1), draw(1, 1, 2))
+    };
     let site = GrindingSite::FoldResponse { level: 3 };
     let nonce = 7;
     let state = new_prover_channel(b"native-fold-transaction", b"fixture");
     let mut prover = ProverGrinding::new(state, &plan);
-    let (preview_first, preview_second) = {
+    let (work, preview) = {
         let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
-        let first = PreviewFoldDraw::new(&mut preview_state)
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                64,
-                0,
-                2,
-                1,
-                &config,
-                None,
-            )
-            .unwrap();
-        let second = PreviewFoldDraw::new(&mut preview_state)
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                64,
-                1,
-                1,
-                2,
-                &config,
-                None,
-            )
-            .unwrap();
-        (first, second)
+        let work = preview_state.take_work().unwrap();
+        let preview = draw(&mut |group, blocks, claims| {
+            PreviewFoldDraw::new(&mut preview_state)
+                .draw_fold_challenges(&family, group, blocks, claims)
+                .unwrap()
+                .unwrap()
+        });
+        (work, preview)
     };
-    prover.commit_fold_response(site, nonce).unwrap();
-    let live_first = ProverFoldDraw::new(prover.state_mut(), 3, 0)
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            64,
-            0,
-            2,
-            1,
-            &config,
-            None,
-        )
-        .unwrap();
-    prover.record_fold_challenges(3, 0, 2).unwrap();
-    let live_second = ProverFoldDraw::new(prover.state_mut(), 3, 1)
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            64,
-            1,
-            1,
-            2,
-            &config,
-            None,
-        )
-        .unwrap();
-    prover.record_fold_challenges(3, 1, 2).unwrap();
-    assert_eq!(
-        (preview_first, preview_second),
-        (live_first.clone(), live_second.clone())
-    );
+    prover.commit_fold_response(site, work).unwrap();
+    let live = draw(&mut |group, blocks, claims| {
+        let challenges = ProverFoldDraw::new(prover.state_mut(), 3, group as u32)
+            .draw_fold_challenges(&family, group, blocks, claims)
+            .unwrap()
+            .unwrap();
+        prover.record_fold_challenges(3, group as u32, 2).unwrap();
+        challenges
+    });
+    assert_eq!(preview, live);
     let proof = prover.finish().unwrap();
+    assert!(proof.len() <= plan.nonce_max_bytes());
 
     let state = new_verifier_channel(b"native-fold-transaction", b"fixture", &proof);
     let mut verifier = VerifierGrinding::new(state, &plan);
     assert_eq!(verifier.read_fold_response(site).unwrap(), nonce);
-    let verified_first = VerifierFoldDraw::new(verifier.state_mut(), 3, 0)
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            64,
-            0,
-            2,
-            1,
-            &config,
-            None,
-        )
-        .unwrap();
-    verifier.record_fold_challenges(3, 0, 2).unwrap();
-    let verified_second = VerifierFoldDraw::new(verifier.state_mut(), 3, 1)
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            64,
-            1,
-            1,
-            2,
-            &config,
-            None,
-        )
-        .unwrap();
-    verifier.record_fold_challenges(3, 1, 2).unwrap();
-    assert_eq!((verified_first, verified_second), (live_first, live_second));
+    let verified = draw(&mut |group, blocks, claims| {
+        let challenges = VerifierFoldDraw::new(verifier.state_mut(), 3, group as u32)
+            .draw_fold_challenges(&family, group, blocks, claims)
+            .unwrap()
+            .unwrap();
+        verifier.record_fold_challenges(3, group as u32, 2).unwrap();
+        challenges
+    });
+    assert_eq!(verified, live);
     verifier.finish().unwrap();
 }

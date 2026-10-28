@@ -85,9 +85,15 @@ fn assert_selected_grinding_edge_parity(
             .expect("selected relation geometry");
         let edge = akita_params::transcript_grinding_cost_for_planner_edge(
             &fold.params,
+            akita_params::FoldChallengeCost::new(&fold.params, &layout)
+                .expect("selected fold challenge cost"),
             geometry,
             &layout,
             successor,
+            folds.get(index + 1).is_none().then(|| {
+                akita_params::FoldChallengeCost::terminal(&schedule.terminal)
+                    .expect("selected terminal fold cost")
+            }),
             challenge_order,
             extension_degree,
             u32::try_from(index).expect("selected fold level fits u32"),

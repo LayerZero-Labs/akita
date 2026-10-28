@@ -92,15 +92,17 @@ pub use sis::{
 pub use tail_golomb_rice_low_bits::{rice_low_bits_for_cap, wire_rice_low_bits};
 pub use transcript_grinding::{
     independent_batch_loss_factor, multilinear_point_loss_factor, polynomial_identity_loss_factor,
-    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder, GrindingPlan,
-    GrindingQueryKind, GrindingRun, GrindingSite, SumcheckProtocol, TranscriptGrindingCost,
-    FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
-    GRINDING_CHECK_MAX_BYTES, GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER,
-    GRINDING_NONCE_SLACK_BITS, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
-    TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
+    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
+    FoldChallengeCost, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
+    SumcheckProtocol, TranscriptGrindingCost, FOLD_COORDINATE_ORACLE_REVISION,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_CHECK_MAX_BYTES,
+    GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_GRINDING_QUERY_LIMIT,
+    TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
-    derive_transcript_grinding_plan_from_public_shape, transcript_grinding_cost_for_planner_edge,
+    derive_transcript_grinding_plan_from_public_shape, fold_challenge_runs,
+    transcript_grinding_cost_for_planner_edge,
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
