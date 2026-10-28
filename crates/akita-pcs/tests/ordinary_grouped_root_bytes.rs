@@ -132,12 +132,26 @@ fn ordinary_grouped_root_proof_bytes_are_pinned() {
                 .unwrap();
         }
         let mut setup_bytes = Vec::new();
-        setup
+        let required = akita_config::SetupRequirements::from_catalog::<OneHotCfg>(
+            scheme.schedules(),
+            FINAL_NV,
+            2,
+        )
+        .unwrap()
+        .matrix_capacity()
+        .num_field_elements;
+        // Disk persistence may retain a larger cached prefix. Pin the entire
+        // catalog-required prefix, excluding that unrelated surplus capacity.
+        let mut descriptor = setup.expanded.descriptor().clone();
+        descriptor.num_field_elements = required;
+        descriptor.serialize_compressed(&mut setup_bytes).unwrap();
+        for coefficient in setup
             .expanded
-            .descriptor()
-            .serialize_compressed(&mut setup_bytes)
-            .unwrap();
-        for coefficient in setup.expanded.shared_matrix().as_field_slice() {
+            .shared_matrix()
+            .as_field_slice()
+            .get(..required)
+            .unwrap()
+        {
             setup_bytes.extend_from_slice(&coefficient.to_bytes_le_vec());
         }
         let observed = (
