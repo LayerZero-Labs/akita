@@ -25,5 +25,7 @@ pub(in crate::opaque) use recursive_kernels::prepare_recursive_witness_opening;
 #[cfg(test)]
 pub(crate) use stage_sessions::{cpu_extension_opening_session, ConsumerStage2Session};
 pub(crate) use stage_sessions::{
-    cpu_extension_opening_session_from_witnesses, CpuStage1SessionHandle, CpuStage2SessionHandle,
+    cpu_extension_opening_session_from_witnesses, CpuStage1SessionHandle,
 };
+
+pub use stage_sessions::CpuStage2SessionHandle;
