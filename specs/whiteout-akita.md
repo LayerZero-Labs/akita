@@ -2528,18 +2528,31 @@ The numbering continues the W4 note's A1–A23.
   expanded rows, map images) are not wiped.
 
   The response prover's own code reads `e` only at public indices and
-  lifts its digits with `jolt_zk::whiteout::lift_ct` (no branch on sign):
-  `AkitaResponseProver::prove` (the committed table), `FusedE` (the i8 first
-  round and its fold), `SplitB` (indexed by `I_bin`'s public positions and
-  the round index only), and jolt-zk's `PlaneLayout::recompose`. `e`'s
-  digits and every table derived from them are wiped when freed:
-  `Zeroizing` for digits, `SecretTable` for field tables (each fold drops,
-  and so wipes, the previous one), jolt-zk's `SecretVec` for the decoded
-  parts. Not audited and not wiped here, because they are Akita's shared
-  kernels: the commitment's copy of `e` (`DensePoly` and its digit cache),
-  and the digit-range session, whose `CompactDigitSource` groups digits by
-  value class (`ordered_range_class_pairs`), a memory access that depends
-  on `e`. Both are requirements on those kernels, as for the compression
+  lifts its digits with `jolt_algebra::lift_ct` (no branch on sign):
+  `AkitaResponseProver::prove`, `FusedKernel` (the streamed rounds' chunks
+  and the held tables' folds), `SplitB` (indexed by `I_bin`'s public
+  positions and the round index only), and jolt-zk's
+  `PlaneLayout::recompose`. `e`'s digits and every table derived from them
+  are wiped when freed: `Zeroizing` for digits, `SecretTable` for field
+  tables and the streamed chunks' scratch, `SignedBlockPoly`'s drop for
+  the committed copy and `SignedScratch`'s for the signed-block reader's
+  staged rows, jolt-zk's `SecretVec` for the decoded parts. Since
+  M2 (jolt `specs/whiteout-m2-memory.md`) the commitment holds `e` as
+  `i8` digits (`SignedBlockPoly`), and the signed-block reads it reaches
+  are argued constant time there: values enter `F` by `lift_ct`, signed
+  readers skip no zero, and every comparison on `e`'s extrema has the same
+  outcome for every in-alphabet `e`. Not audited, because they are Akita's
+  shared kernels and take the same digit rows as before M2: the commit
+  matvec (`I8CommitPolicy::Dense`, whose reconstruction is `to_ring`, not
+  `to_ring_ct`); its digit-to-Montgomery conversion, whose scalar
+  fallback `DigitMontLut::get` (jolt-algebra `crt_ntt_repr/lut.rs`)
+  indexes a table by the digit (reached with `i16` primes, on x86_64
+  without AVX2 or at `D < 64`, and on targets with neither NEON nor AVX2;
+  not reached on the M4, where the response commit uses `i32` NEON at
+  every level); the opening's decompose-fold accumulators; and the
+  digit-range session, whose `CompactDigitSource` groups digits by value
+  class (`ordered_range_class_pairs`), a memory access that depends on
+  `e`. These are requirements on those kernels, as for the compression
   executor.
 - **A37, trusting the setup cache (upstream, open).** With
   disk-persistence, `akita_setup::load_prover_setup` reads the public
