@@ -25,10 +25,10 @@ use akita_types::{
 };
 #[cfg(test)]
 use jolt_algebra::Ring;
-use jolt_algebra::{One, Zero};
+use jolt_algebra::{lift_ct, One, Zero};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{
-    lift_ct, CompressedImage, CompressedTarget, ImageCompression, ResponseStatement, WhiteoutError,
+    CompressedImage, CompressedTarget, ImageCompression, ResponseStatement, WhiteoutError,
 };
 
 use super::{CompressionShape, F};

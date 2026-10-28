@@ -8,12 +8,11 @@
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckKernel;
 
-use jolt_zk::whiteout::lift_ct;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::rows::eq_table;
 use jolt_algebra::solinas::parallel::*;
-use jolt_algebra::{cfg_fold_reduce, cfg_into_iter, Field, Fold, JoltField};
+use jolt_algebra::{cfg_fold_reduce, cfg_into_iter, lift_ct, Field, Fold, JoltField};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProverRoundContext, SumcheckSite, VerifierRoundContext};
 use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};

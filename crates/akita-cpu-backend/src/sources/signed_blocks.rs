@@ -12,6 +12,7 @@ use jolt_algebra::ring::cyclotomic::{BalancedDecomposePow2Params, SmallSignedVal
 use jolt_algebra::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 use std::ops::Range;
+use zeroize::Zeroize;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -428,11 +429,30 @@ impl<F: Field + CanonicalEncoding, V: Copy + Default, const D: usize> SignedScra
     }
 }
 
+/// The staged values and digit rows copy the source, which may be a secret
+/// witness (`SignedBlockPoly`, A45): wiped over their whole capacity.
+/// Borrowed rows never pass through here, so on that path they hold zeros.
+impl<F: Field + CanonicalEncoding, V, const D: usize> Drop for SignedScratch<F, V, D> {
+    fn drop(&mut self) {
+        wipe_scratch(&mut self.raw);
+        wipe_scratch(&mut self.i8);
+        wipe_scratch(&mut self.i16);
+    }
+}
+
+/// Zeroes `values`' whole capacity and empties it.
+fn wipe_scratch<T>(values: &mut Vec<T>) {
+    values.clear();
+    values.spare_capacity_mut().zeroize();
+}
+
 fn row_buffer<T: Copy + Default, const D: usize>(
     rows: &mut Vec<[T; D]>,
     width: usize,
 ) -> &mut [[T; D]] {
     if rows.len() < width {
+        // Growing frees the old buffer, which may hold secret rows.
+        wipe_scratch(rows);
         rows.resize(width, [T::default(); D]);
     }
     rows
