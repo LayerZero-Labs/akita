@@ -16,3 +16,20 @@ pub enum GroupClaimKind {
         claim: crate::binary_source::BinaryTerminalClaim,
     },
 }
+
+impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
+    /// Extension seam: validate group kinds and cross-group claim constraints.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub(super) fn check_group_kinds(
+        groups: &[super::PolynomialGroupClaims<'_, F, C>],
+    ) -> Result<(), akita_error::AkitaError> {
+        for group in groups {
+            if group.evaluations.is_empty() {
+                return Err(akita_error::AkitaError::InvalidInput(
+                    "opening claim group evaluations must be nonempty".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}

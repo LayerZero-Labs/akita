@@ -46,3 +46,7 @@ pub use sponge::TranscriptSponge;
 pub const TRANSCRIPT_CHALLENGE_BLOCK_LEN: usize = 32;
 /// Byte length of every fold-challenge seed.
 pub const FOLD_CHALLENGE_SEED_LEN: usize = TRANSCRIPT_CHALLENGE_BLOCK_LEN;
+
+/// Extension seam: expose the encoding bounds needed to implement custom proof channels.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+pub use spongefish::{Encoding, NargDeserialize};
