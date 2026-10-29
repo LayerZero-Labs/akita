@@ -1,21 +1,24 @@
-//! Binary terminal claims inside the ordinary grouped opening interface.
+//! Binary word claims inside the ordinary grouped opening interface.
 
 use super::{GroupClaimKind, PolynomialGroupClaims};
-use crate::binary_source::BinaryTerminalClaim;
+use crate::binary_source::BinaryWordClaim;
 use crate::proof::commitment::CommittedGroupKind;
 use crate::CommittedGroup;
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
 
 impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, CommittedGroup<F>> {
-    /// Select one binary terminal claim; the future field switch produces it.
+    /// Select one logical word claim over GF(2^128).
     ///
     /// The ordinary point and evaluation vectors are zero carrier geometry for
-    /// suffix schedule selection. Only the typed terminal is the binary claim.
+    /// suffix schedule selection. Only the typed word claim is the binary claim.
     /// Use `map_commitment` to borrow the same frozen claim for verification.
+    /// The opening runs the field switch and authenticates its carrier terminal.
+    /// Multiple points on one polynomial must be reduced by the application;
+    /// the opening rejects a second claim with the same polynomial identifier.
     pub fn new_binary(
         commitment: CommittedGroup<F>,
-        claim: BinaryTerminalClaim,
+        claim: BinaryWordClaim,
     ) -> Result<Self, AkitaError> {
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
             return Err(AkitaError::InvalidInput(

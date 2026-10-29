@@ -45,3 +45,7 @@ pub use protocol::{
     RingRelationProver, RingSwitchOutput, SuffixProverState,
 };
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
+
+#[cfg(feature = "labinius-trinomial")]
+#[doc(hidden)]
+pub mod binary_field_switch;

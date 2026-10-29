@@ -115,6 +115,9 @@ impl FaultBackend {
         let (mut payload, native) = self
             .inner
             .prepare_root_group(session, context, handle, request)?;
+        if request.is::<akita_types::binary_source::BinaryFieldSwitchSourceRequest>() {
+            return Ok((payload, native));
+        }
         let request = request
             .downcast_ref::<BinaryRootWitnessRequest<C>>()
             .unwrap();
@@ -240,4 +243,16 @@ impl FaultBackend {
             batching,
         )
     }
+}
+
+/// Exercise the actual native root carry constructor on a frontend terminal.
+pub(super) fn authenticate_terminal(
+    manifest: &BinaryCommittedGroupManifest,
+    claim: &BinaryTerminalClaim,
+    source: &[u128],
+    challenges: &akita_challenges::Challenges,
+) -> Result<(), AkitaError> {
+    let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
+    fault_witness::reconstruct(manifest, claim, &plan, &[53; 32], source, challenges)?;
+    Ok(())
 }

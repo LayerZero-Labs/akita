@@ -73,14 +73,6 @@ where
         None
     };
     let logical_len = schedule.root.output_witness_len;
-    let public = BinaryRootPublic::new(
-        manifest,
-        claim,
-        expanded,
-        logical_len,
-        next.params.d_a(),
-        ordinary_profile,
-    )?;
     let ordinary_statement = ordinary_group
         .zip(ordinary_profile)
         .map(|(ordinary, profile)| {
@@ -106,9 +98,36 @@ where
         ordinary_statement,
     )?;
     let context = backend.proof_context(proof_session, 0)?;
+    let (_, source) = backend.prepare_root_group(
+        proof_session,
+        &context.for_group(0),
+        handles.first().ok_or(AkitaError::InvalidProof)?,
+        &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
+            manifest: manifest.as_ref().clone(),
+            polynomial: *claim.polynomial(),
+        },
+    )?;
+    let carriers = source
+        .downcast_ref::<Vec<u128>>()
+        .ok_or_else(|| AkitaError::Internal("backend field-switch source type mismatch".into()))?;
+    let terminal = crate::binary_field_switch::prove_field_switch(
+        manifest.descriptor(),
+        claim,
+        carriers,
+        grinding.state_mut(),
+    )?;
+    let public = BinaryRootPublic::new(
+        manifest,
+        &terminal,
+        expanded,
+        logical_len,
+        next.params.d_a(),
+        ordinary_profile,
+    )?;
+
     let request = akita_types::binary_source::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),
-        claim: claim.clone(),
+        claim: terminal,
         plan: public.plan().clone(),
         ordinary: ordinary_profile
             .map(|profile| {

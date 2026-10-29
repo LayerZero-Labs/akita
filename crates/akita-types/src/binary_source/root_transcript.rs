@@ -1,6 +1,6 @@
 //! Shared transcript atoms of an explicitly selected binary root.
 
-use super::{BinaryCommittedGroupManifest, BinaryTerminalClaim};
+use super::{BinaryCommittedGroupManifest, BinaryWordClaim};
 use akita_challenges::{Challenges, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 use akita_error::AkitaError;
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
@@ -9,13 +9,13 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 /// Extension seam: bind the complete order-zero binary and mixed statement.
 /// <https://github.com/LayerZero-Labs/akita/issues/285>
 ///
-/// Bind the source contract and terminal supplied by the frontend.
-/// The future field switch produces this same terminal claim.
+/// Bind the source contract and caller's logical word claim before the field
+/// switch produces its internal carrier terminal.
 #[allow(clippy::type_complexity)]
 pub fn binary_root_statement<F, E, S>(
     state: &mut S,
     manifest: &BinaryCommittedGroupManifest,
-    claim: &BinaryTerminalClaim,
+    claim: &BinaryWordClaim,
     binary_commitment: &[F],
     ordinary: Option<(usize, &[F], &[E], &[E])>,
 ) -> Result<(), AkitaError>

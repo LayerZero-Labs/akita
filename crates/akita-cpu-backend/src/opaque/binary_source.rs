@@ -322,6 +322,11 @@ where
     E: Field + 'static,
 {
     let binding = backend.binding(session, context)?;
+    if let Some(request) =
+        request.downcast_ref::<akita_types::binary_source::BinaryFieldSwitchSourceRequest>()
+    {
+        return field_switch_source(backend, &binding, context, handle, request);
+    }
     let request = request
         .downcast_ref::<akita_types::binary_source::BinaryRootWitnessRequest<CommitmentHandle<F, E>>>()
         .ok_or_else(|| AkitaError::InvalidInput("native root request family mismatch".into()))?;
@@ -550,4 +555,84 @@ fn natural_segment_digits(
         }
     }
     Ok(natural)
+}
+
+/// Extract the authenticated owner's carriers in canonical low-column-bit order.
+fn field_switch_source<F, E>(
+    backend: &CpuBackend<F, E>,
+    binding: &OperationBinding,
+    context: &ProofContext,
+    handle: &CommitmentHandle<F, E>,
+    request: &akita_types::binary_source::BinaryFieldSwitchSourceRequest,
+) -> Result<(Vec<F>, Box<dyn std::any::Any + Send + Sync>), AkitaError>
+where
+    F: Field + CanonicalEncoding + 'static,
+    E: Field + 'static,
+{
+    use akita_algebra::ring::trinomial::module_map::{scalar_to_binary, unpack_signed_components};
+    let source = handle.committed.source.binary_source().ok_or_else(|| {
+        AkitaError::InvalidInput("field switch requires a binary source handle".into())
+    })?;
+    request
+        .manifest
+        .validate_carrier(&handle.committed.parameters)?;
+    let (schedule, root_layout) = binding.scope_lease().proof_plan()?;
+    if handle.owner != backend.owner_id()
+        || context.fold_level() != 0
+        || context
+            .group_index()
+            .and_then(|group| u64::try_from(group).ok())
+            != Some(request.manifest.setup_group())
+        || request.manifest != source.manifest
+        || schedule.root.params.group_params(&root_layout, 0)?.profile != source.carrier_profile
+        || handle.committed.parameters != source.carrier_profile
+        || handle.committed.retained.is_some()
+    {
+        return Err(AkitaError::InvalidInput(
+            "field-switch source owner mismatch".into(),
+        ));
+    }
+    let descriptor = request.manifest.descriptor();
+    let owner = descriptor
+        .polynomials()
+        .iter()
+        .position(|id| id == &request.polynomial)
+        .ok_or_else(|| AkitaError::InvalidInput("unknown binary polynomial".into()))?;
+    let index = descriptor.index_map();
+    let scalar_rows = checked::exact_div(index.padded_carriers(), index.columns())
+        .ok_or(AkitaError::Internal("invalid carrier geometry".into()))?;
+    let ring_rows = checked::exact_div(scalar_rows, 4)
+        .ok_or(AkitaError::Internal("invalid source ring geometry".into()))?;
+    let mut carriers = Vec::new();
+    carriers
+        .try_reserve_exact(index.padded_carriers())
+        .map_err(|_| AkitaError::InvalidInput("carrier allocation failed".into()))?;
+    for carrier in 0..index.padded_carriers() {
+        let row = carrier / index.columns();
+        let element = checked::mul_add(owner, index.columns(), carrier % index.columns())
+            .and_then(|x| checked::mul_add(x, ring_rows, row / 4))
+            .ok_or(AkitaError::Internal("carrier address overflow".into()))?;
+        let components = unpack_signed_components(
+            source
+                .sources
+                .get(element)
+                .ok_or(AkitaError::Internal("missing source ring".into()))?,
+        )?;
+        let [low, high, padding] = scalar_to_binary(
+            components
+                .get(row % 4)
+                .ok_or(AkitaError::Internal("missing source component".into()))?,
+        )?
+        .to_words();
+        if padding != 0 {
+            return Err(AkitaError::Internal(
+                "nonzero source carrier padding".into(),
+            ));
+        }
+        carriers.push(u128::from(low) | (u128::from(high) << 64));
+    }
+    binding
+        .scope_lease()
+        .admit_commitment(context, handle.committed.commitment_id)?;
+    Ok((Vec::new(), Box::new(carriers)))
 }

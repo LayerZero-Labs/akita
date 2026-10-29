@@ -5,12 +5,14 @@ use akita_error::{checked, AkitaError};
 
 use super::BinarySourceDescriptor;
 
-/// A binary terminal from the caller's frontend.
+/// An internal whole-carrier terminal produced by the opening's field switch.
 ///
-/// The future field switch produces this exact interface. Coordinates and value
+/// Coordinates and value
 /// use the unique 21-byte polynomial-basis encoding of GF(2^162). The row point
 /// addresses scalar carriers within a column; the column point addresses the
-/// low carrier-address bits. The complete claim belongs in transcript order zero.
+/// low carrier-address bits. For sumcheck point `z` and `C = 2^c` columns,
+/// `rho_col = z[..c]` and `rho_row = z[c..]`. The opening authenticates this
+/// terminal even when its public field-switch weight is zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryTerminalClaim {
     polynomial: [u8; 32],
@@ -20,6 +22,8 @@ pub struct BinaryTerminalClaim {
 }
 
 impl BinaryTerminalClaim {
+    /// Construct the internal terminal after the carrier field switch.
+    #[doc(hidden)]
     pub fn new(
         descriptor: &BinarySourceDescriptor,
         polynomial: [u8; 32],

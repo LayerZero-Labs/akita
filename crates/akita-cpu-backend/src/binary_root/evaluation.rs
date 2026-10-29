@@ -21,7 +21,7 @@ pub struct BinaryEvaluationWitness {
     pub bounds: BinaryEvaluationBounds,
 }
 
-/// Construct U before the fold challenge, from the caller's terminal row point.
+/// Construct U before the fold challenge, from the field-switch terminal row point.
 ///
 /// Sources use polynomial/column/ring-row order. The returned one-digit scalar
 /// elements use polynomial/column order. Only the claimed polynomial is live;

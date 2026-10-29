@@ -7,13 +7,13 @@
 pub enum GroupClaimKind {
     /// The ordinary negacyclic-ring opening relation.
     Ordinary,
-    /// A binary terminal supplied by the caller's frontend.
+    /// A binary word claim supplied by the caller.
     #[cfg(feature = "labinius-trinomial")]
     Binary {
         /// Frozen binary A/B contract, retained when mapping commitment payloads.
         manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
-        /// The caller's binary terminal evaluation.
-        claim: crate::binary_source::BinaryTerminalClaim,
+        /// The caller's logical word MLE evaluation over GF(2^128).
+        claim: crate::binary_source::BinaryWordClaim,
     },
 }
 
@@ -28,6 +28,21 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                 return Err(akita_error::AkitaError::InvalidInput(
                     "opening claim group evaluations must be nonempty".into(),
                 ));
+            }
+        }
+        #[cfg(feature = "labinius-trinomial")]
+        for (position, group) in groups.iter().enumerate() {
+            if let GroupClaimKind::Binary { manifest, claim } = &group.kind {
+                claim.validate(manifest.descriptor())?;
+                if groups.iter().take(position).any(|previous| {
+                    matches!(&previous.kind, GroupClaimKind::Binary { claim: earlier, .. }
+                        if earlier.polynomial() == claim.polynomial())
+                }) {
+                    return Err(akita_error::AkitaError::InvalidInput(
+                        "one binary word claim per polynomial; reduce multiple points before opening"
+                            .into(),
+                    ));
+                }
             }
         }
         Ok(())

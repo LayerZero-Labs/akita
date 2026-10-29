@@ -4,10 +4,14 @@
 mod common;
 #[path = "binary_source_end_to_end/fault_backend.rs"]
 mod fault_backend;
+#[path = "binary_source_end_to_end/field_switch.rs"]
+mod field_switch;
+#[path = "binary_source_end_to_end/reference.rs"]
+mod reference;
 #[path = "binary_source_end_to_end/statement_binding.rs"]
 mod statement_binding;
 
-use akita_algebra::binary::BinaryField162;
+use akita_algebra::binary::{BinaryField128, BinaryField162};
 use akita_challenges::FoldChallengeFamily;
 use akita_config::{
     proof_optimized::fp128::DenseBounded, CommitmentConfig, TrustedScheduleCatalog,
@@ -22,7 +26,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryTerminalClaim,
+    BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
 };
 use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use common::{init_rayon_pool, run_on_large_stack, selected_prover_data, selected_statement};
@@ -101,57 +105,46 @@ fn scalar(low: u64, middle: u64, high: u64) -> BinaryField162 {
     BinaryField162::from_words([low, middle, high]).unwrap()
 }
 
-/// Independent source evaluation: collapse the low carrier bit for columns,
-/// followed by the two row bits. It does not use the root's public-weight code.
-fn honest_claim(descriptor: &BinarySourceDescriptor, words: &[u128]) -> BinaryTerminalClaim {
-    let row = [scalar(3, 5, 1), scalar(7, 11, 2)];
-    let column = [scalar(13, 17, 3)];
-    let mut values = words
-        .iter()
-        .map(|&word| scalar(word as u64, (word >> 64) as u64, 0))
+/// Reference word MLE is independent of the field-switch arithmetic.
+fn honest_claim(descriptor: &BinarySourceDescriptor, words: &[u128]) -> BinaryWordClaim {
+    let split = descriptor.index_map().claim_variable_split();
+    let point = (0..split.intra_carrier + split.carrier_address)
+        .map(|axis| reference::host(31 + axis as u128 * 17))
         .collect::<Vec<_>>();
-    for coordinate in column.iter().chain(&row) {
-        values = values
-            .chunks_exact(2)
-            .map(|pair| (BinaryField162::ONE + *coordinate) * pair[0] + *coordinate * pair[1])
-            .collect();
-    }
-    assert_eq!(values.len(), 1);
-    BinaryTerminalClaim::new(
-        descriptor,
-        descriptor.polynomials()[0],
-        row.iter().map(|value| value.to_bytes()).collect(),
-        column.iter().map(|value| value.to_bytes()).collect(),
-        values[0].to_bytes(),
-    )
-    .unwrap()
+    reference::claim(descriptor, words, &point)
 }
 
 #[test]
 fn binary_group_opens_once_inside_the_callers_transcript() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None));
+    run_on_large_stack(|| run_fixture(false, None, 128));
 }
 
 #[test]
 fn binary_and_ordinary_groups_share_one_opening() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(true, None));
+    run_on_large_stack(|| run_fixture(true, None, 128));
 }
 
 #[test]
-fn binary_root_rejects_a_foreign_source_commitment() {
+fn field_switch_binary_root_rejects_a_foreign_source_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignCommitment)));
+    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignCommitment), 128));
 }
 
 #[test]
 fn binary_root_rejects_a_foreign_partial_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignPartials)));
+    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignPartials), 128));
 }
 
-fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
+#[test]
+fn field_switch_narrow_source_mutations_authenticate() {
+    init_rayon_pool();
+    run_on_large_stack(|| run_fixture(false, None, 8));
+}
+
+fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usize) {
     let catalog = test_catalog();
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
     let singleton_carrier = scheme
@@ -191,7 +184,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
         .setup_prover(if mixed { 23 } else { 18 }, if mixed { 2 } else { 1 })
         .unwrap();
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone()).unwrap());
-    let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
+    let index = BinaryIndexMap::new(word_width, 8 * (128 / word_width), 8, 2).unwrap();
     let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0).unwrap();
     let descriptor = BinarySourceDescriptor::new(index, vec![[29; 32]], profiles).unwrap();
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
@@ -206,8 +199,9 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
         0x1357_9bdf_2468_ace0_1357_9bdf_2468_ace0,
     ];
     let claim = honest_claim(&descriptor, &words);
+    let logical_words = reference::logical_words(&descriptor, &words);
     let source = backend
-        .import_binary_source(manifest.clone(), carrier, vec![words.clone()])
+        .import_binary_source(manifest.clone(), carrier, vec![logical_words.clone()])
         .unwrap();
     let committed = backend
         .commit(
@@ -225,7 +219,11 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
             claim.value()
         );
         let foreign = backend
-            .import_binary_source(manifest.clone(), carrier, vec![foreign_words])
+            .import_binary_source(
+                manifest.clone(),
+                carrier,
+                vec![reference::logical_words(&descriptor, &foreign_words)],
+            )
             .unwrap();
         let foreign = backend
             .commit(
@@ -247,10 +245,15 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
     let commitment =
         CommittedGroup::<F>::deserialize_compressed(commitment_bytes.as_slice(), &()).unwrap();
     assert_eq!(commitment, original_commitment);
-    // A binary terminal cannot be attached to an ordinary group kind, even if
+    // A binary word claim cannot be attached to an ordinary group kind, even if
     // its payload and carrier metadata came from the same binary commitment.
     let wrong_kind = CommittedGroup::new(carrier, commitment.commitment().clone());
     assert!(PolynomialGroupClaims::<F, _>::new_binary(wrong_kind, claim.clone()).is_err());
+    let duplicate = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim.clone()).unwrap(),
+        PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim.clone()).unwrap(),
+    ]);
+    assert!(matches!(duplicate, Err(AkitaError::InvalidInput(_))));
     let (ordinary_commitment, ordinary_handle, ordinary_point, ordinary_value) = if mixed {
         let coefficients = (0..1usize << 18)
             .map(|index| F::from_u64(((index ^ (index >> 3) ^ (index >> 11)) & 1) as u64))
@@ -301,7 +304,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
     }
     let claims = OpeningClaims::from_groups(groups).unwrap();
     let data = selected_prover_data::<BinaryTestSuffix>(claims, handles, scheme.schedules());
-    let statement = |claim: &BinaryTerminalClaim, point: &[F], value: F| {
+    let statement = |claim: &BinaryWordClaim, point: &[F], value: F| {
         let owned =
             PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim.clone()).unwrap();
         let mut groups = vec![owned.map_commitment(|_| &commitment)];
@@ -321,7 +324,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
         let attacker = FaultBackend::new(
             backend.clone(),
             setup.expanded.descriptor().setup_seed.seed,
-            words.clone(),
+            logical_words.clone(),
             fault,
         );
         let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::<F, _>::new_binary(
@@ -399,12 +402,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
         .unwrap();
     let proof = prover.narg_string().to_vec();
     eprintln!(
-        "{} ordinary grouped proof: {} bytes",
+        "{} ordinary grouped proof (word width {}): {} bytes",
         if mixed {
             "mixed binary/ordinary"
         } else {
             "binary-only"
         },
+        descriptor.index_map().word_width(),
         proof.len()
     );
     prover.public_message(b"application-suffix");
@@ -468,7 +472,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
     assert_eq!(replay.verifier_message::<[u8; 32]>().unwrap(), continuation);
     replay.check_eof().unwrap();
 
-    let rejects = |bytes: &[u8], claim: &BinaryTerminalClaim, point: &[F], value: F| {
+    let rejects = |bytes: &[u8], claim: &BinaryWordClaim, point: &[F], value: F| {
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             let mut replay =
                 new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", bytes).unwrap();
@@ -486,23 +490,28 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>) {
     };
     let mut value = *claim.value();
     value[0] ^= 1;
-    let mut row = claim.rho_row().to_vec();
-    row[0][0] ^= 1;
-    let mut column = claim.rho_col().to_vec();
-    column[0][0] ^= 1;
-    for (row, column, value) in [
-        (claim.rho_row().to_vec(), claim.rho_col().to_vec(), value),
-        (row, claim.rho_col().to_vec(), *claim.value()),
-        (claim.rho_row().to_vec(), column, *claim.value()),
-    ] {
+    let altered = BinaryWordClaim::new(
+        &descriptor,
+        *claim.polynomial(),
+        claim.point().to_vec(),
+        value,
+    )
+    .unwrap();
+    rejects(&proof, &altered, &ordinary_point, ordinary_value);
+    for coordinate in 0..claim.point().len() {
+        let mut point = claim.point().to_vec();
+        point[coordinate][0] ^= 1;
         let altered =
-            BinaryTerminalClaim::new(&descriptor, *claim.polynomial(), row, column, value).unwrap();
+            BinaryWordClaim::new(&descriptor, *claim.polynomial(), point, *claim.value()).unwrap();
         rejects(&proof, &altered, &ordinary_point, ordinary_value);
     }
-    // U's D payload is the first private message in the restricted root order.
-    let mut altered_d = proof.clone();
-    altered_d[0] ^= 1;
-    rejects(&altered_d, &claim, &ordinary_point, ordinary_value);
+    // Preserve the original U commitment mutation after the frontend prefix;
+    // also mutate a partial and the mandatory terminal in the full opening.
+    for offset in [0, 128 * 16 + 3 * 42, 128 * 16 + 3 * 42 + 21] {
+        let mut altered = proof.clone();
+        altered[offset] ^= 1;
+        rejects(&altered, &claim, &ordinary_point, ordinary_value);
+    }
     for offset in [proof.len() / 2, proof.len() - 1] {
         let mut altered = proof.clone();
         altered[offset] ^= 1;
