@@ -116,5 +116,27 @@ fn field_switch_zero_multiplier_authenticates_terminal() {
             "zero-weight terminal authentication panicked"
         );
         assert!(matches!(outcome.unwrap(), Err(AkitaError::InvalidProof)));
+
+        // Check the actual verifier-shared relation on honest witness digits,
+        // independently of the prover's carry construction refusal above.
+        fault_backend::authenticate_terminal_relation(
+            &manifest,
+            &terminal,
+            &terminal,
+            &source,
+            &challenges,
+        )
+        .unwrap();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            fault_backend::authenticate_terminal_relation(
+                &manifest,
+                &terminal,
+                &changed,
+                &source,
+                &challenges,
+            )
+        }));
+        assert!(outcome.is_ok(), "zero-weight verifier relation panicked");
+        assert!(matches!(outcome.unwrap(), Err(AkitaError::InvalidProof)));
     });
 }

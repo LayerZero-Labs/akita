@@ -256,3 +256,36 @@ pub(super) fn authenticate_terminal(
     fault_witness::reconstruct(manifest, claim, &plan, &[53; 32], source, challenges)?;
     Ok(())
 }
+
+/// Check the verifier's terminal relation on the honest authenticated digits.
+/// A false received terminal must fail even if its frontend multiplier is zero.
+pub(super) fn authenticate_terminal_relation(
+    manifest: &BinaryCommittedGroupManifest,
+    honest: &BinaryTerminalClaim,
+    received: &BinaryTerminalClaim,
+    source: &[u128],
+    challenges: &akita_challenges::Challenges,
+) -> Result<(), AkitaError> {
+    let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
+    let digits =
+        fault_witness::reconstruct(manifest, honest, &plan, &[53; 32], source, challenges)?;
+    let weights = received.relation_weights(
+        manifest.descriptor(),
+        plan.repacking(),
+        akita_types::binary_source::BinaryEvaluationSegments {
+            response: 0,
+            partials: 3,
+            parity_carry: 4,
+            value_carry: 5,
+        },
+        challenges,
+        F::from_u64(1),
+        [F::from_u64(1); 2],
+        u128::MAX - 274,
+    )?;
+    let table = digits
+        .into_iter()
+        .map(|digit| F::from_i64(i64::from(digit)))
+        .collect::<Vec<_>>();
+    weights.check_table(&table)
+}
