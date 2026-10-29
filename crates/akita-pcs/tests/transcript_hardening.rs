@@ -160,6 +160,32 @@ fn stream_binds_session_statement_basis_and_eof() {
                 }),
                 "workload must exercise and mutate a later sumcheck round"
             );
+            // The digests of the recomputed last terminal block each get their
+            // own mutation.
+            let terminal_level = role_ranges
+                .iter()
+                .filter(|(bucket, _)| bucket.family == akita_transcript::SITE_FAMILY_TERMINAL)
+                .map(|(bucket, _)| bucket.level)
+                .max()
+                .expect("workload must reach the terminal");
+            for site in [
+                akita_types::FoldSite::NextWitnessInnerStateDigest {
+                    level: terminal_level - 1,
+                },
+                akita_types::FoldSite::TerminalEDigest {
+                    level: terminal_level,
+                },
+            ] {
+                let id = site.id().expect("digest site id");
+                assert!(
+                    role_ranges
+                        .iter()
+                        .any(|(bucket, _)| bucket.family == id.family
+                            && bucket.level == id.level
+                            && bucket.stage == id.stage),
+                    "workload must mutate the {site:?} digest"
+                );
+            }
             for (bucket, range) in role_ranges {
                 let end = range.start.checked_add(range.len).expect("range end");
                 assert!(end <= proof.len(), "recorded proof range must be in bounds");

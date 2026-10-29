@@ -1,6 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 mod decomposition;
+mod inverse;
 mod shift_windows;
 #[cfg(test)]
 mod tests;

@@ -10,7 +10,7 @@ quantum Core-SVP cost. Its Fiat-Shamir soundness target is 128 bits.
 [Security status](#security-status) states what each target covers.
 
 Akita's small proofs are one of its strongest advantages. Current production
-benchmarks produce opening proofs of roughly 75 to 90 KB. This contrasts with
+benchmarks produce opening proofs of roughly 70 to 85 KB. This contrasts with
 hash-based post-quantum polynomial commitment schemes, which produce proofs of
 hundreds of kilobytes at the same polynomial sizes Akita supports.
 
@@ -250,7 +250,7 @@ PCS provers, which usually materialize an encoded word and a hash tree during
 commitment, then retain both to answer later openings. The memory for those
 objects grows linearly with the polynomial size.
 
-The 75 to 90 KB figures cover the Akita commitment proof. The host proof system
+The 70 to 85 KB figures cover the Akita commitment proof. The host proof system
 contributes its own proof data.
 
 Jolt is the first demanding host for these boundaries. It exercises Akita

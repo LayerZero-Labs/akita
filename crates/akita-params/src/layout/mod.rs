@@ -77,6 +77,6 @@ pub use setup_prefix_slots::{
 pub use setup_projection::SetupProjectionGeometry;
 pub use subring_packing_geometry::SubringCoefficientPackingGeometry;
 pub use tail_segments::{
-    terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponseShape,
+    terminal_response_upper_bound_bytes, terminal_sent_blocks, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalResponseShape, TERMINAL_BLOCK_DIGEST_BYTES,
 };
