@@ -86,9 +86,8 @@ fn check(rank: usize, width: usize, columns: usize, matrix: Matrix, source: Sour
     let prepared = PreparedLimbCommitMatrix::prepare(Q24, D, rank, width, &coefficients).unwrap();
     assert!(prepared.uses_q24_packed_slots());
     let expected = unpacked::<BinaryField128>(&prepared, width, &words);
-    let commit = || {
-        commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, columns, &words).unwrap()
-    };
+    let commit =
+        || commit_binary_clear_limb_prepared::<BinaryField128>(&prepared, columns, &words).unwrap();
     let case = format!("rank={rank} width={width} columns={columns} {matrix:?} {source:?}");
     assert_eq!(commit(), expected, "{case}");
     #[cfg(feature = "parallel")]

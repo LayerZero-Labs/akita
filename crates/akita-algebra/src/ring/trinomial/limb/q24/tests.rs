@@ -336,22 +336,23 @@ fn q24_known_answer_vector() {
 /// documentation: the largest product, the lane bound and its `2^63` margin.
 #[test]
 fn q24_reduction_interval_bound_is_pinned() {
+    // The module's const assertions check the same inequalities at compile time;
+    // `black_box` keeps these runtime checks from being constant-folded away.
+    let (max_product, lane_bound) = std::hint::black_box((MAX_PRODUCT, LANE_BOUND));
+    let low = std::hint::black_box(P as u128 - 1);
     assert_eq!(Q24, 14_253_409);
     assert_eq!(Q24_REDUCTION_TERMS, 1 << 15);
-    assert_eq!(MAX_PRODUCT, 203_159_639_614_464);
-    assert!(MAX_PRODUCT < 1 << 48);
-    assert_eq!(LANE_BOUND, 6_657_135_070_901_009_760);
-    assert_eq!(LANE_BOUND, (P as u128 - 1) + (1 << 15) * MAX_PRODUCT);
-    assert!(LANE_BOUND < 1 << 63);
+    assert_eq!(max_product, 203_159_639_614_464);
+    assert!(max_product < 1 << 48);
+    assert_eq!(lane_bound, 6_657_135_070_901_009_760);
+    assert_eq!(lane_bound, low + (1 << 15) * max_product);
+    assert!(lane_bound < 1 << 63);
     // One more interval of the same length would cross 2^63.
-    assert_eq!(
-        (P as u128 - 1) + (1 << 16) * MAX_PRODUCT,
-        13_314_270_141_787_766_112
-    );
-    assert!((P as u128 - 1) + (1 << 16) * MAX_PRODUCT >= 1 << 63);
+    assert_eq!(low + (1 << 16) * max_product, 13_314_270_141_787_766_112);
+    assert!(low + (1 << 16) * max_product >= 1 << 63);
     // The largest exact interval below 2^63.
-    assert!((P as u128 - 1) + 45_399 * MAX_PRODUCT < 1 << 63);
-    assert!((P as u128 - 1) + 45_400 * MAX_PRODUCT >= 1 << 63);
+    assert!(low + 45_399 * max_product < 1 << 63);
+    assert!(low + 45_400 * max_product >= 1 << 63);
 }
 
 /// Batch lengths around the IFMA (8 slots) and NEON (4 slots) vector widths,
