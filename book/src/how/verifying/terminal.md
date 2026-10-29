@@ -24,10 +24,11 @@ $$
 \tag{1}
 $$
 
-The predecessor binds the canonical coefficients of all $\mathbf t_b$
-before its ring-switch and sumcheck challenges. The terminal response must
-contain exactly those bytes. Thus the prover cannot choose a new collection
-of inner images after seeing the opening point handed to the terminal.
+The predecessor binds the canonical coefficients of every $\mathbf t_b$
+but the last, and a digest of the last, before its ring-switch and sumcheck
+challenges. The terminal response must contain exactly those bytes. Thus the
+prover cannot choose a new collection of inner images after seeing the
+opening point handed to the terminal.
 
 Let $Q_p$ be the position weights derived from that opening point, and
 $G_a^{\mathrm{in}}$ the inner digit recomposition weights. The honest
@@ -46,11 +47,13 @@ z_{p,a}=\sum_b c_b s_{b,p,a}.
 \tag{3}
 $$
 
-The terminal response contains $\mathbf z$, the $E_b$, and the
-$\mathbf t_b$. For $m$ live blocks, there are $m$ opening rings,
-$mn_A$ inner-image rings, and $Lk_{\mathrm{in}}$ response rings, all
-with $D$ coefficients. The schedule fixes these counts, including the
-convention for a partial final block.
+The terminal response contains $\mathbf z$ and every $E_b$ and
+$\mathbf t_b$ except those of the last live block, which the verifier
+recomputes (see [Recompute the last block](#recompute-the-last-block)).
+For $m$ live blocks, there are $m-1$ opening rings, $(m-1)n_A$
+inner-image rings, and $Lk_{\mathrm{in}}$ response rings, all with $D$
+coefficients, plus two 32-byte digests. The schedule fixes these counts,
+including the convention for a partial final block.
 
 The response uses recomposed ring values for $E_b$ and $\mathbf t_b$.
 There is no need to commit their digits through another B or D matrix,
@@ -184,15 +187,17 @@ The verifier performs the terminal handoff in this order:
 1. Check that the scheduled terminal geometry matches the remaining witness
    and that there is no deferred setup-prefix opening.
 2. Absorb the incoming inner-image binding and check that the response's
-   $\mathbf t_b$ coefficients match it exactly.
+   $\mathbf t_b$ coefficients match it exactly. The last block's digest was
+   already absorbed by the predecessor.
 3. Prepare the incoming point and claim. Replay extension-opening reduction
    when required.
-4. Absorb the $E_b$, consume the terminal fold-response nonce, and derive
-   the sparse $c_b$. The L2 route also uses its scheduled challenge
+4. Absorb every $E_b$ but the last and the digest of the last, consume the
+   terminal fold-response nonce, and derive the sparse $c_b$. The L2 route also uses its scheduled challenge
    admission rule.
 5. Absorb the remaining response bytes, decode $\mathbf z$, and check
    its bounds.
-6. Check the ring relations and the scalar opening.
+6. Recover the last $E_b$ and $\mathbf t_b$ from the ring relations,
+   compare them with their digests, and check the scalar opening.
 
 The predecessor's binding fixes $\mathbf t_b$ before the terminal query
 is known, and step 4 fixes $E_b$ before $c_b$ is known. Both ordering
@@ -219,6 +224,120 @@ whose bound exceeds every supported exact profile is invalid.
 
 Prepared matrix views are derived from the coefficient setup and are never
 serialized. These execution choices compute the same relation (5).
+
+## Recompute the last block
+
+Checks (4) and (5) are linear in the last block, and its coefficient is the
+last fold challenge $c_{m-1}$. That challenge is a short nonzero ring
+element, so it is invertible for Akita's fields, as
+[rings and fields](../../foundations/rings-and-fields.md) explains. Each
+relation therefore has exactly one solution for the last block:
+
+$$
+E_{m-1}
+=c_{m-1}^{-1}\Bigl(
+\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}-\sum_{b<m-1}c_bE_b
+\Bigr),
+\qquad
+\mathbf t_{m-1}
+=c_{m-1}^{-1}\Bigl(
+\mathbf A\mathbf z-\sum_{b<m-1}c_b\mathbf t_b
+\Bigr).
+\tag{10}
+$$
+
+Once (4) and (5) hold, the last block carries no further information, so the
+response omits it. For $m$ live blocks the response carries $m-1$ opening
+rings and $(m-1)n_A$ inner-image rings. This removes $(1+n_A)D$ field
+elements from the proof at the cost of two 32-byte digests.
+
+The omitted values still have to be fixed before the challenges that test
+them. An honest prover knows $\mathbf t_{m-1}$ before the predecessor's
+challenges and $E_{m-1}$ before the $c_b$. The digests enforce this order:
+
+- The predecessor sends the coefficients of every $\mathbf t_b$ but the
+  last, followed by a digest of the last block's coefficients.
+- The terminal prover sends every $E_b$ but the last, followed by a digest
+  of the last, before the $c_b$ are sampled.
+
+The verifier computes the last block from (10), hashes its canonical
+coefficients, and compares the result with the digest it received earlier.
+The scalar opening check (7) or (8) then runs over all $E_b$, including the
+recovered one.
+
+### Why omitting the block is sound
+
+Computing (10) alone proves nothing, because it makes (4) and (5) true by
+construction. The digest comparison carries the argument. It reduces
+soundness to that of the *full-response protocol*, which sends the last
+block as fields in place of each digest, in the classical random-oracle
+model.
+
+Model the digest as a random oracle $H$ with 256-bit output. The encoding of
+a block is injective, since the field encoding is canonical and the schedule
+fixes the block length. Take a prover that makes at most
+$Q$ digest queries, counting the verifier's. When it sends a digest $d$,
+one of two cases holds.
+
+- It has already queried some block $x$ with $H(x)=d$. A reduction sends
+  $x$ as the full message of the full-response protocol, at the same
+  position. If
+  the verifier later recovers $x'$ and accepts, then $H(x')=d=H(x)$, so
+  $x'=x$ unless $H$ collides. The recovered block satisfies (4), (5), and
+  the opening check, so the block sent earlier does too.
+- It has queried no preimage of $d$. To be accepted, a later query must
+  hit $d$, and each fresh query does so with probability $2^{-256}$. This
+  case covers a prover that sends a digest without knowing any opening.
+
+There are two digests. A union bound over collisions and over hits on an
+unopened digest gives
+
+$$
+\epsilon_{\text{digest}}
+\le
+\epsilon+\frac{\binom{Q}{2}+2Q}{2^{256}},
+\tag{11}
+$$
+
+where $\epsilon$ is the soundness error of the full-response protocol with
+the same parameters. Outside the bad event the reduction supplies the same blocks at
+the same positions and sees the same challenge distribution.
+
+Three points keep the argument exact:
+
+- Each digest is absorbed where the full block was. The $\mathbf t$ digest
+  precedes the predecessor's ring-switch and sumcheck challenges. The $E$
+  digest precedes the terminal fold-response nonce and the $c_b$. The
+  terminal does not absorb $\mathbf t_{m-1}$ again after recovering it,
+  because the earlier digest already binds it in the same transcript.
+- Statement (11) compares the two interactive protocols. A digest absorbs
+  different bytes than a block does, so the Fiat-Shamir challenges differ
+  from those of a full-response proof. Expanding a proof does not yield a
+  full-response proof.
+- The argument records the prover's oracle queries, so it is a classical
+  one. This page makes no claim for a prover with quantum access to $H$.
+
+The last fold challenge is always a unit, so an honest proof is never
+rejected for a missing inverse. For Akita's fields $X^D+1$ splits into
+$k\in\{2,4\}$ irreducible factors $X^{D/k}-\omega$. A nonzero challenge
+with coefficients bounded by $B$ that vanished modulo one factor would give
+a nonzero integer resultant with $T^k+1$ that $q$ divides and whose size is
+at most $(kB^2)^{k/2}$. Hence every such challenge is a unit once
+$q>(kB^2)^{k/2}$. For $B=2$ this needs only $q>256$.
+
+The verifier does not trust its own division either. It inverts $c_{m-1}$
+by multiplying with the conjugate $c_{m-1}(-X)$, whose product with
+$c_{m-1}$ lies in a ring of half the degree, and repeats until one field
+inversion remains. It then multiplies each candidate from (10) back by the
+sparse challenge and checks (4) and (5) as written. A wrong inverse can
+therefore only cause a rejection. A challenge with no inverse is rejected.
+The $1+n_A$ multiplications by $c_{m-1}^{-1}$ are the terminal's only dense
+ring products.
+
+In the code, `terminal_sent_blocks` in
+`crates/akita-params/src/layout/tail_segments.rs` sets the layout,
+`crates/akita-verifier/src/terminal/direct.rs` recovers the block, and
+`crates/akita-algebra/src/ring/cyclotomic/inverse.rs` inverts the challenge.
 
 ## No-panic boundary and code map
 
