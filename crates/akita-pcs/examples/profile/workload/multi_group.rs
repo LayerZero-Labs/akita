@@ -444,8 +444,18 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let verifier = proof_scheme
         .verifier(verifier_setup.clone())
         .expect("verifier for the profile setup");
-    let verify =
-        |statement| verifier.batched_verify(&proof, b"profile", statement, BasisMode::Lagrange);
+    let verify = |statement| {
+        verifier.batched_verify(
+            &proof,
+            b"profile",
+            statement,
+            BasisMode::Lagrange,
+            #[cfg(feature = "external-setup-accumulation")]
+            None,
+            #[cfg(feature = "external-setup-accumulation")]
+            &mut akita_verifier::SetupMode::Check,
+        )
+    };
     run_verifier_timings(label, pools, "multi-group profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

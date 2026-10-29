@@ -234,6 +234,10 @@ where
                 session,
                 verify_input::<Cfg>(selection, &point, claimed, &commitment),
                 BasisMode::Lagrange,
+                #[cfg(feature = "external-setup-accumulation")]
+                None,
+                #[cfg(feature = "external-setup-accumulation")]
+                &mut akita_verifier::SetupMode::Check,
             )
         })
     };

@@ -118,3 +118,10 @@ mod sis_compression_tests;
 
 #[cfg(test)]
 mod params_tests;
+
+pub use setup_contribution::{
+    materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
+    PreparedCoefficientFunctional, ReducedRoleCoefficientState, SetupIndexWeightMle,
+};
+#[cfg(feature = "external-setup-accumulation")]
+pub mod setup_claims;

@@ -200,7 +200,16 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
             &committed_group,
         )?])?,
     )?;
-    verifier.batched_verify(&proof, DOMAIN, statement, BasisMode::Lagrange)?;
+    verifier.batched_verify(
+        &proof,
+        DOMAIN,
+        statement,
+        BasisMode::Lagrange,
+        #[cfg(feature = "external-setup-accumulation")]
+        None,
+        #[cfg(feature = "external-setup-accumulation")]
+        &mut akita_verifier::SetupMode::Check,
+    )?;
     if check_failures {
         let destination = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
         let unused = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);

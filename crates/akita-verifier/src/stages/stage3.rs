@@ -2,6 +2,8 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::relation::RelationMatrixEvaluator;
+#[cfg(feature = "external-setup-accumulation")]
+use crate::setup_batch::PreparedOuterSetup;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::SetupIndexWeightMle;
 #[cfg(test)]
@@ -27,10 +29,8 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 /// row evaluation, then call [`verify`](Self::verify)
 /// with the proof and transcript.
 struct SetupSumcheckVerifier<E: Field> {
-    setup_index_weight: SetupIndexWeightMle<E>,
     alpha: E,
-    ring_bits: usize,
-    rounds: usize,
+    plan: akita_types::SetupContributionPlan<E>,
 }
 pub(crate) struct SetupSumcheckReplay<E: Field> {
     pub(crate) claim: E,
@@ -61,29 +61,26 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             PreparedRelationAddress::new(x_challenges)?,
             fold_gadget.as_deref(),
         )?;
-        let setup_index_weight = SetupIndexWeightMle::new(&plan)?;
-        let geometry = setup_index_weight.projection_geometry();
-        Ok(Self {
-            setup_index_weight,
-            alpha,
-            ring_bits: geometry.ring_bits(),
-            rounds: geometry.rounds(),
-        })
+        Ok(Self { alpha, plan })
     }
 
     /// Replay stage 3 directly from the Spongefish stream.
     pub(crate) fn verify<F>(
-        &self,
+        self,
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &CommittedGroupParams,
         grinding: &mut akita_types::VerifierGrinding<'_, '_>,
         level: u32,
+        #[cfg(feature = "external-setup-accumulation")] accumulator: Option<
+            &mut crate::SetupClaimAccumulator<E>,
+        >,
+        #[cfg(feature = "external-setup-accumulation")] mode: &crate::SetupMode<'_, E>,
     ) -> Result<SetupSumcheckReplay<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
     {
-        let geometry = self.setup_index_weight.projection_geometry();
+        let geometry = self.plan.projection_geometry();
         let ring_d = geometry.base_ring_dim();
         if ring_d == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -105,18 +102,45 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             level,
             0,
         );
+        #[cfg(feature = "external-setup-accumulation")]
+        if matches!(mode, crate::SetupMode::Defer(_)) {
+            let accumulator = accumulator.ok_or(AkitaError::InvalidProof)?;
+            let query = akita_types::setup_claims::SetupQuery::contribution(
+                self.plan,
+                akita_types::PreparedCoefficientFunctional::lifted_power(self.alpha),
+            )?;
+            accumulator
+                .pending
+                .push(akita_types::setup_claims::SetupClaim::new(
+                    accumulator.polynomial.clone(),
+                    query,
+                    claim,
+                )?);
+            let challenges = akita_sumcheck::replay_sumcheck_transcript::<F, E, _>(
+                &mut channel,
+                0,
+                claim,
+                akita_sumcheck::SumcheckShape::new(geometry.rounds(), SETUP_SUMCHECK_DEGREE)?,
+            )?;
+            let setup_prefix_eval =
+                akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
+            return Ok(SetupSumcheckReplay {
+                claim,
+                setup_prefix_eval,
+                challenges,
+            });
+        }
         let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
             &mut channel,
             0,
             claim,
-            akita_sumcheck::SumcheckShape::new(self.rounds, SETUP_SUMCHECK_DEGREE)?,
+            akita_sumcheck::SumcheckShape::new(geometry.rounds(), SETUP_SUMCHECK_DEGREE)?,
         )?;
         let setup_prefix_eval =
             akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
-        let (rho_y, rho_setup_idx) = replay.challenges.split_at(self.ring_bits);
-        let setup_index_weight = self
-            .setup_index_weight
-            .evaluate(rho_setup_idx, self.alpha)?;
+        let (rho_y, rho_setup_idx) = replay.challenges.split_at(geometry.ring_bits());
+        let setup_index_weight =
+            SetupIndexWeightMle::new(&self.plan)?.evaluate(rho_setup_idx, self.alpha)?;
         let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
         if replay.output_claim != setup_prefix_eval * setup_index_weight * alpha_val {
             return Err(AkitaError::InvalidProof);
@@ -129,10 +153,49 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     }
 }
 
+/// Check the combined setup sumcheck, leaving its setup evaluation to the successor.
+#[cfg(feature = "external-setup-accumulation")]
+pub(crate) fn verify_stage3_outer<F, E>(
+    outer: &PreparedOuterSetup<E>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    level: u32,
+) -> Result<SetupSumcheckReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let input = outer.statement.input_claim(&outer.coefficients)?;
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_params::SumcheckProtocol::Stage3,
+        level,
+        0,
+    );
+    let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
+        &mut channel,
+        0,
+        input,
+        akita_sumcheck::SumcheckShape::new(outer.statement.polynomial().num_variables(), 2)?,
+    )?;
+    let value = akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
+    let weight = outer
+        .statement
+        .evaluate_weight(&outer.coefficients, &replay.challenges)?;
+    if replay.output_claim != value * weight {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(SetupSumcheckReplay {
+        claim: outer.claim,
+        setup_prefix_eval: value,
+        challenges: replay.challenges,
+    })
+}
+
 /// Replay Stage 3 for a fold whose successor defers the setup contribution.
 ///
 /// The setup contribution is evaluated at the Stage 2 point with its
 /// coefficient variables removed.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_stage3<F, E>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
@@ -140,11 +203,50 @@ pub(crate) fn verify_stage3<F, E>(
     next_params: &CommittedGroupParams,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
+    #[cfg(feature = "external-setup-accumulation")] outer: Option<
+        &crate::setup_batch::PreparedOuterSetup<E>,
+    >,
+    #[cfg(feature = "external-setup-accumulation")] accumulator: Option<
+        &mut crate::SetupClaimAccumulator<E>,
+    >,
+    #[cfg(feature = "external-setup-accumulation")] mode: &crate::SetupMode<'_, E>,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
 {
+    #[cfg(feature = "external-setup-accumulation")]
+    if let Some(outer) = outer {
+        if !matches!(mode, crate::SetupMode::Defer(_)) {
+            return Err(AkitaError::InvalidInput(
+                "outer Stage 3 checks require verify_stage3_outer".into(),
+            ));
+        }
+        accumulator
+            .ok_or(AkitaError::InvalidProof)?
+            .pending
+            .extend(outer.statement.claims().iter().cloned());
+        let input = outer.statement.input_claim(&outer.coefficients)?;
+        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+            grinding,
+            akita_params::SumcheckProtocol::Stage3,
+            level,
+            0,
+        );
+        let challenges = akita_sumcheck::replay_sumcheck_transcript::<F, E, _>(
+            &mut channel,
+            0,
+            input,
+            akita_sumcheck::SumcheckShape::new(outer.statement.polynomial().num_variables(), 2)?,
+        )?;
+        let setup_prefix_eval =
+            akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
+        return Ok(SetupSumcheckReplay {
+            claim: outer.claim,
+            setup_prefix_eval,
+            challenges,
+        });
+    }
     let setup_coefficient_bits = rs
         .relation_address_geometry
         .relation_coefficient_variable_count();
@@ -156,7 +258,16 @@ where
         setup_x_challenges,
         rs.alpha,
     )?;
-    verifier.verify::<F>(setup, next_params, grinding, level)
+    verifier.verify::<F>(
+        setup,
+        next_params,
+        grinding,
+        level,
+        #[cfg(feature = "external-setup-accumulation")]
+        accumulator,
+        #[cfg(feature = "external-setup-accumulation")]
+        mode,
+    )
 }
 
 /// Resolve the planned setup-prefix slot in the verifier setup, check that it

@@ -45,3 +45,12 @@ pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::Stage1Verifier;
 pub use verifier::AkitaVerifier;
+
+#[cfg(feature = "external-setup-accumulation")]
+mod setup_batch;
+#[cfg(feature = "external-setup-accumulation")]
+mod setup_claims;
+#[cfg(feature = "external-setup-accumulation")]
+pub use setup_batch::{decide_setup_accumulator, verify_setup_batch_deferred};
+#[cfg(feature = "external-setup-accumulation")]
+pub use setup_claims::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};

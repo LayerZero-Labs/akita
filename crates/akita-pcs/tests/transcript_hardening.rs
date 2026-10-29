@@ -79,6 +79,10 @@ fn stream_binds_session_statement_basis_and_eof() {
                             scheme.schedules(),
                         ),
                         basis,
+                        #[cfg(feature = "external-setup-accumulation")]
+                        None,
+                        #[cfg(feature = "external-setup-accumulation")]
+                        &mut akita_verifier::SetupMode::Check,
                     )
                 })
         };
@@ -260,6 +264,10 @@ fn stream_mutations_reject_without_panicking() {
                                 scheme.schedules(),
                             ),
                             BasisMode::Lagrange,
+                            #[cfg(feature = "external-setup-accumulation")]
+                            None,
+                            #[cfg(feature = "external-setup-accumulation")]
+                            &mut akita_verifier::SetupMode::Check,
                         )
                     })
             }));

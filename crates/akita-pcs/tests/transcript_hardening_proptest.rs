@@ -91,6 +91,10 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
                     scheme.schedules(),
                 ),
                 basis_mode,
+                #[cfg(feature = "external-setup-accumulation")]
+                None,
+                #[cfg(feature = "external-setup-accumulation")]
+                &mut akita_verifier::SetupMode::Check,
             )
         })
         .expect("verify");
@@ -102,7 +106,11 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
             &trailing,
             b"hardening/proptest/native",
             verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules(),),
-            basis_mode
+            basis_mode,
+            #[cfg(feature = "external-setup-accumulation")]
+            None,
+            #[cfg(feature = "external-setup-accumulation")]
+            &mut akita_verifier::SetupMode::Check,
         ))
         .is_err());
 }

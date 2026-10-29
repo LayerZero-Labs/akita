@@ -215,6 +215,10 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
                         DOMAIN,
                         GroupBatchStatement::new(selection, public).unwrap(),
                         BasisMode::Lagrange,
+                        #[cfg(feature = "external-setup-accumulation")]
+                        None,
+                        #[cfg(feature = "external-setup-accumulation")]
+                        &mut akita_verifier::SetupMode::Check,
                     )
                 })
                 .unwrap();

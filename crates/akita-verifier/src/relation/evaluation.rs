@@ -89,6 +89,76 @@ impl<E: Field> RelationMatrixEvaluator<E> {
             + relation.evaluate_quotient_tail::<F>()?
             + relation.point.common_alpha_evaluation() * setup_claim)
     }
+    /// Extension seam: externally resolve direct setup functionals without a setup scan.
+    #[cfg(feature = "external-setup-accumulation")]
+    pub(crate) fn eval_flat_at_point_with_external_setup<F>(
+        &self,
+        point: &[E],
+        alpha: E,
+        mut resolve: impl FnMut(akita_types::setup_claims::SetupQuery<E>) -> Result<E, AkitaError>,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
+    {
+        use akita_types::setup_claims::SetupQuery;
+        match &self.groups {
+            PreparedRelationGroups::QuotientLift(groups) => {
+                let (relation, plan) = QuotientRelation::prepare::<F>(self, groups, point, alpha)?;
+                let structured = relation.evaluate_structured(|group| {
+                    evaluate_structured_group::<F, _>(
+                        &plan,
+                        group.group_id,
+                        &group.multipliers.c_alphas,
+                        &group.multipliers.opening_a_evals,
+                        alpha,
+                    )
+                })?;
+                let query =
+                    SetupQuery::contribution(plan, relation.point.coefficient_functional())?;
+                let setup = resolve(query)?;
+                Ok(structured
+                    + relation.evaluate_quotient_tail::<F>()?
+                    + relation.point.common_alpha_evaluation() * setup)
+            }
+            PreparedRelationGroups::ReducedEvaluation(groups) => {
+                let (relation, plan) = ReducedRelation::prepare::<F>(self, groups, point, alpha)?;
+                let akita_types::PreparedCoefficientFunctional::ReducedEvaluation {
+                    coefficient_point,
+                    ..
+                } = relation.point.coefficient_functional()
+                else {
+                    return Err(AkitaError::InvalidProof);
+                };
+                let mut cache = Vec::new();
+                let mut structured = E::zero();
+                for (group, planned) in groups.iter().zip(plan.groups()) {
+                    if group.group_id != planned.group_id() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let weights =
+                        crate::setup_contribution::materialize_reduced_direct_scan_weights(
+                            &plan,
+                            planned,
+                            alpha,
+                            &coefficient_point,
+                            &mut cache,
+                        )?;
+                    structured +=
+                        crate::setup_contribution::evaluate_reduced_structured_group::<F, E>(
+                            planned,
+                            &weights,
+                            alpha,
+                            &group.multipliers.challenges,
+                            &group.multipliers.opening,
+                        )?;
+                }
+                let query =
+                    SetupQuery::contribution(plan, relation.point.coefficient_functional())?;
+                Ok(structured + resolve(query)?)
+            }
+        }
+    }
 }
 
 fn prepare_setup_plan<F, E>(

@@ -102,6 +102,12 @@ where
         step.output_witness_len,
         next_binding,
         prepared,
+        #[cfg(feature = "external-setup-accumulation")]
+        handoff
+            .request
+            .setup_batch
+            .filter(|(target, _)| *target as usize == level)
+            .map(|(_, statement)| statement),
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(
                 backend,

@@ -1,13 +1,19 @@
 //! Stage-3 setup-index weight MLE evaluated by the verifier.
 //!
 //! The prover materializes the same weights densely with
-//! [`akita_types::SetupContributionPlan::materialize_setup_index_weights`];
+//! [`crate::SetupContributionPlan::materialize_setup_index_weights`];
 //! only the verifier needs the paired-equality tensor form built here.
 
-use super::*;
+use crate::{
+    checked_slice, factor_aligned_role_tensors, project_role_tensors, role_projection_evaluation,
+    role_tensors_are_aligned, SetupContributionGroupPlan, SetupContributionPlan,
+};
 use akita_algebra::offset_eq::{
     eval_boolean_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily,
 };
+use akita_error::{checked, AkitaError};
+use akita_params::{RelationAddressGeometry, SetupProjectionGeometry};
+use jolt_field::Field;
 
 struct ProjectedEqPairTensor<E: Field> {
     ratio: usize,
@@ -26,7 +32,7 @@ enum ProjectedEqPairTensorState {
 /// Only the verifier builds this: it evaluates the packed setup-position
 /// weight at one sumcheck point without materializing it. The prover
 /// materializes the same weights densely with
-/// [`akita_types::SetupContributionPlan::materialize_setup_index_weights`], so it never
+/// [`crate::SetupContributionPlan::materialize_setup_index_weights`], so it never
 /// pays for these tensors.
 pub struct SetupIndexWeightMle<E: Field> {
     tensors: Vec<ProjectedEqPairTensor<E>>,
@@ -260,7 +266,7 @@ fn append_a_tensors<E: Field>(
     Ok(())
 }
 
-fn build_group_b_setup_tensors<E: Field>(
+pub(crate) fn build_group_b_setup_tensors<E: Field>(
     relation_geometry: RelationAddressGeometry,
     group: &SetupContributionGroupPlan<E>,
 ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
@@ -415,7 +421,7 @@ fn rebase_relation_tensor<E: Field>(
     )
 }
 
-fn lift_role_tensor<E: Field>(
+pub(crate) fn lift_role_tensor<E: Field>(
     tensor: &EqPairTensorFamily<E>,
     left_offset: usize,
     row_stride: usize,

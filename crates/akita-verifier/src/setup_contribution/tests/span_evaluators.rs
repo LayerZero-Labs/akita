@@ -781,3 +781,85 @@ fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
         assert_eq!(got, expected, "ownership widths {ownership_widths:?}");
     }
 }
+
+#[cfg(feature = "external-setup-accumulation")]
+#[test]
+fn external_setup_queries_preserve_sliced_physical_b_and_overlap() {
+    use akita_types::setup_claims::{SetupPolynomialId, SetupQuery};
+    let dims = CommitmentRingDims {
+        inner: 128,
+        outer: 64,
+        opening: 64,
+    };
+    for slices in [2, 4] {
+        let plan = || {
+            structured_weight_fixture_with_slices(
+                11,
+                &[3, 5, 3],
+                dims,
+                32,
+                akita_params::CommitmentSliceCount::try_new(slices).unwrap(),
+            )
+            .3
+        };
+        for reduced in [false, true] {
+            let geometry = plan().relation_address_geometry();
+            let coefficient = (0..geometry.relation_coefficient_variable_count())
+                .map(|i| test_scalar(701 + i as u128))
+                .collect::<Vec<_>>();
+            let functional = if reduced {
+                PreparedCoefficientFunctional::reduced_evaluation(
+                    test_scalar(3),
+                    &coefficient,
+                    geometry,
+                )
+                .unwrap()
+            } else {
+                PreparedCoefficientFunctional::lifted_power(test_scalar(3))
+            };
+            let len = plan()
+                .projection_geometry()
+                .natural_field_len()
+                .next_power_of_two();
+            let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 0,
+                    max_num_batched_polys: 0,
+                    num_field_elements: len,
+                    setup_seed: [0; 32].into(),
+                },
+                FlatMatrix::from_flat_data(
+                    (0..len).map(|i| test_scalar(1201 + i as u128)).collect(),
+                ),
+            );
+            let expected = DirectScan::new(plan(), functional.clone())
+                .unwrap()
+                .evaluate_direct(&setup)
+                .unwrap();
+            let domain = SetupPolynomialId::new::<F, F>(&setup, len).unwrap();
+            let query = SetupQuery::contribution(plan(), functional).unwrap();
+            let terms = query.compile(&domain, 32).unwrap();
+            let dense = (0..len)
+                .map(|j| {
+                    terms.iter().fold(F::zero(), |sum, t| {
+                        sum + t.coefficient()[j % 32] * t.index_weight(j / 32)
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                expected,
+                dense
+                    .iter()
+                    .zip(setup.shared_matrix().as_field_slice())
+                    .fold(F::zero(), |sum, (&w, &s)| sum + w * s)
+            );
+            let z = (0..domain.num_variables())
+                .map(|i| test_scalar(101 + i as u128))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                query.evaluate_weight(&domain, &z).unwrap(),
+                akita_algebra::poly::multilinear_eval(&dense, &z).unwrap()
+            );
+        }
+    }
+}

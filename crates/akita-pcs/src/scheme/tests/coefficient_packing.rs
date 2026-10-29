@@ -301,7 +301,16 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                 scheme
                     .verifier(verifier_setup.clone())
                     .and_then(|verifier| {
-                        verifier.batched_verify(proof.as_slice(), label, statement, basis)
+                        verifier.batched_verify(
+                            proof.as_slice(),
+                            label,
+                            statement,
+                            basis,
+                            #[cfg(feature = "external-setup-accumulation")]
+                            None,
+                            #[cfg(feature = "external-setup-accumulation")]
+                            &mut akita_verifier::SetupMode::Check,
+                        )
                     })
                     .unwrap();
 
@@ -323,7 +332,11 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                             malformed.as_slice(),
                             label,
                             statement,
-                            basis
+                            basis,
+                            #[cfg(feature = "external-setup-accumulation")]
+                            None,
+                            #[cfg(feature = "external-setup-accumulation")]
+                            &mut akita_verifier::SetupMode::Check,
                         ))
                         .is_err());
 

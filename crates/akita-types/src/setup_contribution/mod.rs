@@ -4,15 +4,18 @@
 //! layout/weight derivation for the stage-3 setup product. The prover consumes
 //! the materialized setup-index weight vector: one scalar weight per packed
 //! setup position. Verifier-only evaluation of the same plan (the direct
-//! setup scan, closed-form structured groups, and the setup-index weight MLE
-//! at the stage-3 challenge point) lives in `akita-verifier`.
+//! setup scan and closed-form structured groups live in `akita-verifier`.
+//! Coefficient functionals and the structured setup-index MLE live here so
+//! external accumulation uses exactly the same arithmetic definitions.
 
 use akita_error::{checked, AkitaError};
 use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
 use jolt_field::{CanonicalEncoding, Field};
 
+mod coefficient_functional;
 mod geometry;
 mod plan;
+pub(crate) mod setup_index_weight;
 
 #[cfg(test)]
 mod tests;
@@ -62,3 +65,9 @@ pub fn checked_slice<'a, T>(
         AkitaError::InvalidInput(format!("{context} range exceeds the supplied slice"))
     })
 }
+
+pub use coefficient_functional::{
+    materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
+    PreparedCoefficientFunctional, ReducedRoleCoefficientState,
+};
+pub use setup_index_weight::SetupIndexWeightMle;

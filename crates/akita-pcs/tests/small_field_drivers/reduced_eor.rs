@@ -27,6 +27,10 @@ fn verify(
                 label,
                 GroupBatchStatement::new(roundtrip.selection, claims)?,
                 BasisMode::Lagrange,
+                #[cfg(feature = "external-setup-accumulation")]
+                None,
+                #[cfg(feature = "external-setup-accumulation")]
+                &mut akita_verifier::SetupMode::Check,
             )
         })
 }

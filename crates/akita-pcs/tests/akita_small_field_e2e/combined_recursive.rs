@@ -65,6 +65,10 @@ fn commit_prove_verify<Cfg, P>(
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
+                #[cfg(feature = "external-setup-accumulation")]
+                None,
+                #[cfg(feature = "external-setup-accumulation")]
+                &mut akita_verifier::SetupMode::Check,
             )
         })
         .expect("verify");

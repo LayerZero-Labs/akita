@@ -243,7 +243,18 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let verifier = scheme
         .verifier(verifier_setup.clone())
         .expect("verifier for the profile setup");
-    let verify = |claims| verifier.batched_verify(&proof, b"profile", claims, BasisMode::Lagrange);
+    let verify = |claims| {
+        verifier.batched_verify(
+            &proof,
+            b"profile",
+            claims,
+            BasisMode::Lagrange,
+            #[cfg(feature = "external-setup-accumulation")]
+            None,
+            #[cfg(feature = "external-setup-accumulation")]
+            &mut akita_verifier::SetupMode::Check,
+        )
+    };
     run_verifier_timings(label, pools, "batched profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

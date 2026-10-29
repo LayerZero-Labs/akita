@@ -489,3 +489,109 @@ fn malformed_relation_property_matrix_rejects_without_panicking() {
         }
     }
 }
+
+#[cfg(feature = "external-setup-accumulation")]
+#[test]
+fn external_setup_queries_match_direct_mixed_role_relations() {
+    use akita_types::setup_claims::{SetupPolynomialId, SetupQuery};
+    for mode in [
+        akita_params::RingRelationMode::QuotientLift,
+        akita_params::RingRelationMode::ReducedEvaluation,
+    ] {
+        let MixedRelationFixture {
+            evaluator,
+            setup,
+            point,
+            alpha,
+        } = mixed_relation_fixture(mode);
+        let geometry = evaluator.relation_address_geometry;
+        let (coefficient_point, address) =
+            point.split_at(geometry.relation_coefficient_variable_count());
+        let fold = evaluator
+            .setup_contribution_fold_gadget::<MixedF>()
+            .unwrap()
+            .unwrap();
+        let plan = || {
+            evaluator
+                .setup_contribution_plan::<MixedF>(
+                    PreparedRelationAddress::new(address).unwrap(),
+                    Some(&fold),
+                )
+                .unwrap()
+        };
+        let functional = if mode.is_reduced_evaluation() {
+            crate::PreparedCoefficientFunctional::reduced_evaluation(
+                alpha,
+                coefficient_point,
+                geometry,
+            )
+            .unwrap()
+        } else {
+            crate::PreparedCoefficientFunctional::lifted_power(alpha)
+        };
+        let reference = crate::DirectScan::new(plan(), functional.clone())
+            .unwrap()
+            .evaluate_direct(&setup)
+            .unwrap();
+        let polynomial = SetupPolynomialId::new::<MixedF, MixedF>(
+            &setup,
+            plan()
+                .projection_geometry()
+                .natural_field_len()
+                .next_power_of_two(),
+        )
+        .unwrap();
+        let query = SetupQuery::contribution(plan(), functional).unwrap();
+        let terms = query.compile(&polynomial, 32).unwrap();
+        let dense = (0..polynomial.field_len())
+            .map(|j| {
+                terms.iter().fold(MixedF::zero(), |sum, term| {
+                    sum + term.coefficient()[j % 32] * term.index_weight(j / 32)
+                })
+            })
+            .collect::<Vec<_>>();
+        let contraction = dense
+            .iter()
+            .zip(setup.shared_matrix().as_field_slice())
+            .fold(MixedF::zero(), |sum, (&w, &s)| sum + w * s);
+        assert_eq!(reference, contraction, "{mode:?}");
+        let z = (0..polynomial.num_variables())
+            .map(|i| MixedF::from_u64(71 + i as u64))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            query.evaluate_weight(&polynomial, &z).unwrap(),
+            akita_sumcheck::multilinear_eval(&dense, &z).unwrap(),
+            "{mode:?}"
+        );
+        struct Advice(MixedF);
+        impl crate::SetupClaimAdvice<MixedF> for Advice {
+            fn answer(&mut self, _: &SetupQuery<MixedF>) -> Result<MixedF, AkitaError> {
+                Ok(self.0)
+            }
+        }
+        let complete = evaluator
+            .eval_flat_at_point::<MixedF>(&point, &setup, alpha)
+            .unwrap();
+        let mut advice = Advice(reference);
+        let mut accumulator = crate::SetupClaimAccumulator::new(polynomial.clone());
+        assert_eq!(
+            complete,
+            evaluator
+                .eval_flat_at_point_with_external_setup::<MixedF>(&point, alpha, |query| {
+                    accumulator.resolve(query, &mut advice)
+                })
+                .unwrap()
+        );
+        assert_eq!(accumulator.into_pending().len(), 1);
+        let mut bad = Advice(reference + MixedF::one());
+        let mut accumulator = crate::SetupClaimAccumulator::new(polynomial.clone());
+        assert_ne!(
+            complete,
+            evaluator
+                .eval_flat_at_point_with_external_setup::<MixedF>(&point, alpha, |query| {
+                    accumulator.resolve(query, &mut bad)
+                })
+                .unwrap()
+        );
+    }
+}

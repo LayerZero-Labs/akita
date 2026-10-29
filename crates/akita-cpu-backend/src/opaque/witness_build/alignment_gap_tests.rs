@@ -210,6 +210,10 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
                         SESSION,
                         GroupBatchStatement::new(selection, claims).unwrap(),
                         BasisMode::Lagrange,
+                        #[cfg(feature = "external-setup-accumulation")]
+                        None,
+                        #[cfg(feature = "external-setup-accumulation")]
+                        &mut akita_verifier::SetupMode::Check,
                     )
                     .unwrap();
             }

@@ -96,3 +96,8 @@ where
         + TerminalCommitmentMaterialKernel<F, B::CommitmentMaterialHandle>,
 {
 }
+
+#[cfg(feature = "external-setup-accumulation")]
+mod setup_batch;
+#[cfg(feature = "external-setup-accumulation")]
+pub use setup_batch::{SetupBatchBackend, SetupBatchKernel, SetupBatchRequest};

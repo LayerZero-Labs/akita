@@ -24,6 +24,36 @@ pub struct Stage3Request<'a, F: Field, E: Field, ProofSession> {
 pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
     type Stage3SessionHandle: Send;
 
+    /// Extension seam: prepare the outer contribution and all inherited setup claims.
+    #[cfg(feature = "external-setup-accumulation")]
+    fn prepare_setup_batch(
+        &self,
+        _request: super::SetupBatchRequest<'_, F, E, Self::ProofSessionHandle>,
+    ) -> Result<
+        (
+            akita_types::setup_claims::SetupBatchStatement<E>,
+            Self::Stage3SessionHandle,
+        ),
+        AkitaError,
+    > {
+        Err(AkitaError::InvalidInput(
+            "backend does not support integrated setup accumulation".into(),
+        ))
+    }
+
+    /// Fix batching coefficients after the complete statement has entered the transcript.
+    #[cfg(feature = "external-setup-accumulation")]
+    fn bind_setup_batch(
+        &self,
+        _session: &mut Self::Stage3SessionHandle,
+        _statement: &akita_types::setup_claims::SetupBatchStatement<E>,
+        _coefficients: &[E],
+    ) -> Result<E, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not support integrated setup accumulation".into(),
+        ))
+    }
+
     fn begin_stage3(
         &self,
         request: Stage3Request<'_, F, E, Self::ProofSessionHandle>,

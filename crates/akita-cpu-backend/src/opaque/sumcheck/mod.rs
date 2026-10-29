@@ -128,3 +128,6 @@ pub(crate) fn fold_prefix_pair_with_zero_padding<E: Field>(row: &[E], left: usiz
     let v1 = row.get(left + 1).copied().unwrap_or_else(E::zero);
     v0 + r * (v1 - v0)
 }
+
+#[cfg(feature = "external-setup-accumulation")]
+pub(crate) mod setup_batch;
