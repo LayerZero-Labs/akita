@@ -35,6 +35,6 @@ pub(crate) use finalize::{
     cpu_recursive_witness_build, quotient_decomposition_calls, reset_quotient_decomposition_calls,
     RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
 };
-pub(crate) use prepared_openings::{PreparedOpeningWitness, PublicPreparedRelationOpening};
+pub(crate) use prepared_openings::PreparedOpeningWitness;
 #[cfg(test)]
 pub(crate) use relation_quotient::{multi_group_quotient_calls, reset_multi_group_quotient_calls};

@@ -14,7 +14,9 @@ mod tests {
         } else {
             SisModulusProfileId::Q32Offset99
         };
-        let ring_dimension = if mixed_dimensions { 64 } else { 32 };
+        // q32 compression starts at D=128 and q128 at D=32; the mixed variant
+        // keeps three distinct dimensions (A=128, B=64, D=32) above that floor.
+        let ring_dimension = 128;
         let mut params = CommittedGroupParams::params_only(
             profile,
             ring_dimension,
@@ -36,7 +38,7 @@ mod tests {
                     outer.output_rank(),
                     outer.input_width() * 2,
                     outer.coeff_linf_bound(),
-                    32,
+                    64,
                 );
             let open = params.open().matrix;
             params.open_matrix = akita_params::OpenCommitMatrixParams::new_unchecked(
@@ -46,7 +48,7 @@ mod tests {
                 open.output_rank(),
                 open.input_width() * 4,
                 open.coeff_linf_bound(),
-                16,
+                32,
             );
         }
         params
@@ -734,16 +736,36 @@ mod tests {
         use akita_params::layout::setup_prefix_slots::{
             scheduled_setup_prefix, setup_prefix_precommitted_params,
         };
-        use akita_params::test_fixtures::{
-            prefix_eligible_level_params, retarget_group_role_dims_wide,
-        };
+        use akita_params::test_fixtures::retarget_group_role_dims_wide;
         use akita_params::{padded_setup_prefix_len, PolynomialGroupLayout};
+        use jolt_crypto::challenge::SparseChallengeConfig;
 
         let mut compared = 0;
         let mut compared_chunked = 0;
         for natural_len in [65, 129, 256] {
-            let mut params = prefix_eligible_level_params();
-            retarget_group_role_dims_wide(&mut params, 64, 64, 1024);
+            // q32 compression starts at D=128, so the compressed B and D
+            // images need a ring dimension it divides.
+            let mut params = CommittedGroupParams::params_only(
+                SisModulusProfileId::Q32Offset99,
+                128,
+                2,
+                2,
+                3,
+                2,
+                SparseChallengeConfig::pm1_only(3),
+            )
+            .with_decomp(
+                2,
+                3,
+                akita_params::sis::compute_num_digits_field_width(
+                    SisModulusProfileId::Q32Offset99.field_bits(),
+                    3,
+                ),
+                2,
+                2,
+            )
+            .expect("prefix-eligible level params");
+            retarget_group_role_dims_wide(&mut params, 128, 128, 1024);
             let commitment_params =
                 setup_prefix_precommitted_params(&params, padded_setup_prefix_len(natural_len))
                     .expect("setup-prefix params");

@@ -45,7 +45,7 @@ pub use benchmark_support::{
 };
 #[cfg(feature = "zk")]
 pub use masked::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
-pub use prepared_cache::build_riscv64_terminal_ntt_cache;
+pub use prepared_cache::{build_riscv64_terminal_ntt_cache, TrustedTerminalCache};
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::{Stage1Verifier, Stage1VerifyOutput};

@@ -8,17 +8,27 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
     use akita_params::InnerCommitSecurityRoute;
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    let recursive_policy =
+        policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+    // The recursive selection rule returns the independent searches as they
+    // are. Only the direct rule runs the combined search, so test both.
+    let direct_policy = PlannerPolicy {
+        selection_policy: crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+        ..recursive_policy
+    };
     let opening = PlannerOpeningCandidate::evaluation_trace(
         Recursive::ring_challenge_config(64).expect("challenge config"),
     );
     let dimensions = CommitmentRingDims::uniform(64);
     let source = crate::InnerBasisSource::BalancedDigits { log_basis: 4 };
     let source_moment = crate::response_model::SourceMomentEstimate::new(1_000_000);
-    for retain_split_frontier in [false, true] {
+    for (policy, retain_split_frontier) in [&recursive_policy, &direct_policy]
+        .into_iter()
+        .flat_map(|policy| [(policy, false), (policy, true)])
+    {
         let request = RecursiveCandidateRequest {
             input_chunks: None,
-            policy: &policy,
+            policy,
             payload_mode: akita_params::CommitmentPayloadMode::Compressed,
             opening,
             dimensions,

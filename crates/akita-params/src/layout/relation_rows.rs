@@ -226,9 +226,8 @@ impl RelationRhsLayout {
 mod tests {
     use super::{RelationRhsLayout, RelationRowFamily, RelationRowGeometry};
     use crate::layout::relation_layout::RelationCompressionLayout;
-    use crate::layout::relation_rhs_layout::compression_plan;
     use crate::layout::CommitmentRingDims;
-    use crate::{CommitmentSliceCount, SisModulusProfileId};
+    use crate::{CommitmentSliceCount, CompressionChainPlan, SisModulusProfileId};
     use akita_error::AkitaError;
 
     fn materialized_block(layout: &RelationRhsLayout) -> Result<usize, AkitaError> {
@@ -356,11 +355,13 @@ mod tests {
             2,
         )
         .unwrap();
-        let group_plan = compression_plan(SisModulusProfileId::Q64Offset59, 4, 128).unwrap();
+        let group_plan =
+            CompressionChainPlan::for_image(SisModulusProfileId::Q64Offset59, 4, 128).unwrap();
         layout.compression = Some(RelationCompressionLayout {
             group_indices: vec![0, 1],
             group_plans: vec![group_plan.clone(), group_plan],
-            opening_plan: compression_plan(SisModulusProfileId::Q64Offset59, 2, 128).unwrap(),
+            opening_plan: CompressionChainPlan::for_image(SisModulusProfileId::Q64Offset59, 2, 128)
+                .unwrap(),
         });
         let expected = materialized_block(&layout).unwrap();
         assert_eq!(layout.relation_coefficient_block_len().unwrap(), expected);
@@ -398,11 +399,13 @@ mod tests {
             2,
         )
         .unwrap();
-        let group_plan = compression_plan(SisModulusProfileId::Q64Offset59, 2, 64).unwrap();
+        let group_plan =
+            CompressionChainPlan::for_image(SisModulusProfileId::Q64Offset59, 2, 64).unwrap();
         layout.compression = Some(RelationCompressionLayout {
             group_indices: vec![0, 1],
             group_plans: vec![group_plan.clone(), group_plan],
-            opening_plan: compression_plan(SisModulusProfileId::Q64Offset59, 1, 64).unwrap(),
+            opening_plan: CompressionChainPlan::for_image(SisModulusProfileId::Q64Offset59, 1, 64)
+                .unwrap(),
         });
         let actual: Vec<_> = layout
             .row_families()

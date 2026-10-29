@@ -167,7 +167,7 @@ fn proven_pruned_zeta_search(
             if reduction_lower_bound > current_cost {
                 break;
             }
-            // Width-table certification needs only the 128-bit decision. If
+            // Width-table certification needs only the policy decision. If
             // both the best visited attack and the lower bound for every
             // unvisited beta clear the target, classify the global result
             // without spending minutes representing a much larger exact cost.

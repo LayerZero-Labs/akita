@@ -18,9 +18,9 @@ fn zero_vec<T: AdditiveGroup>(len: usize) -> Result<Vec<T>, AkitaError> {
     Ok(values)
 }
 
-/// Position × packing weights tied to the prepared point that produced them.
+/// Position × packing weights tied to the prepared tables that produced them.
 pub(crate) struct FusedPackingWeights<'a, E: Field> {
-    point: &'a akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    tables: &'a akita_types::SubringCoefficientPackingTables<E>,
     values: Vec<E>,
 }
 
@@ -28,27 +28,28 @@ impl<'a, E: Field> FusedPackingWeights<'a, E> {
     /// Precompute the tensor product reused by every claim in one opening batch.
     #[tracing::instrument(skip_all, name = "coefficient_packing_prepare_weights")]
     pub(crate) fn new(
-        point: &'a akita_types::PreparedSubringCoefficientPackingPoint<E>,
+        tables: &'a akita_types::SubringCoefficientPackingTables<E>,
     ) -> Result<Self, AkitaError> {
-        let len = Self::required_len(point)?;
+        let len = Self::required_len(tables)?;
         let mut values = Vec::new();
         values.try_reserve_exact(len).map_err(|_| {
             AkitaError::InvalidInput("coefficient-packing fused weight allocation failed".into())
         })?;
-        for &position_weight in point.position_weights() {
+        for &position_weight in tables.position_weights() {
             values.extend(
-                point
+                tables
                     .packing_weights()
                     .iter()
                     .map(|&packing_weight| position_weight * packing_weight),
             );
         }
-        Ok(Self { point, values })
+        Ok(Self { tables, values })
     }
 
     pub(crate) fn required_len(
-        point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
+        tables: &akita_types::SubringCoefficientPackingTables<E>,
     ) -> Result<usize, AkitaError> {
+        let point = tables.point();
         checked::product([
             point.num_positions_per_block(),
             point.geometry().subring_embedding_stride(),
@@ -58,8 +59,8 @@ impl<'a, E: Field> FusedPackingWeights<'a, E> {
         })
     }
 
-    pub(crate) fn point(&self) -> &'a akita_types::PreparedSubringCoefficientPackingPoint<E> {
-        self.point
+    pub(crate) fn tables(&self) -> &'a akita_types::SubringCoefficientPackingTables<E> {
+        self.tables
     }
 
     pub(crate) fn values(&self) -> &[E] {
@@ -86,10 +87,10 @@ where
     P: Sync,
 {
     let plan = SubringCoefficientPackingPlan {
-        point: fused_weights.point(),
+        tables: fused_weights.tables(),
     };
     plan.validate::<D>(source_num_vars)?;
-    let point = plan.point;
+    let point = plan.tables.point();
     let geometry = point.geometry();
     if E::DEGREE != geometry.extension_degree() {
         return Err(AkitaError::InvalidSetup(
@@ -268,7 +269,9 @@ mod tests {
     use crate::opaque::{DensePoly, OneHotPoly, RecursiveWitnessFlat};
     use akita_error::AkitaError;
     use akita_params::{BasisMode, SubringCoefficientPackingGeometry};
-    use akita_types::{FpExtEncoding, PreparedSubringCoefficientPackingPoint};
+    use akita_types::{
+        FpExtEncoding, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables,
+    };
     use jolt_algebra::CyclotomicRing;
     use jolt_algebra::{
         CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
@@ -279,12 +282,13 @@ mod tests {
     type E = FpExt4<F>;
     const D: usize = 256;
 
-    fn prepared_point() -> PreparedSubringCoefficientPackingPoint<E> {
+    fn prepared_tables() -> SubringCoefficientPackingTables<E> {
         let geometry = SubringCoefficientPackingGeometry::try_new(4, D, 64).unwrap();
         let point = (0..9)
             .map(|index| E::from_u64((index + 2) as u64))
             .collect::<Vec<_>>();
         PreparedSubringCoefficientPackingPoint::new(geometry, BasisMode::Lagrange, 2, 4, 9, &point)
+            .and_then(SubringCoefficientPackingTables::new)
             .unwrap()
     }
 
@@ -307,6 +311,7 @@ mod tests {
             &public_point,
         )
         .unwrap();
+        let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
         let rings = (0..2)
             .map(|position| {
                 CyclotomicRing::<T, RING_D>::from_coefficients(std::array::from_fn(|coefficient| {
@@ -323,8 +328,8 @@ mod tests {
             2,
             4,
             &source,
-            point.position_weights(),
-            point.packing_weights(),
+            tables.position_weights(),
+            tables.packing_weights(),
         )
         .unwrap();
         let poly = DensePoly::from_ring_coeffs(rings).unwrap();
@@ -334,7 +339,7 @@ mod tests {
             .coefficient_packing_partials_batch(
                 None,
                 batch,
-                SubringCoefficientPackingPlan { point: &point },
+                SubringCoefficientPackingPlan { tables: &tables },
             )
             .unwrap();
         assert_eq!(got[0].coordinates(), expected);
@@ -342,7 +347,8 @@ mod tests {
 
     #[test]
     fn dense_kernel_matches_flat_reference_with_signed_coefficients() {
-        let point = prepared_point();
+        let tables = prepared_tables();
+        let point = tables.point();
         let rings = (0..2)
             .map(|position| {
                 CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
@@ -359,8 +365,8 @@ mod tests {
             point.num_live_positions(),
             point.num_positions_per_block(),
             &source,
-            point.position_weights(),
-            point.packing_weights(),
+            tables.position_weights(),
+            tables.packing_weights(),
         )
         .unwrap();
         let poly = DensePoly::from_ring_coeffs(rings).unwrap();
@@ -370,7 +376,7 @@ mod tests {
             .coefficient_packing_partials_batch(
                 None,
                 batch,
-                SubringCoefficientPackingPlan { point: &point },
+                SubringCoefficientPackingPlan { tables: &tables },
             )
             .unwrap();
         assert_eq!(got.len(), 1);
@@ -402,6 +408,7 @@ mod tests {
             &public_point,
         )
         .unwrap();
+        let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
         let rings = (0..POSITIONS)
             .map(|position| {
                 CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
@@ -419,8 +426,8 @@ mod tests {
             POSITIONS,
             POSITIONS_PER_BLOCK,
             &source,
-            point.position_weights(),
-            point.packing_weights(),
+            tables.position_weights(),
+            tables.packing_weights(),
         )
         .unwrap();
         let poly = DensePoly::from_ring_coeffs(rings).unwrap();
@@ -430,7 +437,7 @@ mod tests {
             .coefficient_packing_partials_batch(
                 None,
                 batch,
-                SubringCoefficientPackingPlan { point: &point },
+                SubringCoefficientPackingPlan { tables: &tables },
             )
             .unwrap();
 
@@ -461,6 +468,7 @@ mod tests {
             &public_point,
         )
         .unwrap();
+        let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
         let source_digits = (0..2)
             .map(|claim| {
                 (0..6 * D)
@@ -483,7 +491,7 @@ mod tests {
             .coefficient_packing_partials_batch(
                 None,
                 batch,
-                SubringCoefficientPackingPlan { point: &point },
+                SubringCoefficientPackingPlan { tables: &tables },
             )
             .unwrap();
         assert_eq!(got.len(), 2);
@@ -501,8 +509,8 @@ mod tests {
                 6,
                 4,
                 &source,
-                point.position_weights(),
-                point.packing_weights(),
+                tables.position_weights(),
+                tables.packing_weights(),
             )
             .unwrap();
             assert_eq!(partials.coordinates(), expected);
@@ -511,7 +519,7 @@ mod tests {
 
     #[test]
     fn onehot_and_dense_kernels_emit_identical_coordinates() {
-        let point = prepared_point();
+        let tables = prepared_tables();
         let hot = [17usize, 255usize];
         let rings = hot
             .iter()
@@ -529,7 +537,7 @@ mod tests {
             <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
         let onehot_batch =
             <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&onehot_refs).unwrap();
-        let plan = SubringCoefficientPackingPlan { point: &point };
+        let plan = SubringCoefficientPackingPlan { tables: &tables };
         let dense_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, dense_batch, plan)
             .unwrap();
@@ -564,6 +572,7 @@ mod tests {
             &public_point,
         )
         .expect("recursive-style live prefix point");
+        let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
         let dense = DensePoly::from_ring_coeffs::<D>(vec![CyclotomicRing::zero(); 8]).unwrap();
         let onehot = OneHotPoly::<F>::new(
             D,
@@ -585,7 +594,7 @@ mod tests {
             <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
         let onehot_batch =
             <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&onehot_refs).unwrap();
-        let plan = SubringCoefficientPackingPlan { point: &point };
+        let plan = SubringCoefficientPackingPlan { tables: &tables };
 
         assert!(matches!(
             CpuBackend::<F, E>::for_arithmetic_tests().coefficient_packing_partials_batch(
@@ -624,6 +633,7 @@ mod tests {
             &public_point,
         )
         .unwrap();
+        let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
         let hot = [17usize, 1009usize];
         let dense = DensePoly::from_ring_coeffs(
             hot.iter()
@@ -642,7 +652,7 @@ mod tests {
             <DensePoly<F> as RootOpeningSource<F, LARGE_D>>::opening_batch(&dense_refs).unwrap();
         let onehot_batch =
             <OneHotPoly<F> as RootOpeningSource<F, LARGE_D>>::opening_batch(&onehot_refs).unwrap();
-        let plan = SubringCoefficientPackingPlan { point: &point };
+        let plan = SubringCoefficientPackingPlan { tables: &tables };
         let dense_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, dense_batch, plan)
             .unwrap();
@@ -671,6 +681,7 @@ mod tests {
             &public_point,
         )
         .unwrap();
+        let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
         let hot_by_claim = [
             [Some(1023usize), Some(17usize)],
             [Some(1024usize), Some(2047usize)],
@@ -709,7 +720,7 @@ mod tests {
             <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&onehot_refs).unwrap();
         let dense_batch =
             <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
-        let plan = SubringCoefficientPackingPlan { point: &point };
+        let plan = SubringCoefficientPackingPlan { tables: &tables };
         let onehot_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
@@ -722,7 +733,7 @@ mod tests {
 
     #[test]
     fn recursive_live_prefix_matches_zero_padded_dense_source() {
-        let point = prepared_point();
+        let tables = prepared_tables();
         let live_digits = (0..300)
             .map(|index| match index % 5 {
                 0 => -1,
@@ -751,7 +762,7 @@ mod tests {
         let recursive_batch =
             <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&recursive_refs)
                 .unwrap();
-        let plan = SubringCoefficientPackingPlan { point: &point };
+        let plan = SubringCoefficientPackingPlan { tables: &tables };
         let dense_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, dense_batch, plan)
             .unwrap();
@@ -778,6 +789,7 @@ mod tests {
             &public_point,
         )
         .unwrap();
+        let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
         let lower_arity = DensePoly::from_field_evals(5, vec![Base::one(); 32]).unwrap();
         let refs = [&lower_arity];
         let batch =
@@ -786,7 +798,7 @@ mod tests {
             .coefficient_packing_partials_batch(
                 None,
                 batch,
-                SubringCoefficientPackingPlan { point: &point },
+                SubringCoefficientPackingPlan { tables: &tables },
             )
             .is_err());
     }

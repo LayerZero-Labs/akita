@@ -43,7 +43,9 @@ use source::attach_source_moments;
 #[cfg(feature = "zk")]
 pub(crate) use state::CutOffload;
 use state::*;
-pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology, ZkSearch};
+pub(crate) use state::{
+    ScheduleMemo, SetupFieldBudget, SuffixCtx, SuffixState, SuffixTopology, ZkSearch,
+};
 pub(crate) use terminal::try_terminal_direct_suffix_cost;
 
 const SETUP_AND_PAYLOAD_PROJECTIONS: &[Projection] =
@@ -89,7 +91,7 @@ struct ChildEdge<'a> {
     level_setup_field_elements: usize,
     offloaded: bool,
     require_child_fold: bool,
-    setup_field_budget: Option<usize>,
+    setup_field_budget: Option<&'a SetupFieldBudget>,
 }
 
 impl ChildEdge<'_> {
@@ -492,7 +494,7 @@ fn child_choice(
         .max(suffix.setup_field_elements);
     if edge
         .setup_field_budget
-        .is_some_and(|budget| setup_field_elements > budget)
+        .is_some_and(|budget| !budget.admits(setup_field_elements))
     {
         return Ok(None);
     }

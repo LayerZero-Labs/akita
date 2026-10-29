@@ -1,7 +1,7 @@
 //! Whiteout's compressed images on Akita (`specs/whiteout-akita.md` §5.4;
 //! Whiteout §2, "Commitment compression"). An image is cut into the fewest
 //! balanced chunks of at most the largest source a certified chain
-//! compresses (884 coefficients at q128, the paper's `FCHAIN_MAX_IMAGE`;
+//! compresses (15,115 coefficients at q128, the paper's `FCHAIN_MAX_IMAGE`;
 //! clear B/D images keep the 8 KiB cap), and each chunk runs Akita's
 //! two-map negative-binary chain: `ξ₁ = Bin(t)`, `j = K₁ξ₁`, `ξ₂ = Bin(j)`,
 //! `cm = K₂ξ₂`, with `K₁` and `K₂` the offset-0 prefix of the setup stream.

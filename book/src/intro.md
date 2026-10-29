@@ -4,11 +4,13 @@ Akita is a lattice-based polynomial commitment scheme, or PCS, implemented in
 Rust. Akita lets a prover commit to a large table and later prove an evaluation
 of the multilinear polynomial represented by that table. The verifier checks
 the proof without receiving the whole table. Akita uses transparent setup, so
-it needs no trusted ceremony. Its production parameters provide 128-bit
-post-quantum security under Module-SIS.
+it needs no trusted ceremony. Its production parameters price every Module-SIS
+instance at NIST security category 3, the level of ML-DSA-65: 169 bits of
+quantum Core-SVP cost. Its Fiat-Shamir soundness target is 128 bits.
+[Security status](#security-status) states what each target covers.
 
 Akita's small proofs are one of its strongest advantages. Current production
-benchmarks produce opening proofs of roughly 65 to 80 KB. This contrasts with
+benchmarks produce opening proofs of roughly 75 to 90 KB. This contrasts with
 hash-based post-quantum polynomial commitment schemes, which produce proofs of
 hundreds of kilobytes at the same polynomial sizes Akita supports.
 
@@ -32,15 +34,16 @@ quantum computer could break the assumptions behind them.
 
 The commitment is often the part of the proof system that carries this
 assumption. The surrounding protocol checks polynomial identities using
-algebra and random challenges. Replacing the PCS with a post-quantum PCS can
-therefore protect the complete proof without replacing every other protocol in
-the system.
+algebra and random challenges. A PCS designed for quantum resistance removes
+that particular curve assumption. Security of the complete proof also depends
+on the surrounding protocol, including its transcript challenges.
 
 Hash-based commitments provide one post-quantum path. They are well developed,
 but they tend to produce larger proofs and require more prover memory. Akita
-takes the lattice path. It uses structured lattice problems to obtain
-post-quantum security, compact proofs, and a commitment operation that can
-preserve sparse inputs.
+takes the lattice path. It uses structured lattice problems to target quantum
+resistance while providing compact proofs and a commitment operation that can
+preserve sparse inputs. The [security status](#security-status) states the
+model-specific targets and their limits.
 
 ## What a polynomial commitment proves
 
@@ -179,6 +182,55 @@ from configuration through setup, commitment, folding, and verification. The
 [security model](./how/security.md) gives the exact Module-SIS assumptions and
 parameter checks.
 
+## Security status
+
+Akita prices Module-SIS instances at a 169-bit quantum attack cost and targets
+a 128-bit Fiat-Shamir rate in the classical random-oracle model. These are
+statements about two concrete models, not an end-to-end security bound,
+classical or quantum.
+
+- **Module-SIS binding.** Module-SIS instances are priced at a 169-bit target
+  with the ADPS16 quantum cost model. Two generated tables cover the
+  commitment matrices: a coefficient-$L_\infty$ table, from a scalarized
+  infinity-norm LGSA estimate, and a Euclidean table for selective-$L_2$
+  folds, which prices the collision's $L_2$ length. Six fixed cells cover the
+  compression matrices of compressed commitments. Each estimate prices one
+  known attack family on a scalarized instance. It does not price attacks
+  that exploit ring or module structure, CRT splitting, subfield projection,
+  or role-specific matrix structure, and it does not show that every quantum
+  attack costs at least $2^{169}$. These estimates price the instances. They
+  do not account for the loss of the reduction from a successful prover to a
+  Module-SIS solution.
+- **Fiat-Shamir.** Transcript checks are analyzed in the classical
+  random-oracle model. Sparse fold-challenge addresses have a 128-bit
+  per-address rate under the grinding specification's indexed fold bound.
+  That bound assumes the accepting-tree extraction described in the binding
+  chapter, the ability to sample each complete indexed oracle stream with its
+  exact distribution conditioned on the selected challenge value, and an
+  address that binds each challenge to its preceding transcript prefix. Every accepted challenge set has at least $2^{128}$ elements,
+  but support size alone does not give the rate. Each typed field challenge
+  is priced so that its local algebraic loss meets a 128-bit per-query rate,
+  with proof-of-work where needed. Extending that rate to the complete
+  extraction tree also requires, at every field site, a proof that its
+  full-tree debit is at most the local loss, or a target raised to price the
+  debit. Akita has no such field-address ledger. A complete claim also needs
+  an adversarial query budget, the fold-coordinate completion bound
+  instantiated for the selected schedule, bounds on field challenges first
+  queried by final verification and on the distinct transcript contexts that
+  produce group roots, a certificate that the extraction tree has polynomial
+  size, and Module-SIS success probabilities evaluated at the extractor's
+  expected running time. None of these is declared today. The total over an
+  attacker's query budget grows with the budget and is not reported per
+  schedule row. The
+  [binding chapter](./foundations/pcs-and-binding.md#from-the-fold-bound-to-a-security-claim)
+  and the [grinding specification](../../specs/transcript-grinding.md)
+  give the accounting.
+- **Quantum adversaries against the transcript hash.** Akita has no
+  quantum-random-oracle analysis. Generic quantum search finds an event of
+  probability $2^{-128}$ per query with about $2^{64}$ quantum oracle queries,
+  so the classical 128-bit Fiat-Shamir target does not by itself give 128-bit
+  soundness against an adversary that queries the hash on a quantum computer.
+
 ## Built as a complete system
 
 Akita treats deployment engineering as part of the cryptographic design. The
@@ -198,7 +250,7 @@ PCS provers, which usually materialize an encoded word and a hash tree during
 commitment, then retain both to answer later openings. The memory for those
 objects grows linearly with the polynomial size.
 
-The 65 to 80 KB figures cover the Akita commitment proof. The host proof system
+The 75 to 90 KB figures cover the Akita commitment proof. The host proof system
 contributes its own proof data.
 
 Jolt is the first demanding host for these boundaries. It exercises Akita

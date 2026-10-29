@@ -34,20 +34,20 @@ use jolt_algebra::{ExtField, Ring};
 
 /// Digests under the current protocol.
 const CURRENT_PROTOCOL: &[&str] = &[
-    "fp128_onehot final=12:1 commitments=d84c67e04b7d74d6ef6543bde7b7746dca6cee0b00b86e3d4ef693cafdc32954 proof_len=36755 proof=ce3794d316781586f36bdb5bfd2aadd008eee5ad5344ad92d39f67bb38dd038a",
-    "fp128_dense final=14:1 commitments=49976505877e18fce8ccd10e660e063919641d63863c09425c942bcfc123f0bb proof_len=62430 proof=c9ceab90c9648c9696b14fe15b17c5d4decd154517500c8ee8b5405ff860d408",
-    "fp128_onehot final=18:1 commitments=8296c20f4eff9761e9a3b0de022da93bae29d9e3c76c23404ef0ae7bc45d7544 proof_len=61819 proof=6c7c40f7c6e5fbd1e724aa5987a30f222e1861c543239fc0f5514c7a98ddc636",
-    "fp128_onehot final=16:1;precommitted=14:1 commitments=9a83dbdd32c30f09a985d0ed489dea18497297a69162fd3b7f18c691152974cb proof_len=61782 proof=000d1d023e990e392aa1a90be1fac648b26ec0c2b6d0c074d56876dc7aba7bd0",
-    "fp64_dense final=14:1 commitments=7db9315ca12c861b643c2a3a023084189ae3b8dcea9f9aedf00b30c7ed6abd0c proof_len=58832 proof=a465e03784e99f327ff3fcf7145ba9006957b73cdf11f59ae0ac8fefd2eb6929",
+    "fp128_onehot final=12:1 commitments=32e3bf3534003ccd6d3371a3a4304e650caefab86d311612ef61998bc356eb92 proof_len=42052 proof=9bb1c30fccb581f763d3b45ea67a419d8c6e7b4e2a3e390f8935f9ea4a8686c7",
+    "fp128_dense final=14:1 commitments=7c16802e31dbe69151fe27e4ee4d6666ce7e2e4428c6a348016b618f76c890f1 proof_len=73844 proof=c29d541d8fc2da811bc460dc5cdc594e8fe69427c4355299b2ee4dcd60b41496",
+    "fp128_onehot final=18:1 commitments=9b6cc92466df8bb492a8247e2b0f9aa070f8b098c795174875f7919e4c42cf24 proof_len=70585 proof=267d96d187caf49a4e6978f27e78269f227bd0a48ec68c6331fc63f7c63d1a7a",
+    "fp128_onehot final=16:1;precommitted=14:1 commitments=a31f2ae7274d259c6ce505af798b9c8d0ebe891864c9c8414370d1cbc6b231b0 proof_len=70598 proof=90ffca158387063524f8e18577925375ed4a883bc60cafe24448855f826988fc",
+    "fp64_dense final=14:1 commitments=4f6c809555b2a7ecd98b9de86721835257ae388a5de590817e2456f5b5ffeb23 proof_len=68381 proof=23976febd0956f6ac0a3bf3100560af31ee8de896118c202f09d7f5fe24ed693",
 ];
 
 /// Digests under the dev protocol (`akita_params::DEV_PROTOCOL`).
 const DEV_PROTOCOL: &[&str] = &[
-    "fp128_onehot final=12:1 commitments=d84c67e04b7d74d6ef6543bde7b7746dca6cee0b00b86e3d4ef693cafdc32954 proof_len=32642 proof=dcde664098b6f51fdc2011634b3b7f70ac7d57320bd6cad50546d1cb4d630a65",
-    "fp128_dense final=14:1 commitments=49976505877e18fce8ccd10e660e063919641d63863c09425c942bcfc123f0bb proof_len=58397 proof=0ce69d1734bc2714d18085aab9cb436f4a1774b8b338aef25a285c53c98d8bcd",
-    "fp128_onehot final=18:1 commitments=8296c20f4eff9761e9a3b0de022da93bae29d9e3c76c23404ef0ae7bc45d7544 proof_len=57780 proof=8a1908a916f01a11701e171ce408350e1cc69fb6d305a7838d9cd7011c542ba5",
-    "fp128_onehot final=16:1;precommitted=14:1 commitments=9a83dbdd32c30f09a985d0ed489dea18497297a69162fd3b7f18c691152974cb proof_len=57775 proof=5d82f331a949c9bca25250c6ad924e3075f0ac9312ca0b1edea7fcdecae0600f",
-    "fp64_dense final=14:1 commitments=7db9315ca12c861b643c2a3a023084189ae3b8dcea9f9aedf00b30c7ed6abd0c proof_len=54855 proof=6e0018441900547195f8b1000a913df4dd85e0b07d0ca2fe71a5541fe293730e",
+    "fp128_onehot final=12:1 commitments=32e3bf3534003ccd6d3371a3a4304e650caefab86d311612ef61998bc356eb92 proof_len=37078 proof=be954264c86e60be72890d7cfb0931f4f2f366bcc4a0ff3fb54fc72c5f3fe45d",
+    "fp128_dense final=14:1 commitments=7c16802e31dbe69151fe27e4ee4d6666ce7e2e4428c6a348016b618f76c890f1 proof_len=68808 proof=73341efb53dd6a864e9045356c66a1970377b56a9356bd3cba73030a10b05166",
+    "fp128_onehot final=18:1 commitments=9b6cc92466df8bb492a8247e2b0f9aa070f8b098c795174875f7919e4c42cf24 proof_len=65554 proof=0cb16f1454037d55331bec0873f3b2c2f307c21a3a187e271229e53608ccc258",
+    "fp128_onehot final=16:1;precommitted=14:1 commitments=a31f2ae7274d259c6ce505af798b9c8d0ebe891864c9c8414370d1cbc6b231b0 proof_len=65502 proof=07ea0d92c43d9a41335ee8d701941b1261ce32a1afc01b0933ab27b93b30a77d",
+    "fp64_dense final=14:1 commitments=4f6c809555b2a7ecd98b9de86721835257ae388a5de590817e2456f5b5ffeb23 proof_len=63890 proof=948707a0293e0d38879a61c9126e51a6430c684ca51c3fd92fd7ec5c5c9ebdbe",
 ];
 
 const SESSION: &[u8] = b"golden_proof_digests";

@@ -110,7 +110,7 @@ for each source block. It decomposes those images into short digits
 $\hat{\mathbf t}$ and computes the outer image
 $\mathbf u=\mathbf B\hat{\mathbf t}$. A standalone commitment then
 compresses $\mathbf u$ through two more short-input matrix maps to a
-128-byte payload.
+256-byte payload.
 
 This creates several binding obligations. If two different sources share a
 commitment, follow their images through the chain. Where distinct admitted

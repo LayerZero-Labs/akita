@@ -191,10 +191,15 @@ prices each role separately.
 
 ## The production security tables
 
-Akita targets 128-bit quantum security under the ADPS16 quantum LGSA attack
-model. The estimator runs offline. It searches scalar lattice attack
-parameters, certifies the accepted width boundary for each supported query,
-and emits compact tables for the runtime.
+Akita prices its scalarized SIS instances at a 169-bit quantum attack-cost
+target under the ADPS16 cost model. The coefficient-$L_\infty$ table uses an
+LGSA estimate; the Euclidean table prices the collision's $L_2$ length directly.
+The target follows NIST security category 3: under the same model, forging an
+ML-DSA-65 signature also costs 169 bits, and every Akita SIS instance needs at
+least the BKZ block size, 638, that the forgery needs. The estimator runs
+offline. It searches scalar lattice attack parameters, certifies the accepted
+width boundary for each supported query, and emits compact tables for the
+runtime.
 
 The runtime lookup has the following shape:
 
@@ -212,9 +217,9 @@ This split keeps expensive floating point attack estimation out of the proof
 path. It also makes every accepted parameter choice reproducible from checked
 in generated data and its digest.
 
-The 128-bit value is a claim inside a specific attack model. It is not a count
+The 169-bit value is a claim inside a specific attack model. It is not a count
 of physical qubits or a claim that every possible future attack has been
-classified. The exact policy name is `Quantum128BitADPS16`.
+classified. The exact policy name is `Quantum169BitADPS16`.
 
 ## What the verifier enforces
 

@@ -80,7 +80,7 @@ impl CommittedSourceEncoding {
 }
 
 /// Root layout metadata frozen when a standalone commitment group is created.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct GroupCommitPhaseParams {
     /// Version of the canonical committed-profile encoding.
     pub version: u8,
@@ -97,10 +97,34 @@ pub struct GroupCommitPhaseParams {
     /// Hiding-randomness ring columns appended to every B slice.
     ///
     /// Extension seam: Whiteout outer hiding randomness (akita#120). Zero in
-    /// every clear schedule, where it is not serialized. The B matrix width
+    /// every clear schedule, where text formats omit it. The B matrix width
     /// in the descriptor bytes binds it.
-    #[serde(default, skip_serializing_if = "is_zero_width")]
+    #[serde(default)]
     pub randomness_columns: usize,
+}
+
+/// Text formats omit a zero hiding-randomness width, so clear JSON catalog
+/// rows keep their bytes. Binary formats such as postcard carry no field names
+/// and cannot skip a field the decoder still reads, so they always carry it.
+impl serde::Serialize for GroupCommitPhaseParams {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let omit_unset = serializer.is_human_readable();
+        let mut state = serializer.serialize_struct("GroupCommitPhaseParams", 7)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("group", &self.group)?;
+        state.serialize_field("blocks", &self.blocks)?;
+        state.serialize_field("outer_slice_count", &self.outer_slice_count)?;
+        state.serialize_field("inner", &self.inner)?;
+        state.serialize_field("outer", &self.outer)?;
+        if omit_unset && is_zero_width(&self.randomness_columns) {
+            state.skip_field("randomness_columns")?;
+        } else {
+            state.serialize_field("randomness_columns", &self.randomness_columns)?;
+        }
+        state.end()
+    }
 }
 
 pub(crate) fn is_zero_width(value: &usize) -> bool {
@@ -197,6 +221,35 @@ impl GroupCommitPhaseParams {
         .with_randomness_columns(self.randomness_columns)
     }
 
+    /// Compression chain of this group's complete stacked B image.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the image cannot feed the compression ladder.
+    pub fn outer_compression_plan(&self) -> Result<crate::CompressionChainPlan, AkitaError> {
+        let matrix = &self.outer.matrix;
+        crate::CompressionChainPlan::for_image(
+            matrix.sis_modulus_profile(),
+            self.outer_slice_count
+                .logical_output_rows(matrix.output_rank())?,
+            matrix.ring_dimension(),
+        )
+    }
+
+    /// Candidate-aware [`Self::outer_compression_plan`]. `None` means the B
+    /// image cannot feed the compression ladder.
+    pub fn try_outer_compression_plan(
+        &self,
+    ) -> Result<Option<crate::CompressionChainPlan>, AkitaError> {
+        let matrix = &self.outer.matrix;
+        crate::CompressionChainPlan::try_for_image(
+            matrix.sis_modulus_profile(),
+            self.outer_slice_count
+                .logical_output_rows(matrix.output_rank())?,
+            matrix.ring_dimension(),
+        )
+    }
+
     /// The A-role gadget decomposition.
     #[inline]
     #[must_use]
@@ -287,6 +340,17 @@ impl GroupCommitPhaseParams {
     /// block geometry must cover every ring in that domain without a partial
     /// block or an omitted tail.
     pub fn validate_setup_prefix_geometry(&self, natural_len: usize) -> Result<(), AkitaError> {
+        let field_bits = self.inner.matrix.sis_modulus_profile().field_bits();
+        self.inner.digits.validate(field_bits)?;
+        let full_width =
+            crate::sis::compute_num_digits_field_width(field_bits, self.inner.digits.log_basis);
+        if self.inner.digits.num_digits != full_width {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup-prefix inner digit depth {} does not cover the full field width ({full_width} digits)",
+                self.inner.digits.num_digits
+            )));
+        }
+
         if self.group.num_polynomials() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "setup-prefix commitment profile must be singleton".into(),

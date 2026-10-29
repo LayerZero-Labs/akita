@@ -186,10 +186,11 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     ]
     .map(params_for)
     .into_iter()
-    .collect();
+    .collect::<Vec<_>>();
 
     let selected =
-        prune_locally_unprofitable_slices(&policy, &opening_layout, candidates).expect("pruning");
+        prune_root_slices_by_first_direct_setup(&policy, &opening_layout, candidates.clone())
+            .expect("pruning");
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].outer_slice_count(), CommitmentSliceCount::FOUR);
     let selected_capacity = padded_setup_prefix_len(
@@ -202,4 +203,15 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
         );
         assert!(selected_capacity <= other_capacity);
     }
+
+    // The V6 envelope is a schedule-wide maximum, so no slice can be
+    // discarded on its local setup alone.
+    policy.selection_policy =
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6;
+    assert_eq!(
+        prune_root_slices_by_first_direct_setup(&policy, &opening_layout, candidates)
+            .expect("no pruning")
+            .len(),
+        3
+    );
 }

@@ -52,7 +52,9 @@ impl std::hash::Hash for UnprunedState {
 
 pub(super) const MAX_ORACLE_SUFFIX_STATES: usize = 2_000_000;
 pub(super) const MAX_ORACLE_COMPLETE_SCHEDULES: usize = 1_000_000;
-pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 4;
+// Small chunked schedules reach five recursive folds, so the reference
+// oracle must too.
+pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 5;
 
 #[derive(Default)]
 struct OracleWork {

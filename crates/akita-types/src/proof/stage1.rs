@@ -194,7 +194,7 @@ mod tests {
     fn route_authority_derives_exact_headerless_stage1_shapes() {
         let plan = DigitRangePlan::new(64).unwrap();
         let linf = InnerCommitSecurityRoute::Linf(SisTableKey {
-            policy: SisSecurityPolicyId::Quantum128BitADPS16,
+            policy: SisSecurityPolicyId::Quantum169BitADPS16,
             table_digest: SisTableDigest::CURRENT,
             modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             role: akita_params::SisMatrixRole::Inner,
@@ -207,7 +207,7 @@ mod tests {
 
         let l2 = InnerCommitSecurityRoute::L2 {
             table_key: SisL2TableKey {
-                policy: SisSecurityPolicyId::Quantum128BitADPS16,
+                policy: SisSecurityPolicyId::Quantum169BitADPS16,
                 table_digest: SisL2TableDigest::CURRENT,
                 modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
                 ring_dimension: 64,

@@ -43,51 +43,35 @@ impl CommittedGroupParams {
         )
     }
 
-    /// Whether every B/D image at this level fits the compression policy cap.
+    /// Whether every B/D image at this level can feed the compression ladder.
     pub fn compression_sources_supported(&self) -> Result<bool, AkitaError> {
         if !self.payload_mode.is_compressed() {
             return Ok(true);
         }
-        let final_outer = self.outer_slice_count().complete_source_coefficients(
-            self.outer().matrix.output_rank(),
-            self.role_dims().d_b(),
-        )?;
-        if crate::CompressionChainPlan::try_for_complete_source(
-            self.outer().matrix.sis_modulus_profile(),
-            final_outer,
-        )?
-        .is_none()
-        {
-            return Ok(false);
-        }
-        for group in self.preceding_group_iter() {
-            let source = group
-                .profile
-                .outer_slice_count
-                .complete_source_coefficients(
-                    group.profile.outer.matrix.output_rank(),
-                    group.profile.outer.matrix.ring_dimension(),
-                )?;
-            if crate::CompressionChainPlan::try_for_complete_source(
-                group.profile.outer.matrix.sis_modulus_profile(),
-                source,
-            )?
-            .is_none()
-            {
+        let group_profiles = std::iter::once(&self.own_group().profile)
+            .chain(self.preceding_group_iter().map(|group| &group.profile));
+        for profile in group_profiles {
+            if profile.try_outer_compression_plan()?.is_none() {
                 return Ok(false);
             }
         }
-        let opening = self
-            .open()
-            .matrix
-            .output_rank()
-            .checked_mul(self.role_dims().d_d())
-            .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
-        Ok(crate::CompressionChainPlan::try_for_complete_source(
-            self.open().matrix.sis_modulus_profile(),
-            opening,
+        let opening = &self.open().matrix;
+        Ok(crate::CompressionChainPlan::try_for_image(
+            opening.sis_modulus_profile(),
+            opening.output_rank(),
+            self.role_dims().d_d(),
         )?
         .is_some())
+    }
+
+    /// Compression chain of this level's shared D image.
+    pub fn opening_compression_plan(&self) -> Result<crate::CompressionChainPlan, AkitaError> {
+        let opening = &self.open().matrix;
+        crate::CompressionChainPlan::for_image(
+            opening.sis_modulus_profile(),
+            opening.output_rank(),
+            self.role_dims().d_d(),
+        )
     }
 
     /// Append the descriptor digest encoding for this parameter set.

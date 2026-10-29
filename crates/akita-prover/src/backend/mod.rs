@@ -34,8 +34,8 @@ pub use messages::{
 };
 pub use metadata::{
     AcceptedFoldMetadata, CommitmentMaterialMetadata, CommitmentRelationMaterial,
-    PreparedRelationGroupPublic, RelationWitnessFinalClaims, Stage1FinalClaims,
-    Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
+    PreparedRelationGroupPublic, PreparedRelationOpening, RelationWitnessFinalClaims,
+    Stage1FinalClaims, Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
     TerminalCommitmentMaterialKernel,
 };
 pub use opening::{

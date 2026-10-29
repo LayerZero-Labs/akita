@@ -7,8 +7,14 @@
 | Status        | implemented |
 | PR            | #444 |
 | Supersedes    | the SIS policy and table specs deleted in this cutover |
-| Superseded-by | |
+| Superseded-by | [`sis-nist-level3-policy`](sis-nist-level3-policy.md) (target and policy ID only) |
 | Book-chapter  | book/src/how/security.md |
+
+> The 128-bit target and the `Quantum128BitADPS16` policy ID below are
+> retired. The current gate is `Quantum169BitADPS16` (tag `2`); see
+> [`sis-nist-level3-policy`](sis-nist-level3-policy.md). The estimator,
+> certificate domain, table layout, and role coverage described here are
+> unchanged.
 
 ## Summary
 

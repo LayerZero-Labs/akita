@@ -2157,6 +2157,13 @@ code does, and why.
   `cm(t)` is `8·⌈len/884⌉` coefficients: t_p and u_a (1,216 coefficients
   each at rank 19) go from three chunks to two of 608, whose first maps
   are 4,864 of the cell's 7,077 columns.
+  *U3 (Akita main #232):* the 169-bit SIS policy doubles every ladder
+  dimension (q128: d = 32 then 16) and the terminal image grows to 256 B,
+  so the first map's cell is 60,460 `R_32` columns and the bound is
+  15,115 coefficients (15,115 · 128 / 32 = 60,460). `cm(t)` is
+  `16·⌈len/15,115⌉` coefficients; t_p and u_a now take one chunk.
+  Main's V4 policy took tag 4, so `NegativeBinaryTwoMapSisBoundV1` moved to
+  tag 5.
 - **Rows after reduction.** Paper `02_preliminaries.tex:199-203` and
   `04_protocol.tex:329-330`: the verifier checks `t = G₁ξ₁`,
   `K₁ξ₁ = G₂ξ₂`, `K₂ξ₂ = cm(t)`. Code: `t = G₁ξ₁` coefficient by

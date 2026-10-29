@@ -64,14 +64,11 @@ where
             ));
         }
         let base = catalog.resolve_key(key)?;
-        // The grouped row supplies a packing-capable quotient successor for
-        // Stage 3; the scalar row may already enter a reduced-evaluation suffix.
-        let grouped_key = ScheduleLookupKey {
-            final_group: key.final_group,
-            precommitteds: vec![base.profiles().final_group],
-        };
-        let successor_template = catalog
-            .resolve_key(&grouped_key)?
+        // Folds 0 and 1 always use quotient lift with packing, so the row's
+        // own first recursive fold is a packing-capable quotient successor for
+        // Stage 3. It follows this root, so its inner digits chain from the
+        // root's opening digits.
+        let successor_template = base
             .schedule()
             .recursive_folds
             .first()

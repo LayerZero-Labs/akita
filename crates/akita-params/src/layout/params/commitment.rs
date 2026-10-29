@@ -108,23 +108,11 @@ impl CommittedGroupParams {
                 "commitment B matrix width disagrees with sliced request geometry".into(),
             ));
         }
-        if self.payload_mode.is_compressed() {
-            let source_coefficients = geometry
-                .logical_output_rows(self.outer().matrix.output_rank())?
-                .checked_mul(self.role_dims().d_b())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("commitment B source size overflow".into())
-                })?;
-            if crate::CompressionChainPlan::try_for_complete_source(
-                self.outer().matrix.sis_modulus_profile(),
-                source_coefficients,
-            )?
-            .is_none()
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "commitment B source exceeds the compression cap".into(),
-                ));
-            }
+        if self.payload_mode.is_compressed() && own_profile.try_outer_compression_plan()?.is_none()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "commitment B image cannot feed the compression ladder".into(),
+            ));
         }
         Ok(geometry)
     }

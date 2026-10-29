@@ -6,10 +6,9 @@ use super::{LabiniusCommitmentModulus, LabiniusRingDegree};
 
 #[rustfmt::skip]
 pub const LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE: &[LabiniusWidthCell] = &[
-    LabiniusWidthCell { commitment_modulus: LabiniusCommitmentModulus::Q25Plus14561, ring_degree: LabiniusRingDegree::D648, rank: 2, coeff_linf_bound: 1506960, max_width: 6400000000000, cutoff: LabiniusWidthCutoff::SearchCap },
     LabiniusWidthCell { commitment_modulus: LabiniusCommitmentModulus::Q25Plus14561, ring_degree: LabiniusRingDegree::D648, rank: 3, coeff_linf_bound: 1506960, max_width: 6400000000000, cutoff: LabiniusWidthCutoff::SearchCap },
     LabiniusWidthCell { commitment_modulus: LabiniusCommitmentModulus::Q25Plus14561, ring_degree: LabiniusRingDegree::D648, rank: 4, coeff_linf_bound: 1506960, max_width: 6400000000000, cutoff: LabiniusWidthCutoff::SearchCap },
 ];
 
 #[rustfmt::skip]
-pub const LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE_DIGEST: [u8; 32] = [127, 58, 251, 161, 229, 134, 112, 250, 231, 48, 4, 190, 198, 120, 27, 234, 61, 117, 163, 205, 54, 237, 86, 213, 51, 159, 231, 145, 170, 105, 169, 83];
+pub const LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE_DIGEST: [u8; 32] = [205, 183, 34, 233, 36, 76, 180, 10, 85, 85, 42, 203, 112, 64, 197, 22, 117, 124, 46, 157, 93, 61, 38, 210, 29, 117, 54, 54, 139, 23, 1, 222];

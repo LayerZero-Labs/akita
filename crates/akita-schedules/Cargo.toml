@@ -11,7 +11,15 @@ readme = "../../README.md"
 [features]
 # Zero-knowledge catalogs (`ScheduleAdmission::ZeroKnowledge`).
 zk = ["akita-params/zk"]
+# Used only through `#[serde(with = "serde_bytes")]`, which machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["serde_bytes"]
+
 [dependencies]
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
+serde_bytes = { version = "0.11", default-features = false, features = [
+  "alloc",
+] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "lattice",

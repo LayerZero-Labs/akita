@@ -2,7 +2,7 @@
 
 use crate::{
     akita::{scalar_sis_from_ring_euclidean, AkitaModulusProfileId},
-    config::EstimateConfig,
+    config::{EstimateConfig, SisSecurityPolicy},
     cost::{CostValue, LatticeCost, LogCost},
     error::{EstimatorError, Result},
     estimate,
@@ -12,8 +12,10 @@ use crate::{
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Current shipped L2 table target security level.
-pub const DEFAULT_EUCLIDEAN_TARGET_BITS: f64 = 128.0;
+/// Current shipped L2 table target security level: the production SIS policy gate.
+pub const DEFAULT_EUCLIDEAN_TARGET_BITS: f64 = SisSecurityPolicy::Quantum169BitADPS16
+    .adps16_quantum_constraint()
+    .minimum_log2_rop;
 /// Exact modulus domain owned by the independent Euclidean table.
 pub const EUCLIDEAN_FAMILIES: &[AkitaModulusProfileId] = &[
     AkitaModulusProfileId::Q32Offset99,

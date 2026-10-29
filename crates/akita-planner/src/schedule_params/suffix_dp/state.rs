@@ -416,6 +416,48 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
     })
 }
 
+/// Upper bound on a schedule's total setup field elements for one search.
+///
+/// Every rejection records its setup size, so a caller whose search found
+/// nothing can learn the smallest size it excluded.
+pub(crate) struct SetupFieldBudget {
+    limit: usize,
+    // Successor states complete in parallel, so rejections are recorded
+    // under a lock.
+    min_rejected: Mutex<Option<usize>>,
+}
+
+impl SetupFieldBudget {
+    pub(crate) const fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            min_rejected: Mutex::new(None),
+        }
+    }
+
+    /// Whether `setup_field_elements` fits, recording it when it does not.
+    pub(crate) fn admits(&self, setup_field_elements: usize) -> bool {
+        if setup_field_elements <= self.limit {
+            return true;
+        }
+        let mut min_rejected = self
+            .min_rejected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *min_rejected =
+            Some(min_rejected.map_or(setup_field_elements, |min| min.min(setup_field_elements)));
+        false
+    }
+
+    /// Smallest setup size this budget rejected, if any.
+    pub(crate) fn min_rejected(&self) -> Option<usize> {
+        *self
+            .min_rejected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// DP-invariant inputs for the suffix search.
 ///
 /// Values that remain constant across the whole recursion are carried in one
@@ -428,7 +470,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) ring_challenge_config: &'a (dyn Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
              + Sync),
     pub(crate) key: PolynomialGroupLayout,
-    pub(crate) setup_field_budget: Option<usize>,
+    pub(crate) setup_field_budget: Option<&'a SetupFieldBudget>,
     pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,
     /// Optional exact main-group root selected by an earlier scalar plan.
     ///

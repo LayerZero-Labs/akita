@@ -2,7 +2,7 @@ use super::*;
 use sha3::{Digest, Sha3_256};
 
 fn generated_artifact_digest() -> [u8; 32] {
-    const DOMAIN: &[u8] = b"akita-sis-table-digest-adps16-quantum-128bit\0";
+    const DOMAIN: &[u8] = b"akita-sis-table-digest-adps16-quantum-169bit\0";
     const FILES: &[(&str, &[u8])] = &[
         ("q32.rs", include_bytes!("../generated_sis_table/q32.rs")),
         ("q64.rs", include_bytes!("../generated_sis_table/q64.rs")),

@@ -148,14 +148,9 @@ impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
     }
 }
 
-pub(crate) type PublicPreparedRelationOpening<F, E> = akita_types::OpeningFamily<
-    akita_types::PreparedOpeningPoint<F, E>,
-    akita_types::PreparedSubringCoefficientPackingPoint<E>,
->;
-
 type PreparedGroupWitnessOutput<F, E> = (
     PreparedOpeningWitness<F>,
-    PublicPreparedRelationOpening<F, E>,
+    akita_prover::backend::PreparedRelationOpening<F, E>,
     Vec<E>,
 );
 

@@ -17,7 +17,7 @@ use sha3::{Digest, Sha3_256};
 const CSV: &str = include_str!("../data/labinius_commitment_prime_infinity_width.csv");
 const COEFF_LINF_BOUND: u64 = 1_506_960;
 /// Smallest rank with a certified positive width.
-const MIN_RANK: u32 = 2;
+const MIN_RANK: u32 = 3;
 
 /// The checked-in rows are what the search produces under the default policy
 /// and cap, and the runtime cells and digest in `akita-params` are those rows.
@@ -64,7 +64,7 @@ fn rows_regenerate_with_the_unchanged_policy_and_cap() {
     assert_eq!(rows.len(), (MIN_RANK..=4).count());
     for row in rows {
         assert_eq!(row.modulus_profile, profile);
-        assert_eq!(row.policy, SisSecurityPolicy::Quantum128BitADPS16);
+        assert_eq!(row.policy, SisSecurityPolicy::Quantum169BitADPS16);
         assert_eq!(row.d, 648);
         assert_eq!(row.coeff_linf_bound, COEFF_LINF_BOUND);
         assert_eq!(row.max_width, row.search_cap);
