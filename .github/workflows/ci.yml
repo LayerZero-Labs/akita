@@ -105,6 +105,8 @@ jobs:
         run: cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-blake2b -- kernels::trinomial_relation
       - name: Clippy trinomial bridge and benchmarks
         run: cargo clippy -p akita-types -p akita-cpu-backend --lib --benches --no-default-features --features labinius-trinomial,transcript-blake2b -- -D warnings
+      - name: Test binary source end-to-end opening
+        run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-blake2b
 
 
   labinius-binary:
