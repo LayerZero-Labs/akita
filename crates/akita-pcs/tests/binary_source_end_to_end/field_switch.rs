@@ -193,3 +193,49 @@ fn field_switch_rejects_false_source_word() {
         ));
     }
 }
+
+// Isolate the frontend's value equation from order-zero statement binding.
+// Both channels absorb the honest claim's bytes; only the verifier frontend's
+// argument changes. Transcript divergence therefore cannot mask a missing
+// reconstructed-value check.
+fn rejects_false_word_value(width: usize) {
+    let descriptor = descriptor(width, 8, 2);
+    let source = (0..8)
+        .map(|i| 0x7123_4567_89ab_cdef_9876_5432_10ff_aa55u128.rotate_left(i * 9))
+        .collect::<Vec<_>>();
+    let claim = honest_claim(&descriptor, &source);
+    let (proof, terminal) = frontend_proof(&descriptor, &claim, &source);
+    assert_eq!(check(&descriptor, &claim, &proof).unwrap(), terminal);
+    let mut value = *claim.value();
+    value[0] ^= 1;
+    let altered = BinaryWordClaim::new(
+        &descriptor,
+        *claim.polynomial(),
+        claim.point().to_vec(),
+        value,
+    )
+    .unwrap();
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let mut verifier = new_verifier_channel(DOMAIN, b"caller", &proof).unwrap();
+        verifier.public_message(&descriptor.canonical_bytes());
+        verifier.public_message(&claim.canonical_bytes());
+        let terminal = verify_field_switch(&descriptor, &altered, &mut verifier)?;
+        verifier.check_eof()?;
+        Ok::<_, AkitaError>(terminal)
+    }));
+    assert!(outcome.is_ok(), "false word value caused a verifier panic");
+    assert!(
+        matches!(outcome.unwrap(), Err(AkitaError::InvalidProof)),
+        "false word value was accepted at width {width}"
+    );
+}
+
+#[test]
+fn field_switch_rejects_false_word_value_dense() {
+    rejects_false_word_value(128);
+}
+
+#[test]
+fn field_switch_rejects_false_word_value_narrow() {
+    rejects_false_word_value(8);
+}

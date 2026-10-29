@@ -2,8 +2,6 @@
 #![cfg(feature = "labinius-trinomial")]
 
 mod common;
-#[path = "binary_source_end_to_end/false_value.rs"]
-mod false_value;
 #[path = "binary_source_end_to_end/fault_backend.rs"]
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
@@ -119,51 +117,34 @@ fn honest_claim(descriptor: &BinarySourceDescriptor, words: &[u128]) -> BinaryWo
 #[test]
 fn binary_group_opens_once_inside_the_callers_transcript() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 128, false));
+    run_on_large_stack(|| run_fixture(false, None, 128));
 }
 
 #[test]
 fn binary_and_ordinary_groups_share_one_opening() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(true, None, 128, false));
+    run_on_large_stack(|| run_fixture(true, None, 128));
 }
 
 #[test]
 fn field_switch_binary_root_rejects_a_foreign_source_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignCommitment), 128, false));
+    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignCommitment), 128));
 }
 
 #[test]
 fn binary_root_rejects_a_foreign_partial_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignPartials), 128, false));
+    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignPartials), 128));
 }
 
 #[test]
 fn field_switch_narrow_source_mutations_authenticate() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 8, false));
+    run_on_large_stack(|| run_fixture(false, None, 8));
 }
 
-#[test]
-fn field_switch_rejects_false_bound_word_value_dense() {
-    init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 128, true));
-}
-
-#[test]
-fn field_switch_rejects_false_bound_word_value_narrow() {
-    init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 8, true));
-}
-
-fn run_fixture(
-    mixed: bool,
-    authentication_fault: Option<Fault>,
-    word_width: usize,
-    false_word_value: bool,
-) {
+fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usize) {
     let catalog = test_catalog();
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
     let singleton_carrier = scheme
@@ -217,19 +198,7 @@ fn run_fixture(
         0x0101_0202_0303_0404_0505_0606_0707_0808,
         0x1357_9bdf_2468_ace0_1357_9bdf_2468_ace0,
     ];
-    let mut claim = honest_claim(&descriptor, &words);
-    if false_word_value {
-        let mut value = *claim.value();
-        value[0] ^= 1;
-        assert_ne!(value, *claim.value());
-        claim = BinaryWordClaim::new(
-            &descriptor,
-            *claim.polynomial(),
-            claim.point().to_vec(),
-            value,
-        )
-        .unwrap();
-    }
+    let claim = honest_claim(&descriptor, &words);
     let logical_words = reference::logical_words(&descriptor, &words);
     let source = backend
         .import_binary_source(manifest.clone(), carrier, vec![logical_words.clone()])
@@ -347,36 +316,6 @@ fn run_fixture(
             scheme.schedules(),
         )
     };
-
-    if false_word_value {
-        assert!(!mixed && authentication_fault.is_none());
-        let proof = false_value::proof(word_width);
-        false_value::assert_honest_partials(&descriptor, &claim, &words, proof);
-        let verifier = scheme
-            .verifier(scheme.setup_verifier(&setup).unwrap())
-            .unwrap();
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            let mut replay =
-                new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", proof).unwrap();
-            replay.public_message(b"application-prefix");
-            verifier
-                .batched_verify_in_session(
-                    &mut replay,
-                    statement(&claim, &ordinary_point, ordinary_value),
-                    BasisMode::Lagrange,
-                )
-                .and_then(|_| replay.check_eof())
-        }));
-        assert!(
-            result.is_ok(),
-            "false bound word value caused a verifier panic"
-        );
-        assert!(
-            matches!(result.unwrap(), Err(AkitaError::InvalidProof)),
-            "false bound word value was accepted at width {word_width}"
-        );
-        return;
-    }
 
     let prove_fault = |fault: Fault| {
         let verifier = scheme
