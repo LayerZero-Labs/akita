@@ -4,9 +4,11 @@ use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;
 use crate::ntt::butterfly::forward_ntt;
 use crate::ntt::prime::NttPrime;
+#[cfg(feature = "ntt-inline")]
+use crate::ntt::tables::I32_RAW_PRIMES;
 use crate::ntt::tables::{
-    q128_primes, I16_TAIL_PRIME, I32_RAW_PRIMES, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_NUM_PRIMES,
-    Q32_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES,
+    q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES,
+    Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use crate::CyclotomicRing;
 
@@ -505,68 +507,80 @@ fn i32_crt_mat_vec_with_i16_tail_matches_schoolbook() {
     assert_ne!(wide_only[0], actual[0]);
 }
 
+/// The Jolt backend's padded lazy dot agrees with the canonical repeated
+/// pointwise product for every batch length, signed residue extremes, and an
+/// accumulator off a doubleword boundary.
+#[cfg(feature = "ntt-inline")]
 #[test]
-fn portable_lazy_dot_satisfies_canonical_montgomery_relation() {
+fn jolt_pointwise_dot_matches_repeated_pointwise_mul() {
     const D: usize = 64;
-    for p in I32_RAW_PRIMES {
-        let prime = NttPrime::compute(p);
+    for raw in I32_RAW_PRIMES {
+        let prime = NttPrime::<i32>::compute(raw);
+        let params = CrtNttParamSet::<i32, 1, D>::new([prime]);
         for case in 0..4 {
-            let lhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|product| {
-                std::array::from_fn(|lane| {
-                    MontCoeff::from_raw(match case {
-                        0 => 0,
-                        1 => 1,
-                        2 => p - 1,
-                        _ => ((product as i64 * 7919 + lane as i64 * 104729) % i64::from(p)) as i32,
-                    })
+            let residue = |product: usize, lane: usize, salt: i64| {
+                MontCoeff::from_raw(match case {
+                    0 => 0,
+                    1 => raw - 1,
+                    2 => 1 - raw,
+                    _ => {
+                        ((product as i64 * 7919 + lane as i64 * 104_729 + salt)
+                            % (2 * i64::from(raw) - 1)
+                            - i64::from(raw)
+                            + 1) as i32
+                    }
                 })
-            });
-            let rhs = std::array::from_fn::<_, I32_LAZY_DOT_BATCH, _>(|product| {
-                std::array::from_fn::<_, D, _>(|lane| {
-                    MontCoeff::from_raw(if case == 3 {
-                        p - 1 - lhs[product][lane].raw()
-                    } else {
-                        lhs[product][lane].raw()
-                    })
-                })
-            });
-            let initial = std::array::from_fn::<_, D, _>(|lane| {
-                MontCoeff::from_raw(if lane % 2 == 0 { 0 } else { p - 1 })
-            });
-            let (lhs, rhs) = (
-                lhs.map(|row| row.map(MontCoeff::raw)),
-                rhs.map(|row| row.map(MontCoeff::raw)),
-            );
+            };
+            let lhs: [CyclotomicCrtNtt<i32, 1, D>; I32_LAZY_DOT_BATCH] =
+                std::array::from_fn(|product| CyclotomicCrtNtt {
+                    limbs: [std::array::from_fn(|lane| residue(product, lane, 3))],
+                });
+            let rhs: [CyclotomicCrtNtt<i32, 1, D>; I32_LAZY_DOT_BATCH] =
+                std::array::from_fn(|product| CyclotomicCrtNtt {
+                    limbs: [std::array::from_fn(|lane| residue(product, lane, 11))],
+                });
+            let initial = CyclotomicCrtNtt::<i32, 1, D> {
+                limbs: [std::array::from_fn(|lane| {
+                    MontCoeff::from_raw(if lane % 2 == 0 { 1 - raw } else { raw - 1 })
+                })],
+            };
             for count in 0..=I32_LAZY_DOT_BATCH {
-                let mut actual = initial.map(MontCoeff::raw);
-                super::ops::add_assign_pointwise_dot_limb_i32(
-                    &mut actual,
-                    |product| &lhs[product],
-                    |product| &rhs[product],
-                    count,
-                    prime,
-                    crate::ntt::NttKernelPlan::SCALAR,
-                );
-                for lane in 0..D {
-                    assert!((0..p).contains(&actual[lane]));
-                    let products: i128 = (0..count)
-                        .map(|product| {
-                            i128::from(lhs[product][lane]) * i128::from(rhs[product][lane])
-                        })
-                        .sum();
-                    let delta = i128::from(actual[lane]) - i128::from(initial[lane].raw());
+                let mut expected = initial.clone();
+                for (lhs, rhs) in lhs[..count].iter().zip(&rhs[..count]) {
+                    expected.add_assign_pointwise_mul(lhs, rhs, &params);
+                }
+                let mut misaligned = Misaligned {
+                    _pad: 0,
+                    acc: initial.clone(),
+                };
+                assert_eq!(core::ptr::addr_of!(misaligned.acc) as usize % 8, 4);
+                let mut aligned = initial.clone();
+                for acc in [&mut aligned, &mut misaligned.acc] {
+                    crate::ntt::jolt::pointwise_dot_acc(
+                        &mut acc.limbs[0],
+                        |product| &lhs[product].limbs[0],
+                        |product| &rhs[product].limbs[0],
+                        count,
+                        prime,
+                    );
                     assert_eq!(
-                        (delta * (1i128 << 32) - products).rem_euclid(i128::from(p)),
-                        0,
-                        "p={p} case={case} count={count} lane={lane}"
+                        acc.limbs[0].map(|c| prime.normalize(c).raw()),
+                        expected.limbs[0].map(|c| prime.normalize(c).raw()),
+                        "p={raw} case={case} count={count}"
                     );
                 }
             }
         }
     }
+
+    #[repr(C, align(8))]
+    struct Misaligned {
+        _pad: u32,
+        acc: CyclotomicCrtNtt<i32, 1, 64>,
+    }
 }
 
-/// The tables `forward_ntt` hands the 64-point inline (twist powers, the
+/// The tables the Jolt backend hands the 64-point inline (twist powers, the
 /// stage twiddle row with Montgomery one first, `p`, `pinv`) reproduce the
 /// portable transform; the inline's host fallback runs the same sequence.
 #[cfg(feature = "ntt-inline")]
@@ -582,20 +596,10 @@ fn inline_ntt64_matches_portable_forward_ntt() {
         });
         let mut portable = input;
         forward_ntt(&mut portable, prime, &tw, NttKernelPlan::SCALAR);
-        let mut inline = input.map(MontCoeff::raw);
-        jolt_inlines_ntt::forward_ntt64(
-            &mut inline,
-            &tw.psi_pows.map(MontCoeff::raw),
-            &tw.fwd_twiddles.map(MontCoeff::raw),
-            prime.p,
-            prime.pinv,
-        );
-        let canonical = |x: i32| x.rem_euclid(raw);
-        assert_eq!(
-            inline.map(canonical),
-            portable.map(|c| canonical(c.raw())),
-            "p = {raw}"
-        );
+        let mut inline = input;
+        crate::ntt::jolt::forward_ntt(&mut inline, prime, &tw);
+        let canonical = |c: MontCoeff<i32>| c.raw().rem_euclid(raw);
+        assert_eq!(inline.map(canonical), portable.map(canonical), "p = {raw}");
     }
 }
 

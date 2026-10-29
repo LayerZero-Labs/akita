@@ -209,13 +209,6 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
     }
 }
 
-/// Whether `plan` selects the guest's 64-point i32 NTT and pointwise-dot
-/// inlines and they serve this width and degree.
-#[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
-pub(crate) const fn inline_ntt64<W: PrimeWidth, const D: usize>(plan: NttKernelPlan) -> bool {
-    plan.uses_jolt_inline() && D == jolt_inlines_ntt::DEGREE && W::R_LOG == 32
-}
-
 /// Forward negacyclic NTT (twist + cyclic Gentleman-Sande DIF).
 ///
 /// Transforms `D` coefficients in-place from coefficient form to NTT
@@ -228,19 +221,8 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     plan: NttKernelPlan,
 ) {
     #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
-    if inline_ntt64::<W, D>(plan) {
-        // SAFETY: PrimeWidth is sealed to i16/i32 and MontCoeff is transparent.
-        // The branch pins both element width and array length. The inline SDK
-        // copies to aligned buffers when an array lacks doubleword alignment.
-        unsafe {
-            jolt_inlines_ntt::forward_ntt64(
-                &mut *(a as *mut _ as *mut [i32; 64]),
-                &*(&tw.psi_pows as *const _ as *const [i32; 64]),
-                &*(&tw.fwd_twiddles as *const _ as *const [i32; 64]),
-                prime.p.to_i64() as i32,
-                prime.pinv.to_i64() as i32,
-            );
-        }
+    if super::jolt::selected::<W, D>(plan) {
+        super::jolt::forward_ntt(a, prime, tw);
         return;
     }
 
