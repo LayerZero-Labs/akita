@@ -68,22 +68,6 @@ impl BinaryCommittedGroupManifest {
     pub fn b_rows(&self) -> usize {
         B_ROWS
     }
-    pub fn carrier_profile_digest(&self) -> &[u8; 32] {
-        &self.carrier_profile_digest
-    }
-
-    pub fn b_columns(&self) -> Result<usize, AkitaError> {
-        checked::product([
-            self.descriptor.polynomials().len(),
-            self.descriptor.index_map().columns(),
-            A_RANK,
-            8,
-            A_DEGREE,
-        ])
-        .and_then(|coefficients| checked::exact_div(coefficients, B_DEGREE))
-        .ok_or_else(|| AkitaError::InvalidInput("binary B input width overflow".into()))
-    }
-
     /// Compute the identities of the actual typed A/B setup contracts.
     pub fn commitment_profiles(
         index: &BinaryIndexMap,

@@ -27,8 +27,6 @@ pub struct BinaryRootWitnessPlan {
     descriptor: BinarySourceDescriptor,
     rank: usize,
     repacking: RootCoefficientRepacking,
-    quotient_bounds: BinaryQuotientBounds,
-    evaluation_bounds: BinaryEvaluationBounds,
 }
 
 impl BinaryRootWitnessPlan {
@@ -48,7 +46,7 @@ impl BinaryRootWitnessPlan {
         let ring_rows = checked::exact_div(scalar_rows, 4).ok_or(AkitaError::InvalidProof)?;
         let owners = descriptor.polynomials().len();
         let quotient_bounds = BinaryQuotientBounds::new(ring_rows, columns, BINARY_SETUP_P)?;
-        let evaluation_bounds = BinaryEvaluationBounds::new(scalar_rows, columns, BINARY_SETUP_P)?;
+        BinaryEvaluationBounds::new(scalar_rows, columns, BINARY_SETUP_P)?;
         let ring = RelationRowGeometry::for_polynomial(
             RelationPolynomial::minus_trinomial(648)?,
             1,
@@ -80,8 +78,6 @@ impl BinaryRootWitnessPlan {
             descriptor: descriptor.clone(),
             rank,
             repacking: RootCoefficientRepacking::new(segments, destination_ring_dimension)?,
-            quotient_bounds,
-            evaluation_bounds,
         })
     }
 
@@ -94,26 +90,21 @@ impl BinaryRootWitnessPlan {
     pub fn repacking(&self) -> &RootCoefficientRepacking {
         &self.repacking
     }
-    pub fn quotient_bounds(&self) -> BinaryQuotientBounds {
-        self.quotient_bounds
-    }
-    pub fn evaluation_bounds(&self) -> BinaryEvaluationBounds {
-        self.evaluation_bounds
-    }
 
     pub fn with_domain_len(mut self, domain_len: usize) -> Result<Self, AkitaError> {
         self.repacking = self.repacking.with_domain_len(domain_len)?;
         Ok(self)
     }
 
-    /// Append one ordinary source's complete commitment preimage before
-    /// selecting the common outgoing coefficient domain.
+    /// Append one admitted ordinary source's complete commitment preimage
+    /// before selecting the common outgoing coefficient domain.
     pub fn with_ordinary(
         mut self,
-        profile: &akita_params::GroupCommitPhaseParams,
+        ordinary: &super::OrdinaryNativeRootPlan,
     ) -> Result<Self, AkitaError> {
-        let ordinary =
-            super::OrdinaryNativeRootPlan::new(*profile, self.repacking.segments().len())?;
+        if ordinary.first_segment != self.repacking.segments().len() {
+            return Err(AkitaError::InvalidProof);
+        }
         let mut segments = self.repacking.segments().to_vec();
         segments
             .try_reserve_exact(ordinary.segments().len())

@@ -19,7 +19,7 @@ use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
 #[derive(Clone, Debug)]
 pub struct OrdinaryNativeRootPlan {
     profile: GroupCommitPhaseParams,
-    first_segment: usize,
+    pub(super) first_segment: usize,
     segments: [RootRepackingSegment; 4],
     compression: CompressionChainPlan,
     linear_batch_count: usize,
@@ -119,9 +119,6 @@ impl OrdinaryNativeRootPlan {
         })
     }
 
-    pub fn profile(&self) -> &GroupCommitPhaseParams {
-        &self.profile
-    }
     pub fn segments(&self) -> &[RootRepackingSegment] {
         &self.segments
     }

@@ -374,7 +374,11 @@ where
                 "ordinary preimage differs from its admitted ordered group".into(),
             ));
         }
-        expected_plan = expected_plan.with_ordinary(profile)?;
+        let ordinary_plan = akita_types::binary_source::OrdinaryNativeRootPlan::new(
+            *profile,
+            expected_plan.repacking().segments().len(),
+        )?;
+        expected_plan = expected_plan.with_ordinary(&ordinary_plan)?;
         let ordinary_context = context.for_group(1);
         backend.validate_context(session, &ordinary_context)?;
         let segments =

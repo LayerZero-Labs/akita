@@ -95,10 +95,10 @@ impl BinaryRootPublic {
             destination_ring_dimension,
         )?;
         let ordinary = ordinary_profile
-            .map(|profile| OrdinaryNativeRootPlan::new(profile, 6))
+            .map(|profile| OrdinaryNativeRootPlan::new(profile, plan.repacking().segments().len()))
             .transpose()?;
-        if let Some(profile) = ordinary_profile {
-            plan = plan.with_ordinary(&profile)?;
+        if let Some(ordinary) = &ordinary {
+            plan = plan.with_ordinary(ordinary)?;
         }
         let plan = plan.with_domain_len(domain_len)?;
         let negative_binary_addresses = ordinary
@@ -148,10 +148,6 @@ impl BinaryRootPublic {
 
     pub fn plan(&self) -> &BinaryRootWitnessPlan {
         &self.plan
-    }
-
-    pub fn ordinary_plan(&self) -> Option<&OrdinaryNativeRootPlan> {
-        self.ordinary.as_ref()
     }
 
     /// A, parity/value, B/D, padding, ordinary rows, then negative-bit batches.
