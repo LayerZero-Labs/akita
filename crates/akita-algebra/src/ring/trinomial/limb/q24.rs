@@ -21,12 +21,25 @@
 //! The accumulator decodes each packed slot to its canonical residue
 //! `0 <= u < q` and adds unsigned products to one `u64` per slot. After a
 //! reduction each sum is below `q`. After `k <= 2^15` further products a sum
-//! is at most `q - 1 + k (q - 1)^2`, which at `k = 2^15` equals
-//! `6_657_135_070_901_009_761 < 2^63`. The accumulator reduces every sum
-//! modulo `q` exactly when the product count since the last reduction reaches
-//! `2^15`, so no `u64` addition wraps. [`TrinomialQ24Accumulator::finish`]
-//! returns the centered residue of each sum. That is the unique representative
-//! in `[-(q-1)/2, (q-1)/2]` of the exact product sum, the same value
+//! is at most `q - 1 + k (q - 1)^2`. With `q = 14_253_409`:
+//!
+//! | Quantity | Value |
+//! |---|---:|
+//! | Largest product `(q - 1)^2` | `203_159_639_614_464` (below `2^48`) |
+//! | `q - 1 + 2^15 (q - 1)^2`, the lane bound | `6_657_135_070_901_009_760` |
+//! | `2^63` | `9_223_372_036_854_775_808` |
+//! | Lane bound at `k = 2^16` | `13_314_270_141_787_766_112` (above `2^63`) |
+//!
+//! So `2^15` is the largest power-of-two interval that keeps every lane below
+//! `2^63`, leaving the top bit of each `u64` clear; the largest exact interval
+//! is `45_399` products. The accumulator reduces every sum modulo `q` exactly
+//! when the product count since the last reduction reaches `2^15`, so no
+//! `u64` addition wraps. Compile-time assertions below and the test
+//! `q24_reduction_interval_bound_is_pinned` check these numbers.
+//!
+//! [`TrinomialQ24Accumulator::finish`] returns the centered residue of each
+//! sum. That is the unique representative in `[-(q-1)/2, (q-1)/2]` of the
+//! exact product sum, the same value
 //! [`TrinomialLimbAccumulator::finish`](super::TrinomialLimbAccumulator::finish)
 //! returns for the unpacked slots.
 //!
@@ -61,8 +74,14 @@ pub const Q24_REDUCTION_TERMS: u32 = 1 << 15;
 const Q: u64 = Q24 as u64;
 
 const MAX_PRODUCT: u128 = (Q as u128 - 1) * (Q as u128 - 1);
+/// Largest lane value between reductions: `q - 1 + 2^15 (q - 1)^2`.
+const LANE_BOUND: u128 = Q as u128 - 1 + Q24_REDUCTION_TERMS as u128 * MAX_PRODUCT;
+// (q - 1)^2 < 2^48: the IFMA kernel's 52-bit low product is the whole product.
+const _: () = assert!(MAX_PRODUCT < 1 << 48);
 // q - 1 + 2^15 (q - 1)^2 < 2^63: no u64 lane wraps between reductions.
-const _: () = assert!(Q as u128 - 1 + Q24_REDUCTION_TERMS as u128 * MAX_PRODUCT < 1 << 63);
+const _: () = assert!(LANE_BOUND < 1 << 63);
+// Doubling the interval would break the 2^63 margin.
+const _: () = assert!(Q as u128 - 1 + 2 * Q24_REDUCTION_TERMS as u128 * MAX_PRODUCT >= 1 << 63);
 // Every three-byte offset word decodes inside (-q, q): the smallest word decodes to
 // -IMAGE_OFFSET and the largest to 2^24 - 1 - IMAGE_OFFSET.
 const _: () = assert!(IMAGE_OFFSET < Q24 as i32);

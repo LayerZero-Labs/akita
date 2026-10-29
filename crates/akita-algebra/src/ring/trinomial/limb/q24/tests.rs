@@ -331,3 +331,69 @@ fn q24_known_answer_vector() {
         assert_eq!(finish_q24(accumulator), want, "{:?}", accumulator.backend);
     }
 }
+
+/// The numbers behind the `2^15` reduction interval, stated in the module
+/// documentation: the largest product, the lane bound and its `2^63` margin.
+#[test]
+fn q24_reduction_interval_bound_is_pinned() {
+    assert_eq!(Q24, 14_253_409);
+    assert_eq!(Q24_REDUCTION_TERMS, 1 << 15);
+    assert_eq!(MAX_PRODUCT, 203_159_639_614_464);
+    assert!(MAX_PRODUCT < 1 << 48);
+    assert_eq!(LANE_BOUND, 6_657_135_070_901_009_760);
+    assert_eq!(LANE_BOUND, (P as u128 - 1) + (1 << 15) * MAX_PRODUCT);
+    assert!(LANE_BOUND < 1 << 63);
+    // One more interval of the same length would cross 2^63.
+    assert_eq!(
+        (P as u128 - 1) + (1 << 16) * MAX_PRODUCT,
+        13_314_270_141_787_766_112
+    );
+    assert!((P as u128 - 1) + (1 << 16) * MAX_PRODUCT >= 1 << 63);
+    // The largest exact interval below 2^63.
+    assert!((P as u128 - 1) + 45_399 * MAX_PRODUCT < 1 << 63);
+    assert!((P as u128 - 1) + 45_400 * MAX_PRODUCT >= 1 << 63);
+}
+
+/// Batch lengths around the IFMA (8 slots) and NEON (4 slots) vector widths,
+/// including the empty batch, on zero, canonical extremes and `q - 1`.
+#[test]
+fn q24_batch_lengths_and_extremes_match_reference() {
+    const LENGTHS: [usize; 16] = [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64];
+    let h = H as i32;
+    // Centered -1 is the canonical residue q - 1.
+    let values = [0, 1, -1, h, -h, h - 1, 1 - h];
+    let mut seed = 0x3b1d_0f24_8c55_e017;
+    let pool: Vec<TrinomialLimbSlots> = (0..64)
+        .map(|index| {
+            slots(std::array::from_fn(|i| match index % 4 {
+                0 => 0,
+                1 => values[i % values.len()],
+                2 => values[(i + index) % values.len()],
+                _ => center(i128::from(next(&mut seed))),
+            }))
+        })
+        .collect();
+    let packed: Vec<_> = pool.iter().map(pack).collect();
+    for length in LENGTHS {
+        let (lhs, rhs) = (&pool[..length], &pool[64 - length..]);
+        let (packed_lhs, packed_rhs) = (&packed[..length], &packed[64 - length..]);
+        let mut expected = reference();
+        expected.add_product_batch(lhs, rhs).unwrap();
+        let want = finish_reference(&expected);
+        for mut accumulator in accumulators() {
+            accumulator
+                .add_product_batch(packed_lhs, packed_rhs)
+                .unwrap();
+            assert_eq!(accumulator.terms as usize, length);
+            if length == 0 {
+                assert_eq!(accumulator.sums, [0; DEGREE]);
+            }
+            assert_eq!(
+                finish_q24(&accumulator),
+                want,
+                "{:?} length {length}",
+                accumulator.backend
+            );
+        }
+    }
+}
