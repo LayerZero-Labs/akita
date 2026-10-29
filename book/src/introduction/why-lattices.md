@@ -60,8 +60,8 @@ structure turns large matrix products into fast polynomial operations, while
 the small coefficient bounds provide the binding statement priced by
 Module-SIS.
 
-This gives Akita a transparent commitment with post-quantum security and useful
-algebra. Every layer agrees on the exact dimensions, decomposition ranges,
+This gives Akita a transparent commitment whose binding rests on a lattice
+problem with no known efficient quantum attack, plus useful algebra. Every layer agrees on the exact dimensions, decomposition ranges,
 challenge distributions, and accepted response bounds. Akita makes those
 choices explicit in generated schedules and validates them at the verifier
 boundary.
