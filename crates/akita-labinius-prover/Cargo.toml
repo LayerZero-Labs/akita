@@ -66,6 +66,9 @@ labinius = [
   "akita-params/labinius-sis",
   "akita-labinius-verifier/labinius",
 ]
+# Packed three-byte q24 matrix slots with one reduction per 2^15 products in
+# the prepared commitment kernel. Off by default; commitments are identical.
+q24-packed-commit = ["labinius"]
 transcript-blake2b = [
   "akita-transcript/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",
