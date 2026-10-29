@@ -20,7 +20,10 @@ use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-const VERIFIER_MAGIC: [u8; 8] = *b"AKSCVFY1";
+/// Distinct from the `AKSCVFY1` views, whose rows have no zero-knowledge
+/// schedule: postcard writes every row's `zk` option, so the two layouts
+/// differ under the same descriptor version.
+const VERIFIER_MAGIC: [u8; 8] = *b"AKSCVFY2";
 
 /// Byte bound for a view: the full identity list plus one JSON row's budget
 /// for the carried rows. It bounds decoding before any count check runs.
