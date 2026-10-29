@@ -238,6 +238,7 @@ pub fn new_verifier_channel<'proof>(
 ) -> Result<VerifierChannel<'proof>, AkitaError> {
     Ok(VerifierChannel::new(
         domain(session, instance)?.to_verifier(TranscriptSponge::default(), proof),
+        proof.len(),
     ))
 }
 
@@ -507,6 +508,10 @@ pub fn send_bytes(state: &mut ProverChannel, bytes: &[u8]) {
 
 /// Receive an exact schedule-bounded number of bytes in fixed-size chunks.
 pub fn receive_bytes(state: &mut VerifierChannel<'_>, len: usize) -> Result<Vec<u8>, AkitaError> {
+    if len > state.proof_len {
+        state.invalidate();
+        return Err(AkitaError::InvalidProof);
+    }
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(len)
