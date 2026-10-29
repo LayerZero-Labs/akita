@@ -118,7 +118,8 @@ binary
 Jolt ProgramPreprocessing                covered by preprocessing_digest
 ├─ program commitments
 ├─ bundle_id, set names
-└─ program rows                          grouped rows planned for this program
+├─ program rows                          grouped rows planned for this program
+└─ merged catalog digest                 base rows admitted for it + program rows
 ```
 
 **Parameter set.** The unit a loader builds. It fixes how one kind of
@@ -366,23 +367,32 @@ decodes data it has not yet authenticated.
 Admission sizes the setup from what is actually needed:
 
 - **A1.** Admit rows with `TrustedScheduleCatalog::rows_within_setup_capacity`
-  against the set limits (for a single-row load, resolve the selection and
-  apply the same capacity check; `for_selection` is constructed after A3).
-  For a set with program rows, admit (a) the base rows whose final group
-  equals the program's shape and (b) the program's rows, both against the
-  program bounds. A program row is admitted only if every slot that
-  `required_setup_prefix_slot_ids_for_schedule` derives from its audited
-  schedule maps to a universe profile. The loader MUST NOT accept a
-  separately supplied list of slot ids.
+  against the set limits. For a set with program rows, admit (a) the base
+  rows whose final group equals the program's shape and (b) the program's
+  rows, both against the program bounds. A program row is admitted only if
+  every slot that `required_setup_prefix_slot_ids_for_schedule` derives from
+  its audited schedule maps to a universe profile. The loader MUST NOT accept
+  a separately supplied list of slot ids. The A1 rows fix the **catalog
+  identity**: for a set without program rows, the base catalog; with program
+  rows, the **merged catalog**, `ValidatedScheduleCatalog::try_new` over all
+  A1 rows. A **single-row load** (a verifier for one selection, such as a
+  guest) MUST resolve its selection within that identity, reject a selection
+  outside the A1 rows, and use the identity's selected-row verifier view
+  (`to_verifier_view`), which carries the complete list of row digests and
+  reproduces the identity's `catalog_digest()`. Materializing fewer rows
+  never changes the catalog identity.
 - **A2.** Size the matrix: for a verifier, the largest
-  `verifier_setup_matrix_capacity_for_schedule` over the admitted rows; for a
-  prover, `SetupRequirements::from_catalog(…).matrix_capacity()` over the
-  rows it may prove.
+  `verifier_setup_matrix_capacity_for_schedule` over the rows it will verify
+  (all A1 rows, or the selected row); for a prover,
+  `SetupRequirements::from_catalog(…).matrix_capacity()` over the rows it
+  may prove.
 - **A3.** Derive that prefix from the seed, and build the setup descriptor
   from the set limits (the program bounds, for a set with program rows) and
   the derived length.
-- **A4.** `verifier_admits` on the resulting setup MUST return exactly the A1
-  rows.
+- **A4.** For a full load, `verifier_admitted_rows` on the resulting setup
+  MUST return exactly the A1 rows. For a single-row load, `verifier_admits`
+  MUST accept the selected row, and the verifier MUST admit only that row
+  (`for_selection`), even when other rows of the identity fit the setup.
 
 The matrix is derived, not shipped: at the largest measured shape it is
 4 GiB, and deriving it is about 3% of setup time. Prover hints are loaded
@@ -470,10 +480,11 @@ rebuilding but need freshness and rollback protection, and are out of scope.
 6. **Only loader values reach production constructors.** `PinnedVerifierSetup`
    and `PinnedTerminalCache` (in `akita-verifier`) and `PinnedProverSetup` (in
    `akita-cpu-backend`) have private fields, no public constructor, and no
-   deserializer. With program rows, the pinned catalog is
-   `ValidatedScheduleCatalog::try_new` over the admitted base and program
-   rows; `catalog_digest()` authenticates the base catalog, and Jolt's
-   transcript binds the merged catalog's digest. Every path that builds a
+   deserializer. The pinned catalog is the catalog identity of A1, or its
+   selected-row verifier view for a single-row load; with program rows that
+   is the merged catalog. The set record's `catalog_digest` authenticates the
+   base catalog, and Jolt's transcript binds the merged catalog's digest,
+   which every loader of one program reproduces. Every path that builds a
    setup from loaded bytes becomes loader-private or an `unsafe fn` whose
    contract is that the caller guarantees derivation:
    - `AkitaVerifierSetup` fields, `from_parts`, and its deserializer (it
@@ -548,6 +559,9 @@ rebuilding but need freshness and rollback protection, and are out of scope.
 - [ ] The production guest checks its embedded preprocessing with the loader
       and reads none from its input; its approved program commitment comes
       from the same ELF snapshot the approval checked.
+- [ ] A host loader and a single-row guest loader for one program bind the
+      same merged catalog digest, and a guest for a program row outside the
+      base catalog is built and approved without a new release.
 
 ### Testing Strategy
 
@@ -558,7 +572,14 @@ rebuilding but need freshness and rollback protection, and are out of scope.
   duplicated manifest entries, modification after hashing.
 - Anchors: wrong set name, wrong kind, files from two releases.
 - Config and algorithm mismatch.
-- Admission: A1 and A4 agree; matrix ranges ending mid-page.
+- Admission: A1 and A4 agree for full loads; a single-row load admits only
+  its selection and rejects one outside A1; matrix ranges ending mid-page.
+- Catalog identity: one honest Jolt proof verifies through a full host
+  loader and a single-row guest loader, both binding the same merged
+  catalog digest.
+- Guest program rows: build and approve a guest for a row absent from the
+  base catalog without a new release; approval rejects a modified
+  program-row cache or merged view.
 - Program rows: profile outside the universe, wrong precommitted profile,
   duplicate base key, and planner determinism (`find_adapted_schedule` on
   sampled keys at two thread counts and on two instruction sets).
@@ -634,9 +655,9 @@ published, per flavor / K / chunk profile        per program
 ├─ one-hot set                                   ProgramPreprocessing
 │   ├─ base catalog                              ├─ program commitments
 │   └─ profile universe                          ├─ bundle_id, set names
-├─ bounded-dense set                             └─ program rows
-│   advice, committed bytecode and image,             (find_adapted_schedule)
-│   bounded fused increment
+├─ bounded-dense set                             ├─ program rows
+│   advice, committed bytecode and image,        │   (find_adapted_schedule)
+│   bounded fused increment                      └─ merged catalog digest
 └─ full-dense sets
     one per field-increment arity (14..31)
 ```
@@ -651,10 +672,13 @@ every sampled row, for about 70 MB of hints and 18 KB of commitments.
 
 Rules:
 
-- Program rows, the `bundle_id`, and set names MUST be stored in
-  `ProgramPreprocessing` (full and committed variants), so
-  `preprocessing_digest` covers them. They MUST NOT be stored in `pcs_setup`,
-  which the digest does not cover.
+- Program rows, the `bundle_id`, set names, and the merged catalog digest
+  (A1) MUST be stored in `ProgramPreprocessing` (full and committed
+  variants), so `preprocessing_digest` covers them. They MUST NOT be stored
+  in `pcs_setup`, which the digest does not cover. Every loader, full or
+  single-row, MUST reproduce the stored merged catalog digest from the
+  catalog it builds and reject on mismatch, so a host prover and a guest
+  verifier bind the same digest.
 - A construction loads the one-hot set and the dense sets it needs from one
   manifest. Every precommitted group profile in a program row MUST equal the
   frozen profile for that layout in its anchored producer set: bounded-dense
@@ -720,24 +744,46 @@ image.
 ```text
 approved guest image
 ├─ trust anchor
-├─ manifest, set record, catalog view, registry entries   checked by the loader at startup
-├─ matrix prefix, terminal caches                          vouched for by image approval
-└─ inner ProgramPreprocessing with its program rows        admitted, never planned
+├─ manifest, set record, registry entries        checked by the loader at startup
+├─ catalog view                                  release file, or merged view for program rows
+├─ matrix prefix, terminal caches                vouched for by image approval
+└─ inner ProgramPreprocessing                    program rows and merged catalog digest;
+                                                 admitted, never planned
 ```
 
 At startup the guest runs the same loader as a host on the small embedded
-files. Hashing the large ones may cost too many cycles, so they MAY be issued
+files, as a single-row load (A1–A4). A guest verifying grouped Jolt proofs
+embeds the inner program's `ProgramPreprocessing` and admits its rows with
+the same loader call as the host. One approved image covers one inner
+program.
+
+Files that depend on program rows cannot be release files, since the rows
+are planned after publication: the selected-row view of the merged catalog,
+and the terminal cache of a program row (`TerminalNttCache::install_trusted`
+binds the exact row digest and setup capacity). The guest build step MUST
+derive them from the anchored release and the inner program preprocessing:
+it runs the host loader for the program, takes `to_verifier_view` of the
+merged catalog for the rows the guest verifies, and builds each row's cache
+with `build_riscv64_terminal_ntt_cache` from the loader-derived matrix
+prefix. Rows of the base catalog MAY use the release's `catalog-view` and
+`terminal-cache` files instead. A guest without an embedded cache for a row
+prepares it in the guest (`for_selection` with no supplied cache).
+
+Hashing the large files may cost too many cycles, so they MAY be issued
 through a guest-only `unsafe fn` whose contract is that the bytes are
-embedded in an approved image and match the manifest; only the guest crate
-may call it. A guest verifying grouped Jolt proofs embeds the inner program's
-`ProgramPreprocessing` and admits its rows with the same loader call as the
-host. One approved image covers one inner program.
+embedded in an approved image and either match the manifest (release files)
+or equal the build step's derivation (program-row files); only the guest
+crate may call it. The merged view needs no such contract: the loader checks
+that it reproduces the merged catalog digest stored in the authenticated
+`ProgramPreprocessing`.
 
 Approval happens in the trusted build environment: a reproducible build
 produces one immutable ELF snapshot; the approval step checks its embedded
-files against the manifest and the inner program preprocessing against its
-digest; Jolt's program commitment for the guest is computed from the same
-snapshot, and the outer verifier trusts that commitment.
+release files against the manifest, the inner program preprocessing against
+its digest, and every program-row file by rederiving it as the build step
+does and comparing bytes. Jolt's program commitment for the guest is
+computed from the same snapshot, and the outer verifier trusts that
+commitment. A new inner program needs a new guest image, not a new release.
 
 ### Publication and audit
 
