@@ -22,11 +22,12 @@ for evaluation points and claimed values.
 
 All three families price every Module-SIS instance at 169 bits of quantum
 Core-SVP cost, NIST category 3, under Akita's concrete lattice attack model.
-Their Fiat-Shamir soundness target stays at 128 bits. The smaller base fields
-use extension fields for opening points and claimed values. The host should
-choose the family whose opening field matches the values it needs to prove.
-The [rings and fields](../foundations/rings-and-fields.md) chapter explains
-the construction.
+Their Fiat-Shamir target is a 128-bit rate per random-oracle query in the
+classical random-oracle model. The [security status](../intro.md#security-status)
+states what these targets cover. The smaller base fields use extension fields
+for opening points and claimed values. The host should choose the family whose
+opening field matches the values it needs to prove. The [rings and
+fields](../foundations/rings-and-fields.md) chapter explains the construction.
 
 ## Match the committed data
 
