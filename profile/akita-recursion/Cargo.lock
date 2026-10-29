@@ -52,6 +52,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "jolt-field",
+ "jolt-inlines-ntt",
  "jolt-poly",
  "rand_core 0.6.4",
  "rayon",
@@ -65,6 +66,7 @@ dependencies = [
  "akita-error",
  "akita-transcript",
  "jolt-field",
+ "jolt-inlines-keccak256",
  "keccak 0.1.6",
  "serde",
  "smallvec",
@@ -112,6 +114,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-inline-parity-guest"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-params",
+ "akita-transcript",
+ "jolt-field",
+ "jolt-sdk",
+ "serde",
+]
+
+[[package]]
+name = "akita-inline-parity-host"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-inline-parity-guest",
+ "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-ntt",
+ "jolt-program",
+ "jolt-sdk",
+ "jolt-sdk-macros",
+]
+
+[[package]]
 name = "akita-params"
 version = "0.1.0"
 dependencies = [
@@ -123,6 +152,7 @@ dependencies = [
  "akita-transcript",
  "blake2 0.11.0",
  "jolt-field",
+ "jolt-inlines-blake2",
  "serde",
  "sha3 0.12.0",
 ]
@@ -300,6 +330,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "jolt-field",
+ "jolt-inlines-blake2",
  "spongefish 0.7.4",
 ]
 
@@ -1312,6 +1343,44 @@ dependencies = [
  "serde",
  "tracer",
  "tracing",
+]
+
+[[package]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=83fcab4937c492615b068dc852ad848c3b20cde0#83fcab4937c492615b068dc852ad848c3b20cde0"
+dependencies = [
+ "digest 0.11.3",
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=83fcab4937c492615b068dc852ad848c3b20cde0#83fcab4937c492615b068dc852ad848c3b20cde0"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=83fcab4937c492615b068dc852ad848c3b20cde0#83fcab4937c492615b068dc852ad848c3b20cde0"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jolt-inlines-sdk"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=83fcab4937c492615b068dc852ad848c3b20cde0#83fcab4937c492615b068dc852ad848c3b20cde0"
+dependencies = [
+ "inventory",
+ "jolt-platform",
+ "jolt-program",
+ "jolt-riscv",
+ "num-bigint 0.4.8",
+ "tracer",
 ]
 
 [[package]]

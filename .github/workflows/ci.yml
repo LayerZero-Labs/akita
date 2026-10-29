@@ -286,8 +286,8 @@ jobs:
           target: riscv64gc-unknown-linux-gnu
       # The guest backends select themselves only on riscv64. The NTT inline's
       # portable fallback runs on any host, so its table layout is pinned here;
-      # Jolt pins the Blake2b and Keccak inlines on their host paths, and its
-      # recursion example runs this verifier in a guest with all three.
+      # the `inline-parity` job in jolt-verifier-profile-smoke.yml executes all
+      # three inlines in a traced Jolt guest.
       - name: Inline NTT against the portable transform
         run: cargo test --release -p akita-algebra --features ntt-inline --lib
       - name: Host builds with every inline feature

@@ -18,10 +18,20 @@
 #                  prover, prints cycle counts.
 #   * `artifact` — host binary that produces a verifier-input blob from
 #                  a real Akita prover run.
+#   * `inline-parity/{guest,host}` — traces Akita's inline-selected
+#                  transcript, challenge, and NTT paths in a Jolt guest and
+#                  compares them with a portable native run.
 
 [workspace]
 resolver = "2"
-members = ["artifact", "glue", "guest", "host"]
+members = [
+  "artifact",
+  "glue",
+  "guest",
+  "host",
+  "inline-parity/guest",
+  "inline-parity/host",
+]
 # Default to building the binaries (`host` + `artifact`) only. They each
 # pull in `guest` / `glue` as path deps with the right feature
 # unification (the host enables `jolt-sdk/host` so the guest's
