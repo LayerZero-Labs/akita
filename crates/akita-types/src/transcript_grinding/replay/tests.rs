@@ -4,10 +4,10 @@ use akita_challenges::{
     SparseChallengeConfig, VerifierFoldDraw,
 };
 use akita_params::{ChallengeFieldOrder, GrindingRun};
-use akita_transcript::{new_prover_channel, new_verifier_channel, FoldPreview, ProverTranscript};
+use akita_transcript::{
+    new_prover_channel, new_verifier_channel, FoldPreview, NonceAtom, ProverTranscript,
+};
 use jolt_field::Prime128Offset275 as F;
-use jolt_transcript::Probe;
-use spongefish::Encoding;
 
 /// The fold proof of work at `level`, priced for `loss` challenges against a
 /// `2^128` set.
@@ -81,16 +81,16 @@ fn verifier_accepts_a_valid_nonminimal_two_byte_pow_nonce() {
     )
     .unwrap();
     let mut state = new_prover_channel(b"native-long-nonce", b"fixture");
-    let search = state.message_search();
+    let oracle = state.verifier_message_oracle();
     let nonce = (128..=u8::MAX as u32)
         .find(|&candidate| {
-            let mut check = [0u8; 1];
-            search.probe(NonceAtom::new(candidate).encode().as_ref(), &mut check);
+            let mut check = [0u8; GRINDING_CHECK_BYTES as usize];
+            oracle(&NonceAtom::new(candidate).word(), &mut check);
             check[0] & 1 == 0
         })
         .expect("the two-byte half of an 8-bit nonce domain must contain a winner");
-    state.prover_message(&NonceAtom::new(nonce));
-    let _: [u8; 1] = state.verifier_message();
+    send_nonce(&mut state, nonce);
+    let _: [u8; GRINDING_CHECK_BYTES as usize] = state.verifier_message();
     let proof = state.narg_string().to_vec();
     assert_eq!(proof.len(), 2);
 

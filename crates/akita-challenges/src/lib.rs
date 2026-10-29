@@ -34,7 +34,6 @@ pub use config::{
 #[cfg(feature = "prover")]
 pub use fold_draw::PreviewFoldDraw;
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw,
-    ProverFoldDraw, VerifierFoldDraw,
+    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
 };
 pub use sampler::SparseChallengeStream;

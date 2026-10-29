@@ -104,7 +104,6 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
- "blake2",
  "jolt-field",
  "jolt-transcript",
  "rand 0.8.8",
@@ -923,20 +922,21 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=d6868f689aef7e6715345032b13973ff85804467#d6868f689aef7e6715345032b13973ff85804467"
 dependencies = [
  "cc",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish",
  "thiserror",
 ]
 
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=d6868f689aef7e6715345032b13973ff85804467#d6868f689aef7e6715345032b13973ff85804467"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -950,13 +950,12 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=d6868f689aef7e6715345032b13973ff85804467#d6868f689aef7e6715345032b13973ff85804467"
 dependencies = [
  "blake2",
- "digest 0.11.3",
  "getrandom 0.4.3",
  "jolt-field",
- "rayon",
+ "sha3",
  "shake",
  "spongefish",
 ]
@@ -964,7 +963,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=d6868f689aef7e6715345032b13973ff85804467#d6868f689aef7e6715345032b13973ff85804467"
 dependencies = [
  "num-traits",
 ]
@@ -1805,7 +1804,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys",

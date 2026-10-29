@@ -45,7 +45,7 @@ where
         0,
     ));
     let mut integer = response_l2_sq;
-    state.exchange(&mut integer)?;
+    state.exchange(std::slice::from_mut(&mut integer))?;
     exchange_extension_group::<F, E, _>(state, site(level, ROLE_SUBCLAIMS), subclaims)?;
     Ok(integer)
 }

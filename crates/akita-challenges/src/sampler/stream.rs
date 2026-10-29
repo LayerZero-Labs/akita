@@ -1,8 +1,11 @@
 //! One transcript message per sparse fold group.
 //!
 //! A group's `count` challenges are read from one squeezed message of a fixed
-//! byte length. The message is a little-endian bit stream: bit `i` is bit
-//! `i % 8` of byte `i / 8`. Candidate `j` occupies bits `[j K, (j + 1) K)`.
+//! whole number of `u64` words, so the squeeze stays word aligned. The message
+//! is a little-endian bit stream over little-endian `u64` words: bit `i` is bit
+//! `i % 64` of word `i / 64`, which is bit `i % 8` of byte `i / 8`. Candidate
+//! `j` occupies bits `[j K, (j + 1) K)`, and the bits past the last candidate
+//! are ignored.
 //!
 //! A candidate is a `K`-bit integer `R`. Its low `w = count_pm1 + count_pm2`
 //! bits are the signs of the nonzero coefficients in output order (0 is `+`).
@@ -41,6 +44,10 @@ const POOL_CHERNOFF_SCALE: u128 = 224;
 const MAX_POOL_CANDIDATES: u128 = 1 << 32;
 /// Largest message, matching Jolt's per-message squeeze limit.
 const MAX_MESSAGE_BYTES: usize = 1 << 24;
+/// Bytes in one message word.
+const WORD_BYTES: usize = 8;
+/// Bits in one message word.
+const WORD_BITS: usize = u64::BITS as usize;
 /// Most binomial tables kept for reuse across decodes.
 const MAX_CACHED_BINOMIAL_TABLES: usize = 8;
 #[cfg(feature = "parallel")]
@@ -242,7 +249,7 @@ impl SparseChallengeShell {
         };
         candidates
             .checked_mul(self.candidate_bits)
-            .map(|bits| bits.div_ceil(8))
+            .map(|bits| bits.div_ceil(WORD_BITS) * WORD_BYTES)
             .filter(|&bytes| bytes <= MAX_MESSAGE_BYTES)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
@@ -266,11 +273,12 @@ pub struct SparseChallengeStream {
 }
 
 impl SparseChallengeStream {
-    /// Exact byte length of the group's challenge message.
+    /// Exact byte length of the group's challenge message: the candidate bits
+    /// rounded up to whole `u64` words.
     #[must_use]
     pub fn message_len(&self) -> usize {
         // `new` checked that this product fits.
-        (self.candidates * self.shell.candidate_bits).div_ceil(8)
+        (self.candidates * self.shell.candidate_bits).div_ceil(WORD_BITS) * WORD_BYTES
     }
 
     /// Guaranteed `log2` size of the set each challenge is uniform on: `K` for
@@ -689,21 +697,34 @@ fn map_to_complement(taken: &[u32], slots: &mut [u32], ring_d: usize) -> Result<
     Ok(())
 }
 
-/// Read `width <= 128` bits starting at bit `offset` of a little-endian bit
-/// stream.
+/// Read `width <= 128` bits starting at bit `offset` of a bit stream over
+/// little-endian `u64` words.
 fn read_bits(message: &[u8], offset: usize, width: u32) -> Result<u128, AkitaError> {
-    let shift = offset % 8;
-    let bytes = message
-        .get(offset / 8..(offset + width as usize).div_ceil(8))
-        .filter(|_| width <= u128::BITS)
-        .ok_or_else(|| AkitaError::Internal("sparse message read past its end".into()))?;
-    let mut window = [0u8; 16];
-    let low = bytes.len().min(16);
-    window[..low].copy_from_slice(&bytes[..low]);
-    let mut value = u128::from_le_bytes(window) >> shift;
-    // A read of up to 128 bits spans 17 bytes only when it starts mid-byte.
-    if let Some(&high) = bytes.get(16) {
-        value |= u128::from(high) << (128 - shift);
+    let past_end = || AkitaError::Internal("sparse message read past its end".into());
+    let word = |index: usize| {
+        message
+            .get(index * WORD_BYTES..(index + 1) * WORD_BYTES)
+            .and_then(|bytes| <[u8; WORD_BYTES]>::try_from(bytes).ok())
+            .map(|bytes| u128::from(u64::from_le_bytes(bytes)))
+            .ok_or_else(past_end)
+    };
+    if width > u128::BITS {
+        return Err(past_end());
+    }
+    if width == 0 {
+        return Ok(0);
+    }
+    let first = offset / WORD_BITS;
+    let last = (offset + width as usize - 1) / WORD_BITS;
+    let shift = offset % WORD_BITS;
+    let mut value = word(first)? >> shift;
+    // A read of up to 128 bits spans three words only when it starts mid-word,
+    // so both shifts below are below 128.
+    if last > first {
+        value |= word(first + 1)? << (WORD_BITS - shift);
+    }
+    if last > first + 1 {
+        value |= word(first + 2)? << (2 * WORD_BITS - shift);
     }
     if width < u128::BITS {
         value &= (1u128 << width) - 1;
