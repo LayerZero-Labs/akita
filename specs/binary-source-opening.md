@@ -5,7 +5,7 @@
 | Author(s) | Akita contributors |
 | Created | 2026-10-28 |
 | Status | implemented experimental path; security admission pending |
-| PR | Pending |
+| PR | [#290](https://github.com/LayerZero-Labs/akita/pull/290) |
 | Supersedes | None |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
