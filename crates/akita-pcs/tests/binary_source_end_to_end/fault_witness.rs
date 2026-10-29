@@ -22,14 +22,7 @@ pub(super) fn reconstruct(
     let descriptor = manifest.descriptor();
     let index = descriptor.index_map();
     let ring_rows = index.padded_carriers() / (4 * index.columns());
-    let mut sources = vec![[0i128; 648]; index.columns() * ring_rows];
-    for (word, &value) in words.iter().enumerate() {
-        for bit in 0..index.word_width() {
-            let position = index.logical_to_ring(word, bit)?;
-            sources[position.column * ring_rows + position.ring_row][position.coefficient] =
-                i128::from(position.sign) * ((value >> bit) & 1) as i128;
-        }
-    }
+    let sources = source_rings(manifest, words)?;
     let matrix = binary_root_matrix(seed, manifest)?;
     let mut images = Vec::new();
     for column in sources.chunks_exact(ring_rows) {
@@ -102,4 +95,42 @@ fn extract(plan: &RootCoefficientRepacking, table: &[i8], segment: usize) -> Vec
         }
     }
     digits
+}
+
+fn source_rings(
+    manifest: &BinaryCommittedGroupManifest,
+    words: &[u128],
+) -> Result<Vec<[i128; 648]>, AkitaError> {
+    let index = manifest.descriptor().index_map();
+    let ring_rows = index.padded_carriers() / (4 * index.columns());
+    let mut sources = vec![[0i128; 648]; index.columns() * ring_rows];
+    for (word, &value) in words.iter().enumerate() {
+        for bit in 0..index.word_width() {
+            let position = index.logical_to_ring(word, bit)?;
+            sources[position.column * ring_rows + position.ring_row][position.coefficient] =
+                i128::from(position.sign) * ((value >> bit) & 1) as i128;
+        }
+    }
+    Ok(sources)
+}
+
+pub(super) fn foreign_partial_payload(
+    manifest: &BinaryCommittedGroupManifest,
+    claim: &BinaryTerminalClaim,
+    words: &[u128],
+    seed: &[u8; 32],
+) -> Result<Vec<F>, AkitaError> {
+    let sources = source_rings(manifest, words)?;
+    let mut partials = binary_row_partials(manifest.descriptor(), claim, &sources)?;
+    // Commit a distinct, still range-valid U; retain the original U in the
+    // outgoing witness so only its D authentication can expose the mismatch.
+    partials[0] ^= 1;
+    akita_types::binary_source::binary_public_digit_commitment::<F>(
+        seed,
+        akita_params::binary_setup::SetupStreamLabel {
+            role: akita_params::binary_setup::SetupStreamRole::WitnessCommitment,
+            ..manifest.b_label()
+        },
+        &partials,
+    )
 }

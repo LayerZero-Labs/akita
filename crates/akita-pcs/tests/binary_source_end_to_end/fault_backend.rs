@@ -31,6 +31,8 @@ mod fault_witness;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Fault {
+    ForeignCommitment,
+    ForeignPartials,
     Image,
     Response,
     Partials,
@@ -53,6 +55,7 @@ impl Fault {
 
     fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
         let segment = match self {
+            Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
             Self::Response => 0,
             Self::Image => 1,
             Self::QuotientCarry => 2,
@@ -109,12 +112,25 @@ impl FaultBackend {
         handle: &C,
         request: &dyn Any,
     ) -> Result<(Vec<F>, Box<dyn Any + Send + Sync>), AkitaError> {
-        let (payload, native) = self
+        let (mut payload, native) = self
             .inner
             .prepare_root_group(session, context, handle, request)?;
         let request = request
             .downcast_ref::<BinaryRootWitnessRequest<C>>()
             .unwrap();
+        if matches!(self.fault, Fault::ForeignPartials) {
+            let foreign = fault_witness::foreign_partial_payload(
+                &request.manifest,
+                &request.claim,
+                &self.words,
+                &self.seed,
+            )?;
+            assert_ne!(
+                payload, foreign,
+                "foreign U must have a distinct D commitment"
+            );
+            payload = foreign;
+        }
         assert!(
             request.ordinary.is_none(),
             "fault injection uses the binary-only fixture"
@@ -163,11 +179,16 @@ impl FaultBackend {
             challenges,
         )?;
         digits.truncate(logical_len);
-        let address = self.fault.address(&preparation.plan);
-        let old = digits[address];
-        digits[address] = if old == 3 { 2 } else { old + 1 };
-        assert_ne!(digits[address], old);
-        assert!((-4..=3).contains(&digits[address]));
+        if !matches!(
+            self.fault,
+            Fault::ForeignCommitment | Fault::ForeignPartials
+        ) {
+            let address = self.fault.address(&preparation.plan);
+            let old = digits[address];
+            digits[address] = if old == 3 { 2 } else { old + 1 };
+            assert_ne!(digits[address], old);
+            assert!((-4..=3).contains(&digits[address]));
+        }
         *self.digits.lock().unwrap() = Some(digits.clone());
         self.inner
             .import_root_witness(session, context, digits, destination_ring_dimension)
@@ -197,10 +218,15 @@ impl FaultBackend {
             .fold(F::zero(), |sum, (&weight, &digit)| {
                 sum + weight * F::from_i64(i64::from(digit))
             });
-        assert_ne!(
-            actual, claim,
-            "the selected mutation must violate the public relation"
-        );
+        if !matches!(
+            self.fault,
+            Fault::ForeignCommitment | Fault::ForeignPartials
+        ) {
+            assert_ne!(
+                actual, claim,
+                "the selected mutation must violate the public relation"
+            );
+        }
         let anchor = digits.iter().position(|&digit| digit != 0).unwrap();
         let value = F::from_i64(i64::from(digits[anchor]));
         weights[anchor] += (claim - actual) * value.inverse().unwrap();

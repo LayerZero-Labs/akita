@@ -227,8 +227,26 @@ A test-only backend alters T, Z, U, K, K_val, KA or padding before outgoing
 commitment. It uses an incorrect public oracle to complete the adversarial
 proof; verification must reject using the independently compiled correct oracle.
 Each rejection runs behind a panic-catching boundary.
-The source check rejects standalone binary drivers and nested channel creation
-on this path. Test outcomes belong in the accompanying validation report.
+
+The six-test suite also proves against a commitment to a different source
+while retaining the original source witness and independently evaluated claim.
+A second authentication test changes D before the challenges while retaining
+the original U witness. The test backend completes both adversarial proofs;
+the verifier must reject them even though prover and verifier share the
+relation compiler. Removing B or D authentication locally makes the respective
+rejection test fail.
+
+A direct first-challenge probe invokes the canonical order-zero binder used by
+both drivers, on prover and verifier channels. It changes only the manifest,
+polynomial identifier, each row or column coordinate, value, binary commitment,
+or ordinary commitment, point coordinate or evaluation, and checks that both
+roles produce the same changed challenge. Omitting the column-point binding
+locally makes this test fail. Catalogs are loaded from external schedule
+artifacts, including the separate dev-protocol catalog.
+The structural source check scans the two root orchestration files for
+standalone binary driver calls and nested channel creation. It does not inspect
+transitive helper calls. Test outcomes belong in the accompanying validation
+report.
 
 The ordinary regression fixture is
 [ordinary_grouped_root_bytes.rs](../crates/akita-pcs/tests/ordinary_grouped_root_bytes.rs),

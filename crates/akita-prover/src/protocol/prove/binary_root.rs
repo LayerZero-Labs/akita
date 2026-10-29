@@ -81,43 +81,30 @@ where
         next.params.d_a(),
         ordinary_profile,
     )?;
-    binary_root_statement(grinding.state_mut(), manifest, claim)?;
-    akita_transcript::public_fields_prover(
+    let ordinary_statement = ordinary_group
+        .zip(ordinary_profile)
+        .map(|(ordinary, profile)| {
+            let compression = profile.outer_compression_plan()?;
+            let dimension = compression
+                .maps()
+                .last()
+                .ok_or(AkitaError::InvalidProof)?
+                .ring_dimension();
+            Ok::<_, AkitaError>((
+                dimension,
+                ordinary.commitment().rows().coeffs(),
+                ordinary.point(),
+                ordinary.evaluations(),
+            ))
+        })
+        .transpose()?;
+    binary_root_statement::<Cfg::Field, Cfg::ExtField, _>(
         grinding.state_mut(),
-        akita_types::FoldSite::RootCommitment {
-            group: 0,
-            ring_dimension: 64,
-        }
-        .id()?,
+        manifest,
+        claim,
         group.commitment().rows().coeffs(),
+        ordinary_statement,
     )?;
-    if let (Some(ordinary), Some(profile)) = (ordinary_group, ordinary_profile) {
-        let compression = profile.outer_compression_plan()?;
-        let ring_dimension = compression
-            .maps()
-            .last()
-            .ok_or(AkitaError::InvalidProof)?
-            .ring_dimension();
-        akita_transcript::public_fields_prover(
-            grinding.state_mut(),
-            akita_types::FoldSite::RootCommitment {
-                group: 1,
-                ring_dimension,
-            }
-            .id()?,
-            ordinary.commitment().rows().coeffs(),
-        )?;
-        akita_transcript::public_extensions::<Cfg::Field, Cfg::ExtField, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::RootPoint { group: 1 }.id()?,
-            ordinary.point(),
-        )?;
-        akita_transcript::public_extensions::<Cfg::Field, Cfg::ExtField, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::Openings { level: 0 }.id()?,
-            ordinary.evaluations(),
-        )?;
-    }
     let context = backend.proof_context(proof_session, 0)?;
     let request = akita_types::binary_source::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),

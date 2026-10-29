@@ -75,43 +75,30 @@ where
     }
     let num_vars = domain_len.trailing_zeros() as usize;
 
-    binary_root_statement(grinding.state_mut(), manifest, claim)?;
-    akita_transcript::public_fields_verifier(
+    let ordinary_statement = ordinary
+        .zip(ordinary_profile)
+        .map(|(ordinary, profile)| {
+            let compression = profile.outer_compression_plan()?;
+            let dimension = compression
+                .maps()
+                .last()
+                .ok_or(AkitaError::InvalidProof)?
+                .ring_dimension();
+            Ok::<_, AkitaError>((
+                dimension,
+                ordinary.commitment().rows().coeffs(),
+                ordinary.point(),
+                ordinary.evaluations(),
+            ))
+        })
+        .transpose()?;
+    binary_root_statement::<F, E, _>(
         grinding.state_mut(),
-        akita_types::FoldSite::RootCommitment {
-            group: 0,
-            ring_dimension: manifest.b_ring_dimension(),
-        }
-        .id()?,
+        manifest,
+        claim,
         group.commitment().rows().coeffs(),
+        ordinary_statement,
     )?;
-    if let (Some(group), Some(profile)) = (ordinary, ordinary_profile) {
-        let compression = profile.outer_compression_plan()?;
-        let dimension = compression
-            .maps()
-            .last()
-            .ok_or(AkitaError::InvalidProof)?
-            .ring_dimension();
-        akita_transcript::public_fields_verifier(
-            grinding.state_mut(),
-            akita_types::FoldSite::RootCommitment {
-                group: 1,
-                ring_dimension: dimension,
-            }
-            .id()?,
-            group.commitment().rows().coeffs(),
-        )?;
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::RootPoint { group: 1 }.id()?,
-            group.point(),
-        )?;
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::Openings { level: 0 }.id()?,
-            group.evaluations(),
-        )?;
-    }
     let payload_len =
         akita_error::checked::product([manifest.b_rows(), manifest.b_ring_dimension()])
             .ok_or(AkitaError::InvalidProof)?;
