@@ -7,7 +7,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Extension seam: relation weights for the shared Stage 2, including groups
 /// with different native polynomial identities.
-/// https://github.com/LayerZero-Labs/akita/issues/285
+/// <https://github.com/LayerZero-Labs/akita/issues/285>
 ///
 /// Implementations derive weights from the fixed statement and public
 /// challenges. `setup_claim`, when present, is authenticated by Stage 3.
