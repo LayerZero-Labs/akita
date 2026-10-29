@@ -201,8 +201,8 @@ mod tests {
     #[test]
     fn eor_rejects_argument_lengths_before_reading_proof_atoms() {
         let (plan, layout, openings, partials, _) = fixture();
-        let state = new_verifier_channel(b"native-eor", b"fixture", &[]);
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-eor", &[]);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         assert!(matches!(
             eor_prefix::<F, E, _>(&mut verifier, &layout, &[], partials.clone(), 3),
             Err(AkitaError::InvalidSize {
@@ -228,15 +228,16 @@ mod tests {
     fn eor_grammar_roundtrips_without_structured_proof() {
         let level = 3;
         let (plan, layout, openings, partials, mut final_claims) = fixture();
-        let state = new_prover_channel(b"native-eor", b"fixture");
-        let mut prover = ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-eor");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         let prover_prefix =
             eor_prefix::<F, E, _>(&mut prover, &layout, &openings, partials, level).unwrap();
         eor_final_claims::<F, E, _>(&mut prover, &layout, &mut final_claims, level).unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = state.narg_string().to_vec();
 
-        let state = new_verifier_channel(b"native-eor", b"fixture", &proof);
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-eor", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         let verifier_prefix = eor_prefix::<F, E, _>(
             &mut verifier,
             &layout,
@@ -249,23 +250,24 @@ mod tests {
         let mut received = vec![E::zero(); final_claims.len()];
         eor_final_claims::<F, E, _>(&mut verifier, &layout, &mut received, level).unwrap();
         assert_eq!(received, final_claims);
-        verifier.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 
     #[test]
     fn eor_rejects_truncation_before_final_claims() {
         let level = 3;
         let (plan, layout, openings, partials, mut final_claims) = fixture();
-        let state = new_prover_channel(b"native-eor", b"fixture");
-        let mut prover = ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-eor");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         let partial_count = partials.len();
         eor_prefix::<F, E, _>(&mut prover, &layout, &openings, partials, level).unwrap();
         eor_final_claims::<F, E, _>(&mut prover, &layout, &mut final_claims, level).unwrap();
-        let mut proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let mut proof = state.narg_string().to_vec();
         proof.pop();
 
-        let state = new_verifier_channel(b"native-eor", b"fixture", &proof);
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-eor", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         eor_prefix::<F, E, _>(
             &mut verifier,
             &layout,

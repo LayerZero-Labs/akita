@@ -255,6 +255,7 @@ dependencies = [
  "akita-error",
  "jolt-field",
  "jolt-transcript",
+ "sha3",
  "spongefish",
 ]
 

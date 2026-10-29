@@ -88,14 +88,15 @@ mod tests {
         .unwrap();
         let mut subclaims = [E::from_u64(3), E::from_u64(5)];
         let mut virtuals = [E::from_u64(8), E::from_u64(13), E::from_u64(21)];
-        let state = new_prover_channel(b"native-l2", b"fixture");
-        let mut prover = ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-l2");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         l2_prefix::<F, E, _>(&mut prover, 4, u128::MAX - 9, &mut subclaims).unwrap();
         l2_virtual_evaluations::<F, E, _>(&mut prover, 4, &mut virtuals).unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = state.narg_string().to_vec();
 
-        let state = new_verifier_channel(b"native-l2", b"fixture", &proof);
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-l2", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         let mut received_subclaims = [E::zero(); 2];
         assert_eq!(
             l2_prefix::<F, E, _>(&mut verifier, 4, 0, &mut received_subclaims).unwrap(),
@@ -105,6 +106,6 @@ mod tests {
         let mut received_virtuals = [E::zero(); 3];
         l2_virtual_evaluations::<F, E, _>(&mut verifier, 4, &mut received_virtuals).unwrap();
         assert_eq!(received_virtuals, virtuals);
-        verifier.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

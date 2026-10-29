@@ -2,7 +2,11 @@
 
 use akita_error::{narrowing::usize_to_u64, AkitaError};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{BytesMsg, ChallengeCodec, Shake128};
+use jolt_transcript::{
+    protocol_tag, BytesMsg, ChallengeCodec, DigestHash, DigestHasher, Shake128, DIGEST_HASH,
+    TAG_BYTES,
+};
+use sha3::Digest;
 use spongefish::{
     Encoding, FromNarg, NargReader, ProverState, SessionId, Transcript, VerificationError,
     VerifierState,
@@ -17,7 +21,7 @@ mod site;
 pub use channel::ProofChannel;
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, NonceAtom};
 
-/// Proof channel and proof-stream format version, named by [`SESSION_TAG`].
+/// Proof channel and proof-stream format version, named by [`PROTOCOL_TAG`].
 ///
 /// Version 8 fixes:
 ///
@@ -45,19 +49,30 @@ pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, N
 /// meaning of the coefficient-packing draw domain.
 pub const PROTOCOL_VERSION: u32 = 8;
 
-/// Spongefish session tag: the protocol name, [`PROTOCOL_VERSION`] and the
-/// digest hash ([`jolt_transcript::DIGEST_HASH`]), zero-padded to 32 bytes:
+/// Akita protocol tag, absorbed first in every Akita sub-transcript: the
+/// protocol name, [`PROTOCOL_VERSION`] and the digest hash
+/// ([`jolt_transcript::DIGEST_HASH`]), zero-padded to 32 bytes:
 /// `akita-pcs/transcript/v8/sha3`, or `akita-pcs/transcript/v8/keccak` under
 /// `keccak256-digests`.
 ///
+/// Akita absorbs it whether it runs in its own session or inside a caller's.
 /// Naming the digest hash keeps a proof made under one selection from
 /// verifying under the other. The tag does not name the sponge: a different
 /// sponge is a different hash function and already changes every output.
-pub const SESSION_TAG: [u8; 32] =
-    jolt_transcript::protocol_tag(match jolt_transcript::DIGEST_HASH {
-        jolt_transcript::DigestHash::Sha3_256 => b"akita-pcs/transcript/v8/sha3".as_slice(),
-        jolt_transcript::DigestHash::Keccak256 => b"akita-pcs/transcript/v8/keccak".as_slice(),
-    });
+pub const PROTOCOL_TAG: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
+    DigestHash::Sha3_256 => b"akita-pcs/transcript/v8/sha3".as_slice(),
+    DigestHash::Keccak256 => b"akita-pcs/transcript/v8/keccak".as_slice(),
+});
+
+/// Spongefish session tag of a standalone Akita proof.
+pub const STANDALONE_SESSION_TAG: [u8; TAG_BYTES] =
+    protocol_tag(b"akita-pcs/standalone-session/v8");
+
+/// Domain tag hashed ahead of a root commitment's canonical bytes.
+pub const COMMITMENT_DIGEST_TAG: [u8; TAG_BYTES] = protocol_tag(b"akita-pcs/commitment-digest/v8");
+
+/// Byte length of a root-commitment digest.
+pub const COMMITMENT_DIGEST_LEN: usize = 32;
 
 /// Domain tag stored in every diagnostic context record.
 pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v8\0\0\0\0\0";
@@ -90,6 +105,8 @@ pub const SITE_FAMILY_NEXT_WITNESS: u32 = 10;
 pub const SITE_FAMILY_ROOT_STATEMENT: u32 = 11;
 /// Stable family identifier for terminal response messages.
 pub const SITE_FAMILY_TERMINAL: u32 = 12;
+/// Stable family identifier for the protocol tag and descriptor.
+pub const SITE_FAMILY_INSTANCE: u32 = 13;
 
 /// Proof-stream operation kind recorded by diagnostic context metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,31 +220,78 @@ impl ProtocolContextRecord {
     }
 }
 
-fn session_id() -> SessionId {
-    spongefish::derive_session_id::<Shake128>(&SESSION_TAG)
+fn standalone_session_id() -> SessionId {
+    spongefish::derive_session_id::<Shake128>(&STANDALONE_SESSION_TAG)
 }
 
-/// Spongefish instance: the caller's session bytes, then the public statement
-/// bytes, each absorbed as a `u64` little-endian length word, the bytes, then
-/// zero padding to a word.
-fn instance(session: &[u8], statement: &[u8]) -> (BytesMsg, BytesMsg) {
-    (BytesMsg(session.to_vec()), BytesMsg(statement.to_vec()))
-}
-
-/// Construct a prover channel bound to [`SESSION_TAG`], `session` and `instance`.
+/// Construct a standalone prover channel bound to [`STANDALONE_SESSION_TAG`]
+/// and the caller's length-prefixed `session` bytes.
+///
+/// The channel carries no Akita statement yet; the proof entry absorbs it with
+/// [`bind_instance`], as it does on a caller's channel.
 #[must_use]
-pub fn new_prover_channel(session: &[u8], statement: &[u8]) -> ProverChannel {
-    ProverState::new(&session_id(), &instance(session, statement))
+pub fn new_prover_channel(session: &[u8]) -> ProverChannel {
+    #[cfg(feature = "logging-transcript")]
+    crate::clear_thread_events();
+    ProverState::new(&standalone_session_id(), &BytesMsg(session.to_vec()))
 }
 
-/// Construct a verifier channel over one proof byte string.
+/// Construct a standalone verifier channel over one proof byte string.
 #[must_use]
 pub fn new_verifier_channel<'proof>(
     session: &[u8],
-    statement: &[u8],
     proof: &'proof [u8],
 ) -> VerifierChannel<'proof> {
-    VerifierState::new(&session_id(), &instance(session, statement), proof)
+    VerifierState::new(&standalone_session_id(), &BytesMsg(session.to_vec()), proof)
+}
+
+/// Absorb the Akita protocol tag, then the canonical descriptor as a
+/// [`BytesMsg`]: its `u64` little-endian length word, the bytes, then zero
+/// padding to a word.
+///
+/// Every Akita proof entry calls this first, on its own channel or on a
+/// caller's, so both modes bind the same statement before any challenge.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidInput`] when the record size overflows; a
+/// verifier transcript is then rejected.
+pub fn bind_instance<S: ProofChannel>(state: &mut S, descriptor: &[u8]) -> Result<(), AkitaError> {
+    let mut bytes = PROTOCOL_TAG.to_vec();
+    bytes.extend_from_slice(BytesMsg(descriptor.to_vec()).encode().as_ref());
+    let site = ProtocolSiteId {
+        family: SITE_FAMILY_INSTANCE,
+        ..ProtocolSiteId::default()
+    };
+    public_bytes(state, site, &bytes)
+}
+
+/// 32-byte digest of one root commitment's canonical bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CommitmentDigest([u8; COMMITMENT_DIGEST_LEN]);
+
+impl CommitmentDigest {
+    /// Hash canonical commitment bytes.
+    ///
+    /// The digest is [`jolt_transcript::DIGEST_HASH`] of
+    /// [`COMMITMENT_DIGEST_TAG`] followed by `bytes`. Callers pass the one
+    /// canonical encoding of the commitment they then use.
+    #[must_use]
+    pub fn of_canonical_bytes(bytes: &[u8]) -> Self {
+        let digest = DigestHasher::new()
+            .chain_update(COMMITMENT_DIGEST_TAG)
+            .chain_update(bytes)
+            .finalize();
+        let mut out = [0u8; COMMITMENT_DIGEST_LEN];
+        out.copy_from_slice(&digest);
+        Self(out)
+    }
+
+    /// Borrow the digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; COMMITMENT_DIGEST_LEN] {
+        &self.0
+    }
 }
 
 /// Permanently reject a verifier transcript after a semantic protocol failure.
@@ -396,8 +460,13 @@ fn encode_atoms<T: Encoding>(atoms: impl IntoIterator<Item = T>) -> Vec<u8> {
     wire
 }
 
-/// Emit `wire` as one proof message, absorbed zero-padded to a word.
+/// Emit `wire` as one proof message, absorbed zero-padded to a word. An empty
+/// message makes no absorb call, so it leaves the sponge as it was even right
+/// after a squeeze.
 fn send_padded(state: &mut ProverChannel, wire: &[u8]) {
+    if wire.is_empty() {
+        return;
+    }
     state.prover_message_with(wire, word_padded, |wire, out| out.extend_from_slice(wire));
 }
 
@@ -407,7 +476,8 @@ fn send_atoms<T: Encoding>(state: &mut ProverChannel, atoms: impl IntoIterator<I
 }
 
 /// Receive `count` canonical atoms sent by [`send_atoms`], rejecting a
-/// noncanonical one. The count must come from bound data.
+/// noncanonical one. The count must come from bound data. An empty group
+/// makes no absorb call.
 fn receive_atoms<T: Encoding + FromNarg + Copy>(
     state: &mut VerifierChannel<'_>,
     count: usize,
@@ -415,6 +485,9 @@ fn receive_atoms<T: Encoding + FromNarg + Copy>(
     let mut atoms = Vec::new();
     if atoms.try_reserve_exact(count).is_err() {
         return Err(reject(state));
+    }
+    if count == 0 {
+        return Ok(atoms);
     }
     state
         .prover_message_with(
@@ -851,7 +924,7 @@ impl FoldPreview {
     pub fn new(state: &ProverChannel, nonce: u32) -> Self {
         // A fresh channel has an empty argument string; its sponge is then
         // replaced by the live one.
-        let mut detached = new_prover_channel(&[], &[]);
+        let mut detached = new_prover_channel(&[]);
         detached.duplex_sponge_state = state.duplex_sponge_state.clone();
         let mut state = detached;
         state.public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());

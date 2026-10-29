@@ -4,7 +4,7 @@
 //! executed by a prover and replayed by a verifier over the emitted argument
 //! string. Oracles: every received value and challenge matches, EOF holds,
 //! and any single-byte change to the argument string makes replay fail or
-//! diverge. A different session, instance, or public message changes the
+//! diverge. A different session or public message changes the
 //! first challenge that follows it.
 
 use crate::input::Reader;
@@ -166,14 +166,12 @@ pub fn run(data: &[u8]) {
     let mut reader = Reader::new(data);
     let session_len = usize::from(reader.u8() % 40);
     let session = reader.take(session_len).to_vec();
-    let instance_len = usize::from(reader.u8() % 40);
-    let instance = reader.take(instance_len).to_vec();
     let ops = ops(&mut reader);
 
-    let mut prover = new_prover_channel(&session, &instance);
+    let mut prover = new_prover_channel(&session);
     let challenges = prove(&mut prover, &ops);
     let proof = prover.narg_string().to_vec();
-    let verifier = new_verifier_channel(&session, &instance, &proof);
+    let verifier = new_verifier_channel(&session, &proof);
     let (received, replayed) = replay(verifier, &ops).expect("honest transcript must replay");
     assert_eq!(received, sent(&ops), "received prover messages");
     assert_eq!(replayed, challenges, "replayed challenges");
@@ -183,7 +181,7 @@ pub fn run(data: &[u8]) {
         let mut tampered = proof.clone();
         let offset = reader.u32() as usize % tampered.len();
         tampered[offset] ^= reader.u8().max(1);
-        let verifier = new_verifier_channel(&session, &instance, &tampered);
+        let verifier = new_verifier_channel(&session, &tampered);
         if let Some((received_t, replayed_t)) = replay(verifier, &ops) {
             assert!(
                 received_t != received || replayed_t != replayed,
@@ -199,7 +197,7 @@ pub fn run(data: &[u8]) {
     if first_challenge.is_some() && !challenges.is_empty() {
         let mut other_session = session.clone();
         other_session.push(reader.u8());
-        let mut other = new_prover_channel(&other_session, &instance);
+        let mut other = new_prover_channel(&other_session);
         let other_challenges = prove(&mut other, &ops);
         assert_ne!(
             other_challenges[0], challenges[0],

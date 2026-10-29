@@ -78,8 +78,8 @@ pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
 where
     FF: Field + CanonicalEncoding + CanonicalBytes + akita_transcript::ChallengeCodec + 'static,
 {
-    let mut transcript =
-        akita_transcript::new_prover_channel(b"akita/protocol-epoch/digest", payload);
+    let mut transcript = akita_transcript::new_prover_channel(b"akita/protocol-epoch/digest");
+    akita_transcript::bind_instance(&mut transcript, payload).expect("bind epoch payload");
     akita_transcript::ext_challenge::<FF, _>(
         &mut transcript,
         akita_transcript::ProtocolSiteId {

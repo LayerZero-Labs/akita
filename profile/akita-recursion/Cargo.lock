@@ -482,6 +482,7 @@ dependencies = [
  "akita-error 0.1.0",
  "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=d6868f689aef7e6715345032b13973ff85804467)",
  "jolt-transcript",
+ "sha3 0.12.0",
  "spongefish 0.8.0",
 ]
 

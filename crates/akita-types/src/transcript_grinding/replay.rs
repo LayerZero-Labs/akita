@@ -244,7 +244,7 @@ impl GrindingReplay for ProverGrinding<'_> {
     type State = ProverChannel;
 
     fn state_mut(&mut self) -> &mut ProverChannel {
-        &mut self.state
+        &mut *self.state
     }
 
     fn poison(&mut self) {
@@ -264,12 +264,12 @@ impl<'proof> GrindingReplay for VerifierGrinding<'proof, '_> {
     type State = VerifierChannel<'proof>;
 
     fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
-        &mut self.state
+        &mut *self.state
     }
 
     fn poison(&mut self) {
         self.invalid = true;
-        let _ = reject(&mut self.state);
+        let _ = reject(self.state);
     }
 
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
@@ -282,9 +282,12 @@ impl<'proof> GrindingReplay for VerifierGrinding<'proof, '_> {
 }
 
 /// Prover-side state paired with exact grinding-plan progress.
+///
+/// The state is borrowed: it is Akita's own standalone channel or a caller's
+/// channel that Akita's messages join.
 #[cfg(feature = "prover")]
 pub struct ProverGrinding<'plan> {
-    state: ProverChannel,
+    state: &'plan mut ProverChannel,
     cursor: GrindingPlanCursor<'plan>,
     serialized_nonce_bytes: usize,
     invalid: bool,
@@ -294,9 +297,7 @@ pub struct ProverGrinding<'plan> {
 impl<'plan> ProverGrinding<'plan> {
     /// Attach a prover channel to its public grinding plan.
     #[must_use]
-    pub fn new(state: ProverChannel, plan: &'plan GrindingPlan) -> Self {
-        #[cfg(feature = "logging-transcript")]
-        akita_transcript::clear_thread_events();
+    pub fn new(state: &'plan mut ProverChannel, plan: &'plan GrindingPlan) -> Self {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
@@ -335,9 +336,9 @@ impl<'plan> ProverGrinding<'plan> {
         let (nonce_record, check_record) =
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
         let start = self.state.narg_string().len();
-        prover_context(&mut self.state, nonce_record);
-        work(&mut self.state, bits)?;
-        prover_context(&mut self.state, check_record);
+        prover_context(self.state, nonce_record);
+        work(self.state, bits)?;
+        prover_context(self.state, check_record);
         let nonce_bytes = self.state.narg_string().len() - start;
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
@@ -373,11 +374,8 @@ impl<'plan> ProverGrinding<'plan> {
                 "fold-response nonce exceeds its scheduled bit width".into(),
             ));
         }
-        prover_context(
-            &mut self.state,
-            fold_response_record(site, entry.nonce_bits),
-        );
-        send_nonce(&mut self.state, counter);
+        prover_context(self.state, fold_response_record(site, entry.nonce_bits));
+        send_nonce(self.state, counter);
         self.serialized_nonce_bytes = self
             .serialized_nonce_bytes
             .checked_add(nonce_encoded_len(counter))
@@ -447,7 +445,7 @@ impl<'plan> ProverGrinding<'plan> {
         let bits = pow_bits(work).ok_or_else(|| {
             AkitaError::Internal("grinding entry nonce width differs from grind_bits + 7".into())
         })?;
-        let mut preview = FoldPreview::new(&self.state, counter);
+        let mut preview = FoldPreview::new(self.state, counter);
         preview.grind(bits)?;
         Ok(preview)
     }
@@ -474,8 +472,9 @@ impl<'plan> ProverGrinding<'plan> {
         result
     }
 
-    /// Finish plan replay and return the authoritative Spongefish argument.
-    pub fn finish(self) -> Result<Vec<u8>, AkitaError> {
+    /// Finish plan replay. Akita's messages are now in the borrowed channel's
+    /// argument string.
+    pub fn finish(self) -> Result<(), AkitaError> {
         if self.invalid {
             return Err(AkitaError::InvalidInput(
                 "an earlier grinding step failed".into(),
@@ -492,14 +491,17 @@ impl<'plan> ProverGrinding<'plan> {
             "native proof nonce bytes"
         );
         #[cfg(feature = "logging-transcript")]
-        akita_transcript::finish_proof_ranges(&self.state);
-        Ok(self.state.narg_string().to_vec())
+        akita_transcript::finish_proof_ranges(self.state);
+        Ok(())
     }
 }
 
 /// Verifier-side state paired with exact grinding-plan progress.
+///
+/// The state is borrowed: it is Akita's own standalone channel or a caller's
+/// channel whose argument string continues with Akita's proof.
 pub struct VerifierGrinding<'proof, 'plan> {
-    state: VerifierChannel<'proof>,
+    state: &'plan mut VerifierChannel<'proof>,
     cursor: GrindingPlanCursor<'plan>,
     serialized_nonce_bytes: usize,
     invalid: bool,
@@ -507,17 +509,47 @@ pub struct VerifierGrinding<'proof, 'plan> {
 
 /// Evidence that replay consumed the complete grinding plan and proof.
 ///
-/// The private field makes this value constructible only by the consuming
-/// verifier finish boundary.
+/// The private field makes this value constructible only by
+/// [`PendingEof::check_eof`].
 #[derive(Debug)]
 pub struct ProofAcceptance {
     _private: (),
 }
 
+/// Evidence that Akita's verifier accepted its part of the argument string,
+/// before the end of that string is checked.
+///
+/// The verifier state may carry a caller's messages after Akita's, so the
+/// owner of the state checks the end once its own last message is read. A
+/// poisoned state fails that check, so no rejected proof reaches
+/// [`ProofAcceptance`].
+#[derive(Debug)]
+#[must_use = "Akita's proof is accepted only after `PendingEof::check_eof`"]
+pub struct PendingEof {
+    _private: (),
+}
+
+impl PendingEof {
+    /// Consume the verifier state and require that its whole argument string
+    /// was read and never rejected.
+    ///
+    /// `state` must be the state Akita verified on. Nothing ties the token to
+    /// that state, so passing another state skips this check.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] on unread bytes or a rejected
+    /// state.
+    pub fn check_eof(self, state: VerifierChannel<'_>) -> Result<ProofAcceptance, AkitaError> {
+        state.check_eof().map_err(|_| AkitaError::InvalidProof)?;
+        Ok(ProofAcceptance { _private: () })
+    }
+}
+
 impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
     /// Attach a verifier channel to its public grinding plan.
     #[must_use]
-    pub const fn new(state: VerifierChannel<'proof>, plan: &'plan GrindingPlan) -> Self {
+    pub const fn new(state: &'plan mut VerifierChannel<'proof>, plan: &'plan GrindingPlan) -> Self {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
@@ -538,11 +570,11 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
         }
         let (nonce_record, check_record) =
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
-        verifier_context(&mut self.state, nonce_record);
+        verifier_context(self.state, nonce_record);
         self.state
             .check_grind(bits)
             .map_err(|_| AkitaError::InvalidProof)?;
-        verifier_context(&mut self.state, check_record);
+        verifier_context(self.state, check_record);
         Ok(())
     }
 
@@ -558,11 +590,8 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
 
     fn read_fold_response_inner(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
-        verifier_context(
-            &mut self.state,
-            fold_response_record(site, entry.nonce_bits),
-        );
-        let counter = receive_nonce(&mut self.state)?;
+        verifier_context(self.state, fold_response_record(site, entry.nonce_bits));
+        let counter = receive_nonce(self.state)?;
         if !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidProof);
         }
@@ -601,9 +630,16 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
         result
     }
 
-    /// Require grinding-plan completion and consume the verifier for EOF.
-    pub fn finish(self) -> Result<ProofAcceptance, AkitaError> {
+    /// Require grinding-plan completion. The end of the argument string is
+    /// checked by the state's owner through the returned [`PendingEof`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] and rejects the state when an
+    /// earlier step failed or the plan has unconsumed entries.
+    pub fn finish(mut self) -> Result<PendingEof, AkitaError> {
         if self.invalid || !self.cursor.is_finished() {
+            self.poison();
             return Err(AkitaError::InvalidProof);
         }
         tracing::info!(
@@ -611,10 +647,7 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
-        self.state
-            .check_eof()
-            .map_err(|_| AkitaError::InvalidProof)?;
-        Ok(ProofAcceptance { _private: () })
+        Ok(PendingEof { _private: () })
     }
 }
 

@@ -13,24 +13,73 @@ which bytes are absorbed and when each challenge is drawn.
 ## The transcript layer
 
 Production uses Spongefish v0.8.0 prover and verifier states through Jolt's
-`jolt-transcript` crate. The selected sponge is BLAKE2b or Keccak. Each state
-starts from three inputs:
+`jolt-transcript` crate. The selected sponge is BLAKE2b or Keccak. Akita runs
+on a state it borrows, so it can run either on its own session or inside a
+caller's transcript.
 
-1. A session identifier derived with SHAKE128 from Akita's protocol tag,
-   `akita-pcs/transcript/v8/sha3` zero-padded to 32 bytes
-   (`akita-pcs/transcript/v8/keccak` when the application selects Keccak-256
-   digests). The tag names the protocol, its version and the digest hash. The
-   version fixes the field challenge codec, the proof-of-work layout, the
-   absorb layout and the sparse message codec, so changing any of them means a
-   new version and changes every challenge. The tag does not name the sponge:
-   a different sponge is a different hash, so it already changes every output.
-2. The caller's session bytes, as a `u64` little-endian length word, the
-   bytes, and zero padding to the next 8-byte word.
-3. The canonical instance descriptor bytes, framed the same way.
+A standalone proof builds its own state. The session identifier is derived
+with SHAKE128 from `STANDALONE_SESSION_TAG`, `akita-pcs/standalone-session/v8`
+zero-padded to 32 bytes. The Spongefish instance is the caller's session
+bytes, as a `u64` little-endian length word, the bytes, and zero padding to
+the next 8-byte word.
 
-The length words keep the session and the descriptor apart: the session
-`ab` with descriptor `c` differs from session `a` with descriptor `bc`. Akita
-keeps a known-answer vector for each sponge.
+In both modes, Akita's first absorbs are its binding of the instance, made by
+`bind_instance` as one public message:
+
+1. Akita's protocol tag, `akita-pcs/transcript/v8/sha3` zero-padded to 32
+   bytes (`akita-pcs/transcript/v8/keccak` when the application selects
+   Keccak-256 digests). The tag names the protocol, its version and the digest
+   hash. The version fixes the field challenge codec, the proof-of-work
+   layout, the absorb layout and the sparse message codec, so changing any of
+   them means a new version and changes every challenge. The tag does not name
+   the sponge: a different sponge is a different hash, so it already changes
+   every output.
+2. The canonical instance descriptor bytes, as a `u64` little-endian length
+   word, the bytes, and zero padding to the next word.
+
+The tag has a fixed length and the descriptor carries its own length word, so
+the two cannot run into each other. Akita keeps a known-answer vector for each
+sponge.
+
+### Running inside a caller's transcript
+
+A caller with its own Spongefish state, such as Jolt, passes that state to
+`batched_prove_embedded` or `batched_verify_embedded`. Akita's messages then
+go into the caller's argument string, and its challenges come from the
+caller's sponge. The standalone entries build a state and call the same
+embedded entries, so the two modes run the same code. On a fresh state with
+the same session, an embedded proof has the same bytes as a standalone one.
+
+Akita absorbs its whole statement itself: the tag, the descriptor, each root
+commitment's digest, the opening points and the claimed values. Its soundness
+therefore does not depend on what the caller absorbed. The caller must:
+
+1. Pass a state over Akita's sponge. The entries take Akita's channel types,
+   so a state over another sponge does not compile.
+2. On the verifier side, build its state so that the unread part of the
+   argument string begins with Akita's proof when Akita starts.
+3. Bind each root commitment before any of its own challenges that depend on
+   it. Absorbing the commitment's 32-byte digest is enough.
+4. Stop on any error from Akita, and after its own last message pass its state
+   to `PendingEof::check_eof`.
+
+### Commitment digests
+
+The root binds each commitment group by a 32-byte `CommitmentDigest`, not by
+its rows. The digest is the selected digest hash (SHA3-256, or Keccak-256
+under `keccak256-digests`) of `COMMITMENT_DIGEST_TAG`,
+`akita-pcs/commitment-digest/v8` zero-padded to 32 bytes, followed by the
+uncompressed serialization of the group: its profile, then its rows in
+canonical form. `CommittedGroup` computes the digest when it is built or
+decoded, and no path accepts a digest from outside. The verifier therefore
+hashes the same rows it later uses.
+
+Changing a bound commitment means finding two groups with the same digest.
+For a 256-bit digest that costs about $2^{128}$ hash calls, which is the
+transcript target. The digest hash is the one that already hashes the
+descriptor, so the digest adds no new primitive.
+The digest covers the profile so that one absorb also fixes how the rows are
+read.
 
 Every logical message or challenge has a fixed public diagnostic context
 record. Proof values use prover emission and verifier receipt, derived
@@ -98,10 +147,16 @@ ignores the error that reported the first failure. Acceptance requires that end-
 whole proof is consumed, nothing is left over, and the state is not
 poisoned.
 
+The embedded verifier poisons the borrowed state on any error before it
+returns, and on success it returns a `#[must_use]` `PendingEof` instead of
+accepting. The caller finishes its own messages and then calls
+`PendingEof::check_eof`, which consumes the state and is the only way to
+obtain acceptance. The standalone verifier calls it right away.
+
 Production absorbs and squeezes are positional. Context records and callsite
 labels are diagnostics and do not enter sponge bytes. The backend-specific
-protocol identifier, length-framed session, canonical instance descriptor,
-messages, and replay order do enter the cryptographic state. Renaming a
+protocol tag, length-framed session, canonical instance descriptor,
+commitment digests, messages, and replay order do enter the cryptographic state. Renaming a
 diagnostic label therefore differs from changing any of those bound values.
 
 Prover and verifier must execute the same sequence, including challenge
@@ -226,8 +281,8 @@ Implementation:
 
 Before replay, both parties construct an `AkitaInstanceDescriptor` from the
 validated public configuration. The shared `transcript_instance_descriptor`
-helper builds it, and its canonical bytes become the instance input of the
-Spongefish state.
+helper builds it, and `bind_instance` absorbs its canonical bytes right after
+the protocol tag.
 
 The descriptor records the following identities:
 
@@ -263,21 +318,22 @@ nonterminal `RingRelationMode`. Switching between quotient lifting and
 reduced evaluation changes the preamble before the ring-switch challenge
 $\alpha$. The verifier uses the selected mode and rejects a mismatch.
 
-The descriptor fixes the interpretation of the call. Actual commitment
-payloads, opening-point coordinates, and claimed values are absorbed during
-the protocol. Binding only the call's shape would not bind those values.
+The descriptor fixes the interpretation of the call. Commitment digests,
+opening-point coordinates, and claimed values are absorbed during the
+protocol. Binding only the call's shape would not bind those values.
 
 For example, two calls with identical shapes but different opening values
 have the same shape metadata. Their transcripts diverge when the claimed
-values are absorbed. Two calls that interpret identical payload bytes under
-different schedules diverge at the descriptor.
+values are absorbed. Two calls that interpret identical commitment bytes
+under different schedules diverge at the descriptor.
 
 ## Root and fold replay
 
-At the root, the descriptor fixes the batch shape. Replay binds group
-commitments in canonical group order, each group's complete opening point, and
-the per-polynomial claimed values as public messages. The verifier checks
-commitment geometry before binding the payloads.
+At the root, the descriptor fixes the batch shape. Replay binds each group's
+commitment digest in canonical group order, each group's complete opening
+point, and the per-polynomial claimed values as public messages. The verifier
+checks each group's geometry when it builds the group, before its digest is
+absorbed.
 
 A nonterminal fold then follows these dependencies:
 
@@ -287,8 +343,10 @@ A nonterminal fold then follows these dependencies:
    $\mathbf v_D$, then draw the application claim-batching coefficients.
 3. Consume the fold-response nonce and draw the sparse fold challenges for
    each group.
-4. Absorb the next-witness binding. It is a recursive commitment payload or,
-   on the last edge, the terminal inner-image state.
+4. Absorb the next-witness binding as the prover sends it. It is a recursive
+   commitment payload or, on the last edge, the terminal inner-image state.
+   It is absorbed only there; the next level and the terminal use the
+   received value without absorbing it again.
 5. Draw the ring-switch challenge $\alpha$, followed by the range and row
    points $\tau_0,\tau_1$.
 6. Replay Stage 1 and Stage 2. Absorb each sumcheck round message before

@@ -23,6 +23,12 @@ Akita: the session tag, atom codecs, diagnostic site records, and the
 fold-response preview. Proof bytes change, so the protocol version moves from
 7 to 8.
 
+The embedded transcript
+([`akita-embedded-transcript.md`](akita-embedded-transcript.md)), still
+protocol v8, replaces the session and instance layout described below: the protocol tag
+and the descriptor move into the first in-band absorbs, and a standalone
+session uses its own tag.
+
 ## Intent
 
 ### Goal

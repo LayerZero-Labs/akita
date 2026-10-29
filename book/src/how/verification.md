@@ -76,6 +76,16 @@ a `TrustedScheduleCatalog<Cfg>` already validated and bound to the verifier's
 exact config. The catalog is a trusted verifier parameter. It is loaded before
 proof parsing and is not read from the proof.
 
+`batched_verify` builds a standalone transcript state and calls
+`batched_verify_embedded`, which a caller with its own transcript can call
+directly. On any error, the embedded entry poisons the borrowed state before
+it returns, so every later proof read and the end-of-proof check fail. On
+success it returns a `PendingEof`. Acceptance requires
+`PendingEof::check_eof`, which checks that the whole proof was consumed;
+`batched_verify` calls it right away, and an embedding caller calls it after
+its own last message. See
+[Running inside a caller's transcript](./transcript.md#running-inside-a-callers-transcript).
+
 At a high level:
 
 1. **Bind the instance** and absorb the opening batch shape into the transcript.

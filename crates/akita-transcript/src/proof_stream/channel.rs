@@ -20,7 +20,8 @@ pub trait ProofChannel {
     fn context(&mut self, record: ProtocolContextRecord);
 
     /// Absorb public bytes that both sides already hold, zero-padded to a
-    /// word. Their length must come from bound data.
+    /// word. Their length must come from bound data. Empty input makes no
+    /// absorb call.
     fn public(&mut self, bytes: &[u8]);
 
     /// Emit (prover) or read (verifier) one proof message of `messages.len()`
@@ -77,7 +78,9 @@ impl ProofChannel for ProverChannel {
     }
 
     fn public(&mut self, bytes: &[u8]) {
-        self.public_message_as(bytes, word_padded);
+        if !bytes.is_empty() {
+            self.public_message_as(bytes, word_padded);
+        }
     }
 
     fn exchange<T: Encoding + FromNarg + Copy>(
@@ -116,7 +119,9 @@ impl ProofChannel for VerifierChannel<'_> {
     }
 
     fn public(&mut self, bytes: &[u8]) {
-        self.public_message_as(bytes, word_padded);
+        if !bytes.is_empty() {
+            self.public_message_as(bytes, word_padded);
+        }
     }
 
     fn exchange<T: Encoding + FromNarg + Copy>(

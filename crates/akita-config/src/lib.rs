@@ -11,7 +11,7 @@ use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 #[cfg(test)]
 use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
-use akita_serialization::Valid;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::ChallengeCodec;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::marker::PhantomData;
@@ -385,7 +385,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
     ///
     /// Fiat-Shamir draws over it use Jolt's challenge codec for the field.
-    type Field: CanonicalEncoding + Field + ChallengeCodec;
+    type Field: CanonicalEncoding + Field + ChallengeCodec + Valid + AkitaSerialize;
 
     /// Field used by public openings and all proof scalars.
     type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid + ChallengeCodec;

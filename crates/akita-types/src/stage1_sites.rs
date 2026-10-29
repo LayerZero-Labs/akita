@@ -88,17 +88,18 @@ mod tests {
         .unwrap();
         let mut claims = [E::from_u64(3), E::from_u64(5), E::from_u64(8)];
         let range_image = E::from_u64(13);
-        let state = new_prover_channel(b"native-stage1", b"fixture");
-        let mut prover = ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-stage1");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         stage1_child_claims::<F, E, _>(&mut prover, level, stage, &mut claims).unwrap();
         let prover_gamma = prover
             .grinded_ext_challenge::<E>(GrindingSite::Stage1InterstageBatch { level, stage })
             .unwrap();
         stage1_range_image::<F, E, _>(&mut prover, level, stage + 1, range_image).unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = state.narg_string().to_vec();
 
-        let state = new_verifier_channel(b"native-stage1", b"fixture", &proof);
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-stage1", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         let mut received = [E::zero(); 3];
         stage1_child_claims::<F, E, _>(&mut verifier, level, stage, &mut received).unwrap();
         assert_eq!(received, claims);
@@ -110,6 +111,6 @@ mod tests {
             stage1_range_image::<F, E, _>(&mut verifier, level, stage + 1, E::zero()).unwrap(),
             range_image
         );
-        verifier.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

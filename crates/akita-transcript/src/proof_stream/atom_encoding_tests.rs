@@ -55,7 +55,7 @@ fn atom_encodings_match_frozen_bytes() {
          cdab0000000000000000000000000000"
     );
 
-    let mut prover = new_prover_channel(b"atom-pins", b"fixture");
+    let mut prover = new_prover_channel(b"atom-pins");
     send_atoms(&mut prover, [FieldAtom::new(small)]);
     send_atoms(&mut prover, [ExtensionAtom::<F, E>::new(ext)]);
     assert_eq!(
