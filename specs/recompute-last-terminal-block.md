@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao                      |
 | Created       | 2026-10-29                     |
 | Status        | active                         |
-| PR            |                                |
+| PR            | [#293](https://github.com/LayerZero-Labs/akita/pull/293) |
 | Supersedes    |                                |
 | Superseded-by |                                |
 | Book-chapter  | how/verifying/terminal.md      |
