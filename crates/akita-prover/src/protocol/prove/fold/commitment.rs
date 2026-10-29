@@ -15,7 +15,7 @@ pub(in crate::protocol::prove) struct CommittedNextWitness<F: Field, WitnessHand
 }
 
 /// Extension seam: commit and transcript-bind the witness consumed by the successor.
-/// Shared fold orchestration for https://github.com/LayerZero-Labs/akita/issues/285.
+/// Shared fold orchestration for <https://github.com/LayerZero-Labs/akita/issues/285>.
 /// The logical witness is computed once and retained for ring switching.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::prove) fn commit_next_witness<F, E, B>(

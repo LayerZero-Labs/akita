@@ -265,7 +265,7 @@ pub(in crate::protocol::prove) struct Stage1SessionOutput<E: Field> {
 
 /// Extension seam: run shared Stage 1 transport for an admitted backend session.
 /// Native root orchestration attaches through
-/// https://github.com/LayerZero-Labs/akita/issues/285.
+/// <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::prove) fn prove_stage1_session<F, E, B>(
     backend: &B,
@@ -603,7 +603,7 @@ where
 
 /// Extension seam: run shared Stage 2 transport for an admitted backend session.
 /// Native relation compilers attach through
-/// https://github.com/LayerZero-Labs/akita/issues/285.
+/// <https://github.com/LayerZero-Labs/akita/issues/285>.
 pub(in crate::protocol::prove) fn prove_stage2_session<F, E, B>(
     backend: &B,
     mut session_handle: B::Stage2SessionHandle,

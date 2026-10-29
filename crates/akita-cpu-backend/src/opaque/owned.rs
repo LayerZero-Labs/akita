@@ -66,7 +66,7 @@ pub(super) struct CommittedSource<F: Field + CanonicalEncoding, E: Field> {
 }
 impl<F: Field + CanonicalEncoding, E: Field> CommittedSource<F, E> {
     /// Extension seam: admit ordinary relation material only for commitments that retain it.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub(super) fn ordinary_retained(
         &self,
     ) -> Result<&crate::commitment::PortableCommitmentHandle<F>, AkitaError> {
@@ -98,7 +98,7 @@ where
 // homogeneous group while allowing different representations in one proof.
 pub(super) trait PrivateSource<F: Field + CanonicalEncoding, E: Field>: Send + Sync {
     /// Extension seam: select source-group interpretation without changing ordinary sources.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     fn group_kind(&self) -> SourceGroupKind {
         SourceGroupKind::Ordinary
     }

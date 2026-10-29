@@ -12,7 +12,7 @@ use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Extension seam: dispatch a root by its declared group relation kind.
-/// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_root<F, E>(
     setup: &AkitaVerifierSetup<F>,

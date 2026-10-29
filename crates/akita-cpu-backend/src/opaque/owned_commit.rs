@@ -85,7 +85,7 @@ where
     E: FpExtEncoding<F> + 'static,
 {
     /// Extension seam: dispatch commitment by the source's explicitly selected group kind.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     ///
     /// Commit an imported immutable source under the producer schedule family
     /// `family`, retaining its exact source and parameters.

@@ -52,7 +52,7 @@ where
 }
 
 /// Extension seam: dispatch a root by its declared group relation kind.
-/// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub(super) fn prove_root<Cfg, B>(

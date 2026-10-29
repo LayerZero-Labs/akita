@@ -66,7 +66,7 @@ where
     E: Field,
 {
     /// Extension seam: prepare a native group's public payload and opaque private state.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     fn prepare_root_group(
         &self,
         _session: &Self::ProofSessionHandle,
@@ -80,7 +80,7 @@ where
     }
 
     /// Extension seam: construct one admitted native root after the response challenge.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     #[allow(clippy::too_many_arguments)]
     fn build_root_group(
         &self,
@@ -97,7 +97,7 @@ where
     }
 
     /// Extension seam: import a coefficient table into the admitted root scope.
-    /// Native root producers attach through https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Native root producers attach through <https://github.com/LayerZero-Labs/akita/issues/285>.
     fn import_root_witness(
         &self,
         _session: &Self::ProofSessionHandle,
@@ -174,7 +174,7 @@ where
     E: Field,
 {
     /// Extension seam: range-check an admitted coefficient table independently of its native ring.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     fn begin_root_digit_range(
         &self,
         _witness: &Self::WitnessHandle,
@@ -235,7 +235,7 @@ where
     E: Field,
 {
     /// Extension seam: combine direct public linear weights with the ordinary range-image relation.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     /// Sparse negative-binary weights optionally add per-address `w(w+1)` predicates.
     #[allow(clippy::too_many_arguments)]
     fn begin_root_relation(

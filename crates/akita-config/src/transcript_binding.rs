@@ -19,7 +19,7 @@ use akita_types::{
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Extension seam: bind the selected root and suffix plan in the canonical descriptor.
-/// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
 ///
 /// Construct the canonical [`AkitaInstanceDescriptor`] bytes and grinding plan.
 ///

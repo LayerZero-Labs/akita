@@ -5,7 +5,7 @@ use akita_types::CommittedGroup;
 use jolt_field::Field;
 
 /// Extension seam: validate the payload according to its committed group kind.
-/// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
 pub(super) fn validate_group_payload<F: Field>(
     committed: &CommittedGroup<F>,
     kind: &GroupClaimKind,

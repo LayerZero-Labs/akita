@@ -62,13 +62,13 @@ pub struct GroupContext<'a> {
 
 impl<'a> GroupContext<'a> {
     /// Extension seam: bind an explicitly selected source group to its ordered context.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub fn group_index(&self) -> usize {
         self.precommitted_groups.as_slice().len()
     }
 
     /// Extension seam: inspect the frozen profile selected by a source-group extension.
-    /// Tracking issue: https://github.com/LayerZero-Labs/akita/issues/285.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub const fn explicit_profile(&self) -> Option<&'a GroupCommitPhaseParams> {
         match self.parameter_source {
             GroupParameterSource::Explicit(profile) => Some(profile),
