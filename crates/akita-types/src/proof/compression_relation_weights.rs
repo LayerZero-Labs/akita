@@ -10,6 +10,7 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
+use akita_algebra::row_batch::dot_base_rows_batched;
 use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -723,8 +724,11 @@ where
                     .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
             let matrix_row = matrix.row_flat(0)?;
             let powers = scalar_powers(alpha, map.ring_dimension());
-            let column_coefficients = (0..map.input_width())
-                .map(|column| {
+            // All columns share the powers: batched calls let a field-inline
+            // guest load each power once per block of columns.
+            let columns = dot_base_rows_batched(
+                &powers,
+                (0..map.input_width()).map(|column| {
                     let start = column * map.ring_dimension();
                     let end = start + map.ring_dimension();
                     matrix_row.get(start..end).ok_or_else(|| {
@@ -732,12 +736,8 @@ where
                             "compression column exceeds the checked setup matrix row".into(),
                         )
                     })
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            // All columns share the powers: one batched call lets a
-            // field-inline guest load each power once per block of columns.
-            let mut columns = vec![E::zero(); column_coefficients.len()];
-            E::dot_base_rows(&powers, &column_coefficients, &mut columns);
+                }),
+            )?;
             evaluated_matrices.push(EvaluatedCompressionMatrix {
                 input_width: map.input_width(),
                 ring_dimension: map.ring_dimension(),

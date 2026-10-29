@@ -1,5 +1,6 @@
 //! Deterministic terminal checks over the revealed terminal response.
 
+use akita_algebra::row_batch::ROW_BATCH;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
@@ -10,6 +11,7 @@ use akita_types::{
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use std::iter::repeat_n;
 
 use crate::prepared_cache::TerminalNttCache;
 
@@ -18,38 +20,44 @@ use crate::prepared_cache::TerminalNttCache;
 ///
 /// `X^position · v` contributes `v[k − position]` at coefficient `k ≥ position`
 /// and `−v[k + D − position]` below it. A challenge coefficient `c` enters as
-/// `|c|` unit terms with the sign of `c`.
+/// `|c|` unit terms with the sign of `c`. The terms are generated lazily from
+/// the validated challenges, so no per-term storage is allocated.
 fn sparse_challenge_dot<'a, F, const D: usize>(
     challenges: &[SparseChallenge],
-    values: impl IntoIterator<Item = &'a CyclotomicRing<F, D>>,
+    values: impl Iterator<Item = &'a CyclotomicRing<F, D>> + Clone,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: Field + Ring + 'a,
 {
-    let mut values = values.into_iter();
-    let mut terms = Vec::new();
-    for challenge in challenges {
-        let value = values.next().ok_or(AkitaError::InvalidProof)?;
-        challenge.validate::<D>()?;
-        for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-            let position = usize::try_from(position).map_err(|_| AkitaError::InvalidProof)?;
-            for _ in 0..coefficient.unsigned_abs() {
-                terms.push((value.coefficients(), position, coefficient < 0));
-            }
-        }
-    }
-    if values.next().is_some() {
+    if values.clone().count() != challenges.len() {
         return Err(AkitaError::InvalidProof);
+    }
+    for challenge in challenges {
+        challenge.validate::<D>()?;
     }
     Ok(CyclotomicRing::from_coefficients(std::array::from_fn(
         |k| {
-            F::signed_sum(terms.iter().map(|&(value, position, negative)| {
-                if k >= position {
-                    (&value[k - position], negative)
-                } else {
-                    (&value[k + D - position], !negative)
-                }
-            }))
+            F::signed_sum(
+                challenges
+                    .iter()
+                    .zip(values.clone())
+                    .flat_map(|(challenge, value)| {
+                        let value = value.coefficients();
+                        challenge.positions.iter().zip(&challenge.coeffs).flat_map(
+                            move |(&position, &coefficient)| {
+                                // `validate` pinned `position < D`.
+                                let position = position as usize;
+                                let negative = coefficient < 0;
+                                let term = if k >= position {
+                                    (&value[k - position], negative)
+                                } else {
+                                    (&value[k + D - position], !negative)
+                                };
+                                repeat_n(term, usize::from(coefficient.unsigned_abs()))
+                            },
+                        )
+                    }),
+            )
         },
     )))
 }
@@ -65,8 +73,8 @@ where
 }
 
 /// `Σ_{p,d} w_p·g_d·z[p·digits + d]` for base-field position weights `w` and
-/// gadget scalars `g`: the consistency fold of the decoded `z`, computed as
-/// one weight-vector dot product per ring coefficient.
+/// gadget scalars `g`: the consistency fold of the decoded `z`, computed per
+/// ring coefficient as dot products over [`ROW_BATCH`]-term batches.
 fn base_reduced_z<F, const D: usize>(
     position_weights: &[F],
     gadget: &[F],
@@ -83,21 +91,26 @@ where
         AkitaError::InvalidInput("base multiplier product index out of range".into())
     })?;
     let z = z.get(..terms).ok_or(AkitaError::InvalidProof)?;
-    let weights: Vec<F> = position_weights
+    let mut products = position_weights
         .iter()
-        .flat_map(|&weight| gadget.iter().map(move |&scalar| weight * scalar))
-        .collect();
-    let mut column = Vec::with_capacity(terms);
-    Ok(CyclotomicRing::from_coefficients(std::array::from_fn(
-        |coefficient| {
-            column.clear();
-            column.extend(
-                z.iter()
-                    .map(|ring| F::from_i64(i64::from(ring[coefficient]))),
-            );
-            F::dot_product(&weights, &column)
-        },
-    )))
+        .flat_map(|&weight| gadget.iter().map(move |&scalar| weight * scalar));
+    let mut weights = [F::zero(); ROW_BATCH];
+    let mut column = [F::zero(); ROW_BATCH];
+    let mut sum = [F::zero(); D];
+    for z_batch in z.chunks(ROW_BATCH) {
+        let weights = &mut weights[..z_batch.len()];
+        for (slot, product) in weights.iter_mut().zip(products.by_ref()) {
+            *slot = product;
+        }
+        let column = &mut column[..z_batch.len()];
+        for (coefficient, sum) in sum.iter_mut().enumerate() {
+            for (slot, ring) in column.iter_mut().zip(z_batch) {
+                *slot = F::from_i64(i64::from(ring[coefficient]));
+            }
+            *sum += F::dot_product(weights, column);
+        }
+    }
+    Ok(CyclotomicRing::from_coefficients(sum))
 }
 
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
@@ -131,11 +144,7 @@ where
         .entered();
         (0..n_a)
             .map(|row_index| {
-                let rows = t
-                    .chunks_exact(n_a)
-                    .map(|rows| rows.get(row_index).ok_or(AkitaError::InvalidProof))
-                    .collect::<Result<Vec<_>, AkitaError>>()?;
-                sparse_challenge_dot(challenges.as_slice(), rows)
+                sparse_challenge_dot(challenges.as_slice(), t.iter().skip(row_index).step_by(n_a))
             })
             .collect::<Result<Vec<_>, AkitaError>>()
     });
@@ -260,7 +269,7 @@ where
                             blocks = challenges.as_slice().len()
                         )
                         .entered();
-                        sparse_challenge_dot(challenges.as_slice(), e)?
+                        sparse_challenge_dot(challenges.as_slice(), e.iter())?
                     };
                     let reduced = {
                         let _span = tracing::info_span!(
@@ -551,8 +560,11 @@ mod tests {
                     F::from_i64(i64::from(challenge.coeffs[position]))
                 })
         }));
-        let actual = sparse_challenge_dot(&[challenge.clone(), challenge], [&value, &value])
-            .expect("valid sparse challenge");
+        let actual = sparse_challenge_dot(
+            &[challenge.clone(), challenge],
+            [&value, &value].into_iter(),
+        )
+        .expect("valid sparse challenge");
         assert_eq!(actual, (dense * value).scale(&F::from_i64(2)));
     }
 
@@ -569,15 +581,25 @@ mod tests {
             coeffs: vec![1].into(),
         };
         let value = CyclotomicRing::<F, 64>::zero();
-        assert!(sparse_challenge_dot(&[challenge.clone(), challenge.clone()], [&value]).is_err());
-        assert!(sparse_challenge_dot(&[challenge], [&value, &value]).is_err());
+        assert!(sparse_challenge_dot(
+            &[challenge.clone(), challenge.clone()],
+            [&value].into_iter()
+        )
+        .is_err());
+        assert!(sparse_challenge_dot(&[challenge], [&value, &value].into_iter()).is_err());
     }
 
     /// `Σ_p w_p · Σ_d g_d · z[p·digits + d]`, evaluated with ring scaling.
     #[test]
     fn base_reduced_z_matches_definition() {
+        // 6, 32, and 34 terms: below, at, and across the batch boundary.
+        for positions in [3, ROW_BATCH / 2, ROW_BATCH / 2 + 1] {
+            assert_base_reduced_z_matches_definition(positions, 2);
+        }
+    }
+
+    fn assert_base_reduced_z_matches_definition(positions: usize, digits: usize) {
         const D: usize = 64;
-        let (positions, digits) = (3, 2);
         let weights: Vec<F> = (0..positions)
             .map(|p| F::from_i64(3 * p as i64 + 2))
             .collect();

@@ -1,4 +1,5 @@
 use super::PhysicalBWeightTerm;
+use akita_algebra::row_batch::WeightedRowBatch;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use jolt_field::{ExtField, Field, MulBaseUnreduced};
@@ -148,9 +149,8 @@ where
         .get(range.clone())
         .ok_or(AkitaError::InvalidProof)?;
     // Rows with a zero weight contribute nothing; the rest go through the
-    // shared-powers kernel in one call.
-    let mut rows: Vec<&[F]> = Vec::with_capacity(setup.len());
-    let mut weights: Vec<E> = Vec::with_capacity(setup.len());
+    // shared-powers kernel in bounded batches.
+    let mut batch = WeightedRowBatch::new(base_pows);
     for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
         range,
         segment,
@@ -163,13 +163,12 @@ where
         |offset, weight| {
             if !weight.is_zero() {
                 let ring = setup.get(offset).ok_or(AkitaError::InvalidProof)?;
-                rows.push(ring.coefficients().as_slice());
-                weights.push(weight);
+                batch.push(ring.coefficients(), weight);
             }
             Ok(())
         },
     )?;
-    Ok(E::weighted_dot_base_rows(&rows, &weights, base_pows))
+    Ok(batch.finish())
 }
 
 #[inline(always)]

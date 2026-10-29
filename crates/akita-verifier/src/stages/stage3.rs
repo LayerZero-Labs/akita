@@ -7,6 +7,8 @@ use crate::SetupIndexWeightMle;
 #[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::ring::evaluate_power_sequence_mle;
+#[cfg(test)]
+use akita_algebra::row_batch::WeightedRowBatch;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SETUP_SUMCHECK_DEGREE};
 use akita_serialization::AkitaSerialize;
@@ -269,11 +271,11 @@ where
                 .e_in
                 .get(..entries.len())
                 .ok_or(AkitaError::InvalidProof)?;
-            let entry_rows = entries
-                .iter()
-                .map(|entry| entry.coefficients().as_slice())
-                .collect::<Vec<_>>();
-            let inner = E::weighted_dot_base_rows(&entry_rows, inner_weights, eq_y);
+            let mut inner = WeightedRowBatch::new(eq_y);
+            for (entry, &weight) in entries.iter().zip(inner_weights) {
+                inner.push(entry.coefficients(), weight);
+            }
+            let inner = inner.finish();
             let outer_weight = eq_setup_idx
                 .e_out
                 .get(outer_idx)

@@ -4,6 +4,7 @@ use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{eval_ring_at, scalar_powers};
+use akita_algebra::row_batch::WeightedRowBatch;
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch_for_field;
@@ -339,11 +340,11 @@ where
     E: Field + MulBaseUnreduced<F>,
 {
     let weights = relation_row_weights(eq_tau1, *row_idx, rows.len())?;
-    let row_slices = rows
-        .iter()
-        .map(|r| r.coefficients().as_slice())
-        .collect::<Vec<_>>();
-    *acc += E::weighted_dot_base_rows(&row_slices, weights, alpha_pows);
+    let mut batch = WeightedRowBatch::new(alpha_pows);
+    for (row, &weight) in rows.iter().zip(weights) {
+        batch.push(row.coefficients(), weight);
+    }
+    *acc += batch.finish();
     *row_idx += rows.len();
     Ok(())
 }
@@ -366,10 +367,14 @@ where
         });
     }
     let alpha_pows = scalar_powers(alpha, D);
-    let row_slices = coeffs.chunks_exact(D).collect::<Vec<_>>();
-    let weights = relation_row_weights(eq_tau1, *row_idx, row_slices.len())?;
-    *acc += E::weighted_dot_base_rows(&row_slices, weights, &alpha_pows);
-    *row_idx += row_slices.len();
+    let row_count = coeffs.len() / D;
+    let weights = relation_row_weights(eq_tau1, *row_idx, row_count)?;
+    let mut batch = WeightedRowBatch::new(&alpha_pows);
+    for (row, &weight) in coeffs.chunks_exact(D).zip(weights) {
+        batch.push(row, weight);
+    }
+    *acc += batch.finish();
+    *row_idx += row_count;
     Ok(())
 }
 
