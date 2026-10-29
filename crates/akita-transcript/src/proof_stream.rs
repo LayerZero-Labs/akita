@@ -231,8 +231,6 @@ fn standalone_session_id() -> SessionId {
 /// [`bind_instance`], as it does on a caller's channel.
 #[must_use]
 pub fn new_prover_channel(session: &[u8]) -> ProverChannel {
-    #[cfg(feature = "logging-transcript")]
-    crate::clear_thread_events();
     ProverState::new(&standalone_session_id(), &BytesMsg(session.to_vec()))
 }
 
