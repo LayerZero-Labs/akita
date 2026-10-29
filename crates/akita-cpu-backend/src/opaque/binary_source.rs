@@ -608,9 +608,9 @@ where
         .try_reserve_exact(index.padded_carriers())
         .map_err(|_| AkitaError::InvalidInput("carrier allocation failed".into()))?;
     for carrier in 0..index.padded_carriers() {
-        let row = carrier / index.columns();
-        let element = checked::mul_add(owner, index.columns(), carrier % index.columns())
-            .and_then(|x| checked::mul_add(x, ring_rows, row / 4))
+        let position = index.scalar_to_ring(carrier, 0)?;
+        let element = checked::mul_add(owner, index.columns(), position.column)
+            .and_then(|x| checked::mul_add(x, ring_rows, position.ring_row))
             .ok_or(AkitaError::Internal("carrier address overflow".into()))?;
         let components = unpack_signed_components(
             source
@@ -620,7 +620,7 @@ where
         )?;
         let [low, high, padding] = scalar_to_binary(
             components
-                .get(row % 4)
+                .get(position.coefficient)
                 .ok_or(AkitaError::Internal("missing source component".into()))?,
         )?
         .to_words();
