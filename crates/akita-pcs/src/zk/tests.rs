@@ -503,7 +503,6 @@ fn batched_weights_match_h_column_by_column() {
     });
 }
 
-/// The chain relation against its definition: on digits in `{−1, 0}`,
 /// An image takes the fewest chunks of at most 15,115 coefficients,
 /// balanced: t_p and u_a (1,216) take one chunk, whose first map is 4,864
 /// `R_32` columns, well inside the cell's 60,460.
