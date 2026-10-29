@@ -597,7 +597,17 @@ mod extension_challenges {
                     1,
                     akita_challenges::SparseChallengeConfig::production_for_ring_dim(D).unwrap(),
                 )
-                .with_decomp(4, 4, 2, 2, 2)
+                // A setup prefix is committed at the full field width.
+                .with_decomp(
+                    4,
+                    4,
+                    akita_params::sis::compute_num_digits_field_width(
+                        SisModulusProfileId::Q64Offset59.field_bits(),
+                        2,
+                    ),
+                    2,
+                    2,
+                )
                 .unwrap();
                 let inner = &params.inner().matrix;
                 let inner_bound = *akita_params::sis::inner_coeff_linf_bounds(

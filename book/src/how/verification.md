@@ -217,6 +217,53 @@ trusted parameter is loaded. Unknown proof row digests reject. There is no
 proof field that can replace a catalog row or ask the verifier to decode
 schedule content.
 
+## What the verifier trusts
+
+The verifier has two kinds of input, and it treats them differently.
+
+Proof bytes, commitments, claims, and opening points are untrusted. Every
+check in this chapter exists so that soundness does not depend on who produced
+them.
+
+The remaining inputs are preprocessing: the expanded public matrix, the
+setup-prefix commitment registry, the optional terminal NTT cache, and the
+schedule catalog. The matrix is a function of the setup seed. The registry and
+the cache are functions of the seed and of schedule rows. The catalog is
+planner output checked against the compiled SIS tables. Together they play
+the role of a verifying key.
+
+Three separate claims stand behind a preprocessed object.
+
+- **Identity.** The setup seed names the public stream and the row digest
+  names the schedule row. Akita binds both into the transcript.
+- **Derivation.** The object is the stated function of the seed and the
+  schedule. Only computation establishes this, either by recomputing the
+  object or by checking a proof of the derivation. Akita has no such proof
+  today.
+- **Byte authentication.** The bytes the verifier loaded are the bytes whose
+  derivation was established. A release, a verifier program image, or a
+  pinned digest can establish this.
+
+Authentication does not replace derivation. A pinned digest authenticates
+bytes and inherits the trust placed in whoever derived them. A verifier
+therefore either recomputes an object and trusts no one for it, or loads
+authenticated bytes and trusts the party that derived them. Recomputation is
+always allowed and never required, and it is costly for the setup-prefix
+commitments in particular.
+
+Soundness assumes that the derivation claim holds. A verifier that loads
+preprocessing that neither it nor a party it trusts has derived is outside
+the soundness claim. Akita does not authenticate preprocessing bytes itself.
+That is the deployment's responsibility.
+
+Trusting an object's derivation does not relax its decoding. Validated
+decoding checks preprocessing bytes for lengths, geometry, and canonical
+field encoding under the same no-panic contract as proof bytes, whether or
+not it also re-derives the object. Akita also keeps inexpensive
+admission checks where a faulty generator could produce data that verifies
+and is weaker than intended. The SIS audit of each catalog row is the main
+example.
+
 ## The verifier no-panic contract
 
 Verifier-reachable execution is a **no-panic boundary**.

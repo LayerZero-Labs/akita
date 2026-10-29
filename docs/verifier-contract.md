@@ -29,6 +29,14 @@ schedule fits the setup field capacity. Private polynomial representations and
 honest-prover witness models are not verifier inputs. A proof cannot supply
 schedule bytes.
 
+"Trusted" here is a statement about soundness, not about parsing. The catalog,
+the verifier setup, and an optional terminal NTT cache are preprocessing. The
+verifier assumes each was derived as claimed, and the deployment either
+recomputes it or authenticates bytes that a party it trusts derived;
+[`security-posture.md`](security-posture.md#verifier-preprocessing) states
+the model. This contract still applies to their bytes: malformed
+preprocessing is rejected with an error, never a panic.
+
 The accepted proof topology is structural: a root fold, zero or more recursive
 folds, and one terminal cleartext witness. The proof carries no shape header.
 The verifier derives every message count and length from the schedule, so a
