@@ -1,4 +1,4 @@
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_cpu_backend::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_error::{checked, AkitaError};
 use akita_params::{
@@ -347,14 +347,13 @@ fn b_slice_report_geometry(
 fn reported_operator_norm_threshold(
     security_route: InnerCommitSecurityRoute,
     ring_dimension: usize,
-    challenge: &SparseChallengeConfig,
+    challenge: &FoldChallengeFamily,
 ) -> Option<u32> {
     match security_route {
         InnerCommitSecurityRoute::Linf(_) => None,
-        InnerCommitSecurityRoute::L2 { .. } => {
-            akita_challenges::selective_l2_operator_norm_rejection(ring_dimension, challenge)
-                .map(|policy| policy.threshold)
-        }
+        InnerCommitSecurityRoute::L2 { .. } => challenge
+            .operator_norm_rejection(ring_dimension)
+            .map(|policy| policy.threshold),
     }
 }
 
@@ -432,8 +431,24 @@ impl PlannedGroupReport {
             num_digits_open: params.open().digits.num_digits,
             num_digits_fold: params.num_digits_fold(),
             challenge_l1_mass: params.challenge_l1_mass(),
-            challenge_count_pm1: params.fold_challenge_config().count_pm1,
-            challenge_count_pm2: params.fold_challenge_config().count_pm2,
+            challenge_count_pm1: params
+                .fold_challenge_config()
+                .signed_sparse()
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "profile report requires signed-sparse challenges".into(),
+                    )
+                })?
+                .count_pm1,
+            challenge_count_pm2: params
+                .fold_challenge_config()
+                .signed_sparse()
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "profile report requires signed-sparse challenges".into(),
+                    )
+                })?
+                .count_pm2,
             challenge_operator_norm_threshold,
 
             num_live_ring_elements_per_claim: params.blocks().live_ring_elements_per_claim,
@@ -536,8 +551,26 @@ impl PlannedGroupReport {
             num_digits_open: params.opening.num_digits_open,
             num_digits_fold: params.opening.num_digits_fold,
             challenge_l1_mass: params.challenge_l1_mass(),
-            challenge_count_pm1: params.opening.fold_challenge_config.count_pm1,
-            challenge_count_pm2: params.opening.fold_challenge_config.count_pm2,
+            challenge_count_pm1: params
+                .opening
+                .fold_challenge_config
+                .signed_sparse()
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "profile report requires signed-sparse challenges".into(),
+                    )
+                })?
+                .count_pm1,
+            challenge_count_pm2: params
+                .opening
+                .fold_challenge_config
+                .signed_sparse()
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "profile report requires signed-sparse challenges".into(),
+                    )
+                })?
+                .count_pm2,
             challenge_operator_norm_threshold,
 
             num_live_ring_elements_per_claim: layout.blocks.live_ring_elements_per_claim,
@@ -849,8 +882,8 @@ pub(crate) fn emit_runtime_schedule_summary(
             ?d_input_raw_dimension,
             ?d_output_raw_dimension,
             challenge_l1_mass = lp.challenge_l1_mass(),
-            challenge_count_pm1 = lp.fold_challenge_config().count_pm1,
-            challenge_count_pm2 = lp.fold_challenge_config().count_pm2,
+            challenge_count_pm1 = lp.fold_challenge_config().signed_sparse().ok_or_else(|| AkitaError::InvalidSetup("profile report requires signed-sparse challenges".into()))?.count_pm1,
+            challenge_count_pm2 = lp.fold_challenge_config().signed_sparse().ok_or_else(|| AkitaError::InvalidSetup("profile report requires signed-sparse challenges".into()))?.count_pm2,
             challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
             log_basis_inner = lp.inner().digits.log_basis,
             log_basis_outer = lp.outer().digits.log_basis,
@@ -905,8 +938,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         fold_log_basis = witness.fold.log_basis,
         fold_digit_count = witness.fold.num_digits,
         challenge_l1_mass = challenge.l1_norm(),
-        challenge_count_pm1 = challenge.count_pm1,
-        challenge_count_pm2 = challenge.count_pm2,
+        challenge_count_pm1 = challenge.signed_sparse().ok_or_else(|| AkitaError::InvalidSetup("profile report requires signed-sparse challenges".into()))?.count_pm1,
+        challenge_count_pm2 = challenge.signed_sparse().ok_or_else(|| AkitaError::InvalidSetup("profile report requires signed-sparse challenges".into()))?.count_pm2,
         challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
         security_route = ?security_route,
         response_l2_sq_cap = ?response_l2_sq_cap,

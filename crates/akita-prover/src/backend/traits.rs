@@ -65,6 +65,51 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Extension seam: prepare a native group's public payload and opaque private state.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    fn prepare_root_group(
+        &self,
+        _session: &Self::ProofSessionHandle,
+        _context: &super::ProofContext,
+        _handle: &Self::CommitmentHandle,
+        _request: &dyn std::any::Any,
+    ) -> Result<(Vec<F>, Box<dyn std::any::Any + Send + Sync>), AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not prepare native root groups".into(),
+        ))
+    }
+
+    /// Extension seam: construct one admitted native root after the response challenge.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    #[allow(clippy::too_many_arguments)]
+    fn build_root_group(
+        &self,
+        _session: &Self::ProofSessionHandle,
+        _context: &super::ProofContext,
+        _preparation: &dyn std::any::Any,
+        _challenges: &akita_challenges::Challenges,
+        _logical_len: usize,
+        _destination_ring_dimension: usize,
+    ) -> Result<Option<Self::WitnessHandle>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not build native root groups".into(),
+        ))
+    }
+
+    /// Extension seam: import a coefficient table into the admitted root scope.
+    /// Native root producers attach through <https://github.com/LayerZero-Labs/akita/issues/285>.
+    fn import_root_witness(
+        &self,
+        _session: &Self::ProofSessionHandle,
+        _context: &super::ProofContext,
+        _digits: Vec<i8>,
+        _destination_ring_dimension: usize,
+    ) -> Result<Self::WitnessHandle, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not import root witnesses".into(),
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn begin_recursive_witness(
         &self,
@@ -128,6 +173,20 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Extension seam: range-check an admitted coefficient table independently of its native ring.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    fn begin_root_digit_range(
+        &self,
+        _witness: &Self::WitnessHandle,
+        _domain: akita_params::FlatBooleanDomain,
+        _equality_point: &[E],
+        _range: akita_params::DigitRangePlan,
+    ) -> Result<Self::Stage1SessionHandle, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not range-check native root witnesses".into(),
+        ))
+    }
+
     fn begin_stage1(
         &self,
         relation_handle: &Self::RelationHandle,
@@ -175,6 +234,25 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    /// Extension seam: combine direct public linear weights with the ordinary range-image relation.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    /// Sparse negative-binary weights optionally add per-address `w(w+1)` predicates.
+    #[allow(clippy::too_many_arguments)]
+    fn begin_root_relation(
+        &self,
+        _witness: &Self::WitnessHandle,
+        _weights: Vec<E>,
+        _negative_binary_weights: Vec<(usize, E)>,
+        _claim: E,
+        _stage1_point: &[E],
+        _range_image_evaluation: E,
+        _batching: E,
+    ) -> Result<Self::Stage2SessionHandle, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "backend does not compile native root relations".into(),
+        ))
+    }
+
     fn begin_stage2(
         &self,
         relation_handle: Self::RelationHandle,

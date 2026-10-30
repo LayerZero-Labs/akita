@@ -3,7 +3,7 @@ use super::recursive::{
     RecursiveSplitLowerBoundInput,
 };
 use super::*;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::{PolynomialGroupLayout, SisModulusProfileId};
 
 fn synthetic_profile(
@@ -34,7 +34,7 @@ fn synthetic_profile(
 }
 
 fn grouped_level_params() -> CommittedGroupParams {
-    let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
     let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
@@ -95,9 +95,8 @@ fn audited_grouped_level_params() -> CommittedGroupParams {
         .iter()
         .cloned()
         .map(|mut group| {
-            group.opening.fold_challenge_config =
-                SparseChallengeConfig::production_for_ring_dim(64)
-                    .expect("production synthetic challenge");
+            group.opening.fold_challenge_config = FoldChallengeFamily::production_for_ring_dim(64)
+                .expect("production synthetic challenge");
             group.profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
                 key(SisMatrixRole::Inner),
                 group.profile.inner.matrix.input_width(),
@@ -698,7 +697,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         );
     }
     let trace_precommit = PlannerOpeningCandidate::evaluation_trace(
-        SparseChallengeConfig::production_for_ring_dim(dimensions.d_a()).unwrap(),
+        FoldChallengeFamily::production_for_ring_dim(dimensions.d_a()).unwrap(),
     );
     assert!(
         crate::planner::root_level_candidates_with_fresh_preparation(
@@ -1073,7 +1072,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         outer: 64,
         opening: 64,
     };
-    let challenge = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+    let challenge = FoldChallengeFamily::production_for_ring_dim(128).unwrap();
     let trace = PlannerOpeningCandidate::evaluation_trace(challenge);
     let exact_packing =
         PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 128)

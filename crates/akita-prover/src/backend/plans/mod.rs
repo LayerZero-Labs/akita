@@ -9,7 +9,7 @@ mod relation;
 
 pub use handoff::*;
 pub use relation::{
-    EvaluationTraceDescription, PhysicalL2WeightRequest, RelationWeightRequest,
+    EvaluationTraceDescription, PhysicalL2WeightRequest, RelationCompiler, RelationWeightRequest,
     Stage2OpeningDescription, ValidatedRelationSessionPlan,
 };
 
@@ -538,3 +538,6 @@ impl ValidatedTerminalZEncodingPlan {
         self.payload_bytes
     }
 }
+
+#[cfg(feature = "labinius-trinomial")]
+pub use relation::NativeRootRelationRequest;

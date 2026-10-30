@@ -61,7 +61,7 @@ pub(super) struct FoldDigitInputs {
     num_live_blocks: usize,
     num_live_ring_elements_per_claim: usize,
     opening_method: akita_params::OpeningMethod,
-    fold_challenge_config: akita_challenges::SparseChallengeConfig,
+    fold_challenge_config: akita_challenges::FoldChallengeFamily,
 }
 
 impl FoldDigitInputs {

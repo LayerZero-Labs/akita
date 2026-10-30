@@ -5,7 +5,7 @@
 //! Runtime resolution is strict: missing catalog rows reject instead of invoking
 //! planner search.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 #[cfg(test)]
@@ -35,7 +35,7 @@ macro_rules! impl_catalog_family {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> akita_params::SisModulusProfileId {
@@ -415,7 +415,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// # Errors
     ///
     /// `InvalidSetup` if `d` is not supported.
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeFamily, AkitaError>;
 
     /// Exact SIS modulus profile used by security-floor lookups.
     fn sis_modulus_profile() -> SisModulusProfileId;
@@ -523,13 +523,13 @@ mod tests {
             }
         }
 
-        fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        fn ring_challenge_config(d: usize) -> Result<FoldChallengeFamily, AkitaError> {
             if d != 64 {
                 return Err(AkitaError::InvalidSetup(format!(
                     "unsupported D={d} for SingleExtensionConfig (expected 64)"
                 )));
             }
-            Ok(SparseChallengeConfig::pm1_only(1))
+            Ok(FoldChallengeFamily::pm1_only(1))
         }
 
         fn sis_modulus_profile() -> SisModulusProfileId {
@@ -561,7 +561,7 @@ mod tests {
             SingleExtensionConfig::decomposition()
         }
 
-        fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        fn ring_challenge_config(d: usize) -> Result<FoldChallengeFamily, AkitaError> {
             SingleExtensionConfig::ring_challenge_config(d)
         }
 

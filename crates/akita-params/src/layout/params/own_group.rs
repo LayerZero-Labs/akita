@@ -7,7 +7,7 @@
 use super::precommitted::GroupOpenPhaseParams;
 use super::CommittedGroupParams;
 use crate::OpeningMethod;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 
 impl CommittedGroupParams {
     /// This fold's own new group: the last entry in `groups`.
@@ -56,7 +56,7 @@ impl CommittedGroupParams {
     /// Fold-challenge family of this fold's own new group.
     #[inline]
     #[must_use]
-    pub fn fold_challenge_config(&self) -> SparseChallengeConfig {
+    pub fn fold_challenge_config(&self) -> FoldChallengeFamily {
         self.own_group().opening.fold_challenge_config
     }
 

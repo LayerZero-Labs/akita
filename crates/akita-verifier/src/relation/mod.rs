@@ -18,6 +18,8 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::Arc;
 
 pub(crate) mod evaluation;
+mod weights;
+pub use weights::Stage2RelationWeights;
 pub(crate) mod evaluation_trace;
 mod prepared_point;
 #[cfg(test)]
@@ -454,3 +456,6 @@ impl<E: Field> RelationMatrixEvaluator<E> {
         Ok(&context.witness_layout)
     }
 }
+
+#[cfg(feature = "labinius-trinomial")]
+pub(crate) mod native_root;

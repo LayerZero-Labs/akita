@@ -40,12 +40,12 @@ pub use opening::{
     EorGroupRequest, GroupOpeningRequest, OpaqueEorKernel, OpaqueOpeningKernel, PreparedEor,
 };
 pub use plans::{
-    EvaluationTraceDescription, FoldProbeGeometry, PhysicalL2WeightRequest, RelationWeightRequest,
-    Stage2OpeningDescription, ValidatedFoldAcceptancePlan, ValidatedFoldProbePlan,
-    ValidatedRecursiveGroupOpeningPlan, ValidatedRecursiveWitnessCommitPlan,
-    ValidatedRecursiveWitnessPlan, ValidatedRelationSessionPlan, ValidatedRelationWitnessPlan,
-    ValidatedStage1Plan, ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan,
-    WitnessCommitmentParameters,
+    EvaluationTraceDescription, FoldProbeGeometry, PhysicalL2WeightRequest, RelationCompiler,
+    RelationWeightRequest, Stage2OpeningDescription, ValidatedFoldAcceptancePlan,
+    ValidatedFoldProbePlan, ValidatedRecursiveGroupOpeningPlan,
+    ValidatedRecursiveWitnessCommitPlan, ValidatedRecursiveWitnessPlan,
+    ValidatedRelationSessionPlan, ValidatedRelationWitnessPlan, ValidatedStage1Plan,
+    ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan, WitnessCommitmentParameters,
 };
 pub use scope::{ProofScope, ProofScopeConsumer, ProofScopeId};
 pub use stage3::{OpaqueStage3Kernel, Stage3Request};
@@ -96,3 +96,6 @@ where
         + TerminalCommitmentMaterialKernel<F, B::CommitmentMaterialHandle>,
 {
 }
+
+#[cfg(feature = "labinius-trinomial")]
+pub use plans::NativeRootRelationRequest;

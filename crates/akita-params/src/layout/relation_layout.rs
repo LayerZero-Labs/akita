@@ -2,21 +2,25 @@
 
 use akita_error::{checked, AkitaError};
 
-use crate::{CommitmentRingDims, CommitmentSliceCount, CompressionChainPlan, OpeningMethod};
+use crate::{
+    CommitmentRingDims, CommitmentSliceCount, CompressionChainPlan, OpeningMethod,
+    RelationPolynomial,
+};
 
 #[path = "relation_rows.rs"]
 mod rows;
 
-/// Checked coefficient geometry of one logical relation row.
+/// Extension seam: polynomial identity and coefficient geometry of one relation row.
 ///
-/// A row contains `coordinate_plane_count` polynomials modulo
-/// `X^polynomial_modulus_dimension + 1`. The physical witness concatenates
-/// those planes and therefore has `physical_coefficient_width` base-field
-/// coordinates. Keeping these values distinct prevents an extension-coordinate
-/// width from being mistaken for a polynomial modulus.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+/// Each coordinate plane holds one polynomial with `polynomial.degree()`
+/// natural coefficients and an explicit padded coefficient count. Physical
+/// witness addresses concatenate the padded planes. Ordinary rows retain
+/// `X^D + 1` and have no padding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RelationRowGeometry {
-    polynomial_modulus_dimension: usize,
+    polynomial: RelationPolynomial,
+    padded_coefficient_count: usize,
     coordinate_plane_count: usize,
     physical_coefficient_width: usize,
 }
@@ -35,11 +39,37 @@ impl RelationRowGeometry {
                     .into(),
             ));
         }
-        let physical_coefficient_width = polynomial_modulus_dimension
-            .checked_mul(coordinate_plane_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation row width overflow".into()))?;
-        Ok(Self {
+        Self::for_polynomial(
+            RelationPolynomial::negacyclic(polynomial_modulus_dimension)?,
+            coordinate_plane_count,
             polynomial_modulus_dimension,
+        )
+    }
+
+    /// Construct checked geometry for an explicitly selected polynomial.
+    ///
+    /// Padding changes only coefficient addresses; it never changes the
+    /// polynomial identity or admits padding coordinates as natural data.
+    pub fn for_polynomial(
+        polynomial: RelationPolynomial,
+        coordinate_plane_count: usize,
+        padded_coefficient_count: usize,
+    ) -> Result<Self, AkitaError> {
+        if !coordinate_plane_count.is_power_of_two()
+            || !padded_coefficient_count.is_power_of_two()
+            || padded_coefficient_count < polynomial.degree()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation row requires power-of-two planes and padding covering its polynomial"
+                    .into(),
+            ));
+        }
+        let physical_coefficient_width =
+            checked::product([padded_coefficient_count, coordinate_plane_count])
+                .ok_or_else(|| AkitaError::InvalidSetup("relation row width overflow".into()))?;
+        Ok(Self {
+            polynomial,
+            padded_coefficient_count,
             coordinate_plane_count,
             physical_coefficient_width,
         })
@@ -52,7 +82,18 @@ impl RelationRowGeometry {
 
     #[must_use]
     pub const fn polynomial_modulus_dimension(self) -> usize {
-        self.polynomial_modulus_dimension
+        self.polynomial.degree()
+    }
+
+    #[must_use]
+    pub const fn polynomial(self) -> RelationPolynomial {
+        self.polynomial
+    }
+
+    /// Physical stride between coordinate planes, including zero padding.
+    #[must_use]
+    pub const fn padded_coefficient_count(self) -> usize {
+        self.padded_coefficient_count
     }
 
     #[must_use]
@@ -72,7 +113,7 @@ impl RelationRowGeometry {
         modulus_coefficient: usize,
     ) -> Result<usize, AkitaError> {
         if coordinate_plane >= self.coordinate_plane_count
-            || modulus_coefficient >= self.polynomial_modulus_dimension
+            || modulus_coefficient >= self.polynomial.degree()
         {
             return Err(AkitaError::InvalidInput(
                 "relation row coefficient lies outside its geometry".into(),
@@ -80,7 +121,7 @@ impl RelationRowGeometry {
         }
         checked::mul_add(
             coordinate_plane,
-            self.polynomial_modulus_dimension,
+            self.padded_coefficient_count,
             modulus_coefficient,
         )
         .filter(|&index| index < self.physical_coefficient_width)
@@ -274,6 +315,47 @@ mod tests {
         assert_eq!(geometry.physical_coefficient_index(1, 63).unwrap(), 127);
         assert!(geometry.physical_coefficient_index(2, 0).is_err());
         assert!(geometry.physical_coefficient_index(0, 64).is_err());
+    }
+
+    #[test]
+    fn explicit_polynomial_geometry_preserves_ordinary_addresses() {
+        for degree in [1, 64, 256] {
+            for planes in [1, 2, 4] {
+                let ordinary = RelationRowGeometry::new(degree, planes).unwrap();
+                let explicit = RelationRowGeometry::for_polynomial(
+                    RelationPolynomial::negacyclic(degree).unwrap(),
+                    planes,
+                    degree,
+                )
+                .unwrap();
+                assert_eq!(ordinary, explicit);
+                for plane in 0..planes {
+                    for coefficient in 0..degree {
+                        assert_eq!(
+                            ordinary
+                                .physical_coefficient_index(plane, coefficient)
+                                .unwrap(),
+                            plane * degree + coefficient
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn polynomial_geometry_uses_padded_plane_stride() {
+        let polynomial = RelationPolynomial::negacyclic(64).unwrap();
+        let geometry = RelationRowGeometry::for_polynomial(polynomial, 2, 128).unwrap();
+        assert_eq!(geometry.polynomial(), polynomial);
+        assert_eq!(geometry.polynomial_modulus_dimension(), 64);
+        assert_eq!(geometry.padded_coefficient_count(), 128);
+        assert_eq!(geometry.physical_coefficient_width(), 256);
+        assert_eq!(geometry.physical_coefficient_index(1, 63).unwrap(), 191);
+        assert!(geometry.physical_coefficient_index(0, 64).is_err());
+        assert!(RelationRowGeometry::for_polynomial(polynomial, 1, 32).is_err());
+        assert!(RelationRowGeometry::for_polynomial(polynomial, 3, 128).is_err());
+        assert!(RelationRowGeometry::for_polynomial(polynomial, 1, 96).is_err());
     }
 
     #[test]

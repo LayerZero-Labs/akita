@@ -4,7 +4,7 @@ use crate::coefficient_packing_relation::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
 use crate::relation::evaluation_trace::PreparedEvaluationTrace;
-use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::relation::Stage2RelationWeights;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::stages::stage1::Stage1Replay;
 use akita_algebra::{
@@ -131,7 +131,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     batching_coeff: E,
     witness_eval: E,
     stage1_point: Vec<E>,
-    relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+    relation_matrix_evaluator: &'a dyn Stage2RelationWeights<F, E>,
     compression: Stage2CompressionOracle<'a, E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
@@ -150,7 +150,7 @@ pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
     /// Stage 1 sumcheck point.
     pub(crate) stage1_point: Vec<E>,
     /// Prepared relation-matrix evaluator from the ring switch.
-    pub(crate) relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+    pub(crate) relation_matrix_evaluator: &'a dyn Stage2RelationWeights<F, E>,
     /// Payload-mode compression oracle.
     pub(crate) compression: Stage2CompressionOracle<'a, E>,
     /// Expanded public setup.
@@ -249,10 +249,7 @@ where
             self.witness_eval
         };
 
-        let relation_is_reduced = matches!(
-            &self.relation_matrix_evaluator.groups,
-            PreparedRelationGroups::ReducedEvaluation(_)
-        );
+        let relation_is_reduced = self.relation_matrix_evaluator.is_reduced_evaluation();
         let evaluate_relation_weight = || {
             // `cfg_join!` may execute this closure on a Rayon worker which does
             // not inherit the caller's `stage2_verifier` span. Carry the
@@ -261,14 +258,12 @@ where
             let _span =
                 tracing::info_span!("stage2_relation_weight", reduced = relation_is_reduced)
                     .entered();
-            match self.setup_claim {
-                Some(claim) => self
-                    .relation_matrix_evaluator
-                    .eval_flat_at_point_with_deferred_setup::<F>(challenges, self.alpha, claim),
-                None => self
-                    .relation_matrix_evaluator
-                    .eval_flat_at_point::<F>(challenges, self.setup, self.alpha),
-            }
+            self.relation_matrix_evaluator.evaluate(
+                challenges,
+                self.setup,
+                self.alpha,
+                self.setup_claim,
+            )
         };
         let (relation_weight, coefficient_packing_weight) = match &self.opening_semantics.0 {
             OpeningFamily::EvaluationTrace(_) => (evaluate_relation_weight()?, E::zero()),
@@ -474,7 +469,7 @@ mod tests {
     use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
     use crate::coefficient_packing_relation::tests::materialize_stage2;
     use crate::relation::{FlatRelationContext, RelationMatrixEvaluator};
-    use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+    use akita_challenges::{Challenges, FoldChallengeFamily, SparseChallenge};
     use akita_params::{
         BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
         OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry, RelationWitnessGeometry,
@@ -497,7 +492,7 @@ mod tests {
         let s = 64;
         let d_a = 256;
         let d_d = 128;
-        let challenge_config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+        let challenge_config = FoldChallengeFamily::production_for_ring_dim(s).unwrap();
         let mut params = akita_params::CommittedGroupParams::params_only(
             SisModulusProfileId::Q64Offset59,
             d_a,
@@ -567,9 +562,9 @@ mod tests {
                     positions: (0..challenge_config.weight())
                         .map(|term| ((term + challenge) % s) as u32)
                         .collect(),
-                    coeffs: (0..challenge_config.count_pm1)
+                    coeffs: (0..challenge_config.signed_sparse().unwrap().count_pm1)
                         .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
-                        .chain((0..challenge_config.count_pm2).map(|_| 2))
+                        .chain((0..challenge_config.signed_sparse().unwrap().count_pm2).map(|_| 2))
                         .collect(),
                 })
                 .collect(),

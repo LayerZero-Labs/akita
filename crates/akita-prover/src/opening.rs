@@ -67,14 +67,8 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         let groups = claims
             .groups()
             .iter()
-            .map(|g| {
-                PolynomialGroupClaims::new(
-                    g.point().to_vec(),
-                    g.evaluations().to_vec(),
-                    g.commitment().commitment().clone(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|g| g.map_commitment(|commitment| commitment.commitment().clone()))
+            .collect();
         Ok(Self {
             selection,
             opening_data: ProverOpeningData::from_parts(

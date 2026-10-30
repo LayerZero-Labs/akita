@@ -85,7 +85,7 @@ impl BinaryChallengeSampler {
         self.sample_from_seed(&seed, count)
     }
 
-    fn sample_from_seed(
+    pub(crate) fn sample_from_seed(
         &mut self,
         seed: &[u8; 32],
         count: usize,

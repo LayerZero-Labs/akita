@@ -4,13 +4,14 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
     materialize_eq_tensor_left, EqPairTensorFamily, EqPairTensorWeights, OffsetEqWindow,
 };
-use akita_prover::backend::ValidatedRelationSessionPlan;
+use akita_prover::backend::{RelationCompiler, ValidatedRelationSessionPlan};
 
-pub(crate) struct CompiledStage2Weights<E: Field> {
-    pub response_norm: Option<ResponseNormFactors<E>>,
-    pub ordinary: RelationWeightDescription<E>,
-    pub linear: Vec<(usize, E)>,
-    pub binary_intervals: Vec<Range<usize>>,
+/// CPU-owned relation weights consumed by the shared Stage 2 engine.
+pub struct CompiledStage2Weights<E: Field> {
+    pub(crate) response_norm: Option<ResponseNormFactors<E>>,
+    pub(crate) ordinary: RelationWeightDescription<E>,
+    pub(crate) linear: Vec<(usize, E)>,
+    pub(crate) binary_intervals: Vec<Range<usize>>,
 }
 
 impl<E: Field> CompiledStage2Weights<E> {
@@ -181,145 +182,153 @@ fn factor_response_norm_weights<E: Field + Ring>(
     }))
 }
 
-pub(crate) fn compile_stage2_weights<F, E>(
-    setup: &AkitaExpandedSetup<F>,
-    plan: &ValidatedRelationSessionPlan<'_, F, E>,
-) -> Result<CompiledStage2Weights<E>, AkitaError>
+impl<F, E> RelationCompiler<&ValidatedRelationSessionPlan<'_, F, E>>
+    for crate::opaque::CpuPreparedSetup<F>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F> + Ring,
 {
-    let request = plan.relation();
-    let parameters = request.parameters;
-    let instance = request.relation;
-    if parameters.payload_mode.is_compressed()
-        && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
-        && akita_error::checked::product([
-            request.opening_source_len,
-            request.opening_ring_dimension,
-        ])
-        .ok_or_else(|| AkitaError::Internal("stage 2 opening domain product overflow".into()))?
-            != plan.domain_len()
-    {
-        return Err(AkitaError::Internal(
-            "Stage 2 opening domain differs from its relation".into(),
-        ));
-    }
-    let layout = instance.segment_layout(parameters, Some(plan.witness_len()))?;
-    if layout.live_coeff_len() != plan.witness_len()
-        || request.relation_plan.digit_witness_domain().domain_len() != plan.domain_len()
-    {
-        return Err(AkitaError::Internal(
-            "Stage 2 geometry differs from its relation".into(),
-        ));
-    }
-    let ordinary = match parameters.ring_relation_mode {
-        akita_params::RingRelationMode::QuotientLift => {
-            let weights = build_relation_lane_weights(RelationLaneWeightInputs {
-                setup: RelationSetupSource::Matrix(setup),
-                instance,
-                alpha: request.alpha,
-                level_params: parameters,
-                relation_row_point: request.tau1,
-                claim_coefficients: request.claim_coefficients,
-                opening_source_len: request.opening_source_len,
-                opening_ring_dim: request.opening_ring_dimension,
-                relation_plan: request.relation_plan,
-                packing_semantics: match plan.linear_terms() {
-                    akita_prover::backend::Stage2OpeningDescription::CoefficientPacking {
-                        semantics,
-                        ..
-                    } => Some(semantics),
-                    akita_prover::backend::Stage2OpeningDescription::EvaluationTrace { .. } => None,
-                },
-            })?;
-            RelationWeightDescription::QuotientFactored(weights.into_factorization()?)
+    type Output = CompiledStage2Weights<E>;
+
+    fn compile_relation(
+        &self,
+        plan: &ValidatedRelationSessionPlan<'_, F, E>,
+    ) -> Result<Self::Output, AkitaError> {
+        let setup = &self.expanded;
+        let request = plan.relation();
+        let parameters = request.parameters;
+        let instance = request.relation;
+        if parameters.payload_mode.is_compressed()
+            && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
+            && akita_error::checked::product([
+                request.opening_source_len,
+                request.opening_ring_dimension,
+            ])
+            .ok_or_else(|| AkitaError::Internal("stage 2 opening domain product overflow".into()))?
+                != plan.domain_len()
+        {
+            return Err(AkitaError::Internal(
+                "Stage 2 opening domain differs from its relation".into(),
+            ));
         }
-        akita_params::RingRelationMode::ReducedEvaluation => {
-            if request
-                .groups
-                .iter()
-                .any(|group| matches!(group.kind(), OpeningFamily::SubringCoefficientPacking(_)))
-            {
-                return Err(AkitaError::Internal(
-                    "reduced relation mode contains packing opening points".into(),
-                ));
+        let layout = instance.segment_layout(parameters, Some(plan.witness_len()))?;
+        if layout.live_coeff_len() != plan.witness_len()
+            || request.relation_plan.digit_witness_domain().domain_len() != plan.domain_len()
+        {
+            return Err(AkitaError::Internal(
+                "Stage 2 geometry differs from its relation".into(),
+            ));
+        }
+        let ordinary = match parameters.ring_relation_mode {
+            akita_params::RingRelationMode::QuotientLift => {
+                let weights = build_relation_lane_weights(RelationLaneWeightInputs {
+                    setup: RelationSetupSource::Matrix(setup),
+                    instance,
+                    alpha: request.alpha,
+                    level_params: parameters,
+                    relation_row_point: request.tau1,
+                    claim_coefficients: request.claim_coefficients,
+                    opening_source_len: request.opening_source_len,
+                    opening_ring_dim: request.opening_ring_dimension,
+                    relation_plan: request.relation_plan,
+                    packing_semantics: match plan.linear_terms() {
+                        akita_prover::backend::Stage2OpeningDescription::CoefficientPacking {
+                            semantics,
+                            ..
+                        } => Some(semantics),
+                        akita_prover::backend::Stage2OpeningDescription::EvaluationTrace {
+                            ..
+                        } => None,
+                    },
+                })?;
+                RelationWeightDescription::QuotientFactored(weights.into_factorization()?)
             }
-            build_reduced_dense_relation_weights(
+            akita_params::RingRelationMode::ReducedEvaluation => {
+                if request.groups.iter().any(|group| {
+                    matches!(group.kind(), OpeningFamily::SubringCoefficientPacking(_))
+                }) {
+                    return Err(AkitaError::Internal(
+                        "reduced relation mode contains packing opening points".into(),
+                    ));
+                }
+                build_reduced_dense_relation_weights(
+                    setup,
+                    instance,
+                    request.alpha,
+                    parameters,
+                    request.tau1,
+                    request.opening_source_len,
+                    request.opening_ring_dimension,
+                    request.relation_plan,
+                )?
+            }
+        };
+        let linear = if parameters.payload_mode.is_compressed()
+            && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
+        {
+            let weights = akita_types::build_compression_relation_weights(
                 setup,
                 instance,
                 request.alpha,
                 parameters,
                 request.tau1,
-                request.opening_source_len,
+                &layout,
                 request.opening_ring_dimension,
-                request.relation_plan,
-            )?
-        }
-    };
-    let linear = if parameters.payload_mode.is_compressed()
-        && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
-    {
-        let weights = akita_types::build_compression_relation_weights(
-            setup,
-            instance,
-            request.alpha,
-            parameters,
-            request.tau1,
-            &layout,
-            request.opening_ring_dimension,
-            plan.domain_len(),
-        )?;
-        weights.into_sparse_entries()?
-    } else {
-        Vec::new()
-    };
-    let binary_intervals = if parameters.payload_mode.is_compressed() {
-        akita_types::NegativeBinarySupport::new(&layout, plan.domain_len())?
-            .intervals()
-            .to_vec()
-    } else {
-        if !plan.binary_batching().is_zero() {
-            return Err(AkitaError::Internal(
-                "uncompressed stage 2 relation has nonzero binary batching".into(),
-            ));
-        }
-        Vec::new()
-    };
-    let mut compiled = CompiledStage2Weights {
-        response_norm: None,
-        ordinary,
-        linear,
-        binary_intervals,
-    };
-    if let Some(norm) = plan.physical_l2() {
-        if akita_types::PhysicalResponsePlan::new(parameters, request.relation_plan)?.as_ref()
-            != Some(norm.plan)
-        {
-            return Err(AkitaError::Internal(
-                "physical L2 request differs from its schedule".into(),
-            ));
-        }
-        let families = norm.plan.virtualization_families(norm.batching)?;
-        let factorized = match &mut compiled.ordinary {
-            RelationWeightDescription::QuotientFactored(weights) => factor_response_norm_weights(
-                norm.point,
-                &families,
-                plan.witness_len(),
-                weights.common_alpha_factor().len(),
-            )?,
-            RelationWeightDescription::ReducedEvaluations { .. } => None,
-        };
-        if let Some(factors) = factorized {
-            compiled.response_norm = Some(factors);
+                plan.domain_len(),
+            )?;
+            weights.into_sparse_entries()?
         } else {
-            let equality = OffsetEqWindow::new(norm.point)?;
-            let response_norm =
-                materialize_eq_tensor_left(&equality, &families, plan.witness_len())?;
-            compiled.add_response_norm_weights(response_norm)?;
+            Vec::new()
+        };
+        let binary_intervals = if parameters.payload_mode.is_compressed() {
+            akita_types::NegativeBinarySupport::new(&layout, plan.domain_len())?
+                .intervals()
+                .to_vec()
+        } else {
+            if !plan.binary_batching().is_zero() {
+                return Err(AkitaError::Internal(
+                    "uncompressed stage 2 relation has nonzero binary batching".into(),
+                ));
+            }
+            Vec::new()
+        };
+        let mut compiled = CompiledStage2Weights {
+            response_norm: None,
+            ordinary,
+            linear,
+            binary_intervals,
+        };
+        if let Some(norm) = plan.physical_l2() {
+            if akita_types::PhysicalResponsePlan::new(parameters, request.relation_plan)?.as_ref()
+                != Some(norm.plan)
+            {
+                return Err(AkitaError::Internal(
+                    "physical L2 request differs from its schedule".into(),
+                ));
+            }
+            let families = norm.plan.virtualization_families(norm.batching)?;
+            let factorized = match &mut compiled.ordinary {
+                RelationWeightDescription::QuotientFactored(weights) => {
+                    factor_response_norm_weights(
+                        norm.point,
+                        &families,
+                        plan.witness_len(),
+                        weights.common_alpha_factor().len(),
+                    )?
+                }
+                RelationWeightDescription::ReducedEvaluations { .. } => None,
+            };
+            if let Some(factors) = factorized {
+                compiled.response_norm = Some(factors);
+            } else {
+                let equality = OffsetEqWindow::new(norm.point)?;
+                let response_norm =
+                    materialize_eq_tensor_left(&equality, &families, plan.witness_len())?;
+                compiled.add_response_norm_weights(response_norm)?;
+            }
         }
+        Ok(compiled)
     }
-    Ok(compiled)
 }
 
 #[cfg(test)]

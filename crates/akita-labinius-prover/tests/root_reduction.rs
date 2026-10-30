@@ -484,10 +484,9 @@ fn proof_of_work_nonce_outside_its_range_rejects() {
 fn proof_digest<F: Field + CanonicalEncoding, E: ExtField<F>>(mode: RootOpeningMode) -> String {
     use jolt_field::Ring;
     let case = RootCase::<H, F, E>::new(admitted(1, 0x31), mode);
-    let values: Vec<P128> = case
-        .prove()
-        .unwrap()
-        .0
+    let (proof, claims) = case.prove().unwrap();
+    assert!(case.verify(&proof).unwrap() == claims);
+    let values: Vec<P128> = proof
         .iter()
         .map(|&byte| P128::from_u64(u64::from(byte)))
         .collect();
@@ -498,25 +497,26 @@ fn proof_digest<F: Field + CanonicalEncoding, E: ExtField<F>>(mode: RootOpeningM
 }
 
 /// One pinned digest of the complete proof bytes per opening mode and shipped
-/// field pair. The prime claim is the cell claim of `RootCase`.
+/// field pair, using exact q-uniform setup. All three modes are opt-in root
+/// reductions; Prime selects a cell claim on the same binary-source setup.
 #[cfg(feature = "transcript-blake2b")]
 #[test]
 fn shipped_mode_and_field_pair_proof_bytes_are_pinned() {
     for (mode, p128, p64x2) in [
         (
             RootOpeningMode::Binary,
-            "cf6ba34d0f3d909788f1307441d2ac5440fac03120eca8eda5c298279342c1b7",
-            "d7f8bb3181b7b638b6ad9e3bd7054753d7ae93969efe50398649a81df387d86e",
+            "8e9bb74ccd78eba787585b0f5e9c6807c1e37977368975b53739b2f3f8c7168f",
+            "9dd52381654906e1dff0169ea8502ac02079f7b3494b24ad0f13501c7872d140",
         ),
         (
             RootOpeningMode::Prime,
-            "8f275e868110b1d2c2f5ccb046beaee74557b254e5868d791bb2ef1b1c161c55",
-            "2055609c18ac6946ef1da8ae6449ae1dccc4c08b39b8c5c640246768278c429c",
+            "e401bd6e2b6221a03b1034db2d5d80df01b2e1c682c5caa920fb8ad38c327739",
+            "eed7751fdf1e09f116da260900c26d9bb4522ab18ef9d80f3f68cb15bb4ccc0c",
         ),
         (
             RootOpeningMode::Both,
-            "654c14c5a158f8e33c670f3700467bcea61f453d2c41fae879782de234bc8ace",
-            "c6952d93d5d069f9806dfe46da162191771d8362c4429ccbd878001361d36bf3",
+            "ec72673aee863b21f7a0cf2466e9a8e12d90f8fe179d78f77ccb0d0063293800",
+            "f12200bf41c30a462644ebe8286049bc234a6e1d64e9ea5c2752bf4e7ef2f2ff",
         ),
     ] {
         assert_eq!(proof_digest::<P128, P128>(mode), p128, "{mode:?}");

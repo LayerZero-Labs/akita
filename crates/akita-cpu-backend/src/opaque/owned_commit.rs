@@ -1,5 +1,6 @@
 //! Commitment execution and persistence admission at the owning backend boundary.
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, SourceHandle};
+use super::owned_kind::SourceGroupKind;
 use crate::commitment::{AcceptedReach, CommitmentExecutor, GroupContext, PortableStatePolicy};
 use crate::opaque::CpuBackend;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
@@ -53,7 +54,9 @@ where
         )?;
         let (recomputed, retained) =
             executor.execute_full_via_outer_image(self, committed.parameters, &sources, None)?;
-        if recomputed.commitment != committed.public || retained != committed.retained {
+        if recomputed.commitment != committed.public
+            || &retained != committed.ordinary_retained()?
+        {
             return Err(AkitaError::InvalidInput(
                 "transferred commitment does not match backend setup".into(),
             ));
@@ -69,7 +72,7 @@ where
                 // so the admitting contract carries over unchanged.
                 producer_contract: committed.producer_contract,
                 public: committed.public.clone(),
-                retained,
+                retained: Some(retained),
             }),
         })
     }
@@ -81,6 +84,9 @@ where
     F::Wide: From<F>,
     E: FpExtEncoding<F> + 'static,
 {
+    /// Extension seam: dispatch commitment by the source's explicitly selected group kind.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Commit an imported immutable source under the producer schedule family
     /// `family`, retaining its exact source and parameters.
     ///
@@ -102,6 +108,24 @@ where
                 "source belongs to another backend".into(),
             ));
         }
+        match source.storage.group_kind() {
+            SourceGroupKind::Ordinary => self.commit_ordinary(family, source, context),
+            #[cfg(feature = "labinius-trinomial")]
+            SourceGroupKind::Binary => {
+                super::binary_source::commit_binary_source(self, family, source, context)
+            }
+        }
+    }
+
+    fn commit_ordinary<Cfg>(
+        &self,
+        family: &TrustedScheduleCatalog<Cfg>,
+        source: &SourceHandle<F, E>,
+        context: GroupContext<'_>,
+    ) -> Result<CommitOutput<F, E>, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         let prepared = self.prepared()?;
         let executor = CommitmentExecutor::cpu(
             self,
@@ -145,7 +169,7 @@ where
                 parameters: *committed_group.profile(),
                 producer_contract,
                 public: committed_group.commitment().clone(),
-                retained: prover_state,
+                retained: Some(prover_state),
             }),
         };
         Ok(CommitOutput {
@@ -216,15 +240,18 @@ mod tests {
 
                 assert_eq!(actual.committed_group, expected.committed_group);
                 assert_eq!(
-                    actual.private_handle.committed.retained,
-                    expected.prover_state
+                    actual.private_handle.committed.ordinary_retained().unwrap(),
+                    &expected.prover_state
                 );
 
                 let receiving_backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();
                 let transferred = receiving_backend
                     .import_commitment(&actual.private_handle)
                     .unwrap();
-                assert_eq!(transferred.committed.retained, expected.prover_state);
+                assert_eq!(
+                    transferred.committed.ordinary_retained().unwrap(),
+                    &expected.prover_state
+                );
                 assert_eq!(
                     actual.private_handle.producer_contract(),
                     Cfg::committed_source_contract().unwrap()

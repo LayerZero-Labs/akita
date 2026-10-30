@@ -3,6 +3,17 @@ use akita_error::AkitaError;
 use akita_types::{EvaluationTraceGroupParameters, EvaluationTraceInputs, FpExtEncoding};
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
+/// Extension seam: backend compilation of a typed relation request.
+///
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+/// Each request kind names its public mathematical inputs. The implementation
+/// owns the compiled representation consumed by its shared Stage 2 engine.
+pub trait RelationCompiler<Request> {
+    type Output;
+
+    fn compile_relation(&self, request: Request) -> Result<Self::Output, AkitaError>;
+}
+
 /// The public relation and challenge history defining its setup contribution.
 pub struct RelationWeightRequest<'a, F: Field, E: Field> {
     pub relation: &'a akita_types::RingRelationInstance<F>,
@@ -198,4 +209,14 @@ impl<'a, F: Field, E: Field> ValidatedRelationSessionPlan<'a, F, E> {
             binary_batching,
         }
     }
+}
+
+/// Root rows compiled at the shared ring-switch point, before the fused Stage 2.
+/// The caller fixes the successor commitment before sampling these weights.
+#[cfg(feature = "labinius-trinomial")]
+pub struct NativeRootRelationRequest<'a, E: Field> {
+    pub relation: &'a akita_types::native_root_relation::NativeRootRelation<E>,
+    pub alpha: E,
+    pub row_weights: &'a [E],
+    pub padding_weights: &'a [E],
 }

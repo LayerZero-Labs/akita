@@ -476,3 +476,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "labinius-trinomial")]
+#[path = "negative_binary_weights.rs"]
+mod negative_binary_weights;

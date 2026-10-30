@@ -1,6 +1,6 @@
 //! Deliberately unsupported evaluation-trace rows for admission regressions.
 use super::{RootCoefficientPackingConfig, UnsupportedEvaluationTraceConfig};
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupBatchProfile, ScheduleLookupKey};
@@ -30,7 +30,7 @@ where
                 prefix.opening.opening_method = akita_params::OpeningMethod::EvaluationTrace;
                 let d_a = prefix.profile.inner.matrix.ring_dimension();
                 prefix.opening.fold_challenge_config =
-                    SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {
+                    FoldChallengeFamily::production_for_ring_dim(d_a).ok_or_else(|| {
                         AkitaError::InvalidSetup("missing early-ET prefix challenge family".into())
                     })?;
                 step.params.set_setup_prefix(Some(prefix))?;
@@ -44,7 +44,7 @@ where
         params.own_group_mut().opening.opening_method =
             akita_params::OpeningMethod::EvaluationTrace;
         params.own_group_mut().opening.fold_challenge_config =
-            SparseChallengeConfig::production_for_ring_dim(params.d_a()).ok_or_else(|| {
+            FoldChallengeFamily::production_for_ring_dim(params.d_a()).ok_or_else(|| {
                 AkitaError::InvalidSetup("missing early-ET witness challenge family".into())
             })?;
         params.source_encoding = akita_params::CommittedSourceEncoding::for_producer(

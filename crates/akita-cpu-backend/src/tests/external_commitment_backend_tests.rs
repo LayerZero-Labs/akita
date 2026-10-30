@@ -8,7 +8,7 @@ use crate::commitment::{
     UncompressedCommitmentOutput,
 };
 use crate::{AkitaProverSetup, DensePoly};
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::{
     CommittedGroupParams, RingRelationMode, SetupMatrixCapacity, SisModulusProfileId,
@@ -80,7 +80,7 @@ fn downstream_crate_can_compose_fused_and_compression_backends() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();

@@ -55,13 +55,15 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         assert_eq!(l2_step.params.d_a(), 128);
         assert_eq!(
             l2_step.params.fold_challenge_config(),
-            akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+            akita_challenges::FoldChallengeFamily::SignedSparse(
+                akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG
+            ),
         );
         assert_eq!(
-            akita_challenges::selective_l2_operator_norm_rejection(
-                128,
-                &l2_step.params.fold_challenge_config(),
-            ),
+            l2_step
+                .params
+                .fold_challenge_config()
+                .operator_norm_rejection(128),
             Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
         );
         let akita_params::InnerCommitSecurityRoute::L2 {

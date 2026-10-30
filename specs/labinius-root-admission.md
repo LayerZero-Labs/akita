@@ -21,8 +21,8 @@ the feature does not select the extension or change the ordinary protocol.
 
 The profile fixes nothing else. The accepted response interval follows from
 the geometry, and the proof prime is admitted separately; neither is a profile
-field. There is one profile and one commitment modulus; adding either needs a
-new enum variant.
+field. There is one selectable root profile. The additional q24 commitment
+modulus identity below has offline certificates but no selectable root profile.
 
 `q = 2^25 + 14561 = 1 + 23328 * 1439` is prime and congruent to one modulo
 `23328 = lcm(1944, 3888, 5832, 7776)`. The limb transform of
@@ -44,6 +44,48 @@ challenge identity is `BinaryChallengeProfile::identity_bytes`, which binds the
 family's ring, weight rule and sign rule. The digest is
 `LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE_DIGEST`. Construction returns an error
 rather than panicking on a violated profile invariant.
+
+## Ordinary challenge-family integration
+
+With `labinius-challenges` enabled, callers select
+`FoldChallengeFamily::BinaryRoot` through the ordinary `FoldDraw` API. This
+family uses `Phi243 = Z^162 + Z^81 + 1` and samples uniformly from
+`S46 = union_{0 <= i <= 46} binom([162], i)`. Its exact cardinality is
+107268495235892251993000716928106195079952, with
+`log2 |S46| = 136.3002783090589`. `Shake256V1` determines signs from the support;
+the signs contribute no entropy and are not independent choices.
+
+The ordinary group-root context binds the group index, live-block count,
+claim count, total challenge count, ring dimension and family identity
+`b"\x01akita/binary-root/phi243/bounded46/shake256-v1"`. The fixed identity
+names the ring as well as the support and sign rules. Each column uses its
+own indexed SHAKE256 substream from that group root, reusing the indexed
+stream machinery of the existing sampler. It does not add a root-reduction
+transcript draw. The binary draw rejects more than `1 << 20` challenge
+columns with `AkitaError::InvalidInput`; this is a materialization limit,
+separate from entropy or schedule admission. Operator-norm rejection is not
+available for this family.
+
+The empty support remains in S46 and maps to zero in the binary scalar ring
+B. Distinct supports have distinct images in B, so their differences are
+nonzero; an individual challenge need not be nonzero. Removing the empty
+support would change the specified family and is unnecessary for this
+condition. For `P = 2^128 - 275`, tests pin `ord_243(P) = 6` and the sufficient
+unit-condition inequality `6 * 127 = 762 >= 81 * bits(6 * 46) = 729` described
+under [proof-prime admission](#proof-prime-admission-and-clear-integer-ranges).
+
+`FoldChallengeFamily` serializes `SignedSparse` through its existing
+`SparseChallengeConfig` representation. `BinaryRoot` reserves the explicit
+count pair `(count_pm1, count_pm2) = (u32::MAX, 1)` in that representation;
+this pair identifies a family and is not a challenge weight. The marker fits
+both 32-bit and 64-bit `usize`, and ordinary JSON and Postcard bytes retain
+their existing representation without an enum discriminant. Ordinary
+configurations remain `SignedSparse`; enabling the feature alone selects
+nothing, and the production suffix challenge ladder is unchanged.
+
+This integration supplies family selection and sampling. Mixed binary-root
+admission and ring wiring remain work for P2c and P4. It does not establish a
+complete grouped-opening proof or a protocol-composition security claim.
 
 ## Geometry and fold budget
 
@@ -369,25 +411,29 @@ be at least `647 * 2^103`, about `2^112.34`:
 
 ## Derivation bias
 
-The matrix is a stream of field elements reduced modulo q
-([setup contract](labinius-setup-contract.md)). For X uniform on `[0, P)` and
-`r = P mod q`, the total variation distance of `X mod q` from uniform is
-`r * (q - r) / (P * q) <= q / (4P)`. Over the `n_A * m * D` matrix coefficients
-a hybrid gives at most `n_A * m * D * q / (4P)`, an additive loss in the SIS
-reduction.
+The admitted binary-root setup uses exact rejection sampling modulo q
+([setup contract](labinius-setup-contract.md#typed-setup-streams)). It does not
+reduce P-field setup samples modulo q, and `AdmittedRootSetup::derive::<P>`
+does not apply a derivation-bias gate. The q matrix and P-field setup streams
+have separate typed domains.
 
-`LabiniusRootShape::check_derivation_bias(P_stream)` requires
+`LabiniusRootShape::check_derivation_bias(P_stream)` remains available to
+analyze a legacy P-to-q reduction. For X uniform on `[0, P_stream)` and
+`r = P_stream mod q`, the total variation distance of `X mod q` from uniform
+is `r * (q - r) / (P_stream * q) <= q / (4 * P_stream)`. Over the
+`n_A * m * D` matrix coefficients a hybrid gives at most
+`n_A * m * D * q / (4 * P_stream)`. The legacy check requires
 
 ```text
 n_A * m * D * q * 2^t <= 4 * P_stream,    t = LABINIUS_MIN_DERIVATION_BIAS_BITS = 64.
 ```
 
-The floor is a provisional policy, not a derived requirement or a claim of
-composed security. `AdmittedRootSetup::derive::<P>` applies it to the stream
-field it reduces. `2^128 - 275` achieves 82 bits at the sample geometry. A
-64-bit stream is rejected at every geometry: at rank 1 and width 1 it achieves
-31 bits. The reduced view and an unreduced view of the same prefix are
-correlated; nothing may treat them as independent matrices.
+That floor is a provisional policy, not a composed-security claim. For this
+legacy reduction, `2^128 - 275` gives 82 bits at the sample geometry, whereas
+a 64-bit stream fails the floor at every geometry. Those numbers describe the
+retained bias-analysis primitive, not a loss incurred by the exact q sampler.
+A reduced P-field view and its original prefix remain correlated; separate
+typed q and P streams do not use that construction.
 
 ## Admission order and sample geometry
 
@@ -402,9 +448,9 @@ any proof prime:
 4. Select the minimum dominating certified rank; reject missing coverage.
 5. Derive `H`, `B_Q`, `B_K` and `B_KA` with checked arithmetic.
 
-Proof-prime admission and the derivation-bias check are separate calls on the
-derived shape; challenge-field admission is made where the field pair enters,
-at the lowered layout. Caller-selected failures use
+Proof-prime admission and the retained legacy derivation-bias analysis are
+separate calls on the derived shape; challenge-field admission is made where
+the field pair enters, at the lowered layout. Caller-selected failures use
 `AkitaError::InvalidSetup`.
 
 For `(log_num_cells, log_fold_width, lambda_fold) = (22, 8, 128)`:
@@ -425,7 +471,6 @@ For `(log_num_cells, log_fold_width, lambda_fold) = (22, 8, 128)`:
 | Image digits, digit slots, offset `B_T` | 7, 8, 143165576 |
 | Live image coefficients; image table length, log | 497664; 8388608, 23 |
 | Prime left-opening table length, log | 262144, 18 |
-| Achieved derivation-bias bits, `2^128 - 275` | 82 |
 
 Both `2^64 - 59` and `2^128 - 275` admit this geometry with the same encoding.
 At budget 128, fold-width log 9 rejects at the budget gate. With the budget
@@ -506,6 +551,86 @@ derivation-bias boundary against big-integer evaluation, both no-wrap
 inequalities, the unit condition for the four primes above, and the parity
 closed forms.
 
+## q24 binary-source SIS certificate
+
+The opt-in commitment identity `LabiniusCommitmentModulus::Q24Minus2523807`
+is `q = 2^24 - 2,523,807 = 14,253,409`. The offline estimator uses
+`AkitaModulusProfileId::Q24Minus2523807`, label `q24`. The q25 data, runtime
+cells and digest remain unchanged. No catalog or protocol selects q24 here.
+
+The artifact
+`crates/akita-sis-estimator/data/q24_commitment_prime_infinity_width.csv`
+uses the same `local-minimum+proven-pruned-certification` mode, quantum
+ADPS16/LGSA model, 169-bit policy and 6,400,000,000,000 ring-column search
+cap as q25. Local-minimum search discovers a boundary; proven-pruned search
+certifies it. An optimizer probe is never an admission certificate.
+
+For `D = 648`, scalarization is `n = rank * 648`, `m = width * 648`.
+The requested widths 4096, 8192 and 16384 are ring columns, corresponding
+to 2,654,208, 5,308,416 and 10,616,832 scalar columns. The three bounds
+are exactly `eta = 4 * (2w) * 4095` for weights 46, 64 and 77. They are
+source-comparison bounds, not honest response radii.
+
+Every entry below applies separately to **each** width in
+`{4096, 8192, 16384}`. The independently evaluated 27 fixed-width cells,
+including rejected rank-two cells, are recorded in
+`crates/akita-sis-estimator/data/q24_infinity_cells.csv`.
+
+| Rank | eta | Quantum bits | Certificate status | Clears 128 bits |
+| --- | --- | --- | --- | --- |
+| 2 | 1,506,960 | 126.14 | Finite attack, beta 476 | No |
+| 2 | 2,096,640 | 119.78 | Finite attack, beta 452 | No |
+| 2 | 2,522,520 | 116.60 | Finite attack, beta 440 | No |
+| 3 | 1,506,960 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 3 | 2,096,640 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 3 | 2,522,520 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 4 | 1,506,960 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 4 | 2,096,640 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+| 4 | 2,522,520 | >=169.07 | Proven above target, beta threshold 638 | Yes |
+
+All six rank-three/four width certificates reach the search cap with
+`AtLeast` status and no rejected successor. Their `above-target:169.07`
+values are certified lower bounds, not actual attack optima; 638 is a
+block-size threshold, not a selected optimal attack. Under the width
+search's monotone-prefix precondition, they cover all requested widths.
+The exact cutoff above the cap remains unknown. Rank three therefore has
+certificate support for the 128-bit planning target. Rank two fails that
+target at every requested cell; this conclusion comes from its finite
+fixed-width attacks, not merely failure of the stronger 169-bit policy.
+
+The completed reference discovery runs at pinned lattice-estimator revision
+`c667a48546f140c3a5454c7503c3ca44a264cce2` used the same quantum ADPS16,
+LGSA, infinity norm and scalarization. Rust's quantum local-minimum
+cross-check reproduces 126.14 bits/beta 476 at rank two, eta 1,506,960,
+widths 4096 and 8192; 212.795 bits/beta 803 at rank three with the same
+bound and widths; and 197.425 bits/beta 745 at rank three, eta 2,522,520,
+width 4096. These discovery values agree with the certified lower bounds,
+but are not certificates. The reference chose zeta 1; the finite Rust
+rank-two certificate chooses zeta 0 with the same bits and beta. The
+quantum reduction exponent is 0.265 per block dimension; using the default
+classical exponent 0.292 would price a different model.
+
+**The structured-ring assumption remains open.** The estimator prices
+module/ring SIS for the degree-648 trinomial ring as unstructured SIS over
+`Z_q`. It does not assess attacks using the ring structure. These
+certificates establish parameter support in that model, not full protocol
+security, extractor-time admission, or whole-schedule admission.
+
+Regenerate both q24 artifacts, with cells in parallel, using:
+
+```bash
+rtk cargo run -p akita-sis-estimator --release --no-default-features \
+  --features labinius-sis,parallel --example labinius_infinity_width_table -- --q24
+```
+
+The optional `--output-dir PATH` after `--q24` chooses a comparison directory.
+The `labinius_width_table` integration tests regenerate both CSV files
+byte for byte, retain the unchanged q25 regeneration test, and compare
+quantum discovery with the five reference cells. Without `parallel`, the
+same generation and tests run serially. Offline lookup uses
+`q24_certified_rows` or `certified_max_width`; runtime root-profile and
+catalog integration remain separate work.
+
 ## What admission does not establish
 
 - Condition 2 makes each accepting transcript's commitment row an identity
@@ -520,7 +645,8 @@ closed forms.
   alphabet-valid table satisfying the relation is accepted; only its residues
   modulo q enter the commitment relation.
 - The width table prices a generic q-ary instance with modulus q, degree D,
-  the admitted rank and the bound `eta_A`, plus the additive derivation bias.
+  the admitted rank and the bound `eta_A`. Exact q setup sampling adds no
+  P-to-q reduction bias.
   It does not establish ring-ideal security.
 - Knowledge extraction across the fold challenges, the SIS reduction and
   Fiat-Shamir composition are open, as recorded in

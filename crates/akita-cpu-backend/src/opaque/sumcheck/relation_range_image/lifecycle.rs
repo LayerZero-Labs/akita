@@ -174,7 +174,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         }
 
         let input_claim = batching_coeff * range_image_evaluation + relation_linear_claim;
-        let split_eq = GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?;
+        let split_eq = if stage1_point.is_empty() {
+            // A singleton domain has constant equality factor one. Represent
+            // its terminal scalar with the existing accumulator by fully
+            // binding eq(0, 0) = 1. This adds no protocol coordinate or round;
+            // the round count remains num_vars = 0.
+            let mut terminal = GruenSplitEq::with_initial_scalar(&[E::zero()], batching_coeff)?;
+            terminal.bind(E::zero());
+            terminal
+        } else {
+            GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?
+        };
         let mut phase = match relation_weights {
             RelationWeightOracle::QuotientFactored(weights) => {
                 let engine = CompactQuotientPrefix::new(

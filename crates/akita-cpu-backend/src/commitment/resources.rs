@@ -484,7 +484,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
     use akita_params::{CommittedGroupParams, SisModulusProfileId};
 
     fn full_plan() -> CommitmentExecutionPlan {
@@ -495,7 +495,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeFamily::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -576,7 +576,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeFamily::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();

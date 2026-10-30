@@ -6,7 +6,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     let packing = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let production = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
     let mut schedule = recursive_schedule(64, 64, true);
     schedule.root.params.witness_chunk = akita_params::MultiChunkProfileId::W2R2.cfg();
     schedule.recursive_folds[0].params.witness_chunk =
@@ -130,7 +130,7 @@ fn use_multi_chunk_packing(schedule: &mut FoldSchedule, extension_degree: usize)
     let packing = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let production = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
     let root = &mut schedule.root.params;
     root.witness_chunk = akita_params::MultiChunkProfileId::W2R2.cfg();
     root.own_group_mut().opening.opening_method = packing;
@@ -182,7 +182,7 @@ fn accepts_single_chunk_level_two_packing() {
             challenge_subring_dimension: 64,
         };
     recursive.own_group_mut().opening.fold_challenge_config =
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        akita_challenges::FoldChallengeFamily::production_for_ring_dim(64).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
     schedule
         .validate_nonterminal_opening_execution(2)
@@ -211,7 +211,7 @@ fn rejects_unaudited_recursive_packing_family() {
         .params
         .own_group_mut()
         .opening
-        .fold_challenge_config = akita_challenges::SparseChallengeConfig::pm1_only(1);
+        .fold_challenge_config = akita_challenges::FoldChallengeFamily::pm1_only(1);
     assert!(schedule.validate_nonterminal_opening_execution(1).is_err());
 }
 
@@ -255,7 +255,7 @@ fn rejects_evaluation_trace_at_a_multi_chunk_level_one() {
     let witness = &mut schedule.recursive_folds[0].params;
     witness.own_group_mut().opening.opening_method = OpeningMethod::EvaluationTrace;
     witness.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+        FoldChallengeFamily::production_for_ring_dim(128).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
 
     assert!(matches!(
@@ -280,7 +280,7 @@ fn rejects_extension_recursive_trace_mutated_to_canonical() {
         .params
         .own_group_mut()
         .opening
-        .fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+        .fold_challenge_config = FoldChallengeFamily::production_for_ring_dim(128).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
     schedule.recursive_folds[1].params.source_encoding =
         akita_params::CommittedSourceEncoding::CanonicalCoefficientTable;
@@ -322,7 +322,7 @@ fn prefix_at_index_zero_does_not_redefine_the_opening_family() {
     let packing = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let production = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
 
     // A level-1 fold consuming a prefix, consistent in the packing family.
     let mut schedule = recursive_schedule(64, 64, true);

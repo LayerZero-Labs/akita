@@ -1,5 +1,5 @@
 use super::*;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_params::sis::sis_table_key_for_linf_bound;
 use akita_params::{
@@ -199,7 +199,7 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
                 outer_commit_matrix,
             ),
         },
-        opening: GroupOpeningPlan::evaluation_trace(SparseChallengeConfig::pm1_only(0), 1, 1, 1),
+        opening: GroupOpeningPlan::evaluation_trace(FoldChallengeFamily::pm1_only(0), 1, 1, 1),
     }
 }
 

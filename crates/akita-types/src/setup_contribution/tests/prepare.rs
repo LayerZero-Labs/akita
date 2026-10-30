@@ -23,7 +23,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         1,
         1,
         1,
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+        akita_challenges::FoldChallengeFamily::production_for_ring_dim(64)
             .expect("supported test ring dimension"),
     )
     .with_decomp(8, 24, 2, 3, 3)

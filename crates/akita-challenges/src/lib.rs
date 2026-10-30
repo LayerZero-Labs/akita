@@ -22,6 +22,7 @@ mod binary;
 mod challenge;
 mod challenges;
 mod config;
+mod family;
 mod fold_draw;
 mod sampler;
 
@@ -45,3 +46,5 @@ pub use fold_draw::{
     fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, PreviewFoldDraw,
     ProverFoldDraw, VerifierFoldDraw,
 };
+
+pub use family::FoldChallengeFamily;

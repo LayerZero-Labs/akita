@@ -32,6 +32,7 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [features]
+labinius-trinomial = ["akita-types/labinius-trinomial"]
 default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

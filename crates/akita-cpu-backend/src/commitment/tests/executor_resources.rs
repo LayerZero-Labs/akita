@@ -5,7 +5,7 @@ use crate::commitment::{
 };
 use crate::opaque::NttCacheOwnerId;
 use crate::AkitaProverSetup;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use jolt_field::Prime64Offset59;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -61,7 +61,7 @@ fn stage_registration_skips_streamed_slots() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
