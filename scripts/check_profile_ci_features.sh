@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-from scripts.profile_bench_merge_base_policy import MODE_CATALOGS, resolve_baseline
+from scripts.profile_bench_merge_base_policy import read_matrix_cases, resolve_baseline
 from scripts.profile_ci_features import (
     load_feature_graph,
     resolve_feature,
@@ -33,9 +33,6 @@ MODES = {
     "onehot_fp128_multi_chunk_w8r2", "onehot_fp128_multi_chunk_w2r2",
     "onehot_fp128_multi_chunk_w4r2",
 }
-if missing_catalogs := MODES - MODE_CATALOGS.keys():
-    raise SystemExit(f"profile modes lack baseline catalog mappings: {sorted(missing_catalogs)}")
-
 MODE_NUM_POLYS = {
     "onehot_fp32": {1},
     "dense_fp32": {1},
@@ -82,48 +79,7 @@ if not selected_match:
     raise SystemExit(1)
 selected_modes = set(re.findall(r'name:\s*"([^"]+)"', selected_match.group(1)))
 
-wf = workflow.read_text(encoding="utf-8")
-case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
-
-
-def cases_after_pipe(start: int) -> list[str]:
-    cases: list[str] = []
-    for line in wf[start:].splitlines():
-        if not line.strip():
-            continue
-        if not line.startswith(" "):
-            break
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            continue
-        m = case_line.match(stripped)
-        if m:
-            cases.append(m.group(1))
-        else:
-            break
-    return cases
-
-case_anchors = list(re.finditer(r"^\s+cases:\s*\|\s*\n", wf, flags=re.MULTILINE))
-group_pattern = re.compile(
-    r"^\s+- name:\s*(\S+)\s*\n"
-    r"\s+profile_feature:\s*(\S+)\s*\n"
-    r"\s+cases:\s*\|\s*\n",
-    flags=re.MULTILINE,
-)
-groups = list(group_pattern.finditer(wf))
-if len(groups) != len(case_anchors):
-    print("every benchmark matrix group must declare profile_feature before cases", file=sys.stderr)
-    raise SystemExit(1)
-
-bench_cases: list[tuple[str, str, str]] = []
-for group in groups:
-    group_name, profile_feature = group.group(1, 2)
-    for case_spec in cases_after_pipe(group.end()):
-        bench_cases.append((group_name, profile_feature, case_spec))
-
-if not bench_cases:
-    print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
-    raise SystemExit(1)
+bench_cases = read_matrix_cases(workflow)
 case_specs = [case_spec for _, _, case_spec in bench_cases]
 head_policy = resolve_baseline("HEAD", case_specs)
 unsupported = [item for item in head_policy["cases"] if not item["supported"]]

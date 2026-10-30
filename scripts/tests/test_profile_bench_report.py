@@ -1569,6 +1569,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         current = normalize_case_summary(
             {
                 "mode": "onehot_fp128",
+                "onehot_k": 16,
                 "num_vars": 32,
                 "num_polys": 1,
                 "exit_code": 0,
@@ -1652,6 +1653,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         current = normalize_case_summary(
             {
                 "mode": "onehot_fp128",
+                "onehot_k": 16,
                 "num_vars": 32,
                 "num_polys": 1,
                 "exit_code": 0,
@@ -2045,6 +2047,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         }
         case = {
             "mode": "onehot_fp128",
+                "onehot_k": 16,
             "num_vars": 32,
             "num_polys": 1,
             "setup_contribution_mode": "direct",

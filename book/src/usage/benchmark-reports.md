@@ -71,20 +71,35 @@ does not enable disk persistence.
 ## How the comparison works
 
 Pull request runs compare with the merge base, not the current tip of `main`.
-Eligibility is checked per case against the merge base's profile modes and
-schedule catalog. For supported cases, the workflow builds both revisions and
-runs them interleaved on the same machine so changes in runner load affect them
+Eligibility is checked per case against the merge base's runtime workload
+contract and schedule catalog. The declaration at
+`crates/akita-pcs/examples/profile/workloads.json` supplies the accepted shapes,
+setup modes, family, and precommitted topology to both dispatch and eligibility.
+Before timing, CI probes each compiled head case without allocating witnesses;
+the driver checks the declaration against its actual selected config. Audited
+pre-contract revisions use frozen workload snapshots; unknown older drivers
+are explicitly unsupported. For supported cases, the workflow builds both
+revisions and runs them interleaved on the same machine so changes in runner load affect them
 as evenly as possible. An unsupported mode or catalog key runs at the head
 only, with an explicit reason and no merge-base percentage comparison. New
 catalog rows become eligible automatically once they reach the base branch.
 
 Metadata errors, build errors, and failures in a supported baseline or head
 benchmark fail CI. A failed supported baseline also cancels its paired head
-case, and the report records the failure.
+case, and the report records the failure. An orchestration failure before
+measurement also writes case results with its failing phase. Aggregation checks
+the complete requested matrix and fills missing or malformed shard results with
+explicit failures, so failed shards remain in the report even when no benchmark
+process ran.
 
 Each case has one discarded warmup process and three measured processes. The
-report uses the median time and the largest peak resident memory. A negative
-delta means that the branch used less time, memory, or proof data.
+report uses the median time and the largest peak resident memory.
+
+One-hot density K is recorded from each binary's config metadata or its log
+header. Historical density labels are preserved; missing density remains
+unknown. The comparison identity includes K. Different or unknown densities
+receive no percentage comparison, and the report identifies both source
+workloads when they differ. A negative delta means that the branch used less time, memory, or proof data.
 
 The x86 runners compile for the fixed `x86-64-v3` target. This keeps the
 compile-time instruction set stable across machines while retaining AVX2.

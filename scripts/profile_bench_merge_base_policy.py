@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import io
 import json
 import re
@@ -24,24 +25,61 @@ PROFILE_ALL_MARKER = "const PROFILE_ALL_MODES"
 PROFILE_MODES_MARKER = "const PROFILE_MODES"
 NAME_RE = re.compile(r'name:\s*"([^"]+)"')
 
-# Named profile workloads: catalog family and whether two nv16 precommits
-# precede the two-polynomial final group.
-MODE_CATALOGS = {
-    "dense_fp32": ("fp32_dense", False),
-    "dense_fp64": ("fp64_dense", False),
-    "dense_fp128": ("fp128_dense", False),
-    "onehot_fp32": ("fp32_onehot", False),
-    "onehot_fp64": ("fp64_onehot", False),
-    "onehot_fp128": ("fp128_onehot", False),
-    "onehot_fp128_multi_group": ("fp128_onehot", True),
-    "onehot_fp128_multi_group_recursive": ("fp128_onehot_recursive", True),
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": (
-        "fp128_onehot_recursive_multi_chunk_w8r2", True
-    ),
-    "onehot_fp128_multi_chunk_w2r2": ("fp128_onehot_multi_chunk_w2r2", False),
-    "onehot_fp128_multi_chunk_w4r2": ("fp128_onehot_multi_chunk_w4r2", False),
-    "onehot_fp128_multi_chunk_w8r2": ("fp128_onehot_multi_chunk", False),
-}
+WORKLOADS = "crates/akita-pcs/examples/profile/workloads.json"
+
+
+def read_matrix_cases(path: Path) -> list[tuple[str, str, str]]:
+    text = path.read_text()
+    pattern = re.compile(
+        r"^\s+- name:\s*(\S+)\s*\n"
+        r"\s+profile_feature:\s*(\S+)\s*\n"
+        r"\s+cases:\s*\|\s*\n", re.MULTILINE,
+    )
+    cases = []
+    for group in pattern.finditer(text):
+        for line in text[group.end():].splitlines():
+            if not line.strip() or line.strip().startswith("#"):
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9_]+:\d+:\d+(?::[a-z]+)?", line.strip()):
+                break
+            cases.append((*group.group(1, 2), line.strip()))
+    if not cases:
+        raise ValueError("no benchmark matrix cases")
+    return cases
+
+
+def load_workloads(ref: str) -> list[dict]:
+    present = subprocess.check_output(
+        ["git", "ls-tree", "--name-only", ref, "--", WORKLOADS], text=True
+    ).strip()
+    if present:
+        rows = json.loads(git_show(ref, WORKLOADS))
+    else:
+        # Frozen adapters for pre-contract drivers. An unknown old driver is
+        # unsupported; never infer runtime support from its catalog alone.
+        revision = subprocess.check_output(["git", "rev-parse", ref], text=True).strip()
+        rows = []
+        for path in sorted((Path(__file__).parent / "profile_workload_legacy").glob("*.json")):
+            snapshot = json.loads(path.read_text())
+            if snapshot["revision"] == revision:
+                rows = snapshot["workloads"]
+                break
+    seen = set()
+    for row in rows:
+        key = (row["mode"], row["setup_mode"])
+        if key in seen or not row["family"]:
+            raise ValueError("invalid or duplicate workload declaration")
+        seen.add(key)
+        for field in ("num_vars", "num_polys"):
+            values = row[field]
+            if values is not None and (not values or any(type(v) is not int or v <= 0 for v in values)):
+                raise ValueError("invalid workload shape")
+        pre = row["precommitted"]
+        if any(len(g) != 2 or any(type(v) is not int or v <= 0 for v in g) for g in pre):
+            raise ValueError("invalid precommitted topology")
+        if pre and row["num_polys"] != [sum(g[1] for g in pre) + row["final_polys"]]:
+            raise ValueError("inconsistent workload topology")
+    return rows
 
 
 @dataclass(frozen=True)
@@ -150,6 +188,7 @@ def resolve_baseline(merge_base_ref: str, case_specs: list[str]) -> dict[str, ob
     if len({case.spec for case in cases}) != len(cases):
         raise ValueError("duplicate benchmark cases")
     modes = merge_base_profile_modes(merge_base_ref)
+    workloads = load_workloads(merge_base_ref)
     table = csv.DictReader(io.StringIO(git_show(merge_base_ref, CATALOG)), delimiter="\t")
     if not {"family", "logical_key", "lookup_key_digest"}.issubset(table.fieldnames or []):
         raise ValueError("invalid merge-base catalog header")
@@ -169,21 +208,20 @@ def resolve_baseline(merge_base_ref: str, case_specs: list[str]) -> dict[str, ob
         if case.mode not in modes:
             reason = f"merge-base does not define mode {case.mode}"
         else:
-            if case.mode not in MODE_CATALOGS:
-                raise ValueError(f"no catalog mapping for profile mode {case.mode}")
-            family, grouped = MODE_CATALOGS[case.mode]
-            if case.setup_mode == "recursive" and not family.endswith(
-                ("_recursive", "_recursive_multi_chunk_w8r2")
-            ):
-                family += "_recursive"
-            if grouped:
-                if case.num_polys != 4:
-                    raise ValueError("multi-group profiles require four polynomials")
-                logical_key = f"final={case.num_vars}:2;precommitted=16:1,16:1"
+            row = next((row for row in workloads if row["mode"] == case.mode
+                        and row["setup_mode"] == case.setup_mode), None)
+            if row is None:
+                reason = "merge-base driver has no workload contract for this mode/setup"
+            elif any(row[key] is not None and value not in row[key] for key, value in
+                     (("num_vars", case.num_vars), ("num_polys", case.num_polys))):
+                reason = "merge-base driver does not accept this workload shape"
             else:
-                logical_key = f"final={case.num_vars}:{case.num_polys};precommitted="
-            if (family, logical_key) not in keys:
-                reason = f"merge-base catalog {family} has no row for {logical_key}"
+                family = row["family"]
+                final_np = row["final_polys"] if row["precommitted"] else case.num_polys
+                pre = ",".join(f"{nv}:{np}" for nv, np in row["precommitted"])
+                logical_key = f"final={case.num_vars}:{final_np};precommitted={pre}"
+                if (family, logical_key) not in keys:
+                    reason = f"merge-base catalog {family} has no row for {logical_key}"
         decisions.append({"case": case.spec, "supported": not reason, "reason": reason})
     return {"merge_base_ref": merge_base_ref, "cases": decisions}
 
@@ -203,11 +241,26 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--merge-base-ref", required=True)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--merge-base-ref")
+    selection.add_argument("--binary", help="Attest each case using the compiled head driver.")
     parser.add_argument("--case", action="append", default=[])
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--output")
     parser.add_argument("--github-env", default="")
     args = parser.parse_args(argv)
+    if not args.case:
+        parser.error("at least one --case is required")
+    if args.binary:
+        for spec in args.case:
+            case = parse_case_spec(spec)
+            env = dict(os.environ, AKITA_MODE=case.mode, AKITA_NUM_VARS=str(case.num_vars),
+                       AKITA_NUM_POLYS=str(case.num_polys), AKITA_SETUP_MODE=case.setup_mode,
+                       AKITA_PROFILE_CONTRACT_ONLY="1", AKITA_PROFILE_TRACE="0",
+                       AKITA_PROFILE_ANSI="0")
+            subprocess.run([args.binary], env=env, check=True)
+        return 0
+    if not args.output:
+        parser.error("--merge-base-ref requires --output")
     return cmd_resolve(args)
 
 

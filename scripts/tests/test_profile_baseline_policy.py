@@ -29,6 +29,9 @@ class BaselinePolicyTests(unittest.TestCase):
                 return_value=modes or {"dense_fp32", "onehot_fp32"},
             ),
             mock.patch.object(policy, "git_show", return_value=self.catalog(keys)),
+            mock.patch.object(policy, "load_workloads", return_value=json.loads(
+                pathlib.Path(policy.WORKLOADS).read_text()
+            )),
         ):
             return policy.resolve_baseline("main", cases)
 
