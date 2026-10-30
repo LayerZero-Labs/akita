@@ -169,8 +169,13 @@ already checked expanded setup matrix directly. This keeps the benchmark
 focused on transport and verifier execution.
 
 A deployment can preserve the same trust boundary by authenticating the setup
-package outside the guest. A deployment that receives setup from an untrusted
-source should use strict setup decoding inside the guest. The normal guest
+package outside the guest. Strict setup decoding inside the guest re-derives
+the public matrix from the seed, so it removes the need to trust the matrix
+bytes. It does not recompute the setup-prefix commitments, and it does not
+establish where the schedule catalog came from. Those remain inputs that the
+deployment must authenticate, for example through the guest program or its
+public input. Authenticating them fixes the bytes. It still relies on whoever
+derived them. The normal guest
 feature keeps strict decoding enabled; the host opts into the benchmark path
 only for the ELF it builds through the pinned Jolt SDK.
 

@@ -10,13 +10,18 @@ use spongefish::{Decoding, Encoding, NargDeserialize, VerifierState};
 pub struct VerifierChannel<'proof> {
     inner: VerifierState<'proof, TranscriptSponge>,
     invalid: bool,
+    pub(super) proof_len: usize,
 }
 
 impl<'proof> VerifierChannel<'proof> {
-    pub(super) const fn new(inner: VerifierState<'proof, TranscriptSponge>) -> Self {
+    pub(super) const fn new(
+        inner: VerifierState<'proof, TranscriptSponge>,
+        proof_len: usize,
+    ) -> Self {
         Self {
             inner,
             invalid: false,
+            proof_len,
         }
     }
 

@@ -302,6 +302,17 @@ impl GroupCommitPhaseParams {
     /// block geometry must cover every ring in that domain without a partial
     /// block or an omitted tail.
     pub fn validate_setup_prefix_geometry(&self, natural_len: usize) -> Result<(), AkitaError> {
+        let field_bits = self.inner.matrix.sis_modulus_profile().field_bits();
+        self.inner.digits.validate(field_bits)?;
+        let full_width =
+            crate::sis::compute_num_digits_field_width(field_bits, self.inner.digits.log_basis);
+        if self.inner.digits.num_digits != full_width {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup-prefix inner digit depth {} does not cover the full field width ({full_width} digits)",
+                self.inner.digits.num_digits
+            )));
+        }
+
         if self.group.num_polynomials() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "setup-prefix commitment profile must be singleton".into(),

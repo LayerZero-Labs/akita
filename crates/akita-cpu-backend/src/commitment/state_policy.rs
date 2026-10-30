@@ -324,6 +324,7 @@ pub(super) fn assemble_portable_hint<F: Field>(
     }
 }
 
+#[cfg(test)]
 pub(super) fn validate_portable_export_route<F: Field>(
     exporters: &CommitmentStateExporters<F>,
     mode: CommitmentExecutionMode,
@@ -528,6 +529,7 @@ pub(crate) trait PortableCommitmentState<F: Field> {
 }
 
 /// Consuming portable export used by persistence boundaries.
+#[cfg(test)]
 pub(crate) trait IntoPortableCommitmentState<F: Field> {
     /// Consume private state and return its canonical portable hint.
     fn into_portable_hint(self) -> Result<PortableCommitmentHandle<F>, AkitaError>;
@@ -742,10 +744,10 @@ impl<F: Field + 'static> InnerRelationState<F> for PortableCommitmentHandle<F> {
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("inner-relation row length overflow".into())
                 })?;
+        let rows = self.inner_rows()?;
         if self.ring_dim() != plan.ring_dimension
-            || self.inner_rows().len() != source_count
-            || self
-                .inner_rows()
+            || rows.len() != source_count
+            || rows
                 .iter()
                 .any(|row| row.coeff_len() != expected_coefficients)
         {
@@ -761,7 +763,7 @@ impl<F: Field + 'static> InnerRelationState<F> for PortableCommitmentHandle<F> {
         plan: &CommitInnerPlan,
         source_count: usize,
     ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
-        InnerRelationStateMaterial::new(plan, source_count, self.inner_rows().to_vec())
+        InnerRelationStateMaterial::new(plan, source_count, self.inner_rows()?.into_owned())
     }
 }
 
@@ -887,12 +889,14 @@ impl<F: Field> PortableCommitmentState<F> for ResidentCommitmentState<F> {
     }
 }
 
+#[cfg(test)]
 impl<F: Field> IntoPortableCommitmentState<F> for PortableCommitmentHandle<F> {
     fn into_portable_hint(self) -> Result<PortableCommitmentHandle<F>, AkitaError> {
         Ok(self)
     }
 }
 
+#[cfg(test)]
 impl<F: Field> IntoPortableCommitmentState<F> for ResidentCommitmentState<F> {
     fn into_portable_hint(self) -> Result<PortableCommitmentHandle<F>, AkitaError> {
         let material = self.frozen_inner_material()?;

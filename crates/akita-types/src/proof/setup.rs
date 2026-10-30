@@ -15,6 +15,9 @@ use shake::Shake256;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
+mod range;
+pub use range::derive_public_matrix_range;
+
 /// Versioned derivation algorithm for the public field stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicMatrixDerivation {
@@ -243,10 +246,7 @@ pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
     cfg_chunks_mut!(data, id.derivation.page_field_elements())
         .enumerate()
         .for_each(|(page_index, coeffs)| {
-            let mut page_rng = SetupSeedPageXof::new::<F>(id, page_index);
-            for coeff in coeffs.iter_mut() {
-                *coeff = F::random(&mut page_rng);
-            }
+            range::fill_page(id, page_index, 0, coeffs);
         });
 
     FlatMatrix::from_flat_data(data)
@@ -725,6 +725,10 @@ mod tests {
         )
         .first()
         .expect("exact prefix A bounds");
+        let inner_digits = akita_params::sis::compute_num_digits_field_width(
+            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7.field_bits(),
+            1,
+        );
         let inner_commit_matrix = akita_params::InnerCommitMatrixParams::try_new_with_min_rank(
             akita_params::SisTableKey {
                 policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
@@ -734,7 +738,7 @@ mod tests {
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
                 coeff_linf_bound: a_bound,
             },
-            1,
+            inner_digits,
         )
         .expect("audited prefix A matrix");
         let outer_commit_matrix = akita_params::OuterCommitMatrixParams::try_new_with_min_rank(
@@ -759,7 +763,7 @@ mod tests {
                 blocks: akita_params::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
                 outer_slice_count: akita_params::CommitmentSliceCount::ONE,
                 inner: akita_params::RoleParams::new(
-                    akita_params::GadgetDigits::new(1, 1),
+                    akita_params::GadgetDigits::new(1, inner_digits),
                     inner_commit_matrix,
                 ),
                 outer: akita_params::RoleParams::new(
