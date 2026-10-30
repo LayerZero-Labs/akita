@@ -218,19 +218,22 @@ where
     if setup.prefix_slots().get(&prefix).is_none() {
         return Err(AkitaError::InvalidProof);
     }
-    let product = akita_types::binary_source::BinaryAProduct::new(
-        public.plan(),
-        &rho,
-        &replay.challenges,
-        prefix.n_prefix()?,
-    )?;
-    let stage3 = crate::stages::stage3::verify_stage3_session::<F, E>(
-        prefix.n_prefix()?.trailing_zeros() as usize,
-        &typed_identity,
-        grinding,
-        0,
-        |point| product.evaluate(point),
-    )?;
+    let stage3 = {
+        let _span = tracing::info_span!("binary_root_a_stage3").entered();
+        let product = akita_types::binary_source::BinaryAProduct::new(
+            public.plan(),
+            &rho,
+            &replay.challenges,
+            prefix.n_prefix()?,
+        )?;
+        crate::stages::stage3::verify_stage3_session::<F, E>(
+            prefix.n_prefix()?.trailing_zeros() as usize,
+            &typed_identity,
+            grinding,
+            0,
+            |point| product.evaluate(point),
+        )?
+    };
     let expected = (relation.evaluate(&replay.challenges)? + stage3.claim) * witness_eval
         + (negative_bit_weight + gamma * EqPolynomial::mle(&stage1.point, &replay.challenges)?)
             * witness_eval

@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::binary_source::{
-    binary_direct_a_weights, BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor,
-    CANONICAL_IMAGE_WINDOW,
+    binary_direct_a_weights, binary_quotient_weights, BinaryCommitmentProfiles, BinaryIndexMap,
+    BinarySourceDescriptor, CANONICAL_IMAGE_WINDOW,
 };
 use akita_challenges::{Challenges, SparseChallenge};
 use jolt_field::{Prime128Offset275 as F, Ring, Zero};
@@ -87,9 +87,21 @@ fn stage3_release_a_arithmetic_measurements() {
             black_box(product.evaluate(&terminal_point).unwrap());
         }
         let factored_elapsed = start.elapsed() / 8;
+        let start = Instant::now();
+        let non_a = binary_quotient_weights(&plan, None, &challenges, &rho, &padding)
+            .unwrap()
+            .evaluate(&point)
+            .unwrap();
+        black_box(non_a);
+        let non_a_elapsed = start.elapsed();
+        // Both totals include the quotient row's T/KA and zero-padding compiler
+        // work. The new total adds factored A preparation and terminal weight
+        // evaluation, but excludes Stage 3 transcript/sumcheck replay overhead.
+        let factored_total = non_a_elapsed + factored_elapsed;
         eprintln!(
-            "stage3 A arithmetic rows={rows} rank={rank} prefix={prefix_len} stage2_domain={} direct_quotient_compiler_and_mle_us={} factored_a_prepare_and_terminal_us={}",
+            "stage3 A arithmetic rows={rows} rank={rank} prefix={prefix_len} stage2_domain={} direct_quotient_compiler_and_mle_us={} factored_a_prepare_and_terminal_us={} non_a_quotient_compiler_and_mle_us={} non_a_plus_factored_arithmetic_total_us={}",
             plan.repacking().domain_len(), direct_elapsed.as_micros(), factored_elapsed.as_micros(),
+            non_a_elapsed.as_micros(), factored_total.as_micros(),
         );
         if direct_elapsed >= Duration::from_secs(2) {
             break;
