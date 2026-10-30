@@ -60,7 +60,7 @@ fn independent_runtime_catalogs_prove_verify_and_reject_each_other() {
                 )
                 .unwrap();
                 let setup = scheme.setup_prover(NV, 1).unwrap();
-                let backend = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+                let backend = CpuBackend::<F, F>::new(setup.expanded().clone()).unwrap();
                 (scheme, setup, backend)
             });
             assert_ne!(
@@ -119,9 +119,8 @@ fn independent_runtime_catalogs_prove_verify_and_reject_each_other() {
                 })
                 .collect::<Vec<_>>();
             for (verifier_index, (scheme, setup, _)) in contexts.iter().enumerate() {
-                let verifier = scheme
-                    .verifier(scheme.setup_verifier(setup).unwrap())
-                    .unwrap();
+                let verifier =
+                    unsafe { scheme.verifier(scheme.setup_verifier(setup).unwrap()) }.unwrap();
                 for (proof_index, (commitment, selection, proof)) in proofs.iter().enumerate() {
                     let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                         point.clone(),

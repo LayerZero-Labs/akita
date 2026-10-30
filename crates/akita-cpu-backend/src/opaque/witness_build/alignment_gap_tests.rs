@@ -189,12 +189,14 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
             assert_eq!(observed.built_witnesses, observed.committed_witnesses);
             assert_ne!(zero_proof, filler_proof);
 
-            let verifier = akita_verifier::AkitaVerifier::<Cfg>::for_selection(
-                setup.to_verifier_setup(capacity).unwrap(),
-                catalog,
-                selection,
-                None,
-            )
+            let verifier = unsafe {
+                akita_verifier::AkitaVerifier::<Cfg>::for_selection(
+                    setup.to_verifier_setup(capacity).unwrap(),
+                    catalog,
+                    selection,
+                    None,
+                )
+            }
             .unwrap();
             for proof in [&zero_proof, &filler_proof] {
                 let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

@@ -86,15 +86,17 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
                     .max_setup_field_elements()?,
             );
         }
-        let expanded = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 1,
-                max_num_batched_polys: 1,
-                num_field_elements: fields,
-                setup_seed: descriptor.setup_seed.clone(),
-            },
-            FlatMatrix::from_flat_data(source.read(0..fields)?),
-        );
+        let expanded = unsafe {
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 1,
+                    max_num_batched_polys: 1,
+                    num_field_elements: fields,
+                    setup_seed: descriptor.setup_seed.clone(),
+                },
+                FlatMatrix::from_flat_data(source.read(0..fields)?),
+            )
+        };
         Self::new(Arc::new(expanded))?.export_prefixes_from(source, ids)
     }
 

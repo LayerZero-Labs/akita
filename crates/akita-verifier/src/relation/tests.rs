@@ -133,15 +133,17 @@ fn mixed_replay_fixture(mode: akita_params::RingRelationMode) -> MixedReplayFixt
     .unwrap();
     let witness_layout = relation.segment_layout(&lp, None).unwrap();
     let opening_source_len = witness_layout.live_coeff_len().div_ceil(D_PROJECTED);
-    let placeholder_setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 1,
-            num_field_elements: 1,
-            setup_seed: [7; 32].into(),
-        },
-        FlatMatrix::from_flat_data(vec![MixedF::one()]),
-    );
+    let placeholder_setup = unsafe {
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 1,
+                num_field_elements: 1,
+                setup_seed: [7; 32].into(),
+            },
+            FlatMatrix::from_flat_data(vec![MixedF::one()]),
+        )
+    };
     let rows = lp
         .relation_matrix_row_count(relation.opening_batch().num_groups())
         .unwrap();
@@ -169,19 +171,21 @@ fn mixed_replay_fixture(mode: akita_params::RingRelationMode) -> MixedReplayFixt
         super::evaluation::PreparedDirectRelation::prepare::<MixedF>(&evaluator, &point, alpha)
             .unwrap();
     let setup_field_len = prepared.setup_field_len();
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 1,
-            num_field_elements: setup_field_len,
-            setup_seed: [7; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_field_len)
-                .map(|index| MixedF::from_u64(101 + index as u64))
-                .collect(),
-        ),
-    );
+    let setup = unsafe {
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 1,
+                num_field_elements: setup_field_len,
+                setup_seed: [7; 32].into(),
+            },
+            FlatMatrix::from_flat_data(
+                (0..setup_field_len)
+                    .map(|index| MixedF::from_u64(101 + index as u64))
+                    .collect(),
+            ),
+        )
+    };
     MixedReplayFixture {
         lp,
         relation,
@@ -466,15 +470,17 @@ fn malformed_relation_property_matrix_rejects_without_panicking() {
                 fixture.point.clear();
             }
             if mutation_mask & SETUP != 0 {
-                fixture.setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars: 0,
-                        max_num_batched_polys: 1,
-                        num_field_elements: 1,
-                        setup_seed: [9; 32].into(),
-                    },
-                    FlatMatrix::from_flat_data(vec![MixedF::one()]),
-                );
+                fixture.setup = unsafe {
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        AkitaSetupDescriptor {
+                            max_num_vars: 0,
+                            max_num_batched_polys: 1,
+                            num_field_elements: 1,
+                            setup_seed: [9; 32].into(),
+                        },
+                        FlatMatrix::from_flat_data(vec![MixedF::one()]),
+                    )
+                };
             }
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let evaluator = fixture.prepare_evaluator()?;

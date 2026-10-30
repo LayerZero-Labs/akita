@@ -36,16 +36,15 @@ above. The repository checks in CI that `akita-verifier` has no dependency on
 
 The verifier receives these public values:
 
-- An `AkitaVerifierSetup` for the configuration and supported schedule.
-- The approved external schedule artifact or its validated catalog.
+- A `PinnedVerifierSetup` issued by the release loader for an anchored
+  parameter set, which carries the setup and the catalog.
 - A schedule selection produced with the proof.
 - Ordered commitments, points, and claimed values.
 - Spongefish argument bytes.
 - The application transcript domain and basis mode.
 
-The host should place them in one versioned public artifact or authenticate the
-setup separately. The [proof artifacts guide](./proof-artifacts.md) explains the
-bundle.
+The setup comes from a pinned release, not from the proof bundle. The [proof
+artifacts guide](./proof-artifacts.md) explains the rest of the bundle.
 
 ## Keep proof bytes opaque
 
@@ -80,11 +79,11 @@ group is last, and every earlier group is a precommitted group.
 
 ## Verify directly
 
-Build one `AkitaVerifier` from the verifier setup and the trusted catalog, then
+Load the verifier setup from a release, build one `AkitaVerifier` from it, and
 pass the application session label to its verification method.
 
 ```rust
-let verifier = akita_verifier::AkitaVerifier::new(verifier_setup, catalog)?;
+let verifier = akita_verifier::AkitaVerifier::from_pinned(pinned_setup)?;
 verifier.batched_verify(
     &proof_bytes,
     TRANSCRIPT_DOMAIN,
@@ -93,41 +92,64 @@ verifier.batched_verify(
 )?;
 ```
 
-Construction fixes the catalog rows this verifier admits: those whose opening
-key fits the setup descriptor and whose direct matrix uses fit the setup's
-public matrix. It prepares the terminal matrix transforms of those rows once.
-Verification never mutates the verifier, so one instance can serve many proofs
-and threads. A verifier that checks a single proof, such as a zkVM guest, uses
-`AkitaVerifier::for_selection` to admit and prepare only that proof's row.
+A full load admits every catalog row of its parameter set: those whose
+opening key fits the set limits. The loader derives the public matrix those
+rows read and checks that the setup admits exactly them. Construction prepares
+the terminal matrix transforms of those rows once. Verification never mutates
+the verifier, so one instance can serve many proofs and threads. A verifier
+that checks a single proof uses a single-row load, which admits and prepares
+only that proof's row.
 
-The verifier resolves the explicit schedule selection in the supplied catalog.
+The verifier resolves the explicit schedule selection in the pinned catalog.
 It does not run the planner. It then binds the instance descriptor, validates
 the public claims, and replays every fold through terminal verification.
 
-The repository's [quickstart example](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-pcs/examples/quickstart.rs)
-uses this verifier after producing and decoding a proof. Cargo
-compiles that call as part of the normal example checks.
-
 ## Supply verifier setup
 
-The proving environment normally creates verifier setup before packaging or
-serving proofs.
-
-For a first integration, use:
+A verifier trusts only the `(bundle_id, set name)` pairs of its compiled trust
+anchor. Akita's anchor is `akita_anchors::AKITA_ANCHOR`; an integration that
+publishes its own release compiles its own anchor as a constant. The set name
+comes from the integration's own configuration, never from transported bytes.
 
 ```rust
-let verifier_setup = scheme.setup_verifier(&prover_setup)?;
+use akita_anchors::{AKITA_ANCHOR, AKITA_V1_MANIFEST};
+use akita_config::preprocessing::CommitmentSource;
+use akita_types::preprocessing::{open_anchored_manifest, DirectoryReleaseFiles, ReleaseKind};
+
+let release = open_anchored_manifest(
+    &AKITA_ANCHOR,
+    ReleaseKind::Akita,
+    AKITA_V1_MANIFEST,
+    &["fp128-dense-recursive"],
+)?;
+let files = DirectoryReleaseFiles::new(release_dir);
+let pinned_setup = akita_verifier::preprocessing::load_verifier_setup::<Cfg>(
+    &release,
+    &files,
+    "fp128-dense-recursive",
+    None,
+    CommitmentSource::Registry,
+)?;
 ```
 
-For a fixed production schedule, use
-`setup_verifier_for_schedule`. It retains only the public matrix prefix that
-the selected verifier path reads directly, plus the complete setup prefix
-commitment registry.
+The loader checks the anchor before decoding the manifest, compares the set
+record with the compiled configuration, checks every file it reads against
+its manifest hash, and compares every setup-prefix commitment with the
+manifest. Release files are untrusted transport: a directory, the
+`akita-setup` release cache, embedded bytes, or downloaded release assets all
+work, because the loader checks each byte it uses. A single-row verifier uses
+`load_selected_verifier_setup`.
 
-The verifier package consumes this artifact. It does not need setup generation
-code. A host can authenticate the package by digest, distribute it with the
-application, or regenerate and validate it before placing it in the verifier
-environment.
+A host that prefers not to read registry files may derive the commitments from
+the seed instead, with `CommitmentSource::SeedDerived` and the CPU reference
+deriver from `akita-cpu-backend`. The loader compares each derived commitment
+with the manifest, so both modes issue the same verifier. Seed-derived mode
+costs one commitment derivation per profile used, so hosts that load often
+should use registry mode, and a guest must not use it.
+
+A deployment with its own seed, catalogs, or limits writes a description
+under its own `params/`, generates its release with `akita-preprocess`, and
+passes its own anchor to the same loader.
 
 ## Handle rejection as a normal result
 

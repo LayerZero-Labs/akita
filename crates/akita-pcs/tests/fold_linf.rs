@@ -54,8 +54,8 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         BasisMode::Lagrange,
     );
     let setup = scheme.setup_prover(num_vars, 1).expect("setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
@@ -75,8 +75,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
             BasisMode::Lagrange,
         )
         .expect("prove");
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -100,21 +99,19 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
 
 impl FoldLinfGrindFixture {
     fn verify(&self, proof: &[u8]) -> Result<(), akita_error::AkitaError> {
-        self.scheme
-            .verifier(self.verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    proof,
-                    LABEL,
-                    verify_input::<OneHotCfg>(
-                        &self.point,
-                        &[self.opening],
-                        &self.commitment,
-                        self.scheme.schedules(),
-                    ),
-                    BasisMode::Lagrange,
-                )
-            })
+        unsafe { self.scheme.verifier(self.verifier_setup.clone()) }.and_then(|verifier| {
+            verifier.batched_verify(
+                proof,
+                LABEL,
+                verify_input::<OneHotCfg>(
+                    &self.point,
+                    &[self.opening],
+                    &self.commitment,
+                    self.scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
     }
 }
 

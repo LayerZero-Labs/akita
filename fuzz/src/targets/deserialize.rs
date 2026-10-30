@@ -11,9 +11,10 @@ use crate::stats;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_params::OpeningScheduleSelection;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_types::preprocessing::ReleaseManifest;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedGroup,
+    CommittedGroup, SetupPrefixVerifierRegistry,
 };
 
 /// An accepted encoding must equal its re-encoding byte for byte, and the
@@ -39,6 +40,22 @@ where
     stats::count(name);
 }
 
+/// A release manifest is decoded only after its anchor check, but decoding
+/// must still be total and canonical.
+fn manifest(bytes: &[u8]) {
+    let Ok(manifest) = ReleaseManifest::decode(bytes) else {
+        return;
+    };
+    let encoded = manifest
+        .to_bytes()
+        .unwrap_or_else(|error| panic!("manifest: accepted value fails to re-encode: {error:?}"));
+    assert_eq!(
+        encoded, bytes,
+        "manifest: accepted encoding is not canonical"
+    );
+    stats::count("release_manifest");
+}
+
 pub fn run(data: &[u8]) {
     let mut reader = Reader::new(data);
     let selector = reader.u8();
@@ -47,8 +64,8 @@ pub fn run(data: &[u8]) {
         0 => canonical::<CommittedGroup<fp128::Field>>(bytes, "committed_group_fp128"),
         1 => canonical::<CommittedGroup<fp64::Field>>(bytes, "committed_group_fp64"),
         2 => canonical::<CommittedGroup<fp32::Field>>(bytes, "committed_group_fp32"),
-        3 => canonical::<AkitaVerifierSetup<fp128::Field>>(bytes, "verifier_setup_fp128"),
-        4 => canonical::<AkitaVerifierSetup<fp32::Field>>(bytes, "verifier_setup_fp32"),
+        3 => manifest(bytes),
+        4 => canonical::<SetupPrefixVerifierRegistry<fp128::Field>>(bytes, "prefix_registry_fp128"),
         5 => canonical::<AkitaExpandedSetup<fp64::Field>>(bytes, "expanded_setup_fp64"),
         6 => canonical::<AkitaSetupDescriptor>(bytes, "setup_descriptor"),
         7 => canonical::<AkitaSetupSeed>(bytes, "setup_seed"),

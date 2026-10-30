@@ -268,7 +268,7 @@ where
         .setup_prover(max_num_vars, num_polynomials)
         .expect("setup");
     let backend = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
     assert!(
         akita_config::TrustedScheduleCatalog::<Cfg>::verifier_admits(&setup.expanded, row)
             .expect("admission"),
@@ -356,8 +356,7 @@ where
     )
     .expect("verifier claims");
     akita_transcript::clear_thread_events();
-    scheme
-        .verifier(verifier_setup)
+    unsafe { scheme.verifier(verifier_setup) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,

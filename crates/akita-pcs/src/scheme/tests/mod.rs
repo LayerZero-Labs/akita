@@ -82,7 +82,8 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
             .expect("catalog setup capacity");
     let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
     assert!(
-        setup.expanded.shared_matrix().num_field_elements() >= expected_capacity.num_field_elements,
+        setup.expanded().shared_matrix().num_field_elements()
+            >= expected_capacity.num_field_elements,
         "setup must cover the exact catalog-derived matrix requirement"
     );
 }
@@ -259,8 +260,8 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: prover_state,

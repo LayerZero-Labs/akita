@@ -79,9 +79,8 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     reduced_scheme.setup_prover(full_num_vars, 1)
                 }
                 .expect("cross-mode setup");
-            let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-            let verifier_setup = quotient_scheme
-                .setup_verifier(&setup)
+            let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+            let verifier_setup = unsafe { quotient_scheme.setup_verifier(&setup) }
                 .expect("cross-mode verifier setup");
             let akita_cpu_backend::CommitOutput {
                 committed_group: commitment,
@@ -142,8 +141,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     "reduced",
                 ),
             ] {
-                scheme
-                    .verifier(verifier_setup.clone())
+                unsafe { scheme.verifier(verifier_setup.clone()) }
                     .and_then(|verifier| {
                         verifier.batched_verify(
                             proof,
@@ -170,16 +168,14 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 ),
             ] {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    scheme
-                        .verifier(verifier_setup.clone())
-                        .and_then(|verifier| {
-                            verifier.batched_verify(
-                                proof,
-                                LABEL,
-                                statement(wrong_selection, &point, opening, &commitment),
-                                BasisMode::Lagrange,
-                            )
-                        })
+                    unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
+                        verifier.batched_verify(
+                            proof,
+                            LABEL,
+                            statement(wrong_selection, &point, opening, &commitment),
+                            BasisMode::Lagrange,
+                        )
+                    })
                 }));
                 assert!(
                     matches!(outcome, Ok(Err(_))),

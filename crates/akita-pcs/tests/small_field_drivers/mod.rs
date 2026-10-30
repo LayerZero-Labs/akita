@@ -81,8 +81,8 @@ where
         load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
             .expect("workspace schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
@@ -121,8 +121,7 @@ where
     )
     .expect("verifier group")])
     .expect("verifier claims");
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -206,8 +205,7 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     ])
     .expect("verifier claims");
 
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 proof,

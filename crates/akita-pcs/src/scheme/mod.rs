@@ -1,7 +1,7 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend};
+use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend, PinnedProverSetup};
 use akita_error::AkitaError;
 use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity};
 use akita_prover::{BackendRegistry, FixedFoldRoute, ProverBackend, SelectedProverOpeningData};
@@ -9,7 +9,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::ProverChannel;
 use akita_types::AkitaVerifierSetup;
 use akita_types::FpExtEncoding;
-use akita_verifier::AkitaVerifier;
+use akita_verifier::{AkitaVerifier, PinnedVerifierSetup};
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use std::time::Instant;
@@ -79,19 +79,52 @@ where
         akita_setup::new_prover_setup::<Cfg::Field>(&requirements)
     }
 
+    /// Build a scheme over the catalog identity of a pinned prover setup.
+    #[must_use]
+    pub fn from_pinned_prover_setup(pinned: &PinnedProverSetup<Cfg>) -> Self {
+        Self::new(pinned.catalog().clone())
+    }
+
+    /// Build a verifier from a loader-issued setup, which must carry this
+    /// scheme's catalog identity.
+    ///
+    /// This replaces [`Self::verifier`] for production verifiers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the pinned catalog is another
+    /// catalog or preparing an admitted row fails.
+    pub fn pinned_verifier(
+        &self,
+        pinned: PinnedVerifierSetup<Cfg>,
+    ) -> Result<AkitaVerifier<Cfg>, AkitaError> {
+        if pinned.catalog().catalog_digest() != self.schedules.catalog_digest() {
+            return Err(AkitaError::InvalidSetup(
+                "pinned verifier setup carries another catalog identity".into(),
+            ));
+        }
+        AkitaVerifier::from_pinned(pinned)
+    }
+
     /// Derive a verifier setup that preserves the prover's full matrix prefix.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when setup conversion fails.
-    pub fn setup_verifier(
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract of [`AkitaProverSetup::to_verifier_setup`]; a
+    /// production verifier loads a `PinnedVerifierSetup` instead.
+    pub unsafe fn setup_verifier(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
         let capacity = SetupMatrixCapacity {
-            num_field_elements: setup.expanded.shared_matrix().num_field_elements(),
+            num_field_elements: setup.expanded().shared_matrix().num_field_elements(),
         };
-        setup.to_verifier_setup(capacity)
+        // SAFETY: forwarded to the caller.
+        unsafe { setup.to_verifier_setup(capacity) }
     }
 
     /// Derive a verifier setup narrowed to one resolved schedule and root
@@ -105,7 +138,11 @@ where
     ///
     /// Returns [`AkitaError::InvalidSetup`] when the schedule is malformed or
     /// its verifier matrix requirement exceeds the prover setup.
-    pub fn setup_verifier_for_schedule(
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::setup_verifier`].
+    pub unsafe fn setup_verifier_for_schedule(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         schedule: &FoldSchedule,
@@ -113,7 +150,8 @@ where
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
         let capacity =
             akita_params::verifier_setup_matrix_capacity_for_schedule(schedule, root_layout)?;
-        setup.to_verifier_setup(capacity)
+        // SAFETY: forwarded to the caller.
+        unsafe { setup.to_verifier_setup(capacity) }
     }
 
     /// Produce a fused batched opening proof from retained commitments, in a
@@ -203,12 +241,12 @@ where
             opening.opening_layout(),
         )?;
         let prefix_slots =
-            backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
+            backend.import_setup_prefixes(setup.prefix_slots(), &required_prefix_ids)?;
         let mut registry = BackendRegistry::<Cfg>::new()?;
         let root = registry.register(backend, &prefix_slots)?;
         let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
         akita_prover::batched_prove_embedded::<Cfg, _>(
-            setup.expanded.descriptor(),
+            setup.expanded().descriptor(),
             &self.schedules,
             &registry,
             opening,
@@ -227,11 +265,17 @@ where
     ///
     /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing an
     /// admitted row fails.
-    pub fn verifier(
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract of [`AkitaVerifier::new`]; a production verifier
+    /// uses [`Self::pinned_verifier`].
+    pub unsafe fn verifier(
         &self,
         setup: AkitaVerifierSetup<Cfg::Field>,
     ) -> Result<AkitaVerifier<Cfg>, AkitaError> {
-        AkitaVerifier::new(setup, self.schedules.clone())
+        // SAFETY: forwarded to the caller.
+        unsafe { AkitaVerifier::new(setup, self.schedules.clone()) }
     }
 
     /// Protocol identifier.

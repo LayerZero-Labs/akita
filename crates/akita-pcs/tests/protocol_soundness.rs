@@ -150,8 +150,8 @@ where
         });
 
     let setup = scheme.setup_prover(num_vars, 1).expect("prover setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("prover backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("prover backend");
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
@@ -228,7 +228,7 @@ where
         "valid native proof exceeds its schedule-derived parser bound"
     );
     let verify = |candidate: &[u8], claimed: Cfg::ExtField, session: &[u8]| {
-        scheme.verifier(setup.clone()).and_then(|verifier| {
+        unsafe { scheme.verifier(setup.clone()) }.and_then(|verifier| {
             verifier.batched_verify(
                 candidate,
                 session,

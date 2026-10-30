@@ -8,6 +8,7 @@ pub mod instance_descriptor;
 mod l2_sites;
 pub mod ntt_cache;
 pub mod opening_claims;
+pub mod preprocessing;
 pub mod proof;
 pub mod setup_contribution;
 mod stage1_sites;
@@ -28,9 +29,9 @@ pub use field_reduction::{
 };
 pub use fold_sites::FoldSite;
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_serializable, setup_seed_digest, AkitaInstanceDescriptor,
-    AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet, SetupSection,
-    TranscriptGrindingBinding,
+    decomposition_descriptor_bytes, digest_effective_schedule, digest_serializable,
+    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
+    ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
 };
 pub use l2_sites::{l2_prefix, l2_virtual_evaluations};
 pub use ntt_cache::{

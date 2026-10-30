@@ -67,7 +67,7 @@ where
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
     let stack = CpuBackend::with_ring_switch_cache_limit(
-        setup.expanded.clone(),
+        setup.expanded().clone(),
         max_cached_ring_switch_elements,
     )
     .expect("cached backend");
@@ -255,7 +255,7 @@ where
         .expect("multi-group prove");
     assert!(multi_group_schedule.num_fold_levels() >= 2);
 
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
     let mut verifier_groups = Vec::new();
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
@@ -277,8 +277,7 @@ where
     );
     let verify_claims =
         OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -307,8 +306,7 @@ where
         ])
         .expect("swapped verifier claims");
         assert!(
-            scheme
-                .verifier(verifier_setup.clone())
+            unsafe { scheme.verifier(verifier_setup.clone()) }
                 .and_then(|verifier| verifier.batched_verify(
                     &proof,
                     b"test/multi-group-unequal",
@@ -330,8 +328,7 @@ where
         ])
         .expect("tampered verifier claims");
         assert!(
-            scheme
-                .verifier(verifier_setup.clone())
+            unsafe { scheme.verifier(verifier_setup.clone()) }
                 .and_then(|verifier| verifier.batched_verify(
                     &proof,
                     b"test/multi-group-unequal",

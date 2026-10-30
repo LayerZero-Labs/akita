@@ -33,13 +33,9 @@ where
         .iter()
         .filter_map(|fold| fold.params.setup_prefix())
         .map(|prefix| prefix.slot_id().expect("setup prefix group"))
-        .filter(|id| setup.prefix_slots.get(id).is_none())
+        .filter(|id| setup.prefix_slots().get(id).is_none())
         .collect::<Vec<_>>();
-    let artifacts = backend.export_setup_prefixes(&ids)?;
-    for (_, slot) in artifacts.iter() {
-        setup.prefix_slots.insert(slot.clone())?;
-    }
-    Ok(())
+    setup.insert_exported_prefixes(&backend.export_setup_prefixes(&ids)?)
 }
 
 /// Setup-contribution mode selected by the benchmark case.
@@ -206,14 +202,14 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let backend = CpuBackend::new(setup.expanded().clone()).unwrap();
         materialize_schedule_setup_prefix_slots(&mut setup, &backend, &schedule)
             .expect("materialize schedule setup-prefix slots");
         let required_prefix_ids =
             akita_config::required_setup_prefix_slot_ids_for_schedule(&schedule, &opening_layout)
                 .expect("resolve schedule setup-prefix slots");
         backend
-            .import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)
+            .import_setup_prefixes(setup.prefix_slots(), &required_prefix_ids)
             .expect("prewarm schedule setup-prefix slots");
         backend
             .prewarm(&schedule)
@@ -224,7 +220,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
         report_timing(label, "setup", t0.elapsed().as_secs_f64());
-        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+        let num_setup_field_elements = setup.expanded().shared_matrix().num_field_elements();
         report_setup_sizes(
             label,
             num_setup_field_elements,
@@ -406,8 +402,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        proof_scheme
-            .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
+        unsafe { proof_scheme.setup_verifier_for_schedule(&setup, &schedule, &opening_layout) }
             .expect("verifier setup")
     });
     report_timing(
@@ -441,8 +436,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
         .expect("verifier statement")
     };
-    let verifier = proof_scheme
-        .verifier(verifier_setup.clone())
+    let verifier = unsafe { proof_scheme.verifier(verifier_setup.clone()) }
         .expect("verifier for the profile setup");
     let verify =
         |statement| verifier.batched_verify(&proof, b"profile", statement, BasisMode::Lagrange);

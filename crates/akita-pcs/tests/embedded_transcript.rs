@@ -53,8 +53,8 @@ impl Fixture {
         let point = random_point(NUM_VARS, 0x8181);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
         let CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -130,14 +130,12 @@ impl Fixture {
         opening: F,
         commitment: &CommittedGroup<F>,
     ) -> Result<(), akita_error::AkitaError> {
-        self.scheme
-            .verifier(self.verifier_setup.clone())?
-            .batched_verify(
-                proof,
-                session,
-                verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+        unsafe { self.scheme.verifier(self.verifier_setup.clone()) }?.batched_verify(
+            proof,
+            session,
+            verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
+            BasisMode::Lagrange,
+        )
     }
 
     /// Run the caller's verifier up to Akita's end; the caller then finishes.
@@ -151,13 +149,11 @@ impl Fixture {
         public_bytes(state, caller_site(0), CALLER_STATEMENT)?;
         let before = receive_byte_group(state, caller_site(1), CALLER_BEFORE.len())?;
         assert_eq!(before, CALLER_BEFORE);
-        self.scheme
-            .verifier(self.verifier_setup.clone())?
-            .batched_verify_embedded(
-                state,
-                verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+        unsafe { self.scheme.verifier(self.verifier_setup.clone()) }?.batched_verify_embedded(
+            state,
+            verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
+            BasisMode::Lagrange,
+        )
     }
 
     /// A different valid commitment with the same profile.
@@ -206,9 +202,7 @@ fn standalone_is_embedded_on_a_fresh_session() {
         assert_eq!(state.narg_string(), standalone.as_slice());
 
         let mut verifier = new_verifier_channel(SESSION, &standalone);
-        let pending = fixture
-            .scheme
-            .verifier(fixture.verifier_setup.clone())
+        let pending = unsafe { fixture.scheme.verifier(fixture.verifier_setup.clone()) }
             .and_then(|verifier_scheme| {
                 verifier_scheme.batched_verify_embedded(
                     &mut verifier,

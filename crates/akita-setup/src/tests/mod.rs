@@ -3,8 +3,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::SetupMatrixCapacity;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-#[cfg(feature = "disk-persistence")]
-use jolt_field::Zero;
+use akita_types::AkitaExpandedSetup;
 
 type Cfg = fp128::Dense;
 type TestF = fp128::Field;
@@ -66,9 +65,10 @@ impl CommitmentConfig for WrongModulusProfileConfig {
 fn expanded_setup_roundtrips_and_derives_same_verifier() {
     let prover_setup = new_prover_setup::<TestF>(&requirements_at(14, 3)).unwrap();
     let capacity = SetupMatrixCapacity {
-        num_field_elements: prover_setup.expanded.shared_matrix().num_field_elements() / 2,
+        num_field_elements: prover_setup.expanded().shared_matrix().num_field_elements() / 2,
     };
-    let verifier_setup = prover_setup.to_verifier_setup(capacity).unwrap();
+    // SAFETY: the setup was derived and exported in this test.
+    let verifier_setup = unsafe { prover_setup.to_verifier_setup(capacity) }.unwrap();
 
     let mut bytes = Vec::new();
     verifier_setup
@@ -79,15 +79,11 @@ fn expanded_setup_roundtrips_and_derives_same_verifier() {
 
     assert_eq!(decoded, verifier_setup.expanded().as_ref().clone());
     assert_eq!(decoded.descriptor().max_num_batched_polys, 3);
-
     decoded.check().unwrap();
-    let decoded_prover = AkitaProverSetup {
-        prefix_slots: akita_cpu_backend::SetupPrefixProverRegistry::new(
-            decoded.descriptor().setup_seed.clone(),
-        ),
-        expanded: std::sync::Arc::new(decoded.clone()),
-    };
-    let derived_verifier = decoded_prover.to_verifier_setup(capacity).unwrap();
+
+    let rederived = AkitaProverSetup::<TestF>::derive(decoded.descriptor().clone()).unwrap();
+    // SAFETY: derived from its seed in this test, with no setup prefixes.
+    let derived_verifier = unsafe { rederived.to_verifier_setup(capacity) }.unwrap();
     assert_eq!(derived_verifier, verifier_setup);
     assert_eq!(
         verifier_setup
@@ -117,4 +113,4 @@ fn setup_rejects_a_mismatched_field_profile_before_materialization() {
 }
 
 #[cfg(feature = "disk-persistence")]
-mod disk_persistence;
+mod release_cache;

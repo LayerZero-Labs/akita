@@ -53,8 +53,8 @@ where
     )
     .unwrap();
     let setup = scheme.setup_prover(nv, polys.len()).unwrap();
-    let producer = Cpu::new(setup.expanded.clone()).unwrap();
-    let consumer = Cpu::new(setup.expanded.clone()).unwrap();
+    let producer = Cpu::new(setup.expanded().clone()).unwrap();
+    let consumer = Cpu::new(setup.expanded().clone()).unwrap();
     let num_polys = polys.len();
     let committed = producer
         .commit(
@@ -114,10 +114,10 @@ where
         .max(first_tensor);
     assert!(switch < levels - 1);
     let prefixes_a = producer
-        .import_setup_prefixes(&setup.prefix_slots, &all_ids)
+        .import_setup_prefixes(setup.prefix_slots(), &all_ids)
         .unwrap();
     let prefixes_b = consumer
-        .import_setup_prefixes(&setup.prefix_slots, &[])
+        .import_setup_prefixes(setup.prefix_slots(), &[])
         .unwrap();
     let mut registry = BackendRegistry::<Cfg>::new().unwrap();
     let a = registry.register(&producer, &prefixes_a).unwrap();
@@ -153,7 +153,7 @@ where
         .unwrap();
     let prove = |owners| {
         batched_prove(
-            setup.expanded.descriptor(),
+            setup.expanded().descriptor(),
             scheme.schedules(),
             &registry,
             opening(),
@@ -202,9 +202,7 @@ where
         transfers_before + 1,
         "same-ID route must not convert"
     );
-    let verifier = scheme
-        .verifier(scheme.setup_verifier(&setup).unwrap())
-        .unwrap();
+    let verifier = unsafe { scheme.verifier(scheme.setup_verifier(&setup).unwrap()) }.unwrap();
     verifier
         .batched_verify(
             &proof,

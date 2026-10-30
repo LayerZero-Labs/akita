@@ -20,7 +20,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             .expect("workspace recursive schedule catalog")
             .setup_prover(RECURSIVE_ROUND_TRIP_NV, RECURSIVE_ROUND_TRIP_POLYS)
             .expect("recursive setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
         recursive_multi_group_round_trip_on::<BaseCfg>(
             chunking,
             &setup,
@@ -81,7 +81,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     on_schedule(&schedule);
 
     assert!(
-        !setup.prefix_slots.is_empty(),
+        !setup.prefix_slots().is_empty(),
         "recursive setup must precompute setup-prefix slots for the generated profile"
     );
 
@@ -184,9 +184,9 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         )
         .expect("generated-profile recursive proof");
 
-    let verifier_setup = recursive_scheme
-        .setup_verifier_for_schedule(setup, &schedule, &opening_layout)
-        .expect("verifier setup");
+    let verifier_setup =
+        unsafe { recursive_scheme.setup_verifier_for_schedule(setup, &schedule, &opening_layout) }
+            .expect("verifier setup");
     let verify_claims = |final_openings: Vec<F>| {
         let mut verifier_groups = Vec::new();
         for (group_idx, openings) in pre_openings.iter().enumerate() {
@@ -207,8 +207,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         GroupBatchStatement::new(selection, claims).expect("verifier statement")
     };
 
-    recursive_scheme
-        .verifier(verifier_setup.clone())
+    unsafe { recursive_scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -224,16 +223,17 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         &verifier_setup,
         &first_setup_prefix_slot(&schedule),
     ) {
-        let alternate_result = recursive_scheme
-            .verifier(alternate_verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    transcript_domain,
-                    verify_claims(final_openings.clone()),
-                    BasisMode::Lagrange,
-                )
-            });
+        let alternate_result =
+            unsafe { recursive_scheme.verifier(alternate_verifier_setup.clone()) }.and_then(
+                |verifier| {
+                    verifier.batched_verify(
+                        &proof,
+                        transcript_domain,
+                        verify_claims(final_openings.clone()),
+                        BasisMode::Lagrange,
+                    )
+                },
+            );
         assert!(
             alternate_result.is_err(),
             "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs"
@@ -241,9 +241,8 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     }
 
     let reject_stage3_tamper = |tampered_proof: Vec<u8>, label: &str| {
-        let result = recursive_scheme
-            .verifier(verifier_setup.clone())
-            .and_then(|verifier| {
+        let result =
+            unsafe { recursive_scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
                 verifier.batched_verify(
                     &tampered_proof,
                     transcript_domain,
@@ -280,9 +279,8 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
 
     let mut tampered = final_openings;
     tampered[0] += F::from_u128_reduced(1);
-    let tampered_result = recursive_scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
+    let tampered_result =
+        unsafe { recursive_scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
                 transcript_domain,

@@ -42,8 +42,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
 
             let commitments = [commitment];
             let openings = [opening];
-            scheme
-                .verifier(verifier_setup.clone())
+            unsafe { scheme.verifier(verifier_setup.clone()) }
                 .and_then(|verifier| {
                     verifier.batched_verify(
                         &proof,
@@ -56,8 +55,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
 
             let mutation = proof.len() * 3 / 4;
             proof[mutation] ^= 1;
-            scheme
-                .verifier(verifier_setup.clone())
+            unsafe { scheme.verifier(verifier_setup.clone()) }
                 .and_then(|verifier| {
                     verifier.batched_verify(
                         &proof,
@@ -84,8 +82,8 @@ fn verify_rejects_wrong_opening() {
     let (poly, evals) = make_dense_poly(num_vars);
 
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
@@ -125,21 +123,19 @@ fn verify_rejects_wrong_opening() {
 
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
-    let result = scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                b"test/prove",
-                verifier_claims(
-                    &scheme,
-                    &opening_point[..],
-                    &wrong_openings[..],
-                    &commitments[0],
-                ),
-                BasisMode::Lagrange,
-            )
-        });
+    let result = unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
+        verifier.batched_verify(
+            &proof,
+            b"test/prove",
+            verifier_claims(
+                &scheme,
+                &opening_point[..],
+                &wrong_openings[..],
+                &commitments[0],
+            ),
+            BasisMode::Lagrange,
+        )
+    });
 
     assert!(
         result.is_err(),
@@ -165,8 +161,8 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
         layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
     let (poly, evals) = make_dense_poly(num_vars);
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).unwrap();
+    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: prover_state,
@@ -200,8 +196,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
             BasisMode::Lagrange,
         )
         .expect("native proof");
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -211,8 +206,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
             )
         })
         .expect("native verification");
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -222,8 +216,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
             )
         })
         .expect_err("native verification must bind the claimed opening");
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -233,8 +226,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
             )
         })
         .expect_err("native verification must bind the session");
-    let error = scheme
-        .verifier(verifier_setup.clone())
+    let error = unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &proof,
@@ -253,8 +245,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
         "a malformed statement keeps its own error"
     );
     let short_point = &opening_point[..opening_point.len() - 1];
-    let error = scheme
-        .verifier(verifier_setup.clone())
+    let error = unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &[],
@@ -273,8 +264,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     );
     let mut truncated = proof.clone();
     truncated.pop().expect("nonempty native proof");
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &truncated,
@@ -286,8 +276,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
         .expect_err("truncated native proof must reject");
     let mut trailing = proof.clone();
     trailing.push(0);
-    scheme
-        .verifier(verifier_setup.clone())
+    unsafe { scheme.verifier(verifier_setup.clone()) }
         .and_then(|verifier| {
             verifier.batched_verify(
                 &trailing,
@@ -301,16 +290,14 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
     let middle = mutated.len() / 2;
     mutated[middle] ^= 1;
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        scheme
-            .verifier(verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &mutated,
-                    b"test/prove",
-                    verifier_claims(&scheme, &opening_point, &[opening], &commitment),
-                    BasisMode::Lagrange,
-                )
-            })
+        unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
+            verifier.batched_verify(
+                &mutated,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
     }));
     assert!(matches!(outcome, Ok(Err(_))));
 }

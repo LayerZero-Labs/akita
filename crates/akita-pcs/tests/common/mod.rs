@@ -16,7 +16,6 @@ use akita_config::{RecursiveCommitmentConfig, TrustedScheduleCatalog};
 pub(super) use akita_cpu_backend::CommitmentHandle;
 pub(super) use akita_cpu_backend::DensePoly;
 pub(super) use akita_cpu_backend::OneHotPoly;
-use akita_cpu_backend::SetupPrefixProverRegistry;
 use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 pub(super) use akita_params::{BasisMode, PrecommittedGroupProfiles};
@@ -350,7 +349,7 @@ fn verifier_setup_with_alternate_full_prefix(
         return None;
     }
 
-    let original = setup.expanded.shared_matrix().as_field_slice();
+    let original = setup.expanded().shared_matrix().as_field_slice();
     let mut altered = original.to_vec();
     altered[natural_len] += F::one();
     assert_eq!(&altered[..natural_len], &original[..natural_len]);
@@ -359,20 +358,15 @@ fn verifier_setup_with_alternate_full_prefix(
         &original[natural_len..n_prefix]
     );
 
-    let descriptor = setup.expanded.descriptor().clone();
+    let descriptor = setup.expanded().descriptor().clone();
     let setup_seed = descriptor.setup_seed.clone();
-    let altered_expanded = Arc::new(
+    let altered_expanded = Arc::new(unsafe {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             descriptor,
             FlatMatrix::from_flat_data(altered),
-        ),
-    );
-    let altered_setup = AkitaProverSetup {
-        expanded: altered_expanded,
-        prefix_slots: SetupPrefixProverRegistry::new(setup_seed.clone()),
-    };
-    let backend =
-        CpuBackend::<F, F>::new(altered_setup.expanded.clone()).expect("altered setup backend");
+        )
+    });
+    let backend = CpuBackend::<F, F>::new(altered_expanded).expect("altered setup backend");
     let artifacts = backend
         .export_setup_prefixes(std::slice::from_ref(slot_id))
         .expect("altered prefix artifact");
@@ -390,7 +384,7 @@ fn verifier_setup_with_alternate_full_prefix(
             .expect("insert verifier slot");
     }
     Some(
-        AkitaVerifierSetup::from_parts(verifier_setup.expanded().clone(), prefix_slots)
+        unsafe { AkitaVerifierSetup::from_parts(verifier_setup.expanded().clone(), prefix_slots) }
             .expect("alternate verifier setup"),
     )
 }

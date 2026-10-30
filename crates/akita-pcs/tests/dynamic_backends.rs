@@ -83,8 +83,8 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         .collect::<Result<Vec<_>, _>>()?;
 
     let setup = scheme.setup_prover(NUM_VARS, NUM_POLYS)?;
-    let private = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
-    let cpu = CpuBackend::<F, E>::new(setup.expanded.clone())?;
+    let private = PrivateCpu::new(CpuBackend::new(setup.expanded().clone())?);
+    let cpu = CpuBackend::<F, E>::new(setup.expanded().clone())?;
 
     let (committed_group, private_handle) = private.commit_onehot(scheme.schedules(), polys)?;
     let opening = || {
@@ -106,7 +106,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         input.opening_layout(),
     )?;
     let prefixes_private = private.prefixes(&setup, &prefix_ids);
-    let prefixes_cpu = cpu.import_setup_prefixes(&setup.prefix_slots, &prefix_ids)?;
+    let prefixes_cpu = cpu.import_setup_prefixes(setup.prefix_slots(), &prefix_ids)?;
     let mut registry = BackendRegistry::<Cfg>::new()?;
     let private_id = registry.register(&private, &prefixes_private)?;
     let cpu_id = registry.register(&cpu, &prefixes_cpu)?;
@@ -139,7 +139,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
             ),
         ] {
             let error = batched_prove(
-                setup.expanded.descriptor(),
+                setup.expanded().descriptor(),
                 scheme.schedules(),
                 &registry,
                 opening()?,
@@ -167,7 +167,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         owners: Vec::new(),
     };
     let proof = batched_prove(
-        setup.expanded.descriptor(),
+        setup.expanded().descriptor(),
         scheme.schedules(),
         &registry,
         input,
@@ -180,7 +180,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     let exports = private.exports.get();
     let imports = private.imports.get();
     let reference = batched_prove(
-        setup.expanded.descriptor(),
+        setup.expanded().descriptor(),
         scheme.schedules(),
         &registry,
         opening()?,
@@ -192,7 +192,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     assert_eq!(private.exports.get(), exports);
     assert_eq!(private.imports.get(), imports);
 
-    let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
+    let verifier = unsafe { scheme.verifier(scheme.setup_verifier(&setup)?) }?;
     let statement = GroupBatchStatement::new(
         selection,
         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -203,8 +203,8 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     )?;
     verifier.batched_verify(&proof, DOMAIN, statement, BasisMode::Lagrange)?;
     if check_failures {
-        let destination = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
-        let unused = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
+        let destination = PrivateCpu::new(CpuBackend::new(setup.expanded().clone())?);
+        let unused = PrivateCpu::new(CpuBackend::new(setup.expanded().clone())?);
         let prefixes_destination = destination.prefixes(&setup, &prefix_ids);
         let prefixes_unused = unused.prefixes(&setup, &prefix_ids);
         let mut registry = BackendRegistry::<Cfg>::new()?;
@@ -219,7 +219,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
                 owners[levels - 1] = unused_id;
             }
             batched_prove(
-                setup.expanded.descriptor(),
+                setup.expanded().descriptor(),
                 scheme.schedules(),
                 &registry,
                 opening()?,

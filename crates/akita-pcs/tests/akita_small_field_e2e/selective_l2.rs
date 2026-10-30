@@ -80,8 +80,8 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             .collect::<Vec<_>>();
         let opening = onehot_opening_lagrange(&poly, &point);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("L2 prover setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("L2 verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -118,16 +118,14 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             )
             .expect("L2 verifier group")])
             .expect("L2 verifier claims");
-            scheme
-                .verifier(verifier_setup.clone())
-                .and_then(|verifier| {
-                    verifier.batched_verify(
-                        candidate,
-                        LABEL,
-                        selected_statement::<Cfg>(claims, scheme.schedules()),
-                        BasisMode::Lagrange,
-                    )
-                })
+            unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
+                verifier.batched_verify(
+                    candidate,
+                    LABEL,
+                    selected_statement::<Cfg>(claims, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
         };
         verify(&proof).expect("verify native small-field L2 PCS proof");
         for offset in [0, proof.len() / 3, proof.len() * 2 / 3, proof.len() - 1] {
@@ -179,10 +177,9 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         let setup = scheme
             .setup_prover(NUM_VARS, 1)
             .expect("terminal L2 prover setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme
-            .setup_verifier(&setup)
-            .expect("terminal L2 verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup =
+            unsafe { scheme.setup_verifier(&setup) }.expect("terminal L2 verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -219,16 +216,14 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             )
             .expect("terminal L2 verifier group")])
             .expect("terminal L2 verifier claims");
-            scheme
-                .verifier(verifier_setup.clone())
-                .and_then(|verifier| {
-                    verifier.batched_verify(
-                        candidate,
-                        LABEL,
-                        selected_statement::<Cfg>(claims, scheme.schedules()),
-                        BasisMode::Lagrange,
-                    )
-                })
+            unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
+                verifier.batched_verify(
+                    candidate,
+                    LABEL,
+                    selected_statement::<Cfg>(claims, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
         };
         verify(&proof).expect("verify shipped terminal proof");
         for offset in [0, proof.len() / 2, proof.len() - 1] {

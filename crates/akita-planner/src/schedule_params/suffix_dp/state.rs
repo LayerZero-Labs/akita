@@ -154,7 +154,7 @@ pub(crate) struct ScheduleMemo {
     entries: HashMap<ScheduleMemoKey, MemoEntry>,
     direct_insertion_order: VecDeque<ScheduleMemoKey>,
     prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
-    pub(super) setup_prefixes: SetupPrefixSearchCache,
+    pub(crate) setup_prefixes: SetupPrefixSearchCache,
 }
 
 pub(super) struct MemoEntry {

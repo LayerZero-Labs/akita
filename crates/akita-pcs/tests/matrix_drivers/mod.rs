@@ -61,10 +61,10 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
             .setup_prover(FINAL_NV, FINAL_GROUP_SIZE)
             .expect("recursive direct setup");
         assert!(
-            !setup.prefix_slots.is_empty(),
+            !setup.prefix_slots().is_empty(),
             "recursive setup must precompute prefix slots"
         );
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|i| make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
@@ -110,9 +110,9 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
             )
             .expect("recursive direct prove");
 
-        let verifier_setup = scheme
-            .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
-            .expect("verifier setup");
+        let verifier_setup =
+            unsafe { scheme.setup_verifier_for_schedule(&setup, &schedule, &opening_layout) }
+                .expect("verifier setup");
         let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point,
             openings,
@@ -120,8 +120,7 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
         )
         .expect("verifier group")])
         .expect("verifier claims");
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,
@@ -163,8 +162,8 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         let expected_opening = dense_opening_lagrange(&evals, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -189,8 +188,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         });
 
         let openings = [expected_opening];
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,
@@ -221,8 +219,8 @@ pub(super) fn prove_verify_onehot_roundtrip<Cfg>(
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -247,8 +245,7 @@ pub(super) fn prove_verify_onehot_roundtrip<Cfg>(
         });
 
         let openings = [expected_opening];
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,
@@ -274,8 +271,8 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
     let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let pre_seed = 0xd0d0_0000_u64 ^ PRE_NV as u64;
         let pre_evals = dense_field_evals(PRE_NV, pre_seed);
@@ -377,8 +374,7 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
             .expect("final verifier group"),
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,
@@ -405,8 +401,8 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
     let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
         let akita_cpu_backend::CommitOutput {
@@ -483,8 +479,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             .expect("final verifier group"),
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,

@@ -14,7 +14,7 @@ cache expensive transforms without changing commitments or proof bytes.
 | --- | --- | --- |
 | `AkitaSetupSeed` | Identity of the deterministic public matrix stream | No |
 | Prover setup capacity | How much of that stream the prover materialized | Yes, if every proof requirement is covered |
-| Setup prefix registry | Public commitments used by recursive setup offloading | It must cover the same supported schedules |
+| Setup prefix registry | Public commitments used by recursive setup offloading, published in a pinned release | No: every entry must match the anchored manifest |
 | Prepared backend state | Local transformed matrix prefixes and compute resources | Yes |
 
 The public matrix stream has one identity across ring dimensions. A trusted
@@ -109,35 +109,44 @@ proof leaves other proofs and commitments valid.
 
 ## Build verifier setup
 
-The simplest conversion keeps the complete materialized public matrix prefix.
+A production verifier loads its setup from a pinned release that its compiled
+trust anchor names; see
+[Verifier only integration](./verifier-only.md#supply-verifier-setup). A
+prover of the same parameter set loads its setup with `load_prover_setup`,
+which admits the same rows and checks every commitment against the same
+manifest.
+
+For local verification of proofs a process made itself, the scheme can convert
+a prover setup it derived. These conversions are `unsafe fn`s: their contract
+is that the caller derived every setup-prefix commitment, which holds for a
+setup built in the same process and never for one read from storage.
 
 ```rust
-let verifier_setup = scheme.setup_verifier(&setup)?;
+// SAFETY: `setup` was derived from its seed in this process.
+let verifier_setup = unsafe { scheme.setup_verifier(&setup) }?;
 ```
 
-This is a good starting point for local verification and the first integration.
-
-A deployment that knows the exact proof schedule can derive a smaller verifier
-setup:
+A local check that knows the exact proof schedule can derive a smaller
+verifier setup:
 
 ```rust
 let resolved = scheme.schedules().resolve_selection(selection)?;
 let opening_layout = verifier_claims.committed_layout()?;
-let verifier_setup =
-    scheme.setup_verifier_for_schedule(
-        &setup,
-        resolved.schedule(),
-        &opening_layout,
-    )?;
+// SAFETY: as above.
+let verifier_setup = unsafe {
+    scheme.setup_verifier_for_schedule(&setup, resolved.schedule(), &opening_layout)
+}?;
 ```
 
 The narrowed setup retains the terminal matrix and every public matrix prefix
 that verification still reads directly. A setup contribution carried by a
 recursive setup proof does not need the same direct prefix in the verifier hot
-path.
+path. The release loader sizes its matrix the same way, from the rows it
+admits.
 
-The complete setup prefix commitment registry remains part of verifier setup.
-Those commitments authenticate the offloaded public setup contributions.
+Every setup-prefix commitment a proof uses remains part of verifier setup.
+Those commitments authenticate the offloaded public setup contributions, and
+protocol Stage 3 binds each one by its prefix commitment digest.
 
 ## Reuse and release CPU caches
 
@@ -155,18 +164,15 @@ before choosing it.
 
 ## Disk persistence
 
-The `disk-persistence` feature stores public matrix coefficients and setup
-prefix artifacts. It does not store backend transform caches.
+The `disk-persistence` feature enables `akita_setup::ReleaseCache`, a disk
+cache of pinned release files keyed by `bundle_id`. It does not store backend
+transform caches or locally derived setups.
 
-Stored setup entries include their public identity and provisioning limits.
-Versioned filenames prevent an older setup format from being accepted as a
-current entry. If a cache entry is missing or invalid, Akita can regenerate the
-public data from the seed.
-
-A deployment that distributes verifier setup should authenticate the package
-or regenerate it from the public seed. This gives every verifier the same
-public setup identity while allowing each machine to choose its own local
-storage and compute caches.
+The cache is untrusted transport. `ReleaseCache::manifest` returns a manifest
+only when its bytes hash to the requested `bundle_id`, and every file read
+through `ReleaseCache::files` is checked by a loader against that manifest. A
+corrupted or planted file is rejected rather than trusted, so a cached setup
+can no longer bypass setup validation.
 
 ## Setup offloading
 
@@ -184,8 +190,8 @@ from planning through verifier replay.
 
 Share protocol identity and choose compute state locally.
 
-- Prover and verifier packages must agree on the setup seed and prefix
-  commitments.
+- Prover and verifier load the same anchored release, so they agree on the
+  setup seed and prefix commitments.
 - A prover may materialize a larger covering matrix prefix.
 - Each machine may build its own prepared transform caches.
 - Cache release and persistence policies may follow the host's measured memory

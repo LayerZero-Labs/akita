@@ -193,15 +193,12 @@ where
         let slot_id = setup_prefix.slot_id().ok_or_else(|| {
             akita_error::AkitaError::InvalidSetup("group is not a setup prefix".into())
         })?;
-        if setup.prefix_slots.get(&slot_id).is_some() {
+        if setup.prefix_slots().get(&slot_id).is_some() {
             continue;
         }
         ids.push(slot_id);
     }
-    for (_, slot) in backend.export_setup_prefixes(&ids)?.iter() {
-        setup.prefix_slots.insert(slot.clone())?;
-    }
-    Ok(())
+    setup.insert_exported_prefixes(&backend.export_setup_prefixes(&ids)?)
 }
 
 fn build_statement<'a>(
@@ -309,7 +306,7 @@ fn verify_proof(
     session: &[u8],
     statement: GroupBatchStatement<'_, Claim, F>,
 ) -> Result<(), String> {
-    AkitaVerifier::new(verifier_setup.clone(), schedules.clone())
+    unsafe { AkitaVerifier::new(verifier_setup.clone(), schedules.clone()) }
         .map_err(|err| format!("verifier setup rejected: {err}"))?
         .batched_verify(proof, session, statement, BasisMode::Lagrange)
         .map_err(|err| format!("verifier rejected proof: {err}"))
@@ -361,7 +358,7 @@ macro_rules! generate_scalar_case {
         let mut prover_setup = scheme
             .setup_prover(num_vars, 1)
             .map_err(|err| format!("{} prover setup: {err}", case))?;
-        let backend = CpuBackend::new(prover_setup.expanded.clone())
+        let backend = CpuBackend::new(prover_setup.expanded().clone())
             .map_err(|err| format!("{} backend setup preparation: {err}", case))?;
         if $recursive {
             materialize_schedule_setup_prefix_slots(
@@ -418,8 +415,8 @@ macro_rules! generate_scalar_case {
         .map_err(|err| format!("{} prove: {err}", case))?;
         tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-        let verifier_setup = scheme
-            .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout)
+        let verifier_setup = unsafe { scheme
+            .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout) }
         .map_err(|err| format!("{} verifier setup: {err}", case))?;
         let verifier_group = PolynomialGroupClaims::new(
             opening_point.as_slice(),
@@ -433,8 +430,8 @@ macro_rules! generate_scalar_case {
                 .map_err(|err| format!("{} verifier opening claims: {err}", case))?,
         )
         .map_err(|err| format!("{} verifier statement: {err}", case))?;
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme
+            .verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)
             })
@@ -463,8 +460,8 @@ macro_rules! generate_scalar_case {
         let decoded_statement = decoded
             .verifier_statement()
             .map_err(|err| format!("{} decoded statement: {err}", case))?;
-        scheme
-            .verifier(decoded.verifier_setup.clone())
+        unsafe { scheme
+            .verifier(decoded.verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &decoded.proof,
@@ -648,7 +645,7 @@ fn run() -> Result<(), String> {
     let mut prover_setup = scheme
         .setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
         .map_err(|err| format!("prover setup failed: {err}"))?;
-    let backend = CpuBackend::new(prover_setup.expanded.clone())
+    let backend = CpuBackend::new(prover_setup.expanded().clone())
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
     materialize_schedule_setup_prefix_slots(&mut prover_setup, &backend, schedule.schedule())
         .map_err(|err| format!("materialize recursive setup-prefix slots: {err}"))?;
@@ -752,8 +749,8 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup = scheme
-        .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout)
+    let verifier_setup = unsafe { scheme
+        .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout) }
         .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
 
     // Sanity check: the proof should verify with the same domain label.

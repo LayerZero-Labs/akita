@@ -1,0 +1,49 @@
+{
+  "format_version": 1,
+  "name": "akita-v1",
+  "kind": "akita",
+  "generator_version": "akita-preprocess 0.1.0",
+  "seed": "bebafecaefbeadde000000000000000000000000000000000000000000000000",
+  "targets": ["riscv64"],
+  "max_file_part": 1073741824,
+  "hints": true,
+  "page_hashes": true,
+  "sets": [
+    {
+      "name": "fp128-dense",
+      "config": "fp128_dense",
+      "catalog": "artifacts/schedules/fp128_dense.aks",
+      "num_chunks": 1,
+      "num_activated_levels": 0,
+      "max_num_vars": 22,
+      "max_num_batched_polys": 1
+    },
+    {
+      "name": "fp128-dense-recursive",
+      "config": "fp128_dense_recursive",
+      "catalog": "artifacts/schedules/fp128_dense_recursive.aks",
+      "num_chunks": 1,
+      "num_activated_levels": 0,
+      "max_num_vars": 22,
+      "max_num_batched_polys": 1
+    },
+    {
+      "name": "fp32-dense-recursive",
+      "config": "fp32_dense_recursive",
+      "catalog": "artifacts/schedules/fp32_dense_recursive.aks",
+      "num_chunks": 1,
+      "num_activated_levels": 0,
+      "max_num_vars": 22,
+      "max_num_batched_polys": 1
+    },
+    {
+      "name": "fp64-dense-recursive",
+      "config": "fp64_dense_recursive",
+      "catalog": "artifacts/schedules/fp64_dense_recursive.aks",
+      "num_chunks": 1,
+      "num_activated_levels": 0,
+      "max_num_vars": 23,
+      "max_num_batched_polys": 1
+    }
+  ]
+}

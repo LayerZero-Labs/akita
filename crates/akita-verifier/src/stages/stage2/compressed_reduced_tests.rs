@@ -346,19 +346,21 @@ fn compressed_reduced_fixture() -> (
         .map(|span| span.map().input_width() * span.map().ring_dimension())
         .max()
         .unwrap();
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: largest_map,
-            setup_seed: [23; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..largest_map)
-                .map(|index| F::from_u64(1_001 + index as u64))
-                .collect(),
-        ),
-    );
+    let setup = unsafe {
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: largest_map,
+                setup_seed: [23; 32].into(),
+            },
+            FlatMatrix::from_flat_data(
+                (0..largest_map)
+                    .map(|index| F::from_u64(1_001 + index as u64))
+                    .collect(),
+            ),
+        )
+    };
     let tau1 = (0..params.relation_row_index_num_vars(&opening_batch).unwrap())
         .map(|index| {
             E::from_base_slice(&[
@@ -494,15 +496,17 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
 
     let mut changed_setup_coefficients = setup.shared_matrix().as_field_slice().to_vec();
     changed_setup_coefficients[0] += F::one();
-    let changed_setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: changed_setup_coefficients.len(),
-            setup_seed: [23; 32].into(),
-        },
-        FlatMatrix::from_flat_data(changed_setup_coefficients),
-    );
+    let changed_setup = unsafe {
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: changed_setup_coefficients.len(),
+                setup_seed: [23; 32].into(),
+            },
+            FlatMatrix::from_flat_data(changed_setup_coefficients),
+        )
+    };
     assert_ne!(
         prepared.evaluate_at_point(&changed_setup, &point).unwrap(),
         relation_weight

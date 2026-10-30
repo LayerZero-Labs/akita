@@ -50,7 +50,7 @@ fn false_root_evaluation_claim_returns_invalid_input() {
         )
         .unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let backend = CpuBackend::new(setup.expanded().clone()).unwrap();
         let source = backend
             .import_source(vec![DensePoly::from_field_evals(
                 NV,
@@ -120,7 +120,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
         )
         .unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend = Arc::new(CpuBackend::new(setup.expanded.clone()).unwrap());
+        let backend = Arc::new(CpuBackend::new(setup.expanded().clone()).unwrap());
         let source = backend
             .import_source(vec![DensePoly::from_field_evals(
                 NV,
@@ -137,7 +137,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             .unwrap();
         drop(source);
 
-        let foreign = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let foreign = CpuBackend::new(setup.expanded().clone()).unwrap();
         assert!(scheme
             .batched_prove(
                 &setup,
@@ -214,8 +214,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             )
             .unwrap()])
             .unwrap();
-            scheme
-                .verifier(scheme.setup_verifier(&setup).unwrap().clone())
+            unsafe { scheme.verifier(scheme.setup_verifier(&setup).unwrap().clone()) }
                 .and_then(|verifier| {
                     verifier.batched_verify(
                         &proof,
@@ -251,7 +250,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         )
         .unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let backend = CpuBackend::new(setup.expanded().clone()).unwrap();
         let source = backend
             .import_source(vec![DensePoly::from_field_evals(
                 NV,
@@ -277,7 +276,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         assert!(matches!(
             <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
                 &backend,
-                setup.expanded.descriptor(),
+                setup.expanded().descriptor(),
                 scheme.schedules(),
                 &absent_schedule,
                 &layout,
@@ -286,7 +285,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         ));
         let a = <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
             &backend,
-            setup.expanded.descriptor(),
+            setup.expanded().descriptor(),
             scheme.schedules(),
             schedule,
             &layout,
@@ -294,7 +293,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         .unwrap();
         let b = <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
             &backend,
-            setup.expanded.descriptor(),
+            setup.expanded().descriptor(),
             scheme.schedules(),
             schedule,
             &layout,
@@ -376,7 +375,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             )
             .is_err()
         );
-        let mut changed_setup = setup.expanded.descriptor().clone();
+        let mut changed_setup = setup.expanded().descriptor().clone();
         changed_setup.setup_seed = [9; 32].into();
         assert!(
             <CpuBackend<F, F> as ProofAdmission<F, F>>::prepare_executor(
@@ -402,13 +401,13 @@ fn admission_uses_the_extension_field_owned_by_the_configuration() {
         )
         .unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let backend = CpuBackend::new(setup.expanded().clone()).unwrap();
         let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let row = scheme.schedules().resolve_key(&key).unwrap();
         let session =
             <CpuBackend<SmallF, SmallE> as ProofAdmission<SmallF, SmallE>>::prepare_executor(
                 &backend,
-                setup.expanded.descriptor(),
+                setup.expanded().descriptor(),
                 scheme.schedules(),
                 row.schedule(),
                 &key.opening_layout().unwrap(),

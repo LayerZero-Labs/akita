@@ -253,8 +253,60 @@ commitments in particular.
 
 Soundness assumes that the derivation claim holds. A verifier that loads
 preprocessing that neither it nor a party it trusts has derived is outside
-the soundness claim. Akita does not authenticate preprocessing bytes itself.
-That is the deployment's responsibility.
+the soundness claim.
+
+### Pinned releases
+
+Akita authenticates preprocessing as a pinned **release**. A generator
+(`akita-preprocess`) produces a release deterministically from a description
+checked in under `params/<release>/`: it derives each public stream once,
+commits every setup-prefix profile any parameter set needs, and writes the
+registry payloads, optional prover hints, catalogs, optional guest files, and
+a manifest that names every file by hash. The hash of the manifest is the
+release's `bundle_id`. A required merge check regenerates every anchored
+release from scratch and compares the manifest byte for byte, so an anchored
+release is what the code at that commit produces. Anyone can repeat that
+check with `akita-preprocess audit`.
+
+A binary trusts only the `(bundle_id, set name)` pairs of its compiled
+**trust anchor**. Akita's anchor lives in `akita-anchors`; an integration
+compiles its own, and a deployment with its own seed, catalogs, or limits
+generates its own release with the same generator. An anchor is a
+compile-time constant: it has no deserializer, and an anchor read from
+storage would void every guarantee below.
+
+A loader turns release files into the values a verifier is built from. It
+checks the cheapest and most decisive things first:
+
+1. Hash the manifest and require every requested `(bundle_id, set name)`
+   pair to be anchored, before decoding anything; then require the release
+   kind and the compiled digest hash.
+2. Compare the set record's code-derived fields (config family,
+   decomposition, SIS profile and table digests, commitment algorithm) with
+   the compiled configuration.
+3. Check every file it uses against its manifest hash, on the exact bytes it
+   then decodes.
+4. Recompute every setup-prefix commitment's prefix commitment digest and
+   compare it with the manifest. A host may instead derive each commitment
+   from the seed (seed-derived mode) and compare the same digest.
+5. Admit rows, size the matrix from the admitted rows only, derive it, and
+   check that the resulting setup admits exactly those rows.
+
+The result is a `PinnedVerifierSetup`, which has private fields, no public
+constructor, and no deserializer. `AkitaVerifier::from_pinned` accepts it.
+Every other way to build a verifier setup, such as
+`AkitaVerifierSetup::from_parts` or `AkitaVerifier::new`, is an `unsafe fn`
+whose contract is that the caller guarantees derivation; tests and
+benchmarks use them for setups they derived themselves. Here `unsafe` marks a
+soundness contract, not a memory-safety one, so every such call site is
+visible and an integration can deny it with `clippy::disallowed_methods`.
+
+Protocol Stage 3 binds each use. Where it absorbs the selected setup-prefix
+slot id, it now absorbs the slot id followed by that slot's prefix commitment
+digest, recomputed in every proof from the registry entry the fold reads. A
+proof therefore names the commitments it was checked against, and fails
+against any other commitment. Soundness still comes from the load-time
+checks: once loading fixes a commitment, the prover cannot choose it.
 
 Trusting an object's derivation does not relax its decoding. Validated
 decoding checks preprocessing bytes for lengths, geometry, and canonical

@@ -27,6 +27,7 @@ mod benchmark_support;
 mod coefficient_packing_relation;
 mod fold;
 mod prepared_cache;
+pub mod preprocessing;
 mod relation;
 mod setup_contribution;
 mod stages;
@@ -41,6 +42,9 @@ pub use benchmark_support::{
     RelationEvaluatorBenchmarkCase,
 };
 pub use prepared_cache::{build_riscv64_terminal_ntt_cache, TrustedTerminalCache};
+pub use preprocessing::{
+    LocallyDerivedVerifierSetup, PinnedMatrixPrefix, PinnedTerminalCache, PinnedVerifierSetup,
+};
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::Stage1Verifier;

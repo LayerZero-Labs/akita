@@ -352,8 +352,8 @@ fn fp128_onehot_batched() {
             .collect();
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -373,8 +373,7 @@ fn fp128_onehot_batched() {
             scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
         });
 
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,
@@ -414,8 +413,8 @@ fn fp128_dense_batched() {
             .collect();
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -435,8 +434,7 @@ fn fp128_dense_batched() {
             scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
         });
 
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,
@@ -469,7 +467,7 @@ fn byte_model_capture_survives_an_uncaptured_prover_reaching_callsites_first() {
         let pt = random_point(NV, 0xca97_0001);
         let opening = dense_opening_lagrange(&evals, &pt);
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -550,8 +548,8 @@ fn fp128_onehot_oversized_setup() {
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = scheme.setup_prover(setup_nv, 1).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -582,8 +580,7 @@ fn fp128_onehot_oversized_setup() {
             .expect("prove");
 
         let openings = [expected_opening];
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,
@@ -623,8 +620,8 @@ fn fp128_dense_monomial_basis() {
         let expected_opening = dense_opening_monomial(&evals, &pt);
 
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -655,8 +652,7 @@ fn fp128_dense_monomial_basis() {
             .expect("monomial prove");
 
         let openings = [expected_opening];
-        scheme
-            .verifier(verifier_setup.clone())
+        unsafe { scheme.verifier(verifier_setup.clone()) }
             .and_then(|verifier| {
                 verifier.batched_verify(
                     &proof,

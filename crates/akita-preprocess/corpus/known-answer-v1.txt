@@ -1,0 +1,1 @@
+# Known-answer corpus v1: <SIS modulus profile tag> <uncompressed slot id hex>.

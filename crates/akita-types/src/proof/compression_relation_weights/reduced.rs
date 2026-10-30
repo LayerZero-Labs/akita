@@ -652,19 +652,21 @@ mod tests {
             CompressionMapPlan::new(akita_params::SisModulusProfileId::Q128OffsetA7F7, 8, 16, 1)
                 .unwrap();
         let setup_coefficients = map.input_width() * map.ring_dimension();
-        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            crate::AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: setup_coefficients,
-                setup_seed: [0u8; 32].into(),
-            },
-            akita_params::FlatMatrix::from_flat_data(
-                (0..setup_coefficients)
-                    .map(|index| F::from_u64(401 + index as u64))
-                    .collect(),
-            ),
-        );
+        let setup = unsafe {
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                crate::AkitaSetupDescriptor {
+                    max_num_vars: 0,
+                    max_num_batched_polys: 0,
+                    num_field_elements: setup_coefficients,
+                    setup_seed: [0u8; 32].into(),
+                },
+                akita_params::FlatMatrix::from_flat_data(
+                    (0..setup_coefficients)
+                        .map(|index| F::from_u64(401 + index as u64))
+                        .collect(),
+                ),
+            )
+        };
         let point = (0..11)
             .map(|index| F::from_u64(503 + index as u64))
             .collect::<Vec<_>>();

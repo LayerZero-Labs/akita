@@ -743,6 +743,15 @@ fn read_word_vector<R: Read>(
     Ok(values)
 }
 
+/// The bytes [`SetupSection`] writes for `decomposition`.
+#[must_use]
+pub fn decomposition_descriptor_bytes(decomposition: &DecompositionParams) -> Vec<u8> {
+    let mut out = Vec::with_capacity(decomposition_size(decomposition));
+    // Fixed-width words; writing to a vector cannot fail.
+    let _ = encode_decomposition(decomposition, &mut out);
+    out
+}
+
 fn encode_decomposition<W: Write>(
     decomp: &DecompositionParams,
     mut writer: W,
