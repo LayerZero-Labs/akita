@@ -591,9 +591,7 @@ pub(in crate::protocol::prove) fn prove_fold<F, E, B>(
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
     prepared_fold: PreparedFold<F, E, B::WitnessHandle>,
-    #[cfg(feature = "external-setup-accumulation")] setup_batch: Option<
-        &akita_types::setup_claims::SetupBatchStatement<E>,
-    >,
+    setup_batch: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
     handoff: impl FnOnce(
         &RingRelationInstance<F>,
         &crate::backend::ValidatedRecursiveWitnessCommitPlan,
@@ -792,8 +790,9 @@ where
             relation_plan: &relation_range_image_plan,
             groups: &relation_groups,
         },
+        setup_batch
+            .filter(|_| next_params.setup_contribution_mode() == SetupContributionMode::Direct),
     )?;
-    akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
     let stage3_sumcheck_proof = prove_stage3::<F, E, _>(
         consumer,
         session,
@@ -809,7 +808,6 @@ where
         &sumcheck_challenges,
         relation_address_geometry,
         grinding,
-        #[cfg(feature = "external-setup-accumulation")]
         setup_batch,
     )?;
     let setup_prefix_opening =

@@ -129,10 +129,8 @@ where
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
@@ -218,10 +216,8 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .unwrap_or_else(|e| panic!("{what}: {e:?}"));

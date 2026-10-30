@@ -254,11 +254,9 @@ where
         + 'static,
     H: CommitmentHandleMetadata + 'static,
 {
-    #[cfg(feature = "external-setup-accumulation")]
     let setup_batch = opening.setup_batch;
     let (resolved, claims, grinding_plan, descriptor_bytes) =
         root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
-    #[cfg(feature = "external-setup-accumulation")]
     if setup_batch
         .is_some_and(|(level, _)| level as usize >= resolved.schedule().num_fold_levels() - 1)
     {
@@ -299,7 +297,6 @@ where
         schedule: resolved.schedule(),
         layout: claims.opening_layout(),
         identity,
-        #[cfg(feature = "external-setup-accumulation")]
         setup_batch,
     };
     for (executor, selected) in registry.slots.iter().zip(&selected) {
@@ -321,7 +318,6 @@ where
     };
     let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)?;
     let mut grinding = ProverGrinding::new(channel, &grinding_plan);
-    #[cfg(feature = "external-setup-accumulation")]
     if let Some((level, statement)) = setup_batch {
         akita_types::setup_claims::transcript::bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
             akita_types::GrindingReplay::state_mut(&mut grinding),

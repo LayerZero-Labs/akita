@@ -46,7 +46,5 @@ pub use protocol::{
 };
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 
-#[cfg(feature = "external-setup-accumulation")]
 mod setup_batch;
-#[cfg(feature = "external-setup-accumulation")]
 pub use setup_batch::prove_setup_batch;

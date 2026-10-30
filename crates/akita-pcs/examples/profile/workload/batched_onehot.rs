@@ -249,10 +249,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             b"profile",
             claims,
             BasisMode::Lagrange,
-            #[cfg(feature = "external-setup-accumulation")]
             None,
-            #[cfg(feature = "external-setup-accumulation")]
-            &mut akita_verifier::SetupMode::Check,
+            akita_verifier::SetupMode::Check,
         )
     };
     run_verifier_timings(label, pools, "batched profile", prepare, verify);

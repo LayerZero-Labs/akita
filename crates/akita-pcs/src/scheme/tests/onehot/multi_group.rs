@@ -285,10 +285,8 @@ where
                 b"test/multi-group-unequal",
                 GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("multi-group verify");
@@ -319,10 +317,8 @@ where
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 ))
                 .is_err(),
             "swapped group commitments must reject"
@@ -346,10 +342,8 @@ where
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 ))
                 .is_err(),
             "tampered group opening must reject"

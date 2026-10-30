@@ -364,10 +364,8 @@ where
                 LABEL,
                 GroupBatchStatement::new(selection, verifier_claims).expect("statement"),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("honest proof verifies");

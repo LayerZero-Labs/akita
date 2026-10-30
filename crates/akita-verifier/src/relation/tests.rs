@@ -490,7 +490,6 @@ fn malformed_relation_property_matrix_rejects_without_panicking() {
     }
 }
 
-#[cfg(feature = "external-setup-accumulation")]
 #[test]
 fn external_setup_queries_match_direct_mixed_role_relations() {
     use akita_types::setup_claims::{SetupPolynomialId, SetupQuery};
@@ -573,23 +572,25 @@ fn external_setup_queries_match_direct_mixed_role_relations() {
             .eval_flat_at_point::<MixedF>(&point, &setup, alpha)
             .unwrap();
         let mut advice = Advice(reference);
-        let mut accumulator = crate::SetupClaimAccumulator::new(polynomial.clone());
+        let mut accumulator =
+            crate::SetupClaimAccumulator::new(polynomial.clone()).with_advice(&mut advice);
         assert_eq!(
             complete,
             evaluator
                 .eval_flat_at_point_with_external_setup::<MixedF>(&point, alpha, |query| {
-                    accumulator.resolve(query, &mut advice)
+                    accumulator.resolve(query)
                 })
                 .unwrap()
         );
         assert_eq!(accumulator.into_pending().len(), 1);
         let mut bad = Advice(reference + MixedF::one());
-        let mut accumulator = crate::SetupClaimAccumulator::new(polynomial.clone());
+        let mut accumulator =
+            crate::SetupClaimAccumulator::new(polynomial.clone()).with_advice(&mut bad);
         assert_ne!(
             complete,
             evaluator
                 .eval_flat_at_point_with_external_setup::<MixedF>(&point, alpha, |query| {
-                    accumulator.resolve(query, &mut bad)
+                    accumulator.resolve(query)
                 })
                 .unwrap()
         );

@@ -17,10 +17,10 @@ pub(crate) fn prepare_outer_setup<F, E>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
     point: &[E],
-    successor: Option<&CommittedGroupParams>,
+    successor: &CommittedGroupParams,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    accumulator: &mut SetupClaimAccumulator<E>,
+    accumulator: &mut SetupClaimAccumulator<'_, E>,
 ) -> Result<PreparedOuterSetup<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -33,17 +33,15 @@ where
         ));
     }
     inherited.polynomial().validate::<F, E>(setup.expanded())?;
-    if let Some(next) = successor {
-        let id = next
-            .setup_prefix()
-            .and_then(|prefix| prefix.slot_id())
-            .ok_or(AkitaError::InvalidProof)?;
-        let slot = setup
-            .prefix_slots()
-            .get(&id)
-            .ok_or(AkitaError::InvalidProof)?;
-        transcript::bind_outer_prefix(&inherited, slot, next, grinding, level)?;
-    }
+    let id = successor
+        .setup_prefix()
+        .and_then(|prefix| prefix.slot_id())
+        .ok_or(AkitaError::InvalidProof)?;
+    let slot = setup
+        .prefix_slots()
+        .get(&id)
+        .ok_or(AkitaError::InvalidProof)?;
+    transcript::bind_outer_prefix(&inherited, slot, successor, grinding, level)?;
     let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
     let mut claims = inherited.claims().to_vec();
     let relation_weight = rs

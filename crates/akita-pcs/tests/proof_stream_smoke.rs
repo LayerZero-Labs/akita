@@ -74,10 +74,8 @@ macro_rules! onehot_roundtrip {
                     b"native-port-onehot",
                     statement,
                     basis,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .unwrap();
@@ -180,10 +178,8 @@ fn dense_fp128_roundtrip_inner() {
                 b"native-port-smoke",
                 statement,
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .unwrap();

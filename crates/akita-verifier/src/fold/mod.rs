@@ -73,10 +73,8 @@ pub(crate) fn verify_fold<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: PreparedFoldReplay<'_, F, E>,
-    #[cfg(feature = "external-setup-accumulation")] mut accumulator: Option<
-        &mut crate::SetupClaimAccumulator<E>,
-    >,
-    #[cfg(feature = "external-setup-accumulation")] mode: &mut crate::SetupMode<'_, E>,
+    mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
+    mode: crate::SetupMode,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -148,80 +146,52 @@ where
         &opening_semantics,
         prepared.level_layout.stage2_sumcheck(),
     )?;
-    #[cfg(feature = "external-setup-accumulation")]
-    let outer = accumulator
-        .as_deref_mut()
-        .filter(|a| a.batch.as_ref().is_some_and(|(target, _)| *target == level))
-        .map(|accumulator| {
-            crate::setup_batch::prepare_outer_setup::<F, E>(
+    let outer = if let Some(successor) = prepared.stage3 {
+        accumulator
+            .as_deref_mut()
+            .filter(|a| a.batch.as_ref().is_some_and(|(target, _)| *target == level))
+            .map(|accumulator| {
+                crate::setup_batch::prepare_outer_setup::<F, E>(
+                    setup,
+                    &rs,
+                    &stage2_rounds.challenges,
+                    successor,
+                    grinding,
+                    level,
+                    accumulator,
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let stage3 = prepared
+        .stage3
+        .map(|next_params| {
+            verify_stage3::<F, E>(
                 setup,
                 &rs,
                 &stage2_rounds.challenges,
-                prepared.stage3,
+                next_params,
                 grinding,
                 level,
-                accumulator,
+                outer.as_ref(),
             )
         })
         .transpose()?;
-    #[cfg(feature = "external-setup-accumulation")]
-    let outer_check = outer
-        .as_ref()
-        .filter(|_| matches!(mode, crate::SetupMode::Check));
-    let stage3 = 'stage3: {
-        let Some(next_params) = prepared.stage3 else {
-            break 'stage3 None;
-        };
-        #[cfg(feature = "external-setup-accumulation")]
-        if let Some(outer) = outer_check {
-            break 'stage3 Some(crate::stages::stage3::verify_stage3_outer::<F, E>(
-                outer, grinding, level,
-            )?);
-        }
-        Some(verify_stage3::<F, E>(
-            setup,
-            &rs,
-            &stage2_rounds.challenges,
-            next_params,
-            grinding,
-            level,
-            #[cfg(feature = "external-setup-accumulation")]
-            outer.as_ref(),
-            #[cfg(feature = "external-setup-accumulation")]
-            accumulator.as_deref_mut(),
-            #[cfg(feature = "external-setup-accumulation")]
-            mode,
-        )?)
-    };
-    #[cfg_attr(not(feature = "external-setup-accumulation"), allow(unused_labels))]
-    let stage2 = 'stage2: {
-        #[cfg(feature = "external-setup-accumulation")]
-        if let Some(outer) = outer_check {
-            break 'stage2 crate::stages::stage2::validate_stage2_replay_outer(
-                setup,
-                stage1,
-                &rs,
-                stage3.as_ref().map(|replay| replay.claim),
-                opening_semantics,
-                stage2_rounds,
-                outer,
-            )?;
-        }
-        validate_stage2_replay(
-            setup,
-            stage1,
-            &rs,
-            stage3.as_ref().map(|replay| replay.claim),
-            opening_semantics,
-            stage2_rounds,
-            #[cfg(feature = "external-setup-accumulation")]
-            outer.as_ref(),
-            #[cfg(feature = "external-setup-accumulation")]
-            accumulator,
-            #[cfg(feature = "external-setup-accumulation")]
-            mode,
-        )?
-    };
+    let stage2 = validate_stage2_replay(
+        setup,
+        stage1,
+        &rs,
+        stage3.as_ref().map(|replay| replay.claim),
+        opening_semantics,
+        stage2_rounds,
+        outer.as_ref(),
+        accumulator,
+        mode,
+        grinding,
+        level,
+    )?;
     drop(stage2_span);
     Ok(FoldVerifyOutput {
         challenges: stage2.point,

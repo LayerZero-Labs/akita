@@ -1,162 +1,38 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::relation::RelationMatrixEvaluator;
-#[cfg(feature = "external-setup-accumulation")]
 use crate::setup_batch::PreparedOuterSetup;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
-use crate::SetupIndexWeightMle;
 #[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 #[cfg(test)]
 use akita_algebra::ring::eval_ring_at_pows_fast;
-use akita_algebra::ring::evaluate_power_sequence_mle;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SETUP_SUMCHECK_DEGREE};
 use akita_serialization::AkitaSerialize;
 #[cfg(test)]
 use akita_types::AkitaExpandedSetup;
-use akita_types::{setup_prefix_coverage_eval_len, AkitaVerifierSetup, PreparedRelationAddress};
+use akita_types::{
+    setup_claims::{SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery},
+    setup_prefix_coverage_eval_len, AkitaVerifierSetup, FpExtEncoding,
+    PreparedCoefficientFunctional, PreparedRelationAddress,
+};
 #[cfg(test)]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
-/// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
-/// sumcheck for the setup contribution at `x_challenges`.
-///
-/// Construct with [`SetupSumcheckVerifier::new`], which derives the
-/// setup-index weight polynomial and sumcheck round count from the ring-switch
-/// row evaluation, then call [`verify`](Self::verify)
-/// with the proof and transcript.
-struct SetupSumcheckVerifier<E: Field> {
-    alpha: E,
-    plan: akita_types::SetupContributionPlan<E>,
-}
 pub(crate) struct SetupSumcheckReplay<E: Field> {
+    /// This fold's Stage 2 setup answer, before combining inherited claims.
     pub(crate) claim: E,
     pub(crate) setup_prefix_eval: E,
     pub(crate) challenges: Vec<E>,
 }
 
-impl<E: Field> SetupSumcheckVerifier<E> {
-    /// Prepare the setup-product sumcheck verifier for the setup contribution
-    /// at `x_challenges`.
-    ///
-    /// Derives the setup-contribution plan, and from it the setup-index weight
-    /// polynomial and per-round shape, from the relation-matrix evaluation;
-    /// must be called before
-    /// [`verify`](Self::verify).
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new<F>(
-        relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
-        x_challenges: &[E],
-        alpha: E,
-    ) -> Result<Self, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
-        let plan = relation_matrix_evaluator.setup_contribution_plan::<F>(
-            PreparedRelationAddress::new(x_challenges)?,
-            fold_gadget.as_deref(),
-        )?;
-        Ok(Self { alpha, plan })
-    }
-
-    /// Replay stage 3 directly from the Spongefish stream.
-    pub(crate) fn verify<F>(
-        self,
-        setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &CommittedGroupParams,
-        grinding: &mut akita_types::VerifierGrinding<'_, '_>,
-        level: u32,
-        #[cfg(feature = "external-setup-accumulation")] accumulator: Option<
-            &mut crate::SetupClaimAccumulator<E>,
-        >,
-        #[cfg(feature = "external-setup-accumulation")] mode: &crate::SetupMode<'_, E>,
-    ) -> Result<SetupSumcheckReplay<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
-    {
-        let geometry = self.plan.projection_geometry();
-        let ring_d = geometry.base_ring_dim();
-        if ring_d == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "Stage 3 setup ring dimension must be nonzero".into(),
-            ));
-        }
-        bind_setup_prefix_slot(
-            setup,
-            next_fold_level_params,
-            geometry.natural_field_len(),
-            ring_d,
-            grinding,
-            level,
-        )?;
-        let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
-        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
-            grinding,
-            akita_params::SumcheckProtocol::Stage3,
-            level,
-            0,
-        );
-        #[cfg(feature = "external-setup-accumulation")]
-        if matches!(mode, crate::SetupMode::Defer(_)) {
-            let accumulator = accumulator.ok_or(AkitaError::InvalidProof)?;
-            let query = akita_types::setup_claims::SetupQuery::contribution(
-                self.plan,
-                akita_types::PreparedCoefficientFunctional::lifted_power(self.alpha),
-            )?;
-            accumulator
-                .pending
-                .push(akita_types::setup_claims::SetupClaim::new(
-                    accumulator.polynomial.clone(),
-                    query,
-                    claim,
-                )?);
-            let challenges = akita_sumcheck::replay_sumcheck_transcript::<F, E, _>(
-                &mut channel,
-                0,
-                claim,
-                akita_sumcheck::SumcheckShape::new(geometry.rounds(), SETUP_SUMCHECK_DEGREE)?,
-            )?;
-            let setup_prefix_eval =
-                akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
-            return Ok(SetupSumcheckReplay {
-                claim,
-                setup_prefix_eval,
-                challenges,
-            });
-        }
-        let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-            &mut channel,
-            0,
-            claim,
-            akita_sumcheck::SumcheckShape::new(geometry.rounds(), SETUP_SUMCHECK_DEGREE)?,
-        )?;
-        let setup_prefix_eval =
-            akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
-        let (rho_y, rho_setup_idx) = replay.challenges.split_at(geometry.ring_bits());
-        let setup_index_weight =
-            SetupIndexWeightMle::new(&self.plan)?.evaluate(rho_setup_idx, self.alpha)?;
-        let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
-        if replay.output_claim != setup_prefix_eval * setup_index_weight * alpha_val {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(SetupSumcheckReplay {
-            claim,
-            setup_prefix_eval,
-            challenges: replay.challenges,
-        })
-    }
-}
-
-/// Check the combined setup sumcheck, leaving its setup evaluation to the successor.
-#[cfg(feature = "external-setup-accumulation")]
-pub(crate) fn verify_stage3_outer<F, E>(
-    outer: &PreparedOuterSetup<E>,
+/// Check a setup sumcheck, leaving its setup evaluation to the successor.
+fn verify_setup_sumcheck<F, E>(
+    statement: &SetupBatchStatement<E>,
+    coefficients: &[E],
+    claim: E,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
@@ -164,7 +40,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    let input = outer.statement.input_claim(&outer.coefficients)?;
+    let input = statement.input_claim(coefficients)?;
     let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
         grinding,
         akita_params::SumcheckProtocol::Stage3,
@@ -175,23 +51,24 @@ where
         &mut channel,
         0,
         input,
-        akita_sumcheck::SumcheckShape::new(outer.statement.polynomial().num_variables(), 2)?,
+        akita_sumcheck::SumcheckShape::new(
+            statement.polynomial().num_variables(),
+            SETUP_SUMCHECK_DEGREE,
+        )?,
     )?;
     let value = akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
-    let weight = outer
-        .statement
-        .evaluate_weight(&outer.coefficients, &replay.challenges)?;
+    let weight = statement.evaluate_weight(coefficients, &replay.challenges)?;
     if replay.output_claim != value * weight {
         return Err(AkitaError::InvalidProof);
     }
     Ok(SetupSumcheckReplay {
-        claim: outer.claim,
+        claim,
         setup_prefix_eval: value,
         challenges: replay.challenges,
     })
 }
 
-/// Replay Stage 3 for a fold whose successor defers the setup contribution.
+/// Check Stage 3 in either setup mode; the successor authenticates its endpoint.
 ///
 /// The setup contribution is evaluated at the Stage 2 point with its
 /// coefficient variables removed.
@@ -203,71 +80,63 @@ pub(crate) fn verify_stage3<F, E>(
     next_params: &CommittedGroupParams,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    #[cfg(feature = "external-setup-accumulation")] outer: Option<
-        &crate::setup_batch::PreparedOuterSetup<E>,
-    >,
-    #[cfg(feature = "external-setup-accumulation")] accumulator: Option<
-        &mut crate::SetupClaimAccumulator<E>,
-    >,
-    #[cfg(feature = "external-setup-accumulation")] mode: &crate::SetupMode<'_, E>,
+    outer: Option<&PreparedOuterSetup<E>>,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+    E: FpExtEncoding<F> + ExtField<F>,
 {
-    #[cfg(feature = "external-setup-accumulation")]
-    if let Some(outer) = outer {
-        if !matches!(mode, crate::SetupMode::Defer(_)) {
-            return Err(AkitaError::InvalidInput(
-                "outer Stage 3 checks require verify_stage3_outer".into(),
+    let singleton;
+    let unit_coefficient = [E::one()];
+    let (statement, coefficients, claim) = if let Some(outer) = outer {
+        (&outer.statement, outer.coefficients.as_slice(), outer.claim)
+    } else {
+        let setup_coefficient_bits = rs
+            .relation_address_geometry
+            .relation_coefficient_variable_count();
+        let setup_x_challenges = stage2_challenges
+            .get(setup_coefficient_bits..)
+            .ok_or(AkitaError::InvalidProof)?;
+        let fold_gadget = rs
+            .relation_matrix_evaluator
+            .setup_contribution_fold_gadget::<F>()?;
+        let plan = rs.relation_matrix_evaluator.setup_contribution_plan::<F>(
+            PreparedRelationAddress::new(setup_x_challenges)?,
+            fold_gadget.as_deref(),
+        )?;
+        let geometry = plan.projection_geometry();
+        let ring_d = geometry.base_ring_dim();
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "Stage 3 setup ring dimension must be nonzero".into(),
             ));
         }
-        accumulator
-            .ok_or(AkitaError::InvalidProof)?
-            .pending
-            .extend(outer.statement.claims().iter().cloned());
-        let input = outer.statement.input_claim(&outer.coefficients)?;
-        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+        bind_setup_prefix_slot(
+            setup,
+            next_params,
+            geometry.natural_field_len(),
+            ring_d,
             grinding,
-            akita_params::SumcheckProtocol::Stage3,
             level,
-            0,
-        );
-        let challenges = akita_sumcheck::replay_sumcheck_transcript::<F, E, _>(
-            &mut channel,
-            0,
-            input,
-            akita_sumcheck::SumcheckShape::new(outer.statement.polynomial().num_variables(), 2)?,
         )?;
-        let setup_prefix_eval =
-            akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
-        return Ok(SetupSumcheckReplay {
-            claim: outer.claim,
-            setup_prefix_eval,
-            challenges,
-        });
-    }
-    let setup_coefficient_bits = rs
-        .relation_address_geometry
-        .relation_coefficient_variable_count();
-    let setup_x_challenges = stage2_challenges
-        .get(setup_coefficient_bits..)
-        .ok_or(AkitaError::InvalidProof)?;
-    let verifier = SetupSumcheckVerifier::new::<F>(
-        &rs.relation_matrix_evaluator,
-        setup_x_challenges,
-        rs.alpha,
-    )?;
-    verifier.verify::<F>(
-        setup,
-        next_params,
-        grinding,
-        level,
-        #[cfg(feature = "external-setup-accumulation")]
-        accumulator,
-        #[cfg(feature = "external-setup-accumulation")]
-        mode,
-    )
+        let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
+        let field_len =
+            akita_error::checked::pow2(geometry.rounds()).ok_or(AkitaError::InvalidProof)?;
+        let polynomial = SetupPolynomialId::new::<F, E>(setup.expanded(), field_len)?;
+        let query = SetupQuery::contribution(
+            plan,
+            PreparedCoefficientFunctional::LiftedPower { alpha: rs.alpha },
+        )?;
+        singleton = SetupBatchStatement::new(
+            polynomial.clone(),
+            ring_d,
+            vec![SetupClaim::new(polynomial, query, claim)?],
+        )?;
+        // An ordinary proof already binds its single query through the fold
+        // transcript, so it needs no batch descriptor or random coefficient.
+        (&singleton, unit_coefficient.as_slice(), claim)
+    };
+    verify_setup_sumcheck::<F, E>(statement, coefficients, claim, grinding, level)
 }
 
 /// Resolve the planned setup-prefix slot in the verifier setup, check that it
@@ -401,7 +270,7 @@ mod tests {
     use super::*;
 
     use akita_types::AkitaSetupDescriptor;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
     const RING_D: usize = 64;
@@ -458,5 +327,109 @@ mod tests {
             .expect("streamed setup scan"),
             expected
         );
+    }
+
+    #[test]
+    fn stage3_checks_the_terminal_equation_even_without_rounds() {
+        use akita_params::{ChallengeFieldOrder, GrindingPlan};
+        use akita_sumcheck::SumcheckKernel;
+        use akita_types::setup_claims::{
+            SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery,
+        };
+        use akita_types::{ProverGrinding, VerifierGrinding};
+        use jolt_field::One;
+        use jolt_poly::UnivariatePoly;
+
+        struct ConstantClaim(F);
+        impl SumcheckKernel<F> for ConstantClaim {
+            fn num_rounds(&self) -> usize {
+                0
+            }
+            fn degree_bound(&self) -> usize {
+                SETUP_SUMCHECK_DEGREE
+            }
+            fn input_claim(&self) -> F {
+                self.0
+            }
+            fn round_polynomial(
+                &mut self,
+                _: usize,
+                _: F,
+            ) -> Result<UnivariatePoly<F>, AkitaError> {
+                Err(AkitaError::InvalidProof)
+            }
+            fn bind_challenge(&mut self, _: usize, _: F) -> Result<(), AkitaError> {
+                Err(AkitaError::InvalidProof)
+            }
+            fn finish(&mut self) -> Result<(), AkitaError> {
+                Ok(())
+            }
+        }
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: 1,
+                setup_seed: [43; 32].into(),
+            },
+            akita_types::derive_public_matrix_prefix::<F>(1, &[43; 32].into()),
+        );
+        let value = setup.shared_matrix().as_field_slice()[0];
+        let domain = SetupPolynomialId::new::<F, F>(&setup, 1).unwrap();
+        let statement = SetupBatchStatement::new(
+            domain.clone(),
+            1,
+            vec![
+                SetupClaim::new(domain, SetupQuery::evaluation(Vec::new()).unwrap(), value)
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+        let plan = GrindingPlan::new(
+            Vec::new(),
+            ChallengeFieldOrder::from_full_capacity(128).unwrap(),
+        )
+        .unwrap();
+        for coefficient in [F::one(), F::from_u64(7)] {
+            for endpoint in [value, value + F::one()] {
+                let state =
+                    akita_transcript::new_prover_channel(b"checked-stage3", b"fixture").unwrap();
+                let mut prover = ProverGrinding::new(state, &plan);
+                let mut channel = akita_types::GrindingSumcheckProver::<F, F>::new(
+                    &mut prover,
+                    akita_params::SumcheckProtocol::Stage3,
+                    0,
+                    0,
+                );
+                akita_sumcheck::prove_sumcheck::<F, F, _, _>(
+                    &mut ConstantClaim(coefficient * value),
+                    &mut channel,
+                    akita_sumcheck::SumcheckShape::new(0, SETUP_SUMCHECK_DEGREE).unwrap(),
+                    0,
+                )
+                .unwrap();
+                akita_types::stage3_prefix_eval::<F, F, _>(&mut prover, 0, endpoint).unwrap();
+                let proof = prover.finish().unwrap();
+                let state =
+                    akita_transcript::new_verifier_channel(b"checked-stage3", b"fixture", &proof)
+                        .unwrap();
+                let mut verifier = VerifierGrinding::new(state, &plan);
+                let result = verify_setup_sumcheck::<F, F>(
+                    &statement,
+                    &[coefficient],
+                    value,
+                    &mut verifier,
+                    0,
+                );
+                if endpoint == value {
+                    let replay = result.unwrap();
+                    assert_eq!(replay.setup_prefix_eval, value);
+                    assert_eq!(replay.claim, value);
+                    verifier.finish().unwrap();
+                } else {
+                    assert!(matches!(result, Err(AkitaError::InvalidProof)));
+                }
+            }
+        }
     }
 }

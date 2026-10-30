@@ -306,10 +306,8 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                             label,
                             statement,
                             basis,
-                            #[cfg(feature = "external-setup-accumulation")]
                             None,
-                            #[cfg(feature = "external-setup-accumulation")]
-                            &mut akita_verifier::SetupMode::Check,
+                            akita_verifier::SetupMode::Check,
                         )
                     })
                     .unwrap();
@@ -333,10 +331,8 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                             label,
                             statement,
                             basis,
-                            #[cfg(feature = "external-setup-accumulation")]
                             None,
-                            #[cfg(feature = "external-setup-accumulation")]
-                            &mut akita_verifier::SetupMode::Check,
+                            akita_verifier::SetupMode::Check,
                         ))
                         .is_err());
 

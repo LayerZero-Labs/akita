@@ -782,7 +782,6 @@ fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
     }
 }
 
-#[cfg(feature = "external-setup-accumulation")]
 #[test]
 fn external_setup_queries_preserve_sliced_physical_b_and_overlap() {
     use akita_types::setup_claims::{SetupPolynomialId, SetupQuery};

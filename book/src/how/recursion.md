@@ -288,74 +288,98 @@ minimum contraction policy described in
 
 ## External setup accumulation
 
-The optional `external-setup-accumulation` feature lets an enclosing program
-collect setup claims from direct and offloaded inner proofs. Conditional
-verification retains the other Akita checks and returns every omitted setup
-obligation. It does not return complete acceptance.
+Setup accumulation is part of the prover and verifier APIs. It lets an
+encapsulating program collect direct setup evaluations from inner proofs and
+close them together in an outer proof. Conditional verification retains all
+other Akita checks. It becomes complete acceptance only after the exported
+obligations are discharged.
 
-For a direct fold, advice supplies the exact Stage 2 setup contribution. The
-verifier records its query without evaluating the setup weights or scanning the
-setup. For an offloaded fold, the verifier records the original Stage 3 input
-claim. It consumes the Stage 3 messages, challenges and grinding checks without
-checking the sumcheck equation. The successor still opens the original prefix
-endpoint. That endpoint cannot replace the unverified input claim.
+Write each setup claim as $a_i=\sum_x S(x)Q_i(x)$, with $S$ the authenticated
+public setup. The query $Q_i$ is derived by the verifier from the relation and
+transcript challenges. At a direct fold, deferred verification obtains a
+candidate answer from auxiliary advice and records the query and answer. It
+checks the Stage 2 terminal equation with that answer, without evaluating the
+setup functional. Advice supplies candidates; it does not authenticate them.
 
-Write each collected claim as $a_i=\sum_x S(x)Q_i(x)$. The outer proof binds all
-inherited queries and answers before its opening transcript. At the selected
-fold, it binds its own setup query and answer $a_o$, then samples independent
-coefficients. The combined equation is
+The policy applies per fold because a proof can contain both direct and
+offloaded setup contributions:
+
+| Fold | `SetupMode::Defer` | `SetupMode::Check` |
+| --- | --- | --- |
+| Direct | Export the exact setup claim and preserve inherited claims | Check the inherited claims and the fold's own contribution |
+| Offloaded | Verify the full Stage 3 reduction and retain the successor opening | Verify the same Stage 3 reduction and successor opening |
+
+An outer prover accepts an inherited `SetupBatchStatement`. It binds that
+input before its opening transcript. A direct selected fold handles inherited
+claims in Stage 2. It samples independent coefficients for the inherited claims;
+`Check` checks their weighted equation against the setup, while `Defer` carries
+them forward. The current fold's setup contribution follows ordinary Stage 2
+verification: `Check` computes it, and `Defer` obtains advice and exports it.
+A direct fold emits no Stage 3 messages and prepares no Stage 3 backend state.
+
+At an offloaded selected fold, the prover binds its own setup query and answer
+$a_o$, then samples independent batching coefficients. The combined equation is
 
 $$
 \lambda_o a_o+\sum_i\lambda_i a_i
 =\sum_x S(x)\left(\lambda_o Q_o(x)+\sum_i\lambda_i Q_i(x)\right).
 $$
 
-The outer fold's setup mode determines how to check this equation:
+An offloaded fold proves this equation with its existing degree-two Stage 3 in
+either verifier mode. At the resulting point $r$, both modes check
 
-- **Direct:** its Stage 2 evaluator scans the setup once for the combined query.
-  This path adds no sumcheck.
-- **Offloaded:** its existing degree-two Stage 3 proves the combined equation.
-  The existing successor opens the resulting setup evaluation. The batch must
-  use the exact actual prefix selected by that successor.
+$$
+C_{\mathrm{final}}
+=s\left(\lambda_o\widetilde Q_o(r)+\sum_i\lambda_i\widetilde Q_i(r)\right).
+$$
 
-Stage 2 uses the outer answer $a_o$, never the combined answer. The verifier
-prepares the bound batch statement once, then checks each stage separately.
-In `SetupMode::Check`, `verify_stage3_outer` checks the combined sumcheck when
-there is a successor; `validate_stage2_replay_outer` checks the Stage 2 endpoint
-and scans the combined query when there is no successor. In `SetupMode::Defer`,
-the ordinary stage verifiers replay the same transcript and collect the original
-inherited and new queries. Stage 3 collects the batch when there is a successor;
-otherwise Stage 2 collects it. Each claim is collected once. An equality query
-$\operatorname{eq}(x,c)$ is valid for an inherited endpoint only after its
-reduction was checked.
+The ordinary successor opens $\widetilde S(r)=s$. The input claims are thereby
+connected to the retained setup-prefix opening and need not remain individually
+pending. If the successor defers its own direct setup contribution, those new
+obligations replace the old list conditionally on the other checked Akita
+relations. Repeated outer proofs can therefore consume each inherited batch
+without retaining the entire history. Pending output depends on the current
+proof's direct folds. A direct deferred layer without a checked reduction still
+carries its inherited inputs until a later layer checks or offloads them.
 
-With the feature enabled, `AkitaVerifier::batched_verify` takes two additional
-arguments: an optional mutable `SetupClaimAccumulator` and a mutable `SetupMode`.
-Pass `None` and `&mut SetupMode::Check` for ordinary verification.
-`SetupMode::Defer` takes direct-answer advice and leaves the pending claims in
-the supplied accumulator; consume it with `into_pending` after verification.
-`SetupMode::Check` checks a bound batch and leaves no pending claims.
-Use `SetupClaimAccumulator::new` to start collection. Use
-`SetupClaimAccumulator::from_batch` to attach a collection to the same outer fold
-selected with `SelectedProverOpeningData::with_setup_batch`. The bound input
-stays fixed while the verifier processes the proof's folds. The enclosing
-program must bind the complete collection to its inner verifications. Queries
-must share the same authenticated setup identity; smaller supports can use the
-same larger actual prefix. Terminal checks remain part of ordinary verification.
+For offloaded folds, Stage 2 uses the outer answer $a_o$, never the combined
+answer. The verifier prepares the bound batch once. `verify_stage3` checks
+ordinary or accumulated Stage 3 regardless of mode; `validate_stage2_replay` checks the
+Stage 2 endpoint and either scans or exports direct setup claims. No Stage 3
+path merely consumes the transcript while omitting its terminal equation.
 
-The prover prepares the inherited and outer query factors together and traverses
-the setup in blocks shared by all queries to form their coefficient contractions.
-Sequential builds reuse each cached block with the existing singleton kernel;
-parallel builds fuse all query updates for each setup coefficient. The prover
-retains these factors and uses one challenge per round across all terms. After the coefficient point
-is known, it makes one further shared setup contraction for the index rounds.
-These two setup passes are independent of the number of claims; the prover does
-not allocate a full weight table or copy the setup into the extension field.
-Ordinary and accumulated proofs share one Stage 3 preparation function and
-product-sumcheck kernel. Ordinary proofs supply one term with coefficient one
-and keep their existing transcript bindings; accumulated proofs bind the
-combined statement before drawing batching coefficients.
+`AkitaVerifier::batched_verify` takes an optional mutable
+`SetupClaimAccumulator` and a `SetupMode` value. Pass `None` and
+`SetupMode::Check` for ordinary verification. To collect direct obligations,
+construct `SetupClaimAccumulator::new(polynomial).with_advice(&mut advice)` and
+pass it with `SetupMode::Defer`. Consume its result with `into_pending`.
+The mode is a plain enum; auxiliary advice belongs to the accumulator.
+
+Use `SetupClaimAccumulator::from_batch` to attach an inherited collection to
+the nonterminal fold selected by `SelectedProverOpeningData::with_setup_batch`.
+The input stays fixed while other folds can contribute new pending claims.
+An empty collection selects the ordinary singleton computation and preserves
+its proof encoding. The enclosing program must bind the complete collection to
+its inner verifications. Queries share an authenticated setup identity; smaller
+supports may embed in a larger actual prefix. Offloaded batches must match the
+selected successor's exact actual prefix. Ordinary terminal checks remain.
+
+Archived proof bytes remain valid. A direct archived fold uses auxiliary
+advice during deferral; an archived offloaded fold verifies its original
+Stage 3 completely. Adding inherited inputs requires generating a new outer
+proof whose statement binds those inputs.
+
+For offloaded folds, the prover compiles inherited and outer query factors
+together and traverses the setup in blocks shared by all coefficient
+contractions. Sequential builds
+reuse each cached block with the singleton contraction; parallel builds fuse
+query updates for each coefficient. One further shared setup contraction follows
+the common coefficient challenges. The two source passes are independent of the
+number of claims. Ordinary and accumulated proofs use the same product-sumcheck
+kernel without allocating a full coefficient-by-index weight table or copying
+the setup into the extension field.
+
 The standalone `prove_setup_batch` and `verify_setup_batch_deferred` APIs remain
-available for an explicit separate reduction. The integrated outer path does
-not use them or add a separate proof. SDK output sealing and the security
-argument for recursive Fiat-Shamir composition remain separate work.
+available for a separate reduction. The integrated flow uses its existing
+Stage 3 and successor. SDK output sealing and the security argument for recursive
+Fiat-Shamir composition remain separate work.

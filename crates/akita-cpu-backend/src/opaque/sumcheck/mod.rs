@@ -129,5 +129,4 @@ pub(crate) fn fold_prefix_pair_with_zero_padding<E: Field>(row: &[E], left: usiz
     v0 + r * (v1 - v0)
 }
 
-#[cfg(feature = "external-setup-accumulation")]
 pub(crate) mod setup_batch;

@@ -77,7 +77,5 @@ use kernels::{
 };
 use segments::scan_partition;
 
-#[cfg(feature = "external-setup-accumulation")]
 pub(crate) use direct_scan::materialize_reduced_direct_scan_weights;
-#[cfg(feature = "external-setup-accumulation")]
 pub(crate) use structured_reduced::evaluate_reduced_structured_group;

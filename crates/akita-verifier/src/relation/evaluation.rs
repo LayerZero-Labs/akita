@@ -90,7 +90,6 @@ impl<E: Field> RelationMatrixEvaluator<E> {
             + relation.point.common_alpha_evaluation() * setup_claim)
     }
     /// Extension seam: externally resolve direct setup functionals without a setup scan.
-    #[cfg(feature = "external-setup-accumulation")]
     pub(crate) fn eval_flat_at_point_with_external_setup<F>(
         &self,
         point: &[E],

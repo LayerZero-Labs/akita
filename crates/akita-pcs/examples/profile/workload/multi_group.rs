@@ -450,10 +450,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             b"profile",
             statement,
             BasisMode::Lagrange,
-            #[cfg(feature = "external-setup-accumulation")]
             None,
-            #[cfg(feature = "external-setup-accumulation")]
-            &mut akita_verifier::SetupMode::Check,
+            akita_verifier::SetupMode::Check,
         )
     };
     run_verifier_timings(label, pools, "multi-group profile", prepare, verify);

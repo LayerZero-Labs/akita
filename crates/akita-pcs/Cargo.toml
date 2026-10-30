@@ -28,12 +28,6 @@ features = ["parallel", "transcript-blake2b"]
 ignored = ["akita-setup"]
 
 [features]
-external-setup-accumulation = [
-  "akita-cpu-backend/external-setup-accumulation",
-  "akita-prover/external-setup-accumulation",
-  "akita-types/external-setup-accumulation",
-  "akita-verifier/external-setup-accumulation",
-]
 default = ["parallel", "transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

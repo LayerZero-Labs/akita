@@ -102,7 +102,6 @@ where
         step.output_witness_len,
         next_binding,
         prepared,
-        #[cfg(feature = "external-setup-accumulation")]
         handoff
             .request
             .setup_batch

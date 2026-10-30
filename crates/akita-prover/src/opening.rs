@@ -12,7 +12,6 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 pub struct SelectedProverOpeningData<'a, E: Field, H, F: Field> {
     selection: OpeningScheduleSelection,
     opening_data: ProverOpeningData<'a, E, H, F>,
-    #[cfg(feature = "external-setup-accumulation")]
     pub(crate) setup_batch: Option<(u32, &'a akita_types::setup_claims::SetupBatchStatement<E>)>,
 }
 impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningData<'a, E, H, F> {
@@ -78,7 +77,6 @@ impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            #[cfg(feature = "external-setup-accumulation")]
             setup_batch: None,
             selection,
             opening_data: ProverOpeningData::from_parts(
@@ -90,13 +88,12 @@ impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
     }
     /// Close the complete inherited collection at this nonterminal fold.
     /// The enclosing argument must authenticate which inner proofs produced it.
-    #[cfg(feature = "external-setup-accumulation")]
     pub fn with_setup_batch(
         mut self,
         level: u32,
         statement: &'a akita_types::setup_claims::SetupBatchStatement<E>,
     ) -> Self {
-        self.setup_batch = Some((level, statement));
+        self.setup_batch = (!statement.claims().is_empty()).then_some((level, statement));
         self
     }
     pub fn selection(&self) -> OpeningScheduleSelection {

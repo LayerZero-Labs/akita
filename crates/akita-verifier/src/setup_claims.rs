@@ -7,9 +7,10 @@ pub trait SetupClaimAdvice<E: Field> {
     fn answer(&mut self, query: &SetupQuery<E>) -> Result<E, AkitaError>;
 }
 
-/// Setup verification policy. Only deferral needs external direct-evaluation answers.
-pub enum SetupMode<'a, E: Field> {
-    Defer(&'a mut dyn SetupClaimAdvice<E>),
+/// Direct setup verification policy. Stage 3 reductions are checked in both modes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupMode {
+    Defer,
     Check,
 }
 
@@ -18,28 +19,38 @@ pub enum SetupMode<'a, E: Field> {
 /// Start with `new` to collect inner claims. Use `from_batch` to attach a bound
 /// collection to the same nonterminal fold selected by the prover.
 #[must_use = "every pending setup claim must be inherited or checked before acceptance"]
-pub struct SetupClaimAccumulator<E: Field> {
+pub struct SetupClaimAccumulator<'a, E: Field> {
     pub(crate) polynomial: SetupPolynomialId,
     // Keep the bound input separate from claims collected during this replay.
     pub(crate) batch: Option<(u32, SetupBatchStatement<E>)>,
     pub(crate) pending: Vec<SetupClaim<E>>,
+    advice: Option<&'a mut dyn SetupClaimAdvice<E>>,
 }
 
-impl<E: Field> SetupClaimAccumulator<E> {
+impl<'a, E: Field> SetupClaimAccumulator<'a, E> {
     pub fn new(polynomial: SetupPolynomialId) -> Self {
         Self {
             polynomial,
             batch: None,
             pending: Vec::new(),
+            advice: None,
         }
     }
 
     pub fn from_batch(level: u32, batch: SetupBatchStatement<E>) -> Self {
         Self {
             polynomial: batch.polynomial().clone(),
-            batch: Some((level, batch)),
+            batch: (!batch.claims().is_empty()).then_some((level, batch)),
             pending: Vec::new(),
+            advice: None,
         }
+    }
+
+    /// Supply candidate answers for direct folds of an archived proof.
+    /// Every answer becomes a pending obligation; advice never authenticates it.
+    pub fn with_advice(mut self, advice: &'a mut dyn SetupClaimAdvice<E>) -> Self {
+        self.advice = Some(advice);
+        self
     }
 
     /// Return all unresolved claims, including an input batch not yet replayed.
@@ -50,13 +61,15 @@ impl<E: Field> SetupClaimAccumulator<E> {
         self.pending
     }
 
-    pub(crate) fn resolve(
-        &mut self,
-        query: SetupQuery<E>,
-        advice: &mut dyn SetupClaimAdvice<E>,
-    ) -> Result<E, AkitaError> {
+    pub(crate) fn resolve(&mut self, query: SetupQuery<E>) -> Result<E, AkitaError> {
         query.validate(&self.polynomial)?;
-        let value = advice.answer(&query)?;
+        let value = self
+            .advice
+            .as_deref_mut()
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("deferred direct setup evaluation requires advice".into())
+            })?
+            .answer(&query)?;
         self.pending
             .push(SetupClaim::new(self.polynomial.clone(), query, value)?);
         Ok(value)

@@ -71,10 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         TRANSCRIPT_DOMAIN,
         statement,
         BasisMode::Lagrange,
-        #[cfg(feature = "external-setup-accumulation")]
         None,
-        #[cfg(feature = "external-setup-accumulation")]
-        &mut akita_verifier::SetupMode::Check,
+        akita_verifier::SetupMode::Check,
     )?;
 
     println!("Akita proof verified");

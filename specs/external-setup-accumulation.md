@@ -12,12 +12,14 @@
 
 ## Summary
 
-A recursive application can defer direct Stage 2 setup evaluations and offloaded
-Stage 3 input claims. The outer proof closes the complete collection together
-with its own setup claim. A direct outer fold uses one combined setup scan;
-an offloaded outer fold uses its existing degree-two Stage 3. Neither path
-requires a standalone sumcheck. Public operations live in `akita-prover` and
-`akita-verifier`; `akita-pcs` forwards the optional feature.
+A recursive application can defer direct Stage 2 setup evaluations. Both
+verification modes check ordinary and accumulated Stage 3 reductions completely.
+A direct outer fold handles inherited claims in Stage 2 and evaluates its own
+setup contribution through ordinary Stage 2 verification. An offloaded outer
+fold closes the collection together with its own setup claim using its existing
+degree-two Stage 3. Neither path requires a standalone sumcheck. Public
+operations live in `akita-prover` and
+`akita-verifier` and require no Cargo feature.
 
 ## Protocol
 
@@ -34,11 +36,18 @@ residue kernel. Physical B slicing and overlapping role contributions remain
 additive on the same flat setup addresses.
 
 The complete inherited statement is bound before the outer opening transcript.
-The outer fold sends its own scalar, then binds the combined ordered statement
-before independent batching coefficients lambda_i are sampled. Stage 2 uses
-only the outer scalar. Direct closure checks the combined equation in one setup
-scan. Offloaded closure uses the existing Stage 3 transcript and successor. Every term of query i inherits
-the same lambda_i. A query is represented by native coefficient factors and
+At a direct fold, Stage 2 samples coefficients for the inherited claims only.
+`Check` checks their weighted equation with a setup scan and computes the fold's
+own setup contribution normally. `Defer` preserves the inherited claims and
+obtains the current contribution from advice, exporting its exact query and
+answer. The prover sends no candidate setup answer and creates no Stage 3 state
+or transcript events for a direct fold.
+
+An offloaded fold sends its own scalar, then binds the combined ordered
+statement before independent batching coefficients lambda_i are sampled.
+Stage 2 uses only the outer scalar. Offloaded closure uses the existing
+Stage 3 transcript and successor. Every term of query i inherits the same
+lambda_i. A query is represented by native coefficient factors and
 paired-equality index tensors. The backend compiles these into rectangular
 terms A_a(y) B_a(k), using lane views when native dimensions differ.
 
@@ -60,9 +69,9 @@ model; that composition requires protocol review before production deployment.
 
 ## Implementation and invariants
 
-- `external-setup-accumulation` is off by default in the types, prover,
-  verifier, CPU backend, and PCS crates. Enabling it never selects deferred
-  verification, modifies schedules, or changes ordinary proof grammar.
+- Setup accumulation is unconditional in the types, prover, verifier, CPU
+  backend and PCS crates. `SetupMode` is a plain `Check`/`Defer` enum. The mode
+  changes only direct setup verification policy, never proof grammar or schedules.
 - Relation preparation owns the query before setup traversal. Reduced
   structured contractions share the existing arithmetic without requiring
   direct-scan segment construction.
@@ -70,8 +79,8 @@ model; that composition requires protocol review before production deployment.
   contractions. Owner, domain, query encoding, split and answer are checked
   before consuming that state in a batch.
 - Retain mode keeps structured index factors; regenerate mode releases them
-  between advice preparation and the index phase. The integrated outer prover
-  compiles all inherited and outer queries before one coefficient-contraction
+  between advice preparation and the index phase. For offloaded folds, the
+  integrated outer prover compiles all inherited and outer queries before one coefficient-contraction
   traversal shared by every available factor. Parallel builds fuse row updates;
   sequential builds reuse bounded setup blocks with the singleton contraction
   kernel so they retain its small arithmetic working set.
@@ -89,8 +98,9 @@ model; that composition requires protocol review before production deployment.
 - Setup coefficients after a query's support remain actual public coefficients.
   Query support alone is zero-extended. Smaller prefix evaluations embed with
   zero selectors on added high coordinates.
-- Batch statements reject empty batches, more than 65536 claims and invalid
-  coefficient splits. A nontrivial domain requires at least two coefficient
+- Batch statements accept empty input, and reject more than 65536 claims and
+  invalid coefficient splits. An empty inherited input uses the ordinary singleton
+  Stage 3 encoding. A nontrivial domain requires at least two coefficient
   entries so its contracted index state is smaller than the full setup.
 - Decoding accumulators uses an expected polynomial context and bounded point
   arity. Batch replay rejects incomplete arguments and trailing bytes.
@@ -102,29 +112,34 @@ model; that composition requires protocol review before production deployment.
 
 ## Scope
 
-Conditional inner verification preserves internal Stage 3 prefix consumption.
-It replays the Stage 3 transcript and grinding checks but omits its algebra.
-It exports the original input functional and answer, not the unchecked endpoint.
-Direct folds obtain their exact setup answer from advice and omit setup weight
-evaluation. An outer proof can itself defer its combined collection; in that
-case the original inherited and outer claims are carried forward.
+Conditional inner verification defers only direct setup evaluations. Direct
+folds obtain candidate answers from advice attached to their accumulator and
+check their Stage 2 endpoint with those answers. They export exact functionals
+and values without scanning the setup. Both modes verify ordinary and batched
+Stage 3 sumcheck rounds, evaluate the combined public weight, check the terminal
+product equation, and retain the ordinary successor setup-prefix opening.
+Checked offloaded input claims are consumed in both modes. A later direct
+successor may export new obligations, so a recursive outer proof's pending
+output depends on its own direct folds rather than its inherited history.
+Direct deferred folds preserve inherited inputs until a checked reduction or
+direct discharge consumes them.
 
-`SelectedProverOpeningData::with_setup_batch` selects one nonterminal outer fold.
-With the feature enabled, `AkitaVerifier::batched_verify` takes an optional
-mutable `SetupClaimAccumulator` and a mutable `SetupMode`. `Defer` leaves the
-original claims in the accumulator; `Check` closes a bound batch. Ordinary
-verification passes `None` and `&mut SetupMode::Check`. `SetupClaimAccumulator::from_batch` selects the matching fold and
-keeps its bound input fixed while other folds contribute pending claims.
+`SelectedProverOpeningData::with_setup_batch` selects one nonterminal fold.
+`AkitaVerifier::batched_verify` takes an optional mutable `SetupClaimAccumulator`
+and a `SetupMode` value. Ordinary verification passes `None` and
+`SetupMode::Check`. `SetupClaimAccumulator::new(...).with_advice(...)` starts
+collection for archived direct folds; `from_batch` attaches bound inputs to
+the same selected fold as the prover. Empty inputs select ordinary proof grammar.
+All other Akita checks and the ordinary terminal checks remain enabled.
 The offloaded path requires the batch domain to match the selected successor's
 actual prefix. It does not change the admitted schedule or add a sumcheck.
 The standalone reduction helpers remain optional utilities. They are not part
 of the integrated outer flow. SDK preparation, guest epilogues, authenticated
 execution-output envelopes and guest-cycle measurements belong to Jolt integration.
 
-The feature targets `dev`; shared math moves and behavior-preserving verifier
-seams can be reviewed independently for `main`. No schedule artifact changes
-are needed. Broader security certification and performance acceptance remain
-review gates rather than claims inferred from implementation.
+No schedule artifact changes are needed. Broader security certification and
+performance acceptance remain review gates rather than claims inferred from
+implementation.
 
 ## Evaluation
 
@@ -133,7 +148,8 @@ review gates rather than claims inferred from implementation.
 - [x] Singleton product-sumcheck rounds match an independent dense reference in base and extension fields.
 - [x] Base/extension fields and retain/regenerate policies agree.
 - [x] Chaining, domain embedding, accumulator transport, tampering and final rejection pass.
-- [x] Feature-off behavior and existing deterministic proof bytes are preserved.
+- [x] Empty inherited input preserves ordinary deterministic proof bytes.
+- [x] Recursive deferral consumes inherited batches and exports only current direct-fold claims.
 - [x] Cheap gates, scoped tests, Clippy, and ordinary CI configurations pass.
 - [x] Native benchmarks include preparation and equivalent separate reductions.
 
@@ -154,7 +170,7 @@ A separate untouched-main comparison used seed `[37; 32]`, constant-one sources,
 Lagrange points filled with 2 and session `external-setup-byte-compat`. The cases
 were fp128 direct nv14, fp128 recursive nv20, fp32 direct nv20, and fp32 recursive
 nv24 (including actual setup offloading). Setup, commitment and proof bytes
-matched for all four cases with the extension disabled and enabled.
+matched for all four cases in the earlier implementation with accumulation support disabled and enabled.
 
 One local release/parallel fp128 microbenchmark used 65536 setup coefficients
 and a 64-coefficient split. For 32 evaluation claims, retained preparation plus

@@ -311,7 +311,14 @@ fn verify_proof(
 ) -> Result<(), String> {
     AkitaVerifier::new(verifier_setup.clone(), schedules.clone())
         .map_err(|err| format!("verifier setup rejected: {err}"))?
-        .batched_verify(proof, session, statement, BasisMode::Lagrange)
+        .batched_verify(
+            proof,
+            session,
+            statement,
+            BasisMode::Lagrange,
+            None,
+            akita_verifier::SetupMode::Check,
+        )
         .map_err(|err| format!("verifier rejected proof: {err}"))
 }
 
@@ -436,7 +443,7 @@ macro_rules! generate_scalar_case {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)
+                verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange, None, akita_verifier::SetupMode::Check)
             })
         .map_err(|err| format!("{} host-side sanity verify: {err}", case))?;
 
@@ -471,7 +478,9 @@ macro_rules! generate_scalar_case {
                     &decoded.transcript_domain,
                     decoded_statement,
                     BasisMode::Lagrange,
-                )
+        None,
+        akita_verifier::SetupMode::Check,
+    )
             })
         .map_err(|err| format!("{} decoded blob verify: {err}", case))?;
         let blob = akita_recursion_glue::frame_with_schedule_catalog::<ScalarCfg>(

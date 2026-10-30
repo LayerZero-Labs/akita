@@ -25,7 +25,6 @@ pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
     type Stage3SessionHandle: Send;
 
     /// Extension seam: prepare the outer contribution and all inherited setup claims.
-    #[cfg(feature = "external-setup-accumulation")]
     fn prepare_setup_batch(
         &self,
         _request: super::SetupBatchRequest<'_, F, E, Self::ProofSessionHandle>,
@@ -42,7 +41,6 @@ pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
     }
 
     /// Fix batching coefficients after the complete statement has entered the transcript.
-    #[cfg(feature = "external-setup-accumulation")]
     fn bind_setup_batch(
         &self,
         _session: &mut Self::Stage3SessionHandle,

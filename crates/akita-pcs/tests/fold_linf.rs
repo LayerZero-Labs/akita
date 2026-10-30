@@ -83,10 +83,8 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
                 LABEL,
                 verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("verify");
@@ -117,10 +115,8 @@ impl FoldLinfGrindFixture {
                         self.scheme.schedules(),
                     ),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             })
     }

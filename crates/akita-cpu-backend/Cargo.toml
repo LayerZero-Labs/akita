@@ -45,11 +45,6 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 
 [features]
-external-setup-accumulation = [
-  "akita-types/external-setup-accumulation",
-  "akita-prover/external-setup-accumulation",
-  "akita-verifier/external-setup-accumulation",
-]
 default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-prover/transcript-blake2b",

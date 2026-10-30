@@ -1,5 +1,3 @@
-#![cfg(feature = "external-setup-accumulation")]
-
 use akita_config::{test_support::workspace_schedule_catalog, CommitmentConfig, SetupRequirements};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
@@ -44,7 +42,7 @@ fn direct_outer_closes_collected_claims_without_an_extra_sumcheck() {
 }
 
 #[test]
-fn offloaded_outer_batches_original_direct_and_stage3_claims() {
+fn offloaded_outer_consumes_inherited_claims_in_both_modes() {
     run::<akita_config::RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>>(
         24, true,
     );
@@ -165,7 +163,7 @@ where
             Some((level, batch)) => opening().with_setup_batch(level, batch),
             None => opening(),
         };
-        akita_prover::batched_prove::<Cfg, _>(
+        let proof = akita_prover::batched_prove::<Cfg, _>(
             setup.expanded.descriptor(),
             &catalog,
             &registry,
@@ -173,7 +171,27 @@ where
             SESSION,
             BasisMode::Lagrange,
             &mut FixedFoldRoute::new(vec![owner; levels]),
-        )
+        );
+        #[cfg(feature = "logging-transcript")]
+        if proof.is_ok() {
+            for event in akita_transcript::thread_events() {
+                let akita_transcript::TranscriptEvent::Context(record) = event;
+                let site = akita_transcript::ProtocolSiteId::from_bytes(record.site_id);
+                if site.family == akita_transcript::SITE_FAMILY_STAGE3
+                    || (site.family == akita_transcript::SITE_FAMILY_SUMCHECK
+                        && site.invocation == akita_params::SumcheckProtocol::Stage3.tag())
+                {
+                    assert!(
+                        row.schedule()
+                            .recursive_folds
+                            .get(site.level as usize)
+                            .is_some_and(|fold| fold.params.setup_prefix().is_some()),
+                        "direct folds must emit no Stage 3 transcript events"
+                    );
+                }
+            }
+        }
+        proof
     };
     let ordinary = prove(None).unwrap();
     #[cfg(feature = "logging-transcript")]
@@ -184,15 +202,27 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            #[cfg(feature = "external-setup-accumulation")]
             None,
-            #[cfg(feature = "external-setup-accumulation")]
-            &mut akita_verifier::SetupMode::Check,
+            akita_verifier::SetupMode::Check,
         )
         .unwrap();
     let (level, len) = selected.unwrap_or((0, capacity.num_field_elements));
     let polynomial =
         SetupPolynomialId::new::<Cfg::Field, Cfg::ExtField>(&setup.expanded, len).unwrap();
+    let empty = SetupBatchStatement::new(polynomial.clone(), 32, Vec::new()).unwrap();
+    assert_eq!(prove(Some((level, &empty))).unwrap(), ordinary);
+    let mut empty_accumulator = SetupClaimAccumulator::from_batch(level, empty);
+    verifier
+        .batched_verify(
+            &ordinary,
+            SESSION,
+            GroupBatchStatement::new(selection, claims()).unwrap(),
+            BasisMode::Lagrange,
+            Some(&mut empty_accumulator),
+            SetupMode::Check,
+        )
+        .unwrap();
+    assert!(empty_accumulator.into_pending().is_empty());
     let mut advice = Advice {
         backend: &backend,
         polynomial: &polynomial,
@@ -205,7 +235,7 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             None,
-            &mut SetupMode::Defer(&mut advice),
+            SetupMode::Defer,
         ),
         Err(AkitaError::InvalidInput(_))
     ));
@@ -218,11 +248,11 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             Some(&mut checked),
-            &mut SetupMode::Check,
+            SetupMode::Check,
         )
         .unwrap();
     assert!(checked.into_pending().is_empty());
-    let mut collected = SetupClaimAccumulator::new(polynomial.clone());
+    let mut collected = SetupClaimAccumulator::new(polynomial.clone()).with_advice(&mut advice);
     verifier
         .batched_verify(
             &ordinary,
@@ -230,22 +260,33 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             Some(&mut collected),
-            &mut SetupMode::Defer(&mut advice),
+            SetupMode::Defer,
         )
         .unwrap();
     let pending = collected.into_pending();
-    assert_eq!(pending.len(), levels - 1);
+    let direct_folds = (0..levels - 1)
+        .filter(|&level| {
+            row.schedule()
+                .recursive_folds
+                .get(level)
+                .is_none_or(|next| next.params.setup_prefix().is_none())
+        })
+        .count();
+    assert_eq!(pending.len(), direct_folds);
+    assert_eq!(
+        advice.calls,
+        pending.len(),
+        "only direct setup evaluations are exported"
+    );
     if offloaded {
         assert!(
-            advice.calls < pending.len(),
-            "Stage 3 input comes from the proof, not advice"
+            pending.len() < levels - 1,
+            "checked Stage 3 inputs must not be exported"
         );
         assert!(
             advice.calls > 0,
             "the collection also contains direct folds"
         );
-    } else {
-        assert_eq!(advice.calls, pending.len());
     }
     // Every collected obligation is the original exact functional and answer.
     for claim in &pending {
@@ -264,7 +305,7 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             Some(&mut invalid),
-            &mut SetupMode::Check,
+            SetupMode::Check,
         )
         .is_err());
     let outer = prove(Some((level, &inherited))).unwrap();
@@ -278,7 +319,7 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             Some(&mut checked),
-            &mut SetupMode::Check,
+            SetupMode::Check,
         )
         .unwrap();
     assert!(checked.into_pending().is_empty());
@@ -289,11 +330,12 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             None,
-            &mut SetupMode::Check,
+            SetupMode::Check,
         )
         .is_err());
     let advice_calls_before_outer = advice.calls;
-    let mut carried = SetupClaimAccumulator::from_batch(level, inherited.clone());
+    let mut carried =
+        SetupClaimAccumulator::from_batch(level, inherited.clone()).with_advice(&mut advice);
     verifier
         .batched_verify(
             &outer,
@@ -301,21 +343,63 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             Some(&mut carried),
-            &mut SetupMode::Defer(&mut advice),
+            SetupMode::Defer,
         )
         .unwrap();
     let carried = carried.into_pending();
-    assert_eq!(carried.len(), inherited.claims().len() + levels - 1);
+    assert_eq!(
+        carried.len(),
+        direct_folds
+            + if offloaded {
+                0
+            } else {
+                inherited.claims().len()
+            },
+        "a checked recursive batch consumes all inherited inputs"
+    );
     assert_eq!(
         advice.calls - advice_calls_before_outer,
-        ordinary_advice_calls - usize::from(!offloaded),
-        "the selected batch's outer answer comes from the transcript, not advice"
+        ordinary_advice_calls,
+        "every direct fold obtains its setup answer from advice"
     );
     for claim in &carried {
         let (value, _) = backend
             .prepare_setup_query(&polynomial, claim.query(), 32, SetupBatchMemory::Regenerate)
             .unwrap();
         assert_eq!(value, claim.value());
+    }
+    if offloaded {
+        let next_input = SetupBatchStatement::new(polynomial.clone(), 32, carried).unwrap();
+        let next_proof = prove(Some((level, &next_input))).unwrap();
+        let mut checked = SetupClaimAccumulator::from_batch(level, next_input.clone());
+        verifier
+            .batched_verify(
+                &next_proof,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                Some(&mut checked),
+                SetupMode::Check,
+            )
+            .unwrap();
+        assert!(checked.into_pending().is_empty());
+        let mut deferred =
+            SetupClaimAccumulator::from_batch(level, next_input).with_advice(&mut advice);
+        verifier
+            .batched_verify(
+                &next_proof,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                Some(&mut deferred),
+                SetupMode::Defer,
+            )
+            .unwrap();
+        assert_eq!(
+            deferred.into_pending().len(),
+            direct_folds,
+            "recursive generations must not retain their inherited input lists"
+        );
     }
     if offloaded {
         // A direct suffix fold can close the same mixed collection.
@@ -330,12 +414,13 @@ where
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
                 Some(&mut checked),
-                &mut SetupMode::Check,
+                SetupMode::Check,
             )
             .unwrap();
         assert!(checked.into_pending().is_empty());
         let advice_calls_before_direct = advice.calls;
-        let mut carried = SetupClaimAccumulator::from_batch(direct_level, inherited.clone());
+        let mut carried = SetupClaimAccumulator::from_batch(direct_level, inherited.clone())
+            .with_advice(&mut advice);
         verifier
             .batched_verify(
                 &direct,
@@ -343,14 +428,9 @@ where
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
                 Some(&mut carried),
-                &mut SetupMode::Defer(&mut advice),
+                SetupMode::Defer,
             )
             .unwrap();
-        assert_eq!(
-            advice.calls - advice_calls_before_direct,
-            ordinary_advice_calls - 1,
-            "the direct outer Stage 2 collects its transcript answer without advice"
-        );
         // Pending claims must not disappear when the caller changes the mode.
         assert!(matches!(
             verifier.batched_verify(
@@ -359,13 +439,18 @@ where
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
                 Some(&mut carried),
-                &mut SetupMode::Check,
+                SetupMode::Check,
             ),
             Err(AkitaError::InvalidInput(_))
         ));
         assert_eq!(
             carried.into_pending().len(),
-            inherited.claims().len() + levels - 1
+            inherited.claims().len() + direct_folds
+        );
+        assert_eq!(
+            advice.calls - advice_calls_before_direct,
+            ordinary_advice_calls,
+            "a direct batch target uses ordinary Stage 2 advice, without a Stage 3 claim"
         );
     }
     let mut changed = inherited.claims().to_vec();
@@ -384,10 +469,26 @@ where
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
             Some(&mut invalid),
-            &mut SetupMode::Check,
+            SetupMode::Check,
         )
         .is_err());
-    assert!(prove(Some((level, &changed))).is_err());
+    if offloaded {
+        assert!(prove(Some((level, &changed))).is_err());
+    } else {
+        // A direct prover only binds inherited inputs; the verifier checks them.
+        let invalid_proof = prove(Some((level, &changed))).unwrap();
+        let mut invalid = SetupClaimAccumulator::from_batch(level, changed);
+        assert!(verifier
+            .batched_verify(
+                &invalid_proof,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                Some(&mut invalid),
+                SetupMode::Check,
+            )
+            .is_err());
+    }
 }
 
 #[cfg(feature = "logging-transcript")]

@@ -494,6 +494,7 @@ pub(super) fn prove_stage2<F, E, B>(
     trace_opening_claim: E,
     plan: &RelationRangeImagePlan,
     relation: crate::backend::RelationWeightRequest<'_, F, E>,
+    direct_setup_batch: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
 ) -> Result<Stage2ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -588,33 +589,40 @@ where
             "stage 2 backend final claim differs from sumcheck output".into(),
         ));
     }
+    let witness_evaluation = final_output.witness_evaluation();
+    akita_types::stage2_w_eval::<F, E, _>(grinding, level, witness_evaluation)?;
+    if let Some(inherited) = direct_setup_batch {
+        // The inherited statement was bound before the opening transcript.
+        // Direct verification checks it separately from this fold's setup value.
+        akita_types::setup_claims::transcript::batch_coefficients::<F, E, _>(
+            grinding.state_mut(),
+            inherited.claims().len(),
+        )?;
+    }
     Ok(Stage2ProveOutput {
         challenges: sumcheck_challenges,
-        witness_evaluation: final_output.witness_evaluation(),
+        witness_evaluation,
     })
 }
 
-/// Bind Stage 3 input for either an inherited outer batch or ordinary recursive setup.
+/// Bind the singleton or accumulated input to an offloaded Stage 3 sumcheck.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn prepare_stage3_session<F, E, B>(
     backend: &B,
     session: &B::ProofSessionHandle,
     level: u32,
-    setup_contribution_mode: SetupContributionMode,
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
     lp: &CommittedGroupParams,
-    next_level_params: Option<&CommittedGroupParams>,
+    next_level_params: &CommittedGroupParams,
     instance: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     sumcheck_challenges: &[E],
     relation_address_geometry: akita_params::RelationAddressGeometry,
     grinding: &mut akita_types::ProverGrinding<'_>,
-    #[cfg(feature = "external-setup-accumulation")] inherited: Option<
-        &akita_types::setup_claims::SetupBatchStatement<E>,
-    >,
-) -> Result<Option<(E, B::Stage3SessionHandle, usize)>, AkitaError>
+    inherited: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
+) -> Result<(E, B::Stage3SessionHandle, usize), AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F>
@@ -625,46 +633,21 @@ where
         + jolt_field::MulBaseUnreduced<F>,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
-    let successor =
-        next_level_params.filter(|_| setup_contribution_mode == SetupContributionMode::Recursive);
-    #[cfg(feature = "external-setup-accumulation")]
-    let has_inherited = inherited.is_some();
-    #[cfg(not(feature = "external-setup-accumulation"))]
-    let has_inherited = false;
-    if setup_contribution_mode == SetupContributionMode::Direct && !has_inherited {
-        return Ok(None);
+    let id = next_level_params
+        .setup_prefix()
+        .and_then(|group| group.slot_id())
+        .ok_or_else(|| AkitaError::Internal("Stage 3 requires a setup prefix".into()))?;
+    let slot = prefix_slots
+        .get(&id)
+        .ok_or_else(|| AkitaError::InvalidSetup("planned setup prefix is missing".into()))?;
+    let prefix_len = slot.public.id.n_prefix()?;
+    if slot.public.id != id || prefix_len > expanded.num_field_elements {
+        return Err(AkitaError::InvalidSetup(
+            "invalid Stage 3 setup prefix".into(),
+        ));
     }
-    let prefix = successor
-        .map(|next| {
-            let id = next
-                .setup_prefix()
-                .and_then(|group| group.slot_id())
-                .ok_or_else(|| AkitaError::Internal("Stage 3 requires a setup prefix".into()))?;
-            let slot = prefix_slots.get(&id).ok_or_else(|| {
-                AkitaError::InvalidSetup("planned setup prefix is missing".into())
-            })?;
-            let len = slot
-                .public
-                .id
-                .natural_len
-                .checked_next_power_of_two()
-                .ok_or_else(|| AkitaError::InvalidSetup("setup prefix length overflow".into()))?;
-            if slot.public.id != id || len > expanded.num_field_elements {
-                return Err(AkitaError::InvalidSetup(
-                    "invalid Stage 3 setup prefix".into(),
-                ));
-            }
-            Ok((next, slot, len))
-        })
-        .transpose()?;
-    #[cfg(feature = "external-setup-accumulation")]
     let mut batch_statement = None;
-    #[cfg_attr(
-        not(feature = "external-setup-accumulation"),
-        allow(unused_labels, unused_mut)
-    )]
     let (claim, mut stage3, rounds) = 'prepare: {
-        #[cfg(feature = "external-setup-accumulation")]
         if let Some(inherited) = inherited {
             let (statement, prepared) =
                 backend.prepare_setup_batch(crate::backend::SetupBatchRequest {
@@ -678,15 +661,13 @@ where
                     stage2_challenges: sumcheck_challenges,
                     address_geometry: relation_address_geometry,
                 })?;
-            if let Some((next, slot, _)) = prefix {
-                akita_types::setup_claims::transcript::bind_outer_prefix(
-                    &statement,
-                    &slot.public,
-                    next,
-                    grinding,
-                    level,
-                )?;
-            }
+            akita_types::setup_claims::transcript::bind_outer_prefix(
+                &statement,
+                &slot.public,
+                next_level_params,
+                grinding,
+                level,
+            )?;
             let outer = statement
                 .claims()
                 .last()
@@ -696,13 +677,12 @@ where
             batch_statement = Some(statement);
             break 'prepare (outer, prepared, rounds);
         }
-        let (next, slot, prefix_len) = prefix.ok_or(AkitaError::InvalidProof)?;
         let (claim, prepared) = backend.begin_stage3(crate::backend::Stage3Request {
             session,
             level,
             prefix: &slot.public.id,
             parameters: lp,
-            next_parameters: next,
+            next_parameters: next_level_params,
             relation: instance,
             tau1,
             alpha,
@@ -720,7 +700,6 @@ where
         (claim, prepared, prefix_len.trailing_zeros() as usize)
     };
     akita_types::stage3_claim::<F, E, _>(grinding, level, claim)?;
-    #[cfg(feature = "external-setup-accumulation")]
     if let Some(statement) = batch_statement {
         use akita_types::setup_claims::transcript;
         transcript::bind_outer_statement::<F, E, _>(grinding.state_mut(), level, &statement)?;
@@ -728,14 +707,10 @@ where
             grinding.state_mut(),
             statement.claims().len(),
         )?;
-        if successor.is_none() {
-            // Direct closure binds the batch for the verifier's combined scan.
-            return Ok(None);
-        }
         let claim = backend.bind_setup_batch(&mut stage3, &statement, &coefficients)?;
-        return Ok(Some((claim, stage3, rounds)));
+        return Ok((claim, stage3, rounds));
     }
-    Ok(Some((claim, stage3, rounds)))
+    Ok((claim, stage3, rounds))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -754,9 +729,7 @@ pub(super) fn prove_stage3<F, E, B>(
     sumcheck_challenges: &[E],
     relation_address_geometry: akita_params::RelationAddressGeometry,
     grinding: &mut akita_types::ProverGrinding<'_>,
-    #[cfg(feature = "external-setup-accumulation")] inherited: Option<
-        &akita_types::setup_claims::SetupBatchStatement<E>,
-    >,
+    inherited: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -768,22 +741,24 @@ where
         + jolt_field::MulBaseUnreduced<F>,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
+    if setup_contribution_mode == SetupContributionMode::Direct {
+        return Ok(None);
+    }
+    let next_level_params = next_level_params
+        .ok_or_else(|| AkitaError::InvalidSetup("offloaded Stage 3 requires a successor".into()))?;
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    let _stage3_span = (setup_contribution_mode == SetupContributionMode::Recursive).then(|| {
-        tracing::info_span!(
-            "stage3_sumcheck",
-            level,
-            stage2_rounds = sumcheck_challenges.len(),
-            d_a = lp.d_a(),
-        )
-        .entered()
-    });
-    let Some((claim, mut stage3, rounds)) = prepare_stage3_session(
+    let _stage3_span = tracing::info_span!(
+        "stage3_sumcheck",
+        level,
+        stage2_rounds = sumcheck_challenges.len(),
+        d_a = lp.d_a(),
+    )
+    .entered();
+    let (claim, mut stage3, rounds) = prepare_stage3_session(
         backend,
         session,
         level,
-        setup_contribution_mode,
         expanded,
         prefix_slots,
         lp,
@@ -794,12 +769,8 @@ where
         sumcheck_challenges,
         relation_address_geometry,
         grinding,
-        #[cfg(feature = "external-setup-accumulation")]
         inherited,
-    )?
-    else {
-        return Ok(None);
-    };
+    )?;
     let mut kernel = Stage3Sumcheck {
         backend,
         session: &mut stage3,

@@ -26,7 +26,6 @@ shake = "0.1.0"
 tracing = "0.1"
 
 [features]
-external-setup-accumulation = []
 default = ["transcript-blake2b"]
 test-support = ["akita-params/test-support"]
 transcript-blake2b = [

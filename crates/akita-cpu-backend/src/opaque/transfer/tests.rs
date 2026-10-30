@@ -80,7 +80,6 @@ fn run(signed: bool) {
     let capacity = SetupRequirements::from_catalog(&catalog, nv, 1)
         .unwrap()
         .matrix_capacity();
-    #[cfg(feature = "external-setup-accumulation")]
     let capacity = akita_params::SetupMatrixCapacity {
         num_field_elements: capacity.num_field_elements.next_power_of_two(),
     };
@@ -187,13 +186,10 @@ fn run(signed: bool) {
             DOMAIN,
             GroupBatchStatement::new(selection, claims).unwrap(),
             BasisMode::Lagrange,
-            #[cfg(feature = "external-setup-accumulation")]
             None,
-            #[cfg(feature = "external-setup-accumulation")]
-            &mut akita_verifier::SetupMode::Check,
+            akita_verifier::SetupMode::Check,
         )
         .unwrap();
-    #[cfg(feature = "external-setup-accumulation")]
     {
         use akita_prover::backend::SetupBatchBackend;
         use akita_types::setup_claims::{
@@ -234,7 +230,8 @@ fn run(signed: bool) {
         )
         .unwrap()])
         .unwrap();
-        let mut deferred = akita_verifier::SetupClaimAccumulator::new(domain.clone());
+        let mut deferred =
+            akita_verifier::SetupClaimAccumulator::new(domain.clone()).with_advice(&mut advice);
         verifier
             .batched_verify(
                 &proof,
@@ -242,7 +239,7 @@ fn run(signed: bool) {
                 GroupBatchStatement::new(selection, claims).unwrap(),
                 BasisMode::Lagrange,
                 Some(&mut deferred),
-                &mut akita_verifier::SetupMode::Defer(&mut advice),
+                akita_verifier::SetupMode::Defer,
             )
             .unwrap();
         let pending = deferred.into_pending();

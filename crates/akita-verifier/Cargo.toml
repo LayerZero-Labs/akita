@@ -32,7 +32,6 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [features]
-external-setup-accumulation = ["akita-types/external-setup-accumulation"]
 default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

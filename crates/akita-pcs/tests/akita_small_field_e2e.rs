@@ -641,10 +641,8 @@ fn fp32_onehot_multi_group() {
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .expect("fp32 multi-group verify");

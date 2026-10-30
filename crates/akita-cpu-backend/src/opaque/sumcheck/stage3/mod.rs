@@ -38,11 +38,9 @@ pub struct CpuStage3Session<F: Field, E: Field> {
 
 enum Stage3Setup<F: Field, E: Field> {
     Bound(SetupProductSumcheck<F, E>),
-    #[cfg(feature = "external-setup-accumulation")]
     Prepared(Vec<super::setup_batch::CpuPreparedSetupQuery<E>>),
 }
 
-#[cfg(feature = "external-setup-accumulation")]
 mod accumulation;
 
 impl<F, E> OpaqueStage3Kernel<F, E> for CpuBackend<F, E>
@@ -58,7 +56,6 @@ where
 {
     type Stage3SessionHandle = CpuStage3Session<F, E>;
 
-    #[cfg(feature = "external-setup-accumulation")]
     fn prepare_setup_batch(
         &self,
         request: akita_prover::backend::SetupBatchRequest<'_, F, E, Self::ProofSessionHandle>,
@@ -72,7 +69,6 @@ where
         accumulation::prepare(self, request)
     }
 
-    #[cfg(feature = "external-setup-accumulation")]
     fn bind_setup_batch(
         &self,
         session: &mut Self::Stage3SessionHandle,

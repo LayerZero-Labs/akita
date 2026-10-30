@@ -215,10 +215,8 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                 transcript_domain,
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("generated-profile recursive verify");
@@ -236,10 +234,8 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                     transcript_domain,
                     verify_claims(final_openings.clone()),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             });
         assert!(
@@ -257,10 +253,8 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                     transcript_domain,
                     verify_claims(final_openings.clone()),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             });
         assert!(
@@ -300,10 +294,8 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                 transcript_domain,
                 verify_claims(tampered),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         });
     assert!(

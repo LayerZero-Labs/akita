@@ -219,10 +219,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                         &commitments[0],
                     )),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
                 .unwrap();
         })
@@ -238,10 +236,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &commitments[0]),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
                 .unwrap();
         });
@@ -260,10 +256,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                                 &commitments[0],
                             )),
                             BasisMode::Lagrange,
-                            #[cfg(feature = "external-setup-accumulation")]
                             None,
-                            #[cfg(feature = "external-setup-accumulation")]
-                            &mut akita_verifier::SetupMode::Check,
+                            akita_verifier::SetupMode::Check,
                         )
                         .unwrap();
                 })
@@ -299,10 +293,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
                 .unwrap();
             black_box(())
@@ -468,10 +460,8 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                         &commitments[0],
                     )),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
                 .unwrap();
         })
@@ -505,10 +495,8 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
                 .unwrap();
             black_box(())

@@ -467,10 +467,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 )
                 .expect("valid one-hot verifier statement"),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("batched onehot verify");

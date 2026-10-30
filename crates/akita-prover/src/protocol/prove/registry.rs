@@ -105,7 +105,6 @@ pub(super) struct ProofRequest<'p, Cfg: CommitmentConfig> {
     pub(super) schedule: &'p FoldSchedule,
     pub(super) layout: &'p OpeningClaimsLayout,
     pub(super) identity: u64,
-    #[cfg(feature = "external-setup-accumulation")]
     pub(super) setup_batch: Option<(
         u32,
         &'p akita_types::setup_claims::SetupBatchStatement<Cfg::ExtField>,

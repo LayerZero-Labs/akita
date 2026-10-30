@@ -198,10 +198,8 @@ fn heterogeneous_group_types() {
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .expect("heterogeneous verify");
@@ -369,10 +367,8 @@ fn bounded_dense_precommit_with_onehot_final_group() {
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .expect("mixed-bound verify");
@@ -402,10 +398,8 @@ fn bounded_dense_precommit_with_onehot_final_group() {
                     session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 ))
                 .is_err(),
             "a tampered bounded-group opening must not verify"
@@ -879,10 +873,8 @@ fn explicit_commitment_transfer_between_backends() {
                     )
                     .expect("statement"),
                     BasisMode::Lagrange,
-                    #[cfg(feature = "external-setup-accumulation")]
                     None,
-                    #[cfg(feature = "external-setup-accumulation")]
-                    &mut akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .expect("heterogeneous verify");
@@ -937,10 +929,8 @@ where
                 session,
                 verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
-                #[cfg(feature = "external-setup-accumulation")]
                 None,
-                #[cfg(feature = "external-setup-accumulation")]
-                &mut akita_verifier::SetupMode::Check,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("verify");

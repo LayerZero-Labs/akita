@@ -237,10 +237,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             b"profile",
             claims,
             BasisMode::Lagrange,
-            #[cfg(feature = "external-setup-accumulation")]
             None,
-            #[cfg(feature = "external-setup-accumulation")]
-            &mut akita_verifier::SetupMode::Check,
+            akita_verifier::SetupMode::Check,
         )
     };
     run_verifier_timings(label, pools, "profile", prepare, verify);

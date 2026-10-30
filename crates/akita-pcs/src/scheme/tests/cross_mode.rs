@@ -150,10 +150,8 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                             LABEL,
                             statement(selection, &point, opening, &commitment),
                             BasisMode::Lagrange,
-                            #[cfg(feature = "external-setup-accumulation")]
                             None,
-                            #[cfg(feature = "external-setup-accumulation")]
-                            &mut akita_verifier::SetupMode::Check,
+                            akita_verifier::SetupMode::Check,
                         )
                     })
                     .unwrap_or_else(|error| panic!("honest {name} proof must verify: {error:?}"));
@@ -182,10 +180,8 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                                 LABEL,
                                 statement(wrong_selection, &point, opening, &commitment),
                                 BasisMode::Lagrange,
-                                #[cfg(feature = "external-setup-accumulation")]
                                 None,
-                                #[cfg(feature = "external-setup-accumulation")]
-                                &mut akita_verifier::SetupMode::Check,
+                                akita_verifier::SetupMode::Check,
                             )
                         })
                 }));

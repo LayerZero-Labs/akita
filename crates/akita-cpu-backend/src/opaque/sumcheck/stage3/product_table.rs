@@ -48,9 +48,7 @@ pub(in crate::opaque::sumcheck) struct CoefficientTerm<E> {
 /// Index factors retained until all coefficient factors have become scalars.
 pub(in crate::opaque::sumcheck) enum SetupProductWeights<E: Field> {
     Dense(Vec<E>),
-    #[cfg(feature = "external-setup-accumulation")]
     Retained(Vec<akita_types::setup_claims::SetupWeightTerm<E>>),
-    #[cfg(feature = "external-setup-accumulation")]
     Regenerate {
         polynomial: akita_types::setup_claims::SetupPolynomialId,
         query: akita_types::setup_claims::SetupQuery<E>,
@@ -62,7 +60,6 @@ pub(in crate::opaque::sumcheck) enum SetupProductWeights<E: Field> {
 /// Ordinary Stage 3 supplies one term. Accumulation supplies several weighted
 /// terms, sharing coefficient challenges and merging into one index product.
 /// Both cases retain only contracted coefficient and index tables.
-#[cfg_attr(not(feature = "external-setup-accumulation"), allow(unreachable_pub))]
 pub struct SetupProductSumcheck<F: Field, E: Field> {
     setup: SetupProductSource<F>,
     row_capacity: usize,
@@ -228,7 +225,6 @@ where
                         *output += scale * weight;
                     }
                 }
-                #[cfg(feature = "external-setup-accumulation")]
                 weights => {
                     let factors = match weights {
                         SetupProductWeights::Retained(factors) => factors,

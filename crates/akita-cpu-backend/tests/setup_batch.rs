@@ -1,4 +1,3 @@
-#![cfg(feature = "external-setup-accumulation")]
 use akita_algebra::poly::multilinear_eval;
 use akita_cpu_backend::CpuBackend;
 use akita_prover::backend::{SetupBatchBackend, SetupBatchKernel};
