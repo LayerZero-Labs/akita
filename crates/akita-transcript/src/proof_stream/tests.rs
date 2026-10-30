@@ -528,6 +528,7 @@ fn empty_groups_make_no_absorb_call() {
         send_atoms::<FieldAtom<F>>(&mut state, []);
         public_fields::<F, _>(&mut state, site(2, 0), &[]).unwrap();
         public_extensions::<F, E, _>(&mut state, site(2, 1), &[]).unwrap();
+        send_byte_group(&mut state, site(2, 2), &[]).unwrap();
         assert!(state.narg_string().is_empty());
         assert_eq!(
             state.verifier_message::<[u8; 32]>(),
@@ -539,6 +540,9 @@ fn empty_groups_make_no_absorb_call() {
             let _ = verifier.verifier_message::<[u8; 32]>();
         }
         assert!(receive_atoms::<FieldAtom<F>>(&mut verifier, 0)
+            .unwrap()
+            .is_empty());
+        assert!(receive_byte_group(&mut verifier, site(2, 2), 0)
             .unwrap()
             .is_empty());
         assert_eq!(

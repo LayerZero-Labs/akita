@@ -11,11 +11,11 @@ readme = "../../README.md"
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "d6868f689aef7e6715345032b13973ff85804467", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "d6868f689aef7e6715345032b13973ff85804467", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 
