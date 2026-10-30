@@ -316,6 +316,10 @@ where
                 "no terminal caches are defined for target {target:?}"
             )));
         }
+        // The RISC-V guest's scalar terminal caches exist for Q128 only.
+        if field != SisModulusProfileId::Q128OffsetA7F7 {
+            continue;
+        }
         for plan in plans {
             for row in &plan.rows {
                 files.insert(
