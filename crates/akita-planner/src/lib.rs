@@ -33,6 +33,7 @@ pub mod generated_families;
 mod planner;
 mod policy;
 mod response_model;
+mod root_setup;
 pub mod schedule_params;
 
 pub use akita_schedules::policy_digest;
@@ -44,6 +45,7 @@ pub use emit::{
 pub use planner::find_schedule_for_test_relation_mode;
 pub use planner::{find_adapted_schedule, find_schedule};
 pub use policy::InnerBasisSource;
+pub use root_setup::find_schedule_with_root_setup_mode;
 pub use schedule_params::suffix_opening_layout;
 #[cfg(feature = "test-support")]
 pub use schedule_params::TestRelationModeFilter;

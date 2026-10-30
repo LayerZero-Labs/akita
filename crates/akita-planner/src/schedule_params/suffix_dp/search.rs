@@ -59,12 +59,18 @@ fn plan_candidate_children(
             offloaded: None,
         });
     };
-    let guided_successor_is_offloaded = ctx.adaptation_guide.map(|guide| {
-        guide
-            .recursive_folds
-            .get(state.level)
-            .is_some_and(|successor| successor.params.setup_prefix().is_some())
-    });
+    let guided_successor_is_offloaded = (state.level == 0)
+        .then_some(ctx.root_setup_mode)
+        .flatten()
+        .map(|mode| mode == akita_params::SetupContributionMode::Recursive)
+        .or_else(|| {
+            ctx.adaptation_guide.map(|guide| {
+                guide
+                    .recursive_folds
+                    .get(state.level)
+                    .is_some_and(|successor| successor.params.setup_prefix().is_some())
+            })
+        });
     let input_chunks = plan.chunk_shape.map(Arc::new);
     let direct_child = if guided_successor_is_offloaded == Some(true)
         || !plan.direct_edge_is_admissible

@@ -353,6 +353,9 @@ pub(crate) struct SuffixCtx<'a> {
     /// Approved scalar schedule whose structural suffix choices guide adapted
     /// planning. All length-, rank-, and security-derived values are rebuilt.
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
+    /// Extension seam: restrict a caller-selected root setup edge without
+    /// changing canonical planning; <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub(crate) root_setup_mode: Option<akita_params::SetupContributionMode>,
     pub(crate) root_source_contract: Option<akita_params::sis::CommittedSourceContract>,
     pub(crate) precommitted_source_contracts: &'a [akita_params::sis::CommittedSourceContract],
     pub(crate) level_zero_is_root: bool,
