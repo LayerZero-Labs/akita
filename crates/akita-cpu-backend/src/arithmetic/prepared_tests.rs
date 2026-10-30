@@ -3,7 +3,7 @@ use crate::opaque::RingSwitchRelationView;
 use crate::opaque::{ComputeBackendSetup, DigitRowsComputeBackend};
 use crate::opaque::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::AkitaProverSetup;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::MAX_I8_LOG_BASIS;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use akita_types::{NttCacheKey, NttTransformDomain};
@@ -366,7 +366,7 @@ fn relation_prewarm_joins_d_a_b_prefixes_before_kernel_execution() {
         2,
         3,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .expect("relation cache test params");

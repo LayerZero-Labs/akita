@@ -247,7 +247,8 @@ fn fp128_sample_geometry_opening() {
     sample_geometry_opening::<Family128>("fp128", RootOpeningMode::Binary);
 }
 
-/// Complete binary proof bytes stay fixed per family and protocol selection.
+/// Complete binary proof bytes with typed q-uniform setup stay fixed per family
+/// and protocol selection.
 #[cfg(all(feature = "transcript-blake2b", not(feature = "transcript-keccak")))]
 #[test]
 fn binary_proof_bytes_are_pinned_for_both_families() {
@@ -263,6 +264,9 @@ fn binary_proof_bytes_are_pinned_for_both_families() {
             .open::<H>(&case.source, &committed, &case.statement())
             .unwrap();
         assert_eq!(proof, repeated, "the complete proof must be deterministic");
+        case.verifier
+            .verify::<H>(&committed.commitment, &case.statement(), &proof)
+            .unwrap();
         akita_params::digest_descriptor_bytes(&proof)
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -270,13 +274,13 @@ fn binary_proof_bytes_are_pinned_for_both_families() {
     }
     let expected = if akita_params::DEV_PROTOCOL {
         (
-            "c902c1cfebc97faf8e1163c066014153b356a4915206330fe1111406b2175f47",
-            "ce13ad581232d0479831514a79e298ff997a13ff7837268067b60429cb879af8",
+            "5f0fc5eb434fdcbd585f3a7ff2fb3b7dbc78d3e24138a1c7afd6e440505bde7d",
+            "05e60a7ac4719735f529c4250795167504ce80a84e90fd77c1802eb96a8a5a66",
         )
     } else {
         (
-            "47a50daef14acc96a982bc18312c26229a34f1c55988ed94a16126486eb2992e",
-            "f152060914cd796efb3ca5d6fcc96e03715990b5323a293767b269bb38869f47",
+            "d5f963d7d7bb93ea60b585c073ed13d583bf83a603207f8070b67844a9364a79",
+            "426986f517b2f66ee02d8037a3632f0b6f6d4101f62e67e92135203afae4011e",
         )
     };
     assert_eq!(

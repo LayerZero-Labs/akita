@@ -403,7 +403,7 @@ fn append_claim_batch(
 mod tests {
     use super::*;
     use crate::SisModulusProfileId;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
 
     // Pre-PR 56 per-round construction retained as an independent parity oracle.
     fn append_sumcheck(
@@ -436,7 +436,7 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            FoldChallengeFamily::pm1_only(3),
         )
         .with_decomp(1, 1, 2, 2, 2)
         .expect("test fold params")
@@ -474,7 +474,7 @@ mod tests {
                             } => challenge_subring_dimension,
                         };
                         group.opening.fold_challenge_config =
-                            SparseChallengeConfig::production_for_ring_dim(challenge_dimension)
+                            FoldChallengeFamily::production_for_ring_dim(challenge_dimension)
                                 .unwrap();
                     }
                     current.set_precommitted_groups(preceding).unwrap();

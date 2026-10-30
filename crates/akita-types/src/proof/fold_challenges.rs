@@ -54,7 +54,7 @@ where
                 params.inner_commit_matrix_params().security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
-            .then(|| akita_challenges::selective_l2_operator_norm_rejection(d_a, &config))
+            .then(|| config.operator_norm_rejection(d_a))
             .flatten();
             draw.draw_folding_challenges_with_rejection(
                 FoldChallengeDrawDomain::EvaluationTrace,

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 
 /// Number of nonzero canonical coefficients in one source ring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -83,17 +83,18 @@ fn compute_canonical_source_classes(
 /// the product of their two population means.
 pub(super) fn log_mgf_upper(
     class: SourceClass,
-    challenge: &SparseChallengeConfig,
+    challenge: &FoldChallengeFamily,
     ring_dimension: usize,
     lambda: f64,
 ) -> Option<f64> {
+    let sparse = challenge.signed_sparse()?;
     let dimension = ring_dimension as f64;
     let cosh_one = cosh_upper(lambda)?;
     let cosh_two = cosh_upper(round_up(2.0 * lambda))?;
     let mean_pm1 = population_mean_upper(class, dimension, round_up(cosh_one - 1.0));
     let mean_pm2 = population_mean_upper(class, dimension, round_up(cosh_two - 1.0));
-    let pm1 = round_up(challenge.count_pm1 as f64 * ln_upper(mean_pm1)?);
-    let pm2 = round_up(challenge.count_pm2 as f64 * ln_upper(mean_pm2)?);
+    let pm1 = round_up(sparse.count_pm1 as f64 * ln_upper(mean_pm1)?);
+    let pm2 = round_up(sparse.count_pm2 as f64 * ln_upper(mean_pm2)?);
     Some(round_up(pm1 + pm2))
 }
 
@@ -101,15 +102,16 @@ pub(super) fn max_log_mgf_upper(
     ring_dimension: usize,
     chunk_size: usize,
     challenge_dimension: usize,
-    challenge: &SparseChallengeConfig,
+    challenge: &FoldChallengeFamily,
     lambda_exponent: i32,
 ) -> Option<f64> {
+    let sparse = challenge.signed_sparse()?;
     let key = (
         ring_dimension,
         chunk_size,
         challenge_dimension,
-        challenge.count_pm1,
-        challenge.count_pm2,
+        sparse.count_pm1,
+        sparse.count_pm2,
         lambda_exponent,
     );
     if let Some(cached) = MAX_LOG_MGF.lock().ok()?.get(&key) {
@@ -127,19 +129,20 @@ pub(super) fn max_log_mgf_upper(
 pub(super) fn deterministic_convolution_cap(
     ring_dimension: usize,
     chunk_size: usize,
-    challenge: &SparseChallengeConfig,
+    challenge: &FoldChallengeFamily,
 ) -> Option<u128> {
+    let sparse = challenge.signed_sparse()?;
     let key = (
         ring_dimension,
         chunk_size,
-        challenge.count_pm1,
-        challenge.count_pm2,
+        sparse.count_pm1,
+        sparse.count_pm2,
     );
     if let Some(cached) = DETERMINISTIC_CAP.lock().ok()?.get(&key) {
         return Some(*cached);
     }
     let challenge_l1 =
-        (challenge.count_pm1 as u128).checked_add((challenge.count_pm2 as u128).checked_mul(2)?)?;
+        (sparse.count_pm1 as u128).checked_add((sparse.count_pm2 as u128).checked_mul(2)?)?;
     let challenge_linf = challenge.infinity_norm() as u128;
     let value = canonical_source_classes(ring_dimension, chunk_size)?
         .into_iter()
@@ -288,10 +291,11 @@ mod tests {
 
     #[test]
     fn replacement_mgf_dominates_exact_disjoint_fixed_weight_support() {
-        let challenge = SparseChallengeConfig {
-            count_pm1: 2,
-            count_pm2: 1,
-        };
+        let challenge =
+            FoldChallengeFamily::SignedSparse(akita_challenges::SparseChallengeConfig {
+                count_pm1: 2,
+                count_pm2: 1,
+            });
         let class = SourceClass { nonzero_count: 3 };
         let magnitudes = [1.0f64, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let lambda = 0.375;
@@ -315,7 +319,7 @@ mod tests {
 
     #[test]
     fn packing_mgf_uses_the_embedded_residue_class_population() {
-        let challenge = SparseChallengeConfig::pm1_only(1);
+        let challenge = FoldChallengeFamily::pm1_only(1);
         let class = SourceClass { nonzero_count: 4 };
         let lambda = 0.5f64;
         let exact = lambda.cosh();

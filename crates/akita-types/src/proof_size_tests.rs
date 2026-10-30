@@ -7,7 +7,7 @@ mod tests {
     use akita_params::proof_size::*;
     use akita_params::{CommittedGroupParams, DigitRangePlan};
 
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
     use akita_error::AkitaError;
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
@@ -256,7 +256,7 @@ mod tests {
         E: Field + ExtField<B> + AkitaSerialize,
     {
         const D: usize = 128;
-        let challenge = SparseChallengeConfig::pm1_only(3);
+        let challenge = FoldChallengeFamily::pm1_only(3);
         let mut lp = CommittedGroupParams::params_only(profile, D, log_basis, 4, 2, 2, challenge)
             .with_decomp(256, 8, 1, 1, 1)
             .unwrap();
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn planned_level_bytes_follow_successor_padded_relation_domain() {
-        let challenge = SparseChallengeConfig::pm1_only(3);
+        let challenge = FoldChallengeFamily::pm1_only(3);
         let current = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn planned_level_bytes_match_serialized_l2_payloads() {
         const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn planned_level_bytes_use_fixed_compressed_d_and_successor_b_payloads() {
         const D_A: usize = 128;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
         let mut lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D_A,
@@ -617,7 +617,7 @@ mod tests {
     #[test]
     fn terminal_inner_binding_removes_exactly_the_outer_commitment_bytes() {
         const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
         let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -685,7 +685,7 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            FoldChallengeFamily::pm1_only(3),
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
@@ -724,7 +724,7 @@ mod tests {
         // serialize to exactly the direct level layout plus
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -792,7 +792,7 @@ mod tests {
     #[test]
     fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
         let num_claims = 3;
 
         for log_basis in 2..=6 {

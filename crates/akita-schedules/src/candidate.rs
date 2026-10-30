@@ -1,7 +1,7 @@
 //! Shared candidate-construction helpers.
 
 use crate::runtime::PlannerPolicy;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::sis::{
     min_secure_l2_rank, projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
@@ -20,7 +20,7 @@ pub struct SelectiveL2CandidateGeometry<'a> {
     pub ring_dimension: usize,
     pub fold_basis: usize,
     pub fold_digit_count: usize,
-    pub fold_challenge_config: &'a SparseChallengeConfig,
+    pub fold_challenge_config: &'a FoldChallengeFamily,
     /// Planner-frozen response cap. Artifact validation and resolved
     /// schedule audit replay this exact public value instead of rerunning an
     /// offline response model.
@@ -60,14 +60,13 @@ pub fn selective_l2_inner_matrix(
             geometry.fold_digit_count,
         )?,
     };
-    let challenge_mass = akita_challenges::selective_l2_operator_norm_rejection(
-        geometry.ring_dimension,
-        geometry.fold_challenge_config,
-    )
-    .map_or_else(
-        || FoldChallengeNorms::new(geometry.fold_challenge_config).l1_norm,
-        |rejection| u128::from(rejection.threshold),
-    );
+    let challenge_mass = geometry
+        .fold_challenge_config
+        .operator_norm_rejection(geometry.ring_dimension)
+        .map_or_else(
+            || FoldChallengeNorms::new(geometry.fold_challenge_config).l1_norm,
+            |rejection| u128::from(rejection.threshold),
+        );
     let collision_l2_sq =
         role_a_collision_l2_sq_for_response_bound(challenge_mass, response_l2_sq_cap)
             .ok_or_else(|| AkitaError::InvalidSetup("L2 collision bound overflow".into()))?;
@@ -185,7 +184,9 @@ mod tests {
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         };
-        let challenge = akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let challenge = akita_challenges::FoldChallengeFamily::SignedSparse(
+            akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+        );
 
         let candidate = selective_l2_inner_matrix(
             &policy,
@@ -243,7 +244,9 @@ mod tests {
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         };
-        let challenge = akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let challenge = akita_challenges::FoldChallengeFamily::SignedSparse(
+            akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+        );
         let basis_eight = selective_l2_inner_matrix(
             &policy,
             SelectiveL2CandidateGeometry {

@@ -65,7 +65,7 @@ pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize>(
     grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     params: &TerminalFoldParams,
-    sparse: &akita_challenges::SparseChallengeConfig,
+    sparse: &akita_challenges::FoldChallengeFamily,
     witness: &H,
     shape: &TerminalResponseShape,
 ) -> Result<TerminalFoldGrindOutput, AkitaError>
@@ -97,7 +97,8 @@ where
     let response_l2_sq_cap = params.response_l2_sq_cap();
     let operator_rejection = if response_l2_sq_cap.is_some() {
         Some(
-            akita_challenges::selective_l2_operator_norm_rejection(params.d_a(), sparse)
+            sparse
+                .operator_norm_rejection(params.d_a())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
                 })?,
@@ -481,7 +482,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
     use akita_params::SisModulusProfileId;
 
     type F = jolt_field::Prime128Offset275;
@@ -507,7 +508,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+            FoldChallengeFamily::production_for_ring_dim(128).unwrap(),
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
@@ -515,7 +516,7 @@ mod tests {
             challenge_subring_dimension: 64,
         };
         params.own_group_mut().opening.fold_challenge_config =
-            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+            FoldChallengeFamily::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
         let challenges =
@@ -552,7 +553,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+            FoldChallengeFamily::production_for_ring_dim(128).unwrap(),
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
@@ -561,8 +562,8 @@ mod tests {
         };
 
         for config in [
-            SparseChallengeConfig::pm1_only(0),
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeFamily::pm1_only(0),
+            FoldChallengeFamily::pm1_only(1),
         ] {
             params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();

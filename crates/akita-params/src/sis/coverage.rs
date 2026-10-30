@@ -186,7 +186,7 @@ fn derive_inner_coeff_linf_bounds(
             continue;
         }
         let Some(config) =
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(challenge_dimension)
+            akita_challenges::FoldChallengeFamily::production_for_ring_dim(challenge_dimension)
         else {
             continue;
         };
@@ -325,11 +325,11 @@ mod tests {
     fn production_challenge_l1_norms() -> Vec<u128> {
         let mut norms = akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
             .iter()
-            .filter_map(|&dim| {
-                akita_challenges::SparseChallengeConfig::production_for_ring_dim(dim)
-            })
+            .filter_map(|&dim| akita_challenges::FoldChallengeFamily::production_for_ring_dim(dim))
             .chain(core::iter::once(
-                akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+                akita_challenges::FoldChallengeFamily::SignedSparse(
+                    akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+                ),
             ))
             .map(|config| config.l1_norm() as u128)
             .collect::<Vec<_>>();

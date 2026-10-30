@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_algebra::poly::multilinear_eval;
-use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_challenges::{Challenges, FoldChallengeFamily, SparseChallenge};
 use akita_params::{
     r_decomp_levels, BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
     OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry,
@@ -39,7 +39,7 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
     let s = 64;
     let d_a = 256;
     let d_d = 128;
-    let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+    let config = FoldChallengeFamily::production_for_ring_dim(s).unwrap();
     let mut params = akita_params::CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         d_a,
@@ -111,9 +111,9 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
                 positions: (0..config.weight())
                     .map(|term| ((term + challenge) % s) as u32)
                     .collect(),
-                coeffs: (0..config.count_pm1)
+                coeffs: (0..config.signed_sparse().unwrap().count_pm1)
                     .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
-                    .chain((0..config.count_pm2).map(|_| 2))
+                    .chain((0..config.signed_sparse().unwrap().count_pm2).map(|_| 2))
                     .collect(),
             })
             .collect(),

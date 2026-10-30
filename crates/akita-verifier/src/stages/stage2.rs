@@ -474,7 +474,7 @@ mod tests {
     use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
     use crate::coefficient_packing_relation::tests::materialize_stage2;
     use crate::relation::{FlatRelationContext, RelationMatrixEvaluator};
-    use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+    use akita_challenges::{Challenges, FoldChallengeFamily, SparseChallenge};
     use akita_params::{
         BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
         OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry, RelationWitnessGeometry,
@@ -497,7 +497,7 @@ mod tests {
         let s = 64;
         let d_a = 256;
         let d_d = 128;
-        let challenge_config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+        let challenge_config = FoldChallengeFamily::production_for_ring_dim(s).unwrap();
         let mut params = akita_params::CommittedGroupParams::params_only(
             SisModulusProfileId::Q64Offset59,
             d_a,
@@ -567,9 +567,9 @@ mod tests {
                     positions: (0..challenge_config.weight())
                         .map(|term| ((term + challenge) % s) as u32)
                         .collect(),
-                    coeffs: (0..challenge_config.count_pm1)
+                    coeffs: (0..challenge_config.signed_sparse().unwrap().count_pm1)
                         .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
-                        .chain((0..challenge_config.count_pm2).map(|_| 2))
+                        .chain((0..challenge_config.signed_sparse().unwrap().count_pm2).map(|_| 2))
                         .collect(),
                 })
                 .collect(),

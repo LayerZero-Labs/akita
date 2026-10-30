@@ -140,10 +140,10 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
 fn precommit_admission_fixture() -> (
     GroupCommitPhaseParams,
     PrecommittedGroupAdmissionPolicy,
-    SparseChallengeConfig,
+    FoldChallengeFamily,
     usize,
 ) {
-    let challenge = SparseChallengeConfig::production_for_ring_dim(64).expect("D64 challenge");
+    let challenge = FoldChallengeFamily::production_for_ring_dim(64).expect("D64 challenge");
     let policy = PrecommittedGroupAdmissionPolicy {
         decomposition: akita_params::DecompositionParams {
             log_basis: 3,
@@ -402,7 +402,7 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = lp.preceding_group_mut_for_test(0).unwrap();
     precommitted.opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
+        FoldChallengeFamily::production_for_ring_dim(128).expect("D128 challenge");
     let inner = &precommitted.profile.inner.matrix;
     let inner_bound = akita_params::sis::rounded_up_role_a_inf_norm(
         inner.security_policy(),
@@ -494,7 +494,7 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
         .unwrap()
         .opening
         .fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(64).expect("D64 challenge");
+        FoldChallengeFamily::production_for_ring_dim(64).expect("D64 challenge");
 
     let geometry = akita_params::RelationWitnessGeometry::for_level(&lp, &batch, 2)
         .expect("mixed opening geometry");

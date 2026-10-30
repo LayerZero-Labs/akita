@@ -3,7 +3,7 @@ use crate::{
     CommittedGroupParams, FoldParams, FoldSchedule, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalFoldParams, TerminalResponseShape,
 };
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 
 fn committed(ring_dimension: usize) -> CommittedGroupParams {
     CommittedGroupParams::params_only(
@@ -13,7 +13,7 @@ fn committed(ring_dimension: usize) -> CommittedGroupParams {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(ring_dimension.max(31)),
+        FoldChallengeFamily::pm1_only(ring_dimension.max(31)),
     )
     .with_decomp(8, 32, 2, 2, 2)
     .expect("ring-dimension test params")
@@ -30,7 +30,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
         },
         recursive_folds: Vec::new(),
         terminal: TerminalFoldParams {
-            fold_challenge_config: SparseChallengeConfig::pm1_only(ring_dimension.max(31)),
+            fold_challenge_config: FoldChallengeFamily::pm1_only(ring_dimension.max(31)),
             response_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension,

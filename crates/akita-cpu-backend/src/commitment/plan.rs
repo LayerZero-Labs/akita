@@ -322,7 +322,7 @@ impl CommitmentExecutionPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
     use akita_params::{CommitmentPayloadMode, SisModulusProfileId};
 
     fn recursive_params(payload_mode: CommitmentPayloadMode) -> CommittedGroupParams {
@@ -333,7 +333,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeFamily::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
