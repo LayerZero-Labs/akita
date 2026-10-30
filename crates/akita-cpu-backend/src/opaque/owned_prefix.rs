@@ -217,13 +217,13 @@ where
         coefficients: Vec<F>,
     ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError> {
         let prepared = self.prepared()?;
-        let validated =
-            crate::setup::setup_prefix::validate_setup_prefix_source(id, coefficients.len())?;
         if coefficients.len() != id.n_prefix()? {
             return Err(AkitaError::InvalidInput(
                 "setup prefix source must fill its committed domain".into(),
             ));
         }
+        let validated =
+            crate::setup::setup_prefix::validate_setup_prefix_source(id, coefficients.len())?;
         let polynomial =
             DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
         let executor = CommitmentExecutor::cpu(
