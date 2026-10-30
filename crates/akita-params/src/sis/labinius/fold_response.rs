@@ -97,7 +97,9 @@ impl LabiniusFoldResponse {
                 "LaBinius fold response scalar/commitment degree mismatch".into(),
             ));
         }
-        let sparse = SparseChallengeConfig::pm1_only(challenge.weight_cap());
+        let sparse = akita_challenges::FoldChallengeFamily::SignedSparse(
+            SparseChallengeConfig::pm1_only(challenge.weight_cap()),
+        );
         let norms = FoldChallengeNorms::new(&sparse);
         let gamma = u128::from(challenge.multiplication_linf_operator_bound());
         let monomial_gain = gamma

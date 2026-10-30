@@ -1,6 +1,6 @@
 //! Checked subring coefficient packing geometry.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::{checked, AkitaError};
 
 /// Canonical geometry for one subring coefficient packing opening.
@@ -16,7 +16,7 @@ pub struct SubringCoefficientPackingGeometry {
     packing_factor: usize,
     subring_embedding_stride: usize,
     partial_base_field_width: usize,
-    fold_challenge_config: SparseChallengeConfig,
+    fold_challenge_config: FoldChallengeFamily,
 }
 
 impl SubringCoefficientPackingGeometry {
@@ -41,7 +41,7 @@ impl SubringCoefficientPackingGeometry {
             ));
         }
 
-        let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(
+        let fold_challenge_config = FoldChallengeFamily::production_for_ring_dim(
             challenge_subring_dimension,
         )
         .ok_or_else(|| {
@@ -119,7 +119,7 @@ impl SubringCoefficientPackingGeometry {
 
     /// Production sparse challenge family fixed by `s`.
     #[must_use]
-    pub const fn fold_challenge_config(self) -> SparseChallengeConfig {
+    pub const fn fold_challenge_config(self) -> FoldChallengeFamily {
         self.fold_challenge_config
     }
 
@@ -246,7 +246,7 @@ mod tests {
                     assert_eq!(geometry.partial_base_field_width(), k * s);
                     assert_eq!(
                         Some(geometry.fold_challenge_config()),
-                        SparseChallengeConfig::production_for_ring_dim(s)
+                        FoldChallengeFamily::production_for_ring_dim(s)
                     );
                 }
             }

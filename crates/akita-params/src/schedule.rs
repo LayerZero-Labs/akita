@@ -105,7 +105,9 @@ pub struct TerminalFoldParams {
     /// Response basis and depth this terminal fold was planned against.
     pub fold: crate::GadgetDigits,
     /// Fold-challenge family for the terminal response.
-    pub fold_challenge_config: akita_challenges::SparseChallengeConfig,
+    /// Extension seam: challenge selection for binary source groups
+    /// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub fold_challenge_config: akita_challenges::FoldChallengeFamily,
     /// Shape of the clear terminal response payload.
     pub response_shape: TerminalResponseShape,
     /// Witness field length entering the terminal fold.
@@ -640,7 +642,7 @@ struct OpeningExecutionGroup<'a> {
     /// this admission check meant to impose.
     opening_method: OpeningMethod,
     inner_commit_matrix: &'a crate::InnerCommitMatrixParams,
-    fold_challenge_config: akita_challenges::SparseChallengeConfig,
+    fold_challenge_config: akita_challenges::FoldChallengeFamily,
     /// Encoding the committing fold actually used for this group.
     ///
     /// Carried explicitly rather than read from `params`: a group's own
@@ -725,7 +727,7 @@ fn validate_level_opening_execution(
         else {
             continue;
         };
-        let expected = akita_challenges::SparseChallengeConfig::production_for_ring_dim(
+        let expected = akita_challenges::FoldChallengeFamily::production_for_ring_dim(
             challenge_subring_dimension,
         )
         .ok_or_else(|| {

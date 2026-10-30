@@ -1,5 +1,7 @@
 //! Akita parameter geometry, sizing, schedules, and security policy.
 
+#[cfg(feature = "labinius-sis")]
+pub mod binary_setup;
 pub mod commitment_slicing;
 pub mod compression;
 pub mod config;

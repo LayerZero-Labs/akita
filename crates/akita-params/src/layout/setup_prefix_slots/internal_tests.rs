@@ -7,7 +7,7 @@ use crate::{
     CommittedGroupParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
     OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, SisModulusProfileId,
 };
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use std::collections::{BTreeSet, HashSet};
 
 fn precommitted_group(
@@ -63,7 +63,7 @@ fn active_setup_field_len_prices_one_physical_sliced_b_matrix() {
         3,
         3,
         2,
-        SparseChallengeConfig::pm1_only(3),
+        FoldChallengeFamily::pm1_only(3),
     )
     .with_decomp(4, 32, 2, 2, 2)
     .expect("sliced level params");

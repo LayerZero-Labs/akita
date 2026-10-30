@@ -1,5 +1,9 @@
 //! Shared Akita wire values and protocol math.
 
+/// Extension seam: binary source contracts
+/// ([tracking issue](https://github.com/LayerZero-Labs/akita/issues/285)).
+#[cfg(feature = "labinius-trinomial")]
+pub mod binary_source;
 mod eor_sites;
 pub mod extension_opening_reduction;
 pub mod field_reduction;

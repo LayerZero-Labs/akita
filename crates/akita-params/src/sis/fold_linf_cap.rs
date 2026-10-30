@@ -6,7 +6,7 @@
 //! [`super::decomposition_digits::balanced_digit_interval_diameter`] at the
 //! resulting `δ_fold` depth (see [`super::norm_bound::rounded_up_role_a_inf_norm`]).
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 
 /// Per-challenge **grind** acceptance target `p_grind = NUM / DEN` used in the union-bound
@@ -132,7 +132,7 @@ impl FoldWitnessLinfCapConfig {
     /// inner A-matrix width (`num_positions_per_block · δ_commit`).
     #[inline]
     pub fn for_fold_coeffs(
-        fold_challenge_config: &SparseChallengeConfig,
+        fold_challenge_config: &FoldChallengeFamily,
         num_fold_coeffs: usize,
     ) -> Result<Self, AkitaError> {
         let num_fold_coeffs = num_fold_coeffs as u128;

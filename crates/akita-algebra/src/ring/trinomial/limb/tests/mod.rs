@@ -65,3 +65,21 @@ fn inverse(domain: &TrinomialLimbDomain, slots: &TrinomialLimbSlots) -> [i32; DE
         .all(|&value| (-half..=half).contains(&value)));
     coefficients
 }
+
+// Both rounded-product normalization and its power-of-two specialization are
+// monotone. Include both neighbors of every exact quotient transition.
+pub(super) fn normalization_transition_operands(quotient: i32, bound: i64) -> Vec<i32> {
+    let scale = 1i64 << 31;
+    let bias = 1i64 << 30;
+    let q = i64::from(quotient);
+    let mut operands = vec![-bound as i32, bound as i32];
+    for t in ((-bound * q + bias) >> 31)..=((bound * q + bias) >> 31) + 1 {
+        let transition = (t * scale - bias).div_euclid(q);
+        for value in [transition - 1, transition, transition + 1] {
+            if (-bound..=bound).contains(&value) {
+                operands.push(value as i32);
+            }
+        }
+    }
+    operands
+}

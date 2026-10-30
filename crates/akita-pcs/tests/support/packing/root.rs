@@ -1,6 +1,6 @@
 //! Rebuild one root with the fixture's reduced-width packing geometry.
 use super::geometry::rebuild_group_output_matrices;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::{FoldParams, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
@@ -25,7 +25,7 @@ pub(super) fn build_root(
         };
     root.source_encoding = akita_params::CommittedSourceEncoding::CanonicalCoefficientTable;
     root.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension).ok_or_else(
+        FoldChallengeFamily::production_for_ring_dim(challenge_subring_dimension).ok_or_else(
             || {
                 AkitaError::InvalidSetup(
                     "root packing subring is not in the production challenge ladder".into(),

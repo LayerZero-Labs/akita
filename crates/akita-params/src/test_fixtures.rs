@@ -5,7 +5,7 @@ use crate::{
     OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
     SisModulusProfileId,
 };
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 
 pub fn sample_level_params() -> CommittedGroupParams {
     CommittedGroupParams::params_only(
@@ -15,7 +15,7 @@ pub fn sample_level_params() -> CommittedGroupParams {
         3,
         3,
         2,
-        SparseChallengeConfig::pm1_only(3),
+        FoldChallengeFamily::pm1_only(3),
     )
     .with_decomp(4, 3, 2, 2, 2)
     .expect("sample level params")
@@ -33,7 +33,7 @@ pub fn prefix_eligible_level_params() -> CommittedGroupParams {
         2,
         3,
         2,
-        SparseChallengeConfig::pm1_only(3),
+        FoldChallengeFamily::pm1_only(3),
     )
     .with_decomp(2, 3, field_element_digits, 2, 2)
     .expect("prefix eligible level params")
@@ -45,7 +45,7 @@ pub fn retarget_group_role_dims(
     outer_ring_dimension: usize,
 ) {
     params.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
+        FoldChallengeFamily::production_for_ring_dim(inner_ring_dimension)
             .expect("production challenge");
     let a_bound = *crate::sis::inner_coeff_linf_bounds(
         params.inner().matrix.sis_modulus_profile(),
@@ -135,7 +135,7 @@ pub fn sample_params_only() -> CommittedGroupParams {
         2,
         4,
         3,
-        SparseChallengeConfig::pm1_only(3),
+        FoldChallengeFamily::pm1_only(3),
     )
 }
 
@@ -190,12 +190,12 @@ pub fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsL
         .with_layout(&sample_layout_lp())
         .unwrap();
     lp.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(lp.d_a()).expect("test challenge");
+        FoldChallengeFamily::production_for_ring_dim(lp.d_a()).expect("test challenge");
     let mut precommit_lp = sample_params_only()
         .with_layout(&sample_layout_lp())
         .unwrap();
     precommit_lp.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(precommit_lp.d_a())
+        FoldChallengeFamily::production_for_ring_dim(precommit_lp.d_a())
             .expect("precommit test challenge");
     certify_test_sis_bounds(&mut precommit_lp);
     let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
@@ -267,7 +267,7 @@ pub(crate) fn address_oracle_group_params(
         3,
         2,
         3,
-        SparseChallengeConfig::production_for_ring_dim(d_a).expect("test challenge"),
+        FoldChallengeFamily::production_for_ring_dim(d_a).expect("test challenge"),
     )
     .with_decomp(4, blocks * 4, 2, 2, 2)
     .expect("address-oracle params");
@@ -358,7 +358,7 @@ pub fn committed_params_with_geometry(
         2,
         2,
         2,
-        SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+        FoldChallengeFamily::production_for_ring_dim(ring_dimension)
             .expect("production test challenge"),
     )
     .with_decomp(
@@ -429,7 +429,7 @@ pub fn test_lp() -> CommittedGroupParams {
         2,
         3,
         2,
-        SparseChallengeConfig::pm1_only(3),
+        FoldChallengeFamily::pm1_only(3),
     )
     .with_decomp(8, 32, 2, 3, 3)
     .expect("tail segment test params");

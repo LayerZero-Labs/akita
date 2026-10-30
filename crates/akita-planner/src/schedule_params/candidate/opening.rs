@@ -4,7 +4,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PlannerOpeningCandidate {
     EvaluationTrace {
-        challenge_config: SparseChallengeConfig,
+        challenge_config: FoldChallengeFamily,
     },
     SubringCoefficientPacking {
         geometry: akita_params::SubringCoefficientPackingGeometry,
@@ -13,7 +13,7 @@ pub(crate) enum PlannerOpeningCandidate {
 
 impl PlannerOpeningCandidate {
     /// Preserve the historical full-ring EvaluationTrace candidate.
-    pub(crate) fn evaluation_trace(challenge_config: SparseChallengeConfig) -> Self {
+    pub(crate) fn evaluation_trace(challenge_config: FoldChallengeFamily) -> Self {
         Self::EvaluationTrace { challenge_config }
     }
 
@@ -43,7 +43,7 @@ impl PlannerOpeningCandidate {
         challenge_subring_dimension: usize,
     ) -> Result<Option<Self>, AkitaError> {
         dimensions.validate_role_projection()?;
-        if SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension).is_none() {
+        if FoldChallengeFamily::production_for_ring_dim(challenge_subring_dimension).is_none() {
             return Err(AkitaError::InvalidSetup(format!(
                 "challenge subring dimension {challenge_subring_dimension} has no production challenge family"
             )));
@@ -75,7 +75,7 @@ impl PlannerOpeningCandidate {
         }
     }
 
-    pub(crate) const fn challenge_config(self) -> SparseChallengeConfig {
+    pub(crate) const fn challenge_config(self) -> FoldChallengeFamily {
         match self {
             Self::EvaluationTrace { challenge_config } => challenge_config,
             Self::SubringCoefficientPacking { geometry } => geometry.fold_challenge_config(),
@@ -149,7 +149,7 @@ mod tests {
         );
         assert_eq!(
             admitted.challenge_config(),
-            SparseChallengeConfig::production_for_ring_dim(64).unwrap()
+            FoldChallengeFamily::production_for_ring_dim(64).unwrap()
         );
         assert!(admitted.is_coefficient_packing());
 
@@ -206,8 +206,7 @@ mod tests {
 
     #[test]
     fn evaluation_trace_rejects_an_unaudited_challenge_family() {
-        let candidate =
-            PlannerOpeningCandidate::evaluation_trace(SparseChallengeConfig::pm1_only(0));
+        let candidate = PlannerOpeningCandidate::evaluation_trace(FoldChallengeFamily::pm1_only(0));
         assert!(candidate
             .validate_for(1, CommitmentRingDims::uniform(256))
             .is_err());

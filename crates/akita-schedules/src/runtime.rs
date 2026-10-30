@@ -477,7 +477,9 @@ pub struct CandidateFoldStep {
 /// Fully priced terminal response awaiting schedule materialization.
 pub struct CandidateTerminalResponse {
     pub params: akita_params::TerminalFoldParams,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
+    /// Extension seam: challenge selection for binary source groups
+    /// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub sparse_challenge_config: akita_challenges::FoldChallengeFamily,
     pub input_witness_len: usize,
     pub estimated_direct_payload_bytes: usize,
     pub response_shape: TerminalResponseShape,

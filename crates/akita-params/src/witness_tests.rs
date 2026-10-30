@@ -41,7 +41,7 @@ fn test_layout(num_chunks: usize) -> (CommittedGroupParams, OpeningClaimsLayout,
         1,
         1,
         1,
-        akita_challenges::SparseChallengeConfig::pm1_only(1),
+        akita_challenges::FoldChallengeFamily::pm1_only(1),
     )
     .with_decomp(4, 25, 1, 2, 2)
     .expect("test params");
@@ -546,7 +546,7 @@ fn pending_chunk_shape_matches_grouped_successor_alignment() {
                 challenge_subring_dimension: 64,
             };
             group.opening.fold_challenge_config =
-                akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+                akita_challenges::FoldChallengeFamily::production_for_ring_dim(64).unwrap();
         }
         params.set_precommitted_groups(preceding).unwrap();
         for chunks in [1, 2, 8] {

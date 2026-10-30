@@ -641,7 +641,7 @@ pub fn find_schedule(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     find_schedule_in_relation_order(
         key,
@@ -682,7 +682,7 @@ pub fn find_adapted_schedule(
     request: &crate::emit::GroupedGenerationRequest,
     final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let key = request.key();
     let precommitted_source_contracts = request.source_contracts();
@@ -717,7 +717,7 @@ fn find_adapted_schedule_for_key(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
@@ -777,7 +777,7 @@ pub fn find_schedule_for_test_relation_mode(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
     relation_mode_filter: super::schedule_params::TestRelationModeFilter,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     find_schedule_in_relation_order(
@@ -800,7 +800,7 @@ pub(crate) fn find_schedule_in_relation_order(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
     options: ScheduleSearchOptions<'_>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let diagnostics = crate::diagnostics::active();

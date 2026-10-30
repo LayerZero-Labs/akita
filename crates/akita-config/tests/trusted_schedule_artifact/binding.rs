@@ -31,7 +31,7 @@ impl CommitmentConfig for CountingDense {
 
     fn ring_challenge_config(
         dimension: usize,
-    ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
+    ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
         RING_CHALLENGE_AUDITS.fetch_add(1, Ordering::SeqCst);
         fp128::Dense::ring_challenge_config(dimension)
     }

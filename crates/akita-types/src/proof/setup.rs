@@ -768,7 +768,7 @@ mod tests {
                 ),
             },
             opening: akita_params::GroupOpeningPlan::evaluation_trace(
-                akita_challenges::SparseChallengeConfig::pm1_only(0),
+                akita_challenges::FoldChallengeFamily::pm1_only(0),
                 1,
                 1,
                 1,

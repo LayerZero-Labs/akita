@@ -10,10 +10,9 @@
 //! selected row.
 
 use super::{
-    catalog_digest, policy_digest, AkitaError, CatalogCoverage, PlannerPolicy,
-    ScheduleCatalogArtifactRowV1, SparseChallengeConfig, ValidatedScheduleCatalog,
-    AKITA_INSTANCE_DESCRIPTOR_VERSION, MAX_TRUSTED_CATALOG_ROWS,
-    MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
+    catalog_digest, policy_digest, AkitaError, CatalogCoverage, FoldChallengeFamily, PlannerPolicy,
+    ScheduleCatalogArtifactRowV1, ValidatedScheduleCatalog, AKITA_INSTANCE_DESCRIPTOR_VERSION,
+    MAX_TRUSTED_CATALOG_ROWS, MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use serde::{Deserialize, Serialize};
@@ -115,7 +114,7 @@ impl ValidatedScheduleCatalog {
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
     ) -> Result<Self, AkitaError> {
         if bytes.len() > MAX_VERIFIER_VIEW_BYTES {
             return Err(AkitaError::InvalidSetup(

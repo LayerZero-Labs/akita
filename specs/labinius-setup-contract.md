@@ -4,6 +4,10 @@ Status: implemented
 Book-chapter: book/src/how/architecture.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
+The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", and "MAY" in this
+document are interpreted as described in BCP 14 (RFC 2119 and RFC 8174) when
+they appear in all capitals.
+
 ## Derivation and admission
 
 `AdmittedRootSetup::derive::<P>` MUST derive `LabiniusRootShape` from the
@@ -12,8 +16,8 @@ selected `LabiniusRootProfile`, `log_num_cells`, `log_fold_width`, and
 column `m`, fold width `C` and response interval, the balanced base-16 digit
 range of [root admission](labinius-root-admission.md#fold-response), with the
 profile's challenge family, commitment modulus `q` and commitment degree.
-Before expanding, it MUST apply `LabiniusRootShape::check_derivation_bias` to
-the characteristic of the stream field `P`
+The matrix MUST use exact q sampling, so this path MUST NOT apply the legacy
+P-to-q derivation-bias gate
 ([root admission](labinius-root-admission.md#derivation-bias)).
 `BinaryClearSetup::new` MUST check the degree, trinomial sign and commitment
 modulus against those identities and MUST reject a matrix coefficient at
@@ -24,45 +28,82 @@ Deriving the setup admits no proof field: that is a separate check on the
 shape, made where a proof field enters
 ([lowered relation](labinius-lowered-root.md#geometry-and-admission)).
 
-`derive_trinomial_matrix::<P>` MUST expand exactly `rows * columns * D` field
-elements with `derive_public_matrix_prefix::<P>`, passing the caller's
-`AkitaSetupSeed` unchanged. No domain separation is applied at this layer; the
-PCS composition separates the seed before the call
-([matrix seed and stream field](#matrix-seed-and-stream-field)). `P`
-names the stream field being reduced; it is a method-level parameter of
-`AdmittedRootSetup::derive` and not part of the setup's type. The products
-MUST be checked before expansion. Coefficient `t` of `A[i,j]` MUST equal the
-canonical integer of the public field element at
+`derive_trinomial_matrix::<P, M>` MUST derive exactly `rows * columns * D`
+coefficients from `derive_centered_q_matrix`. `P` is a validated field
+descriptor, not the source of q candidates; `M` selects the trinomial sign.
+For this legacy single-root adapter, the typed label MUST use role
+`Commitment`, group zero, level zero, the matrix rank, the ring selected by
+`M`, degree `D`, and modulus `Q(q)`. Each matrix entry has its own row and
+column indices in the label. The caller's 32 seed bytes pass unchanged to the
+typed stream. The PCS composition separately derives that seed
+([matrix seed and stream field](#matrix-seed-and-stream-field)).
+
+The typed stream samples centered integers in `[-(q-1)/2, (q-1)/2]`. This
+adapter MUST convert them to canonical residues in `[0, q)` for
+`BinaryClearSetup`; it MUST NOT change the sampled distribution. Coefficient
+`t` of `A[i,j]` is stored at
 
 ```text
-(i * columns + j) * D + t,    0 <= t < D,
+(i * columns + j) * D + t,    0 <= t < D.
 ```
 
-reduced modulo `q` and stored as a u32. This is
-`TrinomialASetupView::setup_address(i,j,t)` with setup offset zero:
+This is `TrinomialASetupView::setup_address(i,j,t)` with setup offset zero:
 coefficients are contiguous, then columns, then rows. The digest of this view
 is specified in [the clear opening](labinius-clear-opening.md#setup-admission).
 The matrix element at `i * columns + j` is the row-major element consumed by
-`apply_matrix`.
-For an admitted root, the matrix dimensions are `n_A` by `m`; `C` counts source
-columns and does not determine the matrix's column count.
+`apply_matrix`. For an admitted root, the matrix dimensions are `n_A` by `m`;
+`C` counts source columns and does not determine the matrix's column count.
+Increasing the column count preserves every existing entry's coefficient
+stream, although later rows move in the flat storage layout.
 
-The matrix is a reduced view of the public field prefix of its seed over `P`.
-The reduced view has the reduction bias the derivation-bias check admits.
-Expanding a longer prefix MUST preserve every earlier coefficient. Given the
-seed and field of an ordinary Akita setup, this derivation returns a reduced
-copy of a prefix of that setup's matrix, and nothing may treat the two as
-independent. The PCS composition never passes such a seed.
+The materialized typed API MUST check the coefficient count and byte count
+before allocation and use fallible reservation. It rejects zero dimensions,
+a rank or degree not representable as u32, an invalid trinomial degree, an
+invalid q, and centered storage over 128 MiB. The legacy adapter MUST validate
+`P`'s field descriptor and reserve the canonical-residue output fallibly.
+Setup failures MUST return `AkitaError::InvalidSetup`.
 
-This materialized API rejects zero dimensions, zero or odd degree, unsupported
-field descriptors, more than `MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS`
-coefficients, a stream field wider than 128 bits, more than 64 MiB for the
-u32 matrix backing, or more than 128 MiB for the transient flat prefix. These are
-host-resource limits, not limits on the public stream or the numerical shape admission. It MUST perform
-fallible reservation for the matrix and a flat-prefix allocation probe before
-calling the bounded, infallibly allocating expander. The probe is released
-before expansion; it cannot guarantee success against subsequent global
-allocator exhaustion. Setup failures MUST return `AkitaError::InvalidSetup`.
+## Typed setup streams
+
+`akita_setup` exposes the typed stream API from `akita_params::binary_setup`
+behind the default-off `labinius` feature. Calling this API explicitly selects
+the binary-source setup derivation. Enabling the feature alone MUST NOT change
+ordinary setup streams or select the extension.
+
+`TypedSetupStream::new` MUST initialize SHAKE256 with the following fixed byte
+layout. All integers use fixed-width little-endian encoding:
+
+```text
+b"akita/binary-source/setup/shake256/v1" || seed:[u8;32]
+|| role:u8 || group:u64 || level:u32 || rank:u32 || row:u32 || column:u64
+|| ring:u8 || degree:u32 || coefficient_domain:u8 || modulus:u128
+```
+
+The role tags are `Commitment = 1`, `ImageCommitment = 2`,
+`WitnessCommitment = 3`, and `Projection = 4`. Ring tags are
+`PlusTrinomial = 1`, `MinusTrinomial = 2`, and `Negacyclic = 3`.
+Coefficient-domain tag 1 names `Q(q)` and tag 2 names
+`Prime128Offset275`. The full modulus is included even though the domain tag
+already separates q from P. The rank is positive, the row is less than the
+rank, and the degree is positive; a trinomial degree is even. Coefficient
+position is the sequential position within an entry's XOF stream, including
+candidates consumed by rejection.
+
+For odd `3 <= q <= u32::MAX`, `sample_q_centered` MUST read little-endian u32
+candidates and accept exactly those below
+`floor(2^32 / q) * q`. It reduces an accepted candidate modulo q, then
+subtracts q exactly when the residue exceeds `(q-1)/2`. Thus every centered
+representative has the same number of accepted preimages. q is a parameter;
+the implementation supports both q24 = 14,253,409 and q25 = 33,568,993.
+
+The P stream is separate. `sample_p` MUST read little-endian u128 candidates
+and accept exactly those less than `P = 2^128 - 275`, returning a canonical P
+residue. A P stream MUST reject a q-sampling request and conversely. Both
+samplers return `AkitaError::InvalidSetup` after 256 rejected candidates;
+conditional on returning a value, their distributions are exact. No P sample
+is reduced modulo q. The typed domains distinguish the q commitment matrix
+from the P-field image, witness, and projection setup streams, even when they
+use the same seed.
 
 ## Matrix seed and stream field
 
@@ -80,14 +121,12 @@ then the 32 seed bytes) and the digest of `akita_params::digest_descriptor_bytes
 It MUST then call `AdmittedRootSetup::derive::<Prime128Offset275>` with a seed
 that has the nested seed's derivation algorithm and `matrix_seed` as its bytes.
 
-The stream field is `2^128 - 275` whichever field the proof uses. A 64-bit
-stream fails the derivation-bias check at every geometry
-([root admission](labinius-root-admission.md#derivation-bias)), so the 64-bit
-family cannot reduce its own field's stream. A fixed stream field also gives
-one matrix, and therefore one clear image, for both families. The label keeps
-the matrix stream apart from the stream that expands the nested setup: with
-the nested seed itself, the 128-bit family's root matrix would be a prefix of
-its nested Akita setup matrix reduced modulo `q`.
+`Prime128Offset275` remains the validated field descriptor passed by this
+legacy composition, whichever proof field is used. It does not supply the q
+matrix candidates, so changing a valid descriptor does not change that matrix.
+The labelled matrix seed and the typed q domain separate the root matrix from
+the nested ordinary Akita setup stream. The root matrix is no longer a reduced
+prefix of the nested P-field matrix.
 
 The seed bytes of the admitted identity (item 8 below) are `matrix_seed`. The
 nested seed is bound by the nested Akita setup identity, which the PCS
@@ -117,10 +156,10 @@ identity, and existing matrix-view digest. That digest binds `q` and the tight
 row-major matrix coefficients and is transcript-backend specific. This
 contract MUST NOT introduce a second matrix digest.
 
-The identity names neither the stream field nor a proof field. The stream
-field is bound only through the matrix residues it produced. A protocol over a
-proof field MUST bind that field itself; the root reduction absorbs the
-characteristic of its base field and the degree and multiplication table of
+The identity names neither the validated field descriptor nor a proof field.
+The existing matrix-view digest binds the residues derived by the typed q
+stream. A protocol over a proof field MUST bind that field itself; the root
+reduction absorbs the characteristic of its base field and the degree and multiplication table of
 its challenge field
 ([root reduction](labinius-root-reduction.md#transcript-and-wire-grammar)).
 

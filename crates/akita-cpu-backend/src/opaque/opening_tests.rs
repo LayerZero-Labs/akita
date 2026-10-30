@@ -329,7 +329,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 1,
                 1,
                 1,
-                akita_challenges::SparseChallengeConfig::production_for_ring_dim(D).unwrap(),
+                akita_challenges::FoldChallengeFamily::production_for_ring_dim(D).unwrap(),
             )
             .with_decomp(4, 4, 2, 2, 2)
             .unwrap();
