@@ -38,6 +38,8 @@ pub enum LabiniusCommitmentModulus {
     ///
     /// Its certified cells are [`LABINIUS_COMMITMENT_PRIME_WIDTH_TABLE`].
     Q25Plus14561,
+    /// The commitment prime `2^24 - 2523807 = 14_253_409`.
+    Q24Minus2523807,
 }
 
 impl LabiniusCommitmentModulus {
@@ -45,6 +47,7 @@ impl LabiniusCommitmentModulus {
     pub const fn modulus(self) -> u32 {
         match self {
             Self::Q25Plus14561 => 33_568_993,
+            Self::Q24Minus2523807 => 14_253_409,
         }
     }
 
@@ -52,6 +55,7 @@ impl LabiniusCommitmentModulus {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Q25Plus14561 => "q25+14561",
+            Self::Q24Minus2523807 => "q24-2523807",
         }
     }
 }
