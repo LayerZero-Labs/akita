@@ -176,8 +176,10 @@ where
     verifier.verify::<F>(setup, next_params, grinding, level)
 }
 
-/// Resolve the planned setup-prefix slot in the verifier setup, check that it
-/// covers the Stage 3 setup product, and encode its public slot id.
+/// Extension seam: resolve an ordinary prefix without accepting scoped streams.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+///
+/// Check that the slot covers the Stage 3 setup product and encode its public id.
 ///
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
@@ -197,6 +199,11 @@ where
     let selected_slot_id = selected_prefix.slot_id().ok_or_else(|| {
         AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
     })?;
+    if setup.prefix_context(&selected_slot_id).is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "ordinary Stage 3 cannot consume a scoped setup prefix".into(),
+        ));
+    }
     let slot = setup.prefix_slots().get(&selected_slot_id).ok_or_else(|| {
         AkitaError::InvalidSetup(
             "planned setup-prefix slot is missing from verifier setup".to_string(),
