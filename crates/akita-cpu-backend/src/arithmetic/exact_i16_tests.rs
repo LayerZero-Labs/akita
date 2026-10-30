@@ -76,7 +76,7 @@ fn dense_coeff_commit_selects_exact_i16_from_inner_basis_inner() {
                 1,
                 block.len(),
                 &source,
-                std::slice::from_ref(&(0..block.len())),
+                &[0..block.len(), block.len()..block.len()],
                 DigitShape {
                     num_digits: 1,
                     log_basis: log_basis_inner,
@@ -88,7 +88,9 @@ fn dense_coeff_commit_selects_exact_i16_from_inner_basis_inner() {
             .expect("dense commit rows")
     };
 
-    assert_eq!(commit(3), commit(11));
+    let rows = commit(11);
+    assert_eq!(commit(3), rows);
+    assert_eq!(rows[1], vec![CyclotomicRing::zero()]);
 }
 
 #[test]

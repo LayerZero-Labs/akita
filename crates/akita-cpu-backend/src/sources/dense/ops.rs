@@ -40,7 +40,7 @@ where
         log_basis: u32,
     ) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
         validate_digit_shape(num_digits, log_basis)?;
-        let coeffs = self.ring_coeffs::<D>()?;
+        let coeffs = self.nonzero_ring_coeffs::<D>()?;
         let shape = DigitShape {
             num_digits,
             log_basis,
@@ -79,12 +79,12 @@ where
         scalars: &[F],
         num_positions_per_block: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        let coeffs = self.ring_coeffs::<D>()?;
+        let coeffs = self.nonzero_ring_coeffs::<D>()?;
         let n = coeffs.len();
-        let num_live_blocks = n.div_ceil(num_positions_per_block);
+        let num_live_blocks = self.num_ring_elems_at(D).div_ceil(num_positions_per_block);
         Ok(cfg_into_iter!(0..num_live_blocks)
             .map(|i| {
-                let start = i * num_positions_per_block;
+                let start = (i * num_positions_per_block).min(n);
                 let end = (start + num_positions_per_block).min(n);
                 let block = &coeffs[start..end];
                 let mut acc = CyclotomicRing::<F, D>::zero();
@@ -101,12 +101,12 @@ where
         scalars: &[CyclotomicRing<F, D>],
         num_positions_per_block: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        let coeffs = self.ring_coeffs::<D>()?;
+        let coeffs = self.nonzero_ring_coeffs::<D>()?;
         let n = coeffs.len();
-        let num_live_blocks = n.div_ceil(num_positions_per_block);
+        let num_live_blocks = self.num_ring_elems_at(D).div_ceil(num_positions_per_block);
         Ok(cfg_into_iter!(0..num_live_blocks)
             .map(|i| {
-                let start = i * num_positions_per_block;
+                let start = (i * num_positions_per_block).min(n);
                 let end = (start + num_positions_per_block).min(n);
                 let block = &coeffs[start..end];
                 let mut acc = CyclotomicRing::<F, D>::zero();

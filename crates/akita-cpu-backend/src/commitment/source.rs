@@ -86,7 +86,7 @@ impl CommitSourceDescriptor {
         self.num_vars
     }
 
-    /// Physical coefficient extent, including commitment padding.
+    /// Representable coefficient extent, including implicit zeros and commitment padding.
     pub(crate) const fn total_coefficient_len(&self) -> usize {
         self.total_coefficient_len
     }
@@ -351,8 +351,16 @@ impl PolynomialTypeSelection {
 
 /// Borrowed source of canonical dense coefficients.
 pub(crate) trait DenseCoefficientSource<F: Field>: Send + Sync {
-    /// Physical coefficient buffer in canonical source order.
+    /// Stored coefficients in canonical source order, implicitly zero-extended
+    /// to the descriptor's full extent.
     fn coefficients(&self) -> &[F];
+
+    /// Coefficients past this prefix are identically zero. This only limits
+    /// traversal and must not exceed the stored coefficient extent.
+    /// The descriptor still authenticates the full logical domain.
+    fn nonzero_coefficient_len(&self) -> usize {
+        self.coefficients().len()
+    }
 }
 
 /// Borrowed dense source representation.

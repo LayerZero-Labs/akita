@@ -3,6 +3,7 @@ use crate::commitment::CommitmentSource;
 use crate::opaque::RootPolyMeta;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
+use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
 use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_field::{CanonicalEncoding, Ring, Zero};
 
@@ -628,3 +629,107 @@ mod batch_only {
 
 #[path = "signed_block_tests.rs"]
 mod signed_block_tests;
+
+#[test]
+fn zero_suffix_preserves_full_shape_and_fold_values() {
+    const D: usize = 64;
+    const POSITIONS: usize = 2;
+    const NUM_VARS: usize = 14;
+    const DOMAIN: usize = 1 << NUM_VARS;
+    for live in [0, 1, 63, 64, 65, 127, 128, 129, 4095, 4096, 4097, DOMAIN] {
+        let mut values = vec![F::zero(); DOMAIN];
+        for (index, value) in values[..live].iter_mut().enumerate() {
+            *value = F::from_u64(index as u64 + 1);
+        }
+        let poly = DensePoly::<F>::from_field_evals(NUM_VARS, values).unwrap();
+        let rings = poly.ring_coeffs::<D>().unwrap();
+        let weights = [F::from_u64(3), F::from_u64(7)];
+        let expected = rings
+            .chunks(POSITIONS)
+            .map(|block| {
+                block
+                    .iter()
+                    .zip(weights)
+                    .fold(CyclotomicRing::<F, D>::zero(), |sum, (ring, weight)| {
+                        sum + ring.scale(&weight)
+                    })
+            })
+            .collect::<Vec<_>>();
+        let compact =
+            DensePoly::<F>::from_field_prefix(NUM_VARS, poly.field_coeffs()[..live].to_vec())
+                .unwrap();
+        assert_eq!(compact, poly);
+        assert_eq!(
+            compact.field_coeffs().len(),
+            akita_error::checked::align_up(live, *SUPPORTED_COMMITMENT_RING_DIMS.last().unwrap())
+                .unwrap()
+        );
+        for representation in [&poly, &compact] {
+            assert_eq!(
+                representation
+                    .fold_blocks::<D>(&weights, POSITIONS)
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(representation.num_ring_elems_at(D), DOMAIN / D);
+            let descriptor = representation.descriptor().unwrap();
+            assert_eq!(descriptor.live_coefficient_len(), DOMAIN);
+            assert_eq!(descriptor.total_coefficient_len(), DOMAIN);
+        }
+    }
+}
+
+#[test]
+fn zero_suffix_decomposition_keeps_position_and_block_alignment() {
+    use akita_challenges::SparseChallenge;
+    const D: usize = 64;
+    const POSITIONS: usize = 2;
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        4
+    ];
+    for live in [0, 1, 63, 64, 65, 127, 128, 129, 511, 512] {
+        let mut values = vec![F::zero(); 512];
+        let mut expected = vec![0i32; D * POSITIONS];
+        if live != 0 {
+            values[live - 1] = F::from_u64(7);
+            expected[(live - 1) % (D * POSITIONS)] = 7;
+        }
+        for poly in [
+            DensePoly::<F>::from_field_prefix(9, values[..live].to_vec()).unwrap(),
+            DensePoly::<F>::from_field_evals(9, values).unwrap(),
+        ] {
+            let folded = poly
+                .decompose_fold::<D>(&challenges, POSITIONS, 1, 4)
+                .unwrap();
+            assert_eq!(folded.centered_coeffs_flat(), expected);
+        }
+    }
+}
+
+#[test]
+fn compact_dense_source_validates_extent_and_exports_zero_extension() {
+    use crate::custom_source::SourceCoefficients;
+    for num_vars in [0, 6, 10, 14] {
+        let domain = 1 << num_vars;
+        assert!(DensePoly::<F>::from_field_prefix(num_vars, vec![F::zero(); domain + 1]).is_err());
+        for prefix in [vec![], vec![F::from_u64(9)]] {
+            let poly = DensePoly::<F>::from_field_prefix(num_vars, prefix.clone()).unwrap();
+            let exported = poly.source_coefficients().unwrap();
+            assert_eq!(exported.len(), domain);
+            assert_eq!(&exported[..prefix.len()], &prefix);
+            assert!(exported[prefix.len()..]
+                .iter()
+                .all(|value| *value == F::zero()));
+            assert_eq!(poly.descriptor().unwrap().live_coefficient_len(), domain);
+            assert_eq!(
+                poly.descriptor().unwrap().total_coefficient_len(),
+                domain.max(*SUPPORTED_COMMITMENT_RING_DIMS.last().unwrap())
+            );
+        }
+    }
+    assert!(DensePoly::<F>::from_field_prefix(usize::BITS as usize, vec![]).is_err());
+}
