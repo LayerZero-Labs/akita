@@ -13,6 +13,7 @@ import re
 import sys
 from pathlib import Path
 
+from scripts.profile_bench_merge_base_policy import MODE_CATALOGS
 from scripts.profile_ci_features import (
     load_feature_graph,
     resolve_feature,
@@ -32,6 +33,9 @@ MODES = {
     "onehot_fp128_multi_chunk_w8r2", "onehot_fp128_multi_chunk_w2r2",
     "onehot_fp128_multi_chunk_w4r2",
 }
+if missing_catalogs := MODES - MODE_CATALOGS.keys():
+    raise SystemExit(f"profile modes lack baseline catalog mappings: {sorted(missing_catalogs)}")
+
 MODE_NUM_POLYS = {
     "onehot_fp32": {1},
     "dense_fp32": {1},

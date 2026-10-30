@@ -44,8 +44,8 @@ concurrency:
 
 jobs:
   # Cases are split across parallel jobs. Merge-base baseline policy lives in
-  # `scripts/profile_bench_merge_base_policy.py`: mode-name check, optional smoke
-  # run, then interleaved benchmark only when merge-base can complete every case.
+  # `scripts/profile_bench_merge_base_policy.py`: per-case mode/catalog checks,
+  # then interleaved benchmarking for supported cases only.
   bench:
     name: Bench (${{ matrix.group.name }})
     runs-on: GitHubRunner-Large-Public
@@ -104,6 +104,7 @@ jobs:
       - name: Initialize benchmark paths
         run: |
           group_dir="$RUNNER_TEMP/bench/${{ matrix.group.name }}"
+          mkdir -p "$group_dir"
           profile_threads="$(nproc)"
           if [ "$profile_threads" -lt 2 ]; then
             echo "Profile CI requires at least two CPUs for the multi threaded verifier timing" >&2
@@ -141,13 +142,13 @@ jobs:
                 { encoding: 'utf8' }
               ).trim();
             } catch (error) {
-              core.warning(`Could not determine benchmark merge base: ${error.message}`);
+              core.setFailed(`Could not determine benchmark merge base: ${error.message}`);
             }
             if (mergeBaseSha) {
               core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
             }
 
-      - name: Resolve merge-base baseline policy (mode names)
+      - name: Resolve merge-base baseline eligibility
         if: github.event_name == 'pull_request'
         env:
           AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
@@ -162,6 +163,7 @@ jobs:
           python3 scripts/profile_bench_merge_base_policy.py resolve \
             --merge-base-ref "$AKITA_BENCH_MERGE_BASE_SHA" \
             --github-env "$GITHUB_ENV" \
+            --output "$AKITA_BENCH_GROUP_DIR/baseline-eligibility.json" \
             "${case_args[@]}"
 
       # Pin a fixed baseline ISA instead of `-C target-cpu=native`.
@@ -191,7 +193,7 @@ jobs:
         run: ./scripts/check_profile_ci_features.sh
 
       - name: Build merge-base profile binary
-        if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
+        if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_AVAILABLE == '1'
         env:
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
@@ -220,24 +222,6 @@ jobs:
           )
           cp "$RUNNER_TEMP/bench-base-target/release/examples/profile" \
              "$RUNNER_TEMP/bench-bins/profile-base"
-
-      - name: Resolve merge-base baseline policy (smoke)
-        if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
-        env:
-          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
-        run: |
-          case_args=()
-          while IFS= read -r case_spec; do
-            if [ -n "$case_spec" ]; then
-              case_args+=(--case "$case_spec")
-            fi
-          done <<< "$AKITA_BENCH_GROUP_CASES"
-
-          python3 scripts/profile_bench_merge_base_policy.py resolve \
-            --merge-base-ref "$AKITA_BENCH_MERGE_BASE_SHA" \
-            --smoke-binary "$RUNNER_TEMP/bench-bins/profile-base" \
-            --github-env "$GITHUB_ENV" \
-            "${case_args[@]}"
 
       - name: Build profile binary
         env:
@@ -268,26 +252,14 @@ jobs:
           done <<< "$AKITA_BENCH_GROUP_CASES"
 
           baseline_args=()
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$AKITA_BENCH_BASELINE_AVAILABLE" = "1" ]; then
-            echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA interleaved with merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
-            baseline_args+=(
-              --baseline-binary "$RUNNER_TEMP/bench-bins/profile-base"
-              --baseline-output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR"
-            )
-          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            case "$AKITA_BENCH_BASELINE_SKIP_REASON" in
-              missing_modes)
-                echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base; missing mode(s): $AKITA_BENCH_BASELINE_MISSING_MODES"
-                ;;
-              smoke_failed)
-                echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base; smoke failed for: $AKITA_BENCH_BASELINE_SMOKE_FAILURES"
-                ;;
-              *)
-                echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base baseline"
-                ;;
-            esac
-          else
-            echo "Benchmarking $AKITA_BENCH_SOURCE_BRANCH commit $AKITA_BENCH_SOURCE_SHA"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            baseline_args+=(--baseline-policy "$AKITA_BENCH_GROUP_DIR/baseline-eligibility.json")
+            if [ "$AKITA_BENCH_BASELINE_AVAILABLE" = "1" ]; then
+              baseline_args+=(
+                --baseline-binary "$RUNNER_TEMP/bench-bins/profile-base"
+                --baseline-output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR"
+              )
+            fi
           fi
           python3 scripts/profile_bench_report.py run \
             --binary ./target/release/examples/profile \
@@ -375,7 +347,7 @@ jobs:
                 { encoding: 'utf8' }
               ).trim();
             } catch (error) {
-              core.warning(`Could not determine benchmark merge base: ${error.message}`);
+              core.setFailed(`Could not determine benchmark merge base: ${error.message}`);
             }
             if (mergeBaseSha) {
               core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);

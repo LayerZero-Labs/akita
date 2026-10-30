@@ -306,6 +306,11 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    run_parser.add_argument(
+        "--baseline-policy", default="",
+        help="Per-case eligibility JSON from profile_bench_merge_base_policy.py.",
+    )
+
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
     )
@@ -2170,6 +2175,25 @@ def write_aggregate_summaries(
         write_summary_csv(summary_dir / "summary.csv", aggregate["cases"])
 
 
+def baseline_case_policy(
+    path: str, cases: list[BenchmarkCaseSpec]
+) -> dict[str, dict[str, object]]:
+    payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    decisions = {}
+    for item in payload["cases"]:
+        case = parse_case_spec(item["case"], "onehot_fp128")
+        if type(item["supported"]) is not bool or not isinstance(item["reason"], str):
+            raise ValueError("invalid baseline eligibility record")
+        if not item["supported"] and not item["reason"]:
+            raise ValueError("unsupported baseline requires a reason")
+        if case.case_id in decisions:
+            raise ValueError("duplicate baseline eligibility record")
+        decisions[case.case_id] = item
+    if set(decisions) != {case.case_id for case in cases}:
+        raise ValueError("baseline eligibility must cover exactly the requested cases")
+    return decisions
+
+
 def run_benchmark(args: argparse.Namespace) -> int:
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2187,6 +2211,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
         binaries.append((args.baseline_binary, baseline_dir, True))
 
     cases = configured_cases(args)
+    policy_path = getattr(args, "baseline_policy", "")
+    policy = baseline_case_policy(policy_path, cases) if policy_path else {}
+    if policy and any(item["supported"] for item in policy.values()) and not args.baseline_binary:
+        raise ValueError("supported baseline cases require --baseline-binary")
     schedule: list[ScheduledRun] = []
     for case in cases:
         plans = [
@@ -2199,6 +2227,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 allow_legacy_relation_mode,
             )
             for binary, summary_dir, allow_legacy_relation_mode in binaries
+            if not allow_legacy_relation_mode or not policy or policy[case.case_id]["supported"]
         ]
         plan_lengths = {len(plan) for plan in plans}
         if len(plan_lengths) != 1:
@@ -2210,6 +2239,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         schedule.extend(run for slot in zip(*plans) for run in slot)
 
     results, overall_return_code = execute_schedule(schedule)
+    for run, summary in results:
+        if policy and run.summary_dir == output_dir:
+            decision = policy[run.case.case_id]
+            summary["baseline_status"] = "available" if decision["supported"] else "unsupported"
+            summary["baseline_reason"] = decision["reason"]
     write_aggregate_summaries(
         [summary_dir for _, summary_dir, _ in binaries],
         cases,
@@ -3437,6 +3471,14 @@ def render_report(args: argparse.Namespace) -> int:
         ("Merge base", load_optional_case_summaries(args.main_baseline_dir)),
         ("Prior PR run", load_optional_case_summaries(args.previous_baseline_dir)),
     ]
+    unsupported_ids = {
+        str(case["case_id"]) for case in current_cases
+        if case.get("baseline_status") == "unsupported"
+    }
+    if baselines[0][1] is not None:
+        baselines[0] = (baselines[0][0], {
+            key: value for key, value in baselines[0][1].items() if key not in unsupported_ids
+        })
     visible_baselines = [(label, summary) for label, summary in baselines if summary is not None]
 
     source_sha = os.environ.get("AKITA_BENCH_SOURCE_SHA")
@@ -3486,7 +3528,10 @@ def render_report(args: argparse.Namespace) -> int:
             elif previous_baseline_label:
                 print(f"- Prior PR run: {md_text(previous_baseline_label)}.")
     if base_ref and baselines[0][1] is None:
-        print(f"- Merge base: no reusable benchmark artifact found for `{base_ref}`.")
+        if any(case.get("baseline_status") == "unsupported" for case in current_cases):
+            print("- Merge base: no supported baseline cases for these workloads.")
+        else:
+            print(f"- Merge base: no reusable benchmark artifact found for `{base_ref}`.")
     if not args.compact:
         print("- Binary: `target/release/examples/profile`.")
         print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
@@ -3525,9 +3570,18 @@ def render_report(args: argparse.Namespace) -> int:
         if matching_base_cases != len(current_cases):
             print()
             print(
-                "Profiles without a matching merge-base mode are measured at the head only "
+                "Profiles without a supported merge-base case are measured at the head only "
                 "and are marked `no matching merge-base case` instead of showing a delta."
             )
+        print()
+    unsupported = [case for case in current_cases if case.get("baseline_status") == "unsupported"]
+    if unsupported:
+        print("### Unsupported merge-base cases")
+        print()
+        print("| Profile | Reason |")
+        print("| --- | --- |")
+        for case in unsupported:
+            print(f"| {md_text(human_case_label(case))} | {md_text(str(case['baseline_reason']))} |")
         print()
     render_profile_definitions(current_cases)
     print()
