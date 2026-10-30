@@ -5,7 +5,7 @@
 | Author(s) | Akita contributors |
 | Created | 2026-10-28 |
 | Status | implemented experimental path; security admission pending |
-| PR | Base root: [#290](https://github.com/LayerZero-Labs/akita/pull/290); field-switch extension on the current branch |
+| PR | Base root: [#290](https://github.com/LayerZero-Labs/akita/pull/290); field-switch and typed setup extensions on the current branch |
 | Supersedes | None |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
@@ -28,8 +28,8 @@ groups retain their existing encoding and protocol path.
 This is an experimental arithmetic and protocol fixture, with no security
 claim. It uses `P = 2^128 - 275`, base-field challenges (`E = F`), and the
 Lagrange basis. It admits one binary group first, with at most one ordinary
-group second. It requires an ordinary successor fold whose predecessor setup
-contribution is evaluated directly. It does not add a production binary
+group second. It requires an ordinary successor fold that consumes the typed A setup-prefix
+claim as an ordinary committed group. It does not add a production binary
 planner profile or certify a new schedule.
 
 ## Commitment and word-claim interfaces
@@ -142,10 +142,10 @@ identify the state transitions of the binary source opening contract.
 | 3 | Commit the U table in the ordinary D payload, with one balanced digit per coefficient. | U precedes all column challenges. |
 | 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
 | 5 | Commit the outgoing witness containing Z/T digits, the U view, K, K_val and KA; a mixed opening also includes ordinary commitment preimages. | Every witness segment precedes relation batching. |
-| 7 | Draw the shared ring-switch challenge and row-batching weights, together with the range-image point; evaluate direct setup and public weights. | All tested tables and commitments. |
+| 7 | Draw the shared ring-switch challenge and row-batching weights, together with the range-image point; construct the coefficient functional rho and non-A public weights. | All tested tables and commitments. |
 | 8 | Run the ordinary Stage 1 range-image sumcheck with the base-eight digit alphabet. | The range-image terminal precedes Stage 2 batching. |
 | 9 | Run one fused Stage 2 for the A quotient, B/D authentication, parity, value, padding, and range-image binding; include ordinary relations when selected. | One final opening of the same outgoing witness. |
-| 10 | Omit root Stage 3: direct setup evaluation at order 7 replaces its adjoint proof and prefix claims. | The authenticated root opening passed to the suffix. |
+| 10 | Bind the typed A prefix identity; send the A product claim; run the ordinary degree-two Stage 3 sumcheck; send its prefix evaluation. | Each round message precedes its challenge; the A-prefix claim joins the next ordinary grouped fold. |
 | 11 | Continue ordinary grouped recursion and terminal verification. | Return the live caller transcript; the caller checks exact proof exhaustion. |
 
 Orders 1 and 6 are absent: application reductions happen before this opening,
@@ -301,6 +301,194 @@ exactly two 128-bit compression maps. Every native ring degree must be at most
 balanced base-eight digit. The current mixed fixture uses only zero and one.
 Unsupported geometries produce typed errors.
 
+## Typed A setup product
+
+The setup preparer exposes these opt-in methods (the generic CPU field bounds
+are the same as ordinary prefix preparation):
+
+```rust
+pub fn prepare_binary_a_prefixes(
+    &self,
+    manifest: &BinaryCommittedGroupManifest,
+    first: &SetupPrefixSlotId,
+    remaining: &[SetupPrefixSlotId],
+) -> Result<SetupPrefixProverRegistry<F, CommitmentHandle<F, E>>, AkitaError>;
+
+pub fn prepare_binary_a_verifier_setup(
+    &self,
+    ordinary: &AkitaVerifierSetup<F>,
+    manifest: &BinaryCommittedGroupManifest,
+    first: &SetupPrefixSlotId,
+    supplied: &SetupPrefixVerifierSlot<F>,
+) -> Result<AkitaVerifierSetup<F>, AkitaError>;
+
+pub fn binary_a_rho<E: Field>(alpha: E, batches: &[E]) -> Vec<[E; 648]>;
+
+impl<E: Field> BinaryAProduct<E> {
+    pub fn new(
+        plan: &BinaryRootWitnessPlan,
+        rho: &[[E; 648]],
+        stage2_point: &[E],
+        prefix_len: usize,
+    ) -> Result<Self, AkitaError>;
+    pub fn factors(&self) -> Result<(Vec<E>, Vec<E>), AkitaError>;
+    pub fn evaluate(&self, point: &[E]) -> Result<E, AkitaError>;
+}
+```
+
+The coefficient compiler and stream contracts are:
+
+```rust
+pub fn binary_a_setup_coefficients<F: Field>(
+    seed: &[u8; 32], manifest: &BinaryCommittedGroupManifest, prefix_len: usize,
+) -> Result<Vec<F>, AkitaError>;
+pub fn binary_a_prefix_identity(
+    manifest: &BinaryCommittedGroupManifest, slot: &SetupPrefixSlotId,
+) -> Result<Vec<u8>, AkitaError>;
+pub fn binary_quotient_weights<E: Field>(
+    plan: &BinaryRootWitnessPlan, matrix: Option<&[Vec<[i128; 648]>]>,
+    challenges: &Challenges, rho: &[[E; 648]], padding_weights: &[E],
+) -> Result<NativeRootWeights<E>, AkitaError>;
+```
+
+The existing relation methods now expose the same rho boundary:
+
+```rust
+impl BinaryRootWitnessPlan {
+    pub fn relation_weights<E: Field>(
+        &self, claim: &BinaryTerminalClaim, matrix: Option<&[Vec<[i128; 648]>]>,
+        challenges: &Challenges, alpha: E, rho: &[[E; 648]],
+        terminal_batches: [E; 2], padding_weights: &[E],
+    ) -> Result<NativeRootWeights<E>, AkitaError>;
+}
+impl BinaryRootPublic {
+    pub fn relation<E: Field>(
+        &self, challenges: &Challenges, alpha: E, batches: &[E],
+        commitment: &[E], d_payload: &[E], ordinary_claim: Option<(&[E], E, &[E])>,
+        rho: &[[E; 648]], matrix: Option<&[Vec<[i128; 648]>]>,
+    ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError>;
+}
+```
+
+Proving passes `Some(matrix)`; verification passes `None`. The former public
+direct A compiler is compiled only in tests.
+
+The behavior-preserving ordinary seams provide the following signatures:
+
+```rust
+pub struct FactoredStage3Request<'a, F: Field, E: Field, ProofSession> {
+    pub session: &'a ProofSession,
+    pub level: u32,
+    pub coefficients: Arc<[F]>,
+    pub index_factor: Vec<E>,
+    pub coefficient_factor: Vec<E>,
+}
+// OpaqueStage3Kernel method; unsupported backends return UnsupportedSchedule.
+fn begin_factored_stage3(
+    &self, request: FactoredStage3Request<'_, F, E, Self::ProofSessionHandle>,
+) -> Result<(E, Self::Stage3SessionHandle), AkitaError>;
+// CpuBackend method.
+pub fn prepare_setup_prefix_from_coefficients(
+    &self, id: &SetupPrefixSlotId, coefficients: Vec<F>,
+) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError>;
+// AkitaVerifierSetup methods.
+pub fn with_prefix_context(
+    self, id: SetupPrefixSlotId, context: Vec<u8>,
+) -> Result<Self, AkitaError>;
+pub fn prefix_context(&self, id: &SetupPrefixSlotId) -> Option<&[u8]>;
+// Explicit planner selection; ordinary search remains unchanged.
+pub fn find_schedule_with_root_setup_mode(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+    root_setup_mode: SetupContributionMode,
+    root_main_constraint: Option<&CommittedGroupParams>,
+) -> Result<PlannedFoldSchedule, AkitaError>;
+```
+
+Prefix contexts require an existing slot and 1..=262,144 bytes. This is a
+resource cap, not a soundness inequality. With `test-support`,
+`BinaryAReadGuard::forbid() -> BinaryAReadGuard` makes the canonical A accessor
+return an error until the guard is dropped; it adds no proof message.
+
+The scoped prover registry is passed to the canonical grouped backend route;
+the prepared verifier setup is passed to the existing verifier constructor.
+
+The q-valued A stream is separate from every ordinary P-valued setup stream.
+The existing deterministic sampler rejects u32 values at or above
+`4,290,276,109 = 301 q`, then reduces modulo q and centers in
+`[-7,126,704, 7,126,704]`. Exactly 4,691,187 of the 2^32 candidates are rejected.
+The centered coefficients embed in P without changing the source distribution.
+The typed prefix orders coefficients by source row j, padded rank row i, and
+padded coefficient s. The coefficient stride is 1,024 and rank three pads to
+four; all remaining prefix capacity is zero. Its domain must be a power of two
+at least `1,024 * next_power_of_two(rank) * m` (4,096 for this fixture).
+
+Setup preparation commits this table with the ordinary setup-prefix executor,
+checks the supplied commitment against the deterministic typed table once, and
+retains an installation identity containing the stream/layout label, complete
+binary manifest and scheduled slot. Online verification requires that identity.
+A different typed A table or the ordinary stream's table fails preparation;
+a different manifest cannot reuse the prepared verifier view. Scoped contexts
+are transient: serialization rejects before writing bytes, so a persisted
+ordinary setup must have its typed prefix prepared again after loading.
+The first typed slot cannot be reused as an outgoing ordinary setup slot later
+in the same schedule. Ordinary prefix caches remain unchanged.
+
+Write Psi = Y^648 - Y^324 + 1. Under the committed quotient,
+`rho[i][t] = row_batch[i] * alpha^t`. At the Stage 2 witness point, let v_s be
+the coefficient equality weight and let d be the four-digit contraction with
+powers 1, 8, 64 and 512. The A contribution to the linear weight factors as
+
+```text
+sum_(j,i,s) A[i][j][s] eq(r_j,j) h_i(s),
+h_i(s) = d * sum_t rho[i][t] coeff_t(rem_Psi(Y^s sum_u v_u Y^u)).
+```
+
+The signed reduction kernel is Hankel. The existing trinomial adjoint computes
+each h_i with two exact products of length `2D-1 = 1,295`, without roots of
+unity. Multiplying a full length-1,295 kernel by a length-648 reversed input
+would have length `3D-2 = 1,942`; it is not a single length-1,295 product.
+The implementation splits the products and retains their required windows.
+Its existing arithmetic count is 154,872 field multiplications per adjoint,
+versus 419,904 for the dense 648-by-648 product (464,616 versus 1,259,712 for
+rank three). These counts do not include all surrounding field operations.
+
+Order 10 uses the same Stage 3 session, sumcheck transport and verification
+as ordinary setup offloading:
+
+1. Absorb the canonical typed prefix identity as a public message.
+2. Send the claimed setup product in P.
+3. For each of `k = log2(prefix_len)` rounds, send the two ordinary quadratic
+   sumcheck coefficients, apply the existing scheduled grinding step, and draw
+   the round challenge in P.
+4. Send the A-prefix evaluation at the resulting point. Check the terminal
+   product against the factored public weight.
+5. Combine the setup product with the non-A Stage 2 linear weight and the same
+   witness evaluation. Keep the KA term `-q rho[i][t]` unchanged.
+
+The resulting prefix point/value enters the next ordinary grouped recursion,
+using the authenticated prepared commitment. The ordinary suffix consumes it;
+the terminal accepts no unconsumed prefix claim. There is no second proof or
+nested transcript. Order 10 contributes `32k + 32` field-message bytes, plus
+any grinding nonces prescribed by the selected schedule. Its interactive
+algebraic error is at most `2k/P`. The fixture uses k = 18, giving
+`36/(2^128-275)`, approximately `1.058e-37` (2^-122.83). This is added to the
+existing root and suffix algebraic terms and the commitment-binding and hash
+errors, including authentication of the typed prefix commitment. No numerical
+binding-security claim is made for the experimental fixture. No new integer no-wrap inequality is needed. This
+experimental path still makes no production SIS or Fiat-Shamir admission claim.
+
+Online verification constructs rank-many adjoints, evaluates the padded
+coefficient factor, and evaluates the row equality product in logarithmic work
+without expanding the source-row domain. It never materializes or reads A.
+The direct A compiler is retained only as a test reference. Differential tests
+include odd row cutoffs, even though the public source descriptor currently
+requires power-of-two padded source geometry. A test-only accessor guard makes
+any root A materialization fail during complete successful verification.
+
 ## Checked fixture bounds
 
 The fixture uses 128-bit words, eight padded carriers, `M = 4` scalar rows,
@@ -338,18 +526,39 @@ The canonical fixture is
 [binary_source_end_to_end.rs](../crates/akita-pcs/tests/binary_source_end_to_end.rs).
 The measured complete proof sizes for its 128-bit-word fixtures are:
 
-| Protocol | Opening | Before field switch | With field switch |
+| Protocol | Opening | Before typed Stage 3 | With typed Stage 3 |
 | --- | --- | ---: | ---: |
-| Current | Binary-only | 75,702 | 77,873 |
-| Current | Mixed binary/ordinary | 89,811 | 92,116 |
-| `dev-protocol` | Binary-only | 70,610 | 72,818 |
-| `dev-protocol` | Mixed binary/ordinary | 84,791 | 86,954 |
+| Current | Binary-only | 77,873 | 85,902 |
+| Current | Mixed binary/ordinary | 92,116 | 86,077 |
+| `dev-protocol` | Binary-only | 72,818 | 80,923 |
+| `dev-protocol` | Mixed binary/ordinary | 86,954 | 81,001 |
 
-The additional 8-bit-word fixture measures 77,855 bytes in the current protocol
-and 72,792 with `dev-protocol`. The field-switch contribution itself is exactly
-2,195 bytes for every three-round fixture. Complete totals also change with
-later variable-length encodings after the changed transcript challenges; their
-difference is not necessarily 2,195 bytes.
+The before sizes include the field switch. Root offloading requires different
+ordinary suffix schedules; complete-proof deltas therefore include those
+schedule changes, in addition to Stage 3's 608 field-message bytes at k = 18
+and its scheduled grinding nonces. The narrow 8-bit-word fixture is
+85,944 bytes in current mode and 80,905 bytes with `dev-protocol`. The field switch itself remains exactly 2,195 bytes for these
+three-round fixtures. Both protocol catalogs are separate generated external artifacts.
+
+Release arithmetic measurements on rank-three shapes compare the canonical
+pre-offload quotient compiler and MLE evaluation with the new non-A quotient
+compiler plus factored A preparation and terminal evaluation. They exclude
+setup generation and transcript replay:
+
+| Source rows | Old quotient compiler + MLE | New non-A compiler + factored A | Factored A alone |
+| ---: | ---: | ---: | ---: |
+| 1 (end-to-end A geometry) | 3,052 us | 10,483 us | 3,156 us |
+| 2,048 (largest completed shape before the two-second cutoff) | 2,966,006 us | 828,102 us | 9,868 us |
+
+This sample was taken while other release builds shared the host; the test
+reports wall time and stops scaling once a direct run exceeds two seconds.
+These timings expose the small-shape overhead; they do not claim a speedup
+for every shape. The factored A arithmetic is independent of the source-row
+count, while the retained non-A compiler still includes witness-domain
+padding work. The end-to-end test also measures the actual root A verification
+span, including the ordinary Stage 3 transcript replay. In the current-mode
+release run this was 1,943 us for binary-only and 1,923 us for mixed openings
+(rank three, one source row, 18 Stage 3 rounds).
 
 The fixture exercises the caller's prefix and
 post-verification squeeze, commitment serialization, kind consistency,
@@ -401,6 +610,22 @@ The field-switch acceptance tests cover the frontend's additional obligations:
   weight, changes the retained source terminal, and checks rejection by the
   existing root value authentication without division.
 
+Typed Stage 3 acceptance coverage is explicit:
+
+| Mutation or property | Test |
+| --- | --- |
+| Every quadratic round coefficient, setup product claim, and prefix evaluation | `stage3_binary_group_opens_once_inside_the_callers_transcript`; `stage3_binary_and_ordinary_groups_share_one_opening` |
+| A different typed A table; the ordinary stream's A-prefix commitment | `stage3_binary_group_opens_once_inside_the_callers_transcript`, through `reject_foreign_prefixes` |
+| Same-geometry manifest swap; missing typed installation identity | `stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof` |
+| No online A read, including an accessor negative control | Both successful `stage3_binary_*` openings |
+| Random rank-one/rank-three differential, rows 1/2/3/5, independent signed reduction | `stage3_a_product_matches_independent_signed_remainder_and_response_digits` |
+| Zero equality coordinates, odd live-row cutoffs, larger padded prefixes | `stage3_a_product_terminal_matches_dense_factors_with_zero_coordinates_and_odd_cutoff` |
+| Malformed rho, point, and prefix geometry reject without panic | `stage3_a_product_rejects_malformed_rho_point_and_prefix_without_panic` |
+
+The full opening mutation helper catches verifier panics as test failures;
+all proof-field mutations require rejection. Setup-source substitution tests
+exercise the trusted installation boundary before online verification.
+
 The ordinary regression fixture is
 [ordinary_grouped_root_bytes.rs](../crates/akita-pcs/tests/ordinary_grouped_root_bytes.rs),
 which pins a 70,541-byte ordinary proof. Its feature-disabled and
@@ -408,9 +633,9 @@ feature-enabled executions are the compatibility gate when the extension is
 unselected. Existing pinned fixtures and goldens remain part of that gate.
 
 The field switch produces `BinaryTerminalClaim` for the existing root. The
-direct A-term function
-[`binary_direct_a_weights`](../crates/akita-types/src/binary_source/root_plan.rs)
-is the replacement point for a typed Stage 3 adjoint. Projections and prime
-EP planes are not implemented by this opening. The source descriptor's
-existing prime-plane contract remains separate; no prime claim or agreement
-proof is discharged by a binary terminal alone.
+A offload consumes an explicit per-row coefficient functional `rho[i][t]`.
+The committed-quotient caller constructs it with `binary_a_rho`; a different
+linear test can replace that construction without changing Stage 3. Projections
+and prime evaluation planes are not implemented by this opening. The source
+descriptor's existing prime-plane contract remains separate; no prime claim or
+agreement proof is discharged by a binary terminal alone.
