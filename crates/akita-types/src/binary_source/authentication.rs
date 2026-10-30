@@ -115,7 +115,7 @@ pub fn binary_digit_authentication_weights<E: Field>(
     let rows = validate_label::<E>(label)?;
     if !matches!(
         (segment, label.role),
-        (1, SetupStreamRole::ImageCommitment) | (3, SetupStreamRole::WitnessCommitment)
+        (1, SetupStreamRole::ImageCommitment) | (2, SetupStreamRole::WitnessCommitment)
     ) {
         return Err(AkitaError::InvalidSetup(
             "binary digit authentication role differs from its segment".into(),

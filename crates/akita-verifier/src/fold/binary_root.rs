@@ -10,7 +10,10 @@ use akita_params::{
     SetupContributionMode, SumcheckProtocol,
 };
 use akita_serialization::AkitaSerialize;
-use akita_types::binary_source::{binary_root_challenges, binary_root_statement, BinaryRootPublic};
+use akita_types::binary_source::{
+    binary_projection_values, binary_root_challenges, binary_root_statement, BinaryProjectionRows,
+    BinaryRootPublic,
+};
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{
     AkitaVerifierSetup, Commitment, DigitRangeEqualityPoint, FpExtEncoding, GrindingReplay,
@@ -134,6 +137,9 @@ where
         successor_payload_len,
     )
     .map(RingVec::from_coeffs)?;
+    let bounds = public.plan().projection_bounds();
+    let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
+    let projected_values = binary_projection_values(grinding.state_mut(), bounds, &[0; 7])?;
     let alpha =
         grinding.grinded_ext_challenge::<F, E>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let tau0 =
@@ -161,6 +167,8 @@ where
         &challenges,
         alpha,
         &batches,
+        &projections,
+        &projected_values,
         &lift(group.commitment().rows().coeffs()),
         &lift(&d_payload),
         ordinary_claim,

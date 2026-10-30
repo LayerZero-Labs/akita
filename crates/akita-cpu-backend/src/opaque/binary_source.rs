@@ -14,6 +14,8 @@ use akita_types::binary_source::{
 use akita_types::{Commitment, CommittedGroup, RingVec};
 use std::sync::Arc;
 
+mod projection;
+
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
 
@@ -327,6 +329,11 @@ where
     {
         return field_switch_source(backend, &binding, context, handle, request);
     }
+    if let Some(request) =
+        request.downcast_ref::<akita_types::binary_source::BinaryProjectionRequest>()
+    {
+        return projection::prepare(backend, &binding, context, handle, request);
+    }
     let request = request
         .downcast_ref::<akita_types::binary_source::BinaryRootWitnessRequest<CommitmentHandle<F, E>>>()
         .ok_or_else(|| AkitaError::InvalidInput("native root request family mismatch".into()))?;
@@ -476,12 +483,7 @@ where
     else {
         return Ok(None);
     };
-    let quotient = response.committed_quotient(
-        source.manifest.descriptor(),
-        &source.matrix,
-        challenges,
-        destination_ring_dimension,
-    )?;
+    let (response_map, response_table) = response.successor_table(destination_ring_dimension)?;
     let evaluation = crate::binary_root::BinaryEvaluationWitness::build(
         source.manifest.descriptor(),
         &preparation.claim,
@@ -490,14 +492,11 @@ where
         challenges,
         akita_params::binary_setup::BINARY_SETUP_P,
     )?;
-    let quotient_map = quotient.relation.repacking();
-    let response_digits = natural_segment_digits(quotient_map, &quotient.digits, 0)?;
-    let image_digits = natural_segment_digits(quotient_map, &quotient.digits, 1)?;
-    let quotient_digits = natural_segment_digits(quotient_map, &quotient.digits, 2)?;
+    let response_digits = natural_segment_digits(&response_map, &response_table, 0)?;
+    let image_digits = natural_segment_digits(&response_map, &response_table, 1)?;
     let mut natural: Vec<&[i8]> = vec![
         &response_digits,
         &image_digits,
-        &quotient_digits,
         &preparation.partials,
         &evaluation.parity_digits,
         &evaluation.value_digits,

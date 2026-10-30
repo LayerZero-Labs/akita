@@ -26,9 +26,7 @@ const D: usize = 648;
 type AuxiliaryRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
 
 mod evaluation;
-mod quotient;
 pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
-pub use quotient::BinaryQuotientWitness;
 
 /// An integer identity `sum A*z - sum iota(c)*T = remainder + Psi*quotient`.
 /// These values are construction witnesses, not unauthenticated proof messages.
@@ -130,7 +128,7 @@ impl BinaryRootRelation {
     ///
     /// q-divisibility here is an honest-prover construction check. Protocol
     /// verification must authenticate the residual through the shared Stage 2
-    /// and a committed q quotient or fresh exact-lift projections.
+    /// and fresh exact-lift projections.
     /// `challenges` must come from the caller's replay of the binary-family
     /// fold draw. This arithmetic boundary checks geometry and coefficient
     /// bounds; it neither samples challenges nor replays transcript state.
@@ -321,7 +319,7 @@ impl BinaryRootRelation {
     /// Assemble typed public A rows against successor segments 0 and 1.
     /// Setup, challenge, and residual integers are embedded in the requested
     /// proof field. Residual targets are construction values awaiting the
-    /// authenticated q-quotient or projection lane, never clear proof claims.
+    /// authenticated exact-lift projection lane, never clear proof claims.
     pub fn commitment_group<E: Field>(
         &self,
         descriptor: &BinarySourceDescriptor,

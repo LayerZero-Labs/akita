@@ -19,3 +19,11 @@ pub struct BinaryFieldSwitchSourceRequest {
     pub manifest: BinaryCommittedGroupManifest,
     pub polynomial: [u8; 32],
 }
+
+/// Request private exact integer residuals after the outgoing witness commitment.
+/// The caller supplies the accepted response challenges from the same transcript.
+/// The backend replays the fixed response from its authenticated source handle;
+/// projection rows never enter response selection or nonce grinding.
+pub struct BinaryProjectionRequest {
+    pub challenges: akita_challenges::Challenges,
+}

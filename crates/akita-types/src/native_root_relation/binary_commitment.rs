@@ -9,7 +9,7 @@ use super::*;
 /// `matrix` is the admitted q-uniform centered setup embedded in the proof
 /// field; `challenges` are the caller's replayed binary root draws embedded
 /// via the signed module map. `residuals` must be authenticated by the
-/// committed-q-quotient or exact-lift projection lane. They are not a new
+/// exact-lift projection lane. They are not a new
 /// clear proof message and this constructor proves no divisibility claim.
 pub fn binary_commitment_group<E: Field>(
     descriptor: BinarySourceDescriptor,

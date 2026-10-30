@@ -7,8 +7,8 @@ use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 use jolt_field::Field;
 
 use super::{
-    binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
-    BinaryTerminalClaim, OrdinaryNativeRootPlan,
+    binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryProjectionRows,
+    BinaryRootWitnessPlan, BinaryTerminalClaim, OrdinaryNativeRootPlan,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -121,7 +121,7 @@ impl BinaryRootPublic {
         let batch_count = checked::product([2, manifest.b_rows()])
             .and_then(|authentication| {
                 checked::sum([
-                    manifest.a_rank(),
+                    7,
                     2,
                     authentication,
                     padding_count,
@@ -150,7 +150,7 @@ impl BinaryRootPublic {
         &self.plan
     }
 
-    /// A, parity/value, B/D, padding, ordinary rows, then negative-bit batches.
+    /// Seven projection outputs, parity/value, B/D, padding, ordinary rows, then negative-bit batches.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
@@ -161,12 +161,14 @@ impl BinaryRootPublic {
     /// each padding coefficient. `commitment` is the public B payload; `d_payload`
     /// is the order-three U commitment. The future setup adjoint replaces direct
     /// setup evaluation without changing this authenticated coefficient map.
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
         &self,
         challenges: &Challenges,
         alpha: E,
         batches: &[E],
+        projections: &BinaryProjectionRows,
+        projected_values: &[i128; 7],
         commitment: &[E],
         d_payload: &[E],
         ordinary_claim: Option<(&[E], E, &[E])>,
@@ -177,8 +179,17 @@ impl BinaryRootPublic {
                 actual: batches.len(),
             });
         }
-        let rank = self.manifest.a_rank();
-        let terminal = checked::range(rank, 2).ok_or(AkitaError::InvalidProof)?;
+        let mu: [E; 7] = batches
+            .get(..7)
+            .ok_or(AkitaError::InvalidProof)?
+            .try_into()
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let rho = projections.batch(&mu)?;
+        let projection_claim = mu
+            .iter()
+            .zip(projected_values)
+            .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
+        let terminal = checked::range(7, 2).ok_or(AkitaError::InvalidProof)?;
         let b =
             checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
         let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
@@ -202,7 +213,7 @@ impl BinaryRootPublic {
             &self.matrix,
             challenges,
             alpha,
-            batches.get(..rank).ok_or(AkitaError::InvalidProof)?,
+            &rho,
             terminal_batches,
             batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;
@@ -217,7 +228,7 @@ impl BinaryRootPublic {
         )?;
         let d_weights = binary_digit_authentication_weights(
             &self.plan,
-            3,
+            2,
             &self.setup.setup_seed.seed,
             SetupStreamLabel {
                 role: SetupStreamRole::WitnessCommitment,
@@ -257,7 +268,7 @@ impl BinaryRootPublic {
         terms
             .try_reserve_exact(count)
             .map_err(|_| AkitaError::InvalidProof)?;
-        let mut claim = E::zero();
+        let mut claim = projection_claim;
         for weights in components.iter().flatten() {
             terms.extend_from_slice(weights.terms());
             claim += weights.claim();

@@ -5,7 +5,7 @@
 | Author(s) | Akita contributors |
 | Created | 2026-10-28 |
 | Status | implemented experimental path; security admission pending |
-| PR | Base root: [#290](https://github.com/LayerZero-Labs/akita/pull/290); field-switch extension on the current branch |
+| PR | Base root: [#290](https://github.com/LayerZero-Labs/akita/pull/290); field switch and exact-divisibility projections on the current branch |
 | Supersedes | None |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
@@ -141,17 +141,17 @@ identify the state transitions of the binary source opening contract.
 | 2 | Send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
 | 3 | Commit the U table in the ordinary D payload, with one balanced digit per coefficient. | U precedes all column challenges. |
 | 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
-| 5 | Commit the outgoing witness containing Z/T digits, the U view, K, K_val and KA; a mixed opening also includes ordinary commitment preimages. | Every witness segment precedes relation batching. |
-| 7 | Draw the shared ring-switch challenge and row-batching weights, together with the range-image point; evaluate direct setup and public weights. | All tested tables and commitments. |
+| 5 | Commit the outgoing witness containing Z/T digits, the U view, K and K_val; a mixed opening also includes ordinary commitment preimages. | Every witness segment, including Z and T, precedes projection rows. |
+| 6 | Draw seven exactly uniform q-valued rows J, then send the seven signed integer values y in order. Check each encoding, bound and divisibility by q. | The outgoing commitment precedes J; all seven y precede output batching. |
+| 7 | Draw the shared ring-switch challenge, range-image point and independent relation-batching weights, whose first seven entries are the output scalars mu; form rho = sum_l mu_l J_l and evaluate direct setup and public weights. | All tested tables, commitments and projection values. |
 | 8 | Run the ordinary Stage 1 range-image sumcheck with the base-eight digit alphabet. | The range-image terminal precedes Stage 2 batching. |
-| 9 | Run one fused Stage 2 for the A quotient, B/D authentication, parity, value, padding, and range-image binding; include ordinary relations when selected. | One final opening of the same outgoing witness. |
+| 9 | Run one fused Stage 2 for sum_l mu_l (<J_l, RA> - y_l) = 0, B/D authentication, parity, value, padding, and range-image binding; include ordinary relations when selected. | One final opening of the same outgoing witness. |
 | 10 | Omit root Stage 3: direct setup evaluation at order 7 replaces its adjoint proof and prefix claims. | The authenticated root opening passed to the suffix. |
 | 11 | Continue ordinary grouped recursion and terminal verification. | Return the live caller transcript; the caller checks exact proof exhaustion. |
 
-Orders 1 and 6 are absent: application reductions happen before this opening,
-and there are no projections. The committed-quotient fallback replaces the
-projection protocol. Direct public weights replace an equality
-tree or a new bilinear wiring compiler.
+Order 1 is absent: application reductions happen before this opening. There
+is no committed quotient or quotient fallback. Direct public weights replace
+an equality tree or a new bilinear wiring compiler.
 
 ## Carrier-level field switch
 
@@ -262,21 +262,70 @@ the measured total proof size.
 ## Relations and authenticated repacking
 
 All identities below use integer coefficient lifts before reduction modulo P.
-Let `Phi = Z^162 + Z^81 + 1`; `rem_Phi` denotes its reduced remainder.
-The root enforces:
+Let `Psi = X^648 - X^324 + 1`, `Phi = Z^162 + Z^81 + 1`, and let
+`rem` denote the reduced remainder for its subscript. The root enforces:
 
 ```text
-RA = q KA
+RA_i = rem_Psi(sum_j A_ij z_j - sum_b iota(c_b) T_(b,i))
+y_l = <J_l, RA>,  y_l = 0 (mod q),  l = 0..6
 rem_Phi(sum_r Br V0_r - sum_b U_b c_b) = 2 K
 rem_Phi(sum_b E_b U_b) - v = 2 K_val
 ```
 
-Here Br and E_b are direct binary equality weights from the terminal point,
-V0 is the low response-digit view, and c is the binary fold challenge. K has
-nine balanced base-eight digits per coefficient and K_val has six. KA's depth
-comes from its checked honest-carry bound. Their tables are committed at
-order 5 and are never transmitted in the clear. U has no Booleanity predicate;
+Here iota packs the scalar challenge into the first component of the source
+ring's four-component module view. Br and E_b are direct binary equality
+weights from the terminal point, V0 is the low response-digit view, and c is
+the binary fold challenge. K has nine balanced base-eight digits per
+coefficient and K_val has six. These carry tables are committed at order 5 and
+never transmitted in the clear. The outgoing witness has exactly five binary
+segments: response, image, U, K and K_val. U has no Booleanity predicate;
 admission uses its full malicious digit interval `[-4, 3]`.
+
+### Exact divisibility projections
+
+After fixing the accepted response nonce and committing the outgoing witness,
+[BinaryProjectionRows](../crates/akita-types/src/binary_source/projection_rows.rs)
+binds the domain label `binary exact divisibility rows` and draws seven rows
+of `a = rank * 648` coefficients each, in projection, rank-row and natural
+coefficient order. Each 32-byte transcript challenge block supplies ten
+nonoverlapping little-endian three-byte candidates; its final two bytes are
+discarded. Candidates `0 <= x < q` are accepted unchanged; candidates
+`q <= x <= 2^24-1` are rejected. Each accepted entry is exactly uniform in
+`{0, ..., q-1}`, with no modular reduction or bias. After 256 rejected
+candidates for one entry, the sampler returns a typed error rather than
+looping indefinitely. J is outside the response retry loop: each attempted
+response has no access to J.
+
+The prover next binds `binary exact divisibility values` and sends
+`y[0]` through `y[6]`, each in exactly twelve bytes, for 84 proof bytes total.
+The first 95 bits encode the unsigned magnitude in little-endian order; bit
+95 is the sign. Zero has its sign bit clear. The verifier rejects any wrong
+length, negative zero, magnitude exceeding `U_J`, or value not divisible by q.
+The bounds below ensure that every honest y fits the unique encoding.
+
+Only after all seven messages enter the transcript does order 7 draw the
+ring-switch scalar alpha, the range-image point tau0, then the independent
+relation-batching coordinates tau1. Its first seven entries are
+`mu[0]` through `mu[6]`. Stage 2 authenticates
+
+```text
+sum_l mu_l (<J_l, RA> - y_l) = 0  over P
+rho[i][t] = sum_l mu_l J_l[i][t]
+```
+
+The direct A evaluator takes this explicit rho. The public linear target is
+`sum_l mu_l y_l`, lifted with its signed integer interpretation into P. The
+remaining relation coordinates authenticate parity, value, B/D, padding and
+any ordinary rows. No quotient table, quotient bound or quotient relation
+participates in this path.
+
+If the seven individual projection identities hold over P, then they hold
+over the integers: `|<J_l, RA> - y_l| <= 2 U_J < P`. Their checked divisibility
+therefore implies seven zero dot products against `RA mod q`. For any fixed
+nonzero residual modulo the prime q, one exactly uniform row annihilates it
+with probability `1/q`; seven independent rows give `q^-7`. The outgoing
+commitment and accepted response must precede J for this argument, and every
+y must precede mu for the independent output-batching argument.
 
 [BinaryRootPublic](../crates/akita-types/src/binary_source/root_public.rs)
 constructs the shared linear relation, including direct authentication of T
@@ -309,18 +358,55 @@ is `Gamma = 92`. The matrix bound is `B_A = 7,126,704`, the response bound is
 `B_Z = 2,340`, and the enforced image magnitude is `B_T = 9,586,980`.
 
 The admission implementations are
-[BinaryQuotientBounds](../crates/akita-types/src/binary_source/quotient.rs) and
+[BinaryProjectionBounds](../crates/akita-types/src/binary_source/projection.rs) and
 [BinaryEvaluationBounds](../crates/akita-types/src/binary_source/evaluation_bounds.rs).
 Both use checked integer arithmetic and reject equality at a strict no-wrap
-threshold. For `P = 340282366920938463463374607431768211181`:
+threshold. The projection bounds are
+
+```text
+L_R = 972 m B_A B_Z + C Gamma B_T
+a = rank * 648
+U_J = (q-1) a L_R
+2 U_J < P,  U_J < 2^95.
+```
+
+The 972 factor is the maximum absolute row sum of the degree-648 integer
+multiplication kernel modulo Psi. Reducing product monomials uses
+`X^648 = X^324 - 1` and `X^972 = -1`; counting the contributing coefficient
+pairs gives maximum weight 972. The centered setup interval gives
+`B_A = (q-1)/2 = 7,126,704`. Four balanced base-eight response digits have
+interval `[-4*(1+8+64+512), 3*(1+8+64+512)] = [-2340, 1755]`, hence
+`B_Z = 2340`. Eight image digits have interval
+`[-4*(8^8-1)/7, 3*(8^8-1)/7] = [-9,586,980, 7,190,235]`, hence
+`B_T = 9,586,980`; substituting the smaller honest centered interval here
+would be unsound. The binary challenge has weight 46 and coefficient
+multiplication operator bound `Gamma = 2*46 = 92`; the factor two accounts
+for half-degree monomial multiplication in the trinomial basis.
+
+For `P = 340282366920938463463374607431768211181` and rank three
+(`a = 1944`), the fixture and upper envelopes are:
+
+| Geometry `(m, C)` | `L_R` | `U_J` | `2 U_J` |
+| --- | ---: | ---: | ---: |
+| `(1, 2)` fixture | 16,211,309,718,240 | 449,193,104,205,686,897,172,480 | 898,386,208,411,373,794,344,960 |
+| `(4096, 256)` | 66,394,525,036,769,280 | 1,839,701,006,388,918,996,628,930,560 | 3,679,402,012,777,837,993,257,861,120 |
+| `(8192, 256)` upper envelope | 132,788,824,280,985,600 | 3,679,395,756,376,625,911,509,811,200 | 7,358,791,512,753,251,823,019,622,400 |
+
+The existing parity/value carry admission requires power-of-two `M = 4m`
+and C. Its positive carry reaches restrict these to `m <= 8192` and
+`C <= 256`; not every pair under these limits passes both carry checks. Since
+`L_R` is increasing in m and C, the last row dominates every admitted
+rank-three geometry. Its `U_J` is below
+`2^95 = 39,614,081,257,132,168,796,771,975,168`, and its strict lift margin is
+`P - 2 U_J = 340282366913579671950621355608748588781`.
+The constructor nevertheless checks both inequalities independently for every
+geometry, including direct callers with other ranks. The 95-bit encoding
+limit is a separate requirement: `2 U_J < P` alone does not establish it.
+
+The fixture's unchanged parity/value carry bounds are:
 
 | Quantity | Fixture result |
 | --- | ---: |
-| Honest KA bound `ceil(B_A (972 m B_Z + C Gamma) / q)` | 1,137,332 |
-| KA digits; enforced BKA | 8; 9,586,980 |
-| `LR = 972 m B_A B_Z + C Gamma B_T` | 16,211,309,718,240 |
-| `LR + q BKA` | 152,858,456,733,060 |
-| Quotient margin `P - (LR + q BKA)` | 340282366920938463463374454573311478121 |
 | Honest K bound; enforced BK | 4,440; 76,695,844 |
 | K no-wrap bound | 153,400,568 |
 | K margin | 340282366920938463463374607431614810613 |
@@ -332,29 +418,50 @@ The honest carry bounds fit both positive and negative digit reaches. These
 integer inequalities justify the selected exact lifts; they do not establish
 SIS security, whole-schedule grinding security or application agreement.
 
+### Projection error ledger
+
+| Term | Bound and scope |
+| --- | --- |
+| Divisibility testing | `q^-7 = 2^-166.353625727542493448...`, approximately `8.3669807259e-51`, for a fixed nonzero residual modulo q. |
+| Independent output batching | At most `1/|E| = 1/P`, approximately `2.9387358771e-39`, for a nonzero vector of seven projection-identity defects. The fixture uses `E = F`; this term is separate from `q^-7`. |
+| Exact lift | Zero additional error when `2 U_J < P` and both envelopes are enforced. |
+| Sampler exhaustion | Completeness abort at most `7 a (1-q/2^24)^256`. For rank three this is `13608 (1-q/2^24)^256`, approximately `3.4031e-207` or `2^-685.872...`; accepted samples remain unbiased. |
+
+These root terms are additional to the frontend term `(7 + 2n)/2^162`,
+ordinary sumcheck and batching terms, commitment binding, setup security,
+grinding and Fiat-Shamir terms. This ledger does not claim an overall
+166-bit security level: independent output batching alone has a roughly
+128-bit error bound in this base-field fixture.
+
 ## Evidence and remaining interfaces
 
 The canonical fixture is
 [binary_source_end_to_end.rs](../crates/akita-pcs/tests/binary_source_end_to_end.rs).
 The measured complete proof sizes for its 128-bit-word fixtures are:
 
-| Protocol | Opening | Before field switch | With field switch |
+| Protocol | Opening | Before projections | With projections |
 | --- | --- | ---: | ---: |
-| Current | Binary-only | 75,702 | 77,873 |
-| Current | Mixed binary/ordinary | 89,811 | 92,116 |
-| `dev-protocol` | Binary-only | 70,610 | 72,818 |
-| `dev-protocol` | Mixed binary/ordinary | 84,791 | 86,954 |
+| Current | Binary-only | 77,873 | 77,936 |
+| Current | Mixed binary/ordinary | 92,116 | 92,101 |
+| `dev-protocol` | Binary-only | 72,818 | 72,877 |
+| `dev-protocol` | Mixed binary/ordinary | 86,954 | 87,119 |
 
-The additional 8-bit-word fixture measures 77,855 bytes in the current protocol
-and 72,792 with `dev-protocol`. The field-switch contribution itself is exactly
-2,195 bytes for every three-round fixture. Complete totals also change with
-later variable-length encodings after the changed transcript challenges; their
-difference is not necessarily 2,195 bytes.
+The before column records the measurements at base `6a2940981`. The after
+column was measured with the projection implementation in both protocol modes.
+The 8-bit-word fixture measures 77,937 bytes in the current protocol and 72,898
+bytes with `dev-protocol`.
+
+The projection messages themselves add exactly 84 bytes. Removing the
+committed quotient shrinks the natural outgoing witness by `rank*648*8`
+digits, or 15,552 digits at rank three. Complete totals also depend on the
+selected suffix geometry and later variable-length encodings after the changed
+transcript challenges. The field-switch contribution remains exactly 2,195
+bytes for every three-round fixture.
 
 The fixture exercises the caller's prefix and
 post-verification squeeze, commitment serialization, kind consistency,
 statement mutations, malformed proof bytes, truncation and trailing bytes.
-A test-only backend alters T, Z, U, K, K_val, KA or padding before outgoing
+A test-only backend alters T, Z, U, K, K_val or padding before outgoing
 commitment. It uses an incorrect public oracle to complete the adversarial
 proof; verification must reject using the independently compiled correct oracle.
 Each rejection runs behind a panic-catching boundary.
@@ -401,16 +508,45 @@ The field-switch acceptance tests cover the frontend's additional obligations:
   weight, changes the retained source terminal, and checks rejection by the
   existing root value authentication without division.
 
+The projection acceptance tests cover the root's additional obligations:
+
+- `projection_binary_group_opens_once_inside_the_callers_transcript` and the
+  mixed fixture mutate every y by +1, +q, sign flip, an excessive magnitude,
+  negative zero, deletion and insertion of a byte, and truncation. Verification
+  and exact exhaustion run behind the same panic-catching boundary.
+- `projection_challenges_bind_commitment_and_every_output` checks that changing
+  the outgoing commitment changes J, and changing any one of the seven y
+  values changes every mu on both channel roles.
+- `projection_orchestrators_fix_witness_then_rows_then_outputs_then_batches`
+  checks the fixation order in both actual drivers, including paired
+  prover/verifier reorderings.
+- `projection_sampler_rejects_q_and_byte_range_top` scripts q-1, q and
+  `2^24-1` candidates and checks the accepted row and challenge-block count.
+  `projection_sampler_exhaustion_rejects_without_looping_forever` checks the
+  per-entry rejection cap.
+- `projection_encoding_rejects_noncanonical_bounds_and_lengths` independently
+  checks signed encoding, negative zero, out-of-range values, nonmultiples of
+  q, and twelve-byte length enforcement.
+
 The ordinary regression fixture is
 [ordinary_grouped_root_bytes.rs](../crates/akita-pcs/tests/ordinary_grouped_root_bytes.rs),
 which pins a 70,541-byte ordinary proof. Its feature-disabled and
 feature-enabled executions are the compatibility gate when the extension is
 unselected. Existing pinned fixtures and goldens remain part of that gate.
 
+
+Both paired local ordering mutations were exercised before committing: moving
+mu ahead of the y messages in both drivers, and moving J ahead of the outgoing
+commitment in both drivers. Each made
+`projection_orchestrators_fix_witness_then_rows_then_outputs_then_batches`
+fail with exit code 101. Both mutations were reverted; the restored end-to-end
+suite passes in both protocol modes.
+
 The field switch produces `BinaryTerminalClaim` for the existing root. The
 direct A-term function
 [`binary_direct_a_weights`](../crates/akita-types/src/binary_source/root_plan.rs)
-is the replacement point for a typed Stage 3 adjoint. Projections and prime
-EP planes are not implemented by this opening. The source descriptor's
+takes the explicit `rho[i][t]` projection weights and is the replacement point
+for a typed Stage 3 adjoint. Prime EP planes are not implemented by this
+opening. The source descriptor's
 existing prime-plane contract remains separate; no prime claim or agreement
 proof is discharged by a binary terminal alone.

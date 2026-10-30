@@ -6,6 +6,8 @@ mod common;
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
 mod field_switch;
+#[path = "binary_source_end_to_end/projection.rs"]
+mod projection;
 #[path = "binary_source_end_to_end/reference.rs"]
 mod reference;
 #[path = "binary_source_end_to_end/statement_binding.rs"]
@@ -115,7 +117,7 @@ fn honest_claim(descriptor: &BinarySourceDescriptor, words: &[u128]) -> BinaryWo
 }
 
 #[test]
-fn binary_group_opens_once_inside_the_callers_transcript() {
+fn projection_binary_group_opens_once_inside_the_callers_transcript() {
     init_rayon_pool();
     run_on_large_stack(|| run_fixture(false, None, 128));
 }
@@ -304,6 +306,16 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     }
     let claims = OpeningClaims::from_groups(groups).unwrap();
     let data = selected_prover_data::<BinaryTestSuffix>(claims, handles, scheme.schedules());
+    let successor_coefficients = scheme
+        .schedules()
+        .resolve_selection(data.selection())
+        .unwrap()
+        .schedule()
+        .recursive_folds[0]
+        .params
+        .outer_payload_geometry()
+        .unwrap()
+        .transmitted_coefficients();
     let statement = |claim: &BinaryWordClaim, point: &[F], value: F| {
         let owned =
             PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim.clone()).unwrap();
@@ -488,6 +500,9 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         assert!(outcome.is_ok(), "malformed opening caused a verifier panic");
         assert!(outcome.unwrap().is_err(), "malformed opening was accepted");
     };
+    projection::mutate_values(&proof, successor_coefficients, |bytes| {
+        rejects(bytes, &claim, &ordinary_point, ordinary_value);
+    });
     let mut value = *claim.value();
     value[0] ^= 1;
     let altered = BinaryWordClaim::new(
