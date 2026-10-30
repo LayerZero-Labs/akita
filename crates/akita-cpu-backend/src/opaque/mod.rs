@@ -86,8 +86,8 @@ pub(in crate::opaque) use recursive::{
 #[cfg(test)]
 pub(crate) use recursive::{pad_compact_witness, LowBasisRangeCheckProver};
 pub(crate) use recursive::{
-    CpuPreparedOpeningHandle, CpuRelationHandle, CpuStage1SessionHandle, CpuStage2SessionHandle,
-    CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat, WitnessPhase,
+    CpuPreparedOpeningHandle, CpuRelationHandle, CpuStage1SessionHandle, CpuWitnessHandle,
+    CpuWitnessOpeningHandle, RecursiveWitnessFlat, WitnessPhase,
 };
 pub(crate) use relation_weights::RelationWeightDescription;
 impl<F, E> crate::opaque::ProverHandleFamily<F, E> for crate::opaque::CpuBackend<F, E>
@@ -876,3 +876,5 @@ mod kernel_tests;
 mod opening_tests;
 #[cfg(test)]
 mod relation_tests;
+
+pub use recursive::CpuStage2SessionHandle;

@@ -28,8 +28,9 @@ pub use commitment::{
 pub use opaque::standalone;
 pub use opaque::{
     evaluate_root_polynomial, CpuBackend, CpuExportPacket, CpuImportPacket, CpuPacketDescriptor,
-    CpuPacketSections, PreparedCrtNttProfile, PreparedNttCacheMetric, RootPolyMeta, RootPolyShape,
-    RootPolynomialEvaluator, SuccessorEncoding, SuccessorSection, SuccessorSectionDescriptor,
+    CpuPacketSections, CpuStage2SessionHandle, PreparedCrtNttProfile, PreparedNttCacheMetric,
+    RootPolyMeta, RootPolyShape, RootPolynomialEvaluator, SuccessorEncoding, SuccessorSection,
+    SuccessorSectionDescriptor,
 };
 pub use opaque::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
 pub use setup::AkitaProverSetup;
@@ -103,3 +104,9 @@ pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "labinius-trinomial")]
+pub mod native_root;
+
+#[cfg(feature = "labinius-trinomial")]
+pub mod binary_root;

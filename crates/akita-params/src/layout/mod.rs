@@ -18,6 +18,7 @@ pub mod params;
 pub mod proof_size;
 pub mod relation_address;
 pub mod relation_layout;
+pub mod relation_polynomial;
 pub(crate) mod relation_rhs_layout;
 pub mod ring_dims;
 pub mod setup_envelope;
@@ -57,6 +58,9 @@ pub use relation_layout::{
     RelationGroupRows, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
     RelationWitnessGeometry,
 };
+#[cfg(feature = "labinius-trinomial")]
+pub use relation_polynomial::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
+pub use relation_polynomial::{RelationPolynomial, RelationPolynomialKind};
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,

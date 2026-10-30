@@ -74,6 +74,9 @@ logging-transcript = [
 response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 disk-persistence = []
 labinius-trinomial = [
+  "akita-algebra/labinius-binary",
+  "akita-prover/labinius-trinomial",
+  "akita-verifier/labinius-trinomial",
   "akita-algebra/labinius-trinomial",
   "akita-types/labinius-trinomial",
 ]

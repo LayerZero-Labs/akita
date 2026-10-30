@@ -18,10 +18,12 @@ pub(crate) use relation_witness::build_w_evals_compact;
 pub(crate) use witness::cpu_extension_opening_session_from_witnesses;
 pub(crate) use witness::OpaqueRecursiveWitness;
 pub(crate) use witness::{
-    CpuPreparedOpeningHandle, CpuRelationHandle, CpuStage1SessionHandle, CpuStage2SessionHandle,
-    CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat, WitnessPhase,
+    CpuPreparedOpeningHandle, CpuRelationHandle, CpuStage1SessionHandle, CpuWitnessHandle,
+    CpuWitnessOpeningHandle, RecursiveWitnessFlat, WitnessPhase,
 };
 
 pub(in crate::opaque) use witness::prepare_recursive_witness_opening;
 
 pub(crate) use witness::suffix_witness_coefficient_packing_partials;
+
+pub use witness::CpuStage2SessionHandle;

@@ -134,3 +134,8 @@ mod sis_compression_tests;
 
 #[cfg(test)]
 mod params_tests;
+
+#[cfg(feature = "labinius-trinomial")]
+pub mod native_root_relation;
+#[cfg(feature = "labinius-trinomial")]
+pub mod root_repacking;

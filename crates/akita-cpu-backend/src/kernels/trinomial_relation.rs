@@ -113,6 +113,34 @@ impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
         matrix_row: &[TrinomialRing<F, D, M>],
         images: &[TrinomialRing<F, D, M>],
     ) -> Result<Vec<F>, AkitaError> {
+        let (remainder, quotient) = self.decompose(matrix_row, images)?;
+        if remainder
+            .coefficients()
+            .iter()
+            .any(|value| !value.is_zero())
+        {
+            return Err(AkitaError::InvalidInput(
+                "trinomial relation has a nonzero remainder".into(),
+            ));
+        }
+        Ok(quotient)
+    }
+
+    /// Extension seam: decompose a row into its native remainder and quotient.
+    ///
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// Returns `(r, Q)` satisfying
+    /// `sum_j A_j v_j - sum_t Y_t c_t = r + Phi_D Q` over the coefficient field.
+    /// A caller proving a relation modulo another commitment modulus may use
+    /// the remainder as an explicit bounded residual. This method does not
+    /// assert that the remainder vanishes; [`Self::build`] enforces that
+    /// condition for an exact native-ring relation.
+    pub fn decompose(
+        &mut self,
+        matrix_row: &[TrinomialRing<F, D, M>],
+        images: &[TrinomialRing<F, D, M>],
+    ) -> Result<(TrinomialRing<F, D, M>, Vec<F>), AkitaError> {
         if matrix_row.len() != self.response_transforms.len()
             || images.len() != self.challenge_transforms.len()
         {
@@ -147,18 +175,9 @@ impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
             &self.padded[..self.polynomial.product_coefficient_len()?],
         )
         .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-        if remainder
-            .coefficients()
-            .iter()
-            .any(|value| !value.is_zero())
-        {
-            return Err(AkitaError::InvalidInput(
-                "trinomial relation has a nonzero remainder".into(),
-            ));
-        }
         self.polynomial
             .validate_coefficient_len(RelationCoefficientRole::Quotient, quotient.len())?;
-        Ok(quotient)
+        Ok((remainder, quotient))
     }
 }
 
