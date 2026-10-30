@@ -20,17 +20,20 @@ use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 pub(super) use akita_params::{BasisMode, PrecommittedGroupProfiles};
 use akita_params::{
-    CommittedGroupBatchProfile, FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey,
-    SetupPrefixSlotId,
+    CommittedGroupBatchProfile, FlatMatrix, OpeningClaimsLayout, PolynomialGroupLayout,
+    ScheduleLookupKey, SetupPrefixSlotId,
 };
 pub(super) use akita_params::{CommittedGroupParams, FoldSchedule};
+use akita_pcs::{AkitaCommitmentScheme, AkitaVerifier};
 pub(super) use akita_prover::SelectedProverOpeningData;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
-    AkitaExpandedSetup, AkitaVerifierSetup, GroupBatchStatement, SetupPrefixVerifierRegistry,
+    AkitaExpandedSetup, AkitaVerifierSetup, FpExtEncoding, GroupBatchStatement,
+    SetupPrefixVerifierRegistry,
 };
 pub(super) use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::One;
 pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
+use jolt_field::{ExtField, Fold, One, PseudoMersenne, Ring, Unreduced};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};
@@ -54,6 +57,46 @@ pub(super) fn init_rayon_pool() {
             .build_global()
             .ok();
     });
+}
+
+/// Verifier over a setup `setup_prover` derived from its own seed.
+pub(super) fn self_derived_verifier<Cfg>(
+    scheme: &AkitaCommitmentScheme<Cfg>,
+    setup: &AkitaProverSetup<Cfg::Field>,
+) -> AkitaVerifier<Cfg>
+where
+    Cfg: CommitmentConfig + 'static,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    // SAFETY: `setup_prover` derived the setup from its seed.
+    unsafe { scheme.verifier(scheme.setup_verifier(setup).expect("verifier setup")) }
+        .expect("verifier")
+}
+
+/// [`self_derived_verifier`] over the setup narrowed to one schedule and root layout.
+pub(super) fn self_derived_schedule_verifier<Cfg>(
+    scheme: &AkitaCommitmentScheme<Cfg>,
+    setup: &AkitaProverSetup<Cfg::Field>,
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+) -> AkitaVerifier<Cfg>
+where
+    Cfg: CommitmentConfig + 'static,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    // SAFETY: as for `self_derived_verifier`.
+    unsafe {
+        scheme.verifier(
+            scheme
+                .setup_verifier_for_schedule(setup, schedule, root_layout)
+                .expect("schedule verifier setup"),
+        )
+    }
+    .expect("verifier")
 }
 
 pub(super) fn random_point(nv: usize, seed: u64) -> Vec<F> {

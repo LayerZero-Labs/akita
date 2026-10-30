@@ -1,11 +1,10 @@
-//! `akita-preprocess`: generate, check, and audit pinned preprocessing
-//! releases.
+//! `akita-preprocess`: generate and check pinned preprocessing releases.
 
 use akita_error::AkitaError;
 use akita_params::sis::SisModulusProfileId;
 use akita_preprocess::{
-    audit_release_files, check_release, generate, known_answer, release_dirs, write_release,
-    ReleaseDescription, Role, DESCRIPTION_FILE, MANIFEST_FILE,
+    check_release, generate, known_answer, release_dirs, write_release, ReleaseDescription, Role,
+    DESCRIPTION_FILE, MANIFEST_FILE,
 };
 use akita_types::preprocessing::{hex, ReleaseManifest};
 use std::path::{Path, PathBuf};
@@ -15,9 +14,8 @@ const USAGE: &str = "\
 usage:
   akita-preprocess generate <params/RELEASE> <OUT_DIR> [--role all|prover|verifier|TARGET] [--write-manifest]
   akita-preprocess check [<params/RELEASE>...]
-  akita-preprocess audit <params/RELEASE> <FILES_DIR>
   akita-preprocess anchor <params/RELEASE>
-  akita-preprocess known-answer [--write-corpus]
+  akita-preprocess known-answer
 
 Paths in a description are relative to the repository root, the current
 directory unless --repo-root DIR is given.";
@@ -51,8 +49,8 @@ fn run(mut args: Vec<String>) -> Result<(), AkitaError> {
             };
             let release = Path::new(release);
             let description = ReleaseDescription::read(&release.join(DESCRIPTION_FILE))?;
-            let generated = generate(&repo_root, &description, &role)?;
-            write_release(Path::new(out), &generated, description.max_file_part)?;
+            let generated = generate(&repo_root, &description)?;
+            write_release(Path::new(out), &generated, &role)?;
             if write_manifest {
                 std::fs::write(release.join(MANIFEST_FILE), &generated.manifest).map_err(
                     |error| AkitaError::InvalidInput(format!("cannot write manifest: {error}")),
@@ -74,14 +72,6 @@ fn run(mut args: Vec<String>) -> Result<(), AkitaError> {
                 let bundle = check_release(&repo_root, &release)?;
                 println!("ok {} {bundle}", release.display());
             }
-            known_answer::check_corpus_coverage(&repo_root, &repo_root.join("params"))
-        }
-        "audit" => {
-            let [release, files] = args.as_slice() else {
-                return Err(usage());
-            };
-            let bundle = audit_release_files(&repo_root, Path::new(release), Path::new(files))?;
-            println!("audited {release} {bundle}");
             Ok(())
         }
         "anchor" => {
@@ -98,15 +88,6 @@ fn run(mut args: Vec<String>) -> Result<(), AkitaError> {
             Ok(())
         }
         "known-answer" => {
-            if take_flag(&mut args, "--write-corpus") {
-                let corpus = known_answer::build_corpus(&repo_root)?;
-                let path = repo_root.join("crates/akita-preprocess/corpus/known-answer-v1.txt");
-                std::fs::write(&path, corpus).map_err(|error| {
-                    AkitaError::InvalidInput(format!("cannot write {}: {error}", path.display()))
-                })?;
-                println!("wrote {}; rebuild before computing digests", path.display());
-                return Ok(());
-            }
             for field in [
                 SisModulusProfileId::Q32Offset99,
                 SisModulusProfileId::Q64Offset59,

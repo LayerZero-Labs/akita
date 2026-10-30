@@ -86,8 +86,7 @@ fn roundtrip(storage: Storage, len: usize) {
         .unwrap();
     assert_eq!(signed_bytes, dense_bytes, "commitment bytes");
 
-    let verifier =
-        unsafe { scheme.verifier(scheme.setup_verifier(&setup).unwrap().clone()) }.unwrap();
+    let verifier = common::self_derived_verifier(&scheme, &setup);
     let mut proof_bytes = Vec::new();
     for output in [signed_output, dense_output] {
         let opening = common::prove_input::<Cfg>(

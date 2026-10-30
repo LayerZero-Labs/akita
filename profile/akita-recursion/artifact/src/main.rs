@@ -176,9 +176,8 @@ where
     Ok(opening)
 }
 
-fn materialize_schedule_setup_prefix_slots<F, E>(
+fn materialize_schedule_setup_prefix_slots<F>(
     setup: &mut AkitaProverSetup<F>,
-    backend: &CpuBackend<F, E>,
     schedule: &akita_params::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
@@ -193,12 +192,9 @@ where
         let slot_id = setup_prefix.slot_id().ok_or_else(|| {
             akita_error::AkitaError::InvalidSetup("group is not a setup prefix".into())
         })?;
-        if setup.prefix_slots().get(&slot_id).is_some() {
-            continue;
-        }
         ids.push(slot_id);
     }
-    setup.insert_exported_prefixes(&backend.export_setup_prefixes(&ids)?)
+    setup.export_setup_prefixes(&ids)
 }
 
 fn build_statement<'a>(
@@ -361,11 +357,7 @@ macro_rules! generate_scalar_case {
         let backend = CpuBackend::new(prover_setup.expanded().clone())
             .map_err(|err| format!("{} backend setup preparation: {err}", case))?;
         if $recursive {
-            materialize_schedule_setup_prefix_slots(
-                &mut prover_setup,
-                &backend,
-                schedule.schedule(),
-            )
+            materialize_schedule_setup_prefix_slots(&mut prover_setup, schedule.schedule())
             .map_err(|err| format!("{} setup prefix materialization: {err}", case))?;
         }
         tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "prover setup complete");
@@ -647,7 +639,7 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("prover setup failed: {err}"))?;
     let backend = CpuBackend::new(prover_setup.expanded().clone())
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
-    materialize_schedule_setup_prefix_slots(&mut prover_setup, &backend, schedule.schedule())
+    materialize_schedule_setup_prefix_slots(&mut prover_setup, schedule.schedule())
         .map_err(|err| format!("materialize recursive setup-prefix slots: {err}"))?;
     tracing::info!(
         elapsed_s = t0.elapsed().as_secs_f64(),

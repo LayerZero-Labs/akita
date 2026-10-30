@@ -9,7 +9,6 @@
   ],
   "max_file_part": 1073741824,
   "hints": true,
-  "page_hashes": true,
   "sets": [
     {
       "name": "fp128-dense",

@@ -29,7 +29,9 @@
 //! matrix marks `#[ignore]`. The recursive catalogs are excluded for the same
 //! reason: every recursive row is production-sized.
 
-use crate::common::{dense_opening_lagrange, load_workspace_scheme, onehot_opening_lagrange};
+use crate::common::{
+    dense_opening_lagrange, load_workspace_scheme, onehot_opening_lagrange, self_derived_verifier,
+};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};
@@ -267,10 +269,10 @@ where
     let setup = scheme
         .setup_prover(max_num_vars, num_polynomials)
         .expect("setup");
-    let backend = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+    let backend = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier = self_derived_verifier(scheme, &setup);
     assert!(
-        akita_config::TrustedScheduleCatalog::<Cfg>::verifier_admits(&setup.expanded, row)
+        akita_config::TrustedScheduleCatalog::<Cfg>::verifier_admits(setup.expanded(), row)
             .expect("admission"),
         "setup sized from the row must admit it"
     );
@@ -356,15 +358,13 @@ where
     )
     .expect("verifier claims");
     akita_transcript::clear_thread_events();
-    unsafe { scheme.verifier(verifier_setup) }
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                LABEL,
-                GroupBatchStatement::new(selection, verifier_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
-        })
+    verifier
+        .batched_verify(
+            &proof,
+            LABEL,
+            GroupBatchStatement::new(selection, verifier_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
         .expect("honest proof verifies");
     let verifier_events = akita_transcript::thread_events();
     (prover_events, verifier_events)

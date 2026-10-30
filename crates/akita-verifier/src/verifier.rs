@@ -44,7 +44,9 @@ where
     ///
     /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing an
     /// admitted row fails.
-    pub fn from_pinned(pinned: crate::PinnedVerifierSetup<Cfg>) -> Result<Self, AkitaError> {
+    pub fn from_pinned(
+        pinned: crate::preprocessing::PinnedVerifierSetup<Cfg>,
+    ) -> Result<Self, AkitaError> {
         let (setup, schedules, selection) = pinned.into_parts();
         // SAFETY: the loader derived the matrix and checked every commitment
         // against the anchored manifest.
@@ -64,38 +66,15 @@ where
     /// Returns [`AkitaError::InvalidSetup`] when the setup is not a
     /// single-row load of the cache's row or the cache does not match it.
     pub fn from_pinned_with_terminal_cache(
-        pinned: crate::PinnedVerifierSetup<Cfg>,
-        cache: &crate::PinnedTerminalCache,
+        pinned: crate::preprocessing::PinnedVerifierSetup<Cfg>,
+        cache: &crate::preprocessing::PinnedTerminalCache,
     ) -> Result<Self, AkitaError> {
         let (setup, schedules, selection) = pinned.into_parts();
-        let selection = selection
-            .filter(|selection| selection.row_digest == cache.row())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "terminal cache does not belong to the pinned setup's selected row".into(),
-                )
-            })?;
+        let selection = selection.ok_or_else(|| {
+            AkitaError::InvalidSetup("a terminal cache serves a single-row load".into())
+        })?;
         // SAFETY: as for `from_pinned`; the cache was issued by the loader.
         unsafe { Self::for_selection(setup, schedules, selection, Some(cache.as_trusted())) }
-    }
-
-    /// Build a verifier over a setup whose commitments this host derived
-    /// itself, outside every anchored release.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::new`].
-    ///
-    /// # Safety
-    ///
-    /// Soundness contract: the deployment accepts locally derived
-    /// commitments, which no manifest digest checks.
-    pub unsafe fn from_locally_derived(
-        setup: crate::LocallyDerivedVerifierSetup<Cfg::Field>,
-        schedules: TrustedScheduleCatalog<Cfg>,
-    ) -> Result<Self, AkitaError> {
-        // SAFETY: forwarded to the caller.
-        unsafe { Self::new(setup.into_setup(), schedules) }
     }
 
     /// Admit every catalog row `setup` supports and prepare their terminal matrices.

@@ -1,8 +1,6 @@
 //! Release manifest: set records, commitment registry, and file hashes.
 
-use super::encoding::{
-    malformed, push_bytes, push_count, push_str, push_u32_le, push_u64, push_u8, Reader,
-};
+use super::encoding::{malformed, push_bytes, push_str, push_u32, push_u64, push_usize, Reader};
 use super::files::{validate_file_name, validate_name, MAX_FILE_NAME_BYTES, MAX_NAME_BYTES};
 use super::identity::{
     AlgorithmIdentity, BundleId, FileHash, PrefixCommitmentDigest, ProfileKey, StreamId,
@@ -10,7 +8,7 @@ use super::identity::{
 };
 use akita_error::AkitaError;
 use akita_params::descriptor_bytes::DigestHash;
-use akita_params::digest_descriptor_bytes;
+use akita_params::DescriptorHasher;
 
 const MANIFEST_TAG: &str = "akita/preprocessing/manifest/v1";
 const BUNDLE_TAG: &str = "akita/preprocessing/bundle/v1";
@@ -147,7 +145,7 @@ impl SetRecord {
         push_str(&mut out, &self.name);
         push_str(&mut out, &self.config_family);
         push_bytes(&mut out, &self.decomposition);
-        push_u8(&mut out, self.sis_modulus_profile_tag);
+        out.push(self.sis_modulus_profile_tag);
         out.extend_from_slice(&self.sis_table_digest);
         out.extend_from_slice(&self.sis_l2_table_digest);
         out.extend_from_slice(&self.algorithm_identity.to_bytes());
@@ -158,7 +156,7 @@ impl SetRecord {
         push_u64(&mut out, self.max_num_batched_polys);
         out.extend_from_slice(&self.catalog_digest);
         push_profiles(&mut out, &self.catalog_profiles);
-        push_u8(&mut out, u8::from(self.admits_program_rows));
+        out.push(u8::from(self.admits_program_rows));
         push_profiles(&mut out, &self.universe);
         out
     }
@@ -166,7 +164,6 @@ impl SetRecord {
     fn decode(bytes: &[u8]) -> Result<Self, AkitaError> {
         let mut reader = Reader::new(bytes);
         let name = reader.str(MAX_NAME_BYTES, "set name")?.to_owned();
-        validate_name(&name)?;
         let config_family = reader.str(MAX_NAME_BYTES, "config family")?.to_owned();
         let decomposition = reader
             .bytes(MAX_DECOMPOSITION_BYTES, "decomposition")?
@@ -185,9 +182,6 @@ impl SetRecord {
         let admits_program_rows = reader.flag("program-row flag")?;
         let universe = read_profiles(&mut reader, "profile universe")?;
         reader.finish("set record")?;
-        if !admits_program_rows && !universe.is_empty() {
-            return Err(malformed("profile universe without program rows"));
-        }
         Ok(Self {
             name,
             config_family,
@@ -210,7 +204,7 @@ impl SetRecord {
 }
 
 fn push_profiles(out: &mut Vec<u8>, profiles: &[ProfileKey]) {
-    push_count(out, profiles.len());
+    push_usize(out, profiles.len());
     for profile in profiles {
         out.extend_from_slice(profile.as_bytes());
     }
@@ -222,7 +216,6 @@ fn read_profiles(reader: &mut Reader<'_>, what: &str) -> Result<Vec<ProfileKey>,
     for _ in 0..count {
         out.push(ProfileKey::from_bytes(reader.digest(what)?));
     }
-    require_strictly_sorted(&out, |profile| *profile.as_bytes(), what)?;
     Ok(out)
 }
 
@@ -275,32 +268,32 @@ impl ReleaseManifest {
         self.validate()?;
         let mut out = Vec::new();
         push_str(&mut out, MANIFEST_TAG);
-        push_u32_le(&mut out, MANIFEST_FORMAT_VERSION);
-        push_u8(&mut out, digest_hash_tag(self.digest_hash));
+        push_u32(&mut out, MANIFEST_FORMAT_VERSION);
+        out.push(digest_hash_tag(self.digest_hash));
         push_str(&mut out, &self.release_name);
-        push_u8(&mut out, self.kind.tag());
+        out.push(self.kind.tag());
         push_str(&mut out, &self.generator_version);
-        push_count(&mut out, self.targets.len());
+        push_usize(&mut out, self.targets.len());
         for target in &self.targets {
             push_str(&mut out, target);
         }
         push_u64(&mut out, self.max_file_part);
-        push_count(&mut out, self.streams.len());
+        push_usize(&mut out, self.streams.len());
         for stream in &self.streams {
             out.extend_from_slice(&stream.identity.to_bytes());
             push_u64(&mut out, stream.element_count);
         }
-        push_count(&mut out, self.registry.len());
+        push_usize(&mut out, self.registry.len());
         for entry in &self.registry {
             out.extend_from_slice(entry.stream_id.as_bytes());
             out.extend_from_slice(entry.profile_key.as_bytes());
             out.extend_from_slice(entry.prefix_commitment_digest.as_bytes());
         }
-        push_count(&mut out, self.sets.len());
+        push_usize(&mut out, self.sets.len());
         for set in &self.sets {
             push_bytes(&mut out, &set.to_bytes());
         }
-        push_count(&mut out, self.files.len());
+        push_usize(&mut out, self.files.len());
         for file in &self.files {
             push_str(&mut out, &file.name);
             push_u64(&mut out, file.length);
@@ -367,7 +360,7 @@ impl ReleaseManifest {
             });
         }
         let set_count = reader.count(MAX_LIST_ITEMS, 8, "sets")?;
-        let mut sets = Vec::with_capacity(set_count);
+        let mut sets = Vec::new();
         for _ in 0..set_count {
             sets.push(SetRecord::decode(
                 reader.bytes(MAX_MANIFEST_BYTES, "set record")?,
@@ -431,14 +424,6 @@ impl ReleaseManifest {
             if !set.admits_program_rows && !set.universe.is_empty() {
                 return Err(malformed("profile universe without program rows"));
             }
-            if self.stream(&set.stream_id).is_none() {
-                return Err(malformed("set names an unknown stream"));
-            }
-        }
-        for entry in &self.registry {
-            if self.stream(&entry.stream_id).is_none() {
-                return Err(malformed("registry entry names an unknown stream"));
-            }
         }
         for file in &self.files {
             validate_file_name(&file.name)?;
@@ -492,8 +477,10 @@ impl ReleaseManifest {
 /// manifest bytes. Computed before the manifest is decoded.
 #[must_use]
 pub fn bundle_id(manifest: &[u8]) -> BundleId {
-    let mut input = Vec::with_capacity(BUNDLE_TAG.len() + 8 + manifest.len());
-    push_str(&mut input, BUNDLE_TAG);
-    input.extend_from_slice(manifest);
-    BundleId::from_bytes(digest_descriptor_bytes(&input))
+    let mut tag = Vec::with_capacity(BUNDLE_TAG.len() + 8);
+    push_str(&mut tag, BUNDLE_TAG);
+    let mut hasher = DescriptorHasher::new();
+    hasher.update(&tag);
+    hasher.update(manifest);
+    BundleId::from_bytes(hasher.finalize())
 }

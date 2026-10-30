@@ -39,7 +39,7 @@ fn stream_binds_session_statement_basis_and_eof() {
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -66,14 +66,12 @@ fn stream_binds_session_statement_basis_and_eof() {
         #[cfg(feature = "logging-transcript")]
         let prover_ranges = akita_transcript::thread_proof_ranges();
         let verify = |candidate: &[u8], session: &[u8], claimed: F, basis| {
-            unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
-                verifier.batched_verify(
-                    candidate,
-                    session,
-                    verify_input::<OneHotCfg>(&point, &[claimed], &commitment, scheme.schedules()),
-                    basis,
-                )
-            })
+            verifier.batched_verify(
+                candidate,
+                session,
+                verify_input::<OneHotCfg>(&point, &[claimed], &commitment, scheme.schedules()),
+                basis,
+            )
         };
 
         #[cfg(feature = "logging-transcript")]
@@ -210,7 +208,7 @@ fn stream_mutations_reject_without_panicking() {
         );
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -240,19 +238,12 @@ fn stream_mutations_reject_without_panicking() {
             let mut mutated = proof.clone();
             mutated[offset] ^= 1;
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
-                    verifier.batched_verify(
-                        &mutated,
-                        LABEL,
-                        verify_input::<DenseCfg>(
-                            &point,
-                            &[opening],
-                            &commitment,
-                            scheme.schedules(),
-                        ),
-                        BasisMode::Lagrange,
-                    )
-                })
+                verifier.batched_verify(
+                    &mutated,
+                    LABEL,
+                    verify_input::<DenseCfg>(&point, &[opening], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
             }));
             assert!(matches!(outcome, Ok(Err(_))));
         }

@@ -3,7 +3,7 @@ use super::CachedSetupPrefix;
 use crate::commitment::{PortableCommitmentHandle, SetupPrefixProverRegistry, SetupPrefixSlot};
 use crate::CpuBackend;
 use akita_error::AkitaError;
-use akita_params::{FlatMatrix, GroupCommitPhaseParams, RingRelationMode, SetupPrefixSlotId};
+use akita_params::{GroupCommitPhaseParams, RingRelationMode, SetupPrefixSlotId};
 use akita_serialization::Valid;
 use akita_types::{
     derive_public_matrix_range, AkitaExpandedSetup, AkitaSetupDescriptor, RingVec,
@@ -86,17 +86,17 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
                     .max_setup_field_elements()?,
             );
         }
-        let expanded = unsafe {
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                AkitaSetupDescriptor {
-                    max_num_vars: 1,
-                    max_num_batched_polys: 1,
-                    num_field_elements: fields,
-                    setup_seed: descriptor.setup_seed.clone(),
-                },
-                FlatMatrix::from_flat_data(source.read(0..fields)?),
-            )
-        };
+        if fields > source.capacity() {
+            return Err(AkitaError::InvalidSetup(
+                "setup range exceeds capacity".into(),
+            ));
+        }
+        let expanded = AkitaExpandedSetup::derive(AkitaSetupDescriptor {
+            max_num_vars: 1,
+            max_num_batched_polys: 1,
+            num_field_elements: fields,
+            setup_seed: descriptor.setup_seed.clone(),
+        })?;
         Self::new(Arc::new(expanded))?.export_prefixes_from(source, ids)
     }
 

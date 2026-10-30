@@ -419,7 +419,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let setup = scheme.setup_prover(NV, BATCH_SIZE).unwrap();
     let stack =
         CpuBackend::with_ring_switch_cache_limit(setup.expanded().clone(), usize::MAX).unwrap();
-    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+    let verifier = self_derived_verifier(&scheme, &setup);
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
@@ -449,25 +449,23 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
-    unsafe { scheme.verifier(verifier_setup.clone()) }
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                b"test/batched-onehot-shape",
-                selected_statement::<OneHotCfg>(
-                    &scheme,
-                    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                        point,
-                        openings,
-                        &commitments[0],
-                    )
-                    .expect("valid one-hot verifier group")])
-                    .expect("valid one-hot verifier claims"),
+    verifier
+        .batched_verify(
+            &proof,
+            b"test/batched-onehot-shape",
+            selected_statement::<OneHotCfg>(
+                &scheme,
+                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                    point,
+                    openings,
+                    &commitments[0],
                 )
-                .expect("valid one-hot verifier statement"),
-                BasisMode::Lagrange,
+                .expect("valid one-hot verifier group")])
+                .expect("valid one-hot verifier claims"),
             )
-        })
+            .expect("valid one-hot verifier statement"),
+            BasisMode::Lagrange,
+        )
         .expect("batched onehot verify");
 }
 

@@ -1,3 +1,5 @@
+mod common;
+
 use akita_config::{
     proof_optimized::{fp128, fp32},
     CommitmentConfig,
@@ -65,11 +67,8 @@ macro_rules! onehot_roundtrip {
         let verify_group = PolynomialGroupClaims::new(point, vec![opening], &commitment).unwrap();
         let verify_claims = OpeningClaims::from_groups(vec![verify_group]).unwrap();
         let statement = GroupBatchStatement::new(selection, verify_claims).unwrap();
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.unwrap();
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(&proof, b"native-port-onehot", statement, basis)
-            })
+        common::self_derived_verifier(&scheme, &setup)
+            .batched_verify(&proof, b"native-port-onehot", statement, basis)
             .unwrap();
     }};
 }
@@ -161,10 +160,7 @@ fn dense_fp128_roundtrip_inner() {
     let verify_group = PolynomialGroupClaims::new(point, vec![opening], &commitment).unwrap();
     let verify_claims = OpeningClaims::from_groups(vec![verify_group]).unwrap();
     let statement = GroupBatchStatement::new(selection, verify_claims).unwrap();
-    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.unwrap();
-    unsafe { scheme.verifier(verifier_setup.clone()) }
-        .and_then(|verifier| {
-            verifier.batched_verify(&proof, b"native-port-smoke", statement, BasisMode::Lagrange)
-        })
+    common::self_derived_verifier(&scheme, &setup)
+        .batched_verify(&proof, b"native-port-smoke", statement, BasisMode::Lagrange)
         .unwrap();
 }

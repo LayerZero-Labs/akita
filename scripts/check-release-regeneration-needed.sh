@@ -4,8 +4,9 @@
 # usage: scripts/check-release-regeneration-needed.sh <event-name> [<base-sha>]
 #
 # A release must be regenerated whenever its description, manifest, or the
-# anchor changes, when Cargo.lock or rust-toolchain.toml changes, or when any
-# crate in the generator's dependency closure changes. The closure covers
+# anchor changes, when the root Cargo.toml, Cargo.lock, .cargo/config.toml, or
+# rust-toolchain.toml changes, or when any crate in the generator's dependency
+# closure changes. The closure covers
 # nearly all of Akita, so most changes trigger it. Pushes, scheduled runs, and
 # manual runs always regenerate. Prints `needed=true|false`, also to
 # $GITHUB_OUTPUT when set.
@@ -39,8 +40,9 @@ done < <(cargo tree -p akita-preprocess --all-features --edges normal,build --pr
 needed=false
 while IFS= read -r path; do
   case "$path" in
-    params/* | artifacts/schedules/* | crates/akita-anchors/* | Cargo.lock | rust-toolchain.toml \
-      | .github/workflows/preprocessing-releases.yml | scripts/check-release-regeneration-needed.sh)
+    params/* | artifacts/schedules/* | crates/akita-anchors/* | Cargo.toml | Cargo.lock \
+      | .cargo/config.toml | rust-toolchain.toml | .github/workflows/preprocessing-releases.yml \
+      | scripts/check-release-regeneration-needed.sh)
       needed=true
       ;;
   esac

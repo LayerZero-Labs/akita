@@ -202,7 +202,7 @@ where
         transfers_before + 1,
         "same-ID route must not convert"
     );
-    let verifier = unsafe { scheme.verifier(scheme.setup_verifier(&setup).unwrap()) }.unwrap();
+    let verifier = common::self_derived_verifier(&scheme, &setup);
     verifier
         .batched_verify(
             &proof,

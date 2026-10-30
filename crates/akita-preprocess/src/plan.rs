@@ -14,7 +14,7 @@ use akita_params::{
     ScheduleRowDigest, SetupPrefixSlotId,
 };
 use akita_serialization::{AkitaDeserialize, Valid};
-use akita_types::preprocessing::{parse_hex, profile_key, ProfileKey, SetRecord, StreamIdentity};
+use akita_types::preprocessing::{profile_key, ProfileKey, SetRecord, StreamIdentity};
 use akita_types::AkitaSetupSeed;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -50,6 +50,13 @@ pub(crate) fn plan_set<Cfg: CommitmentConfig>(
 where
     Cfg::Field: Valid + AkitaDeserialize<Context = ()>,
 {
+    if Cfg::schedule_family_name() != set.config {
+        return Err(AkitaError::Internal(format!(
+            "config {:?} dispatches to schedule family {:?}",
+            set.config,
+            Cfg::schedule_family_name()
+        )));
+    }
     let path = repo_root.join(&set.catalog);
     let catalog_bytes = std::fs::read(&path).map_err(|error| {
         AkitaError::InvalidInput(format!("cannot read catalog {}: {error}", path.display()))
@@ -80,7 +87,11 @@ where
         None => Vec::new(),
         Some(program_rows) => {
             for file in &program_rows.universe_slots {
-                for id in read_slot_ids(&repo_root.join(file))? {
+                let path = repo_root.join(file);
+                let text = std::fs::read_to_string(&path).map_err(|error| {
+                    AkitaError::InvalidInput(format!("cannot read {}: {error}", path.display()))
+                })?;
+                for id in crate::parse_slot_ids(&text, &path.display().to_string())? {
                     insert_profile(&mut profiles, id);
                 }
             }
@@ -138,7 +149,10 @@ where
 }
 
 /// Keep one slot id per profile: the smallest, so the choice is canonical.
-fn insert_profile(profiles: &mut BTreeMap<ProfileKey, SetupPrefixSlotId>, id: SetupPrefixSlotId) {
+pub(crate) fn insert_profile(
+    profiles: &mut BTreeMap<ProfileKey, SetupPrefixSlotId>,
+    id: SetupPrefixSlotId,
+) {
     profiles
         .entry(profile_key(&id.commitment_profile))
         .and_modify(|kept| {
@@ -147,27 +161,4 @@ fn insert_profile(profiles: &mut BTreeMap<ProfileKey, SetupPrefixSlotId>, id: Se
             }
         })
         .or_insert(id);
-}
-
-/// Read a universe file: one hex-encoded uncompressed slot id per line.
-pub(crate) fn read_slot_ids(path: &Path) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        AkitaError::InvalidInput(format!("cannot read {}: {error}", path.display()))
-    })?;
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(|line| {
-            let id = SetupPrefixSlotId::deserialize_uncompressed_exact(&parse_hex(line)?, &())
-                .map_err(|error| {
-                    AkitaError::InvalidInput(format!(
-                        "invalid slot id in {}: {error}",
-                        path.display()
-                    ))
-                })?;
-            id.check()
-                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            Ok(id)
-        })
-        .collect()
 }

@@ -16,11 +16,11 @@ use std::sync::Arc;
 ///
 /// Backend-prepared compute state is intentionally not stored here. Host code
 /// prepares a compute backend from the expanded setup when it wants to prove.
-#[derive(Debug, Clone, PartialEq, Eq)]
 ///
 /// Fields are private: a prover setup is derived from its seed in this
 /// process, with commitments exported here, or issued by the release loader
 /// as a [`crate::PinnedProverSetup`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaProverSetup<F: Field> {
     /// Expanded matrix stage used by the prover.
     pub(crate) expanded: Arc<AkitaExpandedSetup<F>>,
@@ -60,8 +60,8 @@ impl<F: Field> AkitaProverSetup<F> {
         })
     }
 
-    /// Commit to the setup prefixes `ids` from this setup's matrix and store
-    /// them, replacing any earlier slots.
+    /// Commit to the setup prefixes `ids` not stored yet, from this setup's
+    /// matrix, and store them.
     ///
     /// # Errors
     ///
@@ -70,53 +70,29 @@ impl<F: Field> AkitaProverSetup<F> {
     where
         F: CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
     {
-        if ids.is_empty() {
-            self.prefix_slots =
-                SetupPrefixProverRegistry::new(self.expanded.descriptor().setup_seed.clone());
+        let missing = ids
+            .iter()
+            .filter(|id| self.prefix_slots.get(id).is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
             return Ok(());
         }
         // Prefix commitments depend only on the setup and the slot ids, so the
         // base field fills the exporting backend's extension parameter.
-        let backend = crate::CpuBackend::<F, F>::new(self.expanded.clone())?;
-        self.prefix_slots = backend.export_setup_prefixes(ids)?;
-        tracing::info!(
-            slots = self.prefix_slots.len(),
-            "materialized exact setup-prefix commitments"
-        );
-        Ok(())
-    }
-
-    /// Store slots a CPU backend exported in this process, keeping the slots
-    /// already stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the slots were not exported in this process or
-    /// belong to another stream.
-    pub fn insert_exported_prefixes(
-        &mut self,
-        exported: &SetupPrefixProverRegistry<F>,
-    ) -> Result<(), AkitaError>
-    where
-        F: Valid,
-    {
-        if !exported.is_backend_validated()
-            || exported.setup_seed() != self.prefix_slots.setup_seed()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "only setup prefixes exported in this process over this stream can be stored"
-                    .into(),
-            ));
-        }
+        let exported = crate::CpuBackend::<F, F>::new(self.expanded.clone())?
+            .export_setup_prefixes(&missing)?;
         let validated = self.prefix_slots.is_empty() || self.prefix_slots.is_backend_validated();
-        for (id, slot) in exported.iter() {
-            if self.prefix_slots.get(id).is_none() {
-                self.prefix_slots.insert(slot.clone())?;
-            }
+        for (_, slot) in exported.iter() {
+            self.prefix_slots.insert(slot.clone())?;
         }
         if validated {
             self.prefix_slots.mark_backend_validated();
         }
+        tracing::info!(
+            slots = self.prefix_slots.len(),
+            "materialized exact setup-prefix commitments"
+        );
         Ok(())
     }
 

@@ -16,7 +16,6 @@ path = "src/main.rs"
 [features]
 default = ["parallel", "transcript-keccak"]
 parallel = [
-  "dep:rayon",
   "jolt-field/parallel",
   "akita-cpu-backend/parallel",
   "akita-verifier/parallel",
@@ -50,9 +49,11 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
   "asm",
   "solinas",
 ] }
-rayon = { version = "1.10", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+rayon = "1.10"
 
 [lints]
 workspace = true

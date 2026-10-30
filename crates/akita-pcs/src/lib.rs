@@ -54,8 +54,8 @@ pub use akita_error::AkitaError;
 #[doc(hidden)]
 pub use akita_cpu_backend::custom_source;
 pub use akita_cpu_backend::{
-    load_prover_setup, AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend,
-    CpuPrefixDeriver, DensePoly, GroupContext, OneHotPoly, PinnedProverSetup, SourceHandle,
+    AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
+    OneHotPoly, SourceHandle,
 };
 pub use akita_params::{BasisMode, OpeningClaimsLayout, PrecommittedGroupProfiles};
 pub use akita_prover::{
@@ -64,14 +64,13 @@ pub use akita_prover::{
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, TrustedBytes, Validate};
 pub use akita_setup::new_prover_setup;
 pub use akita_types::{OpeningClaims, PolynomialGroupClaims};
-pub use akita_verifier::{
-    build_riscv64_terminal_ntt_cache, AkitaVerifier, PinnedTerminalCache, PinnedVerifierSetup,
-    TrustedTerminalCache,
-};
+pub use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, TrustedTerminalCache};
 
 /// Pinned preprocessing releases: manifests, anchors, and both loaders.
 pub mod preprocessing {
-    pub use akita_config::preprocessing::{CommitmentSource, PrefixCommitmentDeriver, ProgramRows};
+    pub use akita_config::preprocessing::{
+        PrefixCommitmentDeriver, PrefixCommitmentSource, ProgramRows,
+    };
     pub use akita_cpu_backend::{load_prover_setup, CpuPrefixDeriver, PinnedProverSetup};
     pub use akita_types::preprocessing::*;
     pub use akita_verifier::preprocessing::*;

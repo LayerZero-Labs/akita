@@ -6,15 +6,7 @@
 //! trusted before it is compared with the bytes that remain.
 
 use akita_error::AkitaError;
-use akita_params::descriptor_bytes::{push_u32, push_usize};
-
-pub(crate) fn push_u8(out: &mut Vec<u8>, value: u8) {
-    out.push(value);
-}
-
-pub(crate) fn push_u32_le(out: &mut Vec<u8>, value: u32) {
-    push_u32(out, value);
-}
+pub(crate) use akita_params::descriptor_bytes::{push_u32, push_usize};
 
 pub(crate) fn push_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
@@ -29,10 +21,6 @@ pub(crate) fn push_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
 /// `str(s) = bytes(UTF-8 of s)`; `tag(t)` uses the same encoding.
 pub(crate) fn push_str(out: &mut Vec<u8>, value: &str) {
     push_bytes(out, value.as_bytes());
-}
-
-pub(crate) fn push_count(out: &mut Vec<u8>, count: usize) {
-    push_usize(out, count);
 }
 
 pub(crate) fn malformed(what: &str) -> AkitaError {
@@ -141,7 +129,7 @@ pub fn hex(bytes: &[u8]) -> String {
 /// # Panics
 ///
 /// Panics on any other input. In a `const` item the panic is a compile error.
-pub const fn digest_from_hex(hex: &str) -> [u8; 32] {
+pub(crate) const fn digest_from_hex(hex: &str) -> [u8; 32] {
     let bytes = hex.as_bytes();
     assert!(bytes.len() == 64, "digest hex must have 64 digits");
     let mut out = [0u8; 32];
@@ -159,29 +147,4 @@ const fn hex_digit(digit: u8) -> u8 {
         b'a'..=b'f' => digit - b'a' + 10,
         _ => panic!("digest hex must use lowercase hex digits"),
     }
-}
-
-/// Parse lowercase hex at run time.
-pub fn parse_hex(hex: &str) -> Result<Vec<u8>, AkitaError> {
-    let bytes = hex.as_bytes();
-    if !bytes.len().is_multiple_of(2)
-        || !bytes
-            .iter()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-    {
-        return Err(AkitaError::InvalidInput(format!(
-            "expected lowercase hex, got {hex:?}"
-        )));
-    }
-    Ok(bytes
-        .chunks_exact(2)
-        .map(|pair| (hex_digit(pair[0]) << 4) | hex_digit(pair[1]))
-        .collect())
-}
-
-/// Parse 64 lowercase hex digits at run time.
-pub fn parse_digest_hex(hex: &str) -> Result<[u8; 32], AkitaError> {
-    <[u8; 32]>::try_from(parse_hex(hex)?).map_err(|_| {
-        AkitaError::InvalidInput(format!("expected 64 lowercase hex digits, got {hex:?}"))
-    })
 }

@@ -902,11 +902,7 @@ pub(crate) fn find_schedule_in_relation_order(
             relation_traversal_order: options.relation_traversal_order,
             relation_mode_filter: options.relation_mode_filter,
         };
-        let mut memo = ScheduleMemo::new();
-        if let Some(admissible) = options.setup_prefix_profiles {
-            memo.setup_prefixes
-                .restrict(std::sync::Arc::clone(admissible));
-        }
+        let mut memo = ScheduleMemo::new(options.setup_prefix_profiles.cloned());
         let suffix_started = diagnostics.map(|_| Instant::now());
         let pass_start = diagnostics.map(|diagnostics| diagnostics.search_work());
         let suffix = derive_selected_suffix_schedule(

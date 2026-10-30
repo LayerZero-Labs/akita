@@ -19,9 +19,6 @@ while IFS= read -r match; do
   case "$file" in
     */tests/* | */tests.rs | *_tests.rs | */benches/* | */examples/*) continue ;;
   esac
-  if [[ "$file" == crates/akita-types/src/preprocessing/anchor.rs ]]; then
-    continue
-  fi
   if ! grep -qE '^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?(const|static)[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]*TrustAnchor[[:space:]]*=[[:space:]]*TrustAnchor::new\(' <<<"$text"; then
     echo "$file:$line: TrustAnchor must be a const or static item" >&2
     status=1

@@ -192,7 +192,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     assert_eq!(private.exports.get(), exports);
     assert_eq!(private.imports.get(), imports);
 
-    let verifier = unsafe { scheme.verifier(scheme.setup_verifier(&setup)?) }?;
+    let verifier = common::self_derived_verifier(&scheme, &setup);
     let statement = GroupBatchStatement::new(
         selection,
         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

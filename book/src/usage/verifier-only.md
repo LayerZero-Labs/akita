@@ -113,7 +113,7 @@ comes from the integration's own configuration, never from transported bytes.
 
 ```rust
 use akita_anchors::{AKITA_ANCHOR, AKITA_V1_MANIFEST};
-use akita_config::preprocessing::CommitmentSource;
+use akita_config::preprocessing::PrefixCommitmentSource;
 use akita_types::preprocessing::{open_anchored_manifest, DirectoryReleaseFiles, ReleaseKind};
 
 let release = open_anchored_manifest(
@@ -127,25 +127,24 @@ let pinned_setup = akita_verifier::preprocessing::load_verifier_setup::<Cfg>(
     &release,
     &files,
     "fp128-dense-recursive",
-    None,
-    CommitmentSource::Registry,
+    None, // every admitted row; a single-row verifier passes its selection
+    None, // no program rows
+    PrefixCommitmentSource::Registry,
 )?;
 ```
 
-The loader checks the anchor before decoding the manifest, compares the set
-record with the compiled configuration, checks every file it reads against
-its manifest hash, and compares every setup-prefix commitment with the
-manifest. Release files are untrusted transport: a directory, the
+The loader authenticates every byte it uses against the anchored manifest;
+[pinned releases](../how/verification.md#pinned-releases) lists its checks.
+Release files are therefore untrusted transport: a directory, the
 `akita-setup` release cache, embedded bytes, or downloaded release assets all
-work, because the loader checks each byte it uses. A single-row verifier uses
-`load_selected_verifier_setup`.
+work.
 
 A host that prefers not to read registry files may derive the commitments from
-the seed instead, with `CommitmentSource::SeedDerived` and the CPU reference
-deriver from `akita-cpu-backend`. The loader compares each derived commitment
-with the manifest, so both modes issue the same verifier. Seed-derived mode
-costs one commitment derivation per profile used, so hosts that load often
-should use registry mode, and a guest must not use it.
+the seed instead, with `PrefixCommitmentSource::SeedDerived` and the CPU
+reference deriver from `akita-cpu-backend`. The loader compares each derived
+commitment with the manifest, so both modes issue the same verifier.
+Seed-derived mode costs one commitment derivation per profile used, so hosts
+that load often should use registry mode, and a guest must not use it.
 
 A deployment with its own seed, catalogs, or limits writes a description
 under its own `params/`, generates its release with `akita-preprocess`, and
@@ -156,12 +155,11 @@ passes its own anchor to the same loader.
 The verifier treats every input as possibly malformed. Proof bytes,
 commitments, claims, and opening points may also be adversarial, and the
 verifier's soundness does not depend on who produced them. The verifier setup
-and the schedule catalog are different: the host supplies them, as described
-[above](#supply-verifier-setup), and soundness assumes they were derived as
-claimed. The host either derives them itself or authenticates bytes that a
-party it trusts derived. Their bytes are still decoded defensively. In every
-case the verifier returns `AkitaError` or `SerializationError` when decoding
-or proof replay fails.
+and the schedule catalog are different: the loader authenticates them against
+the compiled anchor, as described [above](#supply-verifier-setup), and
+soundness assumes the anchored release was generated honestly. Their bytes are
+still decoded defensively. In every case the verifier returns `AkitaError` or
+`SerializationError` when decoding or proof replay fails.
 
 Match on the error at the host boundary and reject the request. Do not retry
 verification with another configuration or reconstructed schedule. A valid

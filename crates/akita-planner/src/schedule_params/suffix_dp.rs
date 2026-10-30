@@ -20,7 +20,8 @@ use super::{
     CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, ProofCost,
     RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
     RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
-    SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
+    SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixProfileFilter, SetupPrefixSearchCache,
+    SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 

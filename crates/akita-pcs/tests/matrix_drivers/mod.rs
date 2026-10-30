@@ -110,9 +110,7 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
             )
             .expect("recursive direct prove");
 
-        let verifier_setup =
-            unsafe { scheme.setup_verifier_for_schedule(&setup, &schedule, &opening_layout) }
-                .expect("verifier setup");
+        let verifier = self_derived_schedule_verifier(&scheme, &setup, &schedule, &opening_layout);
         let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point,
             openings,
@@ -120,15 +118,13 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
         )
         .expect("verifier group")])
         .expect("verifier claims");
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    transcript_domain,
-                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                transcript_domain,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
             .expect("recursive direct verify");
     });
 }
@@ -163,7 +159,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -188,15 +184,13 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         });
 
         let openings = [expected_opening];
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    label,
-                    verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                label,
+                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                BasisMode::Lagrange,
+            )
             .unwrap_or_else(|e| panic!("verify dense nv={nv}: {e:?}"));
     }
 }
@@ -220,7 +214,7 @@ pub(super) fn prove_verify_onehot_roundtrip<Cfg>(
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -245,15 +239,13 @@ pub(super) fn prove_verify_onehot_roundtrip<Cfg>(
         });
 
         let openings = [expected_opening];
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    label,
-                    verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                label,
+                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                BasisMode::Lagrange,
+            )
             .unwrap_or_else(|e| panic!("verify onehot nv={nv}: {e:?}"));
     }
 }
@@ -272,7 +264,7 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let pre_seed = 0xd0d0_0000_u64 ^ PRE_NV as u64;
         let pre_evals = dense_field_evals(PRE_NV, pre_seed);
@@ -374,15 +366,13 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
             .expect("final verifier group"),
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    label,
-                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                label,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
             .unwrap_or_else(|e| {
                 panic!("dense precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
             });
@@ -402,7 +392,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
         let akita_cpu_backend::CommitOutput {
@@ -479,15 +469,13 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             .expect("final verifier group"),
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    label,
-                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                label,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
             .unwrap_or_else(|e| {
                 panic!("onehot precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
             });

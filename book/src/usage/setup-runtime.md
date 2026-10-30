@@ -1,9 +1,8 @@
 # Setup and prepared compute state
 
 Akita uses transparent public setup. The setup contains no secret trapdoor and
-needs no ceremony. A deployment can generate it from the public setup seed,
-store it for reuse, and derive a smaller verifier package for each supported
-proof shape.
+needs no ceremony. A prover can generate it from the public setup seed and
+store it for reuse. Verifier setups come from pinned releases.
 
 The API separates protocol identity from local compute state. This lets a host
 cache expensive transforms without changing commitments or proof bytes.
@@ -166,13 +165,13 @@ before choosing it.
 
 The `disk-persistence` feature enables `akita_setup::ReleaseCache`, a disk
 cache of pinned release files keyed by `bundle_id`. It does not store backend
-transform caches or locally derived setups.
+transform caches or setups derived from the seed.
 
 The cache is untrusted transport. `ReleaseCache::manifest` returns a manifest
 only when its bytes hash to the requested `bundle_id`, and every file read
 through `ReleaseCache::files` is checked by a loader against that manifest. A
-corrupted or planted file is rejected rather than trusted, so a cached setup
-can no longer bypass setup validation.
+corrupted or planted file is rejected, so a cache cannot bypass setup
+validation.
 
 ## Setup offloading
 

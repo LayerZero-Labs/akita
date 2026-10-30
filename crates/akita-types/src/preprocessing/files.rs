@@ -6,12 +6,11 @@ use akita_error::AkitaError;
 use akita_params::{DescriptorHasher, ScheduleRowDigest};
 
 const FILE_TAG: &str = "akita/preprocessing/file/v1";
-const PAGE_TAG: &str = "akita/preprocessing/page/v1";
 
 /// Longest release file name.
 pub const MAX_FILE_NAME_BYTES: usize = 255;
 /// Longest set or target name.
-pub const MAX_NAME_BYTES: usize = 64;
+pub(crate) const MAX_NAME_BYTES: usize = 64;
 
 /// `H(tag("akita/preprocessing/file/v1") || str(name) || bytes(content))`.
 #[must_use]
@@ -24,19 +23,6 @@ pub fn file_hash(name: &str, content: &[u8]) -> FileHash {
     hasher.update(&head);
     hasher.update(content);
     FileHash::from_bytes(hasher.finalize())
-}
-
-/// `H(tag("akita/preprocessing/page/v1") || stream_id || u64(i) || page_i)`.
-#[must_use]
-pub fn page_hash(stream_id: &StreamId, index: u64, page: &[u8]) -> [u8; 32] {
-    let mut head = Vec::with_capacity(PAGE_TAG.len() + 48);
-    push_str(&mut head, PAGE_TAG);
-    head.extend_from_slice(stream_id.as_bytes());
-    push_u64(&mut head, index);
-    let mut hasher = DescriptorHasher::new();
-    hasher.update(&head);
-    hasher.update(page);
-    hasher.finalize()
 }
 
 /// `registry/<hex(stream_id)>/<hex(profile_key)>`: the commitment payload.
@@ -66,18 +52,6 @@ pub fn catalog_view_file_name(set_name: &str, row: &ScheduleRowDigest) -> String
     )
 }
 
-/// `matrix/<hex(stream_id)>/<first>-<last>`: complete pages `first..=last`.
-#[must_use]
-pub fn matrix_file_name(stream_id: &StreamId, first_page: u64, last_page: u64) -> String {
-    format!("matrix/{stream_id}/{first_page}-{last_page}")
-}
-
-/// `page-hashes/<hex(stream_id)>`: every page hash of the stream, in order.
-#[must_use]
-pub fn page_hashes_file_name(stream_id: &StreamId) -> String {
-    format!("page-hashes/{stream_id}")
-}
-
 /// `terminal-cache/<hex(stream_id)>/<hex(row digest)>/<target>/<capacity>`.
 #[must_use]
 pub fn terminal_cache_file_name(
@@ -92,10 +66,10 @@ pub fn terminal_cache_file_name(
     )
 }
 
-/// `certificate/<hex(stream_id)>/<hex(profile_key)>`: reserved.
+/// `<name>.part-<index>`: one stored part of a file split for transport.
 #[must_use]
-pub fn certificate_file_name(stream_id: &StreamId, profile_key: &ProfileKey) -> String {
-    format!("certificate/{stream_id}/{profile_key}")
+pub fn part_file_name(name: &str, index: usize) -> String {
+    format!("{name}.part-{index}")
 }
 
 /// Check a set or target name: 1 to 64 bytes of `[a-z0-9._-]`, starting with

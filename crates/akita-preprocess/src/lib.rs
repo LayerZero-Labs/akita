@@ -1,17 +1,16 @@
-//! Generator and auditor of pinned Akita preprocessing releases.
+//! Generator and checker of pinned Akita preprocessing releases.
 //!
-//! A release is generated deterministically from a description checked in
-//! under `params/<release>/`: the generator derives each stream's public
-//! matrix once, commits every setup-prefix profile any set needs with the CPU
-//! reference path, and writes registry payloads, optional prover hints,
-//! catalogs, optional guest files, and the manifest that names every file by
-//! hash. Its output depends only on the description, the code, and the
-//! digest-hash selection.
+//! [`generate`] builds a release from a description checked in under
+//! `params/<release>/`: it derives each stream's public matrix once, commits
+//! every setup-prefix profile any set needs with the CPU reference path, and
+//! produces registry payloads, optional prover hints, catalogs, optional
+//! guest files, and the manifest that names every file by hash.
+//! [`check_release`] regenerates a release and compares the manifest with the
+//! checked-in one.
 //!
 //! This crate is the only component that publishes setup-prefix commitments.
-//! It never reads `akita-setup`'s cache, a previous bundle, or the candidate
-//! it audits as input, and it depends on no anchor crate, so adding a release
-//! never changes a `bundle_id`.
+//! It depends on neither `akita-setup`, whose cache it must not read, nor an
+//! anchor crate, so adding a release never changes a `bundle_id`.
 
 mod description;
 mod generate;
@@ -20,25 +19,17 @@ mod plan;
 
 pub use description::{
     ProgramRowsDescription, ReleaseDescription, SetDescription, DESCRIPTION_FILE,
-    DESCRIPTION_FORMAT_VERSION, MANIFEST_FILE,
+    DESCRIPTION_FORMAT_VERSION, MANIFEST_FILE, RISCV64_TARGET,
 };
-pub use generate::{generate, write_release, GeneratedRelease, Role, RISCV64_TARGET};
+pub use generate::{generate, write_release, GeneratedRelease, Role};
 
-use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_cpu_backend::CpuPrefixDeriver;
 use akita_error::AkitaError;
+use akita_params::SetupPrefixSlotId;
+use akita_serialization::{AkitaDeserialize, Valid};
 use akita_types::preprocessing::{BundleId, ReleaseManifest};
-use akita_types::{
-    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
-    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-};
-use akita_verifier::LocallyDerivedVerifierSetup;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 /// Run `$body` with `$cfg` bound to the compiled config of family `$family`.
-#[macro_export]
-#[doc(hidden)]
 macro_rules! dispatch_config {
     ($family:expr, |$cfg:ident| $body:expr) => {{
         use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -142,11 +133,10 @@ macro_rules! dispatch_config {
         }
     }};
 }
+pub(crate) use dispatch_config;
 
 /// Run `$body` with `$field` bound to the base field of SIS modulus profile
 /// `$profile`.
-#[macro_export]
-#[doc(hidden)]
 macro_rules! dispatch_field {
     ($profile:expr, |$field:ident| $body:expr) => {{
         match $profile {
@@ -165,14 +155,17 @@ macro_rules! dispatch_field {
         }
     }};
 }
+pub(crate) use dispatch_field;
 
-/// Regenerate the release under `release_dir` from scratch and require its
-/// manifest to equal the checked-in one, byte for byte. This is the merge
-/// check and audit mode.
+/// Regenerate the release under `release_dir` from scratch, require its
+/// manifest to equal the checked-in one byte for byte, and require every
+/// profile it publishes to fall in a known-answer corpus class. This is the
+/// merge check and audit mode.
 ///
 /// # Errors
 ///
-/// Returns an error naming the first differing part of the manifest.
+/// Returns an error naming the first differing part of the manifest, or the
+/// corpus lines that would cover the missing classes.
 pub fn check_release(repo_root: &Path, release_dir: &Path) -> Result<BundleId, AkitaError> {
     let description = ReleaseDescription::read(&release_dir.join(DESCRIPTION_FILE))?;
     if release_dir.file_name().and_then(|name| name.to_str()) != Some(description.name.as_str()) {
@@ -185,7 +178,7 @@ pub fn check_release(repo_root: &Path, release_dir: &Path) -> Result<BundleId, A
     let checked_in = std::fs::read(&manifest_path).map_err(|error| {
         AkitaError::InvalidInput(format!("cannot read {}: {error}", manifest_path.display()))
     })?;
-    let generated = generate(repo_root, &description, &Role::Verifier)?;
+    let generated = generate(repo_root, &description)?;
     if generated.manifest != checked_in {
         return Err(AkitaError::InvalidSetup(format!(
             "release {:?} does not regenerate: {}",
@@ -193,42 +186,8 @@ pub fn check_release(repo_root: &Path, release_dir: &Path) -> Result<BundleId, A
             manifest_difference(&checked_in, &generated.manifest)
         )));
     }
+    known_answer::check_corpus_coverage(&generated.profiles)?;
     Ok(generated.bundle_id)
-}
-
-/// Audit the files of a release stored under `files_dir` (for example a
-/// downloaded copy) against a from-scratch regeneration.
-///
-/// # Errors
-///
-/// Returns an error when the release does not regenerate or a stored file
-/// differs from the regenerated one.
-pub fn audit_release_files(
-    repo_root: &Path,
-    release_dir: &Path,
-    files_dir: &Path,
-) -> Result<BundleId, AkitaError> {
-    let bundle = check_release(repo_root, release_dir)?;
-    let description = ReleaseDescription::read(&release_dir.join(DESCRIPTION_FILE))?;
-    let generated = generate(repo_root, &description, &Role::All)?;
-    let manifest = ReleaseManifest::decode(&generated.manifest)?;
-    let stored = akita_types::preprocessing::DirectoryReleaseFiles::new(files_dir);
-    for (name, bytes) in generated.files.iter() {
-        if files_dir.join(name).exists() || files_dir.join(format!("{name}.part-0")).exists() {
-            let read = akita_types::preprocessing::read_release_file(
-                &stored,
-                &manifest,
-                name,
-                bytes.len(),
-            )?;
-            if read != bytes {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "stored file {name:?} differs from the regenerated one"
-                )));
-            }
-        }
-    }
-    Ok(bundle)
 }
 
 fn manifest_difference(expected: &[u8], actual: &[u8]) -> String {
@@ -262,7 +221,7 @@ fn manifest_difference(expected: &[u8], actual: &[u8]) -> String {
 /// # Errors
 ///
 /// Returns an error when the directory cannot be listed.
-pub fn release_dirs(params_dir: &Path) -> Result<Vec<std::path::PathBuf>, AkitaError> {
+pub fn release_dirs(params_dir: &Path) -> Result<Vec<PathBuf>, AkitaError> {
     let entries = std::fs::read_dir(params_dir).map_err(|error| {
         AkitaError::InvalidInput(format!("cannot list {}: {error}", params_dir.display()))
     })?;
@@ -275,87 +234,46 @@ pub fn release_dirs(params_dir: &Path) -> Result<Vec<std::path::PathBuf>, AkitaE
     Ok(dirs)
 }
 
-/// A representative slot id of every profile any release under
-/// `params_dir` publishes.
-///
-/// # Errors
-///
-/// Returns an error when a description or catalog is invalid.
-pub fn release_profiles(
-    repo_root: &Path,
-    params_dir: &Path,
-) -> Result<Vec<akita_params::SetupPrefixSlotId>, AkitaError> {
-    let mut out = Vec::new();
-    for dir in release_dirs(params_dir)? {
-        let description = ReleaseDescription::read(&dir.join(DESCRIPTION_FILE))?;
-        let seed = description.setup_seed()?;
-        for set in &description.sets {
-            let plan = dispatch_config!(set.config.as_str(), |Cfg| plan::plan_set::<Cfg>(
-                repo_root, set, &seed
-            ))?;
-            out.extend(plan.profiles.into_values());
-        }
+/// Parse lowercase hex digits.
+pub(crate) fn parse_hex(hex: &str) -> Result<Vec<u8>, AkitaError> {
+    let digit = |byte: u8| match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        _ => Err(AkitaError::InvalidInput(format!(
+            "{hex:?} is not lowercase hex"
+        ))),
+    };
+    if !hex.len().is_multiple_of(2) {
+        return Err(AkitaError::InvalidInput(format!(
+            "{hex:?} has an odd number of hex digits"
+        )));
     }
-    Ok(out)
+    hex.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| Ok((digit(pair[0])? << 4) | digit(pair[1])?))
+        .collect()
 }
 
-/// Local profile derivation (opt-in, host only): a verifier setup whose
-/// matrix and commitments this host derives itself from `setup_seed`, for
-/// the rows of `catalog` within the bounds.
-///
-/// There is no manifest to compare with: the result is accepted only by the
-/// `unsafe` `AkitaVerifier::from_locally_derived`.
-///
-/// # Errors
-///
-/// Returns an error when no row fits or a commitment cannot be derived.
-pub fn derive_local_verifier_setup<Cfg>(
-    catalog: &TrustedScheduleCatalog<Cfg>,
-    setup_seed: &AkitaSetupSeed,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<LocallyDerivedVerifierSetup<Cfg::Field>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: jolt_field::Unreduced
-        + jolt_field::WithCommitAccumulator
-        + akita_serialization::Valid
-        + 'static,
-{
-    use akita_config::preprocessing::PrefixCommitmentDeriver;
-
-    let rows = catalog.rows_within_setup_capacity(max_num_vars, max_num_batched_polys)?;
-    let mut num_field_elements = 1;
-    let mut ids = std::collections::BTreeSet::new();
-    for row in &rows {
-        let layout = row.profiles().opening_layout()?;
-        num_field_elements = num_field_elements.max(
-            akita_params::verifier_setup_matrix_capacity_for_schedule(row.schedule(), &layout)?
-                .num_field_elements,
-        );
-        ids.extend(akita_config::required_setup_prefix_slot_ids_for_schedule(
-            row.schedule(),
-            &layout,
-        )?);
-    }
-    let ids = ids.into_iter().collect::<Vec<_>>();
-    let expanded = AkitaExpandedSetup::derive(AkitaSetupDescriptor {
-        max_num_vars,
-        max_num_batched_polys,
-        num_field_elements,
-        setup_seed: setup_seed.clone(),
-    })?;
-    let commitments = CpuPrefixDeriver.derive_prefix_commitments(setup_seed, &ids)?;
-    let mut registry = SetupPrefixVerifierRegistry::new(setup_seed.clone());
-    for (id, commitment) in ids.into_iter().zip(commitments) {
-        registry.insert(SetupPrefixVerifierSlot { id, commitment })?;
-    }
-    // SAFETY: the matrix and every commitment were derived here from the seed.
-    unsafe {
-        Ok(LocallyDerivedVerifierSetup::assume_locally_derived(
-            AkitaVerifierSetup::from_parts(Arc::new(expanded), registry)?,
-        ))
-    }
+/// Parse slot-id lines: one hex-encoded uncompressed `SetupPrefixSlotId` per
+/// line, skipping blank lines and `#` comments. `origin` names the text in
+/// errors.
+pub(crate) fn parse_slot_ids(
+    text: &str,
+    origin: &str,
+) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let invalid = |error: String| {
+                AkitaError::InvalidInput(format!("invalid slot id in {origin}: {error}"))
+            };
+            let id = SetupPrefixSlotId::deserialize_uncompressed_exact(&parse_hex(line)?, &())
+                .map_err(|error| invalid(error.to_string()))?;
+            id.check().map_err(|error| invalid(error.to_string()))?;
+            Ok(id)
+        })
+        .collect()
 }
 
 #[cfg(test)]

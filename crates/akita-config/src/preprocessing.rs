@@ -1,18 +1,21 @@
 //! Release checks shared by the prover and verifier loaders.
 //!
 //! A loader opens a manifest with
-//! [`akita_types::preprocessing::open_anchored_manifest`], compares the
-//! code-derived fields of each set record with its compiled configuration
-//! ([`check_set_record_code`]), admits rows with [`Admission`], and loads
-//! the commitments the admitted rows use with [`load_prefix_commitments`],
-//! from registry files or derived from the seed. Prover and verifier run
-//! exactly this code, so they size their setups from the same rows.
+//! [`akita_types::preprocessing::open_anchored_manifest`], opens a set
+//! against its compiled configuration with [`open_set`], admits rows with
+//! [`Admission`], and loads the commitments the admitted rows use with
+//! [`load_prefix_commitments`], from registry files or derived from the seed.
+//! Prover and verifier run exactly this code, so they size their setups from
+//! the same rows.
 
 mod admission;
 mod commitments;
 
 pub use admission::{Admission, ProgramRows};
-pub use commitments::{load_prefix_commitments, CommitmentSource, PrefixCommitmentDeriver};
+pub use commitments::{
+    check_prefix_commitment, load_prefix_commitments, PrefixCommitmentDeriver,
+    PrefixCommitmentSource,
+};
 
 use crate::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
@@ -58,12 +61,25 @@ pub fn set_record_code_fields<Cfg: CommitmentConfig>() -> SetRecordCodeFields {
     }
 }
 
-/// Require the code-derived fields of `record` to equal `Cfg`'s.
+/// Open an anchored set for `Cfg`: its record, with the code-derived fields
+/// required to equal `Cfg`'s (Invariant 5), and its stream, required to be a
+/// stream of `Cfg`'s base field.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] naming the first field that differs.
-pub fn check_set_record_code<Cfg: CommitmentConfig>(record: &SetRecord) -> Result<(), AkitaError> {
+/// Returns [`AkitaError::InvalidSetup`] when the set was not anchored, a
+/// code-derived field differs, or the stream is unknown or over another
+/// field.
+pub fn open_set<'a, Cfg: CommitmentConfig>(
+    release: &'a AnchoredManifest,
+    set_name: &str,
+) -> Result<(&'a SetRecord, &'a StreamEntry), AkitaError> {
+    let record = release.set(set_name)?;
+    check_set_record_code::<Cfg>(record)?;
+    Ok((record, set_stream::<Cfg>(release, record)?))
+}
+
+fn check_set_record_code<Cfg: CommitmentConfig>(record: &SetRecord) -> Result<(), AkitaError> {
     let code = set_record_code_fields::<Cfg>();
     let mismatch = if record.config_family != code.config_family {
         Some("config family")
@@ -107,13 +123,7 @@ pub fn set_chunking(record: &SetRecord) -> Result<ChunkedWitnessCfg, AkitaError>
     Ok(chunking)
 }
 
-/// The stream of a set, required to be a stream of `Cfg`'s base field.
-///
-/// # Errors
-///
-/// Returns an error when the manifest lacks the stream or it belongs to
-/// another field.
-pub fn set_stream<'a, Cfg: CommitmentConfig>(
+fn set_stream<'a, Cfg: CommitmentConfig>(
     release: &'a AnchoredManifest,
     record: &SetRecord,
 ) -> Result<&'a StreamEntry, AkitaError> {
@@ -165,13 +175,13 @@ pub fn load_set_catalog<Cfg: CommitmentConfig>(
     Ok(catalog)
 }
 
-/// Load and authenticate a set's selected-row verifier view of `row`, as a
-/// guest does instead of loading the complete catalog.
+/// Load a set's selected-row verifier view of `row`, as a guest does instead
+/// of loading the complete catalog. [`Admission::admit_view`] checks that it
+/// reproduces the catalog identity.
 ///
 /// # Errors
 ///
-/// Returns an error when the file does not match or the view does not
-/// reproduce the set's catalog digest.
+/// Returns an error when the file does not match the manifest.
 pub fn load_set_catalog_view<Cfg: CommitmentConfig>(
     release: &AnchoredManifest,
     record: &SetRecord,
@@ -183,16 +193,7 @@ pub fn load_set_catalog_view<Cfg: CommitmentConfig>(
         files,
         release.manifest(),
         &name,
-        MAX_VERIFIER_VIEW_FILE_BYTES,
+        crate::MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     )?;
-    let view = TrustedScheduleCatalog::<Cfg>::from_verifier_view(&bytes, set_chunking(record)?)?;
-    if view.catalog_digest() != record.catalog_digest {
-        return Err(AkitaError::InvalidSetup(format!(
-            "catalog view of set {:?} does not reproduce the set's catalog digest",
-            record.name
-        )));
-    }
-    Ok(view)
+    TrustedScheduleCatalog::<Cfg>::from_verifier_view(&bytes, set_chunking(record)?)
 }
-
-const MAX_VERIFIER_VIEW_FILE_BYTES: usize = crate::MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES;

@@ -4,18 +4,21 @@ use super::AkitaProverSetup;
 use crate::commitment::{PortableCommitmentHandle, SetupPrefixProverRegistry, SetupPrefixSlot};
 use crate::CpuBackend;
 use akita_config::preprocessing::{
-    check_set_record_code, load_prefix_commitments, load_set_catalog, set_stream, Admission,
-    CommitmentSource, PrefixCommitmentDeriver, ProgramRows,
+    check_prefix_commitment, load_prefix_commitments, load_set_catalog, open_set, Admission,
+    PrefixCommitmentDeriver, PrefixCommitmentSource, ProgramRows,
 };
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Valid, Validate};
 use akita_types::preprocessing::{
-    hints_file_name, profile_key, read_release_file, AnchoredManifest, BundleId, ReleaseFileSource,
+    hints_file_name, profile_key, read_release_file, AnchoredManifest, BundleId, ProfileKey,
+    ReleaseFileSource,
 };
 use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed, SetupPrefixPublicCommitment};
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Largest prover hint file a loader reads.
 const MAX_HINT_FILE_BYTES: usize = 1 << 32;
@@ -73,9 +76,9 @@ impl<Cfg: CommitmentConfig> PinnedProverSetup<Cfg> {
 /// Rows are admitted exactly as a verifier admits them (A1); the matrix is
 /// sized from the rows the prover may prove (A2) and derived from the
 /// release's seed (A3). With hint files in the release, every slot is
-/// loaded from its registry payload and hints after both match the manifest;
-/// otherwise the slots are exported from the derived matrix and each payload
-/// is compared with the manifest.
+/// loaded from its registry payload and hints after both match the manifest,
+/// before the matrix is derived; otherwise the slots are exported from the
+/// derived matrix and each payload is compared with the manifest.
 ///
 /// # Errors
 ///
@@ -99,9 +102,7 @@ where
         + AkitaDeserialize<Context = ()>
         + 'static,
 {
-    let record = release.set(set_name)?;
-    check_set_record_code::<Cfg>(record)?;
-    let stream = set_stream::<Cfg>(release, record)?;
+    let (record, stream) = open_set::<Cfg>(release, set_name)?;
     let admission = Admission::admit(
         record,
         load_set_catalog::<Cfg>(release, record, files)?,
@@ -109,51 +110,68 @@ where
     )?;
     let requirements = admission.prover_requirements()?;
     let ids = requirements.prefix_slot_ids();
-    let mut setup = AkitaProverSetup::derive(
-        admission.setup_descriptor(stream.identity.setup_seed(), requirements.matrix_capacity()),
-    )?;
-    let hint_names = ids
+    let setup_seed = stream.identity.setup_seed();
+    let hint_name = |id: &SetupPrefixSlotId| {
+        hints_file_name(&record.stream_id, &profile_key(&id.commitment_profile))
+    };
+    let loaded = if ids
         .iter()
-        .map(|id| hints_file_name(&record.stream_id, &profile_key(&id.commitment_profile)))
-        .collect::<Vec<_>>();
-    if !ids.is_empty()
-        && hint_names
-            .iter()
-            .all(|name| release.manifest().file(name).is_some())
+        .all(|id| release.manifest().file(&hint_name(id)).is_some())
     {
-        let commitments = load_prefix_commitments::<Cfg>(
+        let commitments = load_prefix_commitments(
             release,
             record,
+            stream,
             files,
             ids,
-            CommitmentSource::Registry,
+            PrefixCommitmentSource::Registry,
         )?;
-        let mut registry = SetupPrefixProverRegistry::new(stream.identity.setup_seed().clone());
-        for (id, name) in ids.iter().zip(&hint_names) {
-            let key = profile_key(&id.commitment_profile);
+        let mut hints = BTreeMap::<ProfileKey, PortableCommitmentHandle<Cfg::Field>>::new();
+        let mut registry = SetupPrefixProverRegistry::new(setup_seed.clone());
+        for (id, commitment) in ids.iter().zip(commitments) {
+            let hint = match hints.entry(profile_key(&id.commitment_profile)) {
+                Entry::Occupied(entry) => entry.get().clone(),
+                Entry::Vacant(entry) => entry
+                    .insert(decode_hint(&read_release_file(
+                        files,
+                        release.manifest(),
+                        &hint_name(id),
+                        MAX_HINT_FILE_BYTES,
+                    )?)?)
+                    .clone(),
+            };
             registry.insert(SetupPrefixSlot {
                 id: id.clone(),
-                commitment: commitments[&key].clone(),
-                hint: decode_hint(&read_release_file(
-                    files,
-                    release.manifest(),
-                    name,
-                    MAX_HINT_FILE_BYTES,
-                )?)?,
+                commitment,
+                hint,
             })?;
         }
         // Payload and hints matched the anchored manifest (Invariant 7).
         registry.mark_backend_validated();
-        setup.prefix_slots = registry;
+        Some(registry)
     } else {
-        setup.export_setup_prefixes(ids)?;
-        load_prefix_commitments::<Cfg>(
-            release,
-            record,
-            files,
-            ids,
-            CommitmentSource::SeedDerived(&ExportedPrefixes(&setup.prefix_slots)),
-        )?;
+        None
+    };
+    let mut setup = AkitaProverSetup::derive(
+        admission.setup_descriptor(setup_seed, requirements.matrix_capacity()),
+    )?;
+    match loaded {
+        Some(registry) => setup.prefix_slots = registry,
+        None => {
+            setup.export_setup_prefixes(ids)?;
+            let mut checked = BTreeSet::new();
+            for (id, slot) in setup.prefix_slots.iter() {
+                if checked.insert(profile_key(&id.commitment_profile)) {
+                    check_prefix_commitment(
+                        release,
+                        record,
+                        stream,
+                        &id.commitment_profile,
+                        &slot.commitment,
+                    )?;
+                }
+            }
+        }
     }
     Ok(PinnedProverSetup {
         setup,
@@ -183,33 +201,6 @@ where
         return Err(malformed());
     }
     Ok(hint)
-}
-
-/// Slots this process just exported, presented to the manifest comparison.
-struct ExportedPrefixes<'a, F: Field>(&'a SetupPrefixProverRegistry<F>);
-
-impl<F: Field> PrefixCommitmentDeriver<F> for ExportedPrefixes<'_, F> {
-    fn derive_prefix_commitments(
-        &self,
-        setup_seed: &AkitaSetupSeed,
-        ids: &[SetupPrefixSlotId],
-    ) -> Result<Vec<SetupPrefixPublicCommitment<F>>, AkitaError> {
-        if setup_seed != self.0.setup_seed() {
-            return Err(AkitaError::InvalidSetup(
-                "exported setup prefixes belong to another stream".into(),
-            ));
-        }
-        ids.iter()
-            .map(|id| {
-                self.0
-                    .get(id)
-                    .map(|slot| slot.commitment.clone())
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("an exported setup prefix is missing".into())
-                    })
-            })
-            .collect()
-    }
 }
 
 /// Seed-derived mode for host loaders: commits each requested prefix from
@@ -243,6 +234,15 @@ where
             },
             ids,
         )?;
-        ExportedPrefixes(&registry).derive_prefix_commitments(setup_seed, ids)
+        ids.iter()
+            .map(|id| {
+                registry
+                    .get(id)
+                    .map(|slot| slot.commitment.clone())
+                    .ok_or_else(|| {
+                        AkitaError::Internal("an exported setup prefix is missing".into())
+                    })
+            })
+            .collect()
     }
 }

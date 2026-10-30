@@ -169,26 +169,21 @@ execution, not a production trust boundary. The host performs strict setup
 decoding and Akita verification before the guest runs, and the benchmark guest
 then uses the already checked expanded setup matrix directly.
 
-A production guest reads no preprocessing from its input. Everything it needs
-is embedded in an approved image: the trust anchor, the release manifest, its
-set record and registry entries, the catalog view of the rows it verifies,
-the matrix prefix, and terminal caches. At startup it runs the same loader as
-a host on those small embedded files, as a single-row load
-(`load_guest_verifier_setup`), except that it takes the embedded matrix prefix
-instead of deriving the seed. The registry entries are checked like any
-release file; the build step must not embed a combined verifier key whose
-commitments came from anywhere else.
+A production guest reads no preprocessing from its input. It embeds the trust
+anchor, the release manifest with its set record, the set's registry entries,
+the catalog view of the row it verifies, the matrix prefix that row reads, and
+the row's terminal caches. It loads them with `load_guest_verifier_setup`, a
+single-row load that checks the anchor, the set record, and the embedded
+release files like a host loader, but takes the embedded matrix prefix instead
+of deriving the matrix from the seed.
 
-Hashing the large embedded files may cost too many cycles, so they are issued
-through guest-only `unsafe fn`s (`PinnedMatrixPrefix::embedded_unchecked` and
-`PinnedTerminalCache::embedded_unchecked`). Their contract is that the bytes
-are embedded in an approved image and either match the manifest or equal the
-build step's derivation. Approval happens in the trusted build environment: a
-reproducible build produces one ELF snapshot, and the approval step checks
-its embedded release files against the manifest and rederives every file the
-build step derived. The program commitment the outer verifier trusts is
-computed from that same snapshot. A guest crate denies every other unchecked
-constructor with `clippy::disallowed_methods`, for example:
+Hashing the matrix prefix and terminal caches would cost the guest too many
+cycles, so it issues them through the guest-only `unsafe fn`s
+`PinnedMatrixPrefix::embedded_unchecked` and
+`PinnedTerminalCache::embedded_unchecked`. Their soundness contract is that
+the embedded bytes are the matrix prefix derived from the release's seed and
+the terminal caches the release determines. A guest crate denies every other
+unchecked constructor with `clippy::disallowed_methods`, for example:
 
 ```toml
 disallowed-methods = [

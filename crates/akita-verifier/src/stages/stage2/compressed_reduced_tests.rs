@@ -1,19 +1,17 @@
 use super::*;
+use crate::benchmark_support::coefficient_setup;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
 use akita_params::{
-    gadget_row_scalars, CommitmentPayloadMode, FlatMatrix, GroupCommitPhaseParams,
-    GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, RelationQuotientPlan,
-    RelationRowFamily, RelationWitnessGeometry, RingRelationMode, SisModulusProfileId,
-    WitnessLayout,
+    gadget_row_scalars, CommitmentPayloadMode, GroupCommitPhaseParams, GroupOpenPhaseParams,
+    GroupOpeningPlan, InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, PolynomialGroupLayout, RelationQuotientPlan, RelationRowFamily,
+    RelationWitnessGeometry, RingRelationMode, SisModulusProfileId, WitnessLayout,
 };
-use akita_types::{
-    build_reduced_compression_relation_weights, AkitaSetupDescriptor, NegativeBinarySupport,
-};
+use akita_types::{build_reduced_compression_relation_weights, NegativeBinarySupport};
 use jolt_field::{Ext2, ExtField, One, Prime64Offset59, Zero};
 
 type F = Prime64Offset59;
@@ -346,21 +344,11 @@ fn compressed_reduced_fixture() -> (
         .map(|span| span.map().input_width() * span.map().ring_dimension())
         .max()
         .unwrap();
-    let setup = unsafe {
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: largest_map,
-                setup_seed: [23; 32].into(),
-            },
-            FlatMatrix::from_flat_data(
-                (0..largest_map)
-                    .map(|index| F::from_u64(1_001 + index as u64))
-                    .collect(),
-            ),
-        )
-    };
+    let setup = coefficient_setup(
+        (0..largest_map)
+            .map(|index| F::from_u64(1_001 + index as u64))
+            .collect(),
+    );
     let tau1 = (0..params.relation_row_index_num_vars(&opening_batch).unwrap())
         .map(|index| {
             E::from_base_slice(&[
@@ -496,17 +484,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
 
     let mut changed_setup_coefficients = setup.shared_matrix().as_field_slice().to_vec();
     changed_setup_coefficients[0] += F::one();
-    let changed_setup = unsafe {
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: changed_setup_coefficients.len(),
-                setup_seed: [23; 32].into(),
-            },
-            FlatMatrix::from_flat_data(changed_setup_coefficients),
-        )
-    };
+    let changed_setup = coefficient_setup(changed_setup_coefficients);
     assert_ne!(
         prepared.evaluate_at_point(&changed_setup, &point).unwrap(),
         relation_weight

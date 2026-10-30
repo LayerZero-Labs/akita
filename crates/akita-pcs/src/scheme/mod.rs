@@ -1,7 +1,7 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend, PinnedProverSetup};
+use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend};
 use akita_error::AkitaError;
 use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity};
 use akita_prover::{BackendRegistry, FixedFoldRoute, ProverBackend, SelectedProverOpeningData};
@@ -9,7 +9,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::ProverChannel;
 use akita_types::AkitaVerifierSetup;
 use akita_types::FpExtEncoding;
-use akita_verifier::{AkitaVerifier, PinnedVerifierSetup};
+use akita_verifier::AkitaVerifier;
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use std::time::Instant;
@@ -77,33 +77,6 @@ where
             max_num_batched_polys,
         )?;
         akita_setup::new_prover_setup::<Cfg::Field>(&requirements)
-    }
-
-    /// Build a scheme over the catalog identity of a pinned prover setup.
-    #[must_use]
-    pub fn from_pinned_prover_setup(pinned: &PinnedProverSetup<Cfg>) -> Self {
-        Self::new(pinned.catalog().clone())
-    }
-
-    /// Build a verifier from a loader-issued setup, which must carry this
-    /// scheme's catalog identity.
-    ///
-    /// This replaces [`Self::verifier`] for production verifiers.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] when the pinned catalog is another
-    /// catalog or preparing an admitted row fails.
-    pub fn pinned_verifier(
-        &self,
-        pinned: PinnedVerifierSetup<Cfg>,
-    ) -> Result<AkitaVerifier<Cfg>, AkitaError> {
-        if pinned.catalog().catalog_digest() != self.schedules.catalog_digest() {
-            return Err(AkitaError::InvalidSetup(
-                "pinned verifier setup carries another catalog identity".into(),
-            ));
-        }
-        AkitaVerifier::from_pinned(pinned)
     }
 
     /// Derive a verifier setup that preserves the prover's full matrix prefix.
@@ -269,7 +242,7 @@ where
     /// # Safety
     ///
     /// Soundness contract of [`AkitaVerifier::new`]; a production verifier
-    /// uses [`Self::pinned_verifier`].
+    /// uses [`AkitaVerifier::from_pinned`].
     pub unsafe fn verifier(
         &self,
         setup: AkitaVerifierSetup<Cfg::Field>,

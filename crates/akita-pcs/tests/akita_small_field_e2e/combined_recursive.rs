@@ -52,23 +52,14 @@ fn commit_prove_verify<Cfg, P>(
     )
     .expect("verifier group")])
     .expect("verifier claims");
-    unsafe {
-        scheme.verifier(
-            scheme
-                .setup_verifier(setup)
-                .expect("verifier setup")
-                .clone(),
-        )
-    }
-    .and_then(|verifier| {
-        verifier.batched_verify(
+    self_derived_verifier(scheme, setup)
+        .batched_verify(
             &proof,
             label,
             GroupBatchStatement::new(selection, verify_claims).expect("statement"),
             BasisMode::Lagrange,
         )
-    })
-    .expect("verify");
+        .expect("verify");
 }
 
 // One setup built from the union of a recursive family's requirements and a

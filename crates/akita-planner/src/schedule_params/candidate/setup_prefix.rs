@@ -33,12 +33,14 @@ impl SetupPrefixSearchCache {
         (self.hits, self.misses)
     }
 
-    /// Restrict every later search to profiles `admissible` accepts. The
-    /// restriction applies before Pareto pruning, so an admissible profile is
-    /// never lost to an inadmissible one that dominates it.
-    pub(crate) fn restrict(&mut self, admissible: SetupPrefixProfileFilter) {
-        self.entries.clear();
-        self.admissible = Some(admissible);
+    /// A cache whose searches choose only profiles `admissible` accepts, when
+    /// given. The filter applies before Pareto pruning, so an admissible
+    /// profile is never lost to an inadmissible one that dominates it.
+    pub(crate) fn new(admissible: Option<SetupPrefixProfileFilter>) -> Self {
+        Self {
+            admissible,
+            ..Self::default()
+        }
     }
 }
 
@@ -522,11 +524,10 @@ mod tests {
             .collect::<std::collections::HashSet<_>>();
 
         // Excluding every Pareto winner still leaves the dominated candidates.
-        let mut cache = SetupPrefixSearchCache::default();
         let excluded = winners.clone();
-        cache.restrict(Arc::new(move |profile| {
+        let mut cache = SetupPrefixSearchCache::new(Some(Arc::new(move |profile| {
             !excluded.contains(&profile.canonical_descriptor_bytes())
-        }));
+        })));
         let restricted = derive_setup_prefix_groups(&mut cache, request()).expect("restricted");
         assert!(
             !restricted.is_empty(),
@@ -536,8 +537,7 @@ mod tests {
             .iter()
             .all(|candidate| !winners.contains(&candidate.profile.canonical_descriptor_bytes())));
 
-        let mut empty = SetupPrefixSearchCache::default();
-        empty.restrict(Arc::new(|_| false));
+        let mut empty = SetupPrefixSearchCache::new(Some(Arc::new(|_| false)));
         assert!(derive_setup_prefix_groups(&mut empty, request())
             .expect("empty universe")
             .is_empty());

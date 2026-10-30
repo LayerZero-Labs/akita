@@ -3,9 +3,8 @@
 //! [`new_prover_setup`] derives the public matrix from the seed and commits
 //! to the required setup prefixes in this process. With `disk-persistence`,
 //! [`ReleaseCache`] stores the files of pinned preprocessing releases by
-//! `bundle_id`. The cache is untrusted transport: every file read through it
-//! is checked against the release manifest by a loader, so a cached setup can
-//! no longer smuggle commitments past setup validation.
+//! `bundle_id`. The cache is untrusted transport: a loader checks every file
+//! read through it against the release manifest.
 
 #[cfg(feature = "disk-persistence")]
 mod release_cache;

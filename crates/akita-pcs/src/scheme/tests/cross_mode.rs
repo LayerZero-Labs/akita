@@ -80,8 +80,8 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 }
                 .expect("cross-mode setup");
             let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-            let verifier_setup = unsafe { quotient_scheme.setup_verifier(&setup) }
-                .expect("cross-mode verifier setup");
+            let quotient_verifier = self_derived_verifier(&quotient_scheme, &setup);
+            let reduced_verifier = self_derived_verifier(&reduced_scheme, &setup);
             let akita_cpu_backend::CommitOutput {
                 committed_group: commitment,
                 private_handle: hint,
@@ -127,55 +127,51 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
             // either catalog without a transfer.
             let reduced_proof = prove(&reduced_scheme, &stack, hint);
 
-            for (scheme, proof, selection, name) in [
+            for (verifier, proof, selection, name) in [
                 (
-                    &quotient_scheme,
+                    &quotient_verifier,
                     &quotient_proof,
                     catalogs.quotient_selection,
                     "quotient",
                 ),
                 (
-                    &reduced_scheme,
+                    &reduced_verifier,
                     &reduced_proof,
                     catalogs.reduced_selection,
                     "reduced",
                 ),
             ] {
-                unsafe { scheme.verifier(verifier_setup.clone()) }
-                    .and_then(|verifier| {
-                        verifier.batched_verify(
-                            proof,
-                            LABEL,
-                            statement(selection, &point, opening, &commitment),
-                            BasisMode::Lagrange,
-                        )
-                    })
+                verifier
+                    .batched_verify(
+                        proof,
+                        LABEL,
+                        statement(selection, &point, opening, &commitment),
+                        BasisMode::Lagrange,
+                    )
                     .unwrap_or_else(|error| panic!("honest {name} proof must verify: {error:?}"));
             }
 
-            for (scheme, proof, wrong_selection, name) in [
+            for (verifier, proof, wrong_selection, name) in [
                 (
-                    &reduced_scheme,
+                    &reduced_verifier,
                     &quotient_proof,
                     catalogs.reduced_selection,
                     "quotient-as-reduced",
                 ),
                 (
-                    &quotient_scheme,
+                    &quotient_verifier,
                     &reduced_proof,
                     catalogs.quotient_selection,
                     "reduced-as-quotient",
                 ),
             ] {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    unsafe { scheme.verifier(verifier_setup.clone()) }.and_then(|verifier| {
-                        verifier.batched_verify(
-                            proof,
-                            LABEL,
-                            statement(wrong_selection, &point, opening, &commitment),
-                            BasisMode::Lagrange,
-                        )
-                    })
+                    verifier.batched_verify(
+                        proof,
+                        LABEL,
+                        statement(wrong_selection, &point, opening, &commitment),
+                        BasisMode::Lagrange,
+                    )
                 }));
                 assert!(
                     matches!(outcome, Ok(Err(_))),

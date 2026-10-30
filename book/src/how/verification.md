@@ -266,7 +266,7 @@ a manifest that names every file by hash. The hash of the manifest is the
 release's `bundle_id`. A required merge check regenerates every anchored
 release from scratch and compares the manifest byte for byte, so an anchored
 release is what the code at that commit produces. Anyone can repeat that
-check with `akita-preprocess audit`.
+check with `akita-preprocess check`.
 
 A binary trusts only the `(bundle_id, set name)` pairs of its compiled
 **trust anchor**. Akita's anchor lives in `akita-anchors`; an integration
@@ -294,19 +294,19 @@ checks the cheapest and most decisive things first:
 
 The result is a `PinnedVerifierSetup`, which has private fields, no public
 constructor, and no deserializer. `AkitaVerifier::from_pinned` accepts it.
-Every other way to build a verifier setup, such as
+Every other way to build a verifier or its setup, such as
 `AkitaVerifierSetup::from_parts` or `AkitaVerifier::new`, is an `unsafe fn`
 whose contract is that the caller guarantees derivation; tests and
 benchmarks use them for setups they derived themselves. Here `unsafe` marks a
 soundness contract, not a memory-safety one, so every such call site is
 visible and an integration can deny it with `clippy::disallowed_methods`.
 
-Protocol Stage 3 binds each use. Where it absorbs the selected setup-prefix
-slot id, it now absorbs the slot id followed by that slot's prefix commitment
-digest, recomputed in every proof from the registry entry the fold reads. A
-proof therefore names the commitments it was checked against, and fails
-against any other commitment. Soundness still comes from the load-time
-checks: once loading fixes a commitment, the prover cannot choose it.
+Protocol Stage 3 binds each use: it absorbs the selected setup-prefix slot id
+followed by that slot's prefix commitment digest, recomputed in every proof
+from the registry entry the fold reads. A proof therefore names the
+commitments it was checked against, and fails against any other commitment.
+Soundness comes from the load-time checks: once loading fixes a commitment,
+the prover cannot choose it.
 
 Trusting an object's derivation does not relax its decoding. Validated
 decoding checks preprocessing bytes for lengths, geometry, and canonical

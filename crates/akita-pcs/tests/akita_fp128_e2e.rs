@@ -353,7 +353,7 @@ fn fp128_onehot_batched() {
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -373,15 +373,13 @@ fn fp128_onehot_batched() {
             scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
         });
 
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
+                BasisMode::Lagrange,
+            )
             .unwrap_or_else(|e| panic!("onehot nv={nv} batch={batch_size}: {e:?}"));
     }
     init_rayon_pool();
@@ -414,7 +412,7 @@ fn fp128_dense_batched() {
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -434,15 +432,13 @@ fn fp128_dense_batched() {
             scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
         });
 
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
+                BasisMode::Lagrange,
+            )
             .unwrap_or_else(|e| panic!("dense nv={nv} batch={batch_size}: {e:?}"));
     }
     init_rayon_pool();
@@ -549,7 +545,7 @@ fn fp128_onehot_oversized_setup() {
 
         let setup = scheme.setup_prover(setup_nv, 1).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -580,20 +576,13 @@ fn fp128_onehot_oversized_setup() {
             .expect("prove");
 
         let openings = [expected_opening];
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    verify_input::<OneHotCfg>(
-                        &pt[..],
-                        &openings[..],
-                        &commitment,
-                        scheme.schedules(),
-                    ),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                verify_input::<OneHotCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                BasisMode::Lagrange,
+            )
             .unwrap_or_else(|e| {
                 panic!("oversized setup (setup_nv={setup_nv}, poly_nv={poly_nv}): {e:?}")
             });
@@ -621,7 +610,7 @@ fn fp128_dense_monomial_basis() {
 
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
@@ -652,20 +641,13 @@ fn fp128_dense_monomial_basis() {
             .expect("monomial prove");
 
         let openings = [expected_opening];
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    verify_input::<DenseCfg>(
-                        &pt[..],
-                        &openings[..],
-                        &commitment,
-                        scheme.schedules(),
-                    ),
-                    BasisMode::Monomial,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                verify_input::<DenseCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                BasisMode::Monomial,
+            )
             .expect("monomial verify");
     });
 }

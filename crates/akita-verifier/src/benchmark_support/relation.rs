@@ -1,5 +1,6 @@
 //! Fixtures for benchmarking the production relation evaluator.
 
+use super::coefficient_setup;
 use crate::relation::evaluation::PreparedDirectRelation;
 use crate::relation::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
@@ -7,12 +8,12 @@ use crate::relation::{
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 use akita_params::{
-    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    RelationWitnessGeometry, RingOpeningPoint, RingRelationMode, SisModulusProfileId,
+    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, RelationWitnessGeometry,
+    RingOpeningPoint, RingRelationMode, SisModulusProfileId,
 };
 use akita_types::{
-    relation_rhs_coeff_len, AkitaExpandedSetup, AkitaSetupDescriptor, RingMultiplierOpeningPoint,
+    relation_rhs_coeff_len, AkitaExpandedSetup, RingMultiplierOpeningPoint,
     RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
 use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7};
@@ -231,17 +232,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let opening_source_len = witness_layout
         .live_coeff_len()
         .div_ceil(outgoing_ring_dimension);
-    let placeholder_setup = unsafe {
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: NUM_CLAIMS,
-                num_field_elements: 1,
-                setup_seed: [7; 32].into(),
-            },
-            FlatMatrix::from_flat_data(vec![F::default()]),
-        )
-    };
+    let placeholder_setup = coefficient_setup(vec![F::default()]);
     let row_coefficients = (0..NUM_CLAIMS)
         .map(|index| scalar(601 + index as u128))
         .collect::<Vec<_>>();
@@ -266,21 +257,11 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         .collect::<Vec<_>>();
     let prepared = PreparedDirectRelation::prepare::<F>(&evaluator, &point, alpha)?;
     let setup_field_elements = prepared.setup_field_len();
-    let setup = unsafe {
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: NUM_CLAIMS,
-                num_field_elements: setup_field_elements,
-                setup_seed: [7; 32].into(),
-            },
-            FlatMatrix::from_flat_data(
-                (0..setup_field_elements)
-                    .map(|index| scalar(503 + index as u128))
-                    .collect(),
-            ),
-        )
-    };
+    let setup = coefficient_setup(
+        (0..setup_field_elements)
+            .map(|index| scalar(503 + index as u128))
+            .collect(),
+    );
 
     Ok(RelationEvaluatorBenchmarkCase {
         evaluator,

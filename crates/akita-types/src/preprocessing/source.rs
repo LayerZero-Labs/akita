@@ -1,14 +1,13 @@
 //! Untrusted transport of release files and their authenticated reads.
 
-use super::files::{file_hash, validate_file_name};
+use super::files::{file_hash, part_file_name, validate_file_name};
 use super::manifest::ReleaseManifest;
 use akita_error::AkitaError;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 
-/// Where release files are read from: a directory, a cache, embedded bytes,
-/// or memory. Every source is untrusted; [`read_release_file`] checks what it
+/// Where release files are read from: a directory, a cache, or memory. Every source is untrusted; [`read_release_file`] checks what it
 /// returns against the manifest.
 pub trait ReleaseFileSource {
     /// Read the stored bytes of file `name` into a new buffer of exactly
@@ -99,35 +98,6 @@ impl ReleaseFileSource for MemoryReleaseFiles {
     }
 }
 
-/// Release files compiled into an image, such as a guest's.
-#[derive(Debug, Clone, Copy)]
-pub struct EmbeddedReleaseFiles {
-    files: &'static [(&'static str, &'static [u8])],
-}
-
-impl EmbeddedReleaseFiles {
-    /// Files embedded as `(name, bytes)` pairs.
-    #[must_use]
-    pub const fn new(files: &'static [(&'static str, &'static [u8])]) -> Self {
-        Self { files }
-    }
-
-    /// Borrow one embedded file in place.
-    #[must_use]
-    pub fn get(&self, name: &str) -> Option<&'static [u8]> {
-        self.files
-            .iter()
-            .find(|(file, _)| *file == name)
-            .map(|(_, bytes)| *bytes)
-    }
-}
-
-impl ReleaseFileSource for EmbeddedReleaseFiles {
-    fn read_file(&self, name: &str, length: usize) -> Result<Vec<u8>, AkitaError> {
-        copy_exact(self.get(name), name, length)
-    }
-}
-
 fn copy_exact(stored: Option<&[u8]>, name: &str, length: usize) -> Result<Vec<u8>, AkitaError> {
     match stored {
         Some(bytes) if bytes.len() == length => Ok(bytes.to_vec()),
@@ -155,49 +125,25 @@ impl DirectoryReleaseFiles {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }
-
-    /// The directory root.
-    #[must_use]
-    pub fn root(&self) -> &std::path::Path {
-        &self.root
-    }
-
-    /// Path of file `name` under the root.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for a name that is not a valid release file name.
-    pub fn path(&self, name: &str) -> Result<PathBuf, AkitaError> {
-        validate_file_name(name)?;
-        Ok(self.root.join(name))
-    }
 }
 
 impl ReleaseFileSource for DirectoryReleaseFiles {
     fn read_file(&self, name: &str, length: usize) -> Result<Vec<u8>, AkitaError> {
-        let path = self.path(name)?;
+        validate_file_name(name)?;
         let io_error = |error: std::io::Error| {
             AkitaError::InvalidSetup(format!("failed to read release file {name:?}: {error}"))
         };
-        let limit = u64::try_from(length)
-            .ok()
-            .and_then(|length| length.checked_add(1))
-            .ok_or_else(|| AkitaError::InvalidSetup("release file length overflow".into()))?;
+        let limit = (length as u64).saturating_add(1);
         let mut bytes = Vec::with_capacity(length);
-        match std::fs::File::open(&path) {
+        match std::fs::File::open(self.root.join(name)) {
             Ok(file) => {
                 file.take(limit).read_to_end(&mut bytes).map_err(io_error)?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let mut part = 0usize;
                 loop {
-                    let part_path = path.with_file_name(format!(
-                        "{}.part-{part}",
-                        path.file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or_default()
-                    ));
-                    let file = match std::fs::File::open(&part_path) {
+                    let file = match std::fs::File::open(self.root.join(part_file_name(name, part)))
+                    {
                         Ok(file) => file,
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound && part > 0 => {
                             break

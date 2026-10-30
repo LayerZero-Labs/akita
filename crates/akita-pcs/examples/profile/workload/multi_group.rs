@@ -20,9 +20,8 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
 
-fn materialize_schedule_setup_prefix_slots<F, E>(
+fn materialize_schedule_setup_prefix_slots<F>(
     setup: &mut AkitaProverSetup<F>,
-    backend: &CpuBackend<F, E>,
     schedule: &FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
@@ -33,9 +32,8 @@ where
         .iter()
         .filter_map(|fold| fold.params.setup_prefix())
         .map(|prefix| prefix.slot_id().expect("setup prefix group"))
-        .filter(|id| setup.prefix_slots().get(id).is_none())
         .collect::<Vec<_>>();
-    setup.insert_exported_prefixes(&backend.export_setup_prefixes(&ids)?)
+    setup.export_setup_prefixes(&ids)
 }
 
 /// Setup-contribution mode selected by the benchmark case.
@@ -203,7 +201,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let backend = CpuBackend::new(setup.expanded().clone()).unwrap();
-        materialize_schedule_setup_prefix_slots(&mut setup, &backend, &schedule)
+        materialize_schedule_setup_prefix_slots(&mut setup, &schedule)
             .expect("materialize schedule setup-prefix slots");
         let required_prefix_ids =
             akita_config::required_setup_prefix_slot_ids_for_schedule(&schedule, &opening_layout)

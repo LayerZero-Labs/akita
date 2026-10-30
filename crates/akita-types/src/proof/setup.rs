@@ -605,40 +605,9 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> Akit
             descriptor.num_field_elements,
             MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         )?;
-        // `Validate::No` skips element range checks only: the matrix is
-        // always compared with its seed. Unchecked decoding is
-        // `deserialize_unchecked`.
+        // `validate` governs element range checks only: the matrix is always
+        // compared with its seed.
         Self::from_verified_parts(descriptor, shared_matrix)
-    }
-}
-
-impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> AkitaExpandedSetup<F> {
-    /// Decode a setup without comparing its matrix with its seed.
-    ///
-    /// # Safety
-    ///
-    /// Soundness contract: the caller guarantees the encoded matrix was
-    /// derived from the encoded seed, as for
-    /// [`Self::from_trusted_seed_derived_parts_unchecked`].
-    pub unsafe fn deserialize_unchecked<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let descriptor =
-            AkitaSetupDescriptor::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        descriptor.check()?;
-        let shared_matrix = FlatMatrix::deserialize_with_expected_shape(
-            &mut reader,
-            compress,
-            validate,
-            descriptor.num_field_elements,
-            MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-        )?;
-        Ok(Self {
-            descriptor,
-            shared_matrix,
-        })
     }
 }
 
@@ -758,37 +727,6 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> AkitaVerifierSetup<F> {
-    /// Decode a verifier setup. The matrix is compared with its seed; the
-    /// prefix registry is only checked structurally.
-    ///
-    /// `AkitaVerifierSetup` deliberately has no `AkitaDeserialize`
-    /// implementation: a production verifier is built from a
-    /// `PinnedVerifierSetup`.
-    ///
-    /// # Safety
-    ///
-    /// Soundness contract of [`Self::from_parts`] for the decoded registry.
-    pub unsafe fn deserialize_unchecked<R: Read>(
-        reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let mut reader = reader;
-        let expanded = Arc::new(AkitaExpandedSetup::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?);
-        let prefix_slots =
-            SetupPrefixVerifierRegistry::deserialize_with_mode(reader, compress, validate, &())?;
-        // SAFETY: forwarded to the caller.
-        unsafe { Self::from_parts(expanded, prefix_slots) }
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -869,14 +807,24 @@ pub(crate) mod tests {
 
     fn decode_verifier_setup(bytes: &[u8]) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let mut reader = bytes;
-        // SAFETY: test setups; decoding still compares the matrix with its seed.
-        let setup = unsafe {
-            AkitaVerifierSetup::deserialize_unchecked(&mut reader, Compress::Yes, Validate::Yes)?
-        };
+        let expanded = Arc::new(AkitaExpandedSetup::deserialize_with_mode(
+            &mut reader,
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )?);
+        let prefix_slots = SetupPrefixVerifierRegistry::deserialize_with_mode(
+            &mut reader,
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )?;
         if !reader.is_empty() {
             return Err(SerializationError::InvalidData("trailing bytes".into()));
         }
-        Ok(setup)
+        // SAFETY: test setups; the matrix was compared with its seed.
+        unsafe { AkitaVerifierSetup::from_parts(expanded, prefix_slots) }
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 
     fn seed(public_matrix_seed: [u8; 32]) -> AkitaSetupDescriptor {
@@ -893,7 +841,6 @@ pub(crate) mod tests {
         use crate::proof::{RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
 
         let setup_seed = seed([7u8; 32]);
-        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.setup_seed);
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.setup_seed.clone());
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
@@ -914,12 +861,7 @@ pub(crate) mod tests {
         };
         prefix_slots.insert(slot).expect("insert prefix slot");
         let setup = AkitaVerifierSetup {
-            expanded: Arc::new(unsafe {
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    setup_seed,
-                    shared_matrix,
-                )
-            }),
+            expanded: Arc::new(AkitaExpandedSetup::derive(setup_seed).unwrap()),
             prefix_slots,
         };
 
@@ -954,15 +896,9 @@ pub(crate) mod tests {
     #[test]
     fn borrowed_verifier_setup_matches_decode_and_rejects_misalignment() {
         let setup_seed = seed([7u8; 32]);
-        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.setup_seed);
         let prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.setup_seed.clone());
         let setup = AkitaVerifierSetup {
-            expanded: Arc::new(unsafe {
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    setup_seed,
-                    shared_matrix,
-                )
-            }),
+            expanded: Arc::new(AkitaExpandedSetup::derive(setup_seed).unwrap()),
             prefix_slots,
         };
         let mut bytes = Vec::new();
@@ -995,11 +931,7 @@ pub(crate) mod tests {
 
     #[test]
     fn verifier_setup_rejects_prefix_registry_from_another_public_matrix() {
-        let setup_seed = seed([7u8; 32]);
-        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.setup_seed);
-        let expanded = Arc::new(unsafe {
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(setup_seed, shared_matrix)
-        });
+        let expanded = Arc::new(AkitaExpandedSetup::<F>::derive(seed([7u8; 32])).unwrap());
         let foreign_registry =
             SetupPrefixVerifierRegistry::new(AkitaSetupSeed::shake256_paged_v1([9u8; 32]));
 

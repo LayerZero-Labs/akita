@@ -1,5 +1,6 @@
 //! Proof-stream grammar for recursive setup-product stage 3.
 
+use crate::preprocessing::{prefix_commitment_digest, StreamIdentity};
 use crate::{AkitaSetupSeed, GrindingReplay, SetupPrefixVerifierSlot};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
@@ -22,13 +23,9 @@ fn site(level: u32, role: u32) -> ProtocolSiteId {
     }
 }
 
-/// Bind the selected setup-prefix slot: one public byte string,
-/// `serialize_compressed(slot id) || prefix_commitment_digest`.
-///
-/// The digest is recomputed here, in every proof, from the registry entry the
-/// fold reads, so each proof names the commitment it was checked against. The
-/// slot id stays absorbed although the schedule determines it, so the digest
-/// is always read in the context of its slot.
+/// Bind the selected setup-prefix slot:
+/// `serialize_compressed(slot id) || prefix_commitment_digest`, the digest
+/// recomputed from `slot` in every proof.
 pub fn stage3_public_slot<F, G>(
     grinding: &mut G,
     level: u32,
@@ -43,8 +40,10 @@ where
     slot.id
         .serialize_compressed(&mut bound)
         .map_err(|error| AkitaError::InvalidSetup(format!("setup-prefix slot id: {error}")))?;
+    let stream = StreamIdentity::for_field::<F>(setup_seed)?;
     bound.extend_from_slice(
-        crate::preprocessing::slot_prefix_commitment_digest(setup_seed, slot)?.as_bytes(),
+        prefix_commitment_digest(&stream, &slot.id.commitment_profile, &slot.commitment)?
+            .as_bytes(),
     );
     public_bytes(grinding.state_mut(), site(level, ROLE_SETUP_SLOT), &bound)
 }

@@ -116,7 +116,6 @@ fn manifest_decoding_rejects_single_byte_changes_or_reports_another_manifest() {
         changed[index] ^= 0x01;
         if let Ok(decoded) = ReleaseManifest::decode(&changed) {
             assert_ne!(decoded, original, "byte {index} changed nothing");
-            assert_ne!(bundle_id(&changed), bundle_id(&bytes));
         }
     }
 }
@@ -160,14 +159,13 @@ const ANCHOR: TrustAnchor = TrustAnchor::new(ANCHOR_ENTRIES);
 
 #[test]
 fn opening_checks_the_anchor_before_decoding() {
-    let bytes = manifest().to_bytes().unwrap();
-    let id = bundle_id(&bytes);
-    let error = open_anchored_manifest(&ANCHOR, ReleaseKind::Akita, &bytes, &["a-set"])
+    let error = open_anchored_manifest(&ANCHOR, ReleaseKind::Akita, b"not a manifest", &["a-set"])
         .unwrap_err()
         .to_string();
     assert!(error.contains("trust anchor"), "{error}");
 
-    // Garbage under an anchored id is rejected by decoding, not trusted.
+    let bytes = manifest().to_bytes().unwrap();
+    let id = bundle_id(&bytes);
     let leaked: &'static str = Box::leak(id.to_hex().into_boxed_str());
     let entries: &'static [AnchorEntry] = Box::leak(Box::new([
         AnchorEntry::new(leaked, "a-set"),

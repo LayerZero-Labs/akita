@@ -22,16 +22,15 @@ mod tests;
 
 pub use akita_params::descriptor_bytes::{DigestHash, DIGEST_HASH};
 pub use anchor::{AnchorEntry, TrustAnchor};
-pub use encoding::{digest_from_hex, hex, parse_digest_hex, parse_hex};
+pub use encoding::hex;
 pub use files::{
-    catalog_file_name, catalog_view_file_name, certificate_file_name, file_hash, hints_file_name,
-    matrix_file_name, page_hash, page_hashes_file_name, registry_file_name,
-    terminal_cache_file_name, validate_file_name, validate_name, MAX_FILE_NAME_BYTES,
-    MAX_NAME_BYTES,
+    catalog_file_name, catalog_view_file_name, file_hash, hints_file_name, part_file_name,
+    registry_file_name, terminal_cache_file_name, validate_file_name, validate_name,
+    MAX_FILE_NAME_BYTES,
 };
 pub use identity::{
-    known_answer_digest, prefix_commitment_digest, profile_descriptor, profile_key, profile_route,
-    setup_prefix_payload, slot_prefix_commitment_digest, AlgorithmIdentity, BundleId, FileHash,
+    known_answer_corpus_digest, known_answer_digest, prefix_commitment_digest, profile_descriptor,
+    profile_key, profile_route, setup_prefix_payload, AlgorithmIdentity, BundleId, FileHash,
     PrefixCommitmentDigest, ProfileKey, StreamId, StreamIdentity, KNOWN_ANSWER_CORPUS_VERSION,
     SETUP_PREFIX_PAYLOAD_VERSION,
 };
@@ -39,31 +38,9 @@ pub use manifest::{
     bundle_id, FileEntry, RegistryEntry, ReleaseKind, ReleaseManifest, SetRecord, StreamEntry,
     MANIFEST_FORMAT_VERSION, MAX_MANIFEST_BYTES,
 };
-pub use source::{
-    read_release_file, DirectoryReleaseFiles, EmbeddedReleaseFiles, MemoryReleaseFiles,
-    ReleaseFileSource,
-};
+pub use source::{read_release_file, DirectoryReleaseFiles, MemoryReleaseFiles, ReleaseFileSource};
 
 use akita_error::AkitaError;
-
-/// `H(tag || u32(corpus_version) || test_stream_identity || list(...))`, the
-/// known-answer digest over `(profile_descriptor, payload)` pairs.
-#[must_use]
-pub fn known_answer_corpus_digest(
-    test_stream: &StreamIdentity,
-    entries: &[(Vec<u8>, Vec<u8>)],
-) -> [u8; 32] {
-    let mut input = Vec::new();
-    encoding::push_str(&mut input, identity::KNOWN_ANSWER_TAG);
-    encoding::push_u32_le(&mut input, KNOWN_ANSWER_CORPUS_VERSION);
-    input.extend_from_slice(&test_stream.to_bytes());
-    encoding::push_count(&mut input, entries.len());
-    for (descriptor, payload) in entries {
-        encoding::push_bytes(&mut input, descriptor);
-        encoding::push_bytes(&mut input, payload);
-    }
-    akita_params::digest_descriptor_bytes(&input)
-}
 
 /// A manifest whose `bundle_id` the anchor accepted for every requested set.
 ///

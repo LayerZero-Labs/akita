@@ -4,12 +4,12 @@
 mod common;
 
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend};
-use akita_pcs::AkitaCommitmentScheme;
+use akita_pcs::{AkitaCommitmentScheme, AkitaVerifier};
 use akita_transcript::{
     new_prover_channel, new_verifier_channel, public_bytes, receive_byte_group, send_byte_group,
     ProtocolSiteId, VerifierChannel,
 };
-use akita_types::{AkitaVerifierSetup, PendingEof};
+use akita_types::PendingEof;
 use common::*;
 use jolt_field::One;
 
@@ -27,7 +27,7 @@ struct Fixture {
     scheme: AkitaCommitmentScheme<Cfg>,
     setup: AkitaProverSetup<F>,
     stack: CpuBackend<F, F>,
-    verifier_setup: AkitaVerifierSetup<F>,
+    verifier: AkitaVerifier<Cfg>,
     commitment: CommittedGroup<F>,
     hint: CommitmentHandle<F, F>,
     point: Vec<F>,
@@ -54,7 +54,7 @@ impl Fixture {
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
         let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
         let CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -69,7 +69,7 @@ impl Fixture {
             scheme,
             setup,
             stack,
-            verifier_setup,
+            verifier,
             commitment,
             hint,
             point,
@@ -130,7 +130,7 @@ impl Fixture {
         opening: F,
         commitment: &CommittedGroup<F>,
     ) -> Result<(), akita_error::AkitaError> {
-        unsafe { self.scheme.verifier(self.verifier_setup.clone()) }?.batched_verify(
+        self.verifier.batched_verify(
             proof,
             session,
             verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
@@ -149,7 +149,7 @@ impl Fixture {
         public_bytes(state, caller_site(0), CALLER_STATEMENT)?;
         let before = receive_byte_group(state, caller_site(1), CALLER_BEFORE.len())?;
         assert_eq!(before, CALLER_BEFORE);
-        unsafe { self.scheme.verifier(self.verifier_setup.clone()) }?.batched_verify_embedded(
+        self.verifier.batched_verify_embedded(
             state,
             verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
             BasisMode::Lagrange,
@@ -202,19 +202,18 @@ fn standalone_is_embedded_on_a_fresh_session() {
         assert_eq!(state.narg_string(), standalone.as_slice());
 
         let mut verifier = new_verifier_channel(SESSION, &standalone);
-        let pending = unsafe { fixture.scheme.verifier(fixture.verifier_setup.clone()) }
-            .and_then(|verifier_scheme| {
-                verifier_scheme.batched_verify_embedded(
-                    &mut verifier,
-                    verify_input::<Cfg>(
-                        &fixture.point,
-                        &[fixture.opening],
-                        &fixture.commitment,
-                        fixture.scheme.schedules(),
-                    ),
-                    BasisMode::Lagrange,
-                )
-            })
+        let pending = fixture
+            .verifier
+            .batched_verify_embedded(
+                &mut verifier,
+                verify_input::<Cfg>(
+                    &fixture.point,
+                    &[fixture.opening],
+                    &fixture.commitment,
+                    fixture.scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
             .expect("embedded verify");
         pending.check_eof(verifier).expect("eof");
     });

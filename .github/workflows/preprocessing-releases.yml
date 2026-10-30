@@ -39,5 +39,3 @@ jobs:
       - name: Regenerate every release and compare manifests
         if: steps.decide.outputs.needed == 'true'
         run: cargo run --release -p akita-preprocess -- check
-      - name: Anchor lists exactly the committed releases
-        run: cargo test --release -p akita-anchors

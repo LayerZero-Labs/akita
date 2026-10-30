@@ -4,22 +4,22 @@
 //! ([`PinnedVerifierSetup`], [`PinnedTerminalCache`]). The loader opens the
 //! manifest under the binary's trust anchor (see
 //! [`akita_types::preprocessing::open_anchored_manifest`]), compares the set
-//! record with the compiled configuration, admits rows (A1), sizes and
-//! derives the matrix (A2, A3), loads the commitments the admitted rows use,
+//! record with the compiled configuration, admits rows (A1), loads the
+//! commitments the admitted rows use, sizes and derives the matrix (A2, A3),
 //! checks admission again on the result (A4), and issues the pinned value.
 
 use crate::prepared_cache::TrustedTerminalCache;
 use akita_config::preprocessing::{
-    check_set_record_code, load_prefix_commitments, load_set_catalog, load_set_catalog_view,
-    set_chunking, set_stream, Admission, CommitmentSource, ProgramRows,
+    load_prefix_commitments, load_set_catalog, load_set_catalog_view, open_set, set_chunking,
+    Admission, PrefixCommitmentSource, ProgramRows,
 };
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_params::{FlatMatrix, OpeningScheduleSelection, ScheduleRowDigest};
+use akita_params::{FlatMatrix, OpeningScheduleSelection};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, TrustedBytes, Valid};
 use akita_types::preprocessing::{
-    profile_key, read_release_file, terminal_cache_file_name, AnchoredManifest, BundleId,
-    ReleaseFileSource, SetRecord,
+    read_release_file, terminal_cache_file_name, AnchoredManifest, BundleId, ReleaseFileSource,
+    SetRecord, StreamEntry,
 };
 use akita_types::{
     AkitaExpandedSetup, AkitaVerifierSetup, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
@@ -36,7 +36,7 @@ use std::sync::Arc;
 /// rows, or that identity's selected-row view for a single-row load.
 ///
 /// ```compile_fail
-/// use akita_verifier::PinnedVerifierSetup;
+/// use akita_verifier::preprocessing::PinnedVerifierSetup;
 /// use akita_config::proof_optimized::fp128::OneHot;
 /// fn forge(
 ///     setup: akita_types::AkitaVerifierSetup<akita_config::proof_optimized::fp128::Field>,
@@ -50,8 +50,11 @@ use std::sync::Arc;
 /// ```compile_fail
 /// use akita_verifier::AkitaVerifier;
 /// use akita_config::proof_optimized::fp128::OneHot;
-/// fn build(setup: akita_types::AkitaVerifierSetup<akita_config::proof_optimized::fp128::Field>) {
-///     let _ = AkitaVerifier::<OneHot>::from_pinned(setup);
+/// fn build(
+///     setup: akita_types::AkitaVerifierSetup<akita_config::proof_optimized::fp128::Field>,
+///     catalog: akita_config::TrustedScheduleCatalog<OneHot>,
+/// ) {
+///     let _ = AkitaVerifier::<OneHot>::new(setup, catalog);
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -106,7 +109,6 @@ impl<Cfg: CommitmentConfig> PinnedVerifierSetup<Cfg> {
 #[derive(Debug, Clone)]
 pub struct PinnedTerminalCache {
     bytes: TerminalCacheBytes,
-    row: ScheduleRowDigest,
 }
 
 #[derive(Debug, Clone)]
@@ -116,7 +118,7 @@ enum TerminalCacheBytes {
 }
 
 impl PinnedTerminalCache {
-    /// Issue an embedded cache for `row` without hashing it, used in place.
+    /// Issue an embedded cache without hashing it, used in place.
     ///
     /// Guest-only: hashing a large embedded file may cost too many cycles.
     /// Integrations deny this method outside their guest crate with
@@ -129,16 +131,10 @@ impl PinnedTerminalCache {
     /// guest build step's derivation from the anchored release (a program
     /// row's cache). The body must be aligned for in-place use.
     #[must_use]
-    pub unsafe fn embedded_unchecked(row: ScheduleRowDigest, bytes: &'static [u8]) -> Self {
+    pub unsafe fn embedded_unchecked(bytes: &'static [u8]) -> Self {
         Self {
             bytes: TerminalCacheBytes::Embedded(bytes),
-            row,
         }
-    }
-
-    /// The schedule row this cache serves.
-    pub fn row(&self) -> ScheduleRowDigest {
-        self.row
     }
 
     pub(crate) fn as_trusted(&self) -> TrustedTerminalCache<'_> {
@@ -166,134 +162,92 @@ impl PinnedMatrixPrefix {
     ///
     /// Soundness contract: the bytes are embedded in an approved guest image
     /// and are the prefix of the public matrix derived from the release's
-    /// seed, checked at approval against the derivation or `page-hashes`.
+    /// seed.
     #[must_use]
     pub unsafe fn embedded_unchecked(bytes: TrustedBytes) -> Self {
         Self { bytes }
     }
 }
 
-/// How a guest takes its single-row catalog view.
-#[derive(Debug, Clone, Copy)]
-pub enum GuestCatalogView<'a> {
-    /// The release's `catalog-view/<set>/<row>` file.
-    Release,
-    /// The build step's selected-row view of a program's merged catalog,
-    /// checked against the merged catalog digest of the program rows.
-    Merged(&'a [u8]),
-}
-
-/// Full load: a verifier for every row the set admits.
+/// Load a verifier for every row the set admits, or, with `selection`, for
+/// that admitted row only, whose catalog is then the selected-row view of the
+/// catalog identity.
 ///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when the set record does not match
-/// `Cfg`, a file or commitment does not match the manifest, no row is
-/// admitted, or the derived setup does not admit exactly the admitted rows.
+/// `Cfg`, a file or commitment does not match the manifest, no row (or not
+/// `selection`) is admitted, or the derived setup does not admit exactly the
+/// admitted rows.
 #[tracing::instrument(skip_all, name = "load_verifier_setup", fields(set = set_name))]
 pub fn load_verifier_setup<Cfg>(
     release: &AnchoredManifest,
     files: &dyn ReleaseFileSource,
     set_name: &str,
+    selection: Option<OpeningScheduleSelection>,
     program: Option<&ProgramRows>,
-    source: CommitmentSource<'_, Cfg::Field>,
+    source: PrefixCommitmentSource<'_, Cfg::Field>,
 ) -> Result<PinnedVerifierSetup<Cfg>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Valid + AkitaSerialize + AkitaDeserialize<Context = ()>,
 {
-    let record = checked_record::<Cfg>(release, set_name)?;
+    let (record, stream) = open_set::<Cfg>(release, set_name)?;
     let admission = Admission::admit(
         record,
         load_set_catalog::<Cfg>(release, record, files)?,
         program,
     )?;
-    issue(release, record, files, &admission, None, source, None)
-}
-
-/// Single-row load on a host: a verifier for `selection` only, which must
-/// be one of the set's admitted rows. Its catalog is the selected-row view
-/// of the catalog identity.
-///
-/// # Errors
-///
-/// As [`load_verifier_setup`], and when `selection` is not admitted.
-#[tracing::instrument(skip_all, name = "load_selected_verifier_setup", fields(set = set_name))]
-pub fn load_selected_verifier_setup<Cfg>(
-    release: &AnchoredManifest,
-    files: &dyn ReleaseFileSource,
-    set_name: &str,
-    selection: OpeningScheduleSelection,
-    program: Option<&ProgramRows>,
-    source: CommitmentSource<'_, Cfg::Field>,
-) -> Result<PinnedVerifierSetup<Cfg>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: Valid + AkitaSerialize + AkitaDeserialize<Context = ()>,
-{
-    let record = checked_record::<Cfg>(release, set_name)?;
-    let admission = Admission::admit(
-        record,
-        load_set_catalog::<Cfg>(release, record, files)?,
-        program,
-    )?;
+    let catalog = match selection {
+        None => admission.catalog().clone(),
+        Some(selection) => admission.selected_view(selection)?,
+    };
     issue(
-        release,
-        record,
-        files,
-        &admission,
-        Some(selection),
-        source,
-        None,
+        release, record, stream, files, &admission, catalog, selection, source, None,
     )
 }
 
 /// Single-row load in a guest, from small embedded files.
 ///
-/// The catalog view and registry entries are checked like any release file
-/// (registry mode only; a guest never derives commitments), and A3 takes the
-/// embedded matrix prefix, whose shape must be exactly the admitted row's
-/// verifier capacity.
+/// The catalog view is the release's `catalog-view/<set>/<row>` file, or,
+/// with program rows, the build step's selected-row view of the merged
+/// catalog; either must reproduce the catalog identity. Registry entries are
+/// checked like any release file (a guest never derives commitments), and A3
+/// takes the embedded matrix prefix, whose shape must be exactly the admitted
+/// row's verifier capacity.
 ///
 /// # Errors
 ///
-/// As [`load_selected_verifier_setup`], and when the view or matrix does not
-/// match.
+/// As [`load_verifier_setup`], and when the view or matrix does not match.
 pub fn load_guest_verifier_setup<Cfg>(
     release: &AnchoredManifest,
     files: &dyn ReleaseFileSource,
     set_name: &str,
     selection: OpeningScheduleSelection,
-    program: Option<&ProgramRows>,
-    view: GuestCatalogView<'_>,
+    program: Option<(&ProgramRows, &[u8])>,
     matrix: PinnedMatrixPrefix,
 ) -> Result<PinnedVerifierSetup<Cfg>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: Valid + AkitaSerialize + AkitaDeserialize<Context = ()> + 'static,
+    Cfg::Field: Valid + AkitaSerialize + AkitaDeserialize<Context = ()>,
 {
-    let record = checked_record::<Cfg>(release, set_name)?;
-    let view = match (view, program) {
-        (GuestCatalogView::Release, None) => {
-            load_set_catalog_view::<Cfg>(release, record, files, selection.row_digest)?
-        }
-        (GuestCatalogView::Merged(bytes), Some(_)) => {
-            TrustedScheduleCatalog::<Cfg>::from_verifier_view(bytes, set_chunking(record)?)?
-        }
-        _ => {
-            return Err(AkitaError::InvalidSetup(
-                "a guest with program rows takes the merged view, and only then".into(),
-            ))
+    let (record, stream) = open_set::<Cfg>(release, set_name)?;
+    let view = match program {
+        None => load_set_catalog_view::<Cfg>(release, record, files, selection.row_digest)?,
+        Some((_, merged_view)) => {
+            TrustedScheduleCatalog::<Cfg>::from_verifier_view(merged_view, set_chunking(record)?)?
         }
     };
-    let admission = Admission::admit_view(record, view, selection, program)?;
+    let admission = Admission::admit_view(record, view, selection, program.map(|(rows, _)| rows))?;
     issue(
         release,
         record,
+        stream,
         files,
         &admission,
+        admission.catalog().clone(),
         Some(selection),
-        CommitmentSource::Registry,
+        PrefixCommitmentSource::Registry,
         Some(matrix),
     )
 }
@@ -304,8 +258,8 @@ where
 /// # Errors
 ///
 /// Returns an error when the setup is not a single-row load from this
-/// release, the release has no such target or file, or the file does not
-/// match the manifest.
+/// release, the release has no such file, or the file does not match the
+/// manifest.
 pub fn load_terminal_cache<Cfg: CommitmentConfig>(
     release: &AnchoredManifest,
     files: &dyn ReleaseFileSource,
@@ -319,16 +273,6 @@ pub fn load_terminal_cache<Cfg: CommitmentConfig>(
         return Err(AkitaError::InvalidSetup(
             "every file of one verifier comes from one release".into(),
         ));
-    }
-    if !release
-        .manifest()
-        .targets
-        .iter()
-        .any(|known| known == target)
-    {
-        return Err(AkitaError::InvalidSetup(format!(
-            "release provides no files for target {target:?}"
-        )));
     }
     let record = release.set(&pinned.set_name)?;
     let name = terminal_cache_file_name(
@@ -344,33 +288,27 @@ pub fn load_terminal_cache<Cfg: CommitmentConfig>(
             &name,
             PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
         )?),
-        row: selection.row_digest,
     })
 }
 
-fn checked_record<'a, Cfg: CommitmentConfig>(
-    release: &'a AnchoredManifest,
-    set_name: &str,
-) -> Result<&'a SetRecord, AkitaError> {
-    let record = release.set(set_name)?;
-    check_set_record_code::<Cfg>(record)?;
-    Ok(record)
-}
-
+#[allow(clippy::too_many_arguments)]
 fn issue<Cfg>(
     release: &AnchoredManifest,
     record: &SetRecord,
+    stream: &StreamEntry,
     files: &dyn ReleaseFileSource,
     admission: &Admission<Cfg>,
+    catalog: TrustedScheduleCatalog<Cfg>,
     selection: Option<OpeningScheduleSelection>,
-    source: CommitmentSource<'_, Cfg::Field>,
+    source: PrefixCommitmentSource<'_, Cfg::Field>,
     embedded_matrix: Option<PinnedMatrixPrefix>,
 ) -> Result<PinnedVerifierSetup<Cfg>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Valid + AkitaSerialize + AkitaDeserialize<Context = ()>,
 {
-    let stream = set_stream::<Cfg>(release, record)?;
+    let ids = admission.required_slot_ids(selection)?;
+    let commitments = load_prefix_commitments(release, record, stream, files, &ids, source)?;
     let setup_seed = stream.identity.setup_seed();
     let descriptor =
         admission.setup_descriptor(setup_seed, admission.verifier_matrix_capacity(selection)?);
@@ -388,8 +326,7 @@ where
                     "embedded matrix is longer than the admitted row's capacity".into(),
                 ));
             }
-            // SAFETY: the contract of `PinnedMatrixPrefix::embedded_unchecked`:
-            // approval checked the bytes against the seed's derivation.
+            // SAFETY: the contract of `PinnedMatrixPrefix::embedded_unchecked`.
             unsafe {
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     descriptor,
@@ -398,11 +335,8 @@ where
             }
         }
     };
-    let ids = admission.required_slot_ids(selection)?;
-    let commitments = load_prefix_commitments::<Cfg>(release, record, files, &ids, source)?;
     let mut registry = SetupPrefixVerifierRegistry::new(setup_seed.clone());
-    for id in ids {
-        let commitment = commitments[&profile_key(&id.commitment_profile)].clone();
+    for (id, commitment) in ids.into_iter().zip(commitments) {
         registry.insert(SetupPrefixVerifierSlot { id, commitment })?;
     }
     // SAFETY: the matrix is derived from the release's seed (or embedded in
@@ -410,12 +344,6 @@ where
     // manifest's prefix commitment digest.
     let setup = unsafe { AkitaVerifierSetup::from_parts(Arc::new(expanded), registry)? };
     admission.check_verifier_setup(setup.expanded(), selection)?;
-    let catalog = match selection {
-        Some(selection) if admission.catalog().validate_complete().is_ok() => {
-            admission.selected_view(selection)?
-        }
-        _ => admission.catalog().clone(),
-    };
     Ok(PinnedVerifierSetup {
         setup,
         catalog,
@@ -423,41 +351,4 @@ where
         bundle_id: release.bundle_id(),
         set_name: record.name.clone(),
     })
-}
-
-/// A verifier setup whose commitments the host computed itself, for a
-/// custom deployment whose rows need profiles outside every anchored
-/// universe. There is no manifest digest to compare with.
-///
-/// Produced only by a host-only crate downstream of `akita-cpu-backend` and
-/// `akita-planner`, and accepted only by the `unsafe`
-/// [`crate::AkitaVerifier::from_locally_derived`]. Never available in a
-/// guest.
-#[derive(Debug, Clone)]
-pub struct LocallyDerivedVerifierSetup<F: jolt_field::Field> {
-    setup: AkitaVerifierSetup<F>,
-}
-
-impl<F: jolt_field::Field> LocallyDerivedVerifierSetup<F> {
-    /// Wrap a setup derived in this process.
-    ///
-    /// # Safety
-    ///
-    /// Soundness contract: the caller derived the matrix from its seed and
-    /// computed every commitment from that matrix itself; it imported no
-    /// commitment from a prover or a file.
-    #[doc(hidden)]
-    #[must_use]
-    pub unsafe fn assume_locally_derived(setup: AkitaVerifierSetup<F>) -> Self {
-        Self { setup }
-    }
-
-    pub(crate) fn into_setup(self) -> AkitaVerifierSetup<F> {
-        self.setup
-    }
-
-    /// The verifier setup.
-    pub fn setup(&self) -> &AkitaVerifierSetup<F> {
-        &self.setup
-    }
 }

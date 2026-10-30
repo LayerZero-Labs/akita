@@ -9,13 +9,15 @@
 //! - **A4** checks that the resulting verifier setup admits exactly the A1
 //!   rows (or the selected row).
 
+use super::set_chunking;
 use crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule;
-use crate::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
+use crate::{
+    policy_of, row_fits_setup_capacity, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog,
+};
 use akita_error::AkitaError;
 use akita_params::{
     verifier_setup_matrix_capacity_for_schedule, CommittedGroupBatchProfile, FoldSchedule,
-    GroupCommitPhaseParams, OpeningScheduleSelection, ScheduleLookupKey, SetupMatrixCapacity,
-    SetupPrefixSlotId,
+    OpeningScheduleSelection, SetupMatrixCapacity, SetupPrefixSlotId,
 };
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::preprocessing::{profile_key, ProfileKey, SetRecord};
@@ -35,9 +37,6 @@ pub struct ProgramRows {
     pub max_num_batched_polys: usize,
     /// Grouped rows planned for this program, in any order.
     pub rows: Vec<(CommittedGroupBatchProfile, FoldSchedule)>,
-    /// Frozen root profiles of the anchored producer sets. Every precommitted
-    /// group of a program row must equal one of them.
-    pub producer_profiles: Vec<GroupCommitPhaseParams>,
     /// Merged catalog digest stored in the program preprocessing, once it
     /// exists. Every loader must reproduce it.
     pub merged_catalog_digest: Option<[u8; 32]>,
@@ -67,8 +66,7 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
     ///
     /// Returns [`AkitaError::InvalidSetup`] when no row is admitted, a program
     /// bound exceeds a set limit, an admitted row uses a profile outside the
-    /// set's universe, a program row names an unanchored precommitted
-    /// profile, or the merged catalog does not have the stored digest.
+    /// set's universe, or the merged catalog does not have the stored digest.
     pub fn admit(
         record: &SetRecord,
         base: TrustedScheduleCatalog<Cfg>,
@@ -90,10 +88,7 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
             );
         };
         require_program_rows(record, program, set_limits)?;
-        for (profiles, _) in &program.rows {
-            check_producer_profiles(program, profiles)?;
-        }
-        let chunking = base.policy().witness_chunk;
+        let chunking = set_chunking(record)?;
         let merged = ValidatedScheduleCatalog::try_new(
             Cfg::schedule_family_name(),
             base.rows()
@@ -159,7 +154,7 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
             ),
         };
         let row = view.resolve_selection(selection)?;
-        if !row_fits(row.profiles(), bounds)? {
+        if !row_fits_setup_capacity(row, bounds.0, bounds.1)? {
             return Err(AkitaError::InvalidSetup(
                 "selected row is outside the admitted rows".into(),
             ));
@@ -198,26 +193,17 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
         &self.catalog
     }
 
-    /// The A1 rows, in digest order.
-    pub fn rows(&self) -> &[OpeningScheduleSelection] {
-        &self.rows
-    }
-
-    /// Variable and polynomial bounds of the setup descriptor.
-    pub fn bounds(&self) -> (usize, usize) {
-        (self.max_num_vars, self.max_num_batched_polys)
-    }
-
-    /// Frozen root profiles of the admitted rows, which program rows of
-    /// another set may name as precommitted groups.
-    pub fn root_profiles(&self) -> Vec<GroupCommitPhaseParams> {
-        self.resolved(None)
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|row| row.profiles().final_group)
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// The admitted row `selection`.
+    fn admitted_row(
+        &self,
+        selection: OpeningScheduleSelection,
+    ) -> Result<&ResolvedScheduleRow, AkitaError> {
+        if self.rows.binary_search(&selection).is_err() {
+            return Err(AkitaError::InvalidSetup(
+                "selected row is outside the admitted rows".into(),
+            ));
+        }
+        self.catalog.resolve_selection(selection)
     }
 
     /// The rows a verifier will verify: all A1 rows, or the selected row,
@@ -232,12 +218,7 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
                 .iter()
                 .map(|row| self.catalog.resolve_selection(*row))
                 .collect(),
-            Some(selection) if self.rows.binary_search(&selection).is_ok() => {
-                Ok(vec![self.catalog.resolve_selection(selection)?])
-            }
-            Some(_) => Err(AkitaError::InvalidSetup(
-                "selected row is outside the admitted rows".into(),
-            )),
+            Some(selection) => Ok(vec![self.admitted_row(selection)?]),
         }
     }
 
@@ -342,10 +323,10 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
                     .collect::<Vec<_>>()
                     == self.rows
             }
-            Some(selection) => {
-                let row = self.resolved(Some(selection))?[0];
-                TrustedScheduleCatalog::<Cfg>::verifier_admits(setup, row)?
-            }
+            Some(selection) => TrustedScheduleCatalog::<Cfg>::verifier_admits(
+                setup,
+                self.admitted_row(selection)?,
+            )?,
         };
         if agrees {
             Ok(())
@@ -366,7 +347,7 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
         &self,
         selection: OpeningScheduleSelection,
     ) -> Result<TrustedScheduleCatalog<Cfg>, AkitaError> {
-        self.resolved(Some(selection))?;
+        self.admitted_row(selection)?;
         let bytes = self.catalog.to_verifier_view(&[selection])?;
         TrustedScheduleCatalog::from_verifier_view(&bytes, self.catalog.policy().witness_chunk)
     }
@@ -432,34 +413,6 @@ fn program_bounds<Cfg: CommitmentConfig>(
         )));
     }
     Ok((max_num_vars, program.max_num_batched_polys))
-}
-
-fn row_fits(
-    profiles: &CommittedGroupBatchProfile,
-    bounds: (usize, usize),
-) -> Result<bool, AkitaError> {
-    ScheduleLookupKey {
-        final_group: profiles.final_group.group,
-        precommitteds: profiles.precommitteds.clone(),
-    }
-    .fits_setup_capacity(bounds.0, bounds.1)
-}
-
-fn check_producer_profiles(
-    program: &ProgramRows,
-    profiles: &CommittedGroupBatchProfile,
-) -> Result<(), AkitaError> {
-    if profiles
-        .precommitteds
-        .iter()
-        .all(|profile| program.producer_profiles.contains(profile))
-    {
-        Ok(())
-    } else {
-        Err(AkitaError::InvalidSetup(
-            "program row names a precommitted profile outside its anchored producer sets".into(),
-        ))
-    }
 }
 
 fn check_merged_digest<Cfg: CommitmentConfig>(

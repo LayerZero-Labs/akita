@@ -1,5 +1,7 @@
 //! Independent runtime catalogs must coexist without type-global geometry.
 
+mod common;
+
 use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 use akita_cpu_backend::{CpuBackend, GroupContext, OneHotPoly};
 use akita_params::{
@@ -119,8 +121,7 @@ fn independent_runtime_catalogs_prove_verify_and_reject_each_other() {
                 })
                 .collect::<Vec<_>>();
             for (verifier_index, (scheme, setup, _)) in contexts.iter().enumerate() {
-                let verifier =
-                    unsafe { scheme.verifier(scheme.setup_verifier(setup).unwrap()) }.unwrap();
+                let verifier = common::self_derived_verifier(scheme, setup);
                 for (proof_index, (commitment, selection, proof)) in proofs.iter().enumerate() {
                     let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                         point.clone(),

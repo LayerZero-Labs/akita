@@ -1,14 +1,13 @@
 //! Identities of streams, commitment algorithms, profiles, and commitments.
 
 use super::encoding::{
-    hex, malformed, push_bytes, push_str, push_u32_le, push_u64, push_u8, Reader,
+    hex, malformed, push_bytes, push_str, push_u32, push_u64, push_usize, Reader,
 };
-use crate::{AkitaSetupSeed, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
+use crate::{AkitaSetupSeed, SetupPrefixPublicCommitment};
 use akita_error::AkitaError;
 use akita_params::sis::{InnerCommitSecurityRoute, SisModulusProfileId};
 use akita_params::{
-    digest_descriptor_bytes, field_modulus_be_bytes, DescriptorHasher, GroupCommitPhaseParams,
-    COMPRESSION_POLICY,
+    digest_descriptor_bytes, field_modulus_be_bytes, GroupCommitPhaseParams, COMPRESSION_POLICY,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 use jolt_field::{CanonicalEncoding, Field};
@@ -16,7 +15,7 @@ use jolt_field::{CanonicalEncoding, Field};
 const STREAM_TAG: &str = "akita/preprocessing/stream/v1";
 const PROFILE_TAG: &str = "akita/preprocessing/profile/v1";
 const COMMITMENT_TAG: &str = "akita/preprocessing/commitment/v1";
-pub(crate) const KNOWN_ANSWER_TAG: &str = "akita/preprocessing/known-answer/v1";
+const KNOWN_ANSWER_TAG: &str = "akita/preprocessing/known-answer/v1";
 
 /// Version of the setup-prefix commitment payload encoding and its
 /// computation. Bump it with any change to how a payload is computed.
@@ -111,12 +110,6 @@ impl StreamIdentity {
         })
     }
 
-    /// Big-endian base field modulus, as in `AlgebraSection`.
-    #[must_use]
-    pub const fn prime_modulus_be(&self) -> &[u8; 32] {
-        &self.prime_modulus_be
-    }
-
     /// The seed that fixes the public matrix.
     #[must_use]
     pub const fn setup_seed(&self) -> &AkitaSetupSeed {
@@ -183,30 +176,24 @@ impl AlgorithmIdentity {
     /// Encoded length.
     pub const ENCODED_LEN: usize = 1 + 1 + 4 + 32;
 
-    /// The algorithm compiled into this binary for fields of `profile`.
+    /// The algorithm compiled into this binary for fields of `modulus`.
     #[must_use]
-    pub const fn compiled(profile: SisModulusProfileId) -> Self {
+    pub const fn compiled(modulus: SisModulusProfileId) -> Self {
         Self {
             compression_policy_tag: COMPRESSION_POLICY.tag(),
             group_profile_version: GroupCommitPhaseParams::VERSION,
             payload_version: SETUP_PREFIX_PAYLOAD_VERSION,
-            known_answer_digest: known_answer_digest(profile),
+            known_answer_digest: known_answer_digest(modulus),
         }
-    }
-
-    /// The pinned known-answer digest.
-    #[must_use]
-    pub const fn known_answer_digest(&self) -> &[u8; 32] {
-        &self.known_answer_digest
     }
 
     /// `u8(policy) || u8(profile version) || u32(payload version) || digest`.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(Self::ENCODED_LEN);
-        push_u8(&mut out, self.compression_policy_tag);
-        push_u8(&mut out, self.group_profile_version);
-        push_u32_le(&mut out, self.payload_version);
+        out.push(self.compression_policy_tag);
+        out.push(self.group_profile_version);
+        push_u32(&mut out, self.payload_version);
         out.extend_from_slice(&self.known_answer_digest);
         out
     }
@@ -227,8 +214,8 @@ impl AlgorithmIdentity {
 /// payload))` over the corpus entries of that field. The generator crate's
 /// tests recompute them on every supported instruction set.
 #[must_use]
-pub const fn known_answer_digest(profile: SisModulusProfileId) -> [u8; 32] {
-    match profile {
+pub const fn known_answer_digest(modulus: SisModulusProfileId) -> [u8; 32] {
+    match modulus {
         SisModulusProfileId::Q32Offset99 => KNOWN_ANSWER_Q32,
         SisModulusProfileId::Q64Offset59 => KNOWN_ANSWER_Q64,
         SisModulusProfileId::Q128OffsetA7F7 => KNOWN_ANSWER_Q128,
@@ -245,6 +232,25 @@ const KNOWN_ANSWER_Q128: [u8; 32] = super::encoding::digest_from_hex(
     "592ed04e776ff8c6e3b4ca85b83ddeff42d5c838dfba8ffd3112eaf871a6f9b0",
 );
 
+/// `H(tag || u32(corpus_version) || test_stream_identity || list(...))`, the
+/// known-answer digest over `(profile_descriptor, payload)` pairs.
+#[must_use]
+pub fn known_answer_corpus_digest(
+    test_stream: &StreamIdentity,
+    entries: &[(Vec<u8>, Vec<u8>)],
+) -> [u8; 32] {
+    let mut input = Vec::new();
+    push_str(&mut input, KNOWN_ANSWER_TAG);
+    push_u32(&mut input, KNOWN_ANSWER_CORPUS_VERSION);
+    input.extend_from_slice(&test_stream.to_bytes());
+    push_usize(&mut input, entries.len());
+    for (descriptor, payload) in entries {
+        push_bytes(&mut input, descriptor);
+        push_bytes(&mut input, payload);
+    }
+    digest_descriptor_bytes(&input)
+}
+
 /// Inner security route byte of a profile descriptor.
 #[must_use]
 pub fn profile_route(profile: &GroupCommitPhaseParams) -> u8 {
@@ -259,7 +265,7 @@ pub fn profile_route(profile: &GroupCommitPhaseParams) -> u8 {
 pub fn profile_descriptor(profile: &GroupCommitPhaseParams) -> Vec<u8> {
     let descriptor = profile.canonical_descriptor_bytes();
     let mut out = Vec::with_capacity(9 + descriptor.len());
-    push_u8(&mut out, profile_route(profile));
+    out.push(profile_route(profile));
     push_bytes(&mut out, &descriptor);
     out
 }
@@ -273,26 +279,6 @@ pub fn profile_key(profile: &GroupCommitPhaseParams) -> ProfileKey {
     ProfileKey(digest_descriptor_bytes(&input))
 }
 
-/// `prefix_commitment_digest` over already encoded parts.
-#[must_use]
-pub fn prefix_commitment_digest(
-    stream: &StreamIdentity,
-    algorithm: &AlgorithmIdentity,
-    profile_descriptor: &[u8],
-    payload: &[u8],
-) -> PrefixCommitmentDigest {
-    let mut hasher = DescriptorHasher::new();
-    let mut head = Vec::new();
-    push_str(&mut head, COMMITMENT_TAG);
-    head.extend_from_slice(&stream.to_bytes());
-    head.extend_from_slice(&algorithm.to_bytes());
-    push_bytes(&mut head, profile_descriptor);
-    push_u64(&mut head, payload.len() as u64);
-    hasher.update(&head);
-    hasher.update(payload);
-    PrefixCommitmentDigest(hasher.finalize())
-}
-
 /// `payload = ser(SetupPrefixPublicCommitment<F>)`, uncompressed.
 pub fn setup_prefix_payload<F: Field + AkitaSerialize>(
     commitment: &SetupPrefixPublicCommitment<F>,
@@ -304,25 +290,23 @@ pub fn setup_prefix_payload<F: Field + AkitaSerialize>(
     Ok(out)
 }
 
-/// Prefix commitment digest of one setup-prefix slot of the stream
-/// `setup_seed` under the compiled commitment algorithm.
+/// `H(tag || stream_identity || algorithm_identity || bytes(profile_descriptor)
+/// || bytes(payload))` of the commitment to `profile` over `stream`, under the
+/// compiled commitment algorithm.
 ///
-/// Prover and verifier recompute it at protocol Stage 3 from the registry
-/// entry the fold reads; loaders compare it with the manifest.
-pub fn slot_prefix_commitment_digest<F>(
-    setup_seed: &AkitaSetupSeed,
-    slot: &SetupPrefixVerifierSlot<F>,
-) -> Result<PrefixCommitmentDigest, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-{
-    let profile = &slot.id.commitment_profile;
-    let stream = StreamIdentity::for_field::<F>(setup_seed)?;
+/// The generator publishes it, loaders compare it with the manifest, and
+/// prover and verifier absorb it at Stage 3.
+pub fn prefix_commitment_digest<F: Field + AkitaSerialize>(
+    stream: &StreamIdentity,
+    profile: &GroupCommitPhaseParams,
+    commitment: &SetupPrefixPublicCommitment<F>,
+) -> Result<PrefixCommitmentDigest, AkitaError> {
     let algorithm = AlgorithmIdentity::compiled(profile.inner.matrix.sis_modulus_profile());
-    Ok(prefix_commitment_digest(
-        &stream,
-        &algorithm,
-        &profile_descriptor(profile),
-        &setup_prefix_payload(&slot.commitment)?,
-    ))
+    let mut input = Vec::new();
+    push_str(&mut input, COMMITMENT_TAG);
+    input.extend_from_slice(&stream.to_bytes());
+    input.extend_from_slice(&algorithm.to_bytes());
+    push_bytes(&mut input, &profile_descriptor(profile));
+    push_bytes(&mut input, &setup_prefix_payload(commitment)?);
+    Ok(PrefixCommitmentDigest(digest_descriptor_bytes(&input)))
 }

@@ -4,8 +4,8 @@ mod common;
 
 use akita_cpu_backend::CpuBackend;
 use akita_params::GrindingPlan;
-use akita_pcs::AkitaCommitmentScheme;
-use akita_types::{AkitaVerifierSetup, CommittedGroup};
+use akita_pcs::{AkitaCommitmentScheme, AkitaVerifier};
+use akita_types::CommittedGroup;
 use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
@@ -15,7 +15,7 @@ const LABEL: &[u8] = b"fold-linf/onehot/native";
 struct FoldLinfGrindFixture {
     scheme: Scheme,
     proof: Vec<u8>,
-    verifier_setup: AkitaVerifierSetup<F>,
+    verifier: AkitaVerifier<OneHotCfg>,
     commitment: CommittedGroup<F>,
     point: Vec<F>,
     opening: F,
@@ -55,7 +55,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     );
     let setup = scheme.setup_prover(num_vars, 1).expect("setup");
     let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+    let verifier = self_derived_verifier(&scheme, &setup);
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
@@ -75,21 +75,19 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
             BasisMode::Lagrange,
         )
         .expect("prove");
-    unsafe { scheme.verifier(verifier_setup.clone()) }
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                LABEL,
-                verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
-        })
+    verifier
+        .batched_verify(
+            &proof,
+            LABEL,
+            verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
+            BasisMode::Lagrange,
+        )
         .expect("verify");
 
     FoldLinfGrindFixture {
         scheme,
         proof,
-        verifier_setup,
+        verifier,
         commitment,
         point,
         opening,
@@ -99,19 +97,17 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
 
 impl FoldLinfGrindFixture {
     fn verify(&self, proof: &[u8]) -> Result<(), akita_error::AkitaError> {
-        unsafe { self.scheme.verifier(self.verifier_setup.clone()) }.and_then(|verifier| {
-            verifier.batched_verify(
-                proof,
-                LABEL,
-                verify_input::<OneHotCfg>(
-                    &self.point,
-                    &[self.opening],
-                    &self.commitment,
-                    self.scheme.schedules(),
-                ),
-                BasisMode::Lagrange,
-            )
-        })
+        self.verifier.batched_verify(
+            proof,
+            LABEL,
+            verify_input::<OneHotCfg>(
+                &self.point,
+                &[self.opening],
+                &self.commitment,
+                self.scheme.schedules(),
+            ),
+            BasisMode::Lagrange,
+        )
     }
 }
 

@@ -173,7 +173,7 @@ macro_rules! small_field_test {
                     )
                     .expect("setup");
                     let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-                    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+                    let verifier = self_derived_verifier(&scheme, &setup);
 
                     let pre_poly = akita_cpu_backend::DensePoly::<$sf>::from_field_evals(
                         PRE_NV,
@@ -250,9 +250,8 @@ scheme.schedules());
                     });
 
                     two_group_verify_roundtrip::<$cfg>(
-                        &scheme,
                         &proof,
-                        &verifier_setup,
+                        &verifier,
                         selection,
                         (&pre_commitment, &point[..PRE_NV], pre_opening),
                         (&final_commitment, &point[..final_nv], final_opening),
@@ -340,7 +339,7 @@ scheme.schedules());
                     )
                     .expect("setup");
                     let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
-                    let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+                    let verifier = self_derived_verifier(&scheme, &setup);
 
                     let pre_poly = akita_cpu_backend::OneHotPoly::<$sf, u8>::new(
                         onehot_k,
@@ -427,9 +426,8 @@ scheme.schedules());
                     });
 
                     two_group_verify_roundtrip::<$cfg>(
-                        &scheme,
                         &proof,
-                        &verifier_setup,
+                        &verifier,
                         selection,
                         (&pre_commitment, &point[..PRE_NV], pre_opening),
                         (&final_commitment, &point[..final_nv], final_opening),
@@ -573,7 +571,7 @@ fn fp32_onehot_multi_group() {
         let pre_hint = stack
             .import_commitment(&pre_hint)
             .expect("validated precommit transfer");
-        let verifier_setup = unsafe { scheme.setup_verifier(&setup) }.expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let precommitteds =
             PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
@@ -634,15 +632,13 @@ fn fp32_onehot_multi_group() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        unsafe { scheme.verifier(verifier_setup.clone()) }
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
             .expect("fp32 multi-group verify");
     });
 }

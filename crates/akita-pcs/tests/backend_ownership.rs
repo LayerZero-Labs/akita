@@ -201,6 +201,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             output.committed_group.rows().coeffs()
         );
 
+        let verifier = common::self_derived_verifier(&scheme, &setup);
         let prove = || {
             let opening = claims(&decoded, output.private_handle.clone(), scheme.schedules());
             let selection = opening.selection();
@@ -214,15 +215,13 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             )
             .unwrap()])
             .unwrap();
-            unsafe { scheme.verifier(scheme.setup_verifier(&setup).unwrap().clone()) }
-                .and_then(|verifier| {
-                    verifier.batched_verify(
-                        &proof,
-                        DOMAIN,
-                        GroupBatchStatement::new(selection, public).unwrap(),
-                        BasisMode::Lagrange,
-                    )
-                })
+            verifier
+                .batched_verify(
+                    &proof,
+                    DOMAIN,
+                    GroupBatchStatement::new(selection, public).unwrap(),
+                    BasisMode::Lagrange,
+                )
                 .unwrap();
             proof
         };

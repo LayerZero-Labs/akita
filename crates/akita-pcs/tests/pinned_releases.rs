@@ -3,13 +3,13 @@
 //! verifier loaders in every mode.
 #![allow(missing_docs)]
 
-use akita_config::preprocessing::{CommitmentSource, ProgramRows};
+use akita_config::preprocessing::{PrefixCommitmentSource, ProgramRows};
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{load_prover_setup, CpuBackend, CpuPrefixDeriver, DensePoly, GroupContext};
-use akita_params::{BasisMode, ChunkedWitnessCfg, OpeningScheduleSelection, ScheduleRowDigest};
+use akita_params::{BasisMode, ChunkedWitnessCfg, OpeningScheduleSelection};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_preprocess::{generate, ReleaseDescription, Role, RISCV64_TARGET};
+use akita_preprocess::{generate, ReleaseDescription, RISCV64_TARGET};
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaSerialize, TrustedBytes};
 use akita_types::preprocessing::{
@@ -18,8 +18,7 @@ use akita_types::preprocessing::{
 };
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::preprocessing::{
-    load_guest_verifier_setup, load_selected_verifier_setup, load_terminal_cache,
-    load_verifier_setup, GuestCatalogView, PinnedMatrixPrefix,
+    load_guest_verifier_setup, load_terminal_cache, load_verifier_setup, PinnedMatrixPrefix,
 };
 use akita_verifier::AkitaVerifier;
 use jolt_field::CanonicalEncoding;
@@ -87,7 +86,7 @@ fn release_with(
         "sets": [set]
     }))
     .expect("description");
-    let generated = generate(&repo_root(), &description, &Role::All).expect("generate");
+    let generated = generate(&repo_root(), &description).expect("generate");
     Release {
         manifest: generated.manifest,
         files: generated.files,
@@ -129,21 +128,6 @@ struct Proved {
     committed: akita_types::CommittedGroup<F>,
 }
 
-fn evaluate_multilinear(evaluations: &[F], point: &[F]) -> F {
-    let mut layer = evaluations.to_vec();
-    let mut active_len = layer.len();
-    for &coordinate in point {
-        let next_len = active_len / 2;
-        for index in 0..next_len {
-            let low = layer[2 * index];
-            let high = layer[2 * index + 1];
-            layer[index] = low + (high - low) * coordinate;
-        }
-        active_len = next_len;
-    }
-    layer[0]
-}
-
 fn prove(
     scheme: &AkitaCommitmentScheme<Cfg>,
     setup: &akita_cpu_backend::AkitaProverSetup<F>,
@@ -155,7 +139,7 @@ fn prove(
     let point = (0..num_vars)
         .map(|index| F::from_u128_reduced(index as u128 + 5))
         .collect::<Vec<_>>();
-    let evaluation = evaluate_multilinear(&evaluations, &point);
+    let evaluation = akita_algebra::poly::multilinear_eval(&evaluations, &point).unwrap();
     let backend = Arc::new(CpuBackend::new(setup.expanded().clone()).expect("backend"));
     let source = backend
         .import_source(vec![
@@ -231,29 +215,48 @@ fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
         let release = release("e2e", SEED, 24, true, &default_catalog());
         let opened = open(&release);
         let pinned = load_prover_setup::<Cfg>(&opened, &release.files, SET, None).expect("prover");
-        let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
+        let scheme = AkitaCommitmentScheme::new(pinned.catalog().clone());
         let proved = prove(&scheme, pinned.setup(), 24);
+        let load = |selection| {
+            load_verifier_setup::<Cfg>(
+                &opened,
+                &release.files,
+                SET,
+                selection,
+                None,
+                PrefixCommitmentSource::Registry,
+            )
+        };
 
-        let full = load_verifier_setup::<Cfg>(
-            &opened,
-            &release.files,
-            SET,
-            None,
-            CommitmentSource::Registry,
-        )
-        .expect("full load");
+        let full = load(None).expect("full load");
         assert_eq!(full.bundle_id(), bundle_id(&release.manifest));
-        verify(&scheme.pinned_verifier(full).expect("verifier"), &proved).expect("full verifier");
+        verify(&AkitaVerifier::from_pinned(full.clone()).unwrap(), &proved).expect("full verifier");
 
-        let selected = load_selected_verifier_setup::<Cfg>(
-            &opened,
-            &release.files,
-            SET,
-            proved.selection,
-            None,
-            CommitmentSource::Registry,
-        )
-        .expect("single-row load");
+        // Stage 3 binds the commitment each proof uses: the same matrix with
+        // other commitments rejects the proof.
+        let mut registry = akita_types::SetupPrefixVerifierRegistry::new(
+            full.setup().expanded().descriptor().setup_seed.clone(),
+        );
+        assert!(!full.setup().prefix_slots().is_empty());
+        for (_, slot) in full.setup().prefix_slots().iter() {
+            let mut slot = slot.clone();
+            let mut coeffs = slot.commitment.rows[0].coeffs().to_vec();
+            coeffs[0] += F::from_u128_reduced(1);
+            slot.commitment.rows[0] = akita_types::RingVec::from_coeffs(coeffs);
+            registry.insert(slot).unwrap();
+        }
+        // SAFETY: deliberately not derived; the proof must be rejected.
+        let forged = unsafe {
+            let setup = akita_types::AkitaVerifierSetup::from_parts(
+                full.setup().expanded().clone(),
+                registry,
+            )
+            .unwrap();
+            AkitaVerifier::<Cfg>::new(setup, scheme.schedules().clone()).unwrap()
+        };
+        assert!(verify(&forged, &proved).is_err());
+
+        let selected = load(Some(proved.selection)).expect("single-row load");
         assert_eq!(
             selected.catalog().catalog_digest(),
             scheme.schedules().catalog_digest()
@@ -278,7 +281,6 @@ fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
             SET,
             proved.selection,
             None,
-            GuestCatalogView::Release,
             matrix,
         )
         .expect("guest load");
@@ -288,18 +290,14 @@ fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
         );
         verify(&AkitaVerifier::from_pinned(guest).unwrap(), &proved).expect("guest verifier");
 
-        let outside = OpeningScheduleSelection {
-            row_digest: ScheduleRowDigest::from_bytes([0; 32]),
-        };
-        assert!(load_selected_verifier_setup::<Cfg>(
-            &opened,
-            &release.files,
-            SET,
-            outside,
-            None,
-            CommitmentSource::Registry
-        )
-        .is_err());
+        // A catalog row above the set's variable limit is outside A1.
+        let outside = scheme
+            .schedules()
+            .rows()
+            .find(|row| row.profiles().final_group.group.num_vars() > 24)
+            .expect("a catalog row above the set limit")
+            .selection();
+        assert!(load(Some(outside)).is_err());
     });
 }
 
@@ -313,7 +311,8 @@ fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
             &release.files,
             SET,
             None,
-            CommitmentSource::Registry,
+            None,
+            PrefixCommitmentSource::Registry,
         )
         .expect("registry mode");
         let mut catalog_only = MemoryReleaseFiles::new();
@@ -327,7 +326,8 @@ fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
             &catalog_only,
             SET,
             None,
-            CommitmentSource::SeedDerived(&CpuPrefixDeriver),
+            None,
+            PrefixCommitmentSource::SeedDerived(&CpuPrefixDeriver),
         )
         .expect("seed-derived mode");
         assert_eq!(derived.setup(), registry.setup());
@@ -335,9 +335,10 @@ fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
 
         // Without hints, the prover exports its slots and checks them too.
         let pinned = load_prover_setup::<Cfg>(&opened, &catalog_only, SET, None).expect("prover");
-        let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
+        let scheme = AkitaCommitmentScheme::new(pinned.catalog().clone());
         let proved = prove(&scheme, pinned.setup(), 24);
-        verify(&scheme.pinned_verifier(derived).unwrap(), &proved).expect("seed-derived verifier");
+        verify(&AkitaVerifier::from_pinned(derived).unwrap(), &proved)
+            .expect("seed-derived verifier");
 
         // A manifest whose digest differs from the derived commitment is rejected.
         let mut forged = ReleaseManifest::decode(&release.manifest).unwrap();
@@ -358,7 +359,8 @@ fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
             &catalog_only,
             SET,
             None,
-            CommitmentSource::SeedDerived(&CpuPrefixDeriver)
+            None,
+            PrefixCommitmentSource::SeedDerived(&CpuPrefixDeriver)
         )
         .is_err());
         assert!(load_prover_setup::<Cfg>(&forged_opened, &catalog_only, SET, None).is_err());
@@ -423,17 +425,19 @@ fn loaders_reject_unanchored_mismatched_and_tampered_inputs() {
             &tampered.files,
             SET,
             None,
-            CommitmentSource::Registry
+            None,
+            PrefixCommitmentSource::Registry
         )
         .is_err());
 
-        // Files from another tampered.
+        // Files from another release.
         assert!(load_verifier_setup::<Cfg>(
             &opened,
             &other.files,
             SET,
             None,
-            CommitmentSource::Registry
+            None,
+            PrefixCommitmentSource::Registry
         )
         .is_err());
 
@@ -462,7 +466,8 @@ fn loaders_reject_unanchored_mismatched_and_tampered_inputs() {
                         &files,
                         SET,
                         None,
-                        CommitmentSource::Registry,
+                        None,
+                        PrefixCommitmentSource::Registry,
                     )
                     .is_err()
                         && load_prover_setup::<Cfg>(&opened, &files, SET, None).is_err()
@@ -470,46 +475,27 @@ fn loaders_reject_unanchored_mismatched_and_tampered_inputs() {
                 assert!(rejected, "{name}");
             }
         }
-    });
-}
 
-#[test]
-fn stage3_binds_the_commitment_each_proof_uses() {
-    on_large_stack(|| {
-        let release = release("stage3", SEED, 24, true, &default_catalog());
-        let opened = open(&release);
-        let pinned = load_prover_setup::<Cfg>(&opened, &release.files, SET, None).unwrap();
-        let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
+        // The other release has its own seed, so its own commitments, and
+        // works under its own anchor.
+        assert_ne!(
+            ReleaseManifest::decode(&other.manifest).unwrap().registry,
+            ReleaseManifest::decode(manifest).unwrap().registry
+        );
+        let other_opened = open(&other);
+        let pinned = load_prover_setup::<Cfg>(&other_opened, &other.files, SET, None).unwrap();
+        let scheme = AkitaCommitmentScheme::new(pinned.catalog().clone());
         let proved = prove(&scheme, pinned.setup(), 24);
-        let honest = load_verifier_setup::<Cfg>(
-            &opened,
-            &release.files,
+        let verifier = load_verifier_setup::<Cfg>(
+            &other_opened,
+            &other.files,
             SET,
             None,
-            CommitmentSource::Registry,
+            None,
+            PrefixCommitmentSource::Registry,
         )
         .unwrap();
-        let mut registry = akita_types::SetupPrefixVerifierRegistry::new(
-            honest.setup().expanded().descriptor().setup_seed.clone(),
-        );
-        assert!(!honest.setup().prefix_slots().is_empty());
-        for (_, slot) in honest.setup().prefix_slots().iter() {
-            let mut slot = slot.clone();
-            let mut coeffs = slot.commitment.rows[0].coeffs().to_vec();
-            coeffs[0] += F::from_u128_reduced(1);
-            slot.commitment.rows[0] = akita_types::RingVec::from_coeffs(coeffs);
-            registry.insert(slot).unwrap();
-        }
-        // SAFETY: deliberately not derived; the proof must be rejected.
-        let forged = unsafe {
-            akita_types::AkitaVerifierSetup::from_parts(honest.setup().expanded().clone(), registry)
-                .unwrap()
-        };
-        verify(&scheme.pinned_verifier(honest).unwrap(), &proved).expect("honest");
-        // SAFETY: as above.
-        let forged =
-            unsafe { AkitaVerifier::<Cfg>::new(forged, scheme.schedules().clone()) }.unwrap();
-        assert!(verify(&forged, &proved).is_err());
+        verify(&AkitaVerifier::from_pinned(verifier).unwrap(), &proved).expect("custom seed");
     });
 }
 
@@ -533,7 +519,7 @@ fn description_only_transitions_keep_commitments_and_old_proofs() {
             open_anchored_manifest(&both, ReleaseKind::Akita, &new.manifest, &[SET]).unwrap();
         let pinned = load_prover_setup::<Cfg>(&old_opened, &old.files, SET, None).unwrap();
         let proved = prove(
-            &AkitaCommitmentScheme::from_pinned_prover_setup(&pinned),
+            &AkitaCommitmentScheme::new(pinned.catalog().clone()),
             pinned.setup(),
             20,
         );
@@ -542,7 +528,8 @@ fn description_only_transitions_keep_commitments_and_old_proofs() {
             &new.files,
             SET,
             None,
-            CommitmentSource::Registry,
+            None,
+            PrefixCommitmentSource::Registry,
         )
         .unwrap();
         verify(&AkitaVerifier::from_pinned(new_verifier).unwrap(), &proved)
@@ -555,47 +542,9 @@ fn description_only_transitions_keep_commitments_and_old_proofs() {
     });
 }
 
-#[test]
-fn a_custom_seed_release_works_under_its_own_anchor() {
-    on_large_stack(|| {
-        let custom = release(
-            "custom-seed",
-            "0202020202020202020202020202020202020202020202020202020202020202",
-            24,
-            true,
-            &default_catalog(),
-        );
-        let default = release("default-seed", SEED, 24, true, &default_catalog());
-        let custom_manifest = ReleaseManifest::decode(&custom.manifest).unwrap();
-        let default_manifest = ReleaseManifest::decode(&default.manifest).unwrap();
-        assert_ne!(custom_manifest.registry, default_manifest.registry);
-        let opened = open(&custom);
-        let pinned = load_prover_setup::<Cfg>(&opened, &custom.files, SET, None).unwrap();
-        let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
-        let proved = prove(&scheme, pinned.setup(), 24);
-        let verifier = load_verifier_setup::<Cfg>(
-            &opened,
-            &custom.files,
-            SET,
-            None,
-            CommitmentSource::Registry,
-        )
-        .unwrap();
-        verify(&scheme.pinned_verifier(verifier).unwrap(), &proved).expect("custom seed");
-    });
-}
-
 /// A base catalog of the rows below `max_num_vars`, written next to a
 /// universe file listing the setup-prefix slots of the other rows, and those
 /// other rows as program rows.
-fn opened_without_program_rows(catalog: &Path) -> AnchoredManifest {
-    open(&release("program-rows-none", SEED, 24, true, catalog))
-}
-
-fn release_files_without_program_rows(catalog: &Path) -> MemoryReleaseFiles {
-    release("program-rows-none", SEED, 24, true, catalog).files
-}
-
 fn program_fixture(
     max_num_vars: usize,
     max_program_vars: usize,
@@ -660,7 +609,6 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             max_num_vars: 24,
             max_num_batched_polys: 1,
             rows,
-            producer_profiles: Vec::new(),
             merged_catalog_digest: digest,
         };
         let release = release_with("program-rows", SEED, 24, true, &catalog, Some(&universe));
@@ -670,8 +618,9 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             &opened,
             &release.files,
             SET,
+            None,
             Some(&program(program_rows.clone(), None)),
-            CommitmentSource::Registry,
+            PrefixCommitmentSource::Registry,
         )
         .expect("host load");
         let merged = host.catalog().catalog_digest();
@@ -681,8 +630,9 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             &opened,
             &release.files,
             SET,
+            None,
             Some(&program(reversed, Some(merged))),
-            CommitmentSource::Registry,
+            PrefixCommitmentSource::Registry,
         )
         .expect("order does not matter");
         assert_eq!(again.catalog().catalog_digest(), merged);
@@ -691,8 +641,9 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
                 &opened,
                 &release.files,
                 SET,
+                None,
                 Some(&program(program_rows[..1].to_vec(), Some(merged))),
-                CommitmentSource::Registry
+                PrefixCommitmentSource::Registry
             )
             .is_err(),
             "swapping a program row changes the digest"
@@ -713,8 +664,9 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             &opened,
             &release.files,
             SET,
+            None,
             Some(&program(vec![base_row], None)),
-            CommitmentSource::Registry
+            PrefixCommitmentSource::Registry
         )
         .is_err());
 
@@ -734,16 +686,19 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             &open(&narrow),
             &narrow.files,
             SET,
+            None,
             Some(&program(program_rows.clone(), None)),
-            CommitmentSource::Registry
+            PrefixCommitmentSource::Registry
         )
         .is_err());
+        let none = release_with("program-rows-none", SEED, 24, true, &catalog, None);
         assert!(load_verifier_setup::<Cfg>(
-            &opened_without_program_rows(&catalog),
-            &release_files_without_program_rows(&catalog),
+            &open(&none),
+            &none.files,
             SET,
+            None,
             Some(&program(program_rows.clone(), None)),
-            CommitmentSource::Registry
+            PrefixCommitmentSource::Registry
         )
         .is_err());
 
@@ -753,7 +708,7 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
         let pinned =
             load_prover_setup::<Cfg>(&opened, &release.files, SET, Some(&stored)).expect("prover");
         assert_eq!(pinned.catalog().catalog_digest(), merged);
-        let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
+        let scheme = AkitaCommitmentScheme::new(pinned.catalog().clone());
         // The widest program row offloads setup, so it uses the universe.
         let num_vars = program_rows
             .iter()
@@ -761,31 +716,36 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             .max()
             .unwrap();
         let proved = prove(&scheme, pinned.setup(), num_vars);
-        verify(&scheme.pinned_verifier(host).unwrap(), &proved).expect("host verifier");
+        verify(&AkitaVerifier::from_pinned(host).unwrap(), &proved).expect("host verifier");
 
         let view = scheme
             .schedules()
             .to_verifier_view(&[proved.selection])
             .unwrap();
-        let selected = load_selected_verifier_setup::<Cfg>(
+        let selected = load_verifier_setup::<Cfg>(
             &opened,
             &release.files,
             SET,
-            proved.selection,
+            Some(proved.selection),
             Some(&stored),
-            CommitmentSource::Registry,
+            PrefixCommitmentSource::Registry,
         )
         .unwrap();
-        let guest = load_guest_verifier_setup::<Cfg>(
-            &opened,
-            &release.files,
-            SET,
-            proved.selection,
-            Some(&stored),
-            GuestCatalogView::Merged(&view),
-            embedded_matrix(selected.setup()),
-        )
-        .expect("guest load");
+        let matrix = embedded_matrix(selected.setup());
+        let guest = |view: &[u8]| {
+            load_guest_verifier_setup::<Cfg>(
+                &opened,
+                &release.files,
+                SET,
+                proved.selection,
+                Some((&stored, view)),
+                matrix,
+            )
+        };
+        let mut tampered_view = view.clone();
+        *tampered_view.last_mut().unwrap() ^= 1;
+        assert!(guest(&tampered_view).is_err(), "tampered merged view");
+        let guest = guest(&view).expect("guest load");
         assert_eq!(guest.catalog().catalog_digest(), merged);
         verify(&AkitaVerifier::from_pinned(guest).unwrap(), &proved).expect("guest verifier");
         std::fs::remove_dir_all(catalog.parent().unwrap()).unwrap();
@@ -823,9 +783,15 @@ fn loaders_read_each_file_once_and_never_refresh_a_loaded_setup() {
         let reads = std::mem::take(&mut *counting.reads.lock().unwrap());
         assert!(reads.keys().any(|name| name.starts_with("hints/")));
         assert!(reads.values().all(|count| *count == 1), "{reads:?}");
-        let verifier =
-            load_verifier_setup::<Cfg>(&opened, &counting, SET, None, CommitmentSource::Registry)
-                .unwrap();
+        let verifier = load_verifier_setup::<Cfg>(
+            &opened,
+            &counting,
+            SET,
+            None,
+            None,
+            PrefixCommitmentSource::Registry,
+        )
+        .unwrap();
         let reads = std::mem::take(&mut *counting.reads.lock().unwrap());
         assert!(reads.keys().any(|name| name.starts_with("registry/")));
         assert!(reads.values().all(|count| *count == 1), "{reads:?}");
@@ -839,15 +805,16 @@ fn loaders_read_each_file_once_and_never_refresh_a_loaded_setup() {
         for name in names {
             counting.files.lock().unwrap().insert(name, vec![0xa5; 3]);
         }
-        let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
+        let scheme = AkitaCommitmentScheme::new(pinned.catalog().clone());
         let proved = prove(&scheme, pinned.setup(), 24);
-        verify(&scheme.pinned_verifier(verifier).unwrap(), &proved).expect("loaded setup");
+        verify(&AkitaVerifier::from_pinned(verifier).unwrap(), &proved).expect("loaded setup");
         assert!(load_verifier_setup::<Cfg>(
             &opened,
             &counting,
             SET,
             None,
-            CommitmentSource::Registry
+            None,
+            PrefixCommitmentSource::Registry
         )
         .is_err());
     });

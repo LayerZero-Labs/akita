@@ -42,9 +42,6 @@ pub use benchmark_support::{
     RelationEvaluatorBenchmarkCase,
 };
 pub use prepared_cache::{build_riscv64_terminal_ntt_cache, TrustedTerminalCache};
-pub use preprocessing::{
-    LocallyDerivedVerifierSetup, PinnedMatrixPrefix, PinnedTerminalCache, PinnedVerifierSetup,
-};
 pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::Stage1Verifier;

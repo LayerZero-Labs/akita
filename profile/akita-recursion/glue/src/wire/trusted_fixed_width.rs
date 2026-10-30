@@ -185,12 +185,10 @@ where
         let prefix_slots = Self::decode_prefix_slots(rest)?;
         unsafe {
             AkitaVerifierSetup::from_parts(
-                Arc::new(unsafe {
-                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                        seed,
-                        shared_matrix,
-                    )
-                }),
+                Arc::new(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    seed,
+                    shared_matrix,
+                )),
                 prefix_slots,
             )
         }
