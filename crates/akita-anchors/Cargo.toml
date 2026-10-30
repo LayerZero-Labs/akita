@@ -9,6 +9,11 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 publish = false
 
+[features]
+default = ["transcript-keccak"]
+transcript-blake2b = ["akita-types/transcript-blake2b"]
+transcript-keccak = ["akita-types/transcript-keccak"]
+
 [dependencies]
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 

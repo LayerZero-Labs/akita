@@ -183,12 +183,17 @@ where
             Self::deserialize_trusted_fixed_width_setup_matrix,
         )?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        unsafe { AkitaVerifierSetup::from_parts(
-            Arc::new(
-                unsafe { AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix) },
-            ),
-            prefix_slots,
-        ) }
+        unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(unsafe {
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        seed,
+                        shared_matrix,
+                    )
+                }),
+                prefix_slots,
+            )
+        }
         .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 

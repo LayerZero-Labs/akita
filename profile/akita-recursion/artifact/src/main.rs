@@ -749,9 +749,10 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup = unsafe { scheme
-        .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout) }
-        .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
+    let verifier_setup = unsafe {
+        scheme.setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout)
+    }
+    .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
