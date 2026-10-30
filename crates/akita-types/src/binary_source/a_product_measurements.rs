@@ -19,7 +19,9 @@ fn stage3_release_a_arithmetic_measurements() {
     let mut rng = StdRng::seed_from_u64(0x7823_23a0);
     // Stop when a direct evaluation reaches two seconds. The last completed
     // power-of-two geometry is the largest reported shape for this machine.
-    for rows in [1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
+    for rows in [
+        1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+    ] {
         let rank = 3usize;
         let descriptor = BinarySourceDescriptor::new(
             BinaryIndexMap::new(128, 8, 8 * rows, 2).unwrap(),
