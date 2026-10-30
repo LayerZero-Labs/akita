@@ -1,3 +1,7 @@
+#[path = "stage3_transport.rs"]
+mod stage3_transport;
+pub(in crate::protocol::prove) use stage3_transport::prove_stage3_session;
+
 use super::*;
 use akita_types::GrindingReplay;
 use jolt_poly::UnivariatePoly;
@@ -712,7 +716,7 @@ where
                     "invalid Stage 3 setup prefix".into(),
                 ));
             }
-            let (setup_product_claim, mut session) =
+            let (setup_product_claim, session) =
                 backend.begin_stage3(crate::backend::Stage3Request {
                     session,
                     level,
@@ -732,84 +736,17 @@ where
                 .map_err(|error| {
                     AkitaError::Internal(format!("setup-prefix slot serialization failed: {error}"))
                 })?;
-            akita_types::stage3_public_slot(grinding, level, &encoded_slot)?;
-            akita_types::stage3_claim::<F, E, _>(grinding, level, setup_product_claim)?;
-            let mut kernel = Stage3Sumcheck {
+            Ok(Some(prove_stage3_session::<F, E, B>(
                 backend,
-                session: &mut session,
-                claim: setup_product_claim,
-                rounds: prefix_len.trailing_zeros() as usize,
-                next_round: 0,
-                field: std::marker::PhantomData,
-            };
-            let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+                session,
+                setup_product_claim,
+                prefix_len.trailing_zeros() as usize,
+                &encoded_slot,
                 grinding,
-                akita_params::SumcheckProtocol::Stage3,
                 level,
-                0,
-            );
-            let (setup_prefix_point, _) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
-                &mut kernel,
-                &mut channel,
-                akita_sumcheck::SumcheckShape::new(
-                    prefix_len.trailing_zeros() as usize,
-                    akita_params::SETUP_SUMCHECK_DEGREE,
-                )?,
-                0,
-            )?;
-            let setup_prefix_eval = backend.finish_stage3(session)?;
-            akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, setup_prefix_eval)?;
-            Ok(Some(Stage3ProveOutput {
-                setup_prefix_eval,
-                setup_prefix_point,
-            }))
+            )?))
         }
         SetupContributionMode::Direct => Ok(None),
-    }
-}
-
-struct Stage3Sumcheck<'a, F: Field, E: Field, B: crate::backend::OpaqueStage3Kernel<F, E>> {
-    backend: &'a B,
-    session: &'a mut B::Stage3SessionHandle,
-    claim: E,
-    rounds: usize,
-    next_round: usize,
-    field: std::marker::PhantomData<F>,
-}
-
-impl<F: Field, E: Field, B: crate::backend::OpaqueStage3Kernel<F, E>>
-    akita_sumcheck::SumcheckKernel<E> for Stage3Sumcheck<'_, F, E, B>
-{
-    fn num_rounds(&self) -> usize {
-        self.rounds
-    }
-    fn degree_bound(&self) -> usize {
-        akita_params::SETUP_SUMCHECK_DEGREE
-    }
-    fn input_claim(&self) -> E {
-        self.claim
-    }
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        claim: E,
-    ) -> Result<UnivariatePoly<E>, AkitaError> {
-        self.backend
-            .stage3_round_polynomial(self.session, round, claim)
-    }
-    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
-        self.backend
-            .bind_stage3_challenge(self.session, round, challenge)?;
-        self.next_round += 1;
-        Ok(())
-    }
-    fn finish(&mut self) -> Result<(), AkitaError> {
-        if self.next_round != self.rounds {
-            return Err(AkitaError::Internal(
-                "stage 3 sumcheck finished before all rounds were bound".into(),
-            ));
-        }
-        Ok(())
     }
 }
 
