@@ -228,11 +228,11 @@ fn embedded_matrix(setup: &akita_types::AkitaVerifierSetup<F>) -> PinnedMatrixPr
 #[test]
 fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
     on_large_stack(|| {
-        let release = release("e2e", SEED, 20, true, &default_catalog());
+        let release = release("e2e", SEED, 24, true, &default_catalog());
         let opened = open(&release);
         let pinned = load_prover_setup::<Cfg>(&opened, &release.files, SET, None).expect("prover");
         let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
-        let proved = prove(&scheme, pinned.setup(), 20);
+        let proved = prove(&scheme, pinned.setup(), 24);
 
         let full = load_verifier_setup::<Cfg>(
             &opened,
@@ -306,7 +306,7 @@ fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
 #[test]
 fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
     on_large_stack(|| {
-        let release = release("seed-derived", SEED, 20, false, &default_catalog());
+        let release = release("seed-derived", SEED, 24, false, &default_catalog());
         let opened = open(&release);
         let registry = load_verifier_setup::<Cfg>(
             &opened,
@@ -336,7 +336,7 @@ fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
         // Without hints, the prover exports its slots and checks them too.
         let pinned = load_prover_setup::<Cfg>(&opened, &catalog_only, SET, None).expect("prover");
         let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
-        let proved = prove(&scheme, pinned.setup(), 20);
+        let proved = prove(&scheme, pinned.setup(), 24);
         verify(&scheme.pinned_verifier(derived).unwrap(), &proved).expect("seed-derived verifier");
 
         // A manifest whose digest differs from the derived commitment is rejected.
@@ -368,11 +368,11 @@ fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
 #[test]
 fn loaders_reject_unanchored_mismatched_and_tampered_inputs() {
     on_large_stack(|| {
-        let tampered = release("tamper", SEED, 20, true, &default_catalog());
+        let tampered = release("tamper", SEED, 24, true, &default_catalog());
         let other = release(
             "tamper-other",
             "0100000000000000000000000000000000000000000000000000000000000000",
-            20,
+            24,
             true,
             &default_catalog(),
         );
@@ -476,11 +476,11 @@ fn loaders_reject_unanchored_mismatched_and_tampered_inputs() {
 #[test]
 fn stage3_binds_the_commitment_each_proof_uses() {
     on_large_stack(|| {
-        let release = release("stage3", SEED, 20, true, &default_catalog());
+        let release = release("stage3", SEED, 24, true, &default_catalog());
         let opened = open(&release);
         let pinned = load_prover_setup::<Cfg>(&opened, &release.files, SET, None).unwrap();
         let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
-        let proved = prove(&scheme, pinned.setup(), 20);
+        let proved = prove(&scheme, pinned.setup(), 24);
         let honest = load_verifier_setup::<Cfg>(
             &opened,
             &release.files,
@@ -520,8 +520,8 @@ fn stage3_binds_the_commitment_each_proof_uses() {
 #[test]
 fn description_only_transitions_keep_commitments_and_old_proofs() {
     on_large_stack(|| {
-        let old = release("transition-old", SEED, 20, true, &default_catalog());
-        let new = release("transition-new", SEED, 22, true, &default_catalog());
+        let old = release("transition-old", SEED, 24, true, &default_catalog());
+        let new = release("transition-new", SEED, 26, true, &default_catalog());
         let old_manifest = ReleaseManifest::decode(&old.manifest).unwrap();
         let new_manifest = ReleaseManifest::decode(&new.manifest).unwrap();
         for entry in &old_manifest.registry {
@@ -565,18 +565,18 @@ fn a_custom_seed_release_works_under_its_own_anchor() {
         let custom = release(
             "custom-seed",
             "0202020202020202020202020202020202020202020202020202020202020202",
-            20,
+            24,
             true,
             &default_catalog(),
         );
-        let default = release("default-seed", SEED, 20, true, &default_catalog());
+        let default = release("default-seed", SEED, 24, true, &default_catalog());
         let custom_manifest = ReleaseManifest::decode(&custom.manifest).unwrap();
         let default_manifest = ReleaseManifest::decode(&default.manifest).unwrap();
         assert_ne!(custom_manifest.registry, default_manifest.registry);
         let opened = open(&custom);
         let pinned = load_prover_setup::<Cfg>(&opened, &custom.files, SET, None).unwrap();
         let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
-        let proved = prove(&scheme, pinned.setup(), 20);
+        let proved = prove(&scheme, pinned.setup(), 24);
         let verifier = load_verifier_setup::<Cfg>(
             &opened,
             &custom.files,
@@ -758,7 +758,12 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             load_prover_setup::<Cfg>(&opened, &release.files, SET, Some(&stored)).expect("prover");
         assert_eq!(pinned.catalog().catalog_digest(), merged);
         let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
-        let num_vars = program_rows[0].0.final_group.group.num_vars();
+        // The widest program row offloads setup, so it uses the universe.
+        let num_vars = program_rows
+            .iter()
+            .map(|(profiles, _)| profiles.final_group.group.num_vars())
+            .max()
+            .unwrap();
         let proved = prove(&scheme, pinned.setup(), num_vars);
         verify(&scheme.pinned_verifier(host).unwrap(), &proved).expect("host verifier");
 

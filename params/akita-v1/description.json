@@ -4,7 +4,9 @@
   "kind": "akita",
   "generator_version": "akita-preprocess 0.1.0",
   "seed": "bebafecaefbeadde000000000000000000000000000000000000000000000000",
-  "targets": ["riscv64"],
+  "targets": [
+    "riscv64"
+  ],
   "max_file_part": 1073741824,
   "hints": true,
   "page_hashes": true,
@@ -24,7 +26,7 @@
       "catalog": "artifacts/schedules/fp128_dense_recursive.aks",
       "num_chunks": 1,
       "num_activated_levels": 0,
-      "max_num_vars": 22,
+      "max_num_vars": 24,
       "max_num_batched_polys": 1
     },
     {
@@ -33,7 +35,7 @@
       "catalog": "artifacts/schedules/fp32_dense_recursive.aks",
       "num_chunks": 1,
       "num_activated_levels": 0,
-      "max_num_vars": 22,
+      "max_num_vars": 28,
       "max_num_batched_polys": 1
     },
     {
@@ -42,7 +44,7 @@
       "catalog": "artifacts/schedules/fp64_dense_recursive.aks",
       "num_chunks": 1,
       "num_activated_levels": 0,
-      "max_num_vars": 23,
+      "max_num_vars": 25,
       "max_num_batched_polys": 1
     }
   ]

@@ -17,12 +17,13 @@ fn recursive_set(catalog: serde_json::Value) -> serde_json::Value {
         "catalog": catalog,
         "num_chunks": 1,
         "num_activated_levels": 0,
-        "max_num_vars": 20,
+        "max_num_vars": 24,
         "max_num_batched_polys": 1
     })
 }
 
-/// A small release: one recursive set with one row and every optional file.
+/// A small release: one recursive set whose largest row offloads setup, and
+/// every optional file.
 fn small_description(name: &str) -> ReleaseDescription {
     serde_json::from_value(serde_json::json!({
         "format_version": 1,
