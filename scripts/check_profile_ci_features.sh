@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-from scripts.profile_bench_merge_base_policy import MODE_CATALOGS
+from scripts.profile_bench_merge_base_policy import MODE_CATALOGS, resolve_baseline
 from scripts.profile_ci_features import (
     load_feature_graph,
     resolve_feature,
@@ -125,6 +125,12 @@ if not bench_cases:
     print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
     raise SystemExit(1)
 case_specs = [case_spec for _, _, case_spec in bench_cases]
+head_policy = resolve_baseline("HEAD", case_specs)
+unsupported = [item for item in head_policy["cases"] if not item["supported"]]
+if unsupported:
+    for item in unsupported:
+        print(f"head benchmark case {item['case']} is unsupported: {item['reason']}", file=sys.stderr)
+    raise SystemExit(1)
 fp128_direct = "onehot_fp128:33:1:direct"
 fp128_recursive = "onehot_fp128:33:1:recursive"
 if fp128_direct not in case_specs or case_specs.index(fp128_direct) + 1 >= len(case_specs):

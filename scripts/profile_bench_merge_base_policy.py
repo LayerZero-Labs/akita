@@ -35,11 +35,14 @@ MODE_CATALOGS = {
     "onehot_fp128": ("fp128_onehot", False),
     "onehot_fp128_multi_group": ("fp128_onehot", True),
     "onehot_fp128_multi_group_recursive": ("fp128_onehot_recursive", True),
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": ("fp128_onehot_recursive_multi_chunk_w8r2", True),
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": (
+        "fp128_onehot_recursive_multi_chunk_w8r2", True
+    ),
     "onehot_fp128_multi_chunk_w2r2": ("fp128_onehot_multi_chunk_w2r2", False),
     "onehot_fp128_multi_chunk_w4r2": ("fp128_onehot_multi_chunk_w4r2", False),
     "onehot_fp128_multi_chunk_w8r2": ("fp128_onehot_multi_chunk", False),
 }
+
 
 @dataclass(frozen=True)
 class BenchCase:
@@ -52,6 +55,7 @@ class BenchCase:
     def spec(self) -> str:
         suffix = "" if self.setup_mode == "direct" else f":{self.setup_mode}"
         return f"{self.mode}:{self.num_vars}:{self.num_polys}{suffix}"
+
 
 def normalize_setup_mode(setup_mode: str) -> str:
     if setup_mode not in {"direct", "recursive"}:
@@ -75,7 +79,9 @@ def parse_case_spec(case_spec: str) -> BenchCase:
     num_vars = int(num_vars_str)
     num_polys = int(num_polys_str)
     if not mode.strip() or num_vars <= 0 or num_polys <= 0:
-        raise ValueError(f"invalid case spec {case_spec!r}; NUM_VARS and NUM_POLYS must be positive")
+        raise ValueError(
+            f"invalid case spec {case_spec!r}; MODE must be nonempty and sizes positive"
+        )
     return BenchCase(
         mode=mode.strip(),
         num_vars=num_vars,
@@ -149,9 +155,12 @@ def resolve_baseline(merge_base_ref: str, case_specs: list[str]) -> dict[str, ob
         raise ValueError("invalid merge-base catalog header")
     keys = set()
     for row in table:
-        if (not row["family"] or not row["logical_key"].startswith("final=")
-                or ";precommitted=" not in row["logical_key"]
-                or not re.fullmatch(r"[0-9a-f]{64}", row["lookup_key_digest"])):
+        if (
+            not row["family"]
+            or not row["logical_key"].startswith("final=")
+            or ";precommitted=" not in row["logical_key"]
+            or not re.fullmatch(r"[0-9a-f]{64}", row["lookup_key_digest"])
+        ):
             raise ValueError("invalid merge-base catalog row")
         keys.add((row["family"], row["logical_key"]))
     decisions = []
@@ -163,7 +172,9 @@ def resolve_baseline(merge_base_ref: str, case_specs: list[str]) -> dict[str, ob
             if case.mode not in MODE_CATALOGS:
                 raise ValueError(f"no catalog mapping for profile mode {case.mode}")
             family, grouped = MODE_CATALOGS[case.mode]
-            if case.setup_mode == "recursive" and not family.endswith(("_recursive", "_recursive_multi_chunk_w8r2")):
+            if case.setup_mode == "recursive" and not family.endswith(
+                ("_recursive", "_recursive_multi_chunk_w8r2")
+            ):
                 family += "_recursive"
             if grouped:
                 if case.num_polys != 4:
@@ -192,7 +203,6 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["resolve"])
     parser.add_argument("--merge-base-ref", required=True)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--output", required=True)

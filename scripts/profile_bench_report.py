@@ -2211,7 +2211,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         binaries.append((args.baseline_binary, baseline_dir, True))
 
     cases = configured_cases(args)
-    policy_path = getattr(args, "baseline_policy", "")
+    policy_path = args.baseline_policy
     policy = baseline_case_policy(policy_path, cases) if policy_path else {}
     if policy and any(item["supported"] for item in policy.values()) and not args.baseline_binary:
         raise ValueError("supported baseline cases require --baseline-binary")

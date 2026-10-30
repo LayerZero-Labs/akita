@@ -45,7 +45,8 @@ concurrency:
 jobs:
   # Cases are split across parallel jobs. Merge-base baseline policy lives in
   # `scripts/profile_bench_merge_base_policy.py`: per-case mode/catalog checks,
-  # then interleaved benchmarking for supported cases only.
+  # then interleaved benchmarking for supported cases only. Unlike the former
+  # smoke fallback, metadata, build, and supported baseline runtime errors fail CI.
   bench:
     name: Bench (${{ matrix.group.name }})
     runs-on: GitHubRunner-Large-Public
@@ -56,11 +57,8 @@ jobs:
         # deterministically, fixing case order in the comment. `cases` is a
         # newline-separated list of MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE] specs.
         #
-        # Dense fixtures retain their existing sizes. K=16 one-hot cases use
-        # three fewer variables than the original K=256 cases: fp32 nv31,
-        # fp64 nv32, fp128 nv33; multi-group finals nv31 (W8R2 nv29),
-        # and distributed singletons nv29. This leaves twice as many hot
-        # indices as the original workloads. Counts and chunking are unchanged.
+        # K=16 one-hot cases use fp32 nv31, fp64 nv32, fp128 nv33,
+        # multi-group finals nv31 (W8R2 nv29), and distributed singletons nv29.
         group:
           - name: 1-fp32-base
             profile_feature: profile-ci-fp32
@@ -160,7 +158,7 @@ jobs:
             fi
           done <<< "$AKITA_BENCH_GROUP_CASES"
 
-          python3 scripts/profile_bench_merge_base_policy.py resolve \
+          python3 scripts/profile_bench_merge_base_policy.py \
             --merge-base-ref "$AKITA_BENCH_MERGE_BASE_SHA" \
             --github-env "$GITHUB_ENV" \
             --output "$AKITA_BENCH_GROUP_DIR/baseline-eligibility.json" \

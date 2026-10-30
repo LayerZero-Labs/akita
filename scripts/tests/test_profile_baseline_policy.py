@@ -23,12 +23,21 @@ class BaselinePolicyTests(unittest.TestCase):
         return out.getvalue()
 
     def resolve(self, keys, cases, modes=None):
-        with mock.patch.object(policy, "merge_base_profile_modes", return_value=modes or {"dense_fp32", "onehot_fp32"}), mock.patch.object(policy, "git_show", return_value=self.catalog(keys)):
+        with (
+            mock.patch.object(
+                policy, "merge_base_profile_modes",
+                return_value=modes or {"dense_fp32", "onehot_fp32"},
+            ),
+            mock.patch.object(policy, "git_show", return_value=self.catalog(keys)),
+        ):
             return policy.resolve_baseline("main", cases)
 
     def test_resized_onehot_does_not_disable_dense(self):
         result = self.resolve(
-            [("fp32_dense", "final=30:1;precommitted="), ("fp32_onehot", "final=34:1;precommitted=")],
+            [
+                ("fp32_dense", "final=30:1;precommitted="),
+                ("fp32_onehot", "final=34:1;precommitted="),
+            ],
             ["dense_fp32:30:1", "onehot_fp32:31:1"],
         )
         dense, onehot = result["cases"]
@@ -62,10 +71,16 @@ class BaselinePolicyTests(unittest.TestCase):
         self.assertIn("does not define mode", result["cases"][0]["reason"])
 
     def test_metadata_errors_are_fatal(self):
-        with mock.patch.object(policy, "merge_base_profile_modes", return_value={"dense_fp32"}), mock.patch.object(policy, "git_show", return_value="bad header\n"):
+        with (
+            mock.patch.object(policy, "merge_base_profile_modes", return_value={"dense_fp32"}),
+            mock.patch.object(policy, "git_show", return_value="bad header\n"),
+        ):
             with self.assertRaisesRegex(ValueError, "catalog header"):
                 policy.resolve_baseline("main", ["dense_fp32:30:1"])
-        with mock.patch.object(policy, "merge_base_profile_modes", side_effect=subprocess.CalledProcessError(1, "git")):
+        with mock.patch.object(
+            policy, "merge_base_profile_modes",
+            side_effect=subprocess.CalledProcessError(1, "git"),
+        ):
             with self.assertRaises(subprocess.CalledProcessError):
                 policy.resolve_baseline("main", ["dense_fp32:30:1"])
 
@@ -104,7 +119,11 @@ class MixedBaselineRunTests(unittest.TestCase):
             root = pathlib.Path(tmp)
             status, calls = self.run_cases(root)
             self.assertEqual(status, 0)
-            self.assertEqual(calls, [(b, "dense_fp32") for b in ["head", "base"] * 3] + [("head", "onehot_fp32")] * 3)
+            self.assertEqual(
+                calls,
+                [(b, "dense_fp32") for b in ["head", "base"] * 3]
+                + [("head", "onehot_fp32")] * 3,
+            )
             head = json.loads((root / "head/summary.json").read_text())["cases"]
             base = json.loads((root / "base/summary.json").read_text())["cases"]
             self.assertEqual(len(base), 1)

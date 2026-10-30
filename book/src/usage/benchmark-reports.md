@@ -13,17 +13,17 @@ full downloadable artifact.
 | Case | Polynomial groups | Setup path |
 | --- | --- | --- |
 | `dense_fp32` | 1 at nv30 | Direct |
-| `onehot_fp32` | 1 at nv34 | Direct |
+| `onehot_fp32` | 1 at nv31 | Direct |
 | `dense_fp64` | 1 at nv29 | Direct |
-| `onehot_fp64` | 1 at nv35 | Direct |
+| `onehot_fp64` | 1 at nv32 | Direct |
 | `dense_fp128` | 1 at nv28 | Direct |
-| `onehot_fp128` | 1 at nv36 | Direct and recursive |
-| `onehot_fp128_multi_group` | 1 at nv16 + 1 at nv16 + 2 at nv34 | Direct |
-| `onehot_fp128_multi_group_recursive` | 1 at nv16 + 1 at nv16 + 2 at nv34 | Recursive |
-| `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 1 at nv16 + 1 at nv16 + 2 at nv32 | Recursive |
-| `onehot_fp128_multi_chunk_w2r2` | 1 at nv32 | Direct |
-| `onehot_fp128_multi_chunk_w4r2` | 1 at nv32 | Direct |
-| `onehot_fp128_multi_chunk_w8r2` | 1 at nv32 | Direct |
+| `onehot_fp128` | 1 at nv33 | Direct and recursive |
+| `onehot_fp128_multi_group` | 1 at nv16 + 1 at nv16 + 2 at nv31 | Direct |
+| `onehot_fp128_multi_group_recursive` | 1 at nv16 + 1 at nv16 + 2 at nv31 | Recursive |
+| `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 1 at nv16 + 1 at nv16 + 2 at nv29 | Recursive |
+| `onehot_fp128_multi_chunk_w2r2` | 1 at nv29 | Direct |
+| `onehot_fp128_multi_chunk_w4r2` | 1 at nv29 | Direct |
+| `onehot_fp128_multi_chunk_w8r2` | 1 at nv29 | Direct |
 
 The workflow splits these cases into narrow feature groups so each runner
 compiles only the profile modes it measures. Each runner loads the matching
@@ -34,14 +34,14 @@ checked-in `.aks` schedule artifact at runtime.
 The dense cases commit to one arbitrary multilinear table and open it at one
 point. The current fp32, fp64, and fp128 cases use 30, 29, and 28 variables.
 
-The one hot source places one selected value in every 256 entry chunk. The
+The one hot source places one selected value in every 16 entry chunk. The
 public statement still checks commitment and opening consistency. The source
 representation changes prover work, not the meaning of the opening claim.
 
 The multi group cases contain four polynomials in three ordered groups. Two
 earlier groups each contain one 16 variable polynomial and use separate points.
-The final group contains two polynomials that share one point. It uses 34
-variables in the direct and standard recursive cases. The W8R2 case uses 32
+The final group contains two polynomials that share one point. It uses 31
+variables in the direct and standard recursive cases. The W8R2 case uses 29
 variables.
 
 Direct and recursive rows prove the same opening statement. The recursive setup
@@ -71,17 +71,26 @@ does not enable disk persistence.
 ## How the comparison works
 
 Pull request runs compare with the merge base, not the current tip of `main`.
-The workflow builds both revisions and runs them on the same machine. It
-interleaves the two binaries so changes in runner load affect them as evenly as
-possible.
+Eligibility is checked per case against the merge base's profile modes and
+schedule catalog. For supported cases, the workflow builds both revisions and
+runs them interleaved on the same machine so changes in runner load affect them
+as evenly as possible. An unsupported mode or catalog key runs at the head
+only, with an explicit reason and no merge-base percentage comparison. New
+catalog rows become eligible automatically once they reach the base branch.
+
+Metadata errors, build errors, and failures in a supported baseline or head
+benchmark fail CI. A failed supported baseline also cancels its paired head
+case, and the report records the failure.
 
 Each case has one discarded warmup process and three measured processes. The
 report uses the median time and the largest peak resident memory. A negative
 delta means that the branch used less time, memory, or proof data.
 
 The x86 runners compile for the fixed `x86-64-v3` target. This keeps the
-instruction set stable across machines while retaining AVX2. CPU fingerprints
-are recorded with the artifacts.
+compile-time instruction set stable across machines while retaining AVX2.
+Runtime dispatch can still select instructions such as AVX-512 IFMA when the
+host supports them, so compare the paired runs rather than raw timings from
+different runners. CPU fingerprints are recorded with the artifacts.
 
 ## Compact pull request comment
 
@@ -96,7 +105,7 @@ Consecutive repeated dimension tuples are collapsed. This keeps the comment
 readable while still showing a schedule change.
 
 Failed cases remain visible and name the phase that failed. A missing or
-unsupported merge base mode is reported instead of being compared with a
+unsupported merge base case is reported instead of being compared with a
 different workload.
 
 ## Full report artifact
