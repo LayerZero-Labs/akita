@@ -55,9 +55,21 @@ where
     let next = next_fold.ok_or_else(|| {
         AkitaError::InvalidSetup("binary root requires an ordinary successor fold".into())
     })?;
-    if next.predecessor_setup_contribution_mode() == SetupContributionMode::Recursive {
+    if next.predecessor_setup_contribution_mode() != SetupContributionMode::Recursive {
         return Err(AkitaError::InvalidSetup(
-            "binary root evaluates its setup directly".into(),
+            "binary root requires a typed setup-prefix successor".into(),
+        ));
+    }
+    let typed_prefix = next
+        .params
+        .setup_prefix()
+        .and_then(|p| p.slot_id())
+        .ok_or(AkitaError::InvalidProof)?;
+    let typed_identity =
+        akita_types::binary_source::binary_a_prefix_identity(manifest, &typed_prefix)?;
+    if setup.prefix_context(&typed_prefix) != Some(typed_identity.as_slice()) {
+        return Err(AkitaError::InvalidInput(
+            "binary statement differs from its prepared typed A prefix".into(),
         ));
     }
     let logical_len = root_params.output_witness_len::<F>(opening_batch, E::DEGREE)?;
@@ -157,6 +169,12 @@ where
             ))
         })
         .transpose()?;
+    let rho = akita_types::binary_source::binary_a_rho(
+        alpha,
+        batches
+            .get(..manifest.a_rank())
+            .ok_or(AkitaError::InvalidProof)?,
+    );
     let (relation, negative_bits) = public.relation(
         &challenges,
         alpha,
@@ -164,6 +182,8 @@ where
         &lift(group.commitment().rows().coeffs()),
         &lift(&d_payload),
         ordinary_claim,
+        &rho,
+        None,
     )?;
 
     let equality_point =
@@ -190,7 +210,28 @@ where
         E::zero(),
     )?
     .evaluate(&replay.challenges)?;
-    let expected = relation.evaluate(&replay.challenges)? * witness_eval
+    let prefix = next
+        .params
+        .setup_prefix()
+        .and_then(|p| p.slot_id())
+        .ok_or(AkitaError::InvalidProof)?;
+    if setup.prefix_slots().get(&prefix).is_none() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let product = akita_types::binary_source::BinaryAProduct::new(
+        public.plan(),
+        &rho,
+        &replay.challenges,
+        prefix.n_prefix()?,
+    )?;
+    let stage3 = crate::stages::stage3::verify_stage3_session::<F, E>(
+        prefix.n_prefix()?.trailing_zeros() as usize,
+        &typed_identity,
+        grinding,
+        0,
+        |point| product.evaluate(point),
+    )?;
+    let expected = (relation.evaluate(&replay.challenges)? + stage3.claim) * witness_eval
         + (negative_bit_weight + gamma * EqPolynomial::mle(&stage1.point, &replay.challenges)?)
             * witness_eval
             * (witness_eval + E::one());
@@ -199,7 +240,7 @@ where
     }
     Ok(FoldVerifyOutput {
         challenges: replay.challenges,
-        setup_prefix_opening: None,
+        setup_prefix_opening: Some((stage3.challenges, stage3.setup_prefix_eval)),
         next_witness,
         next_witness_last_block_digest: None,
         opening: witness_eval,

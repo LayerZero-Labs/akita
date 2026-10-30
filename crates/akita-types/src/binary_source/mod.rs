@@ -1,4 +1,6 @@
 //! Opt-in binary source wire contracts; no protocol flow is selected here.
+mod a_product;
+mod a_relation;
 mod agreement;
 mod authentication;
 mod commitment_manifest;
@@ -17,6 +19,8 @@ mod root_request;
 mod root_transcript;
 mod terminal;
 mod word_claim;
+pub use a_product::*;
+pub use a_relation::*;
 pub use agreement::*;
 pub use authentication::*;
 pub use commitment_manifest::*;
@@ -37,3 +41,8 @@ pub use terminal::*;
 pub use word_claim::*;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "test-support")]
+mod matrix_access;
+#[cfg(feature = "test-support")]
+pub use matrix_access::BinaryAReadGuard;

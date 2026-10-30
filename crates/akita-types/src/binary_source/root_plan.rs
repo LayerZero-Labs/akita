@@ -1,5 +1,6 @@
 //! Public outgoing layout and direct relation assembly for a binary root.
 
+#[cfg(test)]
 use akita_algebra::ring::trinomial::module_map::pack_signed_components;
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
@@ -7,14 +8,16 @@ use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use jolt_field::Field;
 
+#[cfg(test)]
+use super::{binary_scalar_challenges, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW};
 use super::{
-    binary_scalar_challenges, binary_scalar_geometry, BinaryEvaluationBounds,
-    BinaryEvaluationSegments, BinaryQuotientBounds, BinarySourceDescriptor, BinaryTerminalClaim,
-    BINARY_PARITY_CARRY_DIGITS, BINARY_SOURCE_Q, BINARY_VALUE_CARRY_DIGITS, CANONICAL_IMAGE_WINDOW,
+    binary_scalar_geometry, BinaryEvaluationBounds, BinaryEvaluationSegments, BinaryQuotientBounds,
+    BinarySourceDescriptor, BinaryTerminalClaim, BINARY_PARITY_CARRY_DIGITS,
+    BINARY_VALUE_CARRY_DIGITS,
 };
-use crate::native_root_relation::{
-    binary_commitment_group, NativeRootRelation, NativeRootTerm, NativeRootWeights,
-};
+use crate::native_root_relation::NativeRootWeights;
+#[cfg(test)]
+use crate::native_root_relation::{binary_commitment_group, NativeRootRelation, NativeRootTerm};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 
 /// One public layout shared by A, parity, value, range and successor checks.
@@ -121,21 +124,14 @@ impl BinaryRootWitnessPlan {
     pub fn relation_weights<E: Field>(
         &self,
         claim: &BinaryTerminalClaim,
-        matrix: &[Vec<[i128; 648]>],
+        matrix: Option<&[Vec<[i128; 648]>]>,
         challenges: &Challenges,
         alpha: E,
-        row_batches: &[E],
+        rho: &[[E; 648]],
         terminal_batches: [E; 2],
         padding_weights: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError> {
-        let a = binary_direct_a_weights(
-            self,
-            matrix,
-            challenges,
-            alpha,
-            row_batches,
-            padding_weights,
-        )?;
+        let a = super::binary_quotient_weights(self, matrix, challenges, rho, padding_weights)?;
         let terminal = claim.relation_weights(
             &self.descriptor,
             &self.repacking,
@@ -163,13 +159,14 @@ impl BinaryRootWitnessPlan {
     }
 }
 
-/// Evaluate the binary A term directly from the typed q24 setup matrix.
+/// Test reference for direct evaluation of the typed q24 setup matrix.
 ///
-/// The future typed adjoint replaces this function. It compiles only the
+/// The typed adjoint replaces this online scan. This reference compiles the
 /// source-independent identity `rem_Psi(A*z-sum c*T)-q*KA=0`, never a clear
 /// residual or carry claim. The field E must extend the admitted proof field.
 /// Setup uniformity belongs to the typed setup producer; this boundary checks
 /// its dimensions and centered representatives before compiling public weights.
+#[cfg(test)]
 pub fn binary_direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
     matrix: &[Vec<[i128; 648]>],

@@ -16,11 +16,13 @@ use crate::AkitaSetupDescriptor;
 /// Materialize the q24 source matrix from its canonical typed setup identity.
 ///
 /// Matrix order is A row, source ring row, then natural coefficient. Both the
-/// source commitment and the verifier's direct A evaluation use this function.
+/// source commitment and setup preparation use this function; online verification does not.
 pub fn binary_root_matrix(
     seed: &[u8; 32],
     manifest: &BinaryCommittedGroupManifest,
 ) -> Result<Vec<Vec<[i128; 648]>>, AkitaError> {
+    #[cfg(feature = "test-support")]
+    super::matrix_access::check()?;
     manifest.validate()?;
     let columns = checked::product([4, manifest.descriptor().index_map().columns()])
         .and_then(|block| {
@@ -53,7 +55,7 @@ pub fn binary_root_matrix(
     Ok(matrix)
 }
 
-/// Admitted public inputs and direct weights for one binary terminal claim.
+/// Admitted public inputs and non-A weights for one binary terminal claim.
 ///
 /// This experimental root uses the fixed proof prime 2^128-275. Its outgoing
 /// coefficient map is authenticated by the ordinary successor commitment;
@@ -65,7 +67,6 @@ pub struct BinaryRootPublic {
     claim: BinaryTerminalClaim,
     setup: AkitaSetupDescriptor,
     plan: BinaryRootWitnessPlan,
-    matrix: Vec<Vec<[i128; 648]>>,
     ordinary: Option<OrdinaryNativeRootPlan>,
     negative_binary_addresses: Vec<usize>,
     padding_count: usize,
@@ -132,13 +133,11 @@ impl BinaryRootPublic {
                 ])
             })
             .ok_or(AkitaError::InvalidProof)?;
-        let matrix = binary_root_matrix(&setup.setup_seed.seed, manifest)?;
         Ok(Self {
             manifest: manifest.clone(),
             claim: claim.clone(),
             setup: setup.clone(),
             plan,
-            matrix,
             ordinary,
             negative_binary_addresses,
             padding_count,
@@ -155,13 +154,13 @@ impl BinaryRootPublic {
         self.batch_count
     }
 
-    /// Compile the single direct linear oracle after the outgoing commitment.
+    /// Compile the linear oracle after the outgoing commitment.
     ///
     /// Batch coordinates are independent field challenges, including one for
     /// each padding coefficient. `commitment` is the public B payload; `d_payload`
-    /// is the order-three U commitment. The future setup adjoint replaces direct
-    /// setup evaluation without changing this authenticated coefficient map.
-    #[allow(clippy::type_complexity)]
+    /// is the order-three U commitment. Proving supplies A; verification omits
+    /// it and authenticates that oracle contribution through the typed prefix.
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
         &self,
         challenges: &Challenges,
@@ -170,6 +169,8 @@ impl BinaryRootPublic {
         commitment: &[E],
         d_payload: &[E],
         ordinary_claim: Option<(&[E], E, &[E])>,
+        rho: &[[E; 648]],
+        matrix: Option<&[Vec<[i128; 648]>]>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
         if batches.len() != self.batch_count {
             return Err(AkitaError::InvalidSize {
@@ -199,10 +200,10 @@ impl BinaryRootPublic {
             .map_err(|_| AkitaError::InvalidProof)?;
         let algebra = self.plan.relation_weights(
             &self.claim,
-            &self.matrix,
+            matrix,
             challenges,
             alpha,
-            batches.get(..rank).ok_or(AkitaError::InvalidProof)?,
+            rho,
             terminal_batches,
             batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;

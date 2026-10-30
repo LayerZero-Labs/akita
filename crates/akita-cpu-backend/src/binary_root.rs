@@ -27,6 +27,7 @@ type AuxiliaryRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
 
 mod evaluation;
 mod quotient;
+mod setup_prefix;
 pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
 pub use quotient::BinaryQuotientWitness;
 

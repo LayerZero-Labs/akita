@@ -1,0 +1,116 @@
+//! Quotient relation on the canonical digit addresses, with an explicit rho.
+
+use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
+use akita_algebra::ring::trinomial::module_map::pack_signed_components;
+use akita_algebra::ring::trinomial::MinusTrinomial;
+use akita_challenges::Challenges;
+use akita_error::{checked, AkitaError};
+use jolt_field::Field;
+
+use super::{
+    binary_scalar_challenges, BinaryRootWitnessPlan, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
+};
+use crate::native_root_relation::NativeRootWeights;
+
+/// Compile the A identity's coefficient weights. Proving supplies A; online
+/// verification omits it and authenticates its contribution through Stage 3.
+/// The T and committed KA terms, and all padding equations, are identical.
+pub fn binary_quotient_weights<E: Field>(
+    plan: &BinaryRootWitnessPlan,
+    matrix: Option<&[Vec<[i128; 648]>]>,
+    challenges: &Challenges,
+    rho: &[[E; 648]],
+    padding_weights: &[E],
+) -> Result<NativeRootWeights<E>, AkitaError> {
+    let descriptor = plan.descriptor();
+    let columns = descriptor.index_map().columns();
+    let rows = checked::product([4, columns])
+        .and_then(|d| checked::exact_div(descriptor.index_map().padded_carriers(), d))
+        .ok_or(AkitaError::InvalidProof)?;
+    let owners = descriptor.polynomials().len();
+    if rho.len() != checked::product([owners, plan.rank()]).ok_or(AkitaError::InvalidProof)? {
+        return Err(AkitaError::InvalidInput(
+            "A coefficient functional has the wrong rank".into(),
+        ));
+    }
+    if let Some(matrix) = matrix {
+        if matrix.len() != plan.rank()
+            || matrix.iter().any(|row| row.len() != rows)
+            || matrix.iter().flatten().flatten().any(|&c| {
+                c < i128::from(CANONICAL_IMAGE_WINDOW.0) || c > i128::from(CANONICAL_IMAGE_WINDOW.1)
+            })
+        {
+            return Err(AkitaError::InvalidInput(
+                "A differs from its centered typed geometry".into(),
+            ));
+        }
+    }
+    let embedded = binary_scalar_challenges(descriptor, challenges)?
+        .into_iter()
+        .map(|scalar| {
+            Ok(pack_signed_components(&[scalar, [0; 162], [0; 162], [0; 162]])?.map(E::from_i128))
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
+    let mut terms = Vec::new();
+    for owner in 0..owners {
+        for i in 0..plan.rank() {
+            let row_index =
+                checked::mul_add(owner, plan.rank(), i).ok_or(AkitaError::InvalidProof)?;
+            let weights = rho.get(row_index).ok_or(AkitaError::InvalidProof)?;
+            if let Some(matrix) = matrix {
+                for (j, a) in matrix
+                    .get(i)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .iter()
+                    .enumerate()
+                {
+                    let element =
+                        checked::mul_add(owner, rows, j).ok_or(AkitaError::InvalidProof)?;
+                    for (t, w) in adjoint
+                        .apply(weights, &a.map(E::from_i128))?
+                        .into_iter()
+                        .enumerate()
+                    {
+                        terms.extend(plan.repacking().coefficient_weights(0, element, t, w)?);
+                    }
+                }
+            }
+            for column in 0..columns {
+                let challenge_index =
+                    checked::mul_add(owner, columns, column).ok_or(AkitaError::InvalidProof)?;
+                let challenge = embedded
+                    .get(challenge_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let element = checked::mul_add(challenge_index, plan.rank(), i)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (t, w) in adjoint.apply(weights, challenge)?.into_iter().enumerate() {
+                    terms.extend(plan.repacking().coefficient_weights(1, element, t, -w)?);
+                }
+            }
+            for (t, &w) in weights.iter().enumerate() {
+                terms.extend(plan.repacking().coefficient_weights(
+                    2,
+                    row_index,
+                    t,
+                    -E::from_u64(u64::from(BINARY_SOURCE_Q)) * w,
+                )?);
+            }
+        }
+    }
+    let mut padding = padding_weights.iter();
+    for address in 0..plan.repacking().domain_len() {
+        if plan.repacking().is_padding_address(address)? {
+            terms.push((
+                address,
+                *padding
+                    .next()
+                    .ok_or_else(|| AkitaError::InvalidInput("missing padding weight".into()))?,
+            ));
+        }
+    }
+    if padding.next().is_some() {
+        return Err(AkitaError::InvalidInput("excess padding weights".into()));
+    }
+    NativeRootWeights::new(plan.repacking().domain_len(), terms, E::zero())
+}

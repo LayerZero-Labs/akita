@@ -77,10 +77,10 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
     let weights = plan
         .relation_weights(
             &claim,
-            &matrix,
+            Some(&matrix),
             &challenges,
             F::from_u64(17),
-            &[F::one(); 2],
+            &crate::binary_source::binary_a_rho(F::from_u64(17), &[F::one(); 2]),
             [F::from_u64(19), F::from_u64(23)],
             &vec![F::one(); padding_count],
         )
