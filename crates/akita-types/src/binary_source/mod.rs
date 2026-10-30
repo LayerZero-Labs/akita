@@ -1,11 +1,35 @@
 //! Opt-in binary source wire contracts; no protocol flow is selected here.
 mod agreement;
+mod authentication;
+mod commitment_manifest;
 mod descriptor;
+mod evaluation_bounds;
+mod evaluation_weights;
+mod grinding;
 mod index;
+mod ordinary_root;
 mod prime;
+mod quotient;
+mod root_plan;
+mod root_public;
+mod root_request;
+mod root_transcript;
+mod terminal;
 pub use agreement::*;
+pub use authentication::*;
+pub use commitment_manifest::*;
 pub use descriptor::*;
+pub use evaluation_bounds::*;
+pub use evaluation_weights::*;
+pub use grinding::*;
 pub use index::*;
+pub use ordinary_root::*;
 pub use prime::*;
+pub use quotient::*;
+pub use root_plan::*;
+pub use root_public::*;
+pub use root_request::*;
+pub use root_transcript::*;
+pub use terminal::*;
 #[cfg(test)]
 mod tests;

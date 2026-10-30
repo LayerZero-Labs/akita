@@ -42,10 +42,17 @@ where
             selection,
             resolved.schedule(),
             basis,
+            |plan| {
+                claims
+                    .opening_claims()
+                    .root_grinding_plan(plan, resolved.schedule())
+            },
         )?;
     Ok((resolved, claims, grinding_plan, descriptor_bytes))
 }
 
+/// Extension seam: dispatch a root by its declared group relation kind.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub(super) fn prove_root<Cfg, B>(
@@ -78,74 +85,42 @@ where
         + 'static,
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
-    let root_claims = ProverOpeningData::from_parts(
-        claims.clone(),
-        layout.clone(),
-        handles.iter().map(OpeningSource::Commitment).collect(),
-    )?;
-    let context = backend.proof_context(proof_session, 0)?;
-    let mut material = Vec::with_capacity(layout.num_groups());
-    for (index, handle) in handles.iter().enumerate() {
-        let group = schedule.root.params.group_params(layout, index)?;
-        material.push(backend.validate_commitment(
-            proof_session,
-            &context.for_group(index),
-            handle,
-            &group.profile,
-            claims.group_commitment(index)?,
-        )?);
-    }
-    root_claims.append_to(&schedule.root.params, grinding)?;
-    let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
-        (
-            fold::FoldSuccessorParams::Terminal(&schedule.terminal),
-            akita_params::NextWitnessBindingPolicy::TerminalInnerState,
-        ),
-        |next| {
-            (
-                fold::FoldSuccessorParams::Recursive(next),
-                akita_params::NextWitnessBindingPolicy::OuterPayload,
-            )
-        },
-    );
-    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B>(
-        backend,
-        root_claims,
-        material,
-        false,
-        grinding,
-        0,
-        &schedule.root.params,
-        basis,
-        proof_session,
-        schedule.root.output_witness_len,
-        next_params.inner_ring_dimension(),
-        false,
-    )?;
-    prove_fold::<Cfg::Field, Cfg::ExtField, B>(
-        expanded,
-        prefix_slots,
-        backend,
-        proof_session,
-        grinding,
-        0,
-        &schedule.root.params,
-        next_params,
-        schedule.root.output_witness_len,
-        next_binding,
-        prepared,
-        |relation, commitment, binding, witness, material| {
-            handoff.handoff_successor(
+    match claims.groups().first().map(|group| group.kind()) {
+        #[cfg(feature = "labinius-trinomial")]
+        Some(akita_types::opening_claims::GroupClaimKind::Binary { .. }) => {
+            super::binary_root::prove_root(
+                expanded,
+                prefix_slots,
                 backend,
+                claims,
+                layout,
+                handles,
+                schedule,
                 proof_session,
-                0,
-                &schedule.root.params,
-                relation,
-                commitment,
-                binding,
-                witness,
-                material,
+                grinding,
+                basis,
+                handoff,
             )
-        },
-    )
+        }
+        Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
+            super::ordinary_root::prove_root(
+                expanded,
+                prefix_slots,
+                backend,
+                claims,
+                layout,
+                handles,
+                schedule,
+                proof_session,
+                grinding,
+                basis,
+                handoff,
+            )
+        }
+        // A dependency may expose another kind without enabling this crate's handler.
+        #[allow(unreachable_patterns)]
+        _ => Err(AkitaError::InvalidInput(
+            "root group kind is not enabled in this protocol engine".into(),
+        )),
+    }
 }

@@ -1,6 +1,13 @@
 //! Direct CPU implementation of the opaque protocol kernels.
 mod admission;
 mod backend;
+#[cfg(feature = "labinius-trinomial")]
+mod binary_ordinary;
+#[cfg(feature = "labinius-trinomial")]
+#[path = "../binary_root/sessions.rs"]
+mod binary_root_sessions;
+#[cfg(feature = "labinius-trinomial")]
+mod binary_source;
 pub(crate) mod capabilities;
 pub(crate) mod compression;
 pub(crate) mod consumer_kernels;
@@ -15,6 +22,7 @@ mod openings;
 pub(crate) mod operation_plans;
 mod owned;
 mod owned_commit;
+mod owned_kind;
 mod owned_prefix;
 pub(crate) mod plans;
 mod prepared_opening;
@@ -175,6 +183,55 @@ where
         + Sync
         + 'static,
 {
+    #[cfg(feature = "labinius-trinomial")]
+    fn prepare_root_group(
+        &self,
+        session: &Self::ProofSessionHandle,
+        context: &crate::opaque::ProofContext,
+        handle: &Self::CommitmentHandle,
+        request: &dyn std::any::Any,
+    ) -> Result<(Vec<F>, Box<dyn std::any::Any + Send + Sync>), AkitaError> {
+        binary_source::prepare_root_group(self, session, context, handle, request)
+    }
+
+    #[cfg(feature = "labinius-trinomial")]
+    fn build_root_group(
+        &self,
+        session: &Self::ProofSessionHandle,
+        context: &crate::opaque::ProofContext,
+        preparation: &dyn std::any::Any,
+        challenges: &akita_challenges::Challenges,
+        logical_len: usize,
+        destination_ring_dimension: usize,
+    ) -> Result<Option<Self::WitnessHandle>, AkitaError> {
+        binary_source::build_root_group(
+            self,
+            session,
+            context,
+            preparation,
+            challenges,
+            logical_len,
+            destination_ring_dimension,
+        )
+    }
+
+    #[cfg(feature = "labinius-trinomial")]
+    fn import_root_witness(
+        &self,
+        session: &Self::ProofSessionHandle,
+        context: &crate::opaque::ProofContext,
+        digits: Vec<i8>,
+        destination_ring_dimension: usize,
+    ) -> Result<Self::WitnessHandle, AkitaError> {
+        binary_root_sessions::import_root_witness(
+            self,
+            session,
+            context,
+            digits,
+            destination_ring_dimension,
+        )
+    }
+
     fn begin_recursive_witness(
         &self,
         session: &Self::ProofSessionHandle,
@@ -389,6 +446,17 @@ where
         + Sync
         + 'static,
 {
+    #[cfg(feature = "labinius-trinomial")]
+    fn begin_root_digit_range(
+        &self,
+        witness: &Self::WitnessHandle,
+        domain: akita_params::FlatBooleanDomain,
+        equality_point: &[E],
+        range: akita_params::DigitRangePlan,
+    ) -> Result<Self::Stage1SessionHandle, AkitaError> {
+        binary_root_sessions::begin_root_digit_range(self, witness, domain, equality_point, range)
+    }
+
     fn begin_stage1(
         &self,
         relation_handle: &Self::RelationHandle,
@@ -526,6 +594,29 @@ where
         + Sync
         + 'static,
 {
+    #[cfg(feature = "labinius-trinomial")]
+    fn begin_root_relation(
+        &self,
+        witness: &Self::WitnessHandle,
+        weights: Vec<E>,
+        negative_binary_weights: Vec<(usize, E)>,
+        claim: E,
+        stage1_point: &[E],
+        range_image_evaluation: E,
+        batching: E,
+    ) -> Result<Self::Stage2SessionHandle, AkitaError> {
+        binary_root_sessions::begin_root_relation(
+            self,
+            witness,
+            weights,
+            negative_binary_weights,
+            claim,
+            stage1_point,
+            range_image_evaluation,
+            batching,
+        )
+    }
+
     fn begin_stage2(
         &self,
         relation_handle: Self::RelationHandle,

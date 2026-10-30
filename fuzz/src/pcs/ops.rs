@@ -204,7 +204,7 @@ where
         basis: BasisMode,
     ) -> Result<Vec<u8>, AkitaError> {
         akita_config::transcript_instance_descriptor::<Self::Field, Self>(
-            setup, layout, selection, schedule, basis,
+            setup, layout, selection, schedule, basis, Ok,
         )
         .map(|(_, bytes)| bytes)
     }
