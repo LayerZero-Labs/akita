@@ -1,5 +1,5 @@
 {
-  "revision": "038db2d13352e3469fd5c01feeabe92cf93bf3e8",
+  "revisions": ["038db2d13352e3469fd5c01feeabe92cf93bf3e8", "1160b0a8d574f7090bf47adfa026658a5099787a"],
   "workloads": [
     {"mode": "dense_fp32", "setup_mode": "direct", "family": "fp32_dense", "num_vars": null, "num_polys": [1], "precommitted": [], "final_polys": null},
     {"mode": "onehot_fp32", "setup_mode": "direct", "family": "fp32_onehot", "num_vars": null, "num_polys": null, "precommitted": [], "final_polys": null},

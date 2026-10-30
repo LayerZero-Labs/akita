@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts import profile_bench_merge_base_policy as policy
 from scripts import profile_bench_report as report
@@ -12,24 +13,57 @@ from scripts.profile_bench_collect import collect
 
 
 class RuntimeContractTests(unittest.TestCase):
-    def test_retained_catalog_row_is_not_a_runtime_capability(self):
-        result = policy.resolve_baseline(
-            "038db2d13352e3469fd5c01feeabe92cf93bf3e8",
-            ["onehot_fp128_multi_group:32:4", "onehot_fp128_multi_group:34:4"],
+    def snapshot(self, name):
+        path = Path("scripts/profile_workload_legacy") / f"{name}.json"
+        return json.loads(path.read_text())
+
+    def resolve(self, name, cases):
+        rows = self.snapshot(name)["workloads"]
+        keys = [("fp32_dense", "final=30:1;precommitted="),
+                ("fp64_dense", "final=29:1;precommitted="),
+                ("fp128_dense", "final=28:1;precommitted=")]
+        # Both frozen catalogs retain grouped keys the corresponding driver
+        # rejects. Model membership independently of accepted runtime shapes.
+        for nv in ([32, 34] if name == "main" else [31, 34]):
+            keys.append(("fp128_onehot", f"final={nv}:2;precommitted=16:1,16:1"))
+        catalog = "family\tlogical_key\tlookup_key_digest\n" + "".join(
+            f"{family}\t{key}\t{'a' * 64}\n" for family, key in keys
         )
+        with (
+            mock.patch.object(policy, "load_workloads", return_value=rows),
+            mock.patch.object(policy, "merge_base_profile_modes",
+                              return_value={row["mode"] for row in rows}),
+            mock.patch.object(policy, "git_show", return_value=catalog),
+        ):
+            return policy.resolve_baseline("fixture", cases)
+
+    def test_retained_catalog_row_is_not_a_runtime_capability(self):
+        result = self.resolve("main", ["onehot_fp128_multi_group:32:4",
+                                      "onehot_fp128_multi_group:34:4"])
         self.assertEqual([case["supported"] for case in result["cases"]], [False, True])
         self.assertIn("driver does not accept", result["cases"][0]["reason"])
-        result = policy.resolve_baseline(
-            "3b0546667a292758516ab54f8ee3273706815ee8",
-            ["onehot_fp128_multi_group:34:4", "onehot_fp128_multi_group:31:4"],
-        )
+        result = self.resolve("k16", ["onehot_fp128_multi_group:34:4",
+                                     "onehot_fp128_multi_group:31:4"])
         self.assertEqual([case["supported"] for case in result["cases"]], [False, True])
 
+    def test_synced_main_keeps_only_the_three_dense_baselines(self):
+        cases = [spec for _, _, spec in policy.read_matrix_cases(
+            Path(".github/workflows/profile-bench.yml")
+        )]
+        result = self.resolve("main", cases)
+        self.assertEqual(sum(case["supported"] for case in result["cases"]), 3)
+        self.assertTrue(all(case["case"].startswith("dense_")
+                           for case in result["cases"] if case["supported"]))
+
+    def test_legacy_snapshot_lookup_does_not_need_historical_git_objects(self):
+        snapshot = self.snapshot("main")
+        revision = "1160b0a8d574f7090bf47adfa026658a5099787a"
+        self.assertIn(revision, snapshot["revisions"])
+        with mock.patch.object(policy.subprocess, "check_output", side_effect=["", revision]):
+            self.assertEqual(policy.load_workloads(revision), snapshot["workloads"])
+
     def test_setup_mode_is_part_of_runtime_contract(self):
-        result = policy.resolve_baseline(
-            "038db2d13352e3469fd5c01feeabe92cf93bf3e8",
-            ["onehot_fp128_multi_group:34:4:recursive"],
-        )
+        result = self.resolve("main", ["onehot_fp128_multi_group:34:4:recursive"])
         self.assertFalse(result["cases"][0]["supported"])
 
 

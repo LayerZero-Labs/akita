@@ -61,7 +61,7 @@ def load_workloads(ref: str) -> list[dict]:
         rows = []
         for path in sorted((Path(__file__).parent / "profile_workload_legacy").glob("*.json")):
             snapshot = json.loads(path.read_text())
-            if snapshot["revision"] == revision:
+            if revision in snapshot["revisions"]:
                 rows = snapshot["workloads"]
                 break
     seen = set()

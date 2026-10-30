@@ -77,6 +77,7 @@ class BaselinePolicyTests(unittest.TestCase):
         with (
             mock.patch.object(policy, "merge_base_profile_modes", return_value={"dense_fp32"}),
             mock.patch.object(policy, "git_show", return_value="bad header\n"),
+            mock.patch.object(policy, "load_workloads", return_value=[]),
         ):
             with self.assertRaisesRegex(ValueError, "catalog header"):
                 policy.resolve_baseline("main", ["dense_fp32:30:1"])
