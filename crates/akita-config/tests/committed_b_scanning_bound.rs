@@ -132,11 +132,19 @@ fn committed_b_scanning_bound_changes_the_required_rank() {
     let matrix = schedule.root.params.outer().matrix;
     assert_eq!(matrix.ring_dimension(), 128);
     assert_eq!(matrix.input_width(), 4096);
-    assert_eq!(matrix.output_rank(), 1);
+    assert_eq!(matrix.output_rank(), 2);
     let mut scanner_key = matrix.sis_table_key();
     scanner_key.coeff_linf_bound = 7;
-    let corrected = OuterCommitMatrixParams::try_new_with_min_rank(scanner_key, 4096).unwrap();
-    assert_eq!(corrected.output_rank(), 2);
+    // Both alphabets need rank 2 at this width; a wider q32 D128 matrix
+    // separates them.
+    let rank = |key, width| {
+        OuterCommitMatrixParams::try_new_with_min_rank(key, width)
+            .unwrap()
+            .output_rank()
+    };
+    assert_eq!(rank(scanner_key, 4096), 2);
+    assert_eq!(rank(matrix.sis_table_key(), 40_000), 2);
+    assert_eq!(rank(scanner_key, 40_000), 3);
 
     let error = ValidatedScheduleCatalog::try_new(
         fp32::OneHot::schedule_family_name(),
@@ -144,7 +152,7 @@ fn committed_b_scanning_bound_changes_the_required_rank() {
         &policy_of::<fp32::OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
         fp32::OneHot::ring_challenge_config,
     )
-    .expect_err("a rank-1 matrix priced for bound 3 must not certify bound 7");
+    .expect_err("a matrix priced for bound 3 must not certify bound 7");
     assert!(error
         .to_string()
         .contains("declared coefficient bound 3 is below required bound 7"));

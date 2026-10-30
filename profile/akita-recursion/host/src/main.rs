@@ -22,7 +22,7 @@ use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::BasisMode;
 use akita_recursion_glue::{read_blob_case, AkitaJoltCase, AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_types::prepared_verifier_ntt_cache_metadata;
-use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier};
+use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, TrustedTerminalCache};
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -197,7 +197,7 @@ macro_rules! strict_fp128_preflight {
             decoded.verifier_setup.clone(),
             schedules.clone(),
             decoded.schedule_selection,
-            Some(&cache),
+            Some(TrustedTerminalCache::Decode(&cache)),
         )
         .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?
         .batched_verify(
@@ -361,16 +361,21 @@ macro_rules! run_selected_guest {
             "prover program-io"
         );
 
-        let now = Instant::now();
-        let is_valid = verify($blob, output, program_io.panic, proof);
-        let verifier_secs = now.elapsed().as_secs_f64();
-        info!(verifier_secs, is_valid, "Jolt verifier finished");
-        if !is_valid {
-            return Err("Jolt verifier rejected the proof".to_string());
+        // A panicking guest writes no output, which decodes as the success
+        // code 0, so the panic flag must be rejected on its own.
+        if program_io.panic {
+            return Err("guest panicked".to_string());
         }
         if output != 0 {
             return Err(format!("guest reported Akita-verify failure: {output}"));
         }
+
+        // Verify the statement this run must establish: no panic, success code.
+        let now = Instant::now();
+        let verdict = verify($blob, 0, false, proof);
+        let verifier_secs = now.elapsed().as_secs_f64();
+        info!(verifier_secs, is_valid = verdict.is_ok(), "Jolt verifier finished");
+        verdict.map_err(|err| format!("Jolt verifier rejected the proof: {err}"))?;
         info!(case = %$case, "Akita-in-Jolt proof OK");
         Ok(())
     }};

@@ -397,18 +397,28 @@ where
                     output_scale,
                 )?
             }
-            crate::opaque::Stage2OpeningDescription::CoefficientPacking(terms) => {
-                let mut groups = terms.into_groups().into_iter();
-                let first_group = groups.next().ok_or_else(|| {
+            crate::opaque::Stage2OpeningDescription::CoefficientPacking { semantics, tables } => {
+                let groups = semantics.into_groups();
+                if groups.len() != tables.len() {
+                    return Err(AkitaError::Internal(
+                        "stage 2 coefficient packing plan has one table set per group".into(),
+                    ));
+                }
+                let mut groups = groups.into_iter().zip(tables);
+                let (first_group, first_tables) = groups.next().ok_or_else(|| {
                     AkitaError::Internal(
                         "validated stage 2 coefficient packing plan has no group".into(),
                     )
                 })?;
-                let mut prepared =
-                    relation_range_image::prepare_coefficient_packing_linear_terms(first_group)?;
-                for group in groups {
+                let mut prepared = relation_range_image::prepare_coefficient_packing_linear_terms(
+                    first_group,
+                    first_tables,
+                )?;
+                for (group, tables) in groups {
                     prepared.merge(
-                        relation_range_image::prepare_coefficient_packing_linear_terms(group)?,
+                        relation_range_image::prepare_coefficient_packing_linear_terms(
+                            group, tables,
+                        )?,
                     )?;
                 }
                 prepared

@@ -65,7 +65,11 @@ fn record(
         entry.max_bytes = bytes;
         entry.max_key = key.to_string();
     }
-    match CompressionChainPlan::for_complete_source(profile, coefficients) {
+    let rows = shape
+        .output_rank
+        .checked_mul(shape.logical_images)
+        .ok_or_else(|| "source row count overflow".to_string())?;
+    match CompressionChainPlan::for_image(profile, rows, shape.ring_dimension) {
         Ok(plan) => {
             entry.selected_dimensions.insert(
                 plan.maps()

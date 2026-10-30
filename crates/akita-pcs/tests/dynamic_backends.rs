@@ -24,7 +24,8 @@ type E = F;
 
 use private_cpu::{Fault, PrivateCpu};
 
-const NUM_VARS: usize = 15;
+// The smallest shipped four-polynomial one-hot row with at least three folds.
+const NUM_VARS: usize = 20;
 const NUM_POLYS: usize = 4;
 const DOMAIN: &[u8] = b"akita/test/dynamic-onehot/v1";
 

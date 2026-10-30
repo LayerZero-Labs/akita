@@ -1,8 +1,7 @@
 use super::*;
 use akita_algebra::{
-    eq_poly::EqPolynomial,
-    offset_eq::OffsetEqWindow,
-    ring::{eval_flat_ring_at_pows_fast, ResidueKernelPoint},
+    eq_poly::EqPolynomial, offset_eq::OffsetEqWindow, ring::ResidueKernelPoint,
+    row_batch::dot_base_rows_batched,
 };
 use jolt_field::{ExtField, Unreduced, Zero};
 
@@ -146,12 +145,10 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
         // Rayon costs more than it saves in multi-threaded verification.
         let column_evaluations = if low_offset == 0 {
             let kernel = residue_point.field_kernel(&low_equality)?;
-            let values = (0..columns.input_width)
-                .map(|column| {
-                    let (_, coefficients) = columns.column(column)?;
-                    Ok(eval_flat_ring_at_pows_fast(coefficients, &kernel))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let values = dot_base_rows_batched(
+                &kernel,
+                (0..columns.input_width).map(|column| Ok(columns.column(column)?.1)),
+            )?;
             ReducedCompressionColumnEvaluations::Aligned(values)
         } else {
             let first_len = ring_dimension.checked_sub(low_offset).ok_or_else(|| {
@@ -187,15 +184,11 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
                 })?);
             let first_kernel = residue_point.field_kernel(&first_equality)?;
             let second_kernel = residue_point.field_kernel(&second_equality)?;
-            let values = (0..columns.input_width)
-                .map(|column| {
-                    let (_, coefficients) = columns.column(column)?;
-                    Ok([
-                        eval_flat_ring_at_pows_fast(coefficients, &first_kernel),
-                        eval_flat_ring_at_pows_fast(coefficients, &second_kernel),
-                    ])
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let column_rows =
+                || (0..columns.input_width).map(|column| Ok(columns.column(column)?.1));
+            let first = dot_base_rows_batched(&first_kernel, column_rows())?;
+            let second = dot_base_rows_batched(&second_kernel, column_rows())?;
+            let values = first.into_iter().zip(second).map(|(a, b)| [a, b]).collect();
             ReducedCompressionColumnEvaluations::Split(values)
         };
         Ok(Self {

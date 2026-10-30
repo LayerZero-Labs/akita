@@ -458,6 +458,59 @@ fn fp128_dense_batched() {
     });
 }
 
+/// A prover without the byte-model capture can reach the prover's width
+/// callsites before a capturing test does, and tests share one process. The
+/// capture must still see its own proof's events.
+#[test]
+fn byte_model_capture_survives_an_uncaptured_prover_reaching_callsites_first() {
+    const NV: usize = 14;
+    fn prove_dense(capture: bool) {
+        let scheme = load_workspace_scheme::<DenseCfg>(ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule catalog");
+        let evals = dense_field_evals(NV, 0xca97_0000);
+        let poly =
+            akita_cpu_backend::DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
+        let pt = random_point(NV, 0xca97_0001);
+        let opening = dense_opening_lagrange(&evals, &pt);
+        let setup = scheme.setup_prover(NV, 1).unwrap();
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let akita_cpu_backend::CommitOutput {
+            committed_group: commitment,
+            private_handle: hint,
+        } = stack
+            .commit(
+                scheme.schedules(),
+                &stack.import_source(vec![poly]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
+        let prover_data =
+            prove_input::<DenseCfg>(&pt[..], &[opening], &commitment, hint, scheme.schedules());
+        let session = b"completeness/byte_model_capture";
+        if !capture {
+            scheme
+                .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+                .expect("uncaptured prove");
+            return;
+        }
+        prove_matching_byte_model(scheme.schedules(), prover_data.selection(), || {
+            // Prove on another thread first, so that thread reaches the width
+            // callsites while this capture is active.
+            std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(STACK_SIZE)
+                    .spawn_scoped(scope, || prove_dense(false))
+                    .expect("spawn uncaptured prover")
+                    .join()
+                    .expect("uncaptured prover");
+            });
+            scheme.batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+        });
+    }
+    init_rayon_pool();
+    run_on_large_stack(|| prove_dense(true));
+}
+
 // ============================================================================
 // GROUP D — Edge cases and special configurations
 //

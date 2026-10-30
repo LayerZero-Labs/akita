@@ -76,36 +76,28 @@ impl<E: Field> RelationWitnessFinalClaims<E> {
     }
 }
 
+/// Prepared opening geometry, with the prover's tables for coefficient packing.
+pub type PreparedRelationOpening<F, E> = akita_types::OpeningFamily<
+    akita_types::PreparedOpeningPoint<F, E>,
+    akita_types::SubringCoefficientPackingTables<E>,
+>;
+
 /// Public, witness-free opening metadata retained for Stage 2.
 #[derive(Clone)]
 pub struct PreparedRelationGroupPublic<F: Field, E: Field> {
-    kind: akita_types::OpeningFamily<
-        akita_types::PreparedOpeningPoint<F, E>,
-        akita_types::PreparedSubringCoefficientPackingPoint<E>,
-    >,
+    kind: PreparedRelationOpening<F, E>,
     scalar_openings: Vec<E>,
 }
 
 impl<F: Field, E: Field> PreparedRelationGroupPublic<F, E> {
-    pub fn new(
-        kind: akita_types::OpeningFamily<
-            akita_types::PreparedOpeningPoint<F, E>,
-            akita_types::PreparedSubringCoefficientPackingPoint<E>,
-        >,
-        scalar_openings: Vec<E>,
-    ) -> Self {
+    pub fn new(kind: PreparedRelationOpening<F, E>, scalar_openings: Vec<E>) -> Self {
         Self {
             kind,
             scalar_openings,
         }
     }
 
-    pub const fn kind(
-        &self,
-    ) -> &akita_types::OpeningFamily<
-        akita_types::PreparedOpeningPoint<F, E>,
-        akita_types::PreparedSubringCoefficientPackingPoint<E>,
-    > {
+    pub const fn kind(&self) -> &PreparedRelationOpening<F, E> {
         &self.kind
     }
 
@@ -113,13 +105,12 @@ impl<F: Field, E: Field> PreparedRelationGroupPublic<F, E> {
         &self.scalar_openings
     }
 
-    #[cfg(test)]
-    pub(crate) fn coefficient_packing_point(
+    pub(crate) fn coefficient_packing_tables(
         &self,
-    ) -> Option<&akita_types::PreparedSubringCoefficientPackingPoint<E>> {
+    ) -> Option<&akita_types::SubringCoefficientPackingTables<E>> {
         match &self.kind {
             akita_types::OpeningFamily::EvaluationTrace(_) => None,
-            akita_types::OpeningFamily::SubringCoefficientPacking(point) => Some(point),
+            akita_types::OpeningFamily::SubringCoefficientPacking(tables) => Some(tables),
         }
     }
 }

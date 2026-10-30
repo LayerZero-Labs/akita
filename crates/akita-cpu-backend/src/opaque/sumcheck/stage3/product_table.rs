@@ -2,7 +2,6 @@ use super::utils::{accumulate_left_round, fold_dense_left_round, fold_factor_in_
 #[cfg(test)]
 use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, product_claim};
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use jolt_poly::UnivariatePoly;
 
 use akita_error::{checked, AkitaError};
@@ -477,7 +476,7 @@ where
     cfg_into_iter!(0..rows)
         .map(|index| {
             let start = index * coefficient_len;
-            eval_flat_ring_at_pows_fast(&setup[start..start + coefficient_len], coefficient_eq)
+            E::dot_base(coefficient_eq, &setup[start..start + coefficient_len])
         })
         .collect()
 }

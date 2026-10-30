@@ -3,6 +3,8 @@ mod materialize;
 
 pub use evaluate::eval_boolean_pair_tensor_families;
 pub use materialize::materialize_eq_tensor_left;
+#[cfg(test)]
+pub(super) use materialize::{DenseLeftOverlap, ResidualTerms, MAX_RESIDUAL_TABLE_BYTES};
 
 use super::MAX_COMPACT_STRIDE_TERMS;
 use crate::Field;
@@ -101,6 +103,48 @@ impl<F: Field> EqPairTensorAxis<F> {
         }
     }
 
+    /// Check that the weight table describes exactly `len` coordinates.
+    ///
+    /// The fields are public, so every consumer that sizes work or storage
+    /// from `len` must call this first; otherwise the weights could describe
+    /// far more coordinates than `len` admits.
+    pub(super) fn validate_weights(&self) -> Result<(), AkitaError> {
+        match &self.weights {
+            EqPairTensorWeights::Unit => Ok(()),
+            EqPairTensorWeights::Dense(weights) if weights.len() == self.len => Ok(()),
+            EqPairTensorWeights::Dense(_) => Err(AkitaError::InvalidInput(
+                "paired tensor axis weight length mismatch".into(),
+            )),
+            EqPairTensorWeights::BitProduct(factors)
+                if checked::pow2(factors.len()) == Some(self.len) =>
+            {
+                Ok(())
+            }
+            EqPairTensorWeights::BitProduct(_) => Err(AkitaError::InvalidInput(
+                "paired tensor bit-product length mismatch".into(),
+            )),
+        }
+    }
+
+    /// Number of coordinates with a nonzero weight, at most `len`. A
+    /// bit-product weight is nonzero exactly when every selected factor is,
+    /// since a field has no zero divisors.
+    pub(super) fn nonzero_len(&self) -> Result<usize, AkitaError> {
+        self.validate_weights()?;
+        Ok(match &self.weights {
+            EqPairTensorWeights::Unit => self.len,
+            EqPairTensorWeights::Dense(weights) => {
+                weights.iter().filter(|weight| !weight.is_zero()).count()
+            }
+            // Validation bounds the product by `len`, so it cannot overflow.
+            EqPairTensorWeights::BitProduct(bit_factors) => {
+                bit_factors.iter().fold(1, |count, factors| {
+                    count * factors.iter().filter(|factor| !factor.is_zero()).count()
+                })
+            }
+        })
+    }
+
     pub(super) fn supports_bit_recurrence(&self) -> bool {
         matches!(
             self.weights,
@@ -161,22 +205,7 @@ impl<F: Field> EqPairTensorFamily<F> {
     ) -> Result<Self, AkitaError> {
         let mut normalized = Vec::<EqPairTensorAxis<F>>::new();
         for axis in axes {
-            match &axis.weights {
-                EqPairTensorWeights::Unit => {}
-                EqPairTensorWeights::Dense(weights) if weights.len() == axis.len => {}
-                EqPairTensorWeights::Dense(_) => {
-                    return Err(AkitaError::InvalidInput(
-                        "paired tensor axis weight length mismatch".into(),
-                    ));
-                }
-                EqPairTensorWeights::BitProduct(factors)
-                    if checked::pow2(factors.len()) == Some(axis.len) => {}
-                EqPairTensorWeights::BitProduct(_) => {
-                    return Err(AkitaError::InvalidInput(
-                        "paired tensor bit-product length mismatch".into(),
-                    ));
-                }
-            }
+            axis.validate_weights()?;
             if axis.len == 0 {
                 return Err(AkitaError::InvalidInput(
                     "paired tensor axes must be non-empty".into(),

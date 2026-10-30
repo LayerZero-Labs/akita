@@ -1,8 +1,5 @@
 //! Integrated outer setup checks and optional standalone reductions.
-use akita_algebra::{
-    eq_poly::{EqPolynomial, SplitEqEvals},
-    ring::eval_flat_ring_at_pows_fast,
-};
+use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_error::{checked, AkitaError};
 use akita_sumcheck::{verify_sumcheck_rounds, SumcheckShape};
 use akita_types::{
@@ -74,22 +71,20 @@ where
         .as_field_slice()
         .get(..accumulator.polynomial().field_len())
         .ok_or(AkitaError::InvalidProof)?;
-    let value =
-        cfg_fold_reduce!(
-            0..index.len(),
-            || Ok(E::zero()),
-            |sum: Result<E, AkitaError>, row| {
-                let range = checked::range(
-                    checked::product([row, coefficient.len()]).ok_or(AkitaError::InvalidProof)?,
-                    coefficient.len(),
-                )
-                .ok_or(AkitaError::InvalidProof)?;
-                let coefficients = source.get(range).ok_or(AkitaError::InvalidProof)?;
-                Ok(sum?
-                    + index.eval_at(row)? * eval_flat_ring_at_pows_fast(coefficients, &coefficient))
-            },
-            |left: Result<E, AkitaError>, right: Result<E, AkitaError>| Ok(left? + right?)
-        )?;
+    let value = cfg_fold_reduce!(
+        0..index.len(),
+        || Ok(E::zero()),
+        |sum: Result<E, AkitaError>, row| {
+            let range = checked::range(
+                checked::product([row, coefficient.len()]).ok_or(AkitaError::InvalidProof)?,
+                coefficient.len(),
+            )
+            .ok_or(AkitaError::InvalidProof)?;
+            let coefficients = source.get(range).ok_or(AkitaError::InvalidProof)?;
+            Ok(sum? + index.eval_at(row)? * E::dot_base(&coefficient, coefficients))
+        },
+        |left: Result<E, AkitaError>, right: Result<E, AkitaError>| Ok(left? + right?)
+    )?;
     if value != accumulator.value() {
         return Err(AkitaError::InvalidProof);
     }

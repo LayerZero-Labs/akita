@@ -2,13 +2,14 @@
 //!
 //! A high performance and modular implementation of the Akita polynomial commitment scheme.
 //!
-//! Akita is a lattice-based polynomial commitment scheme with transparent setup and
-//! post-quantum security guarantees. It descends from Hachi while carrying the current
-//! Akita crate decomposition work.
+//! Akita is a lattice-based polynomial commitment scheme with transparent setup. It
+//! descends from Hachi while carrying the current Akita crate decomposition work.
 //!
 //! ## Key Features
 //!
-//! - **Post-quantum secure**: Based on lattice hardness assumptions
+//! - **Lattice binding**: Module-SIS instances, priced at 169 bits under a scalarized lattice
+//!   attack model with the ADPS16 quantum cost; Fiat-Shamir challenges are sized in
+//!   the classical random-oracle model (see the Book's security status)
 //! - **Transparent setup**: No trusted setup required
 //! - **Modular design**: Flexible trait-based architecture
 //! - **Performance optimizations**: Optional parallelization support
@@ -60,10 +61,10 @@ pub use akita_params::{BasisMode, OpeningClaimsLayout, PrecommittedGroupProfiles
 pub use akita_prover::{
     CommitmentHandleMetadata, ProverBackend, ProverOpeningData, SelectedProverOpeningData,
 };
-pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+pub use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, TrustedBytes, Validate};
 pub use akita_setup::new_prover_setup;
 pub use akita_types::{OpeningClaims, PolynomialGroupClaims};
-pub use akita_verifier::AkitaVerifier;
+pub use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, TrustedTerminalCache};
 pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };

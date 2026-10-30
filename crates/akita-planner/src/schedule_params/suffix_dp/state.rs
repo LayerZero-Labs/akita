@@ -330,6 +330,42 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
     })
 }
 
+/// Upper bound on a schedule's total setup field elements for one search.
+///
+/// Every rejection records its setup size, so a caller whose search found
+/// nothing can learn the smallest size it excluded.
+pub(crate) struct SetupFieldBudget {
+    limit: usize,
+    min_rejected: std::cell::Cell<Option<usize>>,
+}
+
+impl SetupFieldBudget {
+    pub(crate) const fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            min_rejected: std::cell::Cell::new(None),
+        }
+    }
+
+    /// Whether `setup_field_elements` fits, recording it when it does not.
+    pub(crate) fn admits(&self, setup_field_elements: usize) -> bool {
+        if setup_field_elements <= self.limit {
+            return true;
+        }
+        self.min_rejected.set(Some(
+            self.min_rejected
+                .get()
+                .map_or(setup_field_elements, |min| min.min(setup_field_elements)),
+        ));
+        false
+    }
+
+    /// Smallest setup size this budget rejected, if any.
+    pub(crate) fn min_rejected(&self) -> Option<usize> {
+        self.min_rejected.get()
+    }
+}
+
 /// DP-invariant inputs for the suffix search.
 ///
 /// Values that remain constant across the whole recursion are carried in one
@@ -342,7 +378,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     pub(crate) key: PolynomialGroupLayout,
-    pub(crate) setup_field_budget: Option<usize>,
+    pub(crate) setup_field_budget: Option<&'a SetupFieldBudget>,
     pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,
     /// Optional exact main-group root selected by an earlier scalar plan.
     ///

@@ -187,6 +187,12 @@ jobs:
           scripts/check-external-schedule-artifacts.sh
           cargo test --release -p akita-config --test trusted_schedule_artifact
       - name: Regenerate schedule artifacts in temporary storage
+        # Planning measured about 18 minutes on CI with two workers, and runner
+        # variance alone has moved this step by about 1.3x. The bound stops a
+        # runaway search. Growth in search size (states, candidates,
+        # descriptors) fails the --planner-cost-baseline check instead; slower
+        # per-candidate pricing is caught only by this timeout.
+        timeout-minutes: 35
         env:
           AKITA_SCHEDULE_GEN_JOBS: 2
         run: |
@@ -196,7 +202,8 @@ jobs:
             --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
             --catalog-baseline artifacts/schedule-catalog.tsv \
             --require-catalog-baseline-match \
-            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv"
+            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv" \
+            --planner-cost-baseline artifacts/schedule-planner-cost.tsv
           diff -ru artifacts/schedules "$artifact_dir"
       - name: Direct modeled SIS cost for every schedule
         run: |
@@ -279,8 +286,8 @@ jobs:
           target: riscv64gc-unknown-linux-gnu
       # The guest backends select themselves only on riscv64. The NTT inline's
       # portable fallback runs on any host, so its table layout is pinned here;
-      # Jolt pins the Blake2b and Keccak inlines on their host paths, and its
-      # recursion example runs this verifier in a guest with all three.
+      # the `inline-parity` job in jolt-verifier-profile-smoke.yml executes all
+      # three inlines in a traced Jolt guest.
       - name: Inline NTT against the portable transform
         run: cargo test --release -p akita-algebra --features ntt-inline --lib
       - name: Host builds with every inline feature

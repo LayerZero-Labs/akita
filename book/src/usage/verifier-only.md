@@ -133,9 +133,15 @@ environment.
 
 ## Handle rejection as a normal result
 
-All verifier facing proof, setup, schedule, claim, and transcript data is
-untrusted public input. The verifier returns `AkitaError` or
-`SerializationError` when decoding or proof replay fails.
+The verifier treats every input as possibly malformed. Proof bytes,
+commitments, claims, and opening points may also be adversarial, and the
+verifier's soundness does not depend on who produced them. The verifier setup
+and the schedule catalog are different: the host supplies them, as described
+[above](#supply-verifier-setup), and soundness assumes they were derived as
+claimed. The host either derives them itself or authenticates bytes that a
+party it trusts derived. Their bytes are still decoded defensively. In every
+case the verifier returns `AkitaError` or `SerializationError` when decoding
+or proof replay fails.
 
 Match on the error at the host boundary and reject the request. Do not retry
 verification with another configuration or reconstructed schedule. A valid

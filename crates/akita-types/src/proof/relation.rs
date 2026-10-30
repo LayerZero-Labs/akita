@@ -3,9 +3,8 @@
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::{
-    eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, scalar_powers,
-};
+use akita_algebra::ring::{eval_ring_at, scalar_powers};
+use akita_algebra::row_batch::WeightedRowBatch;
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch_for_field;
@@ -246,7 +245,7 @@ pub fn assemble_relation_rhs<F: Field>(
 /// Assemble the mandatory compressed relation RHS.
 ///
 /// B, D, and first-map rows are zero. Only each chain's terminal map row
-/// carries its 128-byte public payload.
+/// carries its 256-byte public payload.
 pub fn assemble_compressed_relation_rhs<F: Field>(
     layout: &RelationRhsLayout,
     group_terminal_payloads: &[&[F]],
@@ -331,7 +330,7 @@ pub fn assemble_compressed_relation_rhs<F: Field>(
 
 fn accumulate_extension_rows<F, E, const D: usize>(
     eq_tau1: &[E],
-    alpha: E,
+    alpha_pows: &[E],
     rows: &[CyclotomicRing<F, D>],
     row_idx: &mut usize,
     acc: &mut E,
@@ -340,14 +339,13 @@ where
     F: Field + CanonicalEncoding,
     E: Field + MulBaseUnreduced<F>,
 {
-    let alpha_pows = scalar_powers(alpha, D);
-    for r in rows {
-        if *row_idx >= eq_tau1.len() {
-            return Ok(());
-        }
-        *acc += eq_tau1[*row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
-        *row_idx += 1;
+    let weights = relation_row_weights(eq_tau1, *row_idx, rows.len())?;
+    let mut batch = WeightedRowBatch::new(alpha_pows);
+    for (row, &weight) in rows.iter().zip(weights) {
+        batch.push(row.coefficients(), weight);
     }
+    *acc += batch.finish();
+    *row_idx += rows.len();
     Ok(())
 }
 
@@ -369,20 +367,24 @@ where
         });
     }
     let alpha_pows = scalar_powers(alpha, D);
-    for row in coeffs.chunks_exact(D) {
-        if *row_idx >= eq_tau1.len() {
-            return Ok(());
-        }
-        let coefficients: [F; D] = row.try_into().map_err(|error| {
-            AkitaError::Internal(format!(
-                "relation coefficient chunk does not match dispatched dimension: {error}"
-            ))
-        })?;
-        let ring = CyclotomicRing::from_coefficients(coefficients);
-        *acc += eq_tau1[*row_idx] * eval_ring_at_pows_fast(&ring, &alpha_pows);
-        *row_idx += 1;
+    let row_count = coeffs.len() / D;
+    let weights = relation_row_weights(eq_tau1, *row_idx, row_count)?;
+    let mut batch = WeightedRowBatch::new(&alpha_pows);
+    for (row, &weight) in coeffs.chunks_exact(D).zip(weights) {
+        batch.push(row, weight);
     }
+    *acc += batch.finish();
+    *row_idx += row_count;
     Ok(())
+}
+
+/// The `eq_tau1` weights of `count` rows starting at `start`. Callers size
+/// `eq_tau1` to cover every relation row, so a shortfall is an internal error.
+fn relation_row_weights<E>(eq_tau1: &[E], start: usize, count: usize) -> Result<&[E], AkitaError> {
+    start
+        .checked_add(count)
+        .and_then(|end| eq_tau1.get(start..end))
+        .ok_or_else(|| AkitaError::Internal("relation rows exceed the eq_tau1 weight table".into()))
 }
 
 /// Compute the stage-2 relation claim from the public M-row data.
@@ -451,24 +453,11 @@ where
         .and_then(|count| count.checked_add(v.len()))
         .ok_or_else(|| AkitaError::InvalidSetup("relation row count overflow".into()))?;
     let eq_tau1 = EqPolynomial::evals_prefix(tau1, row_count)?;
-    let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
     let mut row_idx = 1usize + n_a;
-
-    for r in u {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
-        row_idx += 1;
-    }
-    for r in v {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
-        row_idx += 1;
-    }
+    let alpha_pows = scalar_powers(alpha, D);
+    accumulate_extension_rows(&eq_tau1, &alpha_pows, u, &mut row_idx, &mut acc)?;
+    accumulate_extension_rows(&eq_tau1, &alpha_pows, v, &mut row_idx, &mut acc)?;
     Ok(acc)
 }
 
@@ -546,6 +535,7 @@ where
             outer_dim,
             |D_B| {
                 let u_typed = u.as_ring_slice::<D_B>()?;
+                let alpha_pows = scalar_powers(alpha, D_B);
                 let mut commit_offset = 0usize;
                 for group in &layout.groups {
                     row_idx = row_idx
@@ -566,7 +556,7 @@ where
                     })?;
                     accumulate_extension_rows::<F, E, D_B>(
                         &eq_tau1,
-                        alpha,
+                        &alpha_pows,
                         rows,
                         &mut row_idx,
                         &mut acc,
@@ -627,7 +617,14 @@ where
         layout.d_ring_dimension,
         |D_D| {
             let v_typed = v.as_ring_slice::<D_D>()?;
-            accumulate_extension_rows::<F, E, D_D>(&eq_tau1, alpha, v_typed, &mut row_idx, &mut acc)
+            let alpha_pows = scalar_powers(alpha, D_D);
+            accumulate_extension_rows::<F, E, D_D>(
+                &eq_tau1,
+                &alpha_pows,
+                v_typed,
+                &mut row_idx,
+                &mut acc,
+            )
         }
     )?;
     Ok(acc)
@@ -716,7 +713,7 @@ where
             })?
             .1;
         if include(family) {
-            let row_evaluation = eval_flat_ring_at_pows_fast(row, powers);
+            let row_evaluation = MulBaseUnreduced::dot_base(powers, row);
             claim += *row_weights.get(row_index).ok_or_else(|| {
                 AkitaError::Internal(
                     "generated relation row weights are missing the selected row".into(),

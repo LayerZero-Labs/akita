@@ -91,8 +91,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
         }
         #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
         {
-            core::mem::size_of::<W>() == core::mem::size_of::<i32>()
-                && self.kernel_plan.uses_jolt_inline()
+            crate::ntt::jolt::selected::<W, D>(self.kernel_plan)
         }
         #[cfg(not(any(
             target_arch = "aarch64",

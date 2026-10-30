@@ -65,14 +65,7 @@ where
             let committed = group.commitment();
             let descriptor = committed.profile();
             descriptor.validate_frozen_precommit(Cfg::decomposition().field_bits())?;
-            let source_coefficients = descriptor.outer_slice_count.complete_source_coefficients(
-                descriptor.outer.matrix.output_rank(),
-                descriptor.outer.matrix.ring_dimension(),
-            )?;
-            let plan = akita_params::CompressionChainPlan::for_complete_source(
-                descriptor.outer.matrix.sis_table_key().modulus_profile,
-                source_coefficients,
-            )?;
+            let plan = descriptor.outer_compression_plan()?;
             if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
                 return Err(AkitaError::InvalidInput(
                     "commitment length does not match its compression chain".to_string(),

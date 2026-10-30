@@ -43,7 +43,7 @@ fn direct_outer_closes_collected_claims_without_an_extra_sumcheck() {
 
 #[test]
 fn offloaded_outer_consumes_inherited_claims_in_both_modes() {
-    run::<akita_config::RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>>(
+    run::<akita_config::RecursiveCommitmentConfig<akita_config::proof_optimized::fp128::Dense>>(
         24, true,
     );
 }

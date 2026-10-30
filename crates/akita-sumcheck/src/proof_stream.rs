@@ -3,7 +3,6 @@
 use crate::{advance_eq_factored_claim, SumcheckInstanceVerifier, SumcheckKernel};
 #[cfg(test)]
 use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
-use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::{checked, narrowing::usize_to_u64, AkitaError};
 use akita_transcript::{
     prover_context, receive_extension, send_extension, verifier_context, FieldAtom,
@@ -489,14 +488,21 @@ where
     C: SumcheckVerifierChannel<'proof, E>,
 {
     shape.validate_instance(equality_point.len(), shape.degree_bound())?;
+    if equality_point.is_empty() {
+        return Err(AkitaError::InvalidSize {
+            expected: 1,
+            actual: 0,
+        });
+    }
     let degree_bound = shape.degree_bound();
-    let mut equality = GruenSplitEq::new(equality_point)?;
     let mut claim = input_claim;
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
     public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
     let mut challenges = Vec::with_capacity(equality_point.len());
 
-    for round in 0..equality_point.len() {
+    // The normalized claim already carries the bound equality factors. Replay
+    // needs only the current coordinate, not a scalar accumulator or eq tables.
+    for (round, &tau) in equality_point.iter().enumerate() {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
@@ -519,8 +525,7 @@ where
         }
         let poly = OmittedConstantPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
-        claim = advance_eq_factored_claim(claim, equality.current_tau(), &poly, challenge);
-        equality.bind(challenge);
+        claim = advance_eq_factored_claim(claim, tau, &poly, challenge);
         challenges.push(challenge);
     }
     Ok(SumcheckRoundResult {
@@ -532,7 +537,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::poly::multilinear_eval;
+    use akita_algebra::{poly::multilinear_eval, split_eq::GruenSplitEq};
     use akita_transcript::{
         field_challenge_bytes, new_prover_channel, new_verifier_channel, prover_field_challenge,
         verifier_field_challenge, SITE_FAMILY_SUMCHECK,
@@ -1019,6 +1024,27 @@ mod tests {
     }
 
     #[test]
+    fn eq_factored_rejects_empty_equality_point() {
+        let mut verifier = TestVerifierChannel {
+            state: new_verifier_channel(b"native-eq-empty", b"fixture", &[]).unwrap(),
+            invocation: 12,
+        };
+        assert!(matches!(
+            verify_eq_factored_sumcheck_rounds::<F, F, _>(
+                &[],
+                F::zero(),
+                SumcheckShape::new(0, 1).unwrap(),
+                &mut verifier,
+                12,
+            ),
+            Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: 0
+            })
+        ));
+    }
+
+    #[test]
     fn eq_factored_rejects_old_wire_forgery_when_tau_is_zero() {
         let coefficients = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
         let instance = OneRoundEq::new(F::zero(), coefficients);
@@ -1147,6 +1173,26 @@ mod tests {
             5,
         )
         .unwrap();
+        let mut verifier = TestVerifierChannel {
+            state: new_verifier_channel(
+                b"native-cutover",
+                b"normalized",
+                prover.state.narg_string(),
+            )
+            .unwrap(),
+            invocation: 5,
+        };
+        let replayed = verify_eq_factored_sumcheck::<F, F, _, _>(
+            &normalized.equality,
+            normalized.input_claim(),
+            SumcheckShape::new(2, degree).unwrap(),
+            &mut verifier,
+            5,
+            |point| Ok(normalized.evaluate(point[0], point[1])),
+        )
+        .unwrap();
+        assert_eq!(replayed, normalized_point);
+        assert!(verifier.state.check_eof().is_ok());
         let normalized_proof = hex(prover.state.narg_string());
         let normalized_point = challenge_hex(&normalized_point);
 

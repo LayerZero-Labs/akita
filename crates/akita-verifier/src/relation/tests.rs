@@ -12,7 +12,7 @@ use akita_types::{
 use jolt_field::{Fp32, One, Prime128OffsetA7F7, Zero};
 
 type F = Fp32<251>;
-const D: usize = 64;
+const D: usize = 128;
 type MixedF = Prime128OffsetA7F7;
 const D_INNER: usize = 128;
 const D_PROJECTED: usize = 64;
