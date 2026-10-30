@@ -48,3 +48,7 @@ pub use verifier::AkitaVerifier;
 
 #[cfg(feature = "labinius-trinomial")]
 pub use relation::native_root::MixedRootRelationWeights;
+
+#[cfg(feature = "labinius-trinomial")]
+#[doc(hidden)]
+pub mod binary_field_switch;

@@ -189,14 +189,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 "opening claims must be nonempty".into(),
             ));
         }
-        for group in &self.groups {
-            if group.evaluations.is_empty() {
-                return Err(AkitaError::InvalidInput(
-                    "opening claim group evaluations must be nonempty".into(),
-                ));
-            }
-        }
-        Ok(())
+        Self::check_group_kinds(&self.groups)
     }
 
     /// Validate consistency plus public capacity against the setup limits.

@@ -61,20 +61,6 @@ where
         ));
     }
     let logical_len = root_params.output_witness_len::<F>(opening_batch, E::DEGREE)?;
-    let public = BinaryRootPublic::new(
-        manifest,
-        claim,
-        &setup.expanded().descriptor,
-        logical_len,
-        next.params.d_a(),
-        ordinary_profile,
-    )?;
-    let domain_len = public.plan().repacking().domain_len();
-    if !domain_len.is_power_of_two() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let num_vars = domain_len.trailing_zeros() as usize;
-
     let ordinary_statement = ordinary
         .zip(ordinary_profile)
         .map(|(ordinary, profile)| {
@@ -99,6 +85,25 @@ where
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
+    let terminal = crate::binary_field_switch::verify_field_switch(
+        manifest.descriptor(),
+        claim,
+        grinding.state_mut(),
+    )?;
+    let public = BinaryRootPublic::new(
+        manifest,
+        &terminal,
+        &setup.expanded().descriptor,
+        logical_len,
+        next.params.d_a(),
+        ordinary_profile,
+    )?;
+    let domain_len = public.plan().repacking().domain_len();
+    if !domain_len.is_power_of_two() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let num_vars = domain_len.trailing_zeros() as usize;
+
     let payload_len =
         akita_error::checked::product([manifest.b_rows(), manifest.b_ring_dimension()])
             .ok_or(AkitaError::InvalidProof)?;

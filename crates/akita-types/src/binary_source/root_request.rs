@@ -12,3 +12,10 @@ pub struct BinaryRootWitnessRequest<H> {
     pub plan: BinaryRootWitnessPlan,
     pub ordinary: Option<(GroupCommitPhaseParams, H)>,
 }
+
+/// Request canonical padded carrier words for the field-switch prover.
+/// The backend validates the source owner and the complete commitment manifest.
+pub struct BinaryFieldSwitchSourceRequest {
+    pub manifest: BinaryCommittedGroupManifest,
+    pub polynomial: [u8; 32],
+}

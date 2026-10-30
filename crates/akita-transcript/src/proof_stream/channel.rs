@@ -36,6 +36,14 @@ pub trait ProofChannel {
         message: &mut T,
     ) -> Result<(), AkitaError>;
 
+    /// Extension seam: draw uniform bytes for a protocol's canonical challenge encoding.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "channel does not support byte challenges".into(),
+        ))
+    }
+
     /// Draw one exactly uniform base-field challenge.
     ///
     /// # Errors
@@ -47,6 +55,10 @@ pub trait ProofChannel {
 }
 
 impl ProofChannel for ProverChannel {
+    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
+        Ok(self.verifier_message())
+    }
+
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         prover_context(self, record);
@@ -70,6 +82,10 @@ impl ProofChannel for ProverChannel {
 }
 
 impl ProofChannel for VerifierChannel<'_> {
+    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
+        self.verifier_message()
+    }
+
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         verifier_context(self, record);
@@ -93,6 +109,10 @@ impl ProofChannel for VerifierChannel<'_> {
 }
 
 impl ProofChannel for ProverSession {
+    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
+        Ok(self.verifier_message())
+    }
+
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         prover_context(self, record);
@@ -116,6 +136,10 @@ impl ProofChannel for ProverSession {
 }
 
 impl ProofChannel for VerifierSession<'_> {
+    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
+        self.verifier_message()
+    }
+
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         verifier_context(self, record);

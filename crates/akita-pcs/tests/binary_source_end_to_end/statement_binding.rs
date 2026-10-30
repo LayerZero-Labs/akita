@@ -22,7 +22,7 @@ impl<D: FoldDraw> FoldDraw for FirstSqueeze<D> {
 }
 
 #[test]
-fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
+fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides() {
     let catalog = test_catalog();
     let carrier = catalog
         .resolve_key(&ScheduleLookupKey::single(
@@ -31,7 +31,7 @@ fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
         .unwrap()
         .profiles()
         .final_group;
-    let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
+    let index = BinaryIndexMap::new(8, 128, 8, 2).unwrap();
     // Two valid identifiers let the claim's identifier vary independently of
     // its manifest. The hook tests the same canonical binder as both drivers.
     let descriptor = BinarySourceDescriptor::new(
@@ -41,12 +41,13 @@ fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
     )
     .unwrap();
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
-    let claim = BinaryTerminalClaim::new(
+    let claim = BinaryWordClaim::new(
         &descriptor,
         [29; 32],
-        vec![scalar(3, 5, 1).to_bytes(), scalar(7, 11, 2).to_bytes()],
-        vec![scalar(13, 17, 3).to_bytes()],
-        scalar(19, 23, 1).to_bytes(),
+        (0..7)
+            .map(|axis| (31u128 + axis * 17).to_le_bytes())
+            .collect(),
+        19u128.to_le_bytes(),
     )
     .unwrap();
     let binary = vec![F::one(); 128];
@@ -54,7 +55,7 @@ fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
     let point = vec![F::from_u64(3); 18];
     let values = vec![F::from_u64(4)];
     let first = |manifest: &BinaryCommittedGroupManifest,
-                 claim: &BinaryTerminalClaim,
+                 claim: &BinaryWordClaim,
                  binary: &[F],
                  ordinary: &[F],
                  point: &[F],
@@ -100,7 +101,7 @@ fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
     let baseline = first(&manifest, &claim, &binary, &ordinary, &point, &values);
     let changed = |label,
                    manifest: &BinaryCommittedGroupManifest,
-                   claim: &BinaryTerminalClaim,
+                   claim: &BinaryWordClaim,
                    binary: &[F],
                    ordinary: &[F],
                    point: &[F],
@@ -127,15 +128,10 @@ fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
         &point,
         &values,
     );
-    let other_claim = |polynomial, row, column, value| {
-        BinaryTerminalClaim::new(&descriptor, polynomial, row, column, value).unwrap()
+    let other_claim = |polynomial, point, value| {
+        BinaryWordClaim::new(&descriptor, polynomial, point, value).unwrap()
     };
-    let altered = other_claim(
-        [30; 32],
-        claim.rho_row().to_vec(),
-        claim.rho_col().to_vec(),
-        *claim.value(),
-    );
+    let altered = other_claim([30; 32], claim.point().to_vec(), *claim.value());
     changed(
         "polynomial",
         &manifest,
@@ -145,36 +141,12 @@ fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
         &point,
         &values,
     );
-    for coordinate in 0..claim.rho_row().len() {
-        let mut row = claim.rho_row().to_vec();
-        row[coordinate][0] ^= 1;
-        let altered = other_claim(
-            *claim.polynomial(),
-            row,
-            claim.rho_col().to_vec(),
-            *claim.value(),
-        );
+    for coordinate in 0..claim.point().len() {
+        let mut host_point = claim.point().to_vec();
+        host_point[coordinate][0] ^= 1;
+        let altered = other_claim(*claim.polynomial(), host_point, *claim.value());
         changed(
-            "rho_row coordinate",
-            &manifest,
-            &altered,
-            &binary,
-            &ordinary,
-            &point,
-            &values,
-        );
-    }
-    for coordinate in 0..claim.rho_col().len() {
-        let mut column = claim.rho_col().to_vec();
-        column[coordinate][0] ^= 1;
-        let altered = other_claim(
-            *claim.polynomial(),
-            claim.rho_row().to_vec(),
-            column,
-            *claim.value(),
-        );
-        changed(
-            "rho_col coordinate",
+            "word point coordinate",
             &manifest,
             &altered,
             &binary,
@@ -185,12 +157,7 @@ fn every_order_zero_field_changes_the_first_challenge_on_both_sides() {
     }
     let mut value = *claim.value();
     value[0] ^= 1;
-    let altered = other_claim(
-        *claim.polynomial(),
-        claim.rho_row().to_vec(),
-        claim.rho_col().to_vec(),
-        value,
-    );
+    let altered = other_claim(*claim.polynomial(), claim.point().to_vec(), value);
     changed(
         "value", &manifest, &altered, &binary, &ordinary, &point, &values,
     );
