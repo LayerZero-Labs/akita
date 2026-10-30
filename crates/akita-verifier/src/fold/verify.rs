@@ -8,7 +8,10 @@ use akita_serialization::{AkitaSerialize, Valid};
 use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 use akita_params::{validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile};
-use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_transcript::VerifierChannel;
+use akita_types::{
+    FpExtEncoding, GroupBatchStatement, OpeningClaims, PendingEof, PolynomialGroupClaims,
+};
 
 use crate::AkitaVerifier;
 
@@ -19,7 +22,7 @@ where
         Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
-    /// Verify one authoritative Spongefish argument.
+    /// Verify one standalone Spongefish argument under `session`.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify(
@@ -29,115 +32,148 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        let setup = &self.setup;
-        let schedules = &self.schedules;
-        let selection = statement.selection();
-        let claims = statement.into_claims();
-        claims.validate(setup.expanded().descriptor())?;
-        let opening_batch = claims.committed_layout()?;
-        let (final_group, precommitteds) = claims
-            .groups()
-            .split_last()
-            .ok_or(AkitaError::InvalidProof)?;
-        let final_descriptor = *final_group.commitment().profile();
-        for group in claims.groups() {
-            let committed = group.commitment();
-            let descriptor = committed.profile();
-            descriptor.validate_frozen_precommit(Cfg::decomposition().field_bits())?;
-            let plan = descriptor.outer_compression_plan()?;
-            if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
+        let mut state = akita_transcript::new_verifier_channel(session, proof);
+        let pending = self.batched_verify_embedded(&mut state, statement, basis)?;
+        pending.check_eof(state).map(|_accepted| ())
+    }
+
+    /// Verify Akita's messages inside the caller's transcript.
+    ///
+    /// Akita reads its messages from `state`'s argument string and squeezes
+    /// its challenges from `state`'s sponge. On any error the state is
+    /// poisoned before this returns. On success the caller continues its own
+    /// protocol and must pass the state to [`PendingEof::check_eof`] after its
+    /// last message; only that call accepts the proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the statement does not match the setup or the
+    /// selected schedule, or when the proof is invalid.
+    #[inline(never)]
+    #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify_embedded")]
+    pub fn batched_verify_embedded(
+        &self,
+        state: &mut VerifierChannel<'_>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+    ) -> Result<PendingEof, AkitaError> {
+        let result = (|| {
+            let setup = &self.setup;
+            let schedules = &self.schedules;
+            let selection = statement.selection();
+            let claims = statement.into_claims();
+            claims.validate(setup.expanded().descriptor())?;
+            let opening_batch = claims.committed_layout()?;
+            let (final_group, precommitteds) = claims
+                .groups()
+                .split_last()
+                .ok_or(AkitaError::InvalidProof)?;
+            let final_descriptor = *final_group.commitment().profile();
+            for group in claims.groups() {
+                let committed = group.commitment();
+                let descriptor = committed.profile();
+                descriptor.validate_frozen_precommit(Cfg::decomposition().field_bits())?;
+                let plan = descriptor.outer_compression_plan()?;
+                if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
+                    return Err(AkitaError::InvalidInput(
+                        "commitment length does not match its compression chain".to_string(),
+                    ));
+                }
+            }
+            let batch_profile = CommittedGroupBatchProfile {
+                final_group: final_descriptor,
+                precommitteds: precommitteds
+                    .iter()
+                    .map(|group| *group.commitment().profile())
+                    .collect(),
+            };
+            batch_profile.validate(Cfg::decomposition().field_bits())?;
+            let resolved = schedules.resolve_selection(selection)?;
+            resolved.validate_opening_layout(&opening_batch)?;
+            if resolved.profiles() != &batch_profile {
                 return Err(AkitaError::InvalidInput(
-                    "commitment length does not match its compression chain".to_string(),
+                    "commitment profiles do not match the selected schedule row".to_string(),
                 ));
             }
-        }
-        let batch_profile = CommittedGroupBatchProfile {
-            final_group: final_descriptor,
-            precommitteds: precommitteds
+            let schedule = resolved.schedule();
+            let root_params = &schedule.root_fold().params;
+            let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
+                final_descriptor.group,
+                root_params,
+            )?;
+            if final_descriptor != expected_final_descriptor
+                || root_params.precommitted_groups().len() != precommitteds.len()
+                || root_params
+                    .precommitted_groups()
+                    .iter()
+                    .zip(precommitteds)
+                    .any(|(params, claims_group)| {
+                        params.profile != *claims_group.commitment().profile()
+                    })
+            {
+                return Err(AkitaError::InvalidInput(
+                    "commitment profiles do not match the selected schedule's root fold"
+                        .to_string(),
+                ));
+            }
+            validate_schedule_ring_dims(schedule)?;
+            if !self.admits(selection.row_digest) {
+                return Err(AkitaError::InvalidSetup(
+                    "selected schedule row does not fit this verifier's setup".to_string(),
+                ));
+            }
+            let (grinding_plan, descriptor_bytes) =
+                transcript_instance_descriptor::<Cfg::Field, Cfg>(
+                    &setup.expanded().descriptor,
+                    &opening_batch,
+                    selection,
+                    schedule,
+                    basis,
+                )?;
+            akita_transcript::bind_instance(state, &descriptor_bytes)?;
+            let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
+            let raw_groups = claims
+                .groups()
                 .iter()
-                .map(|group| *group.commitment().profile())
-                .collect(),
-        };
-        batch_profile.validate(Cfg::decomposition().field_bits())?;
-        let resolved = schedules.resolve_selection(selection)?;
-        resolved.validate_opening_layout(&opening_batch)?;
-        if resolved.profiles() != &batch_profile {
-            return Err(AkitaError::InvalidInput(
-                "commitment profiles do not match the selected schedule row".to_string(),
-            ));
-        }
-        let schedule = resolved.schedule();
-        let root_params = &schedule.root_fold().params;
-        let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
-            final_descriptor.group,
-            root_params,
-        )?;
-        if final_descriptor != expected_final_descriptor
-            || root_params.precommitted_groups().len() != precommitteds.len()
-            || root_params
-                .precommitted_groups()
-                .iter()
-                .zip(precommitteds)
-                .any(|(params, claims_group)| {
-                    params.profile != *claims_group.commitment().profile()
+                .map(|group| {
+                    PolynomialGroupClaims::new(
+                        group.point().to_vec(),
+                        group.evaluations().to_vec(),
+                        *group.commitment(),
+                    )
                 })
-        {
-            return Err(AkitaError::InvalidInput(
-                "commitment profiles do not match the selected schedule's root fold".to_string(),
-            ));
+                .collect::<Result<Vec<_>, _>>()?;
+            let raw_claims = OpeningClaims::from_groups(raw_groups)?;
+            let root = verify_root::<Cfg::Field, Cfg::ExtField>(
+                setup,
+                &mut grinding,
+                &raw_claims,
+                &opening_batch,
+                basis,
+                root_params,
+                schedule.recursive_folds.first(),
+                &schedule.terminal,
+            )?;
+            verify_suffix::<Cfg::Field, Cfg::ExtField>(
+                setup,
+                &self.terminal_ntt,
+                &mut grinding,
+                schedule,
+                SuffixVerifierState {
+                    opening_point: root.challenges,
+                    opening: root.opening,
+                    witness: root.next_witness,
+                    basis: BasisMode::Lagrange,
+                    witness_len: schedule.root_fold().output_witness_len,
+                    setup_prefix_opening: root.setup_prefix_opening,
+                },
+            )?;
+            grinding.finish()
+        })();
+        if result.is_err() {
+            let _ = akita_transcript::reject(state);
         }
-        validate_schedule_ring_dims(schedule)?;
-        if !self.admits(selection.row_digest) {
-            return Err(AkitaError::InvalidSetup(
-                "selected schedule row does not fit this verifier's setup".to_string(),
-            ));
-        }
-        let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
-            &setup.expanded().descriptor,
-            &opening_batch,
-            selection,
-            schedule,
-            basis,
-        )?;
-        let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof);
-        let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
-        let raw_groups = claims
-            .groups()
-            .iter()
-            .map(|group| {
-                PolynomialGroupClaims::new(
-                    group.point().to_vec(),
-                    group.evaluations().to_vec(),
-                    group.commitment().commitment(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-        let root = verify_root::<Cfg::Field, Cfg::ExtField>(
-            setup,
-            &mut grinding,
-            &raw_claims,
-            &opening_batch,
-            basis,
-            root_params,
-            schedule.recursive_folds.first(),
-            &schedule.terminal,
-        )?;
-        verify_suffix::<Cfg::Field, Cfg::ExtField>(
-            setup,
-            &self.terminal_ntt,
-            &mut grinding,
-            schedule,
-            SuffixVerifierState {
-                opening_point: root.challenges,
-                opening: root.opening,
-                witness: root.next_witness,
-                basis: BasisMode::Lagrange,
-                witness_len: schedule.root_fold().output_witness_len,
-                setup_prefix_opening: root.setup_prefix_opening,
-            },
-        )?;
-        grinding.finish().map(|_accepted| ())
+        result
     }
 }
 

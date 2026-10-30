@@ -55,19 +55,20 @@ mod tests {
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
-        let state = new_prover_channel(b"native-stage2", b"fixture");
-        let mut prover = ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-stage2");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         let evaluation = E::from_u64(42);
         stage2_w_eval::<F, E, _>(&mut prover, 7, evaluation).unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = state.narg_string().to_vec();
         assert_eq!(proof.len(), E::DEGREE * F::NUM_BYTES);
 
-        let state = new_verifier_channel(b"native-stage2", b"fixture", &proof);
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-stage2", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         assert_eq!(
             stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero()).unwrap(),
             evaluation
         );
-        verifier.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

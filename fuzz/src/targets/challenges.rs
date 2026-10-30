@@ -28,7 +28,7 @@ use akita_challenges::{
     PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 use akita_error::AkitaError;
-use akita_transcript::new_prover_channel;
+use akita_transcript::{bind_instance, new_prover_channel};
 
 /// Draws on the live prover channel and records each message length.
 struct RecordingDraw<'a> {
@@ -154,7 +154,8 @@ pub fn run(data: &[u8]) {
         .unwrap_or_else(|error| panic!("valid family (D={ring_d}, {cfg:?}) rejected: {error:?}"));
 
     let draw = |groups: usize| {
-        let mut channel = new_prover_channel(b"akita-fuzz/fold-challenges", &statement);
+        let mut channel = new_prover_channel(b"akita-fuzz/fold-challenges");
+        bind_instance(&mut channel, &statement).expect("a 32-byte descriptor binds");
         let mut draw = RecordingDraw {
             inner: ProverFoldDraw::new(&mut channel, 0, 0),
             message_lens: Vec::new(),

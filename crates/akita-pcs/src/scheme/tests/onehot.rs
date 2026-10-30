@@ -28,7 +28,7 @@ fn profile_commit_group_returns_exact_frozen_layout() {
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
-    let frozen_layout = commitment.profile;
+    let frozen_layout = *commitment.profile();
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
@@ -114,8 +114,8 @@ fn profile_commit_group_allows_independent_groups() {
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit B");
-        let pre_a_frozen = pre_a_commitment.profile;
-        let pre_b_frozen = pre_b_commitment.profile;
+        let pre_a_frozen = *pre_a_commitment.profile();
+        let pre_b_frozen = *pre_b_commitment.profile();
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
@@ -260,8 +260,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7004),
     ];
     let precommitteds = akita_params::PrecommittedGroupProfiles::from_profiles(vec![
-        pre_a_commitment.profile,
-        pre_b_commitment.profile,
+        *pre_a_commitment.profile(),
+        *pre_b_commitment.profile(),
     ])
     .expect("nonempty precommitted groups");
     let akita_cpu_backend::CommitOutput {
@@ -348,7 +348,7 @@ fn commit_group_returns_frozen_exact_layout() {
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit group");
-    let frozen_layout = commitment.profile;
+    let frozen_layout = *commitment.profile();
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(

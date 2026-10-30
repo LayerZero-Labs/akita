@@ -98,7 +98,7 @@ where
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
-        assert_eq!(commitment.profile, *profile);
+        assert_eq!(*commitment.profile(), *profile);
         pre_commitments.push(commitment);
         pre_hints.push(hint);
         pre_polys_by_group.push(polys);

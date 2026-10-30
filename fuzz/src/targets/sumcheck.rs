@@ -226,7 +226,7 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(reader: &
         claim,
     };
     let mut prover = ProverChannel::<F, E> {
-        state: new_prover_channel(&session, b"akita-fuzz/sumcheck"),
+        state: new_prover_channel(&session),
         _marker: PhantomData,
     };
     let (challenges, final_claim) = prove_sumcheck::<F, E, _, _>(
@@ -253,7 +253,7 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(reader: &
             claim,
         };
         let mut channel = VerifierChannel::<F, E> {
-            state: new_verifier_channel(&session, b"akita-fuzz/sumcheck", proof),
+            state: new_verifier_channel(&session, proof),
             _marker: PhantomData,
         };
         let replayed = verify_sumcheck::<F, E, _, _>(&verifier, &mut channel, shape, invocation)?;

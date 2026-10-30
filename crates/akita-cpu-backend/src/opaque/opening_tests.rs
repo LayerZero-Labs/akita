@@ -562,9 +562,9 @@ mod extension_challenges {
                 ring_dimension: 64,
             },
         ];
-        let channel = new_prover_channel(b"test/aggregate-padding", b"test");
+        let mut channel = new_prover_channel(b"test/aggregate-padding");
         let plan = eor_test_plan(7, true);
-        let mut grinding = ProverGrinding::new(channel, &plan);
+        let mut grinding = ProverGrinding::new(&mut channel, &plan);
         let proved = prove_eor(
             &backend,
             &proof.session,
@@ -725,9 +725,9 @@ mod extension_challenges {
                         ring_dimension: D,
                     },
                 ];
-                let channel = new_prover_channel(b"test/mixed-eor-dense-oracle", b"test");
+                let mut channel = new_prover_channel(b"test/mixed-eor-dense-oracle");
                 let plan = eor_test_plan(8, true);
-                let mut grinding = ProverGrinding::new(channel, &plan);
+                let mut grinding = ProverGrinding::new(&mut channel, &plan);
                 let proved = prove_eor(
                     &backend,
                     &proof.session,
@@ -737,7 +737,8 @@ mod extension_challenges {
                     &mut grinding,
                 )
                 .unwrap();
-                let proof_bytes = grinding.finish().unwrap();
+                grinding.finish().unwrap();
+                let proof_bytes = channel.narg_string().to_vec();
                 let tables = [
                     (&setup_evals, &long_point),
                     (&long_evals, &long_point),
@@ -752,9 +753,9 @@ mod extension_challenges {
                     .flat_map(|(evals, point)| direct_column_partials::<F, E>(evals, point))
                     .collect::<Vec<_>>();
                 assert_eq!(proved.partials, partials);
-                let channel =
-                    new_verifier_channel(b"test/mixed-eor-dense-oracle", b"test", &proof_bytes);
-                let mut replay = VerifierGrinding::new(channel, &plan);
+                let mut channel =
+                    new_verifier_channel(b"test/mixed-eor-dense-oracle", &proof_bytes);
+                let mut replay = VerifierGrinding::new(&mut channel, &plan);
                 let eor_prefix = eor_prefix::<F, E, _>(
                     &mut replay,
                     &layout,
@@ -780,14 +781,14 @@ mod extension_challenges {
                                 .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
                     },
                 );
-                let mut channel = GrindingSumcheckVerifier::<F, E>::new(
+                let mut sumcheck = GrindingSumcheckVerifier::<F, E>::new(
                     &mut replay,
                     SumcheckProtocol::ExtensionOpeningReduction,
                     1,
                     0,
                 );
                 let rounds = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-                    &mut channel,
+                    &mut sumcheck,
                     EOR_SUMCHECK_INVOCATION,
                     input,
                     akita_sumcheck::SumcheckShape::new(8, EXTENSION_OPENING_REDUCTION_DEGREE)
@@ -798,7 +799,7 @@ mod extension_challenges {
                 let rho = rounds.challenges;
                 let mut final_claims = vec![E::zero(); layout.num_total_polynomials()];
                 eor_final_claims::<F, E, _>(&mut replay, &layout, &mut final_claims, 1).unwrap();
-                replay.finish().unwrap();
+                replay.finish().unwrap().check_eof(channel).unwrap();
                 assert_eq!(rho, proved.rho);
                 let expected = terms
                     .iter()
@@ -833,9 +834,9 @@ mod extension_challenges {
                         point: &long_point,
                         ring_dimension: D,
                     }];
-                    let channel = new_prover_channel(b"test/shared-commitment-scopes", b"test");
+                    let mut channel = new_prover_channel(b"test/shared-commitment-scopes");
                     let plan = eor_test_plan(8, false);
-                    let mut grinding = ProverGrinding::new(channel, &plan);
+                    let mut grinding = ProverGrinding::new(&mut channel, &plan);
                     let proved = prove_eor(
                         &backend,
                         guard.session(),

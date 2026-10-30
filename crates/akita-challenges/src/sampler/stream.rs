@@ -51,7 +51,7 @@ const WORD_BITS: usize = u64::BITS as usize;
 /// Most binomial tables kept for reuse across decodes.
 const MAX_CACHED_BINOMIAL_TABLES: usize = 8;
 #[cfg(feature = "parallel")]
-const PARALLEL_DECODE_WORK_THRESHOLD: usize = 1 << 12;
+const PARALLEL_DECODE_WORK_THRESHOLD: usize = 1 << 14;
 
 /// Lower bounds used to size an operator-norm pool.
 ///
@@ -406,9 +406,12 @@ impl SparseChallengeStream {
         (accepted.len() == self.count).then_some(accepted)
     }
 
+    /// Whether to decode in parallel, by the challenge count and not the pool
+    /// size: a pool stops after a few candidates per challenge however long it
+    /// is, and every parallel region wakes the whole thread pool.
     #[cfg(feature = "parallel")]
     fn parallel(&self) -> bool {
-        self.candidates.saturating_mul(self.shell.config.weight()) >= PARALLEL_DECODE_WORK_THRESHOLD
+        self.count.saturating_mul(self.shell.config.weight()) >= PARALLEL_DECODE_WORK_THRESHOLD
     }
 }
 

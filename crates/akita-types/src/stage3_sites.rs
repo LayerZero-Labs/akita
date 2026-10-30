@@ -93,15 +93,16 @@ mod tests {
         let slot = b"canonical setup slot";
         let claim = E::from_u64(17);
         let prefix_eval = E::from_u64(29);
-        let state = new_prover_channel(b"native-stage3", b"fixture");
-        let mut prover = ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-stage3");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         stage3_public_slot(&mut prover, 3, slot).unwrap();
         stage3_claim::<F, E, _>(&mut prover, 3, claim).unwrap();
         stage3_prefix_eval::<F, E, _>(&mut prover, 3, prefix_eval).unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = state.narg_string().to_vec();
 
-        let state = new_verifier_channel(b"native-stage3", b"fixture", &proof);
-        let mut verifier = VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-stage3", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         stage3_public_slot(&mut verifier, 3, slot).unwrap();
         assert_eq!(
             stage3_claim::<F, E, _>(&mut verifier, 3, E::zero()).unwrap(),
@@ -111,6 +112,6 @@ mod tests {
             stage3_prefix_eval::<F, E, _>(&mut verifier, 3, E::zero()).unwrap(),
             prefix_eval
         );
-        verifier.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

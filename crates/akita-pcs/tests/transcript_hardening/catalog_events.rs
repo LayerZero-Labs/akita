@@ -309,7 +309,7 @@ where
             .iter()
             .zip(&openings)
             .map(|(commitment, evaluations)| {
-                let num_vars = commitment.profile.group.num_vars();
+                let num_vars = commitment.profile().group.num_vars();
                 PolynomialGroupClaims::new(
                     point[..num_vars].to_vec(),
                     evaluations.clone(),
@@ -344,7 +344,7 @@ where
             .iter()
             .zip(&openings)
             .map(|(commitment, evaluations)| {
-                let num_vars = commitment.profile.group.num_vars();
+                let num_vars = commitment.profile().group.num_vars();
                 PolynomialGroupClaims::new(
                     point[..num_vars].to_vec(),
                     evaluations.clone(),

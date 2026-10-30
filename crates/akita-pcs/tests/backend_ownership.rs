@@ -85,10 +85,16 @@ fn claim_handle_count_mismatch_returns_invalid_input() {
     .unwrap();
     let key = akita_params::ScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
     let row = scheme.schedules().resolve_key(&key).unwrap();
+    let profile = row.profiles().final_group;
+    let coefficients = profile
+        .outer_compression_plan()
+        .unwrap()
+        .terminal_coefficients();
     let commitment = CommittedGroup::new(
-        row.profiles().final_group,
-        Commitment::new(RingVec::from_coeffs(Vec::new())),
-    );
+        profile,
+        Commitment::new(RingVec::from_coeffs(vec![F::from_u64(0); coefficients])),
+    )
+    .unwrap();
     let opening_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         vec![F::from_u64(2); NV],
         vec![F::one()],
@@ -151,7 +157,8 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
         let changed = CommittedGroup::new(
             *output.committed_group.profile(),
             Commitment::new(RingVec::from_coeffs(fields)),
-        );
+        )
+        .unwrap();
         assert!(scheme
             .batched_prove(
                 &setup,

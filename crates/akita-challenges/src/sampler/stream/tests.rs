@@ -234,12 +234,13 @@ fn replacing_one_candidate_changes_only_its_challenge() {
 #[test]
 fn operator_norm_decode_accepts_only_predicate_challenges() {
     let mut rng = SplitMix(3);
-    // 512 challenges take the chunked parallel path when it is enabled.
     for ((d, config, rejection), count) in operator_norm_families()
         .into_iter()
-        .flat_map(|family| [(family, 6), (family, 512)])
+        .flat_map(|family| [(family, 6), (family, 600)])
     {
         let stream = layout(d, &config, Some(rejection), count).unwrap();
+        #[cfg(feature = "parallel")]
+        assert_eq!(stream.parallel(), count == 600);
         let ChallengePolicy::OperatorNorm { threshold, table } =
             ChallengePolicy::new(d, &config, Some(rejection)).unwrap()
         else {

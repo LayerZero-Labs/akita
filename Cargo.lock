@@ -255,6 +255,7 @@ dependencies = [
  "akita-error",
  "jolt-field",
  "jolt-transcript",
+ "sha3",
  "spongefish",
 ]
 
@@ -272,6 +273,7 @@ dependencies = [
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "jolt-transcript",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "shake",

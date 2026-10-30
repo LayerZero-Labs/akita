@@ -296,8 +296,9 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
         let final_evals = dense_field_evals(final_nv, final_seed);
         let final_poly =
             DensePoly::<F>::from_field_evals(final_nv, &final_evals).expect("final dense poly");
-        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
-            .expect("nonempty precommitted groups");
+        let precommitteds =
+            PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
+                .expect("nonempty precommitted groups");
         let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
             private_handle: final_hint,
@@ -313,7 +314,7 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
 
         let schedule_key = ScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, 1),
-            precommitteds: vec![pre_commitment.profile],
+            precommitteds: vec![*pre_commitment.profile()],
         };
         // The openings come from independent oracles, so the schedule is not
         // needed to project them. Keep the lookup as a structural check that
@@ -420,8 +421,9 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             .expect("precommit");
 
         let final_poly = make_onehot_poly_with_k(final_nv, k, 0x0bee_f001_u64 ^ final_nv as u64);
-        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
-            .expect("nonempty precommitted groups");
+        let precommitteds =
+            PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
+                .expect("nonempty precommitted groups");
         let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
             private_handle: final_hint,
