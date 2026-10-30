@@ -128,6 +128,14 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
+# Extension seam: expose existing test diagnostics to grouped integration tests.
+# <https://github.com/LayerZero-Labs/akita/issues/285>.
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
+  "test-support",
+] }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false, features = [
+  "logging-transcript",
+] }
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
