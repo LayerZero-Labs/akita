@@ -80,7 +80,9 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + Ring + MulBaseUnreduced<F>,
 {
-    statement.polynomial().validate::<F, E>(setup)?;
+    statement
+        .polynomial()
+        .validate_materialized::<F, E>(setup)?;
     let expected = statement.input_claim(coefficients)?;
     let mut terms = Vec::new();
     for (claim, &scale) in statement.claims().iter().zip(coefficients) {

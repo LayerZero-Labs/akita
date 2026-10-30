@@ -149,8 +149,20 @@ where
     }
     let mut registry = BackendRegistry::<Cfg>::new().unwrap();
     let owner = registry.register(&backend, &prefixes).unwrap();
+    let verifier_matrix = if offloaded {
+        let capacity = akita_params::verifier_setup_matrix_capacity_for_schedule(
+            row.schedule(),
+            opening().opening_layout(),
+        )
+        .unwrap();
+        let reduced = setup.to_verifier_setup(capacity).unwrap();
+        assert!(reduced.expanded().shared_matrix().num_field_elements() < selected.unwrap().1);
+        reduced.expanded().clone()
+    } else {
+        setup.expanded.clone()
+    };
     let verifier = AkitaVerifier::<Cfg>::for_selection(
-        AkitaVerifierSetup::from_parts(setup.expanded.clone(), public).unwrap(),
+        AkitaVerifierSetup::from_parts(verifier_matrix, public.clone()).unwrap(),
         catalog.clone(),
         selection,
         None,
@@ -402,12 +414,21 @@ where
         );
     }
     if offloaded {
+        // Direct closure requires the full inherited prefix, while the offloaded
+        // verifier above only stores the coefficients needed by its direct folds.
+        let direct_verifier = AkitaVerifier::<Cfg>::for_selection(
+            AkitaVerifierSetup::from_parts(setup.expanded.clone(), public).unwrap(),
+            catalog.clone(),
+            selection,
+            None,
+        )
+        .unwrap();
         // A direct suffix fold can close the same mixed collection.
         let direct = prove(Some((direct_level, &inherited))).unwrap();
         #[cfg(feature = "logging-transcript")]
         assert_eq!(sumcheck_rounds(), ordinary_rounds);
         let mut checked = SetupClaimAccumulator::from_batch(direct_level, inherited.clone());
-        verifier
+        direct_verifier
             .batched_verify(
                 &direct,
                 SESSION,
@@ -421,7 +442,7 @@ where
         let advice_calls_before_direct = advice.calls;
         let mut carried = SetupClaimAccumulator::from_batch(direct_level, inherited.clone())
             .with_advice(&mut advice);
-        verifier
+        direct_verifier
             .batched_verify(
                 &direct,
                 SESSION,
@@ -433,7 +454,7 @@ where
             .unwrap();
         // Pending claims must not disappear when the caller changes the mode.
         assert!(matches!(
-            verifier.batched_verify(
+            direct_verifier.batched_verify(
                 &ordinary,
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),

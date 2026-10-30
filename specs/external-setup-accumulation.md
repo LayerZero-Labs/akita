@@ -27,7 +27,11 @@ The exact polynomial identity binds the public matrix seed and derivation,
 base modulus, canonical extension-field degree/encoding, actual power-of-two
 flat prefix length, and coefficient-first LSB ordering. It does not include the
 rectangular split, so compatible accumulators can be inherited with another
-split. Extension fields use Akita's canonical `FpExtEncoding` contract.
+split. Stream identity is independent of the verifier's materialized matrix:
+offloaded prefixes may exceed that matrix and are authenticated by their
+installed commitments. Direct deciders and backend preparation enforce
+`SetupPolynomialId::validate_materialized` before compiling or scanning queries.
+Extension fields use Akita's canonical `FpExtEncoding` contract.
 
 For query i, the candidate answer is c_i = sum S(x) W_i(x). A contribution
 uses the raw direct-scan result. Quotient lifting retains its common alpha

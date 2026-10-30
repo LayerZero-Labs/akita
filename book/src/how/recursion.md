@@ -362,7 +362,12 @@ An empty collection selects the ordinary singleton computation and preserves
 its proof encoding. The enclosing program must bind the complete collection to
 its inner verifications. Queries share an authenticated setup identity; smaller
 supports may embed in a larger actual prefix. Offloaded batches must match the
-selected successor's exact actual prefix. Ordinary terminal checks remain.
+selected successor's exact actual prefix. The verifier may retain only the
+matrix coefficients needed by its direct folds; offloaded prefixes are
+identified by their public stream and authenticated by their commitments.
+Direct setup scans and prover preparation separately check that the complete
+requested prefix is materialized before compiling its query factors. Ordinary
+terminal checks remain.
 
 Archived proof bytes remain valid. A direct archived fold uses auxiliary
 advice during deferral; an archived offloaded fold verifies its original

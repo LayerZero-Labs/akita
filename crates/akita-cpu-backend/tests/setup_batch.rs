@@ -327,3 +327,23 @@ fn zero_terminal_weight_and_zero_round_domains_need_no_division() {
             .unwrap();
     decide_setup_accumulator(&source, &accumulator).unwrap();
 }
+
+#[test]
+fn setup_identity_does_not_require_local_coefficients_but_scans_do() {
+    let full = setup::<F>(512);
+    let reduced = setup::<F>(128);
+    let domain = SetupPolynomialId::new::<F, F>(&full, 512).unwrap();
+    assert_eq!(
+        domain,
+        SetupPolynomialId::new::<F, F>(&reduced, 512).unwrap()
+    );
+    domain.validate::<F, F>(&reduced).unwrap();
+    assert!(domain.validate_materialized::<F, F>(&reduced).is_err());
+    let query = SetupQuery::evaluation(vec![F::one(); 9]).unwrap();
+    let backend = CpuBackend::<F, F>::new(reduced.clone()).unwrap();
+    assert!(backend
+        .prepare_setup_query(&domain, &query, 8, SetupBatchMemory::Retain)
+        .is_err());
+    let accumulator = SetupAccumulator::new(domain, vec![F::one(); 9], F::zero()).unwrap();
+    assert!(decide_setup_accumulator(&reduced, &accumulator).is_err());
+}

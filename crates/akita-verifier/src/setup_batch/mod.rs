@@ -56,7 +56,9 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + Ring + MulBaseUnreduced<F>,
 {
-    accumulator.polynomial().validate::<F, E>(setup)?;
+    accumulator
+        .polynomial()
+        .validate_materialized::<F, E>(setup)?;
     if accumulator.point().len() != accumulator.polynomial().num_variables() {
         return Err(AkitaError::InvalidProof);
     }

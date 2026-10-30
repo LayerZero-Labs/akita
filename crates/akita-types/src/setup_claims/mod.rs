@@ -19,13 +19,14 @@ pub struct SetupPolynomialId {
 }
 
 impl SetupPolynomialId {
-    /// Select an actual power-of-two prefix of an authenticated setup.
+    /// Name a power-of-two prefix of the setup's authenticated public stream.
+    /// Offloaded prefixes need not be materialized in the verifier's matrix.
     pub fn new<F, E>(setup: &AkitaExpandedSetup<F>, field_len: usize) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + ExtField<F>,
     {
-        if !field_len.is_power_of_two() || field_len > setup.shared_matrix().num_field_elements() {
+        if !field_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
                 "invalid external setup domain".into(),
             ));
@@ -38,6 +39,7 @@ impl SetupPolynomialId {
         })
     }
 
+    /// Check stream and field identity without requiring local coefficients.
     pub fn validate<F, E>(&self, setup: &AkitaExpandedSetup<F>) -> Result<(), AkitaError>
     where
         F: Field + CanonicalEncoding,
@@ -46,6 +48,24 @@ impl SetupPolynomialId {
         if Self::new::<F, E>(setup, self.field_len)? != *self {
             return Err(AkitaError::InvalidSetup(
                 "external setup identity mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check identity and local capacity before compiling or scanning setup queries.
+    pub fn validate_materialized<F, E>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+    ) -> Result<(), AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + ExtField<F>,
+    {
+        self.validate::<F, E>(setup)?;
+        if self.field_len > setup.shared_matrix().num_field_elements() {
+            return Err(AkitaError::InvalidSetup(
+                "setup claim exceeds the materialized public prefix".into(),
             ));
         }
         Ok(())

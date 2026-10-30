@@ -64,7 +64,9 @@ where
         coefficients: &[E],
     ) -> Result<Self::BatchKernel, AkitaError> {
         let setup = Arc::clone(&self.prepared()?.expanded);
-        statement.polynomial().validate::<F, E>(&setup)?;
+        statement
+            .polynomial()
+            .validate_materialized::<F, E>(&setup)?;
         if prepared.len() != statement.claims().len() || coefficients.len() != prepared.len() {
             return Err(AkitaError::InvalidInput(
                 "setup preparation count mismatch".into(),
@@ -133,7 +135,7 @@ where
         E: 'a,
     {
         let setup = &self.prepared()?.expanded;
-        polynomial.validate::<F, E>(setup)?;
+        polynomial.validate_materialized::<F, E>(setup)?;
         let compiled = queries
             .into_iter()
             .map(|query| Ok((query, query.compile(polynomial, coefficient_len)?)))
