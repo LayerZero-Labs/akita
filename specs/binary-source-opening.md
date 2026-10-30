@@ -13,7 +13,8 @@
 ## Scope and selection
 
 A binary source is a commitment-group kind in the canonical grouped PCS. The
-caller commits, supplies one binary word claim over GF(2^128), and uses the
+caller commits, supplies an optional binary word claim over GF(2^128) and/or
+prime evaluation claims, and uses the
 ordinary grouped opening entry points inside the caller's transcript. A carrier-level
 field switch produces an internal binary terminal before the root checks
 the source relation and repacks its bounded coefficients into the ordinary
@@ -21,14 +22,14 @@ negacyclic witness. The existing grouped recursion and terminal then finish
 the same proof.
 
 The implementation is available through the default-off `labinius-trinomial`
-feature. Selecting a binary source handle and a binary claim selects the
+feature. Selecting a binary source handle and a word or prime claim selects the
 extension at runtime. Enabling the feature alone does not select it. Ordinary
 groups retain their existing encoding and protocol path.
 
 This is an experimental arithmetic and protocol fixture, with no security
 claim. It uses `P = 2^128 - 275`, base-field challenges (`E = F`), and the
 Lagrange basis. It admits one binary group first, with at most one ordinary
-group second. It requires an ordinary successor fold whose predecessor setup
+group second. A binary group may contain several polynomials. It requires an ordinary successor fold whose predecessor setup
 contribution is evaluated directly. It does not add a production binary
 planner profile or certify a new schedule.
 
@@ -137,16 +138,16 @@ identify the state transitions of the binary source opening contract.
 
 | Order | Implemented action | Fixed before the next challenge |
 | --- | --- | --- |
-| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the word claim's polynomial identifier, H point and H value, and any ordinary point/value. | The complete public statement. |
+| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the optional word claim, every unique prime plane's polynomial, canonical P point, tensor-component tag and value, and any ordinary point/value. | The complete public statement. |
 | 2 | Send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
-| 3 | Commit the U table in the ordinary D payload, with one balanced digit per coefficient. | U precedes all column challenges. |
+| 3 | Commit the selected U table and every EP plane in one ordinary D payload. U uses one digit; EP coefficients use 43 centered balanced digits. | U precedes all column challenges. |
 | 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
-| 5 | Commit the outgoing witness containing Z/T digits, the U view, K, K_val and KA; a mixed opening also includes ordinary commitment preimages. | Every witness segment precedes relation batching. |
+| 5 | Commit the outgoing witness containing Z/T digits, selected U/EP views, selected K/K_val, and KA; a mixed opening also includes ordinary commitment preimages. | Every witness segment precedes relation batching. |
 | 7 | Draw the shared ring-switch challenge and row-batching weights, together with the range-image point; evaluate direct setup and public weights. | All tested tables and commitments. |
 | 8 | Run the ordinary Stage 1 range-image sumcheck with the base-eight digit alphabet. | The range-image terminal precedes Stage 2 batching. |
-| 9 | Run one fused Stage 2 for the A quotient, B/D authentication, parity, value, padding, and range-image binding; include ordinary relations when selected. | One final opening of the same outgoing witness. |
+| 9 | Run one fused Stage 2 for the A quotient, B/D authentication, selected parity/value and prime response/reading equations, padding, and range-image binding; include ordinary relations when selected. | One final opening of the same outgoing witness. |
 | 10 | Omit root Stage 3: direct setup evaluation at order 7 replaces its adjoint proof and prefix claims. | The authenticated root opening passed to the suffix. |
-| 11 | Continue ordinary grouped recursion and terminal verification. | Return the live caller transcript; the caller checks exact proof exhaustion. |
+| 11 | Continue ordinary grouped recursion and terminal verification. | Return the live caller transcript and, through the readings API, authenticated readings with the conditional-agreement contract; the caller checks exact proof exhaustion. |
 
 Orders 1 and 6 are absent: application reductions happen before this opening,
 and there are no projections. The committed-quotient fallback replaces the
@@ -410,7 +411,172 @@ unselected. Existing pinned fixtures and goldens remain part of that gate.
 The field switch produces `BinaryTerminalClaim` for the existing root. The
 direct A-term function
 [`binary_direct_a_weights`](../crates/akita-types/src/binary_source/root_plan.rs)
-is the replacement point for a typed Stage 3 adjoint. Projections and prime
-EP planes are not implemented by this opening. The source descriptor's
-existing prime-plane contract remains separate; no prime claim or agreement
-proof is discharged by a binary terminal alone.
+is the replacement point for a typed Stage 3 adjoint. Projections are not
+implemented on this branch. Optional EP planes authenticate prime claims as
+described below; no prime claim or agreement proof is discharged by a binary
+terminal alone.
+
+## Prime evaluation planes
+
+The default-off feature also exposes
+`PolynomialGroupClaims::new_binary_planes(commitment, word, primes)`, where
+`word: Option<BinaryWordClaim>` and `primes: Vec<PrimePlaneClaim>`. The existing
+`new_binary` constructor retains its word-only behavior. A group must contain
+at least one word or prime claim. Every prime claim contains:
+
+```rust
+pub struct PrimePlaneClaim {
+    pub polynomial: usize,
+    pub point: Vec<u128>,
+    pub tensor_component: u8,
+    pub value: u128,
+}
+```
+
+The polynomial index names its owner in the committed descriptor. Coordinates
+and value must be canonical residues strictly less than
+`P = 340282366920938463463374607431768211181`. Their transcript encoding is
+16-byte little endian, with fixed-width counts and owner indices. The point has
+`n + 8` coordinates: eight low scalar-coefficient bits, then the low carrier
+column bits, then scalar-row bits. Natural scalar coefficients occupy indices
+0 through 161; indices 162 through 255 are virtual zero. Signed ring packing is
+undone before this reading, so an honest payload reads as its unsigned bits.
+
+The tensor component is a caller-owned decomposition tag from 0 through 3.
+It is bound and counts toward plane identity; it does not impose an extra row
+mask or change equality weights. One separable point reads all scalar rows in
+one plane. This API does not infer arbitrary nonseparable coefficient weights
+from a tag and supplies no application reduction or fusion helper.
+
+`PrimePlaneManifest` is the single admission boundary. It permits at most five
+unique `(polynomial, point, tensor_component)` planes in the entire binary
+group, hence at most five distinct points. Different polynomials never share a
+plane. Exact duplicate requests share the first occurrence and do not change
+order-zero bytes, D, witness size, or proof bytes. Conflicting values for the
+same functional are invalid. A sixth plane, including one distinguished only
+by a component tag or owner, returns `AkitaError::InvalidInput`; it cannot
+increase a proof-controlled allocation. Input request lists are also limited
+to 4096 entries before deduplication.
+
+For each unique plane, split its point into coefficient, column and row
+coordinates. Let `omega_s = eq(rho_coeff,s)`, `h_b = eq(rho_col,b)` and
+`e_r = eq(rho_row,r)`, all in P. The prover constructs
+
+```text
+EP_b(Z) = sum_r e_r src_(r,b)(Z) mod P
+sum_r e_r V_r(Z) = rem_Phi(sum_b c_b(Z) EP_b(Z)) mod P
+v_P = sum_b h_b sum_(s=0..161) omega_s EP_b[s] mod P.
+```
+
+The response V uses **all four balanced response digits**, with the signed
+packing undone. Reading its low digit here would authenticate a different
+functional. Each plane uses the challenges of its own polynomial. The first
+identity is tested after reduced scalar multiplication and ring switching;
+the scalar reading is a separate linear equation. Each receives an independent
+row-batching coefficient at order 7 and joins the existing fused Stage 2.
+
+At order 0, the canonical manifest and all unique prime claims are public
+messages before any challenge. At order 3, D commits the compact natural-digit
+concatenation of U, if selected, followed by all EP planes in first-occurrence
+order. Within EP the order is plane, column, digit, natural coefficient. There
+is no inter-plane degree-64 padding: only the final D chunk is padded. D is
+fixed before the order-4 nonce and indexed column challenges. At order 5, those
+same EP digits occupy the outgoing witness with 256-coefficient scalar strides.
+D authentication addresses this exact compact-to-padded map. Order 9 proves
+the equations above in the same Stage 2 as the ordinary root obligations.
+No new proof messages or challenges are inserted after the suffix.
+
+A prime-only opening skips order 2 and omits U, K and K_val completely from
+both D and the outgoing witness. It retains the A quotient KA on this branch.
+An opening with no prime claims preserves the original word-only transcript
+atoms, witness addresses and bytes.
+
+### Representation bounds and error accounting
+
+An EP coefficient is first reduced modulo P and centered in
+`[-170141183460469231731687303715884105590,
+  170141183460469231731687303715884105590]`. Forty-three balanced base-eight
+digits have negative reach `388894133623929672529570979922020813092` and positive
+reach `291670600217947254397178234941515609819`, so both centered endpoints fit.
+Forty-two digits have positive reach only
+`36458825027243406799647279367689451227`, which is insufficient. Forty-three
+digits do **not** represent every canonical nonnegative residue: `P-1` exceeds
+the positive reach. Centering is required for completeness.
+
+EP identities are equations in P, so they introduce no integer no-wrap
+inequality. Their reduced polynomial degree is at most 161. In the interactive
+algebraic analysis, an erroneous set of prime polynomial equations survives
+a uniform common alpha with probability at most `161/P`; independently
+batching the surviving equations contributes at most `1/P`. These bounds do
+not multiply by the number of planes: fix any nonzero residual polynomial,
+then use independent batching weights. The aggregate root already charges the
+conservative degree loss 648 and independent row-batching loss 1; the prime
+rows fit those existing bounds. The Stage-2 degree remains three. A widened
+domain increases its round count and the associated existing sumcheck loss.
+These are algebraic statements, not a whole-protocol Fiat-Shamir or SIS
+certificate.
+
+### Authenticated output
+
+```rust
+pub fn batched_verify_readings_in_session(
+    &self,
+    session: &mut VerifierSession<'_>,
+    statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+    basis: BasisMode,
+    session_id: [u8; 32],
+    group_id: [u8; 32],
+) -> Result<BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError>;
+```
+
+This method constructs the existing conditional-agreement result only after
+the complete grouped opening and suffix verify. It returns unique authenticated
+prime claims in manifest order and the optional word reading. The terminal
+prime digest binds the commitment payload, source descriptor and canonical prime claims using a
+domain-separated encoding. Session and group identifiers name context already
+authenticated by the caller for this exact committed source. The method adds no transcript messages, preserves
+the caller's continuation, and does not check agreement. Agreement remains the
+application's proof-token contract in `agreement.rs`; Akita adds neither a
+checker nor an application helper. The caller checks final proof exhaustion.
+
+### Planner and admission inputs
+
+`akita_planner::prime_planes::price_binary_root_planes` is behind the planner's
+default-off `labinius-trinomial` feature. It uses the verifier's canonical
+witness plan, including every unique plane, optional word views, and optional
+ordinary preimages. It reports compact D digits/columns, physical segment
+widths, the next power-of-two domain, ordinary ring-element count, and an
+existing-table D rank lookup. It neither selects an extension nor changes
+schedule artifacts.
+
+At C=256, one plane contributes `43*162*256 = 1,783,296` natural digits and
+`43*256*256 = 2,818,048` physical cells. Five planes contribute 8,916,480 natural
+digits and 14,090,240 physical cells. The compact degree-64 D widths are:
+
+| Planes | Prime-only D columns | With U D columns |
+| --- | ---: | ---: |
+| 1 | 27,864 | 28,512 |
+| 2 | 55,728 | 56,376 |
+| 5 | 139,320 | 139,968 |
+
+For the C=2 fixture, five planes add 69,660 natural digits and 110,080 physical
+cells; D has 1,089 prime-only columns or 1,094 with U. With the current KA
+segment and rank-three A, the complete binary outgoing inputs are:
+
+| Geometry | Five planes, prime-only | Five planes plus word | Minimum domain |
+| --- | ---: | ---: | ---: |
+| N=8, C=2 | 187,904 | 192,256 | 262,144 |
+| N=2^22, C=256 | 37,195,776 | 37,265,152 | 67,108,864 |
+| N=2^23, C=256 | 53,972,992 | 54,042,368 | 67,108,864 |
+
+Optional ordinary preimages add their canonical segment widths before rounding
+the domain. The large current-root totals retain 36,864 KA cells
+(`12*1024*3`); a protocol that removes KA has different admission inputs.
+
+Balanced digit differences have coefficient bound 7. The existing degree-64,
+bound-7 q128 scalar SIS row permits 76,306 columns at rank one and 106,021,444
+at rank two. The five-plane D exceeds rank-one coverage and fits the existing
+rank-two row; `Q128Offset275` uses that row through `row_owner`. This lookup
+covers only the declared D width under that table's model. No new estimator or
+full admission certificate has been run for the widened ordinary suffix or
+the experimental q24 root. No production certification is asserted.

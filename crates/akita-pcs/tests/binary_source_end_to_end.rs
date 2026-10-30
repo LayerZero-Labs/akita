@@ -6,6 +6,8 @@ mod common;
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
 mod field_switch;
+#[path = "binary_source_end_to_end/prime_plane.rs"]
+mod prime_plane;
 #[path = "binary_source_end_to_end/reference.rs"]
 mod reference;
 #[path = "binary_source_end_to_end/statement_binding.rs"]

@@ -65,7 +65,7 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
         assert_eq!(payload.len(), 128);
         let weights = binary_digit_authentication_weights(
             &plan,
-            segment,
+            &[segment],
             &seed,
             label,
             &payload,
@@ -97,7 +97,7 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
         altered_payload[0] += F::one();
         let altered = binary_digit_authentication_weights(
             &plan,
-            segment,
+            &[segment],
             &seed,
             label,
             &altered_payload,
@@ -108,7 +108,7 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
         assert!(altered.check_table(&table).is_err());
         let wrong_seed = binary_digit_authentication_weights(
             &plan,
-            segment,
+            &[segment],
             &[42; 32],
             label,
             &payload,
@@ -137,7 +137,7 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
     assert_ne!(payload, image_role);
     assert!(binary_digit_authentication_weights(
         &plan,
-        3,
+        &[3],
         &[8; 32],
         label(SetupStreamRole::ImageCommitment),
         &payload,
@@ -147,7 +147,7 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
     .is_err());
     assert!(binary_digit_authentication_weights(
         &plan,
-        3,
+        &[3],
         &[8; 32],
         setup,
         &payload[..127],
@@ -157,7 +157,7 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
     .is_err());
     assert!(binary_digit_authentication_weights(
         &plan,
-        3,
+        &[3],
         &[8; 32],
         setup,
         &payload,

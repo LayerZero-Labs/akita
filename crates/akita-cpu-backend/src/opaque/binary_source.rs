@@ -304,7 +304,8 @@ fn ordinary_operation() -> AkitaError {
 struct BinaryRootPreparation {
     binding: OperationBinding,
     source: BinarySourceStorage,
-    claim: akita_types::binary_source::BinaryTerminalClaim,
+    claim: Option<akita_types::binary_source::BinaryTerminalClaim>,
+    prime_digits: Vec<i8>,
     plan: akita_types::binary_source::BinaryRootWitnessPlan,
     partials: Vec<i8>,
     ordinary_segments: Vec<Vec<i8>>,
@@ -346,7 +347,9 @@ where
         destination_ring,
     )?;
     manifest.validate_carrier(&handle.committed.parameters)?;
-    claim.validate(manifest.descriptor())?;
+    if let Some(claim) = claim {
+        claim.validate(manifest.descriptor())?;
+    }
     if handle.owner != backend.owner_id()
         || context.fold_level() != 0
         || context
@@ -370,7 +373,8 @@ where
         manifest.descriptor(),
         manifest.a_rank(),
         destination_ring,
-    )?;
+    )?
+    .with_prime_planes(claim.is_some(), request.prime.planes().len())?;
     let ordinary_segments = if let Some((profile, ordinary_handle)) = &request.ordinary {
         if root_layout.num_groups() != 2
             || schedule.root.params.group_params(&root_layout, 1)?.profile != *profile
@@ -406,15 +410,30 @@ where
             "native root request has a different coefficient map".into(),
         ));
     }
-    let partials =
-        crate::binary_root::binary_row_partials(manifest.descriptor(), claim, &source.sources)?;
+    let partials = claim
+        .as_ref()
+        .map(|claim| {
+            crate::binary_root::binary_row_partials(manifest.descriptor(), claim, &source.sources)
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let prime_digits = crate::binary_root::prime_plane_digits::<F>(
+        manifest.descriptor(),
+        &request.prime,
+        &source.sources,
+    )?;
+    let mut d_digits = partials.clone();
+    d_digits
+        .try_reserve_exact(prime_digits.len())
+        .map_err(|_| AkitaError::InvalidProof)?;
+    d_digits.extend_from_slice(&prime_digits);
     let payload = binary_public_digit_commitment::<F>(
         &source.setup_seed,
         akita_params::binary_setup::SetupStreamLabel {
             role: akita_params::binary_setup::SetupStreamRole::WitnessCommitment,
             ..manifest.b_label()
         },
-        &partials,
+        &d_digits,
     )?;
     binding
         .scope_lease()
@@ -425,6 +444,7 @@ where
             binding,
             source: source.clone(),
             claim: claim.clone(),
+            prime_digits,
             plan: plan.clone(),
             partials,
             ordinary_segments,
@@ -482,26 +502,35 @@ where
         challenges,
         destination_ring_dimension,
     )?;
-    let evaluation = crate::binary_root::BinaryEvaluationWitness::build(
-        source.manifest.descriptor(),
-        &preparation.claim,
-        &preparation.partials,
-        &response.response,
-        challenges,
-        akita_params::binary_setup::BINARY_SETUP_P,
-    )?;
+    let evaluation = preparation
+        .claim
+        .as_ref()
+        .map(|claim| {
+            crate::binary_root::BinaryEvaluationWitness::build(
+                source.manifest.descriptor(),
+                claim,
+                &preparation.partials,
+                &response.response,
+                challenges,
+                akita_params::binary_setup::BINARY_SETUP_P,
+            )
+        })
+        .transpose()?;
     let quotient_map = quotient.relation.repacking();
     let response_digits = natural_segment_digits(quotient_map, &quotient.digits, 0)?;
     let image_digits = natural_segment_digits(quotient_map, &quotient.digits, 1)?;
     let quotient_digits = natural_segment_digits(quotient_map, &quotient.digits, 2)?;
-    let mut natural: Vec<&[i8]> = vec![
-        &response_digits,
-        &image_digits,
-        &quotient_digits,
-        &preparation.partials,
-        &evaluation.parity_digits,
-        &evaluation.value_digits,
-    ];
+    let mut natural: Vec<&[i8]> = vec![&response_digits, &image_digits, &quotient_digits];
+    if let Some(evaluation) = &evaluation {
+        natural.extend([
+            preparation.partials.as_slice(),
+            evaluation.parity_digits.as_slice(),
+            evaluation.value_digits.as_slice(),
+        ]);
+    }
+    if preparation.plan.prime_segment().is_some() {
+        natural.push(&preparation.prime_digits);
+    }
     natural.extend(preparation.ordinary_segments.iter().map(Vec::as_slice));
     let mut digits = preparation.plan.repacking().repack(&natural)?;
     if logical_len > digits.len()

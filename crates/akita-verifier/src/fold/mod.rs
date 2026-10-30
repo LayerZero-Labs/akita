@@ -13,6 +13,8 @@ mod admission;
 mod binary_root;
 mod challenges;
 mod ordinary_root;
+#[cfg(feature = "labinius-trinomial")]
+mod prime_readings;
 mod relation_instance;
 mod root;
 mod suffix;

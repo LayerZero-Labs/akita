@@ -15,7 +15,8 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 pub fn binary_root_statement<F, E, S>(
     state: &mut S,
     manifest: &BinaryCommittedGroupManifest,
-    claim: &BinaryWordClaim,
+    claim: Option<&BinaryWordClaim>,
+    prime: &super::PrimePlaneManifest,
     binary_commitment: &[F],
     ordinary: Option<(usize, &[F], &[E], &[E])>,
 ) -> Result<(), AkitaError>
@@ -30,11 +31,18 @@ where
         ));
     }
     manifest.validate()?;
-    claim.validate(manifest.descriptor())?;
-    for (stage, bytes) in [
-        (3, manifest.canonical_bytes()),
-        (4, claim.canonical_bytes()),
-    ] {
+    if let Some(claim) = claim {
+        claim.validate(manifest.descriptor())?;
+    }
+    super::PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
+    let mut messages = vec![(3, manifest.canonical_bytes())];
+    if let Some(claim) = claim {
+        messages.push((4, claim.canonical_bytes()));
+    }
+    if !prime.planes().is_empty() {
+        messages.push((5, prime.canonical_bytes()));
+    }
+    for (stage, bytes) in messages {
         akita_transcript::public_bytes(
             state,
             ProtocolSiteId {
@@ -92,13 +100,14 @@ where
 pub fn binary_root_challenges(
     draw: &mut impl FoldDraw,
     columns: usize,
+    polynomials: usize,
 ) -> Result<Challenges, AkitaError> {
     draw.draw_folding_challenges_with_rejection(
         FoldChallengeDrawDomain::EvaluationTrace,
         162,
         0,
         columns,
-        1,
+        polynomials,
         &FoldChallengeFamily::BinaryRoot,
         None,
     )

@@ -23,7 +23,11 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
             )?;
             return crate::binary_source::binary_root_grinding_plan(
                 &ordinary,
-                &[manifest.descriptor().index_map().columns()],
+                &[akita_error::checked::product([
+                    manifest.descriptor().index_map().columns(),
+                    manifest.descriptor().polynomials().len(),
+                ])
+                .ok_or(AkitaError::InvalidProof)?],
                 domain_len,
                 648,
             );

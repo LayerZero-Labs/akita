@@ -6,6 +6,9 @@
 //! the proof field. A q-divisible residual is retained explicitly: it is never
 //! asserted to vanish over the proof field.
 
+mod prime;
+pub use prime::prime_plane_digits;
+
 use akita_algebra::ring::trinomial::{
     image::{Q24Image, IMAGE_MIN, Q24, Q24_CENTERED_BOUND},
     module_map::pack_signed_components,

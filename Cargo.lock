@@ -248,6 +248,7 @@ dependencies = [
  "akita-params",
  "akita-schedules",
  "akita-sis-estimator",
+ "akita-types",
  "libm",
 ]
 

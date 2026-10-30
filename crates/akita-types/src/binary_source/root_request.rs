@@ -8,7 +8,8 @@ use akita_params::GroupCommitPhaseParams;
 /// same outgoing witness. It does not introduce another opening or transcript.
 pub struct BinaryRootWitnessRequest<H> {
     pub manifest: BinaryCommittedGroupManifest,
-    pub claim: BinaryTerminalClaim,
+    pub claim: Option<BinaryTerminalClaim>,
+    pub prime: super::PrimePlaneManifest,
     pub plan: BinaryRootWitnessPlan,
     pub ordinary: Option<(GroupCommitPhaseParams, H)>,
 }

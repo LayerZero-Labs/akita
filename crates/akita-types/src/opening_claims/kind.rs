@@ -13,7 +13,9 @@ pub enum GroupClaimKind {
         /// Frozen binary A/B contract, retained when mapping commitment payloads.
         manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
         /// The caller's logical word MLE evaluation over GF(2^128).
-        claim: crate::binary_source::BinaryWordClaim,
+        claim: Option<crate::binary_source::BinaryWordClaim>,
+        /// Checked prime requests, shared by exact plane identity.
+        prime: crate::binary_source::PrimePlaneManifest,
     },
 }
 
@@ -32,10 +34,27 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
         }
         #[cfg(feature = "labinius-trinomial")]
         for (position, group) in groups.iter().enumerate() {
-            if let GroupClaimKind::Binary { manifest, claim } = &group.kind {
+            if let GroupClaimKind::Binary {
+                manifest,
+                claim,
+                prime,
+            } = &group.kind
+            {
+                crate::binary_source::PrimePlaneManifest::new(
+                    manifest.descriptor(),
+                    prime.planes(),
+                )?;
+                let Some(claim) = claim else {
+                    if prime.planes().is_empty() {
+                        return Err(akita_error::AkitaError::InvalidInput(
+                            "binary group has no claims".into(),
+                        ));
+                    }
+                    continue;
+                };
                 claim.validate(manifest.descriptor())?;
                 if groups.iter().take(position).any(|previous| {
-                    matches!(&previous.kind, GroupClaimKind::Binary { claim: earlier, .. }
+                    matches!(&previous.kind, GroupClaimKind::Binary { claim: Some(earlier), .. }
                         if earlier.polynomial() == claim.polynomial())
                 }) {
                     return Err(akita_error::AkitaError::InvalidInput(
