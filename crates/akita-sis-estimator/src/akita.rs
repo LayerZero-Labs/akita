@@ -21,6 +21,12 @@ pub enum AkitaModulusProfileId {
     /// protocol uses non-native cyclotomic degrees.
     #[cfg(feature = "labinius-sis")]
     Q25Plus14561,
+    /// Extension seam: q24 modulus variant registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// Binary-source commitment prime `2^24 - 2523807`.
+    #[cfg(feature = "labinius-sis")]
+    Q24Minus2523807,
     /// `2^128 - (2^32 - 22537)`.
     Q128OffsetA7F7,
     /// `2^128 - 275`. Owns no generated rows; see
@@ -29,6 +35,9 @@ pub enum AkitaModulusProfileId {
 }
 
 impl AkitaModulusProfileId {
+    /// Extension seam: q24 parsing match-arm registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Parse a profile label such as `"q32"`.
     ///
     /// # Errors
@@ -40,6 +49,8 @@ impl AkitaModulusProfileId {
             "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
             #[cfg(feature = "labinius-sis")]
             "q25-labinius" | "Q25Plus14561" => Ok(Self::Q25Plus14561),
+            #[cfg(feature = "labinius-sis")]
+            "q24" | "Q24Minus2523807" => Ok(Self::Q24Minus2523807),
             "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
             "q128_offset275" | "Q128Offset275" => Ok(Self::Q128Offset275),
             _ => Err(EstimatorError::InvalidParameter {
@@ -49,6 +60,9 @@ impl AkitaModulusProfileId {
         }
     }
 
+    /// Extension seam: q24 modulus match-arm registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Return the exact modulus for this profile.
     #[must_use]
     pub fn modulus(self) -> BigUint {
@@ -57,6 +71,10 @@ impl AkitaModulusProfileId {
             Self::Q64Offset59 => akita_q64(),
             #[cfg(feature = "labinius-sis")]
             Self::Q25Plus14561 => BigUint::from(33_568_993u32),
+            #[cfg(feature = "labinius-sis")]
+            Self::Q24Minus2523807 => BigUint::from(
+                akita_params::sis::labinius::LabiniusCommitmentModulus::Q24Minus2523807.modulus(),
+            ),
             Self::Q128OffsetA7F7 => akita_q128(),
             Self::Q128Offset275 => {
                 BigUint::from(akita_params::sis::SisModulusProfileId::Q128Offset275.modulus())
@@ -64,6 +82,9 @@ impl AkitaModulusProfileId {
         }
     }
 
+    /// Extension seam: q24 label match-arm registration for
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
     /// Return the stable lowercase table label for this profile.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -72,6 +93,8 @@ impl AkitaModulusProfileId {
             Self::Q64Offset59 => "q64",
             #[cfg(feature = "labinius-sis")]
             Self::Q25Plus14561 => "q25-labinius",
+            #[cfg(feature = "labinius-sis")]
+            Self::Q24Minus2523807 => "q24",
             Self::Q128OffsetA7F7 => "q128",
             Self::Q128Offset275 => "q128_offset275",
         }
