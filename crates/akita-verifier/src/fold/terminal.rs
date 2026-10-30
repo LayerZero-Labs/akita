@@ -129,11 +129,10 @@ where
     grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
-            akita_challenges::selective_l2_operator_norm_rejection(
-                scheduled.d_a(),
-                &scheduled.fold_challenge_config,
-            )
-            .ok_or(AkitaError::InvalidProof)?,
+            scheduled
+                .fold_challenge_config
+                .operator_norm_rejection(scheduled.d_a())
+                .ok_or(AkitaError::InvalidProof)?,
         )
     } else {
         None

@@ -43,7 +43,7 @@ macro_rules! dense_config {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeFamily, AkitaError> {
                 fp128::Dense::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> SisModulusProfileId {

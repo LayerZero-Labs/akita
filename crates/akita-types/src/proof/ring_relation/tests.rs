@@ -5,7 +5,7 @@ use super::*;
 use crate::DigitBlocks;
 use crate::{emit_witness_e_planes, emit_witness_t_planes, relation_rhs_coeff_len};
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+use akita_challenges::{FoldChallengeFamily, SparseChallenge};
 use akita_params::layout::GroupOpenPhaseParams;
 use akita_params::r_decomp_levels;
 use akita_params::{
@@ -60,8 +60,8 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
     );
 }
 
-fn fold_challenge_config() -> SparseChallengeConfig {
-    SparseChallengeConfig::pm1_only(1)
+fn fold_challenge_config() -> FoldChallengeFamily {
+    FoldChallengeFamily::pm1_only(1)
 }
 
 fn opening_point(lp: &CommittedGroupParams) -> RingOpeningPoint<F> {
@@ -110,9 +110,9 @@ fn packing_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenge
             positions: (0..config.weight())
                 .map(|position| position as u32)
                 .collect(),
-            coeffs: (0..config.count_pm1)
+            coeffs: (0..config.signed_sparse().unwrap().count_pm1)
                 .map(|_| 1)
-                .chain((0..config.count_pm2).map(|_| 2))
+                .chain((0..config.signed_sparse().unwrap().count_pm2).map(|_| 2))
                 .collect(),
         })
         .collect();
@@ -399,7 +399,7 @@ fn relation_segment_layout_uses_same_axis_contract() {
 
 fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
     use akita_params::schedule::GroupCommitPhaseParams;
-    let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
+    let fold_challenge_config = FoldChallengeFamily::production_for_ring_dim(MULTI_GROUP_D)
         .expect("multi-group test ring dimension has a production challenge");
     let lp = CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
@@ -676,7 +676,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
         1,
         1,
         1,
-        SparseChallengeConfig::production_for_ring_dim(PACK_D_A).expect("ambient config"),
+        FoldChallengeFamily::production_for_ring_dim(PACK_D_A).expect("ambient config"),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .expect("packing params");
@@ -686,7 +686,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
             challenge_subring_dimension: 64,
         };
     lp.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(64).expect("packing config");
+        FoldChallengeFamily::production_for_ring_dim(64).expect("packing config");
     certify_test_sis_bounds(&mut lp);
     lp.open_matrix = OpenCommitMatrixParams::new_unchecked(
         lp.open().matrix.security_policy(),
@@ -845,8 +845,11 @@ fn packing_challenge_construction_rejects_malformed_sparse_entries() {
     let config = geometry.fold_challenge_config();
     let valid = SparseChallenge {
         positions: (0..config.weight()).map(|index| index as u32).collect(),
-        coeffs: std::iter::repeat_n(1, config.count_pm1)
-            .chain(std::iter::repeat_n(2, config.count_pm2))
+        coeffs: std::iter::repeat_n(1, config.signed_sparse().unwrap().count_pm1)
+            .chain(std::iter::repeat_n(
+                2,
+                config.signed_sparse().unwrap().count_pm2,
+            ))
             .collect(),
     };
     assert!(CoefficientPackingChallenges::new(

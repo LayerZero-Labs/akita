@@ -3,7 +3,7 @@
 //! These policies select an exact gadget depth for schedule generation. They
 //! are not runtime protocol metadata and are never evaluated by the verifier.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 
 #[cfg(test)]
@@ -34,7 +34,7 @@ pub struct HonestFoldSizingQuery<'a> {
     pub witness_norms: FoldWitnessNorms,
     /// Basis used to decompose the emitted folded response.
     pub log_basis_response: u32,
-    pub challenge_config: &'a SparseChallengeConfig,
+    pub challenge_config: &'a FoldChallengeFamily,
 }
 
 /// One group-owned offline rule for selecting its folded-witness digit depth.
@@ -366,7 +366,7 @@ mod tests {
     use super::*;
 
     fn query<'a>(
-        challenge: &'a SparseChallengeConfig,
+        challenge: &'a FoldChallengeFamily,
         ring_dimension: usize,
         blocks: usize,
         positions_per_block: usize,
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn fp128_nv36_drops_the_spurious_positions_per_block_multiplier() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(256).unwrap();
+        let challenge = FoldChallengeFamily::production_for_ring_dim(256).unwrap();
         let policy = UnitOneHotFoldPolicy::canonical(128, 256);
         let query = query(&challenge, 256, 4_096, 65_536);
         assert!(policy.exact_threshold(query).unwrap() <= 219);
@@ -399,8 +399,8 @@ mod tests {
 
     #[test]
     fn fp64_canonical_source_uses_the_existing_degree_one_bound() {
-        let d256_challenge = SparseChallengeConfig::production_for_ring_dim(256).unwrap();
-        let d512_challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
+        let d256_challenge = FoldChallengeFamily::production_for_ring_dim(256).unwrap();
+        let d512_challenge = FoldChallengeFamily::production_for_ring_dim(512).unwrap();
         let policy = UnitOneHotFoldPolicy::canonical(64, 256);
         for query in [
             query(&d256_challenge, 256, 256, 4_096),
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn reduced_challenge_subring_never_underprices_the_ambient_population() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let challenge = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
         let policy = UnitOneHotFoldPolicy::canonical(32, 256);
         let mut packing = query(&challenge, 1_024, 64, 16);
         packing.challenge_dimension = 64;
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn every_chunk_to_ring_branch_uses_the_canonical_group_source() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(256).unwrap();
+        let challenge = FoldChallengeFamily::production_for_ring_dim(256).unwrap();
         for chunk_size in [16, 256, 512] {
             let direct = UnitOneHotFoldPolicy::canonical(128, chunk_size);
             let query = query(&challenge, 256, 8, 4);
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn fp32_small_block_row_uses_canonical_chunk_occupancy() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
+        let challenge = FoldChallengeFamily::production_for_ring_dim(512).unwrap();
         let policy = UnitOneHotFoldPolicy::canonical(32, 256);
         let query = query(&challenge, 512, 8, 4);
         let source_classes = policy.source_classes(query).unwrap();
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn k16_multiple_ones_per_ring_are_charged_canonically() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
+        let challenge = FoldChallengeFamily::production_for_ring_dim(512).unwrap();
         let policy = UnitOneHotFoldPolicy::canonical(32, 16);
         let query = query(&challenge, 512, 8, 4);
         let classes = policy.source_classes(query).unwrap();
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn k_greater_than_d_counts_distinct_chunks_inside_each_window() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let challenge = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
         let policy = UnitOneHotFoldPolicy::canonical(128, 256);
         let query = HonestFoldSizingQuery {
             ring_dimension: 64,
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn k_greater_than_d_handles_nondyadic_blocks_and_a_partial_final_block() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let challenge = FoldChallengeFamily::production_for_ring_dim(64).unwrap();
         let policy = UnitOneHotFoldPolicy::canonical(128, 256);
         let query = HonestFoldSizingQuery {
             ring_dimension: 64,

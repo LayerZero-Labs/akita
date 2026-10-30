@@ -348,7 +348,7 @@ fn include_matrix_field_elements(
 mod tests {
     use super::*;
     use crate::SisModulusProfileId;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
 
     #[test]
     fn commit_only_envelope_prices_complete_sliced_b_image() {
@@ -359,7 +359,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(3),
+            FoldChallengeFamily::pm1_only(3),
         );
         params.own_group_mut().profile.outer_slice_count = CommitmentSliceCount::FOUR;
         let params = params.with_decomp(1, 4, 1, 1, 1).expect("params");
@@ -403,7 +403,7 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            FoldChallengeFamily::pm1_only(3),
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("params");
@@ -475,7 +475,7 @@ mod tests {
             2,
             1,
             1,
-            SparseChallengeConfig::pm1_only(3),
+            FoldChallengeFamily::pm1_only(3),
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("params");

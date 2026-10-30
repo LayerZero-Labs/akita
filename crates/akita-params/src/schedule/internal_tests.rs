@@ -10,7 +10,7 @@ fn accepts_group_local_packing_subring_dimensions() {
                 challenge_subring_dimension: s,
             };
         params.own_group_mut().opening.fold_challenge_config =
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+            akita_challenges::FoldChallengeFamily::production_for_ring_dim(s).unwrap();
         params.source_encoding = crate::CommittedSourceEncoding::CanonicalCoefficientTable;
         params
     };

@@ -513,7 +513,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
     use akita_params::{CommitmentPayloadMode, CompressionMapPlan, RingRelationMode};
     use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
@@ -526,7 +526,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeFamily::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();

@@ -1,7 +1,7 @@
 //! Recursive setup-offloading config adapter.
 
 use crate::CommitmentConfig;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_error::AkitaError;
 use akita_params::{DecompositionParams, SisModulusProfileId};
 use std::marker::PhantomData;
@@ -30,7 +30,7 @@ impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfi
         Cfg::decomposition()
     }
 
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeFamily, AkitaError> {
         Cfg::ring_challenge_config(d)
     }
 

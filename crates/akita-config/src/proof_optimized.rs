@@ -51,15 +51,15 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
-/// [`akita_challenges::SparseChallengeConfig::production_for_ring_dim`].
+/// [`akita_challenges::FoldChallengeFamily::production_for_ring_dim`].
 /// Offline planning and artifact admission call this hook with each
 /// schedule-selected A dimension. The flat public matrix has no generation
 /// dimension.
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
-) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+) -> Result<akita_challenges::FoldChallengeFamily, AkitaError> {
     let cfg =
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+        akita_challenges::FoldChallengeFamily::production_for_ring_dim(d).ok_or_else(|| {
             AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}"))
         })?;
     cfg.validate_for_ring_dim(d)
@@ -171,7 +171,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 

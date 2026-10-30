@@ -1,5 +1,5 @@
 use super::*;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::FoldChallengeFamily;
 use akita_params::layout::setup_prefix_slots::{
     active_setup_field_len, scheduled_setup_prefix, setup_prefix_precommitted_params,
 };
@@ -47,7 +47,7 @@ fn setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer() {
         2,
         3,
         2,
-        SparseChallengeConfig::production_for_ring_dim(64).unwrap(),
+        FoldChallengeFamily::production_for_ring_dim(64).unwrap(),
     )
     .with_decomp(32, 3, 1, 2, 2)
     .expect("tight recursive consumer with setup-prefix capacity");

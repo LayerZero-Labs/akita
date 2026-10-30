@@ -93,7 +93,7 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
     let group_layout = PolynomialGroupLayout::singleton(8);
     let mut group_params = schedule.root.params.clone();
     group_params.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
+        FoldChallengeFamily::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group production challenge");
     let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = group_params.inner().matrix;

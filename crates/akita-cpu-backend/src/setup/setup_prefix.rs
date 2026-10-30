@@ -183,7 +183,7 @@ mod tests {
         CpuOuterCommitOperation, NttExecutionRequirements,
     };
     use crate::AkitaProverSetup;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::FoldChallengeFamily;
     use akita_params::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
         CompressionChainPlan, InnerCommitMatrixParams, OpeningClaimsLayout,
@@ -207,7 +207,7 @@ mod tests {
             2,
             3,
             2,
-            SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+            FoldChallengeFamily::production_for_ring_dim(ring_dimension)
                 .expect("production challenge"),
         )
         .with_decomp(

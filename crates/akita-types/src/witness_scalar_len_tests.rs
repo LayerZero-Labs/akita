@@ -24,7 +24,7 @@ mod tests {
             3,
             2,
             3,
-            akita_challenges::SparseChallengeConfig::pm1_only(1),
+            akita_challenges::FoldChallengeFamily::pm1_only(1),
         )
         .with_decomp(4, 32, 2, 2, 2)
         .expect("scalar test params");
@@ -177,7 +177,7 @@ mod tests {
             2,
             2,
             2,
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+            akita_challenges::FoldChallengeFamily::production_for_ring_dim(64)
                 .expect("D64 challenge"),
         )
         .with_decomp(4, 8, 2, 2, 2)
@@ -367,7 +367,7 @@ mod tests {
                 params.own_group_mut().opening.opening_method = opening_method;
                 if matches!(opening_method, OpeningMethod::EvaluationTrace) {
                     params.own_group_mut().opening.fold_challenge_config =
-                        akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
+                        akita_challenges::FoldChallengeFamily::production_for_ring_dim(256)
                             .expect("A-ring challenge");
                 }
                 let relation_geometry =
@@ -544,7 +544,7 @@ mod tests {
             2,
             2,
             2,
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+            akita_challenges::FoldChallengeFamily::production_for_ring_dim(64)
                 .expect("D64 challenge"),
         )
         .with_decomp(4, 8, 2, 2, 2)
@@ -578,7 +578,7 @@ mod tests {
             2,
             2,
             2,
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(128)
+            akita_challenges::FoldChallengeFamily::production_for_ring_dim(128)
                 .expect("D128 challenge"),
         )
         .with_decomp(4, 8, 2, 2, 2)
