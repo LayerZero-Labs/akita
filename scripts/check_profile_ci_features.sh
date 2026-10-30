@@ -47,18 +47,18 @@ MODE_NUM_POLYS = {
     "onehot_fp128_multi_chunk_w4r2": {1},
 }
 MODE_NUM_VARS = {
-    "onehot_fp32": {34},
+    "onehot_fp32": {31},
     "dense_fp32": {30},
-    "onehot_fp64": {35},
+    "onehot_fp64": {32},
     "dense_fp64": {29},
     "dense_fp128": {28},
-    "onehot_fp128": {36},
-    "onehot_fp128_multi_group": {34},
-    "onehot_fp128_multi_group_recursive": {34},
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {32},
-    "onehot_fp128_multi_chunk_w8r2": {32},
-    "onehot_fp128_multi_chunk_w2r2": {32},
-    "onehot_fp128_multi_chunk_w4r2": {32},
+    "onehot_fp128": {33},
+    "onehot_fp128_multi_group": {31},
+    "onehot_fp128_multi_group_recursive": {31},
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {29},
+    "onehot_fp128_multi_chunk_w8r2": {29},
+    "onehot_fp128_multi_chunk_w2r2": {29},
+    "onehot_fp128_multi_chunk_w4r2": {29},
 }
 MODE_SETUP = {mode: {"direct"} for mode in MODES}
 MODE_SETUP["onehot_fp128"] = {"direct", "recursive"}
@@ -121,14 +121,14 @@ if not bench_cases:
     print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
     raise SystemExit(1)
 case_specs = [case_spec for _, _, case_spec in bench_cases]
-fp128_direct = "onehot_fp128:36:1:direct"
-fp128_recursive = "onehot_fp128:36:1:recursive"
+fp128_direct = "onehot_fp128:33:1:direct"
+fp128_recursive = "onehot_fp128:33:1:recursive"
 if fp128_direct not in case_specs or case_specs.index(fp128_direct) + 1 >= len(case_specs):
-    print("fp128 nv36 direct benchmark case is missing", file=sys.stderr)
+    print("fp128 nv33 direct benchmark case is missing", file=sys.stderr)
     raise SystemExit(1)
 if case_specs[case_specs.index(fp128_direct) + 1] != fp128_recursive:
     print(
-        "fp128 nv36 recursive benchmark must immediately follow the direct case",
+        "fp128 nv33 recursive benchmark must immediately follow the direct case",
         file=sys.stderr,
     )
     raise SystemExit(1)

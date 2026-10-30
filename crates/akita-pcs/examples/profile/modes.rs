@@ -24,8 +24,8 @@ use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 type F = fp128::Field;
 
 const MULTI_GROUP_PRE_NUM_VARS: usize = 16;
-const MULTI_GROUP_FINAL_NUM_VARS: usize = 34;
-const MULTI_GROUP_W8R2_FINAL_NUM_VARS: usize = 32;
+const MULTI_GROUP_FINAL_NUM_VARS: usize = 31;
+const MULTI_GROUP_W8R2_FINAL_NUM_VARS: usize = 29;
 const MULTI_GROUP_PRE_GROUPS: usize = 2;
 const MULTI_GROUP_FINAL_POLYS: usize = 2;
 const MULTI_GROUP_TOTAL_POLYS: usize = MULTI_GROUP_PRE_GROUPS + MULTI_GROUP_FINAL_POLYS;
@@ -428,7 +428,10 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
         }
         SetupContributionMode::Recursive => {
             type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
-            assert_eq!(nv, 36, "recursive onehot_fp128 profiles nv=36");
+            assert!(
+                matches!(nv, 33 | 36),
+                "recursive onehot_fp128 profiles nv=33 or nv=36"
+            );
             run_profile_onehot_fp128_with_cfg::<256, Cfg>("onehot_fp128", nv, num_polys);
         }
     }
@@ -443,8 +446,8 @@ fn run_profile_onehot_fp128_with_cfg<
     num_polys: usize,
 ) {
     assert!(
-        matches!(nv, 32 | 36 | 40),
-        "fp128 one-hot profile supports generated nv=32, nv=36, and nv=40 rows"
+        matches!(nv, 32 | 33 | 36 | 40),
+        "fp128 one-hot profile supports generated nv=32, nv=33, nv=36, and nv=40 rows"
     );
     assert_singleton_mode(label, num_polys);
 

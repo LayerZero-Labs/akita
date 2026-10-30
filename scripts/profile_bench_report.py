@@ -87,7 +87,7 @@ RSS_PATTERNS = [
     re.compile(r"Maximum resident set size \(kbytes\):\s+(\d+)"),
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
 ]
-ONEHOT_ARITY = 256
+ONEHOT_ARITY = 16
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
 CASE_SCHEMA_VERSION = 9
 VALID_RELATION_MODES = frozenset(("quotient_lift", "reduced_evaluation"))

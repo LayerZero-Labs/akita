@@ -42,7 +42,8 @@ fn recursive_prefix_fixture<Cfg: CommitmentConfig>(
 
 #[test]
 fn recursive_prefix_slot_id_fixture() {
-    // These setup-prefix identities bind the generated schedule and policy.
+    // These setup-prefix identities bind the generated schedule and policy,
+    // including the reduced K=16 benchmark rows.
     let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
@@ -52,15 +53,15 @@ fn recursive_prefix_slot_id_fixture() {
     assert_eq!(
         onehot,
         (
-            3,
-            "d9272084b95eaf407444673bd434e517a5afc0e9323f13d105a9d96b051b99c1".to_string(),
+            4,
+            "e373f8e6404b6d206ce678f4765ccf06accfadbee6b4c02bb34e766109107230".to_string(),
         )
     );
     assert_eq!(
         multichunk,
         (
-            2,
-            "3409f71ed207efe55f7eeab29bf12e4bcf87928808f8832ed9a702547ad5ec58".to_string(),
+            3,
+            "811de8b58285c8476324c4be049459b2c04ee74a9ffe392e7aa5fccbb47712f9".to_string(),
         )
     );
 }
