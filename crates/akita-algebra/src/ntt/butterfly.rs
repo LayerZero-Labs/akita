@@ -43,7 +43,12 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Fused conversion factors `psi^i * R^2 mod p`, in centered raw form.
     /// Multiplying a canonical coefficient by this table enters Montgomery
     /// form and applies the negacyclic twist in one Montgomery product.
-    #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "x86",
+        target_arch = "x86_64",
+        all(feature = "ntt-inline", any(target_arch = "riscv64", test))
+    ))]
     pub(crate) psi_pows_r2: [W; D],
     /// Untwist factors `psi^{-i}`, in Montgomery form.
     pub(crate) psi_inv_pows: [MontCoeff<W>; D],
@@ -91,18 +96,30 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
 
         let psi_inv = pow_mod(psi, p - 2, p);
         let mut psi_pows = [MontCoeff::from_raw(W::default()); D];
-        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(any(
+            target_arch = "aarch64",
+            target_arch = "x86",
+            target_arch = "x86_64",
+            all(feature = "ntt-inline", any(target_arch = "riscv64", test))
+        ))]
         let mut psi_pows_r2 = [W::default(); D];
         let mut psi_inv_pows = [MontCoeff::from_raw(W::default()); D];
         let mut cur = 1i64;
         let mut cur_inv = 1i64;
         for i in 0..D {
             psi_pows[i] = prime.from_canonical(W::from_i64(cur));
-            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+            #[cfg(any(
+                target_arch = "aarch64",
+                target_arch = "x86",
+                target_arch = "x86_64",
+                all(feature = "ntt-inline", any(target_arch = "riscv64", test))
+            ))]
             {
-                let raw_r2 = (i128::from(cur) * i128::from(prime.montsq.to_i64()))
-                    .rem_euclid(i128::from(p)) as i64;
-                psi_pows_r2[i] = W::from_i64(if raw_r2 > p / 2 { raw_r2 - p } else { raw_r2 });
+                psi_pows_r2[i] = prime.center(
+                    prime
+                        .mul(psi_pows[i], MontCoeff::from_raw(prime.montsq))
+                        .raw(),
+                );
             }
             psi_inv_pows[i] = prime.from_canonical(W::from_i64(cur_inv));
             cur = (cur * psi) % p;
@@ -172,7 +189,12 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             inv_wlen,
             num_stages,
             psi_pows,
-            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+            #[cfg(any(
+                target_arch = "aarch64",
+                target_arch = "x86",
+                target_arch = "x86_64",
+                all(feature = "ntt-inline", any(target_arch = "riscv64", test))
+            ))]
             psi_pows_r2,
             psi_inv_pows,
             d_inv,
@@ -198,6 +220,12 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+    if super::jolt::selected::<W, D>(plan) {
+        super::jolt::forward_ntt(a, prime, tw);
+        return;
+    }
+
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
@@ -283,6 +311,9 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
@@ -367,6 +398,9 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
@@ -447,6 +481,9 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and

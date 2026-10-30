@@ -18,6 +18,8 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `artifact/`  | bin  | Runs the Akita prover and writes the verifier-input blob.        |
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
 | `guest/`     | lib  | Declarative Jolt entrypoints plus Akita's recursion integration owner. |
+| `inline-parity/guest/` | lib | Runs Akita's transcript, challenge, and CRT+NTT paths with every guest inline feature. |
+| `inline-parity/host/`  | bin | Traces that guest and compares it with a portable native run. |
 
 ## Quick start with an exact CI case
 
@@ -81,6 +83,24 @@ trace done
 
 Most of `deserialize_input` is decoding the expanded verifier-setup matrix
 that lives inside the blob; the proof itself is a tiny fraction.
+
+## Guest inline parity
+
+`blake2-inline`, `keccak-inline`, and `ntt-inline` take effect only in a
+riscv64 guest. `akita-inline-parity-host` builds a guest with all three,
+traces it under Jolt's emulator (no proving), and fails unless each inline
+executes, the `D = 64` CRT parameters select the Jolt NTT backend while
+`D = 128` falls back to the generic path, and every result matches a native
+run on the portable kernels. CI runs it in the `inline-parity` job of
+`.github/workflows/jolt-verifier-profile-smoke.yml`.
+
+```bash
+# The jolt CLI must match the pinned SDK revision.
+cargo install --git https://github.com/a16z/jolt --rev <pinned rev> --locked \
+    --profile ci --root /tmp/jolt-cli jolt
+JOLT_PATH=/tmp/jolt-cli/bin/jolt \
+    cargo run --release -p akita-inline-parity-host
+```
 
 ## Running the full prove pipeline
 

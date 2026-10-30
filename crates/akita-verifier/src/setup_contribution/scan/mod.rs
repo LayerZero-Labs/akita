@@ -3,7 +3,8 @@ mod reduced;
 
 use super::*;
 use akita_algebra::cfg_try_fold_reduce;
-use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::scalar_powers;
+use akita_algebra::row_batch::WeightedRowBatch;
 use group::evaluate_base_ring_direct;
 use reduced::evaluate_groups_reduced;
 
@@ -348,13 +349,15 @@ where
                     })?;
                 }
             }
-            let mut term = E::zero();
+            // Rows with a zero weight contribute nothing; the rest go
+            // through the shared-powers kernel in bounded batches.
+            let mut batch = WeightedRowBatch::new(base_pows);
             for (ring, weight) in setup.iter().zip(weights) {
                 if !weight.is_zero() {
-                    term += eval_ring_at_pows_fast(ring, base_pows) * weight;
+                    batch.push(ring.coefficients(), weight);
                 }
             }
-            Ok(acc + term)
+            Ok(acc + batch.finish())
         },
         |lhs, rhs| Ok(lhs + rhs)
     )
