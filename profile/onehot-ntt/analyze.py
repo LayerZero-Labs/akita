@@ -41,9 +41,10 @@ elif sys.argv[1]=='verify':
  for section in log.split('[experiment] trial=')[1:]:
   match=re.match(r'(\d+) onehot_commit=(\S+)(?: requested=(\S+))?',section)
   index,mode,requested=match.groups()
-  def number(label): return float(re.search(r'^\[onehot_fp128\] '+label+r': ([\d.]+)',section,re.M)[1])
-  assert '[onehot_fp128] verify multi threaded OK:' in section
-  assert '[onehot_fp128] verify single threaded OK:' in section
+  prefix=r'\[onehot_fp128(?:_k16)?\] '
+  def number(label): return float(re.search('^'+prefix+label+r': ([\d.]+)',section,re.M)[1])
+  assert re.search(prefix+'verify multi threaded OK:',section)
+  assert re.search(prefix+'verify single threaded OK:',section)
   io=re.search(r'commit_io_read_bytes: (\d+)',section)
   trials.append({'trial':int(index),'mode':mode,'requested':requested,'commit_s':number('commit'),'prove_s':number('prove'),'storage_read_bytes':int(io[1]) if io else None,'both_verified':True})
  assert len(trials)>=2
