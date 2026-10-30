@@ -532,7 +532,8 @@ pub fn send_byte_group(
     Ok(())
 }
 
-/// Receive an exact schedule-bounded labelled proof group.
+/// Receive an exact schedule-bounded labelled proof group. An empty group makes
+/// no absorb call, like [`send_byte_group`].
 pub fn receive_byte_group(
     state: &mut VerifierChannel<'_>,
     site: ProtocolSiteId,
@@ -541,6 +542,9 @@ pub fn receive_byte_group(
     let record = group_record(site, ProtocolMessageKind::ProofAtoms, Some(len), 1);
     let record = state.guard(record)?;
     verifier_context(state, record);
+    if len == 0 {
+        return Ok(Vec::new());
+    }
     state
         .prover_message_with(
             |reader| reader.take(len).map(<[u8]>::to_vec),
