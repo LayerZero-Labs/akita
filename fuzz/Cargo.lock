@@ -133,7 +133,6 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
- "blake2",
  "jolt-field",
  "jolt-transcript",
  "serde",
@@ -343,15 +342,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
-name = "blake2"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b5d4d889834ee8ecfc0f8426ad30faf7cdcb10f741a8e6d7224d95325479f6f"
-dependencies = [
- "digest 0.11.3",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -432,12 +422,6 @@ name = "clap_lex"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
-
-[[package]]
-name = "cmov"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "cobs"
@@ -532,15 +516,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctutils"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12218662ccac37d9714f2191252553d67585b97df8c839cbe49e0bde278dc865"
-dependencies = [
- "cmov",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -559,7 +534,6 @@ dependencies = [
  "block-buffer 0.12.1",
  "const-oid",
  "crypto-common 0.2.2",
- "ctutils",
 ]
 
 [[package]]
@@ -713,20 +687,21 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
 dependencies = [
  "cc",
  "num-traits",
  "rand_core",
  "rayon",
  "serde",
+ "spongefish",
  "thiserror",
 ]
 
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -740,11 +715,11 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
 dependencies = [
  "getrandom 0.4.3",
  "jolt-field",
- "rayon",
+ "sha3",
  "shake",
  "spongefish",
 ]
@@ -752,7 +727,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9470792dc0112b6d606d9351ebbe455dd58407d3#9470792dc0112b6d606d9351ebbe455dd58407d3"
+source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
 dependencies = [
  "num-traits",
 ]

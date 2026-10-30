@@ -480,7 +480,6 @@ mod tests {
     impl FoldDraw for FixedDraw {
         fn draw_message(
             &mut self,
-            _payload: &[u8],
             len: usize,
             decode: impl FnOnce(
                 &[u8],

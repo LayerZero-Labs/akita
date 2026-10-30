@@ -109,11 +109,22 @@ fn exact_orders_above_the_comparison_width_require_no_small_loss_grinding() {
 
 #[test]
 fn nonce_slack_provisions_exactly_128_expected_trials() {
+    // At 57 bits the nonce space is all of `u64`, so count it in `u128`.
+    assert_eq!(
+        u32::from(MAX_GRINDING_BITS + GRINDING_NONCE_SLACK_BITS),
+        u64::BITS
+    );
     for grind in 1..=MAX_GRINDING_BITS {
         let nonce_bits = grind + GRINDING_NONCE_SLACK_BITS;
-        assert_eq!((1u64 << nonce_bits) / (1u64 << grind), 128);
-        let failure = (1.0 - 2f64.powi(-i32::from(grind))).powf(2f64.powi(i32::from(nonce_bits)));
-        assert!(failure <= (-128f64).exp());
+        assert_eq!((1u128 << nonce_bits) / (1u128 << grind), 128);
+        // Exhaustion probability `(1 - 2^-g)^(2^(g+7))`, compared in the log
+        // domain: above 53 bits `1 - 2^-g` rounds to 1.0, but `ln_1p` keeps
+        // `ln(1 - 2^-g)` accurate, and scaling by a power of two is exact.
+        let ln_failure = 2f64.powi(i32::from(nonce_bits)) * (-2f64.powi(-i32::from(grind))).ln_1p();
+        assert!(
+            ln_failure <= -128.0,
+            "grind={grind}, ln_failure={ln_failure}"
+        );
     }
 }
 
@@ -190,8 +201,8 @@ fn plan_encoding_covers_every_discriminator() {
     assert_eq!(
         plan.digest().unwrap(),
         [
-            182, 224, 249, 161, 94, 199, 170, 109, 104, 128, 253, 110, 50, 4, 253, 43, 149, 145,
-            69, 239, 96, 25, 110, 224, 49, 37, 59, 23, 103, 131, 3, 14,
+            221, 22, 158, 189, 155, 93, 120, 42, 5, 41, 246, 165, 27, 108, 42, 131, 33, 24, 42,
+            117, 186, 242, 72, 28, 68, 63, 194, 27, 30, 155, 183, 104
         ]
     );
 }

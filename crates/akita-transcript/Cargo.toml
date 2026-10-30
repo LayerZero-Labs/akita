@@ -10,11 +10,11 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9470792dc0112b6d606d9351ebbe455dd58407d3", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9470792dc0112b6d606d9351ebbe455dd58407d3", default-features = false, features = [
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "solinas",
 ] }
 spongefish = { version = "=0.8.0", default-features = false }
@@ -24,12 +24,14 @@ default = ["transcript-keccak"]
 logging-transcript = []
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
+# Keccak-256 instead of SHA3-256 for every digest a statement or key binds,
+# for applications whose recursion guest uses Jolt's Keccak-256 inline. The
+# session tag names the selection.
+keccak256-digests = ["jolt-transcript/keccak256-digests"]
 # The prover's proof-of-work and fold-response searches copy the public sponge
 # state, which spongefish 0.8.0 exposes only under `yolocrypto`. Verifier
 # builds leave this feature off.
 prover = ["jolt-transcript/prover-grinding", "spongefish/yolocrypto"]
-# Searches proof-of-work nonces on all threads; the nonce found is the same.
-parallel = ["prover", "jolt-transcript/parallel"]
 
 [lints]
 workspace = true

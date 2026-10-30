@@ -3,13 +3,14 @@
 use crate::{advance_eq_factored_claim, SumcheckInstanceVerifier, SumcheckKernel};
 #[cfg(test)]
 use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
-use akita_error::{checked, narrowing::usize_to_u64, AkitaError};
+use akita_error::{checked, AkitaError};
 use akita_transcript::{
-    prover_context, receive_extension, send_extension, verifier_context, FieldAtom,
-    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, ProverChannel, VerifierChannel,
+    exchange_extension_group, extension_slots, public_extensions, ProtocolSiteId, ProverChannel,
+    VerifierChannel,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly};
+use std::slice;
 
 /// Typed discriminator for sumcheck transcript sites.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,99 +108,6 @@ pub struct SumcheckRoundResult<E: Field> {
     pub challenges: Vec<E>,
 }
 
-fn context(
-    site: ProtocolSiteId,
-    role: SumcheckRole,
-    atom_count: usize,
-    encoded_bytes: usize,
-    challenge_bytes: usize,
-) -> Result<ProtocolContextRecord, AkitaError> {
-    let kind = match role {
-        SumcheckRole::Claim => ProtocolMessageKind::PublicValue,
-        SumcheckRole::RoundBody => ProtocolMessageKind::ProofAtoms,
-        SumcheckRole::Challenge => {
-            return Err(AkitaError::Internal(
-                "sumcheck message context cannot use the challenge role".into(),
-            ));
-        }
-    };
-    Ok(ProtocolContextRecord::new(
-        site.to_bytes(),
-        kind as u32,
-        usize_to_u64(atom_count, "sumcheck atom count")?,
-        usize_to_u64(encoded_bytes, "sumcheck encoded byte count")?,
-        usize_to_u64(challenge_bytes, "sumcheck challenge byte count")?,
-    ))
-}
-
-fn field_bytes<F: CanonicalEncoding>(count: usize) -> Result<usize, AkitaError> {
-    checked::product([count, F::NUM_BYTES]).ok_or_else(|| {
-        AkitaError::InvalidInput("sumcheck encoded byte count overflows usize".into())
-    })
-}
-
-fn extension_atom_count<E, F>(count: usize) -> Result<usize, AkitaError>
-where
-    F: Field,
-    E: ExtField<F>,
-{
-    checked::product([count, E::DEGREE]).ok_or_else(|| {
-        AkitaError::InvalidInput("sumcheck extension atom count overflows usize".into())
-    })
-}
-
-fn public_claim_prover<F, E>(
-    state: &mut ProverChannel,
-    site: ProtocolSiteId,
-    claim: E,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let coefficients = claim.to_base_vec();
-    prover_context(
-        state,
-        context(
-            site,
-            SumcheckRole::Claim,
-            coefficients.len(),
-            field_bytes::<F>(coefficients.len())?,
-            0,
-        )?,
-    );
-    for coefficient in coefficients {
-        state.public_message(&FieldAtom::new(coefficient));
-    }
-    Ok(())
-}
-
-fn public_claim_verifier<F, E>(
-    state: &mut VerifierChannel<'_>,
-    site: ProtocolSiteId,
-    claim: E,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let coefficients = claim.to_base_vec();
-    verifier_context(
-        state,
-        context(
-            site,
-            SumcheckRole::Claim,
-            coefficients.len(),
-            field_bytes::<F>(coefficients.len())?,
-            0,
-        )?,
-    );
-    for coefficient in coefficients {
-        state.public_message(&FieldAtom::new(coefficient));
-    }
-    Ok(())
-}
-
 /// Prove one standard sumcheck directly into a Spongefish argument string.
 ///
 /// `invocation` is the schedule-derived identity of this sumcheck within the
@@ -221,7 +129,7 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_extensions::<F, E, _>(channel.state_mut(), claim_site, slice::from_ref(&claim))?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
@@ -246,22 +154,9 @@ where
             ));
         }
         coefficients.resize(degree_bound, E::zero());
-        let compressed = CompressedPoly::new(coefficients);
-        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
-        prover_context(
-            channel.state_mut(),
-            context(
-                body_site,
-                SumcheckRole::RoundBody,
-                atom_count,
-                field_bytes::<F>(atom_count)?,
-                0,
-            )?,
-        );
-        for coefficient in compressed.coeffs_except_linear_term() {
-            send_extension::<F, E>(channel.state_mut(), *coefficient);
-        }
+        exchange_extension_group::<F, E, _>(channel.state_mut(), body_site, &mut coefficients)?;
+        let compressed = CompressedPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
         prover.bind_challenge(round, challenge)?;
@@ -311,30 +206,14 @@ where
     let num_rounds = shape.num_rounds();
     let degree_bound = shape.degree_bound();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_extensions::<F, E, _>(channel.state_mut(), claim_site, slice::from_ref(&claim))?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
-        verifier_context(
-            channel.state_mut(),
-            context(
-                body_site,
-                SumcheckRole::RoundBody,
-                atom_count,
-                field_bytes::<F>(atom_count)?,
-                0,
-            )?,
-        );
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(degree_bound)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for _ in 0..degree_bound {
-            coefficients.push(receive_extension::<F, E>(channel.state_mut())?);
-        }
+        let mut coefficients = extension_slots::<E, _>(channel.state_mut(), degree_bound)?;
+        exchange_extension_group::<F, E, _>(channel.state_mut(), body_site, &mut coefficients)?;
         let compressed = CompressedPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
@@ -365,7 +244,7 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_extensions::<F, E, _>(channel.state_mut(), claim_site, slice::from_ref(&claim))?;
     let mut challenges = Vec::with_capacity(num_rounds);
 
     for round in 0..num_rounds {
@@ -380,22 +259,9 @@ where
             ));
         }
         coefficients.resize(degree_bound, E::zero());
-        let poly = OmittedConstantPoly::new(coefficients);
-        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
-        prover_context(
-            channel.state_mut(),
-            context(
-                body_site,
-                SumcheckRole::RoundBody,
-                atom_count,
-                field_bytes::<F>(atom_count)?,
-                0,
-            )?,
-        );
-        for coefficient in poly.coefficients() {
-            send_extension::<F, E>(channel.state_mut(), *coefficient);
-        }
+        exchange_extension_group::<F, E, _>(channel.state_mut(), body_site, &mut coefficients)?;
+        let poly = OmittedConstantPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = advance_eq_factored_claim(claim, prover.current_tau(), &poly, challenge);
         challenges.push(challenge);
@@ -456,32 +322,16 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = input_claim;
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
+    public_extensions::<F, E, _>(channel.state_mut(), claim_site, slice::from_ref(&claim))?;
     let mut challenges = Vec::with_capacity(equality_point.len());
 
     // The normalized claim already carries the bound equality factors. Replay
     // needs only the current coordinate, not a scalar accumulator or eq tables.
     for (round, &tau) in equality_point.iter().enumerate() {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
-        verifier_context(
-            channel.state_mut(),
-            context(
-                body_site,
-                SumcheckRole::RoundBody,
-                atom_count,
-                field_bytes::<F>(atom_count)?,
-                0,
-            )?,
-        );
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(degree_bound)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for _ in 0..degree_bound {
-            coefficients.push(receive_extension::<F, E>(channel.state_mut())?);
-        }
+        let mut coefficients = extension_slots::<E, _>(channel.state_mut(), degree_bound)?;
+        exchange_extension_group::<F, E, _>(channel.state_mut(), body_site, &mut coefficients)?;
         let poly = OmittedConstantPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = advance_eq_factored_claim(claim, tau, &poly, challenge);
@@ -498,22 +348,11 @@ mod tests {
     use super::*;
     use akita_algebra::{poly::multilinear_eval, split_eq::GruenSplitEq};
     use akita_transcript::{
-        ext_challenge, new_prover_channel, new_verifier_channel, SITE_FAMILY_SUMCHECK,
+        ext_challenge, new_prover_channel, new_verifier_channel, send_field_group,
+        SITE_FAMILY_SUMCHECK,
     };
     use jolt_field::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
     use jolt_poly::UnivariatePoly;
-
-    #[test]
-    fn sumcheck_count_products_reject_argument_overflow() {
-        assert!(matches!(
-            field_bytes::<F>(usize::MAX),
-            Err(AkitaError::InvalidInput(message)) if message.contains("encoded byte count")
-        ));
-        assert!(matches!(
-            extension_atom_count::<jolt_field::FpExt4<F>, F>(usize::MAX),
-            Err(AkitaError::InvalidInput(message)) if message.contains("extension atom count")
-        ));
-    }
 
     struct DenseInstance {
         evaluations: Vec<F>,
@@ -965,8 +804,12 @@ mod tests {
         let instance = OneRoundEq::new(F::zero(), coefficients);
         let challenge = F::from_u64(11);
         let mut proof_state = new_prover_channel(b"native-eq-forgery", b"fixture");
-        send_extension::<F, F>(&mut proof_state, instance.claim());
-        send_extension::<F, F>(&mut proof_state, F::from_u64(101));
+        send_field_group(
+            &mut proof_state,
+            ProtocolSiteId::default(),
+            &[instance.claim(), F::from_u64(101)],
+        )
+        .unwrap();
         let proof = proof_state.narg_string().to_vec();
         let mut verifier = FixedVerifierChannel {
             state: new_verifier_channel(b"native-eq-forgery", b"fixture", &proof),
@@ -1118,17 +961,17 @@ mod tests {
         ];
         #[cfg(feature = "transcript-blake2b")]
         let expected = [
-            "40000000000000000000000000000000c28cd94b82c202280bd2ca555c08f8643b42dd8d339a9621587b81fb2b610020c1e4f1fba91f04f79ac55445dafdd849",
-            "a062f692a0b000ca82b4721517023e996e1efc993c4e65a3940427743f17617b3ed0400da4348eb9fb01e511513376ae0eedc508bfddd8a3f019d2f3a0dc115a",
-            "48000000000000000000000000000000922b459615c1107ac260385f78350c56",
-            "6f3dcabc3c36c630c0f3dca4303fedf2cd792a3f5aeb326e75f2ec92506a402a",
+            "400000000000000000000000000000008a2f259138fa1138dee3820b3993768b48e0628733ca36cd20680bf15b5c2bf9aae83d42b55bcc7052fade7fa08f1a27",
+            "524b49248e7e048ef7b8e042cea4dda2dd11b4cf45734b6c8c7dd2daaf04dc6c991da3dfa63d8c829051d6a15c38a16a34c8e77bea195dfc39357d89dac1a9fa",
+            "48000000000000000000000000000000442390830f92c29dce926ae6d90a7e64",
+            "84294680ed1e8533fc1ecd4cae8a9391cd54023e1862cedc2f5ec4be8d7bb743",
         ];
         #[cfg(feature = "transcript-keccak")]
         let expected = [
-            "400000000000000000000000000000003a6836c274e947b19930128b25a8393cd92234012b27dc2a26c8293abf837c79f821963e4c882436612555ae3439eb33",
-            "7e998d305dfa516c268cc462096a0e8fb03b06289c0c8e54f62b281debebd71678037faf2d9d2d8853105044d53dcb9d6d82e5e466bf8c1a077464bd68a7c38d",
-            "48000000000000000000000000000000f9c23a43c4629e9cb4169465cdb5e95e",
-            "2e983f4085cce49521295aa599e6d6a4f24cc27b2c49f0ec4d62351b3fb0cd02",
+            "400000000000000000000000000000000fd219508b46a5dc723de9c860b5fbb09caf885693f764d451c7312aa3492839ce0686aca600deea14c1e49a2dcb7e52",
+            "387406d4a25129b75c4f3a3258ed3e6c3ff19e6b13958419264a6fb1bc9b2a58c16b504037e12a005bf7720197a97a0df329ff36930a06bd43db78e95b05db1c",
+            "48000000000000000000000000000000bec7f4f4d7a55788168507f92710e56c",
+            "66e74d759a9690459f31d9263e013992c5735648352eca094e8ef35465eac87e",
         ];
         assert_eq!(actual, expected);
     }

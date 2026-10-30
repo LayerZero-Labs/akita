@@ -7,7 +7,7 @@ use akita_transcript::nonce_max_bytes;
 
 mod challenge_order;
 pub use akita_transcript::{
-    GRINDING_CHECK_MAX_BYTES, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
+    GRINDING_CHECK_BYTES, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
     MAX_GRINDING_BITS,
 };
 pub use challenge_order::ChallengeFieldOrder;
@@ -20,7 +20,7 @@ pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 /// Exclusive upper bound for the existing fold-response search.
 pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
-pub const GRINDING_ENCODING_VERSION: u16 = 4;
+pub const GRINDING_ENCODING_VERSION: u16 = 5;
 /// Query catalog and loss-policy revision.
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 5;
 /// Fold-challenge oracle revision: one decoded message per group.
@@ -40,7 +40,7 @@ fn active_grinding_policy_bytes() -> [u8; GRINDING_POLICY_BYTES] {
     out[2..4].copy_from_slice(&TRANSCRIPT_SECURITY_BITS.to_le_bytes());
     out[4] = GRINDING_NONCE_SLACK_BITS;
     out[5] = MAX_GRINDING_BITS;
-    out[6] = GRINDING_CHECK_MAX_BYTES;
+    out[6] = GRINDING_CHECK_BYTES;
     out[7] = GRINDING_LITTLE_ENDIAN_BIT_ORDER;
     out[8] = FOLD_RESPONSE_NONCE_BITS;
     out[9..13].copy_from_slice(&FOLD_RESPONSE_ATTEMPTS.to_le_bytes());
@@ -890,7 +890,7 @@ impl GrindingPlan {
         Ok(out)
     }
 
-    /// Blake2b-256 digest bound into the instance descriptor.
+    /// Digest bound into the instance descriptor.
     pub fn digest(&self) -> Result<[u8; 32], AkitaError> {
         Ok(digest_descriptor_bytes(&self.canonical_bytes()?))
     }

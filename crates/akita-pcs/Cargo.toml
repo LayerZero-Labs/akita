@@ -53,6 +53,8 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
+# Keccak-256 instead of SHA3-256 digests; see `akita-transcript`.
+keccak256-digests = ["akita-transcript/keccak256-digests"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -102,7 +104,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9470792dc0112b6d606d9351ebbe455dd58407d3", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -117,7 +119,7 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9470792dc0112b6d606d9351ebbe455dd58407d3", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [

@@ -56,8 +56,8 @@ fn atom_encodings_match_frozen_bytes() {
     );
 
     let mut prover = new_prover_channel(b"atom-pins", b"fixture");
-    send_field(&mut prover, small);
-    send_extension::<F, E>(&mut prover, ext);
+    send_atoms(&mut prover, [FieldAtom::new(small)]);
+    send_atoms(&mut prover, [ExtensionAtom::<F, E>::new(ext)]);
     assert_eq!(
         hex(prover.narg_string()),
         "efcdab89010000000403020198badcfe07000000"

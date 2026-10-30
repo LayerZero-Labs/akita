@@ -149,8 +149,13 @@ fn catalog_frame_rejects_missing_truncated_and_tampered_artifacts() {
     while !tampered[digest_start].is_ascii_digit() {
         digest_start += 1;
     }
+    // Change the last digit of the first byte, downward, so the value stays a
+    // valid u8 and only the policy check can reject it.
+    while tampered[digest_start + 1].is_ascii_digit() {
+        digest_start += 1;
+    }
     let digit = tampered[digest_start];
-    tampered[digest_start] = if digit == b'9' { b'8' } else { digit + 1 };
+    tampered[digest_start] = if digit == b'0' { b'1' } else { digit - 1 };
     let tampered = split_schedule_catalog::<TestCfg>(
         &tampered,
         akita_params::ChunkedWitnessCfg::default_non_chunked(),

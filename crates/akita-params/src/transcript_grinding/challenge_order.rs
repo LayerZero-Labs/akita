@@ -105,7 +105,8 @@ impl ChallengeFieldOrder {
             u32::from(TRANSCRIPT_SECURITY_BITS),
         )
         .map_err(|error| AkitaError::InvalidSetup(format!("grinding target: {error}")))?;
-        // Jolt caps the target at its MAX_POW_BITS, which equals MAX_GRINDING_BITS.
+        // Jolt caps the target at its MAX_POW_BITS, which equals
+        // MAX_GRINDING_BITS (57), so the conversion to `u8` never fails.
         u8::try_from(bits).map_err(|_| {
             AkitaError::InvalidSetup(format!(
                 "grinding target exceeds supported maximum {MAX_GRINDING_BITS}"

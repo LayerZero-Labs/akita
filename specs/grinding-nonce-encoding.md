@@ -539,8 +539,10 @@ continuation bit | seven value bits
 - High bit `1`: another byte follows.
 - High bit `0`: this is the final byte.
 
-Akita uses unsigned LEB128 for `u32` nonces. It does not use signed LEB128 or
-ZigZag encoding.
+Akita uses unsigned LEB128 for its nonces: `u32` for the fold-response nonce
+that this section's decoder reads, and `u64` for the proof-of-work nonce that
+Jolt's `grind` sends, at most ten bytes at the 57-bit cap. It does not use
+signed LEB128 or ZigZag encoding.
 
 | Integer | Canonical unsigned LEB128 | Bytes |
 | ---: | --- | ---: |
