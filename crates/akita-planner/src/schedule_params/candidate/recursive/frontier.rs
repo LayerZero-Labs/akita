@@ -81,10 +81,13 @@ pub(super) fn derive_fold_candidate_frontier(
                         .insert(mode, (score, r, candidate.clone(), next_witness_len));
                 }
                 if next_witness_len < request.current_witness_len
-                    && !candidates.contains(&(candidate.clone(), next_witness_len))
+                    && !candidates
+                        .iter()
+                        .any(|(existing, next)| existing == &candidate && *next == next_witness_len)
                 {
                     candidates.push((candidate, next_witness_len));
                 }
+                Ok(())
             },
         )?;
         if request.source_moment.is_none() {
@@ -104,15 +107,13 @@ pub(super) fn derive_fold_candidate_frontier(
         } else {
             &best_modeled
         };
-        for best in l2_seeds {
-            append_selective_l2_candidates(
-                &mut candidates,
-                Some(best),
-                &request,
-                &search,
-                SuccessorPolicy::RequireContraction,
-            )?;
-        }
+        append_selective_l2_candidates(
+            &mut candidates,
+            l2_seeds,
+            &request,
+            &search,
+            SuccessorPolicy::RequireContraction,
+        )?;
     }
     Ok(candidates)
 }

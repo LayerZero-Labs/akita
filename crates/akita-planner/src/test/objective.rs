@@ -192,7 +192,9 @@ fn complete_candidate(
     setup_field_elements: usize,
     output_witness_len: usize,
 ) -> super::ScheduleCandidate {
-    let challenge = akita_challenges::SparseChallengeConfig::pm1_only(3);
+    // The terminal fold must be priceable, so draw from the production family.
+    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+        .expect("production d = 64 family");
     let mut params = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
         64,
@@ -215,7 +217,7 @@ fn complete_candidate(
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            4_095,
+            1_048_575,
             inner.ring_dimension(),
         );
     assert_eq!(params.open().digits.log_basis, 3);
@@ -225,6 +227,8 @@ fn complete_candidate(
     let response_shape = akita_params::TerminalResponseShape::derive(&terminal_params, linf_cap)
         .expect("terminal response shape");
     let terminal = akita_schedules::planner_support::CandidateTerminalResponse {
+        fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)
+            .expect("terminal fold cost"),
         params: terminal_params,
         sparse_challenge_config: challenge,
         input_witness_len: output_witness_len,

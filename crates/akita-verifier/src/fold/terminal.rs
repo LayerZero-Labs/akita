@@ -8,6 +8,7 @@ use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
 use akita_params::{OpeningClaimsLayout, TerminalFoldParams};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{prepare_opening_point, FpExtEncoding, RingVec};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
@@ -21,7 +22,12 @@ pub(super) fn verify_terminal_suffix<F, E>(
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     if current_state.witness_len != scheduled.input_witness_len
         || current_state.setup_prefix_opening.is_some()
@@ -40,11 +46,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields_verifier(
-        grinding.state_mut(),
-        akita_types::FoldSite::TerminalTFields { level }.id()?,
-        current_state.witness.coeffs(),
-    )?;
+    // `t` was absorbed when it was received as the next-witness inner state.
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
@@ -111,28 +113,11 @@ where
     )
     .map(RingVec::from_coeffs)?;
     grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
-    let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
-        Some(
-            akita_challenges::selective_l2_operator_norm_rejection(
-                scheduled.d_a(),
-                &scheduled.fold_challenge_config,
-            )
-            .ok_or(AkitaError::InvalidProof)?,
-        )
-    } else {
-        None
-    };
+    let family = scheduled.fold_challenge_family()?;
     let challenges = {
         let mut draw = akita_challenges::VerifierFoldDraw::new(grinding.state_mut(), level, 0);
-        draw.draw_folding_challenges_with_rejection(
-            akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
-            scheduled.d_a(),
-            0,
-            scheduled.blocks.live_blocks,
-            1,
-            &scheduled.fold_challenge_config,
-            operator_rejection,
-        )?
+        draw.draw_fold_challenges(&family, 0, scheduled.blocks.live_blocks, 1)?
+            .ok_or(AkitaError::InvalidProof)?
     };
     grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks)?;
     let z_payload = akita_transcript::receive_bounded_bytes(

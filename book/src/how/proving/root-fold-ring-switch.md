@@ -220,9 +220,10 @@ an EOR payload nor a packing terminal.
 
 This chapter documents the implemented relation and schedule boundary. The
 active design record gives the planner and algebraic soundness requirements.
-Indexed coordinates supply fork structure for the accepting-tree extractor;
-the [indexed fold bound](../../../../specs/transcript-grinding.md#indexed-address-fold-bound)
-charges every adversarially touched or verifier-completed coordinate stream.
+Each group's challenges come from one transcript message with one slot per
+pair, which supplies the fork structure for the accepting-tree extractor; the
+[fold message bound](../../../../specs/transcript-grinding.md#fold-message-bound)
+prices each fold with one proof of work.
 
 ## The root fold
 

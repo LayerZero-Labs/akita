@@ -1,4 +1,5 @@
 use super::*;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
 /// Transcript-derived continuation; no backend-private storage.
@@ -132,6 +133,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -182,17 +184,9 @@ where
             "terminal commitment material disagrees with the terminal plan".into(),
         ));
     }
-    let terminal_message = crate::backend::TerminalCommitmentMaterialKernel::terminal_message(
-        backend,
-        &commitment_material,
-    )?;
+    // `t` was absorbed when it was sent as the next-witness inner state.
     let fold_level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    akita_transcript::public_fields_prover(
-        grinding.state_mut(),
-        akita_types::FoldSite::TerminalTFields { level: fold_level }.id()?,
-        terminal_message.fields(),
-    )?;
     let t_state = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
         backend,
         commitment_material,
@@ -323,7 +317,6 @@ where
                     grinding,
                     fold_level,
                     params,
-                    &scheduled.fold_challenge_config,
                     witness_source,
                     &scheduled.response_shape,
                 )?;
@@ -378,6 +371,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -488,19 +482,7 @@ where
         )?);
     }
     materials.push(witness_material);
-    akita_transcript::public_fields_prover(
-        grinding.state_mut(),
-        akita_types::FoldSite::WitnessCommitment {
-            level: fold_level,
-            ring_dimension: geometry.transcript_ring_dimension(),
-        }
-        .id()?,
-        claims
-            .opening_claims()
-            .group_commitment(witness_index)?
-            .rows()
-            .coeffs(),
-    )?;
+    // The outer payload was absorbed when it was sent as the next witness.
     let prepared = prepare_fold::<F, E, B>(
         backend,
         claims,
@@ -553,9 +535,9 @@ mod tests {
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
-        let channel = new_prover_channel(b"test/suffix-shared-trace-target", b"test").unwrap();
+        let mut channel = new_prover_channel(b"test/suffix-shared-trace-target");
         let plan = evaluation_batch_plan();
-        let mut grinding = akita_types::ProverGrinding::new(channel, &plan);
+        let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
         let err = match prepare_evaluation_trace_claim::<TestF, TestF>(
             &reduction,
             &openings,
@@ -584,10 +566,9 @@ mod tests {
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("two-claim opening batch");
-        let channel =
-            new_prover_channel(b"test/suffix-independent-late-eor-batch", b"test").unwrap();
+        let mut channel = new_prover_channel(b"test/suffix-independent-late-eor-batch");
         let plan = evaluation_batch_plan();
-        let mut grinding = akita_types::ProverGrinding::new(channel, &plan);
+        let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
         let result = prepare_evaluation_trace_claim::<TestF, TestF>(
             &reduction,
             &openings,

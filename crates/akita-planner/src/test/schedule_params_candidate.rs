@@ -224,7 +224,7 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
+fn response_model_keeps_one_split_per_fold_work_size() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
@@ -252,37 +252,33 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         FoldCandidatePolicy::Best,
     )
     .expect("modeled late-fold candidates");
-    let linf = candidates
-        .iter()
-        .filter(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::Linf(_)
-            )
-        })
-        .count();
-    let l2 = candidates
-        .iter()
-        .filter(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-        })
-        .count();
-    assert_eq!(linf, 1);
-    assert!(l2 > 0);
-    let l2_block_index_bits = candidates
-        .iter()
-        .filter_map(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-            .then_some(candidate.block_index_bits())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(l2_block_index_bits.len(), 1);
+    // Per route, the best split is kept, then each worse split only when its
+    // fold proof of work is strictly smaller.
+    for l2 in [false, true] {
+        let nonce_bits = candidates
+            .iter()
+            .filter(|(candidate, _)| {
+                matches!(
+                    candidate.inner().matrix.security_route(),
+                    InnerCommitSecurityRoute::L2 { .. }
+                ) == l2
+            })
+            .map(|(candidate, _)| {
+                let layout = candidate
+                    .opening_layout_for_final_group(candidate.group())
+                    .unwrap();
+                akita_params::fold_challenge_runs(0, candidate, &layout)
+                    .unwrap()
+                    .0
+                    .nonce_bits()
+            })
+            .collect::<Vec<_>>();
+        assert!(!nonce_bits.is_empty(), "l2 = {l2}");
+        assert!(
+            nonce_bits.windows(2).all(|pair| pair[0] > pair[1]),
+            "l2 = {l2}: {nonce_bits:?}"
+        );
+    }
 }
 
 #[cfg(feature = "catalog-gen")]

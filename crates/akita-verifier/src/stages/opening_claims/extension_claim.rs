@@ -5,6 +5,7 @@ use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{
     canonical_extension_opening_reduction_shape,
@@ -73,7 +74,7 @@ struct GrindingEorVerifierStream<'a, 'proof, 'plan> {
 impl<F, E> EorVerifierStream<F, E> for GrindingEorVerifierStream<'_, '_, '_>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     fn prefix(
         &mut self,
@@ -82,7 +83,8 @@ where
         partial_count: usize,
         split_bits: usize,
     ) -> Result<EorPrefix<E>, AkitaError> {
-        let partials = akita_transcript::extension_slots::<E>(partial_count)?;
+        let partials =
+            akita_transcript::extension_slots::<E, _>(self.grinding.state_mut(), partial_count)?;
         let prefix = akita_types::eor_prefix::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -124,8 +126,10 @@ where
     }
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
-        let mut final_claims =
-            akita_transcript::extension_slots::<E>(opening_batch.num_total_polynomials())?;
+        let mut final_claims = akita_transcript::extension_slots::<E, _>(
+            self.grinding.state_mut(),
+            opening_batch.num_total_polynomials(),
+        )?;
         akita_types::eor_final_claims::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -187,7 +191,7 @@ fn verify_eor_sumcheck<F, E>(
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     if !requires_reduction {
         return Ok(None);
@@ -216,7 +220,7 @@ pub(crate) fn verify_extension_claim_suffix_prefix<F, E>(
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
     let replay = verify_eor_sumcheck::<F, E>(
         group_points,
@@ -293,7 +297,7 @@ pub(crate) fn verify_extension_claim_terminal_suffix<F, E>(
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
     let replay = verify_eor_sumcheck::<F, E>(
         &[opening_point],
@@ -542,8 +546,8 @@ mod tests {
             akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
-        let state = new_prover_channel(b"native-eor-verifier", b"fixture").unwrap();
-        let mut prover = akita_types::ProverGrinding::new(state, &plan);
+        let mut state = new_prover_channel(b"native-eor-verifier");
+        let mut prover = akita_types::ProverGrinding::new(&mut state, &plan);
         akita_types::eor_prefix::<F, E, _>(
             &mut prover,
             &opening_batch,
@@ -576,10 +580,11 @@ mod tests {
             level,
         )
         .unwrap();
-        let proof = prover.finish().unwrap();
+        prover.finish().unwrap();
+        let proof = state.narg_string().to_vec();
 
-        let state = new_verifier_channel(b"native-eor-verifier", b"fixture", &proof).unwrap();
-        let mut verifier = akita_types::VerifierGrinding::new(state, &plan);
+        let mut state = new_verifier_channel(b"native-eor-verifier", &proof);
+        let mut verifier = akita_types::VerifierGrinding::new(&mut state, &plan);
         let replay = verify_eor_sumcheck::<F, E>(
             &group_points,
             &openings,
@@ -592,6 +597,6 @@ mod tests {
         .unwrap();
         assert_eq!(replay.rho.len(), rounds);
         assert_eq!(replay.final_claims, vec![E::zero()]);
-        verifier.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

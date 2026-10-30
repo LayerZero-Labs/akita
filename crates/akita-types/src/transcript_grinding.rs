@@ -3,6 +3,7 @@
 #[path = "transcript_grinding/replay.rs"]
 mod replay;
 pub use replay::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
-    ProverGrinding, VerifierGrinding,
+    GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance, VerifierGrinding,
 };
+#[cfg(feature = "prover")]
+pub use replay::{GrindingSumcheckProver, ProverGrinding};

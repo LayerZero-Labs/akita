@@ -12,6 +12,7 @@ use akita_algebra::row_batch::WeightedRowBatch;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SETUP_SUMCHECK_DEGREE};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 #[cfg(test)]
 use akita_types::AkitaExpandedSetup;
 use akita_types::{setup_prefix_coverage_eval_len, AkitaVerifierSetup, PreparedRelationAddress};
@@ -81,7 +82,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     ) -> Result<SetupSumcheckReplay<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
-        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F> + ChallengeCodec,
     {
         let geometry = self.setup_index_weight.projection_geometry();
         let ring_d = geometry.base_ring_dim();
@@ -143,7 +144,7 @@ pub(crate) fn verify_stage3<F, E>(
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+    E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F> + ChallengeCodec,
 {
     let setup_coefficient_bits = rs
         .relation_address_geometry

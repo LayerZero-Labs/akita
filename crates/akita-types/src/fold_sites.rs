@@ -17,7 +17,7 @@ use akita_transcript::{
 /// [`Self::id`], so callers never narrow them just to fill a site field.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FoldSite {
-    /// Root commitment rows for one opening group.
+    /// Root commitment digest for one opening group.
     RootCommitment { group: usize, ring_dimension: usize },
     /// Root opening point for one opening group.
     RootPoint { group: usize },
@@ -25,8 +25,6 @@ pub enum FoldSite {
     GroupPoint { level: u32, group: usize },
     /// Scalar openings bound before a non-terminal fold's relation.
     Openings { level: u32 },
-    /// Committed witness rows bound before the terminal fold.
-    WitnessCommitment { level: u32, ring_dimension: usize },
     /// Terminal scalar opening bound when no extension reduction runs.
     TerminalOpening { level: u32 },
     /// Terminal protocol point.
@@ -39,8 +37,6 @@ pub enum FoldSite {
     NextWitnessInnerState { level: u32 },
     /// Terminal `e` fields.
     TerminalEFields { level: u32 },
-    /// Terminal public `t` fields.
-    TerminalTFields { level: u32 },
     /// Terminal `z` response payload.
     TerminalZPayload { level: u32 },
 }
@@ -77,13 +73,6 @@ impl FoldSite {
                 ..site(SITE_FAMILY_FOLD_BINDING, level, 1)
             },
             Self::Openings { level } => site(SITE_FAMILY_FOLD_BINDING, level, 2),
-            Self::WitnessCommitment {
-                level,
-                ring_dimension,
-            } => ProtocolSiteId {
-                detail: usize_to_u32(ring_dimension, "fold site ring dimension")?,
-                ..site(SITE_FAMILY_FOLD_BINDING, level, 3)
-            },
             Self::TerminalOpening { level } => site(SITE_FAMILY_FOLD_BINDING, level, 4),
             Self::TerminalPoint { level } => site(SITE_FAMILY_FOLD_BINDING, level, 5),
             Self::OpeningPayload {
@@ -96,7 +85,6 @@ impl FoldSite {
             Self::NextWitnessPayload { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 1),
             Self::NextWitnessInnerState { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 2),
             Self::TerminalEFields { level } => site(SITE_FAMILY_TERMINAL, level, 1),
-            Self::TerminalTFields { level } => site(SITE_FAMILY_TERMINAL, level, 2),
             Self::TerminalZPayload { level } => ProtocolSiteId {
                 round: 3,
                 ..site(SITE_FAMILY_TERMINAL, level, 0)
@@ -133,10 +121,6 @@ mod tests {
         for site in [
             FoldSite::RootCommitment {
                 group: 0,
-                ring_dimension: too_large,
-            },
-            FoldSite::WitnessCommitment {
-                level: 1,
                 ring_dimension: too_large,
             },
             FoldSite::OpeningPayload {

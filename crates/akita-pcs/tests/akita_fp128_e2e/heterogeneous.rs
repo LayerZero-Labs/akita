@@ -89,8 +89,8 @@ fn heterogeneous_group_types() {
             .expect("dense precommit");
 
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![
-            onehot_pre_commitment.profile,
-            dense_commitment.profile,
+            *onehot_pre_commitment.profile(),
+            *dense_commitment.profile(),
         ])
         .expect("nonempty precommitted groups");
         let akita_cpu_backend::CommitOutput {
@@ -263,7 +263,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         // full-width decomposition at the same basis. The independently planned
         // full-width family may choose another basis, so comparing its raw digit
         // count would not compare like with like.
-        let bounded_digits = bounded_commitment.profile.inner.digits;
+        let bounded_digits = bounded_commitment.profile().inner.digits;
         let full_width_digits_at_bounded_basis =
             akita_params::sis::compute_num_digits_field_width(128, bounded_digits.log_basis);
         assert!(
@@ -272,7 +272,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         );
 
         let precommitteds =
-            PrecommittedGroupProfiles::from_profiles(vec![bounded_commitment.profile])
+            PrecommittedGroupProfiles::from_profiles(vec![*bounded_commitment.profile()])
                 .expect("nonempty precommitted groups");
         let final_polys = [final_onehot.clone()];
         let akita_cpu_backend::CommitOutput {
@@ -335,7 +335,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         assert_eq!(schedule.root.params.precommitted_groups().len(), 1);
         assert_eq!(
             precommitted.profile.inner.digits.num_digits,
-            bounded_commitment.profile.inner.digits.num_digits,
+            bounded_commitment.profile().inner.digits.num_digits,
             "the resolved row must carry the bounded producer's own digit depth"
         );
         // The root itself is planned at the one-hot bound, so the two groups

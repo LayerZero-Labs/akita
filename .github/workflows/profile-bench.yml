@@ -202,12 +202,19 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bench-bins"
           features="parallel,$AKITA_BENCH_PROFILE_FEATURE"
           fallback_features="parallel,profile-ci"
+          # Build the merge base with its own default sponge. Older revisions turn
+          # on that default through akita-sis-estimator, so naming a different
+          # sponge there enables both.
+          for backend in transcript-keccak transcript-blake2b; do
+            if python3 scripts/cargo_feature_exists.py --root "$RUNNER_TEMP/bench-base" \
+                --default akita-pcs "$backend"; then
+              features="$features,$backend"
+              fallback_features="$fallback_features,$backend"
+              break
+            fi
+          done
           (
             cd "$RUNNER_TEMP/bench-base" &&
-            if python3 scripts/cargo_feature_exists.py akita-pcs transcript-blake2b; then
-              features="$features,transcript-blake2b"
-              fallback_features="$fallback_features,transcript-blake2b"
-            fi
             if python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROFILE_FEATURE"; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
@@ -246,7 +253,7 @@ jobs:
         env:
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
-          features="parallel,$AKITA_BENCH_PROFILE_FEATURE,transcript-blake2b"
+          features="parallel,$AKITA_BENCH_PROFILE_FEATURE,transcript-keccak"
           cargo build --release --quiet --example profile \
             --no-default-features --features "$features"
 

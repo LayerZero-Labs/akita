@@ -5,9 +5,9 @@ fn full_capacity_prices_exact_loss_bits() {
     let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     for (loss, expected) in [(1, 0), (2, 1), (3, 2), (4, 2), (5, 3), (u64::MAX, 64)] {
         let actual = if expected > u32::from(MAX_GRINDING_BITS) {
-            grind_bits_for_loss(loss, order).expect_err("oversized target")
+            order.grind_bits(loss).expect_err("oversized target")
         } else {
-            let actual = grind_bits_for_loss(loss, order).expect("supported target");
+            let actual = order.grind_bits(loss).expect("supported target");
             assert_eq!(u32::from(actual), expected);
             continue;
         };
@@ -30,7 +30,7 @@ fn full_capacity_security_inequality_holds_for_every_supported_target() {
     ];
     let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     for loss in losses {
-        let grind = grind_bits_for_loss(loss, order).expect("supported loss");
+        let grind = order.grind_bits(loss).expect("supported loss");
         assert!(u128::from(loss) <= (1u128 << grind));
     }
 }
@@ -52,7 +52,9 @@ fn exact_pseudo_mersenne_orders_meet_the_security_bound_with_minimal_bits() {
                 field_modulus,
             )
             .expect("valid exact field order");
-            let bits = grind_bits_for_loss(loss, challenge_order).expect("supported exact price");
+            let bits = challenge_order
+                .grind_bits(loss)
+                .expect("supported exact price");
             assert_eq!(
                 bits, expected_bits,
                 "loss={loss}, degree={extension_degree}"
@@ -98,20 +100,31 @@ fn exact_pseudo_mersenne_orders_meet_the_security_bound_with_minimal_bits() {
 fn exact_orders_above_the_comparison_width_require_no_small_loss_grinding() {
     const FP128_MODULUS: u128 = 340_282_366_920_938_463_463_374_607_427_473_266_697;
     let quadratic = ChallengeFieldOrder::from_field(128, 2, FP128_MODULUS).unwrap();
-    assert_eq!(grind_bits_for_loss(2, quadratic).unwrap(), 0);
-    assert_eq!(grind_bits_for_loss(u64::MAX, quadratic).unwrap(), 0);
+    assert_eq!(quadratic.grind_bits(2).unwrap(), 0);
+    assert_eq!(quadratic.grind_bits(u64::MAX).unwrap(), 0);
 
     let quartic = ChallengeFieldOrder::from_field(128, 4, FP128_MODULUS).unwrap();
-    assert_eq!(grind_bits_for_loss(u64::MAX, quartic).unwrap(), 0);
+    assert_eq!(quartic.grind_bits(u64::MAX).unwrap(), 0);
 }
 
 #[test]
 fn nonce_slack_provisions_exactly_128_expected_trials() {
+    // At 57 bits the nonce space is all of `u64`, so count it in `u128`.
+    assert_eq!(
+        u32::from(MAX_GRINDING_BITS + GRINDING_NONCE_SLACK_BITS),
+        u64::BITS
+    );
     for grind in 1..=MAX_GRINDING_BITS {
         let nonce_bits = grind + GRINDING_NONCE_SLACK_BITS;
-        assert_eq!((1u64 << nonce_bits) / (1u64 << grind), 128);
-        let failure = (1.0 - 2f64.powi(-i32::from(grind))).powf(2f64.powi(i32::from(nonce_bits)));
-        assert!(failure <= (-128f64).exp());
+        assert_eq!((1u128 << nonce_bits) / (1u128 << grind), 128);
+        // Exhaustion probability `(1 - 2^-g)^(2^(g+7))`, compared in the log
+        // domain: above 53 bits `1 - 2^-g` rounds to 1.0, but `ln_1p` keeps
+        // `ln(1 - 2^-g)` accurate, and scaling by a power of two is exact.
+        let ln_failure = 2f64.powi(i32::from(nonce_bits)) * (-2f64.powi(-i32::from(grind))).ln_1p();
+        assert!(
+            ln_failure <= -128.0,
+            "grind={grind}, ln_failure={ln_failure}"
+        );
     }
 }
 
@@ -174,6 +187,7 @@ fn plan_encoding_covers_every_discriminator() {
         })
         .collect::<Vec<_>>();
     runs.push(GrindingRun::fold_response(2));
+    runs.push(GrindingRun::fold_challenge_work(2, 3, 128).unwrap());
     runs.push(GrindingRun::fold_challenge_group(2, 3, 4).unwrap());
     let plan = GrindingPlan::new(
         runs,
@@ -182,13 +196,13 @@ fn plan_encoding_covers_every_discriminator() {
     .unwrap();
     let bytes = plan.canonical_bytes().unwrap();
     assert!(bytes.starts_with(GRINDING_PLAN_DOMAIN));
-    assert_eq!(plan.expanded_query_count(), 23);
-    assert_eq!(plan.total_nonce_bits(), 17 * 9 + 12);
+    assert_eq!(plan.expanded_query_count(), 24);
+    assert_eq!(plan.total_nonce_bits(), 18 * 9 + 12);
     assert_eq!(
         plan.digest().unwrap(),
         [
-            23, 236, 97, 122, 19, 64, 167, 147, 169, 143, 37, 147, 216, 175, 71, 42, 8, 224, 38,
-            33, 26, 236, 47, 127, 109, 150, 186, 198, 151, 118, 193, 12,
+            221, 22, 158, 189, 155, 93, 120, 42, 5, 41, 246, 165, 27, 108, 42, 131, 33, 24, 42,
+            117, 186, 242, 72, 28, 68, 63, 194, 27, 30, 155, 183, 104
         ]
     );
 }
@@ -207,7 +221,7 @@ fn ring_switch_loss_uses_the_native_inner_ring_dimension() {
         ] {
             let loss = ring_switch_alpha_loss_factor(method, inner_dimension).unwrap();
             assert_eq!(loss, expected_loss);
-            assert_eq!(grind_bits_for_loss(loss, order).unwrap(), expected_bits);
+            assert_eq!(order.grind_bits(loss).unwrap(), expected_bits);
             assert!(ring_switch_alpha_loss_factor(method, 0).is_err());
             assert!(ring_switch_alpha_loss_factor(method, usize::MAX).is_err());
         }

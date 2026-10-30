@@ -23,7 +23,7 @@ akita-transcript = { git = "https://github.com/LayerZero-Labs/akita", rev = "<co
 akita-serialization = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
 ```
 
-The default `akita-verifier` features enable the Blake2b transcript backend.
+The default `akita-verifier` features enable the Keccak transcript backend.
 Schedule rows are external data, not features. The host loads approved artifact
 bytes, constructs a `TrustedScheduleCatalog<Cfg>`, and supplies that config-bound
 catalog to every verification call.
@@ -160,7 +160,7 @@ Run these checks when changing a verifier integration:
 scripts/check-crate-deps.sh akita-verifier
 cargo clippy -p akita-verifier --all-targets --release \
   --no-default-features \
-  --features transcript-blake2b \
+  --features transcript-keccak \
   -- -D warnings
 ```
 

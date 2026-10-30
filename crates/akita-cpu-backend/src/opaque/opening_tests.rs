@@ -5,9 +5,8 @@ use akita_error::AkitaError;
 use akita_params::*;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
-use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::*;
-use jolt_field::{Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use std::sync::Arc;
 type F = Prime128OffsetA7F7;
@@ -15,7 +14,10 @@ type E = Ext2<F>;
 
 type CpuBackend = GenericCpuBackend<F, E>;
 
-fn backend() -> CpuBackend {
+fn backend<F, E>() -> GenericCpuBackend<F, E>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+{
     let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
         9,
         3,
@@ -24,13 +26,13 @@ fn backend() -> CpuBackend {
         },
     )
     .unwrap();
-    CpuBackend::new(setup.expanded.clone()).unwrap()
+    GenericCpuBackend::new(setup.expanded.clone()).unwrap()
 }
 struct TestProof {
     session: crate::opaque::CpuProofSessionHandle,
     context: ProofContext,
 }
-fn proof(backend: &CpuBackend) -> TestProof {
+fn proof<F: Field, E>(backend: &GenericCpuBackend<F, E>) -> TestProof {
     let lease = backend.owner().begin_test_scope(vec![3, 3]).unwrap();
     let context = ProofContext::new(
         backend.owner_id(),
@@ -43,8 +45,8 @@ fn proof(backend: &CpuBackend) -> TestProof {
         context,
     }
 }
-fn witness(
-    backend: &CpuBackend,
+fn witness<F: Field, E>(
+    backend: &GenericCpuBackend<F, E>,
     session: &crate::opaque::CpuProofSessionHandle,
     context: &ProofContext,
     digits: Vec<i8>,
@@ -56,148 +58,6 @@ fn witness(
     )
     .unwrap()
 }
-struct ProvedReduction {
-    partials: Vec<E>,
-    final_claims: Vec<E>,
-    rho: Vec<E>,
-}
-struct EorDriver<'a> {
-    backend: &'a CpuBackend,
-    session: &'a mut super::eor::CpuEorSession<E>,
-    claim: E,
-    rounds: usize,
-}
-impl SumcheckKernel<E> for EorDriver<'_> {
-    fn num_rounds(&self) -> usize {
-        self.rounds
-    }
-    fn degree_bound(&self) -> usize {
-        EXTENSION_OPENING_REDUCTION_DEGREE
-    }
-    fn input_claim(&self) -> E {
-        self.claim
-    }
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        claim: E,
-    ) -> Result<UnivariatePoly<E>, AkitaError> {
-        <CpuBackend as OpaqueEorKernel<F, E>>::eor_round(self.backend, self.session, round, claim)
-    }
-    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
-        <CpuBackend as OpaqueEorKernel<F, E>>::bind_eor_round(
-            self.backend,
-            self.session,
-            round,
-            challenge,
-        )
-    }
-    fn finish(&mut self) -> Result<(), AkitaError> {
-        Ok(())
-    }
-}
-fn prove_eor(
-    backend: &CpuBackend,
-    session: &crate::opaque::CpuProofSessionHandle,
-    context: &ProofContext,
-    layout: &OpeningClaimsLayout,
-    groups: &[EorGroupRequest<
-        '_,
-        E,
-        super::CommitmentHandle<F, E>,
-        crate::opaque::CpuWitnessHandle,
-    >],
-    grinding: &mut ProverGrinding<'_>,
-) -> Result<ProvedReduction, AkitaError> {
-    let prepared = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
-        backend, session, context, layout, groups,
-    )?;
-    let prefix = eor_prefix::<F, E, _>(
-        grinding,
-        layout,
-        &prepared.openings,
-        prepared.proof_partials.clone(),
-        1,
-    )?;
-    let (claim, mut session) = <CpuBackend as OpaqueEorKernel<F, E>>::begin_eor(
-        backend,
-        prepared.handle,
-        &prefix.eta,
-        &prefix.claim_coefficients,
-    )?;
-    let mut driver = EorDriver {
-        backend,
-        session: &mut session,
-        claim,
-        rounds: layout.max_num_vars() - 1,
-    };
-    let mut channel = GrindingSumcheckProver::<F, E>::new(
-        grinding,
-        SumcheckProtocol::ExtensionOpeningReduction,
-        1,
-        0,
-    );
-    let (rho, final_claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
-        &mut driver,
-        &mut channel,
-        akita_sumcheck::SumcheckShape::new(
-            layout.max_num_vars() - 1,
-            EXTENSION_OPENING_REDUCTION_DEGREE,
-        )?,
-        EOR_SUMCHECK_INVOCATION,
-    )?;
-    let mut final_claims = <CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(backend, session)?;
-    if final_claims
-        .iter()
-        .zip(&prefix.claim_coefficients)
-        .fold(E::zero(), |sum, (value, weight)| sum + *value * *weight)
-        != final_claim
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    eor_final_claims::<F, E, _>(grinding, layout, &mut final_claims, 1)?;
-    Ok(ProvedReduction {
-        partials: prepared.proof_partials,
-        final_claims,
-        rho,
-    })
-}
-fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_params::GrindingPlan {
-    let challenge_order = akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
-    let mut runs = vec![akita_params::GrindingRun::proof_of_work(
-        akita_params::GrindingSite::ExtensionOpeningPoint { level: 1 },
-        1,
-        challenge_order,
-    )
-    .unwrap()];
-    if batches_claims {
-        runs.push(
-            akita_params::GrindingRun::proof_of_work(
-                akita_params::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
-                1,
-                challenge_order,
-            )
-            .unwrap(),
-        );
-    }
-    for round in 0..rounds {
-        runs.push(
-            akita_params::GrindingRun::proof_of_work(
-                akita_params::GrindingSite::SumcheckRound {
-                    protocol: akita_params::SumcheckProtocol::ExtensionOpeningReduction,
-                    level: 1,
-                    stage: 0,
-                    round: u32::try_from(round).unwrap(),
-                },
-                1,
-                challenge_order,
-            )
-            .unwrap(),
-        );
-    }
-    akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
-}
-
 fn direct_eq_at_boolean<E: Field>(point: &[E], index: usize) -> E {
     point
         .iter()
@@ -265,336 +125,6 @@ where
         .collect()
 }
 
-#[test]
-fn recursive_extension_opening_reduction_pads_and_shares_challenges() {
-    let backend = backend();
-    let proof = proof(&backend);
-    let context = &proof.context;
-    let short = witness(&backend, &proof.session, &context.for_group(0), vec![1; 64]);
-    let mut digits = vec![0; 192];
-    digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
-    let long = witness(&backend, &proof.session, &context.for_group(1), digits);
-    let short_point = (0..6)
-        .map(|i| E::new(F::from_u64(i + 2), F::from_u64(i + 11)))
-        .collect::<Vec<_>>();
-    let long_point = (0..8)
-        .map(|i| E::new(F::from_u64(i + 3), F::from_u64(i + 17)))
-        .collect::<Vec<_>>();
-    let layout = OpeningClaimsLayout::from_groups(vec![
-        PolynomialGroupLayout::new(6, 1),
-        PolynomialGroupLayout::new(8, 1),
-    ])
-    .unwrap();
-    let groups = [
-        EorGroupRequest {
-            source: OpeningSource::Witness(&short),
-            point: &short_point,
-            ring_dimension: 64,
-        },
-        EorGroupRequest {
-            source: OpeningSource::Witness(&long),
-            point: &long_point,
-            ring_dimension: 64,
-        },
-    ];
-    let channel = new_prover_channel(b"test/aggregate-padding", b"test").unwrap();
-    let plan = eor_test_plan(7, true);
-    let mut grinding = ProverGrinding::new(channel, &plan);
-    let proved = prove_eor(
-        &backend,
-        &proof.session,
-        context,
-        &layout,
-        &groups,
-        &mut grinding,
-    )
-    .unwrap();
-    grinding.finish().unwrap();
-    assert_eq!(proved.partials.len(), 4);
-    assert_eq!(proved.final_claims.len(), 2);
-    assert_eq!(proved.rho.len(), 7);
-    backend.finish_scope(&proof.session).unwrap();
-}
-
-#[test]
-fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
-    std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(|| {
-            const D: usize = 128;
-            let mut params = CommittedGroupParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
-                D,
-                2,
-                1,
-                1,
-                1,
-                akita_challenges::SparseChallengeConfig::production_for_ring_dim(D).unwrap(),
-            )
-            // A setup prefix is committed at the full field width.
-            .with_decomp(
-                4,
-                4,
-                akita_params::sis::compute_num_digits_field_width(
-                    SisModulusProfileId::Q128OffsetA7F7.field_bits(),
-                    2,
-                ),
-                2,
-                2,
-            )
-            .unwrap();
-            let inner = &params.inner().matrix;
-            let inner_bound =
-                *akita_params::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
-                    .first()
-                    .expect("audited setup-prefix A bound");
-            params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
-                inner.security_policy(),
-                inner.sis_table_key().unwrap().table_digest,
-                inner.sis_modulus_profile(),
-                inner.output_rank(),
-                inner.input_width(),
-                inner_bound,
-                D,
-            );
-            let outer = &params.outer().matrix;
-            params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
-                outer.security_policy(),
-                outer.sis_table_key().table_digest,
-                outer.sis_modulus_profile(),
-                outer.output_rank(),
-                outer.input_width(),
-                3,
-                D,
-            );
-            let profile = GroupCommitPhaseParams::try_from_params(
-                PolynomialGroupLayout::singleton(9),
-                &params,
-            )
-            .unwrap();
-
-            let setup_evals = (0..512)
-                .map(|i| F::from_i64((i % 17) as i64 - 8))
-                .collect::<Vec<_>>();
-            let capacity = crate::commitment::CommitmentExecutionPlan::for_root(&profile)
-                .unwrap()
-                .max_setup_field_elements()
-                .unwrap()
-                .max(setup_evals.len());
-            let mut matrix = setup_evals.clone();
-            matrix.resize(capacity, F::zero());
-            let expanded = Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars: 9,
-                        max_num_batched_polys: 3,
-                        num_field_elements: capacity,
-                        setup_seed: sample_akita_setup_seed(),
-                    },
-                    FlatMatrix::from_flat_data(matrix),
-                ),
-            );
-            let backend = CpuBackend::new(expanded).unwrap();
-            let proof = proof(&backend);
-            let context = &proof.context;
-            let prefix = backend
-                .prepare_setup_prefix(&SetupPrefixSlotId {
-                    natural_len: 400,
-                    commitment_profile: profile,
-                })
-                .unwrap();
-            let long_digits = (0..512).map(|i| (i % 11) as i8 - 5).collect::<Vec<_>>();
-            let short_digits = (0..128).map(|i| (i % 7) as i8 - 3).collect::<Vec<_>>();
-            let long_evals = long_digits
-                .iter()
-                .copied()
-                .map(F::from_i8)
-                .collect::<Vec<_>>();
-            let short_evals = short_digits
-                .iter()
-                .copied()
-                .map(F::from_i8)
-                .collect::<Vec<_>>();
-            let long = witness(&backend, &proof.session, &context.for_group(1), long_digits)
-                .align_for_commitment_ring_dim(D)
-                .unwrap();
-            let short = witness(
-                &backend,
-                &proof.session,
-                &context.for_group(2),
-                short_digits,
-            )
-            .align_for_commitment_ring_dim(D)
-            .unwrap();
-            let long_point = (0..9)
-                .map(|i| E::new(F::from_u64(i + 2), F::from_u64(2 * i + 3)))
-                .collect::<Vec<_>>();
-            let short_point = (0..7)
-                .map(|i| E::new(F::from_u64(i + 5), F::from_u64(3 * i + 7)))
-                .collect::<Vec<_>>();
-            let layout = OpeningClaimsLayout::from_groups(vec![
-                PolynomialGroupLayout::new(9, 1),
-                PolynomialGroupLayout::new(9, 1),
-                PolynomialGroupLayout::new(7, 1),
-            ])
-            .unwrap();
-            let groups = [
-                EorGroupRequest {
-                    source: OpeningSource::Commitment(&prefix.commitment_handle),
-                    point: &long_point,
-                    ring_dimension: D,
-                },
-                EorGroupRequest {
-                    source: OpeningSource::Witness(&long),
-                    point: &long_point,
-                    ring_dimension: D,
-                },
-                EorGroupRequest {
-                    source: OpeningSource::Witness(&short),
-                    point: &short_point,
-                    ring_dimension: D,
-                },
-            ];
-            let channel = new_prover_channel(b"test/mixed-eor-dense-oracle", b"test").unwrap();
-            let plan = eor_test_plan(8, true);
-            let mut grinding = ProverGrinding::new(channel, &plan);
-            let proved = prove_eor(
-                &backend,
-                &proof.session,
-                context,
-                &layout,
-                &groups,
-                &mut grinding,
-            )
-            .unwrap();
-            let proof_bytes = grinding.finish().unwrap();
-            let tables = [
-                (&setup_evals, &long_point),
-                (&long_evals, &long_point),
-                (&short_evals, &short_point),
-            ];
-            let openings = tables
-                .iter()
-                .map(|(evals, point)| direct_lifted_mle::<F, E>(evals, point))
-                .collect::<Vec<_>>();
-            let partials = tables
-                .iter()
-                .flat_map(|(evals, point)| direct_column_partials::<F, E>(evals, point))
-                .collect::<Vec<_>>();
-            assert_eq!(proved.partials, partials);
-            let channel =
-                new_verifier_channel(b"test/mixed-eor-dense-oracle", b"test", &proof_bytes)
-                    .unwrap();
-            let mut replay = VerifierGrinding::new(channel, &plan);
-            let eor_prefix = eor_prefix::<F, E, _>(
-                &mut replay,
-                &layout,
-                &openings,
-                vec![E::zero(); partials.len()],
-                1,
-            )
-            .unwrap();
-            assert_eq!(eor_prefix.partials, partials);
-            let eta = eor_prefix.eta[0];
-            let coefficients = eor_prefix.claim_coefficients;
-            let terms = tables
-                .iter()
-                .map(|(evals, point)| direct_tensor_tables::<F, E>(evals, point, eta))
-                .collect::<Vec<_>>();
-            let input = terms.iter().zip(&coefficients).fold(
-                E::zero(),
-                |sum, ((witness, factor), coefficient)| {
-                    sum + *coefficient
-                        * witness
-                            .iter()
-                            .zip(factor)
-                            .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
-                },
-            );
-            let mut channel = GrindingSumcheckVerifier::<F, E>::new(
-                &mut replay,
-                SumcheckProtocol::ExtensionOpeningReduction,
-                1,
-                0,
-            );
-            let rounds = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-                &mut channel,
-                EOR_SUMCHECK_INVOCATION,
-                input,
-                akita_sumcheck::SumcheckShape::new(8, EXTENSION_OPENING_REDUCTION_DEGREE).unwrap(),
-            )
-            .unwrap();
-            let claim = rounds.output_claim;
-            let rho = rounds.challenges;
-            let mut final_claims = vec![E::zero(); layout.num_total_polynomials()];
-            eor_final_claims::<F, E, _>(&mut replay, &layout, &mut final_claims, 1).unwrap();
-            replay.finish().unwrap();
-            assert_eq!(rho, proved.rho);
-            let expected = terms
-                .iter()
-                .map(|(witness, factor)| {
-                    let vars = witness.len().trailing_zeros() as usize;
-                    let extra = rho[vars..]
-                        .iter()
-                        .fold(E::one(), |p, r| p * (E::one() - *r));
-                    akita_sumcheck::multilinear_eval(witness, &rho[..vars]).unwrap()
-                        * akita_sumcheck::multilinear_eval(factor, &rho[..vars]).unwrap()
-                        * extra
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(proved.final_claims, expected);
-            assert_eq!(final_claims, expected);
-            assert_eq!(
-                claim,
-                expected
-                    .iter()
-                    .zip(&coefficients)
-                    .fold(E::zero(), |sum, (v, c)| sum + *v * *c)
-            );
-            backend.finish_scope(&proof.session).unwrap();
-
-            // The same immutable committed prefix serves independent simultaneous proofs.
-            let shared_layout = OpeningClaimsLayout::new(9, 1).unwrap();
-            let run = |proof: TestProof| {
-                let TestProof { session, context } = proof;
-                let guard = ProofScope::admitted(&backend, session);
-                let requests = [EorGroupRequest {
-                    source: OpeningSource::Commitment(&prefix.commitment_handle),
-                    point: &long_point,
-                    ring_dimension: D,
-                }];
-                let channel =
-                    new_prover_channel(b"test/shared-commitment-scopes", b"test").unwrap();
-                let plan = eor_test_plan(8, false);
-                let mut grinding = ProverGrinding::new(channel, &plan);
-                let proved = prove_eor(
-                    &backend,
-                    guard.session(),
-                    &context,
-                    &shared_layout,
-                    &requests,
-                    &mut grinding,
-                )
-                .unwrap();
-                grinding.finish().unwrap();
-                guard.finish().unwrap();
-                (proved.partials, proved.final_claims, proved.rho)
-            };
-            let first_proof = super::opening_tests::proof(&backend);
-            let second_proof = super::opening_tests::proof(&backend);
-            let (first, second) = std::thread::scope(|threads| {
-                let first = threads.spawn(|| run(first_proof));
-                let second = threads.spawn(|| run(second_proof));
-                (first.join().unwrap(), second.join().unwrap())
-            });
-            assert_eq!(first, second);
-            // Completing both scopes does not consume the reusable commitment.
-            assert_eq!(first, run(super::opening_tests::proof(&backend)));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
 #[test]
 fn proof_schedule_from_layout_includes_entire_batch() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
@@ -837,4 +367,502 @@ fn witness_level_transition_requires_one_successor_commitment() {
         .is_err()
     );
     assert_eq!(witness.operation_binding().fold_level(), 1);
+}
+
+/// Tests that draw extension-field challenges through the transcript. Jolt's
+/// challenge codec needs a quadratic tower that is a field, which
+/// `Prime128OffsetA7F7` lacks, and the setup-prefix test also needs an SIS
+/// modulus profile for the execution field. On main only `Prime64Offset59`
+/// has both, so these tests run over it with the `Q64Offset59` profile.
+mod extension_challenges {
+    use super::*;
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
+    use jolt_field::Prime64Offset59;
+
+    type F = Prime64Offset59;
+    type E = Ext2<F>;
+    type CpuBackend = GenericCpuBackend<F, E>;
+
+    struct ProvedReduction {
+        partials: Vec<E>,
+        final_claims: Vec<E>,
+        rho: Vec<E>,
+    }
+    struct EorDriver<'a> {
+        backend: &'a CpuBackend,
+        session: &'a mut crate::opaque::eor::CpuEorSession<E>,
+        claim: E,
+        rounds: usize,
+    }
+    impl SumcheckKernel<E> for EorDriver<'_> {
+        fn num_rounds(&self) -> usize {
+            self.rounds
+        }
+        fn degree_bound(&self) -> usize {
+            EXTENSION_OPENING_REDUCTION_DEGREE
+        }
+        fn input_claim(&self) -> E {
+            self.claim
+        }
+        fn round_polynomial(
+            &mut self,
+            round: usize,
+            claim: E,
+        ) -> Result<UnivariatePoly<E>, AkitaError> {
+            <CpuBackend as OpaqueEorKernel<F, E>>::eor_round(
+                self.backend,
+                self.session,
+                round,
+                claim,
+            )
+        }
+        fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+            <CpuBackend as OpaqueEorKernel<F, E>>::bind_eor_round(
+                self.backend,
+                self.session,
+                round,
+                challenge,
+            )
+        }
+        fn finish(&mut self) -> Result<(), AkitaError> {
+            Ok(())
+        }
+    }
+    fn prove_eor(
+        backend: &CpuBackend,
+        session: &crate::opaque::CpuProofSessionHandle,
+        context: &ProofContext,
+        layout: &OpeningClaimsLayout,
+        groups: &[EorGroupRequest<
+            '_,
+            E,
+            crate::opaque::CommitmentHandle<F, E>,
+            crate::opaque::CpuWitnessHandle,
+        >],
+        grinding: &mut ProverGrinding<'_>,
+    ) -> Result<ProvedReduction, AkitaError> {
+        let prepared = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
+            backend, session, context, layout, groups,
+        )?;
+        let prefix = eor_prefix::<F, E, _>(
+            grinding,
+            layout,
+            &prepared.openings,
+            prepared.proof_partials.clone(),
+            1,
+        )?;
+        let (claim, mut session) = <CpuBackend as OpaqueEorKernel<F, E>>::begin_eor(
+            backend,
+            prepared.handle,
+            &prefix.eta,
+            &prefix.claim_coefficients,
+        )?;
+        let mut driver = EorDriver {
+            backend,
+            session: &mut session,
+            claim,
+            rounds: layout.max_num_vars() - 1,
+        };
+        let mut channel = GrindingSumcheckProver::<F, E>::new(
+            grinding,
+            SumcheckProtocol::ExtensionOpeningReduction,
+            1,
+            0,
+        );
+        let (rho, final_claim) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
+            &mut driver,
+            &mut channel,
+            akita_sumcheck::SumcheckShape::new(
+                layout.max_num_vars() - 1,
+                EXTENSION_OPENING_REDUCTION_DEGREE,
+            )?,
+            EOR_SUMCHECK_INVOCATION,
+        )?;
+        let mut final_claims = <CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(backend, session)?;
+        if final_claims
+            .iter()
+            .zip(&prefix.claim_coefficients)
+            .fold(E::zero(), |sum, (value, weight)| sum + *value * *weight)
+            != final_claim
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        eor_final_claims::<F, E, _>(grinding, layout, &mut final_claims, 1)?;
+        Ok(ProvedReduction {
+            partials: prepared.proof_partials,
+            final_claims,
+            rho,
+        })
+    }
+    fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_params::GrindingPlan {
+        let challenge_order = akita_params::ChallengeFieldOrder::from_full_capacity(128).unwrap();
+        let mut runs = vec![akita_params::GrindingRun::proof_of_work(
+            akita_params::GrindingSite::ExtensionOpeningPoint { level: 1 },
+            1,
+            challenge_order,
+        )
+        .unwrap()];
+        if batches_claims {
+            runs.push(
+                akita_params::GrindingRun::proof_of_work(
+                    akita_params::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
+                    1,
+                    challenge_order,
+                )
+                .unwrap(),
+            );
+        }
+        for round in 0..rounds {
+            runs.push(
+                akita_params::GrindingRun::proof_of_work(
+                    akita_params::GrindingSite::SumcheckRound {
+                        protocol: akita_params::SumcheckProtocol::ExtensionOpeningReduction,
+                        level: 1,
+                        stage: 0,
+                        round: u32::try_from(round).unwrap(),
+                    },
+                    1,
+                    challenge_order,
+                )
+                .unwrap(),
+            );
+        }
+        akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
+    }
+
+    #[test]
+    fn recursive_extension_opening_reduction_pads_and_shares_challenges() {
+        let backend = backend();
+        let proof = proof(&backend);
+        let context = &proof.context;
+        let short = witness(&backend, &proof.session, &context.for_group(0), vec![1; 64]);
+        let mut digits = vec![0; 192];
+        digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
+        let long = witness(&backend, &proof.session, &context.for_group(1), digits);
+        let short_point = (0..6)
+            .map(|i| E::new(F::from_u64(i + 2), F::from_u64(i + 11)))
+            .collect::<Vec<_>>();
+        let long_point = (0..8)
+            .map(|i| E::new(F::from_u64(i + 3), F::from_u64(i + 17)))
+            .collect::<Vec<_>>();
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(6, 1),
+            PolynomialGroupLayout::new(8, 1),
+        ])
+        .unwrap();
+        let groups = [
+            EorGroupRequest {
+                source: OpeningSource::Witness(&short),
+                point: &short_point,
+                ring_dimension: 64,
+            },
+            EorGroupRequest {
+                source: OpeningSource::Witness(&long),
+                point: &long_point,
+                ring_dimension: 64,
+            },
+        ];
+        let mut channel = new_prover_channel(b"test/aggregate-padding");
+        let plan = eor_test_plan(7, true);
+        let mut grinding = ProverGrinding::new(&mut channel, &plan);
+        let proved = prove_eor(
+            &backend,
+            &proof.session,
+            context,
+            &layout,
+            &groups,
+            &mut grinding,
+        )
+        .unwrap();
+        grinding.finish().unwrap();
+        assert_eq!(proved.partials.len(), 4);
+        assert_eq!(proved.final_claims.len(), 2);
+        assert_eq!(proved.rho.len(), 7);
+        backend.finish_scope(&proof.session).unwrap();
+    }
+
+    #[test]
+    fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                const D: usize = 128;
+                let mut params = CommittedGroupParams::params_only(
+                    SisModulusProfileId::Q64Offset59,
+                    D,
+                    2,
+                    // Rank 2 is the Q64Offset59 SIS floor for this inner matrix.
+                    2,
+                    1,
+                    1,
+                    akita_challenges::SparseChallengeConfig::production_for_ring_dim(D).unwrap(),
+                )
+                // A setup prefix is committed at the full field width.
+                .with_decomp(
+                    4,
+                    4,
+                    akita_params::sis::compute_num_digits_field_width(
+                        SisModulusProfileId::Q64Offset59.field_bits(),
+                        2,
+                    ),
+                    2,
+                    2,
+                )
+                .unwrap();
+                let inner = &params.inner().matrix;
+                let inner_bound = *akita_params::sis::inner_coeff_linf_bounds(
+                    inner.sis_modulus_profile(),
+                    D as u32,
+                )
+                .first()
+                .expect("audited setup-prefix A bound");
+                params.own_group_mut().profile.inner.matrix =
+                    InnerCommitMatrixParams::new_unchecked(
+                        inner.security_policy(),
+                        inner.sis_table_key().unwrap().table_digest,
+                        inner.sis_modulus_profile(),
+                        inner.output_rank(),
+                        inner.input_width(),
+                        inner_bound,
+                        D,
+                    );
+                let outer = &params.outer().matrix;
+                params.own_group_mut().profile.outer.matrix =
+                    OuterCommitMatrixParams::new_unchecked(
+                        outer.security_policy(),
+                        outer.sis_table_key().table_digest,
+                        outer.sis_modulus_profile(),
+                        outer.output_rank(),
+                        outer.input_width(),
+                        3,
+                        D,
+                    );
+                let profile = GroupCommitPhaseParams::try_from_params(
+                    PolynomialGroupLayout::singleton(9),
+                    &params,
+                )
+                .unwrap();
+
+                let setup_evals = (0..512)
+                    .map(|i| F::from_i64((i % 17) as i64 - 8))
+                    .collect::<Vec<_>>();
+                let capacity = crate::commitment::CommitmentExecutionPlan::for_root(&profile)
+                    .unwrap()
+                    .max_setup_field_elements()
+                    .unwrap()
+                    .max(setup_evals.len());
+                let mut matrix = setup_evals.clone();
+                matrix.resize(capacity, F::zero());
+                let expanded = Arc::new(
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        AkitaSetupDescriptor {
+                            max_num_vars: 9,
+                            max_num_batched_polys: 3,
+                            num_field_elements: capacity,
+                            setup_seed: sample_akita_setup_seed(),
+                        },
+                        FlatMatrix::from_flat_data(matrix),
+                    ),
+                );
+                let backend = CpuBackend::new(expanded).unwrap();
+                let proof = proof(&backend);
+                let context = &proof.context;
+                let prefix = backend
+                    .prepare_setup_prefix(&SetupPrefixSlotId {
+                        natural_len: 400,
+                        commitment_profile: profile,
+                    })
+                    .unwrap();
+                let long_digits = (0..512).map(|i| (i % 11) as i8 - 5).collect::<Vec<_>>();
+                let short_digits = (0..128).map(|i| (i % 7) as i8 - 3).collect::<Vec<_>>();
+                let long_evals = long_digits
+                    .iter()
+                    .copied()
+                    .map(F::from_i8)
+                    .collect::<Vec<_>>();
+                let short_evals = short_digits
+                    .iter()
+                    .copied()
+                    .map(F::from_i8)
+                    .collect::<Vec<_>>();
+                let long = witness(&backend, &proof.session, &context.for_group(1), long_digits)
+                    .align_for_commitment_ring_dim(D)
+                    .unwrap();
+                let short = witness(
+                    &backend,
+                    &proof.session,
+                    &context.for_group(2),
+                    short_digits,
+                )
+                .align_for_commitment_ring_dim(D)
+                .unwrap();
+                let long_point = (0..9)
+                    .map(|i| E::new(F::from_u64(i + 2), F::from_u64(2 * i + 3)))
+                    .collect::<Vec<_>>();
+                let short_point = (0..7)
+                    .map(|i| E::new(F::from_u64(i + 5), F::from_u64(3 * i + 7)))
+                    .collect::<Vec<_>>();
+                let layout = OpeningClaimsLayout::from_groups(vec![
+                    PolynomialGroupLayout::new(9, 1),
+                    PolynomialGroupLayout::new(9, 1),
+                    PolynomialGroupLayout::new(7, 1),
+                ])
+                .unwrap();
+                let groups = [
+                    EorGroupRequest {
+                        source: OpeningSource::Commitment(&prefix.commitment_handle),
+                        point: &long_point,
+                        ring_dimension: D,
+                    },
+                    EorGroupRequest {
+                        source: OpeningSource::Witness(&long),
+                        point: &long_point,
+                        ring_dimension: D,
+                    },
+                    EorGroupRequest {
+                        source: OpeningSource::Witness(&short),
+                        point: &short_point,
+                        ring_dimension: D,
+                    },
+                ];
+                let mut channel = new_prover_channel(b"test/mixed-eor-dense-oracle");
+                let plan = eor_test_plan(8, true);
+                let mut grinding = ProverGrinding::new(&mut channel, &plan);
+                let proved = prove_eor(
+                    &backend,
+                    &proof.session,
+                    context,
+                    &layout,
+                    &groups,
+                    &mut grinding,
+                )
+                .unwrap();
+                grinding.finish().unwrap();
+                let proof_bytes = channel.narg_string().to_vec();
+                let tables = [
+                    (&setup_evals, &long_point),
+                    (&long_evals, &long_point),
+                    (&short_evals, &short_point),
+                ];
+                let openings = tables
+                    .iter()
+                    .map(|(evals, point)| direct_lifted_mle::<F, E>(evals, point))
+                    .collect::<Vec<_>>();
+                let partials = tables
+                    .iter()
+                    .flat_map(|(evals, point)| direct_column_partials::<F, E>(evals, point))
+                    .collect::<Vec<_>>();
+                assert_eq!(proved.partials, partials);
+                let mut channel =
+                    new_verifier_channel(b"test/mixed-eor-dense-oracle", &proof_bytes);
+                let mut replay = VerifierGrinding::new(&mut channel, &plan);
+                let eor_prefix = eor_prefix::<F, E, _>(
+                    &mut replay,
+                    &layout,
+                    &openings,
+                    vec![E::zero(); partials.len()],
+                    1,
+                )
+                .unwrap();
+                assert_eq!(eor_prefix.partials, partials);
+                let eta = eor_prefix.eta[0];
+                let coefficients = eor_prefix.claim_coefficients;
+                let terms = tables
+                    .iter()
+                    .map(|(evals, point)| direct_tensor_tables::<F, E>(evals, point, eta))
+                    .collect::<Vec<_>>();
+                let input = terms.iter().zip(&coefficients).fold(
+                    E::zero(),
+                    |sum, ((witness, factor), coefficient)| {
+                        sum + *coefficient
+                            * witness
+                                .iter()
+                                .zip(factor)
+                                .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
+                    },
+                );
+                let mut sumcheck = GrindingSumcheckVerifier::<F, E>::new(
+                    &mut replay,
+                    SumcheckProtocol::ExtensionOpeningReduction,
+                    1,
+                    0,
+                );
+                let rounds = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
+                    &mut sumcheck,
+                    EOR_SUMCHECK_INVOCATION,
+                    input,
+                    akita_sumcheck::SumcheckShape::new(8, EXTENSION_OPENING_REDUCTION_DEGREE)
+                        .unwrap(),
+                )
+                .unwrap();
+                let claim = rounds.output_claim;
+                let rho = rounds.challenges;
+                let mut final_claims = vec![E::zero(); layout.num_total_polynomials()];
+                eor_final_claims::<F, E, _>(&mut replay, &layout, &mut final_claims, 1).unwrap();
+                replay.finish().unwrap().check_eof(channel).unwrap();
+                assert_eq!(rho, proved.rho);
+                let expected = terms
+                    .iter()
+                    .map(|(witness, factor)| {
+                        let vars = witness.len().trailing_zeros() as usize;
+                        let extra = rho[vars..]
+                            .iter()
+                            .fold(E::one(), |p, r| p * (E::one() - *r));
+                        akita_sumcheck::multilinear_eval(witness, &rho[..vars]).unwrap()
+                            * akita_sumcheck::multilinear_eval(factor, &rho[..vars]).unwrap()
+                            * extra
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(proved.final_claims, expected);
+                assert_eq!(final_claims, expected);
+                assert_eq!(
+                    claim,
+                    expected
+                        .iter()
+                        .zip(&coefficients)
+                        .fold(E::zero(), |sum, (v, c)| sum + *v * *c)
+                );
+                backend.finish_scope(&proof.session).unwrap();
+
+                // The same immutable committed prefix serves independent simultaneous proofs.
+                let shared_layout = OpeningClaimsLayout::new(9, 1).unwrap();
+                let run = |proof: TestProof| {
+                    let TestProof { session, context } = proof;
+                    let guard = ProofScope::admitted(&backend, session);
+                    let requests = [EorGroupRequest {
+                        source: OpeningSource::Commitment(&prefix.commitment_handle),
+                        point: &long_point,
+                        ring_dimension: D,
+                    }];
+                    let mut channel = new_prover_channel(b"test/shared-commitment-scopes");
+                    let plan = eor_test_plan(8, false);
+                    let mut grinding = ProverGrinding::new(&mut channel, &plan);
+                    let proved = prove_eor(
+                        &backend,
+                        guard.session(),
+                        &context,
+                        &shared_layout,
+                        &requests,
+                        &mut grinding,
+                    )
+                    .unwrap();
+                    grinding.finish().unwrap();
+                    guard.finish().unwrap();
+                    (proved.partials, proved.final_claims, proved.rho)
+                };
+                let first_proof = super::proof(&backend);
+                let second_proof = super::proof(&backend);
+                let (first, second) = std::thread::scope(|threads| {
+                    let first = threads.spawn(|| run(first_proof));
+                    let second = threads.spawn(|| run(second_proof));
+                    (first.join().unwrap(), second.join().unwrap())
+                });
+                assert_eq!(first, second);
+                // Completing both scopes does not consume the reusable commitment.
+                assert_eq!(first, run(super::proof(&backend)));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

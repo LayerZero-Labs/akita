@@ -14,7 +14,7 @@ The operating path has three layers:
 
 ## Start with the complete build
 
-The default `akita-pcs` features provide parallel CPU execution and the Blake2b
+The default `akita-pcs` features provide parallel CPU execution and the Keccak
 transcript backend. Schedule rows are not Cargo features and are never linked
 into the binary; the [first proof](./quickstart.md) loads an artifact explicitly.
 

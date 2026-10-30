@@ -8,6 +8,7 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::BasisMode;
 use akita_serialization::AkitaSerialize;
+use akita_transcript::{CommitmentDigest, ProverChannel};
 use akita_types::{AkitaSetupDescriptor, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding};
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
@@ -44,6 +45,7 @@ where
         handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
         grinding: &mut ProverGrinding<'_>,
         claims: &OpeningClaims<'_, Cfg::ExtField, Commitment<Cfg::Field>>,
+        digests: &[CommitmentDigest],
         handles: &dyn Any,
         basis: BasisMode,
     ) -> Result<ExecutionContinuation<Cfg>, AkitaError> {
@@ -64,6 +66,7 @@ where
             self.prefixes,
             self.backend,
             claims,
+            digests,
             request.layout,
             handles,
             request.schedule,
@@ -230,7 +233,7 @@ where
     }
 }
 
-/// Prove with one transcript and route-selected registry entries for every fold.
+/// Prove in a standalone transcript and return the proof bytes.
 pub fn batched_prove<'a, Cfg, H>(
     expanded: &AkitaSetupDescriptor,
     schedules: &TrustedScheduleCatalog<Cfg>,
@@ -254,7 +257,48 @@ where
         + 'static,
     H: CommitmentHandleMetadata + 'static,
 {
-    let (resolved, claims, grinding_plan, descriptor_bytes) =
+    let mut channel = akita_transcript::new_prover_channel(transcript_session);
+    batched_prove_embedded(
+        expanded,
+        schedules,
+        registry,
+        opening,
+        &mut channel,
+        basis,
+        policy,
+    )?;
+    Ok(channel.narg_string().to_vec())
+}
+
+/// Prove inside the caller's transcript, with route-selected registry
+/// entries for every fold.
+///
+/// The proof bytes are appended to `channel`'s proof string. The caller must
+/// have bound every commitment it opens, through its digest, before this call.
+pub fn batched_prove_embedded<'a, Cfg, H>(
+    expanded: &AkitaSetupDescriptor,
+    schedules: &TrustedScheduleCatalog<Cfg>,
+    registry: &BackendRegistry<'_, Cfg>,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
+    channel: &mut ProverChannel,
+    basis: BasisMode,
+    policy: &mut dyn FoldExecutionPolicy,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<Cfg::Field>
+        + AkitaSerialize
+        + 'static,
+    H: CommitmentHandleMetadata + 'static,
+{
+    let (resolved, digests, claims, grinding_plan, descriptor_bytes) =
         root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
     if registry.active.replace(true) {
         return Err(AkitaError::InvalidInput(
@@ -307,12 +351,13 @@ where
             .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
         adopted: None,
     };
-    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)?;
+    akita_transcript::bind_instance(channel, &descriptor_bytes)?;
     let mut grinding = ProverGrinding::new(channel, &grinding_plan);
     let (mut public, mut resident) = root_executor.root(
         &mut handoff,
         &mut grinding,
         claims.opening_claims(),
+        &digests,
         &claims.groups,
         basis,
     )?;
@@ -340,13 +385,13 @@ where
             "proved fold count differs from schedule".into(),
         ));
     }
-    let proof = grinding.finish()?;
+    grinding.finish()?;
     for (slot, selected) in registry.slots.iter().zip(selected) {
         if selected {
             slot.finish()?;
         }
     }
-    Ok(proof)
+    Ok(())
 }
 
 #[cfg(test)]

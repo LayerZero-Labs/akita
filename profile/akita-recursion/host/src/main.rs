@@ -371,7 +371,7 @@ macro_rules! run_selected_guest {
         let verdict = verify($blob, 0, false, proof);
         let verifier_secs = now.elapsed().as_secs_f64();
         info!(verifier_secs, is_valid = verdict.is_ok(), "Jolt verifier finished");
-        verdict.map_err(|err| format!("Jolt verifier rejected the proof: {err}"))?;
+        verdict.map_err(|err| format!("Jolt verifier rejected the proof: {err:?}"))?;
         info!(case = %$case, "Akita-in-Jolt proof OK");
         Ok(())
     }};

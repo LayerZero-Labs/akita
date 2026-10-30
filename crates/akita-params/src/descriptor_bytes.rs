@@ -1,15 +1,13 @@
 //! Shared canonical byte helpers for Fiat-Shamir descriptor digests.
 
 use crate::layout::SisModulusProfileId;
-#[cfg(not(all(feature = "blake2-inline", target_arch = "riscv64")))]
-use blake2::digest::consts::U32;
-#[cfg(not(all(feature = "blake2-inline", target_arch = "riscv64")))]
-use blake2::{Blake2b, Digest};
+use jolt_transcript::DigestHasher;
+use sha3::Digest;
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 5;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 6;
 
-/// Fixed-size Blake2b digest used inside the descriptor.
+/// Fixed-size digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
 
 pub(crate) fn push_usize(bytes: &mut Vec<u8>, value: usize) {
@@ -32,27 +30,48 @@ pub fn sis_modulus_profile_tag(family: SisModulusProfileId) -> u8 {
     }
 }
 
-/// Hash canonical descriptor bytes with Akita's Blake2b-256 primitive.
+/// Hash canonical descriptor bytes with Jolt's digest hash
+/// ([`jolt_transcript::DIGEST_HASH`]).
 ///
-/// Domain separation and version bytes are owned by the caller's canonical
+/// SHA3-256 by default. An application whose recursion guest checks digests
+/// with Jolt's `jolt-inlines-keccak256` inline selects Keccak-256 (pad byte
+/// `0x01`) with the `keccak256-digests` feature; the session tag names the
+/// selection. The transcript sponge feature does not change it. Domain
+/// separation and version bytes are owned by the caller's canonical
 /// descriptor. This shared primitive prevents catalog and transcript identity
 /// code from implementing divergent hash truncation rules.
-#[cfg(not(all(feature = "blake2-inline", target_arch = "riscv64")))]
 pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
-    type Blake2b256 = Blake2b<U32>;
-    let digest = Blake2b256::digest(bytes);
+    let digest = DigestHasher::digest(bytes);
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
 }
 
-/// Same bytes as the portable digest, through the jolt-inlines Blake2b. Host
-/// builds keep the portable digest; only a RISC-V guest has the inline.
-#[cfg(all(feature = "blake2-inline", target_arch = "riscv64"))]
-pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
-    let mut hasher = jolt_inlines_blake2::Blake2b::new_with_output_len(32);
-    hasher.update(bytes);
-    let mut out = [0u8; 32];
-    hasher.finalize_into(&mut out);
-    out
+#[cfg(test)]
+mod tests {
+    use jolt_transcript::{DigestHash, DIGEST_HASH};
+
+    use super::digest_descriptor_bytes;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn descriptor_digest_is_the_selected_hash() {
+        // FIPS 202 SHA3-256 (pad byte 0x06) by default; original Keccak-256
+        // (pad byte 0x01) under `keccak256-digests`.
+        let (empty, abc) = match DIGEST_HASH {
+            DigestHash::Sha3_256 => (
+                "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+                "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532",
+            ),
+            DigestHash::Keccak256 => (
+                "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+                "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45",
+            ),
+        };
+        assert_eq!(hex(&digest_descriptor_bytes(b"")), empty);
+        assert_eq!(hex(&digest_descriptor_bytes(b"abc")), abc);
+    }
 }

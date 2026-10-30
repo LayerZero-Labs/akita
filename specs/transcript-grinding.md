@@ -19,9 +19,8 @@ in all capitals.
 
 Akita prices the local bad-set bound of each typed field challenge to a
 128-bit per-query rate by applying bounded transcript proof of work where
-needed. Independently indexed fold coordinates receive a 128-bit
-per-address rate from their accepted challenge support and the extraction
-argument below. Bounded fold-response search lets an honest folded witness
+needed. Each fold's sparse challenge messages receive the same rate from
+one fold proof of work priced against the smallest challenge set. Bounded fold-response search lets an honest folded witness
 satisfy the scheduled representation and norm bounds. These mechanisms
 share one public, schedule-derived `GrindingPlan` and one plan cursor.
 
@@ -33,11 +32,9 @@ proof-of-work sites emit no nonce and make no grinding-specific state
 transition. Receipt, absorption, challenge extraction, and EOF checking
 are authoritative.
 
-The sparse fold sampler derives every claim-major block coordinate from an
-indexed SHAKE256 query. This preserves the configured coordinate law while
-exposing coordinatewise forks needed by a CWSS extraction argument. This is
-a sampler property; the fold extraction and indexed-address soundness
-argument appear below.
+Each commitment group draws its sparse fold challenges from one squeezed
+message, decoded directly into challenges. The extraction argument and its
+per-fold proof-of-work price appear below.
 
 ## Security model
 
@@ -49,13 +46,15 @@ L * 2^128 <= |E| * 2^g.
 ```
 
 Here `|E| = p^e` is the exact cardinality of the extension field. All
-comparisons use integer arithmetic. In the supported field towers whose
-cardinality is just below `2^128`, a power-of-two loss needs one more bit
-than its binary logarithm. The
-modulus bit width alone is not a challenge-set cardinality. A successful nonce requires a
-separate 32-byte predicate whose first `g` low-order bits are zero. The prover
-searches at most `2^(g+7)` candidates. Production policy rejects `g > 25`, so
-the nonce width `g+7` always fits `u32`. Honest exhaustion is at most
+comparisons use exact integer arithmetic in
+`jolt_transcript::grind_bits_for_loss`, called with 128 security bits. In the
+supported field towers whose cardinality is just below `2^128`, a power-of-two
+loss needs one more bit than its binary logarithm. The modulus bit width alone
+is not a challenge-set cardinality. A successful nonce
+makes the next `ceil(g/8)` squeezed check bytes have `g` zero low-order bits.
+The prover searches at most `2^(g+7)` candidates. Production policy rejects
+`g > 57`, the largest target `jolt_transcript::MAX_POW_BITS` accepts, so the
+nonce width `g+7` always fits `u64`. Honest exhaustion is at most
 `(1 - 2^-g)^(2^(g+7)) <= exp(-128)`.
 
 The classical random-oracle bad-event bound is
@@ -72,18 +71,24 @@ from fold-response trials. The target is a classical random-oracle
 bad-event rate. Accepting any satisfying in-range nonce is sound; the
 verifier MUST NOT require the prover's first solution.
 
-The predicate and protected challenge are distinct random-oracle queries. The
-predicate transition absorbs the candidate nonce and squeezes 32 bytes; after
-the accepted nonce is committed to the live state, the protected challenge is
-drawn separately. The predicate bytes MUST NOT be reused as the protocol
-challenge. The versioned protocol identifier and descriptor bind the positional
+The proof-of-work check and the protected challenge are distinct random-oracle
+queries. The check absorbs the candidate nonce and squeezes `ceil(g/8)` bytes;
+the protected challenge is the next squeeze after it. The check bytes MUST NOT
+be reused as the protocol challenge. The versioned protocol identifier and descriptor bind the positional
 grammar; context records are diagnostics and are not absorbed.
 
-Field challenges use exact canonical rejection sampling. Each attempt
-squeezes the field's canonical byte width, clears unused high bits, and accepts
-only a canonical representative. Consequently there is no modular-reduction
-bias or statistical-distance budget. The admitted codec supports fields
-up to 64 bytes; production fields use 4, 8, or 16 bytes.
+Field challenges use Jolt's pooled rejection codec (`jolt_transcript::ChallengeCodec`).
+One challenge message squeezes a fixed number of bytes that depends only on
+the field and the element count. The bytes form candidates of the base
+field's canonical byte width, masked to the modulus bit width; a candidate is
+accepted exactly when it is a canonical representative, and extension
+coordinates come from consecutive accepted candidates. The pool holds enough
+spare candidates that exhaustion has probability at most `2^-161` for the
+whole message; exhaustion is an error and the verifier rejects. Accepted
+values are exactly uniform, so each message has total variation at most
+`2^-161` from uniform, charged as `2^-160` per message in the soundness bound.
+A multi-element challenge at one site is one message and shares that budget.
+Production fields use 4-, 8-, or 16-byte base candidates.
 
 ## Public plan
 
@@ -95,15 +100,16 @@ plan and its policy revision before any proof message or dependent challenge.
 Each plan entry contains:
 
 - a canonical `GrindingSite`;
-- the query kind (`ProofOfWork`, `FoldResponse`, or `FoldChallengeGroup`);
+- the query kind (`ProofOfWork`, `FoldResponse`, `FoldChallengeWork`, or
+  `FoldChallengeGroup`);
 - the public loss factor and derived target for proof-of-work;
 - the nonce width, if any; and
 - the multiplicity used for query accounting.
 
 The plan uses checked arithmetic. Its expanded query count is a structural
 count for one replay, not a bound on adversarial oracle work. A fold group
-contributes one root plus its claim-major coordinate count; the response entry
-contributes separately as semantic bookkeeping. Absorbing its nonce is not a
+contributes one message plus its challenge count; the response and fold-work
+entries contribute separately as semantic bookkeeping. Absorbing its nonce is not a
 separate oracle squeeze. Failed previews, alternative prefixes, and repeated
 proof attempts are not enumerated by this count. It MUST be less than
 `u32::MAX`. Site fields reject `u32::MAX`, and Rust enum layout, `usize`, debug
@@ -120,14 +126,19 @@ For every proof-of-work entry with `g > 0`:
 
 1. Record diagnostic metadata for the canonical plan site, target, nonce width,
    and `GrindingNonce` kind when transcript logging is enabled.
-2. For each candidate in `[0, 2^(g+7))`, clone only the public duplex state,
-   absorb the canonical nonce, and squeeze 32 predicate bytes.
-3. Select a candidate exactly when the first `g` bits, read low bit first, are
-   zero. Exhaustion returns an error.
-4. Commit the winner once with `prover_message`. The verifier receives
-   the nonce, range-checks it against `g+7`, reproduces the predicate, and
-   rejects a failed predicate.
-5. Record the protected challenge's diagnostic site and draw the challenge.
+2. For each candidate in `[0, 2^(g+7))`, in increasing order, clone only the
+   public duplex state, absorb the canonical nonce one byte at a time, and
+   squeeze `ceil(g/8)` check bytes.
+3. Select the first candidate whose check bytes, read as a little-endian
+   integer, have `g` zero low-order bits. Exhaustion returns an error.
+4. Commit the winner as one single-byte prover message per nonce byte, then
+   squeeze the check bytes. Steps 2--4 are `jolt_transcript::ProverTranscript::grind`.
+   The verifier runs `VerifierTranscript::check_grind`: it reads the nonce
+   byte by byte, rejects a noncanonical encoding or a value of `2^(g+7)` or
+   more, squeezes the check bytes, and rejects a failed check. Any failure
+   poisons the verifier state.
+5. Record the protected challenge's diagnostic site and draw every challenge
+   of the site in one message.
 
 A zero-bit entry has nonce width zero, emits no proof bytes, and skips steps
 1--4. It remains present in the semantic plan so query coverage can be audited.
@@ -146,58 +157,65 @@ For candidate `c`:
 
 1. Clone the current public sponge state and absorb the canonical unsigned
    LEB128 encoding of `c`.
-2. In canonical group order, absorb each group's public sparse-draw payload and
-   squeeze its root. Diagnostic context metadata records the expected sequence
-   without changing the production sponge.
-3. Derive every indexed sparse coordinate, compute the folded response, and
-   accept only if all scheduled representation and norm bounds hold.
+2. Run the fold proof of work (`FoldChallengeWork`) on the clone. With `g = 0`
+   this step does nothing.
+3. In canonical group order, squeeze each group's challenge message. Nothing
+   is absorbed between them; the descriptor and the group's position fix the
+   family
+   ([positional-word-aligned-transcript](positional-word-aligned-transcript.md)). Diagnostic context metadata records the
+   expected sequence without changing the production sponge.
+4. Decode every group's challenges, compute the folded response, and accept
+   only if all scheduled representation and norm bounds hold. A message whose
+   operator-norm pool runs out rejects the candidate.
 
-The prover commits the accepted nonce once, then repeats the same group sequence
-on the live state. The verifier receives and range-checks the nonce, reproduces
-all roots in the same order, and performs the same response checks. The nonce
-is not repeated inside individual group payloads because the shared
-state already binds it.
+Jolt's `verifier_message_oracle` evaluates only "absorb a candidate, then squeeze". A
+fold-response candidate is followed by a proof of work and several message
+squeezes, so `akita_transcript::FoldPreview` performs this
+search on a detached copy of the public sponge state.
+
+The prover commits the accepted nonce once, carries the preview's proof of
+work to the live state without searching again, then repeats the group
+sequence on the live state. The verifier receives and range-checks
+the nonce, checks the proof of work, reproduces every message in the same
+order, and performs the same response checks. No group absorbs anything, so
+the nonce is bound once, before the proof of work.
 
 Fold-response search is honest-prover rejection sampling. It does not repair a
 small Fiat--Shamir challenge space and does not add 12 bits of soundness. Every
 candidate remains an adversarial random-oracle query in security accounting.
 
-## Indexed sparse challenges
+## Sparse fold challenges
 
-The implementation supplies separately indexed coordinate streams and adds no
-fold security proof-of-work. Support size alone does not justify that choice.
-The fold extraction and indexed-address argument below prove a conditional
-loss of at most one accepted value per selected coordinate address, then
-charge every adversarial touch and verifier completion. This is the basis for
-the zero-work 128-bit per-address rate.
+Each commitment group of a fold draws its sparse challenges from one squeezed
+message. The message length depends only on the public family and challenge
+count; the decoder, pool sizes and the full soundness argument are specified
+in [one stream per sparse fold group](sparse-challenge-stream.md). This
+section states the security contract that the grinding plan enforces.
 
-For one group root and zero-based claim-major block coordinate `i`, the sampler
-uses exactly
+The whole fold is one priced challenge message. Fold extraction can fail at a
+fixed prefix with probability at most `W_l / 2^K_l`, where `W_l` is the total
+number of `(claim, block)` pairs over the fold's groups and `2^K_l` is the
+smallest guaranteed challenge-set size among them. The plan therefore inserts
+one `FoldChallengeWork` entry per fold, priced like every other site:
 
 ```text
-SHAKE256(group_root[32] || little_endian_u64(i))
+g_l = least g with W_l * 2^128 <= 2^K_l * 2^g.
 ```
 
-as a fresh XOF input. The fixed input is 40 bytes. Position sampling uses
-unbiased rejection; sign and magnitude extraction follows the configured
-signed-sparse or operator-rejected law. Operator-norm rejection and all
-configured support bounds remain mandatory.
-
-The coordinate count is the checked product
-`num_claims * num_live_blocks`. Reprogramming coordinate `i` changes only that
-coordinate. Group roots, coordinate order, and distribution parameters are
-bound by the public schedule and the versioned positional grammar.
+The entry records `K_l`, and validation recomputes `g_l` from `W_l` and
+`K_l`. It is the only run kind priced against a sparse set rather than the
+challenge field.
 
 ### Geometry and the sampling denominator
 
 For fold level `j` (including the terminal) and ordered commitment group `g`,
-write `W[j,g] = num_claims[j,g] * num_live_blocks[j,g]`. Coordinates are pairs
-`(claim, block)`, with index `claim * num_live_blocks + block`. They are sparse
-ring elements, not individual polynomial coefficients. Groups can have
-different dimensions and supports. Root opening layout and recursive group
-layout determine these counts; neither one group nor one coordinate per fold
-can be assumed. The current terminal has one evaluation-trace group and one
-claim, so its coordinate count is its number of live blocks.
+write `W[j,g] = num_claims[j,g] * num_live_blocks[j,g]`. Challenges are indexed
+by pairs `(claim, block)`, at position `claim * num_live_blocks + block`. They
+are sparse ring elements, not individual polynomial coefficients. Groups can
+have different dimensions and supports. Root opening layout and recursive
+group layout determine these counts; neither one group nor one challenge per
+fold can be assumed. The current terminal has one evaluation-trace group and
+one claim, so its challenge count is its number of live blocks.
 
 The two current opening methods are `EvaluationTrace` and
 `SubringCoefficientPacking`. Evaluation trace uses the scheduled challenge
@@ -205,7 +223,7 @@ ring and can use coefficient-Linf or selective-L2 response security. Packing
 samples in its bound challenge subring and requires the Linf route. It also
 has a separate packed consistency polynomial check, with degree at most
 `2s - 1` for challenge-subring dimension `s`. That field-check loss is not a
-sparse-coordinate loss and is not removed by indexing.
+sparse-challenge loss.
 
 The nonterminal prover admits a response only when its coefficients fit the
 balanced interval represented by the scheduled response digit count and base.
@@ -217,17 +235,17 @@ Linf cap, optional L2 cap, and bounded Golomb-Rice encoding, then checks the
 direct A and consistency relations. These bounds constrain accepted responses,
 not the norm of an extracted source after division by a challenge difference.
 
-Let `C[j,g]` be the exact output support after fixed, witness-independent
-sampler filters. A signed shell in dimension `d` with `a` magnitude-one and
-`b` magnitude-two coefficients has cardinality
+Let `C[j,g]` be the accepted challenge set. A signed shell in dimension `d`
+with `a` magnitude-one and `b` magnitude-two coefficients has cardinality
 
 ```text
-|C_raw| = binom(d, a) * binom(d-a, b) * 2^(a+b).
+|S| = binom(d, a) * binom(d-a, b) * 2^(a+b).
 ```
 
-The production unfiltered ladder is:
+Families without a norm filter decode `K = floor(log2 |S|)` bits per
+challenge and accept every value, so `|C| = 2^K` exactly:
 
-| Dimension | `(a,b)` | Certified integer support-bit floor |
+| Dimension | `(a,b)` | `K` |
 |---|---|---|
 | 64 | (31,10) | 128 |
 | 128 | (31,0) | 129 |
@@ -237,24 +255,12 @@ The production unfiltered ladder is:
 | 2048 | (14,0) | 131 |
 
 Selective L2 instead uses `(31,11)` at D64 with operator threshold 18, or
-`(31,0)` at D128 with threshold 13. Its denominator is the family accepted by
-the exact fixed-point predicate, not the raw shell. The support certificates
-and runtime containment checks retain a lower bound of at least `2^128` for
-these accepted families. The exact rational certificate checks are described
-in [operator support certification](../scripts/operator_norm/README.md), with
-reported lower bounds of 128.062439 bits at D64 and 128.563317 bits at D128.
-The indexed-address theorem below turns this support bound into a
-per-address fold error bound.
-
-In the ideal independent-stream model, unbiased position/sign sampling is
-uniform on the shell. Trying at most 4096 shell samples against a fixed
-operator predicate is uniform on its accepted family conditional on sampler
-success: every accepted element has the same first-success probability.
-Sampler exhaustion rejects. This inner fixed-filter search is distinct from
-the outer 4096-candidate response-nonce search. Conditioning on a response
-fitting its cap need not preserve the product distribution: response admission
-depends on the source and all fold challenges together. It MUST NOT be treated
-as another fixed support certificate.
+`(31,0)` at D128 with threshold 13. Its accepted set is the family accepted by
+the exact fixed-point predicate over the whole shell. The exact rational
+certificate checks are described in
+[operator support certification](../scripts/operator_norm/README.md), with
+reported lower bounds of 128.062439 bits at D64 and 128.563317 bits at D128;
+the plan prices these families at `K = 128`.
 
 ### Fold extraction from accepting children
 
@@ -263,20 +269,23 @@ sufficient accepting transcript tree, and a random-oracle bound for obtaining
 that tree. The following argument applies to every admitted group geometry
 and to both opening methods.
 
-Fix one fold, its prechallenge commitments, shared response nonce, group
-roots, and all coordinates except one pair (claim, block). A coordinate-wise
-binary family has a central accepting child and one accepting alternative for
-each coordinate, with the pair differing only at that coordinate. Each child
-has its own complete accepting subtree for the later ring, range, norm,
-relation, and recursive checks. Later challenges and prover messages need not
-agree between children. The terminal authenticates its outgoing source with
-its direct A and evaluation-trace checks; working backward, a successor's
-authenticated opening supplies the descendant certificate for its predecessor.
+Fix one fold, its prechallenge commitments, shared response nonce, and all
+challenges except one pair (claim, block). A pair-wise binary family has a
+central accepting child and one accepting alternative for each pair, with the
+two differing only at that pair's challenge. Each child has its own complete
+accepting subtree for the later ring, range, norm, relation, and recursive
+checks. Later challenges and prover messages need not agree between children.
+Groups are drawn in sequence, so changing a pair in one group also changes
+every later group's message in that child; each group's fold relation involves
+only its own challenges, so that change belongs to the child's own subtree.
+The terminal authenticates its outgoing source with its direct A and
+evaluation-trace checks; working backward, a successor's authenticated opening
+supplies the descendant certificate for its predecessor.
 
 Run the strong checks under each child. They recover exact native-ring fold
 relations and the verifier-certified response bounds. If two branches open a
 common commitment path differently, commitment binding yields a scheduled
-matrix collision. Otherwise, for one changed coordinate with unit difference
+matrix collision. Otherwise, for one changed pair with unit difference
 delta, subtraction cancels every other fold term and gives
 
 $$
@@ -299,240 +308,129 @@ does not assume that unit division preserves a norm. The terminal seeds
 the same backward induction. This proves the fold extraction step for an
 accepting tree; the next step bounds failure to build that tree.
 
-### Exact conditional coordinate sampling
+### Programming one challenge
 
-Let C[j,g] denote the accepted family after fixed, witness-independent
-filters. The indexed XOF streams are independent in the ideal-oracle model.
-For an unfiltered signed shell, unbiased integer rejection makes each element
-of C[j,g] equally likely. For a fixed operator predicate, let a be the
-single-try acceptance probability and L be the bounded attempt count.
-Every accepted element has the same first-success probability, so the
-output is uniform on C[j,g] conditional on sampler success.
+In the ideal sponge model, the message squeezed at a fixed prefix is one
+uniform answer. For a family without a norm filter, the message is `W`
+independent uniform `K`-bit slots and the decoder is a bijection onto `C`, so
+replacing one slot by the encoding of a fresh uniform element of `C` yields
+exactly the distribution of a message that differs only at that pair.
 
-The tree sampler needs more than a uniformly decoded sparse value: it must
-program the complete ideal XOF tape conditional on that value. Sample a raw
-tape until its bounded filter succeeds, replace its first accepted shell
-value with the prescribed value, and sample that shell value's bit encoding
-conditional on its positions, signs, and magnitudes. Keep the rejected
-prefix and unused suffix from the conditional tape. The prescribed first
-success was uniform and independent of its position, so this procedure is
-exact. Its expected shell work is at most L/[1-(1-a)^L]; inner unbiased
-integer rejection has expected polynomial work. The unfiltered case has
-L=a=1. This programs an ideal stream, not a preimage of a concrete SHAKE
-seed. Failed fixed-filter draws reject; they do not change the accepted
-support denominator.
+For an operator-norm family, each candidate in the pool is accepted
+independently with the same probability, and an accepted candidate is uniform
+on the accepted family, independent of which candidates were accepted.
+Replacing the chosen accepted candidate by a fresh accepted encoding keeps the
+acceptance pattern, every other candidate, and the unused tail, so it is again
+exact. A message whose pool runs out is rejected by the verifier and supplies
+no accepting child. Running out depends only on the acceptance pattern, so
+for any bad set of challenge vectors, `P[accept and bad] <= P_ideal[bad]`.
 
 The outer response-nonce search is different. Its admission predicate
 depends on the source and the complete challenge vector. It is never
-conditioned into C[j,g]. Every original-prover nonce trial and every
-coordinate stream it touches is charged as an oracle query.
+conditioned into `C[j,g]`. Every original-prover nonce trial is charged as an
+oracle query.
 
-### Indexed-address fold bound
+### Fold message bound
 
 In the Fiat–Shamir security game, an adversary can query challenges for
 many proof prefixes and submit one final proof. Interpret each
 protocol-shaped random-oracle query as a verifier challenge at that
-prefix. This is a
-state-restoration view of the adversary's original query trace. The
-extractor replays the adversary with selected answers changed to build
-the accepting tree described above. The address count below already
-charges the adversary's adaptive search; the noninteractive lift adds
-no second query multiplier.
+prefix. The extractor replays the adversary with selected answers changed to
+build the accepting tree described above.
 
-For a classical random-oracle adversary, one fold coordinate address
-$a=(\text{group root},\text{claim-major index})$ names an indexed XOF stream. Reading
-any bytes from that stream touches the address; repeated reads use the
-same answer and count once. Distinct candidate roots give distinct
-addresses outside the root-collision event. Let $q_a$ indicate that the
-original adversary touched $a$ during any attempted proof. Let $r_a$
-indicate that final verification of its selected proof needs $a$ and
-the original adversary did not touch it. These indicators are disjoint.
-Rewound extractor queries affect running time rather than $q_a$.
+Fix a prefix right after the fold proof of work. For one pair in group `g`,
+conditioned on every other pair and everything before, at most one accepted
+value of that pair makes the extractor's fork at that pair fail (the
+matching-input argument). The pair is uniform on `C[l,g]`, so its fork fails
+with probability at most `1/|C[l,g]|`. A union over the pairs of the fold
+gives at most `W_l / 2^K_l` for one prefix.
 
-Let $Q_{\rm coord}$ bound the original adversary's distinct coordinate
-touches in every execution. Let $R_{\rm coord}$ be the maximum number of
-previously untouched coordinate addresses in one final proof under the
-selected schedule. Thus:
+A fresh fold message costs the adversary `2^g_l` proof-of-work checks in
+expectation, and the plan's choice of `g_l` gives
 
 $$
-Q_{\rm coord}\ge\sum_a q_a,\qquad
-R_{\rm coord}\ge\sum_a r_a,\qquad
-R_{\rm coord}\le\sum_{j,g}W[j,g],\qquad
-C_{\min}=\min_{j,g}|C[j,g]|.
+2^{-g_l}\,\frac{W_l}{2^{K_l}} \le 2^{-128}.
 $$
 
-For example, in a final fold with three coordinates, an adversary that
-read two selected streams leaves one stream for final verification. Those
-addresses contribute two observed touches and one completion. Trying
-another root and reading all three coordinates adds three touches.
+So each hash call buys at most `2^-128` of fold failure, the same rate as
+every other challenge site. With `Q` the adversary's hash calls and `R` the
+fold messages the final verifier completes itself, the fold term is at most
+`(Q + R) * 2^-128`, summed with the other sites.
 
-**Indexed fold bound (classical ROM).** Assume the accepting-tree extraction
-above, exact conditional tapes for complete indexed XOF streams, and a
-prefix-bound address for every challenge. The fold contribution to failure
-of the matching-input tree sampler is at most
-
-$$
-\mathbb E\!\left[\sum_a\frac{q_a+r_a}{|C(a)|}\right]
-\le \frac{Q_{\rm coord}+R_{\rm coord}}{C_{\min}}.
-$$
-
-Here $C(a)=C[j,g]$ is the accepted coordinate support at $a$. A
-compressed group-root collision is a separate binding event. The query
-unit in this bound is one distinct coordinate address, rather than a
-complete fold vector or one Keccak permutation.
-
-The random-oracle step uses the selected run from the original adversary
-execution as the central child of the accepting tree. Fix that adversary's
-coins, every oracle answer except the answer at address $a$, and the
-suffix sampler's random tape. The sampler retains the original selected
-address, prefix, and proof on both success and failure. The prefix-bound
-address makes two matches refer to the same prechallenge transcript. The
-exact conditional sampler then holds the other streams and later subtree
-sampling at their correct distributions while varying the complete answer
-at $a$.
-
-At a selected address, two suitable accepted values yield the missing
-binary coordinate fork. The matching-input failure therefore occupies at
-most one value of $C(a)$. Let $H_a$ mean that varying the answer at $a$
-can select that address in the original run. Once the other answers are
-fixed, $H_a$ is fixed as well. It implies either an original query at
-$a$ or a final proof that needs $a$ during verification: changing an
-unread answer cannot change the original prover's run. Consequently
-$H_a\le q_a+r_a$ pointwise. Sum the resulting
-$1/|C(a)|$ charges over addresses and average over oracle tables.
-Retaining the original selected run through each suffix step lets the
-same argument telescope across the mixed challenge tree.
-
-One complete candidate at level $j$ touches $\sum_g W[j,g]$ coordinate
-streams. $V$ candidates with distinct roots touch
-$V\sum_g W[j,g]$ addresses. A partial evaluation counts the streams
-it reads. The fold has one flat coordinate-wise stage with branching
-factor $1+\sum_g W[j,g]$. Root queries and response-nonce trials also
-enter the adversary's total oracle budget. The
-`expanded_query_count` records the structural work of one replay.
-
-For comparison, treating each complete fold vector as one interactive
-verifier challenge gives the whole-vector knowledge-error term
-
-$$
-\varepsilon_{\rm fold}^{\rm whole}
-=\sum_j\sum_g\frac{W[j,g]}{|C[j,g]|}.
-$$
-
-Its Fiat–Shamir reduction counts complete-vector oracle queries. Indexed
-accounting instead counts every coordinate address read in each vector
-candidate, so both conventions retain the same fold geometry.
+No single-message design can price below `W_l * 2^(128 - K_l)` calls per fold
+for the honest prover, because an attacker can do what the honest prover does.
+The fold proof of work sits at that bound.
 
 ### Fold work decision and total security accounting
 
-Every production accepted family has at least 2^128 elements, including
-the certified operator-filtered families. Therefore each sparse address
-has weight 1/|C(a)| at most 2^-128 without fold proof-of-work. This is the
-proved reason for a zero-bit FoldChallengeGroup target under the protocol's
-**128-bit per-address rate**. The aggregate fold term follows by
-multiplying this rate by the charged address count.
-
-For a complete classical-ROM tree, let d_r be the proven
-mixed-tree failure debit at field address r, including any branches
-needed to extract all claims protected by that address. If its
-conditional bad-set bound is d_r/|E_r|, its proof-of-work target g_r
-gives weight d_r/(|E_r| 2^g_r). Give each sparse coordinate its
-weight 1/|C(a)|. Once every challenge stage has such a proven weight,
-the same original-run support argument gives the following bound.
-Here a ranges over the disjoint union of field-draw addresses and
-sparse-coordinate addresses, and q_a and r_a mark original touches
-and final-verifier completions in each family:
+For a complete classical-ROM tree, let `d_r` be the proven mixed-tree failure
+debit at challenge address `r`, including any branches needed to extract all
+claims protected by that address. If its conditional bad-set bound is
+`d_r / |E_r|`, its proof-of-work target `g_r` gives weight
+`d_r / (|E_r| 2^g_r)`. Fold messages are addresses of the same kind, with
+debit `W_l`, set size `2^K_l` and target `g_l`. Once every challenge stage has
+such a proven weight, the same original-run support argument gives
 
 $$
 \varepsilon_{\rm tree}
 \le \mathbb E\!\left[\sum_a \alpha_a(q_a+r_a)\right]
-\le \rho(Q+R_{\rm field}+R_{\rm coord}),\qquad
+\le \rho(Q+R),\qquad
 \rho=\max_a\alpha_a.
 $$
 
-Here Q is a deterministic upper bound on distinct logical
-random-oracle addresses touched by the original adversary. It includes
-predicate queries for rejected work candidates, root queries for
-response-nonce trials, and each indexed coordinate stream read by a
-vector candidate. R_field and R_coord bound previously untouched
-addresses completed by final verification. One XOF stream address
-counts once however many output blocks are read.
+Here `Q` is a deterministic upper bound on distinct logical random-oracle
+addresses touched by the original adversary, including proof-of-work check
+queries for rejected work candidates and response-nonce trials, and `R`
+bounds previously untouched addresses completed by final verification.
 
-The typed GrindingPlan enforces
-L_r 2^128 <= |E_r| 2^g_r for its stored *local* algebraic loss L_r.
-The complete-tree rate rho <= 2^-128 follows when each field site has
-a proof that d_r <= L_r, or when its target is raised to price d_r.
-For a site that draws several independently labelled field values
-under one predicate, this proof assigns one address to each value
-and establishes the predicate's independent 2^-g_r factor for the
-selected address. It also records the stage's flat or nested tree
-factor separately from the address error weight.
-The sparse fold addresses already satisfy this rate through the
-indexed theorem. Root collisions, setup sampling distance, and
-scheduled matrix-collision advantages enter as additive terms.
-Distinct logical contexts that share a 32-byte group root form a
-compressed-context collision. For at most M distinct root contexts
-materialized across the adversary, final verifier, and extractor
-executions, the ideal 256-bit root collision bound is
-M(M-1)/2^257. A concrete bound on M must cover those executions.
+The typed GrindingPlan enforces `L_r 2^128 <= |E_r| 2^g_r` for its stored
+*local* loss `L_r`. The complete-tree rate `rho <= 2^-128` follows when each
+site has a proof that `d_r <= L_r`, or when its target is raised to price
+`d_r`. Setup sampling distance and scheduled matrix-collision advantages enter
+as additive terms.
 
 The deterministic extractor's fold branching product is
-B_fold=prod_j(1+sum_g W[j,g]). Its complete tree product B also includes
-the flat or nested factors of the other challenge stages. An explicit
+`B_fold = prod_j(1 + sum_g W[j,g])`. Its complete tree product `B` also
+includes the flat or nested factors of the other challenge stages. An explicit
 expected-cost reduction has the form
-T_E <= B T_0 + (B-1)(Q+1) gamma + T_tree, where gamma includes
-nonmatching replays and the exact conditional samplers. Module-SIS
-advantages are evaluated at that cost. Expected *polynomial*-time
-knowledge extraction requires B to be polynomial in the declared
-explicit instance length and security parameter. Certifying B is a
-separate admission check from the plan's structural one-replay count.
+`T_E <= B T_0 + (B-1)(Q+1) gamma + T_tree`, where `gamma` includes
+nonmatching replays and the conditional samplers. Module-SIS advantages are
+evaluated at that cost. Expected *polynomial*-time knowledge extraction
+requires `B` to be polynomial in the declared explicit instance length and
+security parameter. Certifying `B` is a separate admission check from the
+plan's structural one-replay count.
 
-For an aggregate target lambda, declare Q_max and the verifier-completion
-bounds, prove each full-tree field debit d_r, and require the weighted
-oracle total plus the setup, root-collision, and matrix-collision terms
-to fit 2^-lambda. If every address has weight at most 2^-128, the simpler
-upper bound is (Q_max+R_field+R_coord)2^-128 before those additive terms.
-This equation shows exactly how many extra support bits an aggregate
-target needs for its declared query budget.
+For an aggregate target `lambda`, declare `Q_max` and the verifier-completion
+bound, prove each full-tree debit, and require the weighted oracle total plus
+the setup and matrix-collision terms to fit `2^-lambda`. If every address has
+weight at most `2^-128`, the simpler upper bound is `(Q_max + R) 2^-128`
+before those additive terms.
 
 ### Established result and implementation evidence
 
-The fold-specific result combines descendant-certified extraction with the
-binary matching-input game. Each original-adversary coordinate touch and
-each previously untouched final-verifier completion receives its own
-one-value charge. The accepted support floor makes zero additional fold
-work sufficient for the 128-bit per-address rate in the classical ROM.
-The result covers both opening methods, all scheduled groups and
-coordinates, and the terminal.
-
-The typed GrindingPlan prices local field checks with exact field orders.
-A complete end-to-end security claim additionally supplies a full-tree
-field-address ledger, a declared adversarial Q_max, completion and
-root-context bounds, a polynomial tree-size certificate, setup terms,
-and Module-SIS advantages at the extractor's expected cost.
+The fold result combines descendant-certified extraction with the binary
+matching-input game at each fold message, priced by the fold proof of work to
+the 128-bit per-call rate in the classical ROM. It covers both opening
+methods, all scheduled groups and pairs, and the terminal.
 
 The 12-bit fold-response search serves honest-prover response admission.
-Adversarial trials and their root and coordinate queries enter Q; this
-query charge accounts for the nonce freedom.
-
-The implementation evidence for this result is:
+Adversarial trials enter `Q`; this query charge accounts for the nonce
+freedom.
 
 | Source | What it establishes |
 |---|---|
-| `crates/akita-challenges/src/fold_draw.rs` | Method, group, dimensions, family, and counts bound before the group root; packing rejects operator filtering |
-| `crates/akita-challenges/src/challenges.rs` and `sampler/xof.rs` in that crate | Claim-major addressing and independent indexed XOF inputs |
-| `crates/akita-challenges/src/config.rs` and `sampler/mod.rs` in that crate | Production support ladder, fixed operator policies, bounded coordinate rejection, runtime certificate containment |
-| `crates/akita-params/src/transcript_grinding/plan.rs` and `crates/akita-params/src/transcript_grinding.rs` | Geometry-derived runs, root-plus-coordinate multiplicity, structural count, response nonce width, and zero fold work bits |
+| `crates/akita-challenges/src/fold_draw.rs` | Method, group, dimensions, family, and counts bound before each group message; packing rejects operator filtering |
+| `crates/akita-challenges/src/sampler/stream.rs` | Slot width, pool size, message length, and the bijective colex decoder |
+| `crates/akita-challenges/src/config.rs` and `sampler/mod.rs` in that crate | Production support ladder, fixed operator policies, runtime certificate containment |
+| `crates/akita-params/src/transcript_grinding/plan.rs` and `crates/akita-params/src/transcript_grinding.rs` | Geometry-derived runs, the per-fold `FoldChallengeWork` price, structural count, response nonce width |
 | `crates/akita-prover/src/protocol/fold_grind.rs` | Joint response-admission search across groups |
 | `crates/akita-verifier/src/stages/stage1.rs` | Nonterminal range and physical-L2 claims tied into the recursive relation |
 | `crates/akita-verifier/src/terminal/direct.rs` | Terminal representation/norm and direct relation checks |
 | [Security model](../book/src/how/security.md) and [subring packing](subring-coefficient-packing.md) | Accepted response-space contract and separate packed relation loss |
 
 The [Book's binding chapter](../book/src/foundations/pcs-and-binding.md)
-explains the coordinate forks, oracle-address accounting, and security
-target for readers. Distribution, replay, and tampering tests check
-implementation correspondence; the accepting-tree and random-oracle
-arguments establish extraction and its concrete loss.
+explains the pair forks, the fold proof of work, and the security target for
+readers.
 
 ## Encoding and proof-size accounting
 
@@ -551,9 +449,10 @@ MUST be regenerated from this objective; generated files MUST NOT be copied or
 hand-edited to manufacture a desired result.
 
 Nonce decoding MUST reject unterminated, overflowing, and redundant
-unsigned LEB128 encodings without advancing the input cursor. The verifier
-checks the scheduled range after receipt. Truncation, trailing argument bytes,
-out-of-range nonces, wrong context/order, failed predicates, and incomplete
+unsigned LEB128 encodings and poison the verifier state, so every later read
+and the EOF check fail. The verifier checks the scheduled range after receipt.
+Truncation, trailing argument bytes, out-of-range nonces, wrong context/order,
+failed proof-of-work checks, and incomplete
 plans reject with `AkitaError`; verifier-reachable code MUST NOT panic or
 allocate from a proof-controlled length.
 
@@ -561,13 +460,14 @@ allocate from a proof-controlled length.
 
 | Component | Responsibility |
 |---|---|
-| Spongefish | State, argument bytes, nonce receipt/absorption, challenge squeeze, EOF |
-| `akita-transcript` | Positional codecs, diagnostic context records, public-state previews, predicate and bounded search primitive |
+| Spongefish | State, argument bytes, nonce receipt/absorption, poisoning, EOF |
+| `jolt-transcript` | Field challenge codecs, proof-of-work pricing, search and check |
+| `akita-transcript` | Session tag, positional codecs, diagnostic context records, fold-response preview |
 | `akita-types` | Grinding sites, policy, plan, cursor, plan-owning adapters |
 | `akita-config` | Derive and descriptor-bind the public plan |
 | `akita-prover` | Fold-response candidate computation and honest bounded search |
-| `akita-verifier` | Nonce ranges, predicates, response equations, plan completion |
-| `akita-challenges` | Indexed sparse expansion and distribution checks |
+| `akita-verifier` | Nonce ranges, proof-of-work checks, response equations, plan completion |
+| `akita-challenges` | Sparse message decoding and distribution checks |
 | `akita-planner` | Query accounting and maximum schedule objective |
 
 There is one production proof path. A separate packed nonce codec, nonce prefix,
@@ -582,9 +482,9 @@ structured proof replay, or alternate verifier is prohibited.
 - Preview output matches live prover and verifier replay for both Blake2b and
   Keccak, multiple groups, and multiple candidate counts.
 - Unsuccessful previews leave live state and proof output unchanged.
-- Prover and verifier sparse roots agree, and the indexed SHAKE256
-  implementation matches an independent 40-byte-input reference.
-- Reprogramming one indexed coordinate changes only that coordinate.
+- Prover and verifier sparse messages agree, and the decoder inverts an
+  independent colexicographic rank reference.
+- Changing one challenge slot changes only that challenge.
 - Signed-sparse and operator-rejected marginal distribution, support, unit
   difference, and norm-policy tests remain green for both opening methods.
 - Runtime plan completion and Spongefish EOF are both necessary for acceptance.

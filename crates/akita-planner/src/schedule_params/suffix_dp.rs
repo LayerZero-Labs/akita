@@ -82,6 +82,7 @@ struct ChildEdge<'a> {
     opening_layout: &'a OpeningClaimsLayout,
     level: u32,
     candidate_params: Arc<CommittedGroupParams>,
+    fold_cost: akita_params::FoldChallengeCost,
     current_witness_len: usize,
     natural_setup_field_len: usize,
     level_setup_field_elements: usize,
@@ -102,9 +103,11 @@ impl ChildEdge<'_> {
         );
         akita_params::transcript_grinding_cost_for_planner_edge(
             self.candidate_params.as_ref(),
+            self.fold_cost,
             relation_geometry,
             self.opening_layout,
             successor,
+            suffix.folds.is_empty().then_some(suffix.terminal.fold_cost),
             self.challenge_order,
             self.policy.claim_ext_degree,
             self.level,
@@ -117,6 +120,7 @@ impl ChildEdge<'_> {
 #[derive(Clone)]
 struct PendingQueryEdge {
     params: Arc<CommittedGroupParams>,
+    fold_cost: akita_params::FoldChallengeCost,
     opening_layout: Arc<OpeningClaimsLayout>,
     level: u32,
 }
@@ -126,9 +130,11 @@ impl PendingQueryEdge {
         state: SuffixState<'_>,
         opening_layout: &OpeningClaimsLayout,
         params: &CommittedGroupParams,
+        fold_cost: akita_params::FoldChallengeCost,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             params: Arc::new(params.clone()),
+            fold_cost,
             opening_layout: Arc::new(opening_layout.clone()),
             level: u32::try_from(state.level)
                 .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
@@ -140,6 +146,7 @@ impl PendingQueryEdge {
         policy: &PlannerPolicy,
         challenge_order: akita_params::ChallengeFieldOrder,
         successor: akita_params::FoldSuccessor<'_>,
+        terminal_fold: Option<akita_params::FoldChallengeCost>,
     ) -> Result<akita_params::TranscriptGrindingCost, AkitaError> {
         let mut producer = (*self.params).clone();
         producer.successor_block_len =
@@ -158,9 +165,11 @@ impl PendingQueryEdge {
         )?;
         akita_params::transcript_grinding_cost_for_planner_edge(
             &self.params,
+            self.fold_cost,
             payload.relation_geometry,
             &self.opening_layout,
             successor,
+            terminal_fold,
             challenge_order,
             policy.claim_ext_degree,
             self.level,
@@ -177,7 +186,15 @@ impl PendingQueryEdge {
             || akita_params::FoldSuccessor::Terminal(&candidate.terminal.params),
             |fold| akita_params::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
-        self.grinding_cost(policy, challenge_order, successor)
+        self.grinding_cost(
+            policy,
+            challenge_order,
+            successor,
+            candidate
+                .folds
+                .is_empty()
+                .then_some(candidate.terminal.fold_cost),
+        )
     }
 }
 
@@ -218,6 +235,7 @@ impl QueryPrefix {
             policy,
             challenge_order,
             akita_params::FoldSuccessor::Recursive(successor),
+            None,
         )?;
         let finalized_query_count = self
             .finalized_query_count
@@ -264,15 +282,16 @@ impl QuerySearch {
         state: SuffixState<'_>,
         opening_layout: &OpeningClaimsLayout,
         params: &CommittedGroupParams,
+        fold_cost: akita_params::FoldChallengeCost,
     ) -> Result<Option<Self>, AkitaError> {
         match self {
             Self::Unconstrained => Ok(Some(Self::Unconstrained)),
             Self::Root(finalized_query_count) => Ok(Some(Self::Restricted(QueryPrefix {
                 finalized_query_count: *finalized_query_count,
-                incoming: PendingQueryEdge::new(state, opening_layout, params)?,
+                incoming: PendingQueryEdge::new(state, opening_layout, params, fold_cost)?,
             }))),
             Self::Restricted(prefix) => {
-                let incoming = PendingQueryEdge::new(state, opening_layout, params)?;
+                let incoming = PendingQueryEdge::new(state, opening_layout, params, fold_cost)?;
                 prefix
                     .advance(ctx.policy, ctx.challenge_order, params, incoming)
                     .map(|next| next.map(Self::Restricted))
@@ -328,6 +347,7 @@ impl StateFrontiers {
 
 struct LevelCandidateEdge<'a> {
     params: &'a CommittedGroupParams,
+    fold_cost: akita_params::FoldChallengeCost,
     natural_setup_field_len: usize,
     require_child_fold: bool,
 }
@@ -340,6 +360,9 @@ struct CandidateChildren<'a> {
 struct PlannedFoldCandidate {
     chunk_shape: Option<akita_params::WitnessChunkShape>,
     params: CommittedGroupParams,
+    /// Fold challenge cost of `params` under its own opening layout, which
+    /// every edge this candidate starts reuses.
+    fold_cost: akita_params::FoldChallengeCost,
     next_witness_len: usize,
     opening_reduction_bytes: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
@@ -800,6 +823,7 @@ fn price_level_candidate_with_children(
     let policy = ctx.policy;
     let LevelCandidateEdge {
         params: candidate_params,
+        fold_cost,
         natural_setup_field_len: natural_len,
         require_child_fold,
     } = candidate;
@@ -824,6 +848,7 @@ fn price_level_candidate_with_children(
         level: u32::try_from(state.level)
             .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
         candidate_params: Arc::new(candidate_params.clone()),
+        fold_cost,
         current_witness_len: state
             .input_chunks
             .map(|chunks| {

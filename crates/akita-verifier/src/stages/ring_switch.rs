@@ -6,6 +6,7 @@ use crate::relation::{
 };
 use akita_error::AkitaError;
 use akita_params::{RelationAddressGeometry, RelationWitnessGeometry, RingRelationMode};
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
@@ -64,21 +65,21 @@ struct RingSwitchChallenges<'a, 'proof, 'plan>(
 impl<F, E> RingSwitchChallengeSource<F, E> for RingSwitchChallenges<'_, '_, '_>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
         self.0
-            .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::RingSwitchAlpha { level })
+            .grinded_ext_challenge::<E>(akita_params::GrindingSite::RingSwitchAlpha { level })
     }
 
     fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
         self.0
-            .grinded_ext_challenges::<F, E>(akita_params::GrindingSite::Tau0Point { level }, count)
+            .grinded_ext_challenges::<E>(akita_params::GrindingSite::Tau0Point { level }, count)
     }
 
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
         self.0
-            .grinded_ext_challenges::<F, E>(akita_params::GrindingSite::Tau1Point { level }, count)
+            .grinded_ext_challenges::<E>(akita_params::GrindingSite::Tau1Point { level }, count)
     }
 }
 
@@ -90,7 +91,7 @@ pub(crate) fn ring_switch_verifier<F, E>(
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
 {
     let mut challenges = RingSwitchChallenges(grinding);
     ring_switch_verifier_with_challenges::<F, E, _>(replay, w_len, &mut challenges, level)

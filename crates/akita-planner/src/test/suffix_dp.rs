@@ -124,8 +124,8 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
-        .expect("D64 challenge");
+    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
+        .expect("D256 challenge");
     let mut shell = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
         256,
@@ -228,9 +228,11 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
             .unwrap();
         akita_params::transcript_grinding_cost_for_planner_edge(
             &evaluation_trace,
+            akita_params::FoldChallengeCost::new(&evaluation_trace, &layout).unwrap(),
             relation_geometry,
             &layout,
             successor,
+            None,
             policy.transcript_grinding_order().unwrap(),
             policy.claim_ext_degree,
             1,
@@ -292,7 +294,8 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let challenge = akita_challenges::SparseChallengeConfig::pm1_only(3);
+    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+        .expect("D64 challenge");
     let mut params = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
         64,
@@ -315,7 +318,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            4_095,
+            (1 << 22) - 1,
             inner.ring_dimension(),
         );
     let successor_params = params.clone().with_decomp(4, 4096, 2, 2, 2).unwrap();
@@ -338,6 +341,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
         }),
         terminal: std::sync::Arc::new(super::CandidateTerminalResponse {
             params: terminal_params.clone(),
+            fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params).unwrap(),
             sparse_challenge_config: challenge,
             input_witness_len: 512,
             estimated_direct_payload_bytes: 0,
@@ -358,8 +362,13 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
         },
     };
     let opening_layout = super::suffix_opening_layout(1_024, None).expect("opening layout");
-    let incoming =
-        super::PendingQueryEdge::new(state, &opening_layout, &params).expect("incoming edge");
+    let incoming = super::PendingQueryEdge::new(
+        state,
+        &opening_layout,
+        &params,
+        akita_params::FoldChallengeCost::new(&params, &opening_layout).expect("fold cost"),
+    )
+    .expect("incoming edge");
     let challenge_order = policy.transcript_grinding_order().unwrap();
     let edge_queries = incoming
         .candidate_grinding_cost(&policy, challenge_order, &candidate(0))
@@ -515,17 +524,25 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     .unwrap();
     let child_candidate = child.payload_candidates().next().unwrap();
     let edge_queries = |candidate: &super::PlannedFoldCandidate| {
-        super::PendingQueryEdge::new(state, &domain.opening_layout, &candidate.params)
-            .unwrap()
-            .candidate_grinding_cost(&policy, ctx.challenge_order, child_candidate)
-            .unwrap()
-            .expanded_query_count
+        super::PendingQueryEdge::new(
+            state,
+            &domain.opening_layout,
+            &candidate.params,
+            akita_params::FoldChallengeCost::new(&candidate.params, &domain.opening_layout)
+                .unwrap(),
+        )
+        .unwrap()
+        .candidate_grinding_cost(&policy, ctx.challenge_order, child_candidate)
+        .unwrap()
+        .expanded_query_count
     };
     assert!(edge_queries(high_query) > edge_queries(low_query));
+    let root_layout = key.opening_layout().unwrap();
     let incoming = super::PendingQueryEdge::new(
         super::SuffixState { level: 0, ..state },
-        &key.opening_layout().unwrap(),
+        &root_layout,
         &root.params,
+        akita_params::FoldChallengeCost::new(&root.params, &root_layout).unwrap(),
     )
     .unwrap();
     let parent_queries = incoming
@@ -533,6 +550,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
             &policy,
             ctx.challenge_order,
             akita_params::FoldSuccessor::Recursive(&low_query.params),
+            None,
         )
         .unwrap()
         .expanded_query_count;

@@ -110,7 +110,9 @@ pub(super) fn retain(
 
 #[test]
 fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
-    let challenge = SparseChallengeConfig::pm1_only(3);
+    // The terminal fold must be priceable, so draw from the production family.
+    let challenge =
+        SparseChallengeConfig::production_for_ring_dim(64).expect("production d = 64 family");
     let mut params = CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q32Offset99,
         64,
@@ -132,7 +134,7 @@ fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            4_095,
+            1_048_575,
             inner.ring_dimension(),
         );
     let (terminal_params, linf_cap) =
@@ -148,6 +150,7 @@ fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
                 folds: CandidateFoldChain::default(),
                 terminal: std::sync::Arc::new(CandidateTerminalResponse {
                     params: terminal_params.clone(),
+                    fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)?,
                     sparse_challenge_config: challenge,
                     input_witness_len: 64,
                     estimated_direct_payload_bytes: 0,

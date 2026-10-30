@@ -15,6 +15,13 @@ pub(super) fn attach_source_moments(
             next_witness_len,
         } = candidate;
         let opening_layout = params.opening_layout_for_final_group(params.group())?;
+        // A fold that cannot be priced, such as one whose challenge message
+        // exceeds the message limit, can never be planned.
+        let fold_cost = match akita_params::FoldChallengeCost::new(&params, &opening_layout) {
+            Ok(cost) => cost,
+            Err(AkitaError::InvalidSetup(_)) => continue,
+            Err(error) => return Err(error),
+        };
         let current_opening_layout = &opening_layout;
         let opening_reduction_bytes = if params
             .opening_method()
@@ -91,6 +98,7 @@ pub(super) fn attach_source_moments(
         candidates_with_source.push(PlannedFoldCandidate {
             chunk_shape,
             params,
+            fold_cost,
             next_witness_len,
             opening_reduction_bytes,
             next_source_moment,

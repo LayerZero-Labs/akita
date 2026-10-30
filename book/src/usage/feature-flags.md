@@ -9,7 +9,7 @@ rows are external runtime artifacts, not Cargo features. The default
 | Feature | What it provides |
 | --- | --- |
 | `parallel` | Rayon execution across field arithmetic, setup, proving, sumcheck, and verification |
-| `transcript-blake2b` | The default Spongefish transcript backend |
+| `transcript-keccak` | The default Spongefish transcript backend |
 
 The normal build uses both:
 
@@ -26,7 +26,7 @@ Keep the default transcript while removing Rayon:
 ```bash
 cargo build -p akita-pcs --release \
   --no-default-features \
-  --features transcript-blake2b
+  --features transcript-keccak
 ```
 
 This build produces the same protocol results. It changes local execution and
@@ -53,15 +53,31 @@ Backend routing requires no Cargo feature; see [backend routing](../how/architec
 
 ## Transcript backends
 
-Production builds enable exactly one transcript backend.
+Production builds enable exactly one transcript backend. Keccak is the
+default; Blake2b stays available as an opt-in feature. To select Blake2b,
+build with `--no-default-features` and enable `transcript-blake2b`.
 
 | Feature | Backend |
 | --- | --- |
-| `transcript-blake2b` | Blake2b based Spongefish transcript with SHA3 support |
-| `transcript-keccak` | Keccak based Spongefish transcript |
+| `transcript-keccak` | Keccak based Spongefish transcript (default) |
+| `transcript-blake2b` | Blake2b based Spongefish transcript (opt-in) |
 
 The transcript backend is part of proof compatibility. Prover and verifier
 must use the same backend and protocol revision.
+
+### Prover-side transcript feature
+
+`akita-transcript`, `akita-challenges`, and `akita-types` each have a `prover`
+feature. It enables the proof-of-work nonce search and the fold-response
+preview. Both evaluate candidate nonces on a copy of the sponge state, and
+Spongefish exposes that state only under its `yolocrypto` feature. `akita-prover`
+turns `prover` on; `akita-verifier` leaves it off. The dependency hygiene check
+`scripts/check-crate-deps.sh akita-verifier` fails if the verifier's own
+dependency graph enables `yolocrypto`.
+
+Cargo unifies features within one build. A binary that links the prover
+therefore compiles its verifier with `yolocrypto` as well. The feature changes
+which Spongefish items are visible; it does not change proof bytes.
 
 ## Schedule catalog storage
 
@@ -79,8 +95,6 @@ paths; every other target keeps the portable path.
 
 | Feature | Inline |
 | --- | --- |
-| `blake2-inline` | Blake2b transcript sponge and descriptor digests (`jolt-inlines-blake2`) |
-| `keccak-inline` | Keccak-f[1600] for the SHAKE challenge samplers (`jolt-inlines-keccak256`) |
 | `ntt-inline` | 64-point i32 negacyclic NTT and six-product pointwise dot (`jolt-inlines-ntt`) |
 
 ## Diagnostic features

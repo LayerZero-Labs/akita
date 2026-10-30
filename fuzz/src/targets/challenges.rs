@@ -3,8 +3,9 @@
 //! Every fold response, its norm cap, and the verifier's knowledge-soundness
 //! bound rely on the drawn challenges having exactly their declared shape, and
 //! on the selective-L2 route's operator-norm rejection being sound. The target
-//! draws through the production `FoldDraw` path with an input-chosen seed and
-//! checks, independently of the sampler:
+//! draws through the production `ProverFoldDraw` path on a fresh prover channel
+//! with an input-chosen statement, so the challenge message is a real sponge
+//! squeeze, and checks, independently of the sampler:
 //!
 //! - every challenge has exactly `count_pm1` coefficients of magnitude 1 and
 //!   `count_pm2` of magnitude 2 at distinct positions below `D`, so its weight,
@@ -14,33 +15,40 @@
 //!   norm `max_k |c(zeta_k)|` at most the policy threshold, recomputed here with
 //!   a floating-point DFT (flagged only beyond a rounding allowance far above
 //!   f64 error, so the check never fires on a boundary case);
-//! - drawing again from the same seed yields the same challenges, and a
+//! - drawing again from the same statement yields the same challenges, and a
 //!   different group index yields a different transcript payload;
-//! - running out of operator-norm attempts is a liveness failure, never an
-//!   expected error.
+//! - an operator-norm pool running out is a liveness failure (at most `2^-161`
+//!   per honest message), never an expected outcome.
 
 use crate::input::Reader;
 use crate::stats;
 use akita_challenges::{
     selective_l2_challenge_config, selective_l2_operator_norm_rejection, FoldChallengeDrawDomain,
-    FoldDraw, SparseChallenge, SparseChallengeConfig, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
+    FoldChallengeFamily, FoldDraw, ProverFoldDraw, SparseChallenge, SparseChallengeConfig,
+    PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 use akita_error::AkitaError;
-use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
+use akita_transcript::{bind_instance, new_prover_channel};
 
-/// Returns an input-chosen seed and records what the draw absorbed.
-struct SeedDraw {
-    seed: [u8; FOLD_CHALLENGE_SEED_LEN],
-    payloads: Vec<Vec<u8>>,
+/// Draws on the live prover channel and records each message length.
+struct RecordingDraw<'a> {
+    inner: ProverFoldDraw<'a>,
+    message_lens: Vec<usize>,
+    messages: Vec<Vec<u8>>,
 }
 
-impl FoldDraw for SeedDraw {
-    fn absorb_and_squeeze(
+impl FoldDraw for RecordingDraw<'_> {
+    fn draw_message(
         &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        self.payloads.push(payload.to_vec());
-        Ok(self.seed)
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
+    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        self.message_lens.push(len);
+        let messages = &mut self.messages;
+        self.inner.draw_message(len, |message| {
+            messages.push(message.to_vec());
+            decode(message)
+        })
     }
 }
 
@@ -141,30 +149,30 @@ pub fn run(data: &[u8]) {
     let group_index = usize::from(reader.u8() % 8);
     let num_live_blocks = 1 + usize::from(reader.u8() % 16);
     let num_claims = 1 + usize::from(reader.u8() % 4);
-    let seed: [u8; FOLD_CHALLENGE_SEED_LEN] = reader.bytes();
+    let statement: [u8; 32] = reader.bytes();
+    let family = FoldChallengeFamily::new(domain, ring_d, cfg, rejection)
+        .unwrap_or_else(|error| panic!("valid family (D={ring_d}, {cfg:?}) rejected: {error:?}"));
 
-    let draw = |group_index: usize| {
-        let mut draw = SeedDraw {
-            seed,
-            payloads: Vec::new(),
+    let draw = |groups: usize| {
+        let mut channel = new_prover_channel(b"akita-fuzz/fold-challenges");
+        bind_instance(&mut channel, &statement).expect("a 32-byte descriptor binds");
+        let mut draw = RecordingDraw {
+            inner: ProverFoldDraw::new(&mut channel, 0, 0),
+            message_lens: Vec::new(),
+            messages: Vec::new(),
         };
-        let result = draw.draw_folding_challenges_with_rejection(
-            domain,
-            ring_d,
-            group_index,
-            num_live_blocks,
-            num_claims,
-            &cfg,
-            rejection,
-        );
-        (result, draw.payloads)
+        let results: Vec<_> = (group_index..group_index + groups)
+            .map(|group| draw.draw_fold_challenges(&family, group, num_live_blocks, num_claims))
+            .collect();
+        (results, draw.message_lens, draw.messages)
     };
-    let (result, payloads) = draw(group_index);
+    let (mut results, message_lens, messages) = draw(1);
+    let result = results.remove(0);
     let challenges = match result {
-        Ok(challenges) => challenges,
-        Err(error) if crate::liveness::is_liveness_exhaustion(&error) => {
-            panic!("liveness: challenge sampling ran out of attempts: {error:?}")
-        }
+        Ok(Some(challenges)) => challenges,
+        Ok(None) => panic!(
+            "liveness: operator-norm pool ran out (D={ring_d}, {cfg:?}, rejection {rejection:?})"
+        ),
         Err(error) => panic!(
             "valid draw (D={ring_d}, {cfg:?}, rejection {rejection:?}, {domain:?}) failed: {error:?}"
         ),
@@ -194,15 +202,31 @@ pub fn run(data: &[u8]) {
         // Closeness to the threshold as coverage for the engine.
         crate::liveness::guide_ratio(peak);
     }
-    let (again, payloads_again) = draw(group_index);
+    assert_eq!(
+        message_lens,
+        [family
+            .stream(num_live_blocks * num_claims)
+            .expect("valid stream")
+            .message_len()],
+        "draw squeezes one family-length message"
+    );
+    let (again, message_lens_again, messages_again) = draw(2);
     assert!(
-        again.as_ref().ok() == Some(&challenges) && payloads_again == payloads,
+        again
+            .first()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(Option::as_ref)
+            == Some(&challenges)
+            && message_lens_again.first() == message_lens.first()
+            && messages_again.first() == messages.first(),
         "challenge draw is not deterministic"
     );
-    let (_, other_payloads) = draw(group_index + 1);
+    // Draws absorb nothing, so the next group's message continues the squeeze
+    // and must differ from this one, whether or not it decodes.
+    assert_eq!(messages_again.len(), 2, "each draw squeezes one message");
     assert_ne!(
-        other_payloads, payloads,
-        "group index does not enter the draw payload"
+        messages_again[0], messages_again[1],
+        "consecutive draws repeat their message"
     );
     stats::count("challenges_drawn");
 }

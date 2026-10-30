@@ -1,12 +1,10 @@
-//! Jolt guest that runs Akita's public transcript, challenge, and CRT+NTT
-//! paths with `blake2-inline`, `keccak-inline`, and `ntt-inline` enabled.
+//! Jolt guest that runs Akita's public CRT+NTT paths with `ntt-inline` enabled.
 //!
-//! On riscv64 those features route the Blake2b sponge and descriptor digests,
-//! the SHAKE fold-challenge sampler, and the 64-point `i32` NTT and lazy
-//! pointwise dot through Jolt inlines. Every other target keeps the portable
-//! paths, so the host driver compares a traced guest run against a native run
-//! of the same function. Each check folds canonical outputs into one FNV-1a
-//! digest; a mismatch names the check that diverged.
+//! On riscv64 that feature routes the 64-point `i32` NTT and lazy pointwise dot
+//! through Jolt inlines. Every other target keeps the portable paths, so the
+//! host driver compares a traced guest run against a native run of the same
+//! function. Each check folds canonical outputs into one FNV-1a digest; a
+//! mismatch names the check that diverged.
 
 use akita_algebra::ntt::I32_LAZY_DOT_BATCH;
 use akita_algebra::tables::{q128_primes, Q128_NUM_PRIMES};
@@ -14,25 +12,11 @@ use akita_algebra::{
     CanonicalEncoding, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, MontCoeff,
     One, Ring, Zero,
 };
-use akita_challenges::{
-    FoldChallengeDrawDomain, FoldDraw, OperatorNormRejection, SparseChallengeConfig,
-    VerifierFoldDraw, D64_SELECTIVE_L2_CHALLENGE_CONFIG,
-};
-use akita_params::digest_descriptor_bytes;
-use akita_transcript::{
-    new_prover_channel, new_verifier_channel, prover_field_challenge, receive_bytes, send_bytes,
-    verifier_field_challenge,
-};
 use jolt_field::Prime128OffsetA7F7 as Fp;
 use serde::{Deserialize, Serialize};
 
 /// Check names, in [`ParityReport::digests`] order.
-pub const CHECKS: [&str; 12] = [
-    "blake2b transcript bytes and challenges",
-    "blake2b descriptor digests",
-    "keccak fold challenges D64",
-    "keccak fold challenges D64 selective-L2",
-    "keccak fold challenges D128",
+pub const CHECKS: [&str; 7] = [
     "ntt D64 ring round trip",
     "ntt D64 centered-i16 mat-vec",
     "ntt D64 pointwise dot, aligned and offset",
@@ -61,7 +45,6 @@ pub struct ParityReport {
 )]
 fn inline_parity(seed: u64) -> ParityReport {
     let mut digests = Vec::with_capacity(CHECKS.len());
-    digests.extend(transcript_checks(seed));
     let (d64, d64_batch) = ntt_checks::<64>(seed);
     digests.extend(d64);
     digests.push(i8_column_dot_check(seed));
@@ -115,10 +98,6 @@ impl Inputs {
         z ^ (z >> 31)
     }
 
-    fn bytes(&mut self, len: usize) -> Vec<u8> {
-        (0..len).map(|_| self.next() as u8).collect()
-    }
-
     /// Field coefficients, the first few pinned to `0`, `1`, and `-1`.
     fn ring<const D: usize>(&mut self) -> CyclotomicRing<Fp, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|index| match index {
@@ -167,85 +146,6 @@ impl<T> Offset<T> {
 
 #[repr(C, align(8))]
 struct Aligned<T>(T);
-
-/// Byte payloads straddling the Blake2b block (128) and SHAKE256 rate (136)
-/// boundaries.
-const PAYLOAD_LENGTHS: [usize; 9] = [0, 1, 63, 127, 128, 129, 136, 137, 1000];
-
-fn transcript_checks(seed: u64) -> [u64; 5] {
-    let session = b"akita-inline-parity";
-    let instance = seed.to_le_bytes();
-    let mut inputs = Inputs(seed);
-    let payloads: Vec<Vec<u8>> = PAYLOAD_LENGTHS
-        .iter()
-        .map(|&len| inputs.bytes(len))
-        .collect();
-
-    let mut transcript = Digest::new();
-    let mut prover = new_prover_channel(session, &instance).expect("prover channel");
-    for payload in &payloads {
-        send_bytes(&mut prover, payload);
-        transcript.field(prover_field_challenge::<Fp>(&mut prover).expect("prover challenge"));
-    }
-    let proof = prover.narg_string().to_vec();
-    transcript.bytes(&proof);
-
-    let mut verifier = new_verifier_channel(session, &instance, &proof).expect("verifier channel");
-    for payload in &payloads {
-        let received = receive_bytes(&mut verifier, payload.len()).expect("receive payload");
-        assert_eq!(&received, payload, "verifier read a different payload");
-        transcript
-            .field(verifier_field_challenge::<Fp>(&mut verifier).expect("verifier challenge"));
-    }
-
-    let mut descriptors = Digest::new();
-    for payload in &payloads {
-        descriptors.bytes(&digest_descriptor_bytes(payload));
-    }
-
-    // Each draw squeezes a seed from the live verifier sponge and expands it
-    // through the indexed SHAKE256 sampler.
-    let draws = [
-        (
-            64,
-            SparseChallengeConfig::production_for_ring_dim(64).expect("D64 production config"),
-            None,
-        ),
-        (
-            64,
-            D64_SELECTIVE_L2_CHALLENGE_CONFIG,
-            Some(OperatorNormRejection::D64_SELECTIVE_L2),
-        ),
-        (
-            128,
-            SparseChallengeConfig::production_for_ring_dim(128).expect("D128 production config"),
-            None,
-        ),
-    ];
-    let folds = draws.map(|(ring_d, config, rejection)| {
-        let challenges = VerifierFoldDraw::new(&mut verifier, 0, ring_d as u32)
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                ring_d,
-                0,
-                3,
-                2,
-                &config,
-                rejection,
-            )
-            .expect("fold challenges");
-        let mut digest = Digest::new();
-        for challenge in challenges.as_slice() {
-            for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-                digest.bytes(&position.to_le_bytes());
-                digest.bytes(&coefficient.to_le_bytes());
-            }
-        }
-        digest.0
-    });
-
-    [transcript.0, descriptors.0, folds[0], folds[1], folds[2]]
-}
 
 type Ntt<const D: usize> = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>;
 

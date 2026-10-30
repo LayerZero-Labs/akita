@@ -104,7 +104,7 @@ fn schedule_selection_is_bound_into_the_current_instance_descriptor() {
 
 #[test]
 fn rejects_removed_q16_sis_modulus_profile_tag() {
-    let err = decode_sis_modulus_profile(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
+    let err = decode_sis_modulus_profile(std::io::Cursor::new(3u64.to_le_bytes()))
         .expect_err("historical Q16 tag 3 must be rejected");
     assert!(matches!(err, SerializationError::InvalidData(_)));
 }
@@ -209,13 +209,15 @@ fn setup_section_rejects_unknown_compression_policy_tag() {
     setup
         .serialize_uncompressed(&mut bytes)
         .expect("serialize setup section");
-    let policy_offset = decomposition_size(&setup.decomposition, Compress::No)
-        + sis_modulus_profile_size(Compress::No);
-    bytes[policy_offset] = u8::MAX;
-    assert!(matches!(
-        SetupSection::deserialize_uncompressed(&bytes[..], &()),
-        Err(SerializationError::InvalidData(_))
-    ));
+    let policy_offset = decomposition_size(&setup.decomposition) + WORD_BYTES;
+    for byte in [policy_offset, policy_offset + WORD_BYTES - 1] {
+        let mut changed = bytes.clone();
+        changed[byte] = u8::MAX;
+        assert!(matches!(
+            SetupSection::deserialize_uncompressed(&changed[..], &()),
+            Err(SerializationError::InvalidData(_))
+        ));
+    }
 }
 
 #[test]
@@ -237,7 +239,7 @@ fn descriptor_roundtrip_preserves_typed_schedule_binding() {
 fn grinding_binding_has_the_exact_dedicated_descriptor_position() {
     let descriptor = sample_descriptor();
     let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
-    let offset = descriptor.version.serialized_size(Compress::No)
+    let offset = WORD_BYTES
         + descriptor.algebra.serialized_size(Compress::No)
         + descriptor.setup.serialized_size(Compress::No)
         + descriptor.plan.serialized_size(Compress::No);
@@ -246,7 +248,7 @@ fn grinding_binding_has_the_exact_dedicated_descriptor_position() {
         .grinding
         .serialize_uncompressed(&mut grinding_bytes)
         .expect("serialize grinding binding");
-    assert_eq!(descriptor.version, 5);
+    assert_eq!(descriptor.version, 6);
     assert_eq!(
         &bytes[offset..offset + grinding_bytes.len()],
         grinding_bytes
@@ -262,10 +264,7 @@ fn grinding_binding_has_the_exact_dedicated_descriptor_position() {
 
 #[test]
 fn call_section_rejects_oversized_group_count_before_allocation() {
-    let mut bytes = Vec::new();
-    u32::MAX
-        .serialize_uncompressed(&mut bytes)
-        .expect("serialize oversized count");
+    let bytes = u64::from(u32::MAX).to_le_bytes();
 
     assert!(matches!(
         CallSection::deserialize_uncompressed(&bytes[..], &()),
@@ -275,12 +274,10 @@ fn call_section_rejects_oversized_group_count_before_allocation() {
 
 #[test]
 fn call_section_rejects_mismatched_arity_count_before_allocation() {
-    let mut bytes = Vec::new();
-    1u32.serialize_uncompressed(&mut bytes)
-        .expect("serialize group count");
-    u32::MAX
-        .serialize_uncompressed(&mut bytes)
-        .expect("serialize oversized arity count");
+    let bytes: Vec<u8> = [1u64, u64::MAX]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
 
     assert!(matches!(
         CallSection::deserialize_uncompressed(&bytes[..], &()),
@@ -290,17 +287,56 @@ fn call_section_rejects_mismatched_arity_count_before_allocation() {
 
 #[test]
 fn call_section_rejects_mismatched_polynomial_count_before_allocation() {
-    let mut bytes = Vec::new();
-    for value in [1u32, 1, 5, u32::MAX] {
-        value
-            .serialize_uncompressed(&mut bytes)
-            .expect("serialize call section prefix");
-    }
+    let bytes: Vec<u8> = [1u64, 1, 5, u64::MAX]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
 
     assert!(matches!(
         CallSection::deserialize_uncompressed(&bytes[..], &()),
         Err(SerializationError::InvalidData(_))
     ));
+}
+
+/// Version 6 is word aligned: every scalar is one `u64` word, so the whole
+/// descriptor and each section are whole words, and a word that its field
+/// cannot hold is rejected rather than truncated.
+#[test]
+fn descriptor_is_word_aligned_and_rejects_noncanonical_words() {
+    let descriptor = sample_descriptor();
+    let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
+    assert_eq!(bytes.len() % WORD_BYTES, 0);
+    assert_eq!(bytes.len(), descriptor.uncompressed_size());
+    assert_eq!(bytes[..WORD_BYTES], 6u64.to_le_bytes());
+    for size in [
+        descriptor.algebra.uncompressed_size(),
+        descriptor.setup.uncompressed_size(),
+        descriptor.plan.uncompressed_size(),
+        descriptor.grinding.uncompressed_size(),
+        descriptor.call.uncompressed_size(),
+    ] {
+        assert_eq!(size % WORD_BYTES, 0);
+    }
+    // Algebra: modulus, then the two degree words.
+    let algebra = WORD_BYTES;
+    assert_eq!(
+        bytes[algebra + 32..algebra + 48],
+        [1u64.to_le_bytes(), 1u64.to_le_bytes()].concat()
+    );
+
+    // A degree word above `u8::MAX`, and a flag word other than 0 or 1.
+    let mut wide_degree = bytes.clone();
+    wide_degree[algebra + 32 + 1] = 1;
+    let setup = algebra + descriptor.algebra.uncompressed_size();
+    let presence = setup + 2 * WORD_BYTES;
+    let mut bad_flag = bytes.clone();
+    bad_flag[presence] = 2;
+    for changed in [wide_degree, bad_flag] {
+        assert!(matches!(
+            AkitaInstanceDescriptor::deserialize_uncompressed_exact(&changed, &()),
+            Err(SerializationError::InvalidData(_))
+        ));
+    }
 }
 
 #[test]

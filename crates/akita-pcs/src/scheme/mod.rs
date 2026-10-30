@@ -6,6 +6,7 @@ use akita_error::AkitaError;
 use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity};
 use akita_prover::{BackendRegistry, FixedFoldRoute, ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_transcript::ProverChannel;
 use akita_types::AkitaVerifierSetup;
 use akita_types::FpExtEncoding;
 use akita_verifier::AkitaVerifier;
@@ -115,7 +116,8 @@ where
         setup.to_verifier_setup(capacity)
     }
 
-    /// Produce a fused batched opening proof from retained commitments.
+    /// Produce a fused batched opening proof from retained commitments, in a
+    /// standalone transcript under `session`.
     ///
     /// Each handle retains its exact source. The backend validates public claims
     /// against that commitment before creating independent proof state.
@@ -150,6 +152,51 @@ where
         >,
     {
         let started = Instant::now();
+        let mut channel = akita_transcript::new_prover_channel(session);
+        self.batched_prove_embedded(setup, opening, backend, &mut channel, basis)?;
+        let proof = channel.narg_string().to_vec();
+        tracing::info!(
+            proof_bytes = proof.len(),
+            elapsed_s = started.elapsed().as_secs_f64(),
+            "akita batched prove complete"
+        );
+        Ok(proof)
+    }
+
+    /// Produce a fused batched opening proof inside the caller's transcript.
+    ///
+    /// The proof bytes are appended to `channel`'s proof string. The caller
+    /// must have absorbed the [`akita_transcript::CommitmentDigest`] of every
+    /// group it opens before this call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for mismatched ownership, setup, claims, or an invalid
+    /// protocol transition. The channel is then unusable for a proof.
+    #[allow(clippy::type_complexity)]
+    pub fn batched_prove_embedded<'a>(
+        &self,
+        setup: &AkitaProverSetup<Cfg::Field>,
+        opening: SelectedProverOpeningData<
+            'a,
+            Cfg::ExtField,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+            Cfg::Field,
+        >,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+        channel: &mut ProverChannel,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError>
+    where
+        Cfg::Field: WithCommitAccumulator + 'static,
+        Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+        CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
+            Cfg::Field,
+            Cfg::ExtField,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+        >,
+    {
         let resolved = self.schedules.resolve_selection(opening.selection())?;
         let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
             resolved.schedule(),
@@ -160,21 +207,15 @@ where
         let mut registry = BackendRegistry::<Cfg>::new()?;
         let root = registry.register(backend, &prefix_slots)?;
         let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        let proof = akita_prover::batched_prove::<Cfg, _>(
+        akita_prover::batched_prove_embedded::<Cfg, _>(
             setup.expanded.descriptor(),
             &self.schedules,
             &registry,
             opening,
-            session,
+            channel,
             basis,
             &mut route,
-        )?;
-        tracing::info!(
-            proof_bytes = proof.len(),
-            elapsed_s = started.elapsed().as_secs_f64(),
-            "akita batched prove complete"
-        );
-        Ok(proof)
+        )
     }
 
     /// Build a verifier for `setup` over this scheme's schedule catalog.

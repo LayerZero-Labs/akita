@@ -14,25 +14,13 @@ use jolt_program::image::decode_elf;
 use jolt_sdk::postcard;
 // Jolt expands inline instructions through link-time `inventory`
 // registrations; naming the crates keeps them in the binary.
-use jolt_inlines_blake2 as _;
-use jolt_inlines_keccak256 as _;
 use jolt_inlines_ntt as _;
 
 const SEED: u64 = 0x5eed_a417_a000_0001;
 const CUSTOM_0: u8 = 0x0b;
 
 /// Inline instructions the guest must execute, as `(name, funct3, funct7)`.
-const EXPECTED_INLINES: [(&str, u32, u32); 4] = [
-    (
-        "blake2b compression",
-        jolt_inlines_blake2::BLAKE2_FUNCT3,
-        jolt_inlines_blake2::BLAKE2_FUNCT7,
-    ),
-    (
-        "keccak absorb-permute",
-        jolt_inlines_keccak256::KECCAK256_ABSORB_PERMUTE_FUNCT3,
-        jolt_inlines_keccak256::KECCAK256_FUNCT7,
-    ),
+const EXPECTED_INLINES: [(&str, u32, u32); 2] = [
     (
         "ntt forward 64",
         jolt_inlines_ntt::FUNCT3,

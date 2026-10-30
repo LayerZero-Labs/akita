@@ -13,11 +13,11 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -26,8 +26,10 @@ shake = "0.1.0"
 tracing = "0.1"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 test-support = ["akita-params/test-support"]
+# Prover-side grinding replay, which searches on a copy of the sponge state.
+prover = ["akita-transcript/prover", "akita-challenges/prover"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",
@@ -55,7 +57,9 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
   "test-support",
 ] }
 criterion = { version = "0.8", features = ["html_reports"] }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
 rand = "0.8"
+spongefish = { version = "=0.8.0", default-features = false }
 
 [[bench]]
 name = "golomb_rice"

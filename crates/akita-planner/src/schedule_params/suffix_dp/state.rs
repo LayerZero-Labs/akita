@@ -59,6 +59,9 @@ enum GrindingSuccessorKey {
         d_a: usize,
         opening_vars: usize,
         live_blocks: u64,
+        /// `log2` size of the terminal challenge set that prices the
+        /// terminal fold proof of work.
+        challenge_set_bits: u32,
     },
 }
 
@@ -66,7 +69,7 @@ impl ParentObservableKey {
     pub(super) fn new(
         policy: &PlannerPolicy,
         recursive: Option<&akita_params::CommittedGroupParams>,
-        terminal: Option<&akita_params::TerminalFoldParams>,
+        terminal: Option<&CandidateTerminalResponse>,
     ) -> Result<Self, AkitaError> {
         if recursive.is_some() == terminal.is_some() {
             return Err(AkitaError::InvalidSetup(
@@ -74,7 +77,11 @@ impl ParentObservableKey {
             ));
         }
         let Some(first) = recursive else {
-            let terminal = terminal.ok_or_else(|| {
+            let CandidateTerminalResponse {
+                params: terminal,
+                fold_cost,
+                ..
+            } = terminal.ok_or_else(|| {
                 AkitaError::InvalidSetup("parent key is missing its terminal successor".into())
             })?;
             return Ok(Self {
@@ -91,6 +98,7 @@ impl ParentObservableKey {
                             "terminal live-block count exceeds grinding query width".into(),
                         )
                     })?,
+                    challenge_set_bits: fold_cost.challenge_set_bits(),
                 },
             });
         };

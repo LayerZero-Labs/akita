@@ -477,6 +477,9 @@ pub struct CandidateFoldStep {
 /// Fully priced terminal response awaiting schedule materialization.
 pub struct CandidateTerminalResponse {
     pub params: akita_params::TerminalFoldParams,
+    /// [`akita_params::FoldChallengeCost::terminal`] of `params`, priced once
+    /// for every planner edge that ends in this terminal.
+    pub fold_cost: akita_params::FoldChallengeCost,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
     pub input_witness_len: usize,
     pub estimated_direct_payload_bytes: usize,

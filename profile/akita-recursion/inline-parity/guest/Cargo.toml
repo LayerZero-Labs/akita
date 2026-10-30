@@ -3,7 +3,7 @@ name = "akita-inline-parity-guest"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-description = "Jolt guest that runs Akita's transcript, challenge, and CRT+NTT paths with every guest inline enabled."
+description = "Jolt guest that runs Akita's CRT+NTT paths with the NTT guest inline enabled."
 license = "Apache-2.0 OR MIT"
 publish = false
 
@@ -16,21 +16,9 @@ guest = ["jolt/guest-std", "jolt/stdout", "jolt/random"]
 akita-algebra = { path = "../../../../crates/akita-algebra", features = [
   "ntt-inline",
 ] }
-akita-challenges = { path = "../../../../crates/akita-challenges", default-features = false, features = [
-  "transcript-blake2b",
-  "keccak-inline",
-] }
-akita-params = { path = "../../../../crates/akita-params", default-features = false, features = [
-  "transcript-blake2b",
-  "blake2-inline",
-] }
-akita-transcript = { path = "../../../../crates/akita-transcript", default-features = false, features = [
-  "transcript-blake2b",
-  "blake2-inline",
-] }
 # Aliased as `jolt` so `#[jolt::provable]` resolves as in the Jolt examples.
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }

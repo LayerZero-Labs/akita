@@ -19,6 +19,7 @@ pub(crate) use oracle::{
 };
 pub(crate) use split::recursive_split_search_domain;
 use split::recursive_witness_body_lower_bound;
+use split::{fold_nonce_bytes, SplitFrontier};
 pub(super) use split::{
     recursive_candidate_order_key, recursive_split_lower_bound, RecursiveSplitLowerBoundInput,
 };
@@ -414,6 +415,9 @@ impl RecursiveCandidateContext<'_, '_> {
 struct RecursiveSplitBounds {
     score: Option<usize>,
     witness_body: Option<usize>,
+    /// Least live block count of the split's candidates, or zero when it
+    /// does not fit.
+    live_blocks: usize,
 }
 
 impl RecursiveCandidateContext<'_, '_> {
@@ -421,7 +425,12 @@ impl RecursiveCandidateContext<'_, '_> {
         &self,
         relation_domain: RelationSearchDomain,
         mut admit_split: impl FnMut(usize, RecursiveSplitBounds) -> bool,
-        mut visit: impl FnMut(LayoutCandidateScore, usize, CommittedGroupParams, usize),
+        mut visit: impl FnMut(
+            LayoutCandidateScore,
+            usize,
+            CommittedGroupParams,
+            usize,
+        ) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         let request = self.request;
         let policy = request.policy;
@@ -468,6 +477,8 @@ impl RecursiveCandidateContext<'_, '_> {
             let bounds = RecursiveSplitBounds {
                 score: recursive_split_lower_bound(lower_bound_input),
                 witness_body: recursive_witness_body_lower_bound(lower_bound_input),
+                live_blocks: checked::pow2(search.reduced_vars - r)
+                    .map_or(0, |positions| search.num_ring_elems.div_ceil(positions)),
             };
             if !admit_split(r, bounds) {
                 continue;
@@ -509,7 +520,7 @@ impl RecursiveCandidateContext<'_, '_> {
                                     .into(),
                             ));
                         }
-                        visit(score, r, params, next_witness_len);
+                        visit(score, r, params, next_witness_len)?;
                     }
                 }
             }
@@ -525,42 +536,40 @@ fn best_linf_candidates_for(
     relation_domain: RelationSearchDomain,
 ) -> Result<Vec<BestLinfCandidate>, AkitaError> {
     // Larger `r` wins exact score ties independently for each relation mode.
-    let mut best = std::collections::BTreeMap::<
+    let best = std::cell::RefCell::new(std::collections::BTreeMap::<
         akita_params::RingRelationMode,
-        (LayoutCandidateScore, usize, CommittedGroupParams, usize),
-    >::new();
-    let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
+        SplitFrontier,
+    >::new());
     context.walk_splits(
         relation_domain,
         |_, bounds| {
             relation_domain.has_multiple_modes()
-                || best_score
-                    .get()
-                    .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
+                || best
+                    .borrow()
+                    .values()
+                    .all(|frontier| frontier.admits(bounds))
         },
         |score, r, candidate, next_witness_len| {
             if !context
                 .successor_policy
                 .admits(context.search.current_witness_len, next_witness_len)
             {
-                return;
+                return Ok(());
             }
-            let mode = candidate.ring_relation_mode;
-            if best.get(&mode).is_none_or(|(best_score, best_r, _, _)| {
-                recursive_candidate_order_key(score, r)
-                    < recursive_candidate_order_key(*best_score, *best_r)
-            }) {
-                if !relation_domain.has_multiple_modes() {
-                    best_score.set(Some(score));
-                }
-                best.insert(mode, (score, r, candidate, next_witness_len));
-            }
+            let Some(nonce_bytes) = fold_nonce_bytes(&candidate)? else {
+                return Ok(());
+            };
+            best.borrow_mut()
+                .entry(candidate.ring_relation_mode)
+                .or_default()
+                .offer(score, r, candidate, next_witness_len, nonce_bytes)
         },
     )?;
 
     Ok(best
+        .into_inner()
         .into_values()
-        .map(|(_, r, candidate, next)| (r, candidate, next))
+        .flat_map(SplitFrontier::into_candidates)
         .collect())
 }
 
@@ -582,14 +591,17 @@ fn all_linf_candidates_for(
             {
                 candidates.push((split, candidate, next_witness_len));
             }
+            Ok(())
         },
     )?;
     Ok(candidates)
 }
 
+/// Append the selective-L2 candidates seeded by each distinct split and
+/// relation mode of `seeds`.
 fn append_selective_l2_candidates(
     candidates: &mut Vec<(CommittedGroupParams, usize)>,
-    best_modeled: Option<&BestLinfCandidate>,
+    seeds: &[BestLinfCandidate],
     request: &RecursiveCandidateRequest<'_>,
     search: &RecursiveLevelSearch,
     successor_policy: SuccessorPolicy,
@@ -611,8 +623,7 @@ fn append_selective_l2_candidates(
     {
         return Ok(());
     }
-    let (Some((block_index_bits, _, _)), Some(source_moment)) = (best_modeled, source_moment)
-    else {
+    let (false, Some(source_moment)) = (seeds.is_empty(), source_moment) else {
         return Ok(());
     };
     let Some(l2_challenge) = akita_challenges::selective_l2_challenge_config(dimensions.d_a())
@@ -641,69 +652,76 @@ fn append_selective_l2_candidates(
         log_basis: l2_request.log_basis_open,
         ..policy.decomposition
     });
-    let Some(mut l2_core) = l2_context.candidate_core(
-        *block_index_bits,
-        search.num_chunks,
-        l2_delta_commit,
-        l2_delta_open,
-    )?
-    else {
-        return Ok(());
-    };
-    let relation_transition = best_modeled
-        .map(|(_, candidate, _)| candidate.ring_relation_mode)
-        .ok_or_else(|| AkitaError::InvalidSetup("L2 candidate is missing its relation".into()))?;
-    let relation_domain = RelationSearchDomain::for_mode(relation_transition);
-    let linf_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
-    if linf_slices.is_empty() {
-        return Ok(());
-    }
-    let linf_rank = l2_core.inner_commit_matrix.output_rank();
-    let Some(inner_commit_matrix) = selective_l2_inner_matrix(
-        policy,
-        SelectiveL2CandidateGeometry {
-            fold_level,
-            num_claims: 1,
-            num_chunks: search.num_chunks,
-            inner_width: l2_core.inner_commit_matrix.input_width(),
-            ring_dimension: dimensions.d_a(),
-            fold_basis,
-            fold_digit_count: l2_core.num_digits_fold,
-            fold_challenge_config: &l2_challenge,
-            response_l2_sq_cap,
-            norm_proof_shape: None,
-        },
-    )?
-    else {
-        return Ok(());
-    };
-    if request.guide.is_none() && inner_commit_matrix.output_rank() >= linf_rank {
-        return Ok(());
-    }
-    l2_core.inner_commit_matrix = inner_commit_matrix;
-    let mut base_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
-    base_slices.retain(|candidate| {
-        linf_slices
-            .iter()
-            .any(|linf| linf.outer_slice_count() == candidate.outer_slice_count())
-    });
-    for setup_prefix in &search.setup_prefixes {
-        for base_candidate in &base_slices {
-            let params = attach_recursive_setup_prefix(
-                setup_prefix.as_ref(),
-                policy.claim_ext_degree,
-                base_candidate.clone(),
-            )?;
-            if !params.compression_sources_supported()? {
-                continue;
-            }
-            let Some((_, params, next_witness_len)) =
-                finalize_recursive_level_candidate(policy, search, params)?
-            else {
-                continue;
-            };
-            if successor_policy.admits(search.current_witness_len, next_witness_len) {
-                candidates.push((params, next_witness_len));
+    // A seed contributes only its split and relation mode, so a repeated pair
+    // would append the same candidates again.
+    let mut seen = Vec::new();
+    for (block_index_bits, seed_candidate, _) in seeds {
+        let relation_transition = seed_candidate.ring_relation_mode;
+        if seen.contains(&(*block_index_bits, relation_transition)) {
+            continue;
+        }
+        seen.push((*block_index_bits, relation_transition));
+        let Some(mut l2_core) = l2_context.candidate_core(
+            *block_index_bits,
+            search.num_chunks,
+            l2_delta_commit,
+            l2_delta_open,
+        )?
+        else {
+            continue;
+        };
+        let relation_domain = RelationSearchDomain::for_mode(relation_transition);
+        let linf_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
+        if linf_slices.is_empty() {
+            continue;
+        }
+        let linf_rank = l2_core.inner_commit_matrix.output_rank();
+        let Some(inner_commit_matrix) = selective_l2_inner_matrix(
+            policy,
+            SelectiveL2CandidateGeometry {
+                fold_level,
+                num_claims: 1,
+                num_chunks: search.num_chunks,
+                inner_width: l2_core.inner_commit_matrix.input_width(),
+                ring_dimension: dimensions.d_a(),
+                fold_basis,
+                fold_digit_count: l2_core.num_digits_fold,
+                fold_challenge_config: &l2_challenge,
+                response_l2_sq_cap,
+                norm_proof_shape: None,
+            },
+        )?
+        else {
+            continue;
+        };
+        if request.guide.is_none() && inner_commit_matrix.output_rank() >= linf_rank {
+            continue;
+        }
+        l2_core.inner_commit_matrix = inner_commit_matrix;
+        let mut base_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
+        base_slices.retain(|candidate| {
+            linf_slices
+                .iter()
+                .any(|linf| linf.outer_slice_count() == candidate.outer_slice_count())
+        });
+        for setup_prefix in &search.setup_prefixes {
+            for base_candidate in &base_slices {
+                let params = attach_recursive_setup_prefix(
+                    setup_prefix.as_ref(),
+                    policy.claim_ext_degree,
+                    base_candidate.clone(),
+                )?;
+                if !params.compression_sources_supported()? {
+                    continue;
+                }
+                let Some((_, params, next_witness_len)) =
+                    finalize_recursive_level_candidate(policy, search, params)?
+                else {
+                    continue;
+                };
+                if successor_policy.admits(search.current_witness_len, next_witness_len) {
+                    candidates.push((params, next_witness_len));
+                }
             }
         }
     }
@@ -742,15 +760,13 @@ fn derive_best_fold_candidates(
         }
     }
     if !request.opening.is_coefficient_packing() {
-        for best in &best_modeled {
-            append_selective_l2_candidates(
-                &mut candidates,
-                Some(best),
-                &request,
-                &search,
-                SuccessorPolicy::RequireContraction,
-            )?;
-        }
+        append_selective_l2_candidates(
+            &mut candidates,
+            &best_modeled,
+            &request,
+            &search,
+            SuccessorPolicy::RequireContraction,
+        )?;
     }
     Ok(candidates)
 }
@@ -805,15 +821,13 @@ pub(crate) fn derive_terminal_candidates(
             }
         }
     }
-    for best in &modeled {
-        append_selective_l2_candidates(
-            &mut candidates,
-            Some(best),
-            &request,
-            &search,
-            SuccessorPolicy::AllowNonContracting,
-        )?;
-    }
+    append_selective_l2_candidates(
+        &mut candidates,
+        &modeled,
+        &request,
+        &search,
+        SuccessorPolicy::AllowNonContracting,
+    )?;
     Ok(candidates
         .into_iter()
         .map(|(candidate, _)| candidate)

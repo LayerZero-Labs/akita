@@ -5,11 +5,11 @@ use akita_error::AkitaError;
 use jolt_field::{ExtField, Field};
 
 use crate::CoefficientPackingChallenges;
-use akita_params::{InnerCommitSecurityRoute, OpeningMethod, SubringCoefficientPackingGeometry};
+use akita_params::SubringCoefficientPackingGeometry;
 
 /// Runtime value carried by one of Akita's two opening methods.
 ///
-/// The schedule chooses an [`OpeningMethod`]; this family preserves that same
+/// The schedule chooses an [`OpeningMethod`](akita_params::OpeningMethod); this family preserves that same
 /// method distinction while each protocol stage supplies its own payloads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpeningFamily<Trace, Packing> {
@@ -35,74 +35,49 @@ impl OpeningFamily<Challenges, CoefficientPackingChallenges> {
 
 /// Draw one authenticated group's fold challenges under its scheduled opening
 /// method and certified A-security route.
+///
+/// Returns `None` when the group's operator-norm pool runs out; see
+/// [`FoldDraw::draw_fold_challenges`].
 pub fn draw_group_fold_challenges<F, E, D>(
     draw: &mut D,
     params: &akita_params::GroupOpenPhaseParams,
     group_index: usize,
     num_claims: usize,
-) -> Result<GroupFoldChallenges, AkitaError>
+) -> Result<Option<GroupFoldChallenges>, AkitaError>
 where
     F: Field,
     E: ExtField<F>,
     D: FoldDraw,
 {
-    let d_a = params.inner_commit_matrix_params().ring_dimension();
-    let config = params.fold_challenge_config();
-    match params.opening_method() {
-        OpeningMethod::EvaluationTrace => {
-            let rejection = matches!(
-                params.inner_commit_matrix_params().security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-            .then(|| akita_challenges::selective_l2_operator_norm_rejection(d_a, &config))
-            .flatten();
-            draw.draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                d_a,
-                group_index,
-                params.num_live_blocks(),
-                num_claims,
-                &config,
-                rejection,
-            )
-            .map(OpeningFamily::EvaluationTrace)
-        }
-        OpeningMethod::SubringCoefficientPacking {
+    let family = params.fold_challenge_family()?;
+    let packing = match family.domain() {
+        FoldChallengeDrawDomain::EvaluationTrace => None,
+        FoldChallengeDrawDomain::SubringCoefficientPacking {
             challenge_subring_dimension,
         } => {
-            if !matches!(
-                params.inner_commit_matrix_params().security_route(),
-                InnerCommitSecurityRoute::Linf(_)
-            ) {
-                return Err(AkitaError::InvalidSetup(
-                    "coefficient packing requires an L-infinity A security route".into(),
-                ));
-            }
             let geometry = SubringCoefficientPackingGeometry::try_new(
                 E::DEGREE,
-                d_a,
+                params.inner_commit_matrix_params().ring_dimension(),
                 challenge_subring_dimension,
             )?;
-            if config != geometry.fold_challenge_config() {
+            if family.config() != geometry.fold_challenge_config() {
                 return Err(AkitaError::InvalidSetup(
                     "coefficient-packing challenge config is not the audited production family"
                         .into(),
                 ));
             }
-            let subring = draw.draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::SubringCoefficientPacking {
-                    challenge_subring_dimension,
-                },
-                challenge_subring_dimension,
-                group_index,
-                params.num_live_blocks(),
-                num_claims,
-                &config,
-                None,
-            )?;
-            Ok(OpeningFamily::SubringCoefficientPacking(
-                CoefficientPackingChallenges::new(geometry, subring)?,
-            ))
+            Some(geometry)
         }
-    }
+    };
+    let Some(challenges) =
+        draw.draw_fold_challenges(&family, group_index, params.num_live_blocks(), num_claims)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(match packing {
+        None => OpeningFamily::EvaluationTrace(challenges),
+        Some(geometry) => OpeningFamily::SubringCoefficientPacking(
+            CoefficientPackingChallenges::new(geometry, challenges)?,
+        ),
+    }))
 }
