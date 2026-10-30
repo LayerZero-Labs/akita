@@ -2,6 +2,8 @@
 #![cfg(feature = "labinius-trinomial")]
 
 mod common;
+#[path = "binary_source_end_to_end/compatibility.rs"]
+mod compatibility;
 #[path = "binary_source_end_to_end/fault_backend.rs"]
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
@@ -403,6 +405,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         )
         .unwrap();
     let proof = prover.narg_string().to_vec();
+    compatibility::assert_base_bytes(&proof, mixed, word_width);
     eprintln!(
         "{} ordinary grouped proof (word width {}): {} bytes",
         if mixed {

@@ -89,6 +89,12 @@ impl<'a, E: Field, F: Field + CanonicalEncoding>
         commitment: CommittedGroup<F>,
         claim: BinaryWordClaim,
     ) -> Result<Self, AkitaError>;
+
+    pub fn new_binary_planes(
+        commitment: CommittedGroup<F>,
+        word: Option<BinaryWordClaim>,
+        primes: Vec<PrimePlaneClaim>,
+    ) -> Result<Self, AkitaError>;
 }
 ```
 
@@ -139,8 +145,8 @@ identify the state transitions of the binary source opening contract.
 | Order | Implemented action | Fixed before the next challenge |
 | --- | --- | --- |
 | 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the optional word claim, every unique prime plane's polynomial, canonical P point, tensor-component tag and value, and any ordinary point/value. | The complete public statement. |
-| 2 | Send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
-| 3 | Commit the selected U table and every EP plane in one ordinary D payload. U uses one digit; EP coefficients use 43 centered balanced digits. | U precedes all column challenges. |
+| 2 | If a word claim is selected, send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
+| 3 | Commit the selected U table and every EP plane in one ordinary D payload. U uses one digit; EP coefficients use 43 centered balanced digits. | The complete D payload precedes all column challenges. |
 | 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
 | 5 | Commit the outgoing witness containing Z/T digits, selected U/EP views, selected K/K_val, and KA; a mixed opening also includes ordinary commitment preimages. | Every witness segment precedes relation batching. |
 | 7 | Draw the shared ring-switch challenge and row-batching weights, together with the range-image point; evaluate direct setup and public weights. | All tested tables and commitments. |
@@ -513,6 +519,8 @@ then use independent batching weights. The aggregate root already charges the
 conservative degree loss 648 and independent row-batching loss 1; the prime
 rows fit those existing bounds. The Stage-2 degree remains three. A widened
 domain increases its round count and the associated existing sumcheck loss.
+At the computed `2^26` root domain, 26 degree-three Stage-2 rounds contribute
+at most `78/P` by the interactive sumcheck union bound.
 These are algebraic statements, not a whole-protocol Fiat-Shamir or SIS
 certificate.
 
@@ -549,6 +557,16 @@ widths, the next power-of-two domain, ordinary ring-element count, and an
 existing-table D rank lookup. It neither selects an extension nor changes
 schedule artifacts.
 
+```rust
+pub fn price_binary_root_planes(
+    manifest: &BinaryCommittedGroupManifest,
+    word: bool,
+    prime: &PrimePlaneManifest,
+    destination_ring_dimension: usize,
+    ordinary: Option<GroupCommitPhaseParams>,
+) -> Result<BinaryPrimePlanePrice, AkitaError>;
+```
+
 At C=256, one plane contributes `43*162*256 = 1,783,296` natural digits and
 `43*256*256 = 2,818,048` physical cells. Five planes contribute 8,916,480 natural
 digits and 14,090,240 physical cells. The compact degree-64 D widths are:
@@ -563,11 +581,11 @@ For the C=2 fixture, five planes add 69,660 natural digits and 110,080 physical
 cells; D has 1,089 prime-only columns or 1,094 with U. With the current KA
 segment and rank-three A, the complete binary outgoing inputs are:
 
-| Geometry | Five planes, prime-only | Five planes plus word | Minimum domain |
-| --- | ---: | ---: | ---: |
-| N=8, C=2 | 187,904 | 192,256 | 262,144 |
-| N=2^22, C=256 | 37,195,776 | 37,265,152 | 67,108,864 |
-| N=2^23, C=256 | 53,972,992 | 54,042,368 | 67,108,864 |
+| Geometry | Five planes, prime-only | Five planes plus word | Minimum domain | Ordinary degree-64 elements |
+| --- | ---: | ---: | ---: | ---: |
+| N=8, C=2 | 187,904 | 192,256 | 262,144 | 4,096 |
+| N=2^22, C=256 | 37,195,776 | 37,265,152 | 67,108,864 | 1,048,576 |
+| N=2^23, C=256 | 53,972,992 | 54,042,368 | 67,108,864 | 1,048,576 |
 
 Optional ordinary preimages add their canonical segment widths before rounding
 the domain. The large current-root totals retain 36,864 KA cells
@@ -580,3 +598,46 @@ rank-two row; `Q128Offset275` uses that row through `row_owner`. This lookup
 covers only the declared D width under that table's model. No new estimator or
 full admission certificate has been run for the widened ordinary suffix or
 the experimental q24 root. No production certification is asserted.
+
+Several polynomial owners also widen the indexed challenge family. With `m`
+owners and C columns its extraction-address input is `I = m*C`, not just C.
+The current bounded-weight support set has
+`|S46| = sum_(i=0..46) binom(162,i) =
+107268495235892251993000716928106195079952`, or 136.300278309 bits.
+At C=256, the elementary `I/|S46|` term is `2^-128.300278309` for one
+owner, `2^-127.300278309` for two, and `2^-125.978350214` for five.
+Consequently the inequality `I/|S46| <= 2^-128` already fails for two
+owners at that geometry. The experimental multi-polynomial tests do not
+constitute production admission or change the sampler. Prime planes on one
+owner do not introduce extra column challenges; the plane cap does not grant
+each owner an independent security budget.
+
+## Measured proof sizes
+
+The eight-carrier, C=2 test fixture uses the existing ordinary suffix catalog.
+Each plane in these measurements has a distinct prime point. Sizes include the
+whole grouped opening inside the caller's transcript.
+
+| Reading | Planes | Current protocol bytes | `dev-protocol` bytes |
+| --- | ---: | ---: | ---: |
+| Prime only | 1 | 75,685 | 70,617 |
+| Prime only | 2 | 75,687 | 70,640 |
+| Prime only | 5 | 75,673 | 70,586 |
+| Word and prime | 1 | 77,873 | 72,800 |
+| Word and prime | 2 | 77,849 | 72,810 |
+| Word and prime | 5 | 77,875 | 72,792 |
+| Word and prime, mixed ordinary | 1 | 92,026 | 86,974 |
+| Word and prime, mixed ordinary | 2 | 92,045 | 86,966 |
+| Word and prime, mixed ordinary | 5 | 92,036 | 86,964 |
+
+With no prime claims, the base and updated word-only proofs are byte-identical:
+
+| Fixture | Current protocol bytes | `dev-protocol` bytes |
+| --- | ---: | ---: |
+| Binary word, width 128 | 77,873 | 72,818 |
+| Binary word, width 8 | 77,855 | 72,792 |
+| Binary word and ordinary group | 92,116 | 86,954 |
+
+The compatibility fixture pins full proof digests captured from base commit
+`6a2940981` in both protocol modes. Duplicate requests also produce identical
+proof bytes.

@@ -71,6 +71,7 @@ fn prime_plane_prime_only() {
     init_rayon_pool();
     run_on_large_stack(|| {
         fixture(false, false, 1, 1, true);
+        fixture(false, false, 2, 1, false);
         fixture(false, false, 5, 1, true);
     });
 }
@@ -160,7 +161,8 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     let primes = (0..planes)
         .map(|plane| {
             let owner = plane % owners;
-            claim(&words[owner], owner, (plane % 4) as u8, plane / 4)
+            let point_id = plane / owners;
+            claim(&words[owner], owner, (point_id % 4) as u8, point_id)
         })
         .collect::<Vec<_>>();
     let checked = PrimePlaneManifest::new(&descriptor, &primes).unwrap();
