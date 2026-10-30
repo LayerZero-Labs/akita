@@ -361,7 +361,7 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
 
 #[allow(clippy::too_many_arguments)]
 /// Extension seam: evaluate each native row using its explicit polynomial identity.
-/// https://github.com/LayerZero-Labs/akita/issues/285
+/// <https://github.com/LayerZero-Labs/akita/issues/285>
 fn evaluate_quotient_tail<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     prepared_point: &PreparedLiftedRelationPoint<E>,
