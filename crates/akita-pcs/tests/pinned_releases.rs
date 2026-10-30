@@ -497,11 +497,7 @@ fn stage3_binds_the_commitment_each_proof_uses() {
             let mut slot = slot.clone();
             let mut coeffs = slot.commitment.rows[0].coeffs().to_vec();
             coeffs[0] += F::from_u128_reduced(1);
-            slot.commitment.rows[0] = akita_types::RingVec::from_coeffs_with_ring_dim(
-                coeffs,
-                slot.commitment.rows[0].ring_dim(),
-            )
-            .unwrap();
+            slot.commitment.rows[0] = akita_types::RingVec::from_coeffs(coeffs);
             registry.insert(slot).unwrap();
         }
         // SAFETY: deliberately not derived; the proof must be rejected.
@@ -793,5 +789,66 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
         assert_eq!(guest.catalog().catalog_digest(), merged);
         verify(&AkitaVerifier::from_pinned(guest).unwrap(), &proved).expect("guest verifier");
         std::fs::remove_dir_all(catalog.parent().unwrap()).unwrap();
+    });
+}
+
+/// Files behind a source that counts reads and can change afterwards.
+struct CountingFiles {
+    files: std::sync::Mutex<MemoryReleaseFiles>,
+    reads: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+}
+
+impl akita_types::preprocessing::ReleaseFileSource for CountingFiles {
+    fn read_file(&self, name: &str, length: usize) -> Result<Vec<u8>, akita_error::AkitaError> {
+        *self
+            .reads
+            .lock()
+            .unwrap()
+            .entry(name.to_owned())
+            .or_default() += 1;
+        self.files.lock().unwrap().read_file(name, length)
+    }
+}
+
+#[test]
+fn loaders_read_each_file_once_and_never_refresh_a_loaded_setup() {
+    on_large_stack(|| {
+        let release = release("read-once", SEED, 24, true, &default_catalog());
+        let opened = open(&release);
+        let counting = CountingFiles {
+            files: std::sync::Mutex::new(release.files.clone()),
+            reads: Default::default(),
+        };
+        let pinned = load_prover_setup::<Cfg>(&opened, &counting, SET, None).unwrap();
+        let reads = std::mem::take(&mut *counting.reads.lock().unwrap());
+        assert!(reads.keys().any(|name| name.starts_with("hints/")));
+        assert!(reads.values().all(|count| *count == 1), "{reads:?}");
+        let verifier =
+            load_verifier_setup::<Cfg>(&opened, &counting, SET, None, CommitmentSource::Registry)
+                .unwrap();
+        let reads = std::mem::take(&mut *counting.reads.lock().unwrap());
+        assert!(reads.keys().any(|name| name.starts_with("registry/")));
+        assert!(reads.values().all(|count| *count == 1), "{reads:?}");
+
+        // Changing storage after loading changes nothing already loaded.
+        let names = release
+            .files
+            .iter()
+            .map(|(name, _)| name.to_owned())
+            .collect::<Vec<_>>();
+        for name in names {
+            counting.files.lock().unwrap().insert(name, vec![0xa5; 3]);
+        }
+        let scheme = AkitaCommitmentScheme::from_pinned_prover_setup(&pinned);
+        let proved = prove(&scheme, pinned.setup(), 24);
+        verify(&scheme.pinned_verifier(verifier).unwrap(), &proved).expect("loaded setup");
+        assert!(load_verifier_setup::<Cfg>(
+            &opened,
+            &counting,
+            SET,
+            None,
+            CommitmentSource::Registry
+        )
+        .is_err());
     });
 }
