@@ -61,6 +61,23 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
+        self.verify_in_session_with_output(session, statement, basis, |_| Ok(()))
+    }
+
+    /// Extension seam: construct an output only after the complete opening verifies.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>
+    ///
+    /// The callback receives the authenticated statement without adding transcript
+    /// messages. Failures, including output construction, invalidate the session.
+    pub(super) fn verify_in_session_with_output<R>(
+        &self,
+        session: &mut akita_transcript::VerifierSession<'_>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+        output: impl FnOnce(
+            &OpeningClaims<'_, Cfg::ExtField, &akita_types::Commitment<Cfg::Field>>,
+        ) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
         let result = (|| {
             let prepared = self.prepare_opening(statement, basis)?;
             akita_transcript::absorb_subprotocol_context(
@@ -72,7 +89,8 @@ where
             let mut grinding =
                 akita_types::VerifierGrinding::new_borrowed(session, &prepared.grinding_plan);
             self.verify_prepared(&prepared, basis, &mut grinding)?;
-            grinding.finish_opening()
+            grinding.finish_opening()?;
+            output(&prepared.claims)
         })();
         if result.is_err() {
             session.invalidate();
