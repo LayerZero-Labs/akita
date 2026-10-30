@@ -10,12 +10,12 @@
 //! and how its opening is computed from an independent oracle — stays at the
 //! call site, which is the only part worth reading per cell.
 
-use crate::common::load_workspace_scheme;
 use crate::common::proof_size::prove_matching_byte_model;
+use crate::common::{load_workspace_scheme, self_derived_verifier};
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::CpuBackend;
 use akita_params::BasisMode;
-use akita_pcs::AkitaCommitmentScheme;
+use akita_pcs::{AkitaCommitmentScheme, AkitaVerifier};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 
@@ -30,7 +30,7 @@ use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 pub(super) struct SingleGroupRoundtrip<Cfg: CommitmentConfig> {
     pub(super) scheme: AkitaCommitmentScheme<Cfg>,
     pub(super) proof: Vec<u8>,
-    pub(super) verifier_setup: akita_types::AkitaVerifierSetup<Cfg::Field>,
+    pub(super) verifier: AkitaVerifier<Cfg>,
     pub(super) selection: akita_params::OpeningScheduleSelection,
     pub(super) commitment: akita_types::CommittedGroup<Cfg::Field>,
     pub(super) point: Vec<Cfg::ExtField>,
@@ -81,8 +81,8 @@ where
         load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
             .expect("workspace schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier = self_derived_verifier(&scheme, &setup);
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
@@ -121,22 +121,19 @@ where
     )
     .expect("verifier group")])
     .expect("verifier claims");
-    scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                label,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
-        })
+    verifier
+        .batched_verify(
+            &proof,
+            label,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
         .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
 
     SingleGroupRoundtrip {
         scheme,
         proof,
-        verifier_setup,
+        verifier,
         selection,
         commitment,
         point,
@@ -152,11 +149,9 @@ where
 /// the pre-commitment exists — so folding that into a driver would mean
 /// threading polynomial-construction closures through it. This split keeps the
 /// genuinely shared part shared without inventing that indirection.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn two_group_verify_roundtrip<Cfg>(
-    scheme: &AkitaCommitmentScheme<Cfg>,
     proof: &[u8],
-    verifier_setup: &akita_types::AkitaVerifierSetup<Cfg::Field>,
+    verifier: &AkitaVerifier<Cfg>,
     selection: akita_params::OpeningScheduleSelection,
     pre: (
         &akita_types::CommittedGroup<Cfg::Field>,
@@ -206,15 +201,12 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     ])
     .expect("verifier claims");
 
-    scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                proof,
-                label,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
-        })
+    verifier
+        .batched_verify(
+            proof,
+            label,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
         .unwrap_or_else(|e| panic!("{what}: {e:?}"));
 }

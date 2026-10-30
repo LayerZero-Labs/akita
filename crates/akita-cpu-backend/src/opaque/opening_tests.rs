@@ -653,7 +653,7 @@ mod extension_challenges {
                     .max(setup_evals.len());
                 let mut matrix = setup_evals.clone();
                 matrix.resize(capacity, F::zero());
-                let expanded = Arc::new(
+                let expanded = Arc::new(unsafe {
                     AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                         AkitaSetupDescriptor {
                             max_num_vars: 9,
@@ -662,8 +662,8 @@ mod extension_challenges {
                             setup_seed: sample_akita_setup_seed(),
                         },
                         FlatMatrix::from_flat_data(matrix),
-                    ),
-                );
+                    )
+                });
                 let backend = CpuBackend::new(expanded).unwrap();
                 let proof = proof(&backend);
                 let context = &proof.context;

@@ -15,16 +15,32 @@ struct SetupPrefixSearchKey {
     guide: Option<SetupPrefixLayoutGuide>,
 }
 
+/// Setup-prefix profiles a search may choose, such as the profile universe
+/// of a release's parameter set. Profiles it rejects are never candidates.
+pub type SetupPrefixProfileFilter =
+    Arc<dyn Fn(&akita_params::GroupCommitPhaseParams) -> bool + Send + Sync>;
+
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[GroupOpenPhaseParams]>>,
     hits: usize,
     misses: usize,
+    admissible: Option<SetupPrefixProfileFilter>,
 }
 
 impl SetupPrefixSearchCache {
     pub(crate) const fn diagnostics(&self) -> (usize, usize) {
         (self.hits, self.misses)
+    }
+
+    /// A cache whose searches choose only profiles `admissible` accepts, when
+    /// given. The filter applies before Pareto pruning, so an admissible
+    /// profile is never lost to an inadmissible one that dominates it.
+    pub(crate) fn new(admissible: Option<SetupPrefixProfileFilter>) -> Self {
+        Self {
+            admissible,
+            ..Self::default()
+        }
     }
 }
 
@@ -341,6 +357,13 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 else {
                     continue;
                 };
+                if cache
+                    .admissible
+                    .as_ref()
+                    .is_some_and(|admissible| !admissible(&entry.3.profile))
+                {
+                    continue;
+                }
                 crate::schedule_params::pareto::insert(
                     &mut frontier,
                     entry,
@@ -468,5 +491,55 @@ mod tests {
             }
         }
         panic!("fixture must contain a feasible setup-prefix layout outside the Pareto frontier");
+    }
+
+    #[test]
+    fn a_profile_universe_restricts_the_search_before_pareto_pruning() {
+        use akita_config::{
+            policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        };
+
+        type Recursive = RecursiveCommitmentConfig<OneHot>;
+        let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        let opening = PlannerOpeningCandidate::evaluation_trace(
+            Recursive::ring_challenge_config(64).expect("challenge config"),
+        );
+        let request = || SetupPrefixSearchRequest {
+            policy: &policy,
+            opening,
+            log_basis_open: 3,
+            n_prefix: 1usize << 14,
+            num_chunks: 1,
+            inner_ring_dimension: 64,
+            outer_ring_dimension: 64,
+            guide: None,
+        };
+        let unrestricted =
+            derive_setup_prefix_groups(&mut SetupPrefixSearchCache::default(), request())
+                .expect("unrestricted frontier");
+        assert!(!unrestricted.is_empty());
+        let winners = unrestricted
+            .iter()
+            .map(|candidate| candidate.profile.canonical_descriptor_bytes())
+            .collect::<std::collections::HashSet<_>>();
+
+        // Excluding every Pareto winner still leaves the dominated candidates.
+        let excluded = winners.clone();
+        let mut cache = SetupPrefixSearchCache::new(Some(Arc::new(move |profile| {
+            !excluded.contains(&profile.canonical_descriptor_bytes())
+        })));
+        let restricted = derive_setup_prefix_groups(&mut cache, request()).expect("restricted");
+        assert!(
+            !restricted.is_empty(),
+            "dominated profiles remain candidates"
+        );
+        assert!(restricted
+            .iter()
+            .all(|candidate| !winners.contains(&candidate.profile.canonical_descriptor_bytes())));
+
+        let mut empty = SetupPrefixSearchCache::new(Some(Arc::new(|_| false)));
+        assert!(derive_setup_prefix_groups(&mut empty, request())
+            .expect("empty universe")
+            .is_empty());
     }
 }

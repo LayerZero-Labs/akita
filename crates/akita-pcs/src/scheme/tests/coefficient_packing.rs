@@ -229,19 +229,9 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                         .expect("setup prefix group")
                 })
                 .collect::<Vec<_>>();
-            let prefix_backend =
-                CpuBackend::<PackingField, PackingExt>::new(setup.expanded.clone()).unwrap();
-            let artifacts = prefix_backend
-                .export_setup_prefixes(&setup_prefixes)
-                .unwrap();
-            for prefix in &setup_prefixes {
-                setup
-                    .prefix_slots
-                    .insert(artifacts.get(prefix).unwrap().clone())
-                    .unwrap();
-            }
-            let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-            let verifier_setup = scheme.setup_verifier(&setup).unwrap();
+            setup.export_setup_prefixes(&setup_prefixes).unwrap();
+            let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+            let verifier = self_derived_verifier(&scheme, &setup);
             let akita_cpu_backend::CommitOutput {
                 committed_group,
                 private_handle: hint,
@@ -298,11 +288,8 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                 .unwrap()])
                 .unwrap();
                 let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
-                scheme
-                    .verifier(verifier_setup.clone())
-                    .and_then(|verifier| {
-                        verifier.batched_verify(proof.as_slice(), label, statement, basis)
-                    })
+                verifier
+                    .batched_verify(proof.as_slice(), label, statement, basis)
                     .unwrap();
 
                 if basis == BasisMode::Lagrange {
@@ -317,14 +304,8 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                         .unwrap()])
                         .unwrap();
                     let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
-                    assert!(scheme
-                        .verifier(verifier_setup.clone())
-                        .and_then(|verifier| verifier.batched_verify(
-                            malformed.as_slice(),
-                            label,
-                            statement,
-                            basis
-                        ))
+                    assert!(verifier
+                        .batched_verify(malformed.as_slice(), label, statement, basis)
                         .is_err());
 
                     macro_rules! unsupported_evaluation_trace_admission_error {

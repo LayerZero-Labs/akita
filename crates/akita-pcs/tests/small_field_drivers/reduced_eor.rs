@@ -18,17 +18,12 @@ fn verify(
         vec![roundtrip.expected],
         &roundtrip.commitment,
     )?])?;
-    roundtrip
-        .scheme
-        .verifier(roundtrip.verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                proof,
-                label,
-                GroupBatchStatement::new(roundtrip.selection, claims)?,
-                BasisMode::Lagrange,
-            )
-        })
+    roundtrip.verifier.batched_verify(
+        proof,
+        label,
+        GroupBatchStatement::new(roundtrip.selection, claims)?,
+        BasisMode::Lagrange,
+    )
 }
 
 pub(super) fn assert_fp32_dense(

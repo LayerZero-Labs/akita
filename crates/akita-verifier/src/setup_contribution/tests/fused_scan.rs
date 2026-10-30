@@ -296,18 +296,10 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     );
     let plan = scan.plan();
     let setup_ring_elements = plan.required().div_ceil(D_A / D_D);
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_ring_elements * D_A,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_ring_elements * D_A)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_ring_elements * D_A)
+            .map(|idx| test_scalar(211 + idx as u128))
+            .collect(),
     );
     let alpha = test_scalar(3);
     let alpha_pows_a = scalar_powers(alpha, D_A);
@@ -428,18 +420,10 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
 
     let base_dimension = plan.projection_geometry().base_ring_dim();
     let setup_coefficients = plan.required() * base_dimension;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_coefficients,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_coefficients)
-                .map(|index| test_scalar(503 + index as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_coefficients)
+            .map(|index| test_scalar(503 + index as u128))
+            .collect(),
     );
     let DirectScanMode::Reduced { groups: direct, .. } = &scan.mode else {
         panic!("reduced fixture must prepare reduced direct-scan state");
@@ -502,18 +486,10 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
     .unwrap();
     let plan = scan.plan();
     let setup_coefficients = plan.required() * plan.projection_geometry().base_ring_dim();
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_coefficients,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_coefficients)
-                .map(|index| test_scalar(1801 + index as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_coefficients)
+            .map(|index| test_scalar(1801 + index as u128))
+            .collect(),
     );
     assert_eq!(
         scan.evaluate_direct::<F>(&setup).unwrap(),
@@ -579,18 +555,10 @@ fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
     .unwrap();
     let plan = scan.plan();
     let setup_coefficients = plan.required() * plan.projection_geometry().base_ring_dim();
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_coefficients,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_coefficients)
-                .map(|index| test_scalar(901 + index as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_coefficients)
+            .map(|index| test_scalar(901 + index as u128))
+            .collect(),
     );
     assert_eq!(
         scan.evaluate_direct::<F>(&setup).unwrap(),

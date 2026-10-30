@@ -26,11 +26,13 @@ orchestration lives in `akita-pcs`.
 | `akita-planner` | `Cfg`-free schedule search and optional preset-driven artifact emission |
 | `akita-schedules` | Versioned artifacts, row audit, and validated owned catalogs |
 | `akita-config` | Presets, `CommitmentConfig`, and artifact-family policy binding |
-| `akita-setup` | Setup construction and optional cache |
+| `akita-setup` | Local setup construction and the release-file cache |
 | `akita-verifier` | Verifier replay (no prover polynomial backends) |
 | `akita-prover` | Generic protocol sequencing and opaque backend contracts |
 | `akita-cpu-backend` | Owning CPU sources, commitments, witness arithmetic, and caches |
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
+| `akita-preprocess` | Generator and auditor of pinned preprocessing releases |
+| `akita-anchors` | Akita's compiled trust anchor |
 
 ## Dependency Layers
 
@@ -53,6 +55,8 @@ graph TD
   Prover["akita-prover"]
   Cpu["akita-cpu-backend"]
   Setup["akita-setup"]
+  Preprocess["akita-preprocess"]
+  Anchors["akita-anchors"]
   Pcs["akita-pcs"]
 
   Algebra --> Error
@@ -153,6 +157,15 @@ graph TD
   Pcs --> Transcript
   Pcs --> Types
   Pcs --> Verifier
+  Preprocess --> Config
+  Preprocess --> Cpu
+  Preprocess --> Error
+  Preprocess --> Field
+  Preprocess --> Params
+  Preprocess --> Ser
+  Preprocess --> Types
+  Preprocess --> Verifier
+  Anchors --> Types
 ```
 
 ## Ownership Rules
@@ -181,6 +194,14 @@ graph TD
   validated catalog to one exact preset. Applications load artifact bytes and
   pass the resulting bound catalog explicitly; configs do not own or resolve
   static rows.
+- `akita-preprocess` is the only component that publishes setup-prefix
+  commitments. It generates pinned releases from scratch and audits them. It
+  must never depend on `akita-setup`, whose cache it may not read, or on an
+  anchor crate, so adding a release never changes a `bundle_id`;
+  `scripts/check-crate-deps.sh akita-preprocess` enforces both. Every
+  verifier-facing crate forbids it.
+- `akita-anchors` lists the `(bundle_id, set name)` pairs of the releases under
+  `params/` as a compile-time constant. It depends only on `akita-types`.
 - `akita-verifier` stays prover-free (no polynomial backends, no setup
   expansion) and is directly `<Cfg>`-generic. It receives the catalog explicitly
   and resolves only the statement's row digest. Verifier-reachable

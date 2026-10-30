@@ -45,8 +45,11 @@ the message's position.
 
 One derivable absorb remains. Stage 3 still absorbs the setup-prefix slot id
 as a padded public byte string, although the effective-schedule digest already
-binds it. Its length is schedule-fixed, so it is harmless. This change leaves
-it alone, because removing it would change the known-answer vectors.
+binds it. Its length is schedule-fixed, so it is harmless. Pinned
+preprocessing releases append the slot's 32-byte prefix commitment digest to
+the same byte string
+([`pinned-preprocessing-releases.md`](pinned-preprocessing-releases.md#transcript-binding)),
+so the slot id now gives the digest its context and stays absorbed.
 
 ### Invariants
 

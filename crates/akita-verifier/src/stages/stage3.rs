@@ -54,7 +54,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
-        F: Field + CanonicalEncoding,
+        F: Field + CanonicalEncoding + AkitaSerialize,
         E: ExtField<F>,
     {
         let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
@@ -81,7 +81,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         level: u32,
     ) -> Result<SetupSumcheckReplay<E>, AkitaError>
     where
-        F: Field + CanonicalEncoding,
+        F: Field + CanonicalEncoding + AkitaSerialize,
         E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F> + ChallengeCodec,
     {
         let geometry = self.setup_index_weight.projection_geometry();
@@ -143,7 +143,7 @@ pub(crate) fn verify_stage3<F, E>(
     level: u32,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F> + ChallengeCodec,
 {
     let setup_coefficient_bits = rs
@@ -161,7 +161,8 @@ where
 }
 
 /// Resolve the planned setup-prefix slot in the verifier setup, check that it
-/// covers the Stage 3 setup product, and absorb its public slot id.
+/// covers the Stage 3 setup product, and absorb its slot id and prefix
+/// commitment digest.
 ///
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
@@ -175,7 +176,7 @@ fn bind_setup_prefix_slot<F>(
     level: u32,
 ) -> Result<(), AkitaError>
 where
-    F: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     let selected_prefix = next_fold_level_params.setup_prefix().ok_or_else(|| {
         AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
@@ -196,11 +197,12 @@ where
         ring_d,
         "verifier setup-prefix slot does not cover setup product",
     )?;
-    let mut encoded_slot = Vec::new();
-    slot.id
-        .serialize_compressed(&mut encoded_slot)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    akita_types::stage3_public_slot(grinding, level, &encoded_slot)
+    akita_types::stage3_public_slot(
+        grinding,
+        level,
+        &setup.expanded().descriptor().setup_seed,
+        slot,
+    )
 }
 
 #[cfg(test)]
@@ -307,14 +309,16 @@ mod tests {
             num_field_elements: setup_eval_len * RING_D,
             setup_seed: [9u8; 32].into(),
         };
-        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            descriptor,
-            akita_params::FlatMatrix::from_flat_data(
-                (0..setup_eval_len * RING_D)
-                    .map(|index| F::from_u64(11 + index as u64))
-                    .collect(),
-            ),
-        );
+        let setup = unsafe {
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                descriptor,
+                akita_params::FlatMatrix::from_flat_data(
+                    (0..setup_eval_len * RING_D)
+                        .map(|index| F::from_u64(11 + index as u64))
+                        .collect(),
+                ),
+            )
+        };
         let rho_y = (0..RING_D.trailing_zeros() as usize)
             .map(|index| F::from_u64(101 + index as u64))
             .collect::<Vec<_>>();

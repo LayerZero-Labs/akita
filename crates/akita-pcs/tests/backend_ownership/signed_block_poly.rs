@@ -56,7 +56,7 @@ fn roundtrip(storage: Storage, len: usize) {
     )
     .unwrap();
     let setup = scheme.setup_prover(NV, 1).unwrap();
-    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+    let backend = CpuBackend::new(setup.expanded().clone()).unwrap();
     let signed_source = backend.import_source(vec![signed]).unwrap();
     let dense_source = backend.import_source(vec![dense]).unwrap();
     let signed_output = backend
@@ -86,9 +86,7 @@ fn roundtrip(storage: Storage, len: usize) {
         .unwrap();
     assert_eq!(signed_bytes, dense_bytes, "commitment bytes");
 
-    let verifier = scheme
-        .verifier(scheme.setup_verifier(&setup).unwrap().clone())
-        .unwrap();
+    let verifier = common::self_derived_verifier(&scheme, &setup);
     let mut proof_bytes = Vec::new();
     for output in [signed_output, dense_output] {
         let opening = common::prove_input::<Cfg>(

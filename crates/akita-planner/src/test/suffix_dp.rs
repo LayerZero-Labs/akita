@@ -26,7 +26,7 @@ fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::Schedu
 fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let direct = memo_key(1, None);
     let prefixed = memo_key(2, Some(1));
-    let mut memo = super::ScheduleMemo::new();
+    let mut memo = super::ScheduleMemo::new(None);
     for key in [direct.clone(), prefixed.clone()] {
         memo.insert(key, super::empty_suffix_result(), None);
     }
@@ -452,7 +452,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
             relation_phase: super::RingRelationPhase::QuotientPrefix,
         },
     };
-    let mut memo = super::ScheduleMemo::new();
+    let mut memo = super::ScheduleMemo::new(None);
     let domain = super::candidates::CandidateDomain::prepare(&ctx, state).unwrap();
     let generated = domain
         .generate_recursive_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)

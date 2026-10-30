@@ -22,7 +22,8 @@ use crate::schedule_params::{
     derive_ab_commitment_candidate, derive_selected_suffix_schedule,
     materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
     AbCommitmentCandidateRequest, CandidateMaterializationCost, PlannerOpeningCandidate,
-    RingChallengeConfigFn, ScheduleMemo, SetupFieldBudget, SuffixCtx, SuffixState,
+    RingChallengeConfigFn, ScheduleMemo, SetupFieldBudget, SetupPrefixProfileFilter, SuffixCtx,
+    SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -45,6 +46,7 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
+    pub(crate) setup_prefix_profiles: Option<&'a SetupPrefixProfileFilter>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
 }
@@ -56,6 +58,7 @@ impl ScheduleSearchOptions<'_> {
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            setup_prefix_profiles: None,
             #[cfg(test)]
             query_prefix_count: 0,
         }
@@ -677,12 +680,18 @@ pub fn find_schedule(
 /// [`akita_schedules::ValidatedScheduleCatalog`]. The resulting expanded row must
 /// still be admitted into the caller's final trusted catalog before runtime
 /// proving or verification.
+///
+/// `setup_prefix_profiles`, when given, restricts both searches to the
+/// setup-prefix profiles it accepts, such as the profile universe of the
+/// release set the row is planned for. Adaptation then fails only when no
+/// feasible schedule exists within that universe.
 pub fn find_adapted_schedule(
     main_row: &ResolvedScheduleRow,
     request: &crate::emit::GroupedGenerationRequest,
     final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    setup_prefix_profiles: Option<&SetupPrefixProfileFilter>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let key = request.key();
     let precommitted_source_contracts = request.source_contracts();
@@ -693,13 +702,18 @@ pub fn find_adapted_schedule(
         &precommitted_source_contracts,
         policy,
         &ring_challenge_config,
+        setup_prefix_profiles,
     ) {
-        Err(AkitaError::UnsupportedSchedule(guided)) => find_schedule(
+        Err(AkitaError::UnsupportedSchedule(guided)) => find_schedule_in_relation_order(
             &key,
             final_source_contract,
             &precommitted_source_contracts,
             policy,
             ring_challenge_config,
+            ScheduleSearchOptions {
+                setup_prefix_profiles,
+                ..ScheduleSearchOptions::canonical()
+            },
         )
         .map_err(|error| match error {
             AkitaError::UnsupportedSchedule(full) => AkitaError::UnsupportedSchedule(format!(
@@ -718,6 +732,7 @@ fn find_adapted_schedule_for_key(
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    setup_prefix_profiles: Option<&SetupPrefixProfileFilter>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
@@ -765,6 +780,7 @@ fn find_adapted_schedule_for_key(
         ScheduleSearchOptions {
             root_main_constraint: Some(&main_row.schedule().root.params),
             adaptation_guide: Some(main_row.schedule()),
+            setup_prefix_profiles,
             ..ScheduleSearchOptions::canonical()
         },
     )
@@ -886,7 +902,7 @@ pub(crate) fn find_schedule_in_relation_order(
             relation_traversal_order: options.relation_traversal_order,
             relation_mode_filter: options.relation_mode_filter,
         };
-        let mut memo = ScheduleMemo::new();
+        let mut memo = ScheduleMemo::new(options.setup_prefix_profiles.cloned());
         let suffix_started = diagnostics.map(|_| Instant::now());
         let pass_start = diagnostics.map(|diagnostics| diagnostics.search_work());
         let suffix = derive_selected_suffix_schedule(

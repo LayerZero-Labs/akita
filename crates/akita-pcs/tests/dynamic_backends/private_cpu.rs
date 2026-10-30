@@ -86,7 +86,7 @@ impl PrivateCpu {
     ) -> SetupPrefixProverRegistry<F, OwnedCommitment> {
         let imported = self
             .inner
-            .import_setup_prefixes(&setup.prefix_slots, ids)
+            .import_setup_prefixes(setup.prefix_slots(), ids)
             .unwrap();
         let mut prefixes = SetupPrefixProverRegistry::default();
         for id in ids {

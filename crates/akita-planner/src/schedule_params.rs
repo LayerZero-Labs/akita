@@ -61,6 +61,7 @@ pub(crate) use akita_schedules::planner_support::{
     materialize_candidate_schedule, CandidateFoldStep, CandidateMaterializationCost,
     CandidateTerminalResponse,
 };
+pub use candidate::SetupPrefixProfileFilter;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,

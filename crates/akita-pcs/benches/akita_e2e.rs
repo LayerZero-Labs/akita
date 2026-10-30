@@ -119,7 +119,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     });
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
-    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
+    let stack = CpuBackend::new(setup.expanded().clone()).unwrap();
 
     let source = stack.import_source(vec![poly.clone()]).unwrap();
 
@@ -159,9 +159,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         .expect("select generated schedule row")
         .selection();
 
-    let verifier = scheme
-        .verifier(scheme.setup_verifier(&setup).expect("verifier setup"))
-        .expect("verifier");
+    let verifier =
+        unsafe { scheme.verifier(scheme.setup_verifier(&setup).expect("verifier setup")) }
+            .expect("verifier");
 
     let mode_label = "direct";
     group.bench_function(format!("prove/{mode_label}"), |b| {
@@ -349,7 +349,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
-    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
+    let stack = CpuBackend::new(setup.expanded().clone()).unwrap();
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     configure_group(&mut group, nv);
@@ -392,9 +392,9 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         .expect("select generated schedule row")
         .selection();
 
-    let verifier = scheme
-        .verifier(scheme.setup_verifier(&setup).expect("verifier setup"))
-        .expect("verifier");
+    let verifier =
+        unsafe { scheme.verifier(scheme.setup_verifier(&setup).expect("verifier setup")) }
+            .expect("verifier");
 
     let mode_label = "direct";
     group.bench_function(format!("prove/{mode_label}"), |b| {

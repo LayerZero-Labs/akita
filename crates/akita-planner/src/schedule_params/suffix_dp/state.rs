@@ -178,7 +178,7 @@ const MAX_SECOND_CHANCE_PROBES: usize = 16;
 #[ignore = "manual peak-RSS measurement with both cache quotas saturated"]
 fn memo_cache_pressure() {
     let multi = std::env::var_os("AKITA_MEMO_MULTI_CHUNK").is_some();
-    let mut memo = ScheduleMemo::new();
+    let mut memo = ScheduleMemo::new(None);
     let result = empty_suffix_result();
     for (topology, capacity) in [
         (
@@ -256,12 +256,14 @@ pub(super) fn evict_suffix_entry(
 }
 
 impl ScheduleMemo {
-    pub(crate) fn new() -> Self {
+    /// An empty memo whose setup-prefix searches choose only profiles
+    /// `setup_prefix_profiles` accepts, when given.
+    pub(crate) fn new(setup_prefix_profiles: Option<SetupPrefixProfileFilter>) -> Self {
         Self {
             entries: HashMap::new(),
             direct_insertion_order: VecDeque::new(),
             prefixed_insertion_order: VecDeque::new(),
-            setup_prefixes: SetupPrefixSearchCache::default(),
+            setup_prefixes: SetupPrefixSearchCache::new(setup_prefix_profiles),
         }
     }
 

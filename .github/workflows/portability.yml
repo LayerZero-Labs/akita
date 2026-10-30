@@ -53,6 +53,12 @@ jobs:
           cargo test --release -p akita-cpu-backend --lib wide_mass::tests
           cargo test --release -p akita-cpu-backend --lib windowed_accum::tests
           cargo test --release -p akita-cpu-backend --lib poly_helpers::tests::partitioned_fold
+      - name: Known-answer digests and release regeneration on AArch64
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        run: |
+          cargo test --release -p akita-preprocess --lib known_answer::tests::known_answer_digests_match_the_compiled_constants -- --exact
+          cargo run --release -p akita-preprocess -- check
 
   x86-avx2:
     name: Native x86-64 AVX2 kernels
@@ -101,6 +107,7 @@ jobs:
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ntt::avx -- --include-ignored
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-types --lib ifma -- --include-ignored
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal::ntt::
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-preprocess --lib known_answer::tests::known_answer_digests_match_the_compiled_constants -- --exact
       # The emulated CPU always has AVX-512BW, which the two-window gather is
       # compiled for, so this step never depends on the runner's hardware.
       - name: Run AVX-512BW window-gather tests under emulation

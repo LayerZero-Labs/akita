@@ -8,12 +8,11 @@ use akita_params::{
     lagrange_weights, BasisMode, CommittedGroupBatchProfile, OpeningScheduleSelection,
     PolynomialGroupLayout, ScheduleLookupKey,
 };
-use akita_pcs::AkitaCommitmentScheme;
+use akita_pcs::{AkitaCommitmentScheme, AkitaVerifier};
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
-    AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims,
+    CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 use jolt_field::{
     CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, One, PseudoMersenne, Ring, Unreduced,
@@ -23,11 +22,11 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 mod common;
-use common::load_workspace_scheme;
 #[cfg(feature = "logging-transcript")]
 use common::mutations::{
     assert_ranges_match_context, representative_mutation_ranges, selected_sumcheck_protocols,
 };
+use common::{load_workspace_scheme, self_derived_verifier};
 
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -98,8 +97,8 @@ fn verify_input<'a, Cfg: CommitmentConfig>(
     .expect("valid verifier statement")
 }
 
-type Fixture<F, E> = (
-    AkitaVerifierSetup<F>,
+type Fixture<Cfg, F, E> = (
+    AkitaVerifier<Cfg>,
     CommittedGroup<F>,
     Vec<u8>,
     Vec<E>,
@@ -111,7 +110,7 @@ fn make_dense_fixture<F, Cfg>(
     scheme: &AkitaCommitmentScheme<Cfg>,
     num_vars: usize,
     label: &'static [u8],
-) -> Fixture<F, Cfg::ExtField>
+) -> Fixture<Cfg, F, Cfg::ExtField>
 where
     F: CanonicalBytes
         + CanonicalEncoding
@@ -150,8 +149,8 @@ where
         });
 
     let setup = scheme.setup_prover(num_vars, 1).expect("prover setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("prover backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("prover backend");
+    let verifier = self_derived_verifier(scheme, &setup);
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
@@ -179,7 +178,7 @@ where
             BasisMode::Lagrange,
         )
         .expect("native proof");
-    (verifier_setup, commitment, proof, point, opening, selection)
+    (verifier, commitment, proof, point, opening, selection)
 }
 
 fn assert_soundness_boundaries<F, Cfg>(num_vars: usize, label: &'static [u8])
@@ -204,7 +203,7 @@ where
             .expect("workspace schedule catalog");
     #[cfg(feature = "logging-transcript")]
     akita_transcript::clear_thread_events();
-    let (setup, commitment, proof, point, opening, selection) =
+    let (verifier, commitment, proof, point, opening, selection) =
         make_dense_fixture::<F, Cfg>(&scheme, num_vars, label);
     #[cfg(feature = "logging-transcript")]
     let proof_ranges = akita_transcript::thread_proof_ranges();
@@ -228,14 +227,12 @@ where
         "valid native proof exceeds its schedule-derived parser bound"
     );
     let verify = |candidate: &[u8], claimed: Cfg::ExtField, session: &[u8]| {
-        scheme.verifier(setup.clone()).and_then(|verifier| {
-            verifier.batched_verify(
-                candidate,
-                session,
-                verify_input::<Cfg>(selection, &point, claimed, &commitment),
-                BasisMode::Lagrange,
-            )
-        })
+        verifier.batched_verify(
+            candidate,
+            session,
+            verify_input::<Cfg>(selection, &point, claimed, &commitment),
+            BasisMode::Lagrange,
+        )
     };
 
     verify(&proof, opening, label).expect("honest native proof must verify");

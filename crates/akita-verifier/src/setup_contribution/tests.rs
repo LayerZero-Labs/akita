@@ -1,17 +1,17 @@
 use super::structured::evaluate_structured_group;
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec, RoleLaneWeighting};
 use super::*;
+use crate::benchmark_support::coefficient_setup;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_params::{
-    dyadic_block_ranges, gadget_row_scalars, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
+    dyadic_block_ranges, gadget_row_scalars, CommitmentRingDims, CommittedGroupParams,
     OpeningClaimsLayout, RingRole, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
 };
 use akita_types::{
-    AkitaExpandedSetup, AkitaSetupDescriptor, PhysicalBSetupPlan, PreparedRelationAddress,
-    SetupContributionGroupInputs,
+    AkitaExpandedSetup, PhysicalBSetupPlan, PreparedRelationAddress, SetupContributionGroupInputs,
 };
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
@@ -1204,18 +1204,10 @@ fn single_group_plan_supports_multi_chunk_weights() {
     let scan = lifted_test_scan(plan);
     let plan = scan.plan();
     let setup_len = plan.required();
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * TEST_D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_len * TEST_D)
+            .map(|idx| test_scalar(211 + idx as u128))
+            .collect(),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
     let expected = scan

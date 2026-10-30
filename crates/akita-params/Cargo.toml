@@ -37,6 +37,8 @@ transcript-keccak = [
   "akita-transcript/transcript-keccak",
 ]
 parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
+# Keccak-256 instead of SHA3-256 descriptor digests; see `akita-transcript`.
+keccak256-digests = ["akita-transcript/keccak256-digests"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]

@@ -65,6 +65,16 @@ pub use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Truste
 pub use akita_setup::new_prover_setup;
 pub use akita_types::{OpeningClaims, PolynomialGroupClaims};
 pub use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, TrustedTerminalCache};
+
+/// Pinned preprocessing releases: manifests, anchors, and both loaders.
+pub mod preprocessing {
+    pub use akita_config::preprocessing::{
+        PrefixCommitmentDeriver, PrefixCommitmentSource, ProgramRows,
+    };
+    pub use akita_cpu_backend::{load_prover_setup, CpuPrefixDeriver, PinnedProverSetup};
+    pub use akita_types::preprocessing::*;
+    pub use akita_verifier::preprocessing::*;
+}
 pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };

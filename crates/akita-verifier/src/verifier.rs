@@ -35,13 +35,61 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding,
 {
+    /// Build a verifier from a setup and catalog the loader issued.
+    ///
+    /// A full load admits every row of its set; a single-row load admits
+    /// only its selection and prepares only that row's terminal matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing an
+    /// admitted row fails.
+    pub fn from_pinned(
+        pinned: crate::preprocessing::PinnedVerifierSetup<Cfg>,
+    ) -> Result<Self, AkitaError> {
+        let (setup, schedules, selection) = pinned.into_parts();
+        // SAFETY: the loader derived the matrix and checked every commitment
+        // against the anchored manifest.
+        unsafe {
+            match selection {
+                None => Self::new(setup, schedules),
+                Some(selection) => Self::for_selection(setup, schedules, selection, None),
+            }
+        }
+    }
+
+    /// Build a single-row verifier from a pinned setup and the loader-issued
+    /// terminal cache of its row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the setup is not a
+    /// single-row load of the cache's row or the cache does not match it.
+    pub fn from_pinned_with_terminal_cache(
+        pinned: crate::preprocessing::PinnedVerifierSetup<Cfg>,
+        cache: &crate::preprocessing::PinnedTerminalCache,
+    ) -> Result<Self, AkitaError> {
+        let (setup, schedules, selection) = pinned.into_parts();
+        let selection = selection.ok_or_else(|| {
+            AkitaError::InvalidSetup("a terminal cache serves a single-row load".into())
+        })?;
+        // SAFETY: as for `from_pinned`; the cache was issued by the loader.
+        unsafe { Self::for_selection(setup, schedules, selection, Some(cache.as_trusted())) }
+    }
+
     /// Admit every catalog row `setup` supports and prepare their terminal matrices.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when sizing an in-capacity row or
     /// preparing a terminal matrix fails.
-    pub fn new(
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract of [`AkitaVerifierSetup::from_parts`]: the caller
+    /// guarantees the setup's matrix and commitments were derived from its
+    /// seed. Production verifiers use [`Self::from_pinned`].
+    pub unsafe fn new(
         setup: AkitaVerifierSetup<Cfg::Field>,
         schedules: TrustedScheduleCatalog<Cfg>,
     ) -> Result<Self, AkitaError> {
@@ -75,7 +123,13 @@ where
     /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing the
     /// selected row fails, or when a trusted cache is supplied for a row this
     /// verifier does not admit or does not match that row.
-    pub fn for_selection(
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract of [`Self::new`], and for a supplied cache, that it
+    /// was derived from the setup's matrix. Production verifiers use
+    /// [`Self::from_pinned`] or [`Self::from_pinned_with_terminal_cache`].
+    pub unsafe fn for_selection(
         setup: AkitaVerifierSetup<Cfg::Field>,
         schedules: TrustedScheduleCatalog<Cfg>,
         selection: OpeningScheduleSelection,
@@ -176,20 +230,22 @@ mod tests {
 
     fn setup(max_num_vars: usize, num_field_elements: usize) -> AkitaVerifierSetup<F> {
         let seed: AkitaSetupSeed = [6; 32].into();
-        AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars,
-                        max_num_batched_polys: 1,
-                        num_field_elements,
-                        setup_seed: seed.clone(),
-                    },
-                    FlatMatrix::from_flat_data(vec![F::from_i64(1); num_field_elements]),
+        unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        AkitaSetupDescriptor {
+                            max_num_vars,
+                            max_num_batched_polys: 1,
+                            num_field_elements,
+                            setup_seed: seed.clone(),
+                        },
+                        FlatMatrix::from_flat_data(vec![F::from_i64(1); num_field_elements]),
+                    ),
                 ),
-            ),
-            SetupPrefixVerifierRegistry::new(seed),
-        )
+                SetupPrefixVerifierRegistry::new(seed),
+            )
+        }
         .expect("verifier setup")
     }
 
@@ -226,7 +282,8 @@ mod tests {
                 build_riscv64_terminal_ntt_cache(&setup, &schedule, selection.row_digest)
                     .expect("terminal cache artifact");
 
-            let all = AkitaVerifier::new(setup.clone(), catalog.clone()).expect("verifier");
+            let all =
+                unsafe { AkitaVerifier::new(setup.clone(), catalog.clone()) }.expect("verifier");
             assert!(all.admits(selection.row_digest));
             assert!(all.admitted_rows().windows(2).all(|pair| pair[0] < pair[1]));
             assert!(all.terminal_ntt_cache_bytes() > 0);
@@ -243,12 +300,14 @@ mod tests {
                 Some(TrustedTerminalCache::Decode(artifact.as_slice())),
                 Some(TrustedTerminalCache::View(aligned)),
             ] {
-                let one = AkitaVerifier::for_selection(
-                    setup.clone(),
-                    catalog.clone(),
-                    selection,
-                    artifact,
-                )
+                let one = unsafe {
+                    AkitaVerifier::for_selection(
+                        setup.clone(),
+                        catalog.clone(),
+                        selection,
+                        artifact,
+                    )
+                }
                 .expect("single-row verifier");
                 assert_eq!(one.admitted_rows(), &[selection.row_digest]);
                 assert!(one.terminal_ntt_cache_bytes() > 0);
@@ -262,16 +321,18 @@ mod tests {
             let (catalog, selection, schedule, capacity) = catalog_row();
             // Too small a public matrix, then too few variables.
             for unsupported in [setup(15, capacity - 1), setup(14, capacity)] {
-                let empty = AkitaVerifier::for_selection(
-                    unsupported.clone(),
-                    catalog.clone(),
-                    selection,
-                    None,
-                )
+                let empty = unsafe {
+                    AkitaVerifier::for_selection(
+                        unsupported.clone(),
+                        catalog.clone(),
+                        selection,
+                        None,
+                    )
+                }
                 .expect("empty verifier");
                 assert!(empty.admitted_rows().is_empty());
                 assert_eq!(empty.terminal_ntt_cache_bytes(), 0);
-                assert!(!AkitaVerifier::new(unsupported, catalog.clone())
+                assert!(!unsafe { AkitaVerifier::new(unsupported, catalog.clone()) }
                     .expect("verifier")
                     .admits(selection.row_digest));
             }
@@ -281,12 +342,14 @@ mod tests {
                 build_riscv64_terminal_ntt_cache(&few_vars, &schedule, selection.row_digest)
                     .expect("terminal cache artifact");
             assert!(matches!(
-                AkitaVerifier::for_selection(
-                    few_vars,
-                    catalog,
-                    selection,
-                    Some(TrustedTerminalCache::Decode(&artifact))
-                ),
+                unsafe {
+                    AkitaVerifier::for_selection(
+                        few_vars,
+                        catalog,
+                        selection,
+                        Some(TrustedTerminalCache::Decode(&artifact)),
+                    )
+                },
                 Err(AkitaError::InvalidSetup(_))
             ));
         });

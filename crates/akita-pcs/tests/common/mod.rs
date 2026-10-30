@@ -16,22 +16,24 @@ use akita_config::{RecursiveCommitmentConfig, TrustedScheduleCatalog};
 pub(super) use akita_cpu_backend::CommitmentHandle;
 pub(super) use akita_cpu_backend::DensePoly;
 pub(super) use akita_cpu_backend::OneHotPoly;
-use akita_cpu_backend::SetupPrefixProverRegistry;
 use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 pub(super) use akita_params::{BasisMode, PrecommittedGroupProfiles};
 use akita_params::{
-    CommittedGroupBatchProfile, FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey,
-    SetupPrefixSlotId,
+    CommittedGroupBatchProfile, FlatMatrix, OpeningClaimsLayout, PolynomialGroupLayout,
+    ScheduleLookupKey, SetupPrefixSlotId,
 };
 pub(super) use akita_params::{CommittedGroupParams, FoldSchedule};
+use akita_pcs::{AkitaCommitmentScheme, AkitaVerifier};
 pub(super) use akita_prover::SelectedProverOpeningData;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
-    AkitaExpandedSetup, AkitaVerifierSetup, GroupBatchStatement, SetupPrefixVerifierRegistry,
+    AkitaExpandedSetup, AkitaVerifierSetup, FpExtEncoding, GroupBatchStatement,
+    SetupPrefixVerifierRegistry,
 };
 pub(super) use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::One;
 pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
+use jolt_field::{ExtField, Fold, One, PseudoMersenne, Ring, Unreduced};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};
@@ -55,6 +57,46 @@ pub(super) fn init_rayon_pool() {
             .build_global()
             .ok();
     });
+}
+
+/// Verifier over a setup `setup_prover` derived from its own seed.
+pub(super) fn self_derived_verifier<Cfg>(
+    scheme: &AkitaCommitmentScheme<Cfg>,
+    setup: &AkitaProverSetup<Cfg::Field>,
+) -> AkitaVerifier<Cfg>
+where
+    Cfg: CommitmentConfig + 'static,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    // SAFETY: `setup_prover` derived the setup from its seed.
+    unsafe { scheme.verifier(scheme.setup_verifier(setup).expect("verifier setup")) }
+        .expect("verifier")
+}
+
+/// [`self_derived_verifier`] over the setup narrowed to one schedule and root layout.
+pub(super) fn self_derived_schedule_verifier<Cfg>(
+    scheme: &AkitaCommitmentScheme<Cfg>,
+    setup: &AkitaProverSetup<Cfg::Field>,
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+) -> AkitaVerifier<Cfg>
+where
+    Cfg: CommitmentConfig + 'static,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    // SAFETY: as for `self_derived_verifier`.
+    unsafe {
+        scheme.verifier(
+            scheme
+                .setup_verifier_for_schedule(setup, schedule, root_layout)
+                .expect("schedule verifier setup"),
+        )
+    }
+    .expect("verifier")
 }
 
 pub(super) fn random_point(nv: usize, seed: u64) -> Vec<F> {
@@ -350,7 +392,7 @@ fn verifier_setup_with_alternate_full_prefix(
         return None;
     }
 
-    let original = setup.expanded.shared_matrix().as_field_slice();
+    let original = setup.expanded().shared_matrix().as_field_slice();
     let mut altered = original.to_vec();
     altered[natural_len] += F::one();
     assert_eq!(&altered[..natural_len], &original[..natural_len]);
@@ -359,20 +401,15 @@ fn verifier_setup_with_alternate_full_prefix(
         &original[natural_len..n_prefix]
     );
 
-    let descriptor = setup.expanded.descriptor().clone();
+    let descriptor = setup.expanded().descriptor().clone();
     let setup_seed = descriptor.setup_seed.clone();
-    let altered_expanded = Arc::new(
+    let altered_expanded = Arc::new(unsafe {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             descriptor,
             FlatMatrix::from_flat_data(altered),
-        ),
-    );
-    let altered_setup = AkitaProverSetup {
-        expanded: altered_expanded,
-        prefix_slots: SetupPrefixProverRegistry::new(setup_seed.clone()),
-    };
-    let backend =
-        CpuBackend::<F, F>::new(altered_setup.expanded.clone()).expect("altered setup backend");
+        )
+    });
+    let backend = CpuBackend::<F, F>::new(altered_expanded).expect("altered setup backend");
     let artifacts = backend
         .export_setup_prefixes(std::slice::from_ref(slot_id))
         .expect("altered prefix artifact");
@@ -390,7 +427,7 @@ fn verifier_setup_with_alternate_full_prefix(
             .expect("insert verifier slot");
     }
     Some(
-        AkitaVerifierSetup::from_parts(verifier_setup.expanded().clone(), prefix_slots)
+        unsafe { AkitaVerifierSetup::from_parts(verifier_setup.expanded().clone(), prefix_slots) }
             .expect("alternate verifier setup"),
     )
 }
