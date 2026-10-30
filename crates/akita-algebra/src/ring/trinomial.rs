@@ -13,6 +13,10 @@ use jolt_field::{Field, Packed, WithPacking};
 
 use crate::fft::{field_pow, primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 
+pub mod image;
+pub mod module_map;
+pub mod signed;
+
 mod limb;
 pub use limb::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
 
