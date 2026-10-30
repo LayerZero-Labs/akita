@@ -394,7 +394,7 @@ For `P = 340282366920938463463374607431768211181` and rank three
 
 The existing parity/value carry admission requires power-of-two `M = 4m`
 and C. Its positive carry reaches restrict these to `m <= 8192` and
-`C <= 256`; not every pair under these limits passes both carry checks. Since
+`C <= 256`. Every power-of-two pair within these limits passes both carry checks. Since
 `L_R` is increasing in m and C, the last row dominates every admitted
 rank-three geometry. Its `U_J` is below
 `2^95 = 39,614,081,257,132,168,796,771,975,168`, and its strict lift margin is
