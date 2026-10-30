@@ -236,13 +236,13 @@ pub const fn known_answer_digest(profile: SisModulusProfileId) -> [u8; 32] {
 }
 
 const KNOWN_ANSWER_Q32: [u8; 32] = super::encoding::digest_from_hex(
-    "0000000000000000000000000000000000000000000000000000000000000000",
+    "b9d89fbf6c8395bcde7efb35707d4206192bf8dcc542dfe7afa3fbee4bda2a2d",
 );
 const KNOWN_ANSWER_Q64: [u8; 32] = super::encoding::digest_from_hex(
-    "0000000000000000000000000000000000000000000000000000000000000000",
+    "60794d92812d0ca59a490a68dc6bdf5e10bd9aecb9c3456b9f65ca68d2413a64",
 );
 const KNOWN_ANSWER_Q128: [u8; 32] = super::encoding::digest_from_hex(
-    "0000000000000000000000000000000000000000000000000000000000000000",
+    "592ed04e776ff8c6e3b4ca85b83ddeff42d5c838dfba8ffd3112eaf871a6f9b0",
 );
 
 /// Inner security route byte of a profile descriptor.
