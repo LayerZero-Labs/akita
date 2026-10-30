@@ -8,10 +8,7 @@ license = "Apache-2.0 OR MIT"
 publish = false
 
 [package.metadata.cargo-machete]
-ignored = [
-  "jolt-inlines-ntt",
-  "jolt-sdk-macros",
-]
+ignored = ["jolt-inlines-ntt", "jolt-sdk-macros"]
 
 [[bin]]
 name = "akita-inline-parity-host"
