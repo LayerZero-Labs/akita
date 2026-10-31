@@ -41,7 +41,7 @@ impl Reader<'_> {
                 for _ in 0..n {
                     let coefficient: Vec<F> = self.fields()?;
                     let d = coefficient.len();
-                    if d < 2 || d > 1024 || !d.is_power_of_two() || d > fields {
+                    if !(2..=1024).contains(&d) || !d.is_power_of_two() || d > fields {
                         return Err(invalid());
                     }
                     let point: Vec<F> = self.fields()?;
