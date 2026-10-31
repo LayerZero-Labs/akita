@@ -614,6 +614,7 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("precommit profile: {err}"))?;
     let final_group = PolynomialGroupLayout::new(nv, FINAL_POLYS);
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
