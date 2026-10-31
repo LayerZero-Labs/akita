@@ -143,6 +143,7 @@ fn main() -> Result<(), String> {
         for resolved in catalog.rows() {
             let profiles = resolved.profiles();
             let key = akita_params::ScheduleLookupKey {
+                root_accumulated_setup_prefix_len: 0,
                 final_group: profiles.final_group.group,
                 precommitteds: profiles.precommitteds.clone(),
             };

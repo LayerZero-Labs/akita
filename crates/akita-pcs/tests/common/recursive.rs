@@ -64,6 +64,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         .profiles()
         .final_group;
     let schedule_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
         precommitteds: vec![pre_frozen, pre_frozen],
     };

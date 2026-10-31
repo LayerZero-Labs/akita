@@ -10,7 +10,7 @@ use akita_params::{
 };
 use akita_params::{ScheduleLookupKey, ScheduleLookupOrderKey};
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
-use serde::ser::SerializeSeq;
+use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::ser::Formatter;
 use serde_json::value::RawValue;
@@ -197,7 +197,11 @@ impl ValidatedScheduleCatalog {
             .enumerate()
             .map(|(index, row)| {
                 (
-                    key_for_profiles(row.profiles()).canonical_order_key(),
+                    key_for_profiles(
+                        row.profiles(),
+                        row.schedule().root_accumulated_setup_prefix_len,
+                    )
+                    .canonical_order_key(),
                     index,
                 )
             })
@@ -429,7 +433,7 @@ impl ValidatedScheduleCatalog {
         &self,
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<&ResolvedScheduleRow, AkitaError> {
-        self.resolve_key_matching(&key_for_profiles(profiles), Some(profiles))
+        self.resolve_key_matching(&key_for_profiles(profiles, 0), Some(profiles))
     }
 
     fn resolve_key_matching(
@@ -498,7 +502,25 @@ impl Serialize for ScheduleCatalogArtifactRowsRef<'_> {
 
 #[derive(Serialize)]
 struct ScheduleCatalogArtifactRowRefV1<'a> {
+    #[serde(serialize_with = "serialize_artifact_schedule")]
     schedule: &'a FoldSchedule,
+}
+
+// Omit the empty demand only in JSON artifacts; binary verifier views encode every field.
+fn serialize_artifact_schedule<S: Serializer>(
+    schedule: &FoldSchedule,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let accumulated = schedule.root_accumulated_setup_prefix_len;
+    let mut fields =
+        serializer.serialize_struct("FoldSchedule", 3 + usize::from(accumulated != 0))?;
+    if accumulated != 0 {
+        fields.serialize_field("root_accumulated_setup_prefix_len", &accumulated)?;
+    }
+    fields.serialize_field("root", &schedule.root)?;
+    fields.serialize_field("recursive_folds", &schedule.recursive_folds)?;
+    fields.serialize_field("terminal", &schedule.terminal)?;
+    fields.end()
 }
 
 fn encode_artifact(artifact: &impl Serialize) -> Result<Vec<u8>, AkitaError> {
@@ -767,8 +789,12 @@ fn validate_family_name(family_name: &str) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> ScheduleLookupKey {
+fn key_for_profiles(
+    profiles: &CommittedGroupBatchProfile,
+    root_accumulated_setup_prefix_len: usize,
+) -> ScheduleLookupKey {
     ScheduleLookupKey {
+        root_accumulated_setup_prefix_len,
         final_group: profiles.final_group.group,
         precommitteds: profiles.precommitteds.clone(),
     }

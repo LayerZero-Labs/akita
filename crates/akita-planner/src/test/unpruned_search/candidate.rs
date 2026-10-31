@@ -436,6 +436,7 @@ pub(in crate::schedule_params) fn prepend_root(
             output_witness_len: fold.output_witness_len,
         });
     let schedule = akita_params::FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: folds.next().ok_or_else(|| {
             AkitaError::UnsupportedSchedule("oracle candidate has no root fold".into())
         })?,

@@ -216,6 +216,7 @@ where
         .expect("selected schedule");
     let bound = akita_schedules::expanded_schedule_proof_bound(
         &ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: resolved.profiles().final_group.group,
             precommitteds: resolved.profiles().precommitteds.clone(),
         },

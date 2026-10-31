@@ -23,6 +23,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
     let terminal_witness = TerminalFoldParams::from_expanded_group(terminal);
     let ring_dimension = terminal_witness.d_a();
     FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: FoldParams {
             params: root.clone(),
             input_witness_len: root.d_a(),

@@ -20,6 +20,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     )
     .expect("workspace schedule catalog");
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::singleton(20),
         precommitteds: Vec::new(),
     };

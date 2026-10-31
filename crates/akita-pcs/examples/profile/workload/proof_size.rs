@@ -12,6 +12,7 @@ pub(super) fn proof_size_budgets(
     policy: &PlannerPolicy,
 ) -> ProofSizeBudgets {
     let key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group,
         precommitteds: schedule
             .root

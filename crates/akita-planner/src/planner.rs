@@ -32,6 +32,9 @@ mod adapted_schedule_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/root_candidates.rs"]
 mod root_candidates;
+#[cfg(test)]
+#[path = "test/root_setup_accumulation.rs"]
+mod root_setup_accumulation_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use root_candidates::{
     exhaustive_root_candidates_for_reference, root_level_candidates_with_fresh_preparation,
@@ -999,6 +1002,7 @@ pub(crate) fn find_schedule_in_relation_order(
         },
         policy,
         &root_layout,
+        key.root_accumulated_setup_prefix_len,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),
     );

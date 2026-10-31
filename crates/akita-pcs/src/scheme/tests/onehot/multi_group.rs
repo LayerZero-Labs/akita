@@ -20,6 +20,7 @@ fn multi_group_key<Cfg: CommitmentConfig>(
         })
         .collect();
     akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: akita_params::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds,
     }

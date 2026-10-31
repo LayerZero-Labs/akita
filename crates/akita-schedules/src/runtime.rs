@@ -704,6 +704,7 @@ pub fn materialize_candidate_schedule(
     cached: CandidateMaterializationCost,
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
+    root_accumulated_setup_prefix_len: usize,
     folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -719,6 +720,7 @@ pub fn materialize_candidate_schedule(
         )
     })?;
     let schedule = FoldSchedule {
+        root_accumulated_setup_prefix_len,
         root: FoldParams {
             params: (*root.params).clone(),
             input_witness_len: root.input_witness_len,

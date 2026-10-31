@@ -141,6 +141,7 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
     let pre_row = scalar_row(pre_group).expect("scalar precommit row");
     let pre_profile = pre_row.profiles().final_group;
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
@@ -265,6 +266,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     assert!(matches!(scalar_error, AkitaError::InvalidInput(_)));
 
     let mismatch = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::singleton(15),
         precommitteds: vec![main_row.profiles().final_group],
     };
@@ -290,6 +292,7 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
         .profiles()
         .final_group;
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: main_group,
         precommitteds: vec![pre_profile; 4],
     };
@@ -381,6 +384,7 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
         .expect("standalone main row");
     let key = ScheduleLookupKey {
         final_group,
+        root_accumulated_setup_prefix_len: 0,
         precommitteds: reference.profiles().precommitteds.clone(),
     };
     let request = grouped_request::<OneHot>(final_group, &key.precommitteds);
@@ -436,6 +440,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
     .profiles()
     .final_group;
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
@@ -547,6 +552,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
             })
             .collect::<Vec<_>>();
         let key = ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: main_group,
             precommitteds,
         };

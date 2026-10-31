@@ -173,6 +173,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         .final_group;
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };

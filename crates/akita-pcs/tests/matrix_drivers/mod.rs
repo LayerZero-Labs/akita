@@ -318,6 +318,7 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
             .expect("final commit");
 
         let schedule_key = ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: PolynomialGroupLayout::new(final_nv, 1),
             precommitteds: vec![pre_commitment.profile],
         };
