@@ -101,6 +101,7 @@ fn catalog_frame_preserves_nondefault_runtime_geometry() {
     }
     let row = decoded.rows().next().expect("runtime row");
     let key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     };
@@ -398,6 +399,7 @@ fn proof_budget_is_derived_from_the_selected_schedule() {
             .expect("native proof bound");
     assert!(bound > 0);
     let key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     };

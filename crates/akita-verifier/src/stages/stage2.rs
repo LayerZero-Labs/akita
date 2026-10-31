@@ -5,6 +5,7 @@ use crate::coefficient_packing_relation::{
 };
 use crate::relation::evaluation_trace::PreparedEvaluationTrace;
 use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
+use crate::setup_batch::{decide_setup_batch, PreparedOuterSetup};
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::stages::stage1::Stage1Replay;
 use akita_algebra::{
@@ -13,11 +14,11 @@ use akita_algebra::{
 };
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::AkitaVerifierSetup;
 use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
     OpeningFamily, ReducedCompressionRelationWeights,
 };
+use akita_types::{AkitaVerifierSetup, GrindingReplay};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -134,6 +135,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
     compression: Stage2CompressionOracle<'a, E>,
     setup_claim: Option<E>,
+    external_relation_weight: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
     opening_semantics: Stage2OpeningSemantics<'a, E>,
@@ -159,6 +161,7 @@ pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
     pub(crate) alpha: E,
     /// Stage 3 setup claim when the setup contribution is deferred.
     pub(crate) setup_claim: Option<E>,
+    pub(crate) external_relation_weight: Option<E>,
     /// Relation lane variable count.
     pub(crate) col_bits: usize,
     /// Relation coefficient variable count.
@@ -203,6 +206,7 @@ where
             setup,
             alpha,
             setup_claim,
+            external_relation_weight,
             col_bits,
             ring_bits,
             opening_semantics,
@@ -228,6 +232,7 @@ where
             relation_matrix_evaluator,
             compression,
             setup_claim,
+            external_relation_weight,
             setup,
             alpha,
             opening_semantics,
@@ -254,6 +259,10 @@ where
             PreparedRelationGroups::ReducedEvaluation(_)
         );
         let evaluate_relation_weight = || {
+            if let Some(weight) = self.external_relation_weight {
+                return Ok(weight);
+            }
+
             // `cfg_join!` may execute this closure on a Rayon worker which does
             // not inherit the caller's `stage2_verifier` span. Carry the
             // authenticated relation mode on this worker-local owner so phase
@@ -381,7 +390,8 @@ where
     })
 }
 
-/// Check the Stage 2 output claim once the Stage 3 setup claim is known.
+/// Resolve this fold's setup contribution and check the Stage 2 output claim.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn validate_stage2_replay<F, E>(
     setup: &AkitaVerifierSetup<F>,
     stage1: Stage1Replay<'_, E>,
@@ -389,11 +399,61 @@ pub(crate) fn validate_stage2_replay<F, E>(
     setup_claim: Option<E>,
     opening_semantics: Stage2OpeningSemantics<'_, E>,
     replay: Stage2RoundReplay<E>,
+    outer: Option<&PreparedOuterSetup<E>>,
+    mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
+    mode: crate::SetupMode,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    level: u32,
 ) -> Result<Stage2Output<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
 {
+    if let Some(accumulator) = accumulator.as_deref_mut().filter(|accumulator| {
+        setup_claim.is_none()
+            && accumulator
+                .batch
+                .as_ref()
+                .is_some_and(|(target, _)| *target == level)
+    }) {
+        let (_, inherited) = accumulator.batch.take().ok_or(AkitaError::InvalidProof)?;
+        if inherited.polynomial() != &accumulator.polynomial {
+            return Err(AkitaError::InvalidInput(
+                "setup batch domain mismatch".into(),
+            ));
+        }
+        let coefficients = akita_types::setup_claims::transcript::batch_coefficients::<F, E, _>(
+            grinding.state_mut(),
+            inherited.claims().len(),
+        )?;
+        match mode {
+            crate::SetupMode::Check => {
+                decide_setup_batch(setup.expanded(), &inherited, &coefficients)?;
+            }
+            crate::SetupMode::Defer => {
+                accumulator
+                    .pending
+                    .extend(inherited.claims().iter().cloned());
+            }
+        }
+    }
+    let external_relation_weight = if let Some(outer) = outer {
+        // The checked offloaded reduction consumed its inherited input claims.
+        Some(outer.relation_weight)
+    } else if setup_claim.is_none() && mode == crate::SetupMode::Defer {
+        let accumulator = accumulator.ok_or(AkitaError::InvalidProof)?;
+        Some(
+            rs.relation_matrix_evaluator
+                .eval_flat_at_point_with_external_setup::<F>(
+                    &replay.challenges,
+                    rs.alpha,
+                    |query| accumulator.resolve(query),
+                )?,
+        )
+    } else {
+        None
+    };
+
     let witness_eval = replay.witness_eval;
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
         batching_coeff: stage1.batching_coeff,
@@ -404,6 +464,7 @@ where
         setup: setup.expanded(),
         alpha: rs.alpha,
         setup_claim,
+        external_relation_weight,
         col_bits: rs.relation_address_geometry.relation_lane_variable_count(),
         ring_bits: rs
             .relation_address_geometry
@@ -667,6 +728,7 @@ mod tests {
             setup: &setup,
             alpha,
             setup_claim: None,
+            external_relation_weight: None,
             col_bits: relation_address_geometry.relation_lane_variable_count(),
             ring_bits: relation_address_geometry.relation_coefficient_variable_count(),
             opening_semantics: Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)])

@@ -90,6 +90,8 @@ verifier.batched_verify(
     TRANSCRIPT_DOMAIN,
     statement,
     BasisMode::Lagrange,
+    None,
+    akita_verifier::SetupMode::Check,
 )?;
 ```
 

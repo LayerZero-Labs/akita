@@ -131,8 +131,14 @@ fn independent_runtime_catalogs_prove_verify_and_reject_each_other() {
                     .unwrap()])
                     .unwrap();
                     let statement = GroupBatchStatement::new(*selection, claims).unwrap();
-                    let result =
-                        verifier.batched_verify(proof, DOMAIN, statement, BasisMode::Lagrange);
+                    let result = verifier.batched_verify(
+                        proof,
+                        DOMAIN,
+                        statement,
+                        BasisMode::Lagrange,
+                        None,
+                        akita_verifier::SetupMode::Check,
+                    );
                     if verifier_index == proof_index {
                         result.expect("the owning catalog verifies its proof");
                     } else {

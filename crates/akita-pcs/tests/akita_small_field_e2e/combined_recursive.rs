@@ -65,6 +65,8 @@ fn commit_prove_verify<Cfg, P>(
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
+                None,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("verify");

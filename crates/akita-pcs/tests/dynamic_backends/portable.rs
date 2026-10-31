@@ -221,6 +221,8 @@ where
             )
             .unwrap(),
             BasisMode::Lagrange,
+            None,
+            akita_verifier::SetupMode::Check,
         )
         .unwrap();
 }

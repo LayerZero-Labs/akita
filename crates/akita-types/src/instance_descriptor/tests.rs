@@ -35,6 +35,7 @@ fn sample_schedule() -> FoldSchedule {
     let response_shape =
         TerminalResponseShape::derive(&terminal_witness, admission_cap).expect("terminal shape");
     FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: FoldParams {
             params: committed.clone(),
             input_witness_len: 256,

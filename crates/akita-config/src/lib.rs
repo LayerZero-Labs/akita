@@ -305,6 +305,7 @@ fn row_fits_setup_capacity(
     max_num_batched_polys: usize,
 ) -> Result<bool, AkitaError> {
     akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     }

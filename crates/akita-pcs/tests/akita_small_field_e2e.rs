@@ -559,6 +559,7 @@ fn fp32_onehot_multi_group() {
         let multi_schedule = scheme
             .schedules()
             .resolve_key(&ScheduleLookupKey {
+                root_accumulated_setup_prefix_len: 0,
                 final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
                 precommitteds: vec![pre_commitment.profile],
             })
@@ -641,6 +642,8 @@ fn fp32_onehot_multi_group() {
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .expect("fp32 multi-group verify");

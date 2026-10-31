@@ -69,7 +69,14 @@ macro_rules! onehot_roundtrip {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.batched_verify(&proof, b"native-port-onehot", statement, basis)
+                verifier.batched_verify(
+                    &proof,
+                    b"native-port-onehot",
+                    statement,
+                    basis,
+                    None,
+                    akita_verifier::SetupMode::Check,
+                )
             })
             .unwrap();
     }};
@@ -166,7 +173,14 @@ fn dense_fp128_roundtrip_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.batched_verify(&proof, b"native-port-smoke", statement, BasisMode::Lagrange)
+            verifier.batched_verify(
+                &proof,
+                b"native-port-smoke",
+                statement,
+                BasisMode::Lagrange,
+                None,
+                akita_verifier::SetupMode::Check,
+            )
         })
         .unwrap();
 }

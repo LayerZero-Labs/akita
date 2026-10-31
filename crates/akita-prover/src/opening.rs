@@ -9,11 +9,12 @@ use akita_types::GrindingReplay;
 use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
-pub struct SelectedProverOpeningData<'a, E: Clone, H, F: Field> {
+pub struct SelectedProverOpeningData<'a, E: Field, H, F: Field> {
     selection: OpeningScheduleSelection,
     opening_data: ProverOpeningData<'a, E, H, F>,
+    pub(crate) setup_batch: Option<(u32, &'a akita_types::setup_claims::SetupBatchStatement<E>)>,
 }
-impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningData<'a, E, H, F> {
+impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningData<'a, E, H, F> {
     pub fn from_committed_claims<Cfg: CommitmentConfig<Field = F, ExtField = E>>(
         claims: OpeningClaims<'a, E, CommittedGroup<F>>,
         handles: Vec<H>,
@@ -76,6 +77,7 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
+            setup_batch: None,
             selection,
             opening_data: ProverOpeningData::from_parts(
                 OpeningClaims::from_groups(groups)?,
@@ -83,6 +85,16 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
                 handles,
             )?,
         })
+    }
+    /// Close the complete inherited collection at this nonterminal fold.
+    /// The enclosing argument must authenticate which inner proofs produced it.
+    pub fn with_setup_batch(
+        mut self,
+        level: u32,
+        statement: &'a akita_types::setup_claims::SetupBatchStatement<E>,
+    ) -> Self {
+        self.setup_batch = (!statement.claims().is_empty()).then_some((level, statement));
+        self
     }
     pub fn selection(&self) -> OpeningScheduleSelection {
         self.selection

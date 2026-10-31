@@ -119,3 +119,13 @@ Pin every Akita crate to the same commit or release and record the accepted
 feature set and approved catalog digest with the deployment. This gives the
 prover and verifier the same catalog identity, transcript backend, public types,
 and proof format.
+
+## External setup accumulation
+
+Setup accumulation needs no Cargo feature. The verifier takes an optional
+mutable setup accumulator and a `SetupMode::Check` or `SetupMode::Defer` value.
+For ordinary verification, pass `None` and `akita_verifier::SetupMode::Check`.
+Both modes check Stage 3 completely; only direct setup evaluations are deferred.
+Attach auxiliary archived-proof advice with `SetupClaimAccumulator::with_advice`.
+See [external setup accumulation](../how/recursion.md#external-setup-accumulation)
+for inheritance and final-discharge requirements.

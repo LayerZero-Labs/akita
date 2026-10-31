@@ -216,6 +216,7 @@ fn valid_small_grouped_root_has_a_schedule() {
         GroupCommitPhaseParams::try_from_params(precommitted_group, &producer)
             .expect("scalar producer profile");
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::singleton(8),
         precommitteds: vec![precommitted_profile],
     };

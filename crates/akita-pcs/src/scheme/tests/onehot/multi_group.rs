@@ -20,6 +20,7 @@ fn multi_group_key<Cfg: CommitmentConfig>(
         })
         .collect();
     akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: akita_params::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds,
     }
@@ -285,6 +286,8 @@ where
                 b"test/multi-group-unequal",
                 GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
                 BasisMode::Lagrange,
+                None,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("multi-group verify");
@@ -314,7 +317,9 @@ where
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
-                    BasisMode::Lagrange
+                    BasisMode::Lagrange,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 ))
                 .is_err(),
             "swapped group commitments must reject"
@@ -337,7 +342,9 @@ where
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
-                    BasisMode::Lagrange
+                    BasisMode::Lagrange,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 ))
                 .is_err(),
             "tampered group opening must reject"

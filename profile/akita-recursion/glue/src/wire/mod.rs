@@ -708,6 +708,7 @@ where
             .resolve_selection(schedule_selection)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         let key = akita_params::ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: resolved.profiles().final_group.group,
             precommitteds: resolved.profiles().precommitteds.clone(),
         };

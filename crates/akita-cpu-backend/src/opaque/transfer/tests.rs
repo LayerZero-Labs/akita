@@ -80,6 +80,9 @@ fn run(signed: bool) {
     let capacity = SetupRequirements::from_catalog(&catalog, nv, 1)
         .unwrap()
         .matrix_capacity();
+    let capacity = akita_params::SetupMatrixCapacity {
+        num_field_elements: capacity.num_field_elements.next_power_of_two(),
+    };
     let setup = AkitaProverSetup::<F>::generate_with_capacity(nv, 1, capacity).unwrap();
     let producer = Cpu::new(setup.expanded.clone()).unwrap();
     let consumer = Cpu::new(setup.expanded.clone()).unwrap();
@@ -183,8 +186,81 @@ fn run(signed: bool) {
             DOMAIN,
             GroupBatchStatement::new(selection, claims).unwrap(),
             BasisMode::Lagrange,
+            None,
+            akita_verifier::SetupMode::Check,
         )
         .unwrap();
+    {
+        use akita_prover::backend::SetupBatchBackend;
+        use akita_types::setup_claims::{
+            SetupBatchMemory, SetupBatchStatement, SetupPolynomialId, SetupQuery,
+        };
+        struct Advice<'a> {
+            backend: &'a Cpu,
+            domain: SetupPolynomialId,
+            prepared: Vec<<Cpu as SetupBatchBackend<F, F>>::PreparedQuery>,
+        }
+        impl akita_verifier::SetupClaimAdvice<F> for Advice<'_> {
+            fn answer(&mut self, query: &SetupQuery<F>) -> Result<F, AkitaError> {
+                let (value, state) = self.backend.prepare_setup_query(
+                    &self.domain,
+                    query,
+                    32,
+                    SetupBatchMemory::Retain,
+                )?;
+                self.prepared.push(state);
+                Ok(value)
+            }
+        }
+        // Provisioning need not be a power of two; select the largest actual prefix.
+        let domain = SetupPolynomialId::new::<F, F>(
+            &setup.expanded,
+            1usize << capacity.num_field_elements.ilog2(),
+        )
+        .unwrap();
+        let mut advice = Advice {
+            backend: &producer,
+            domain: domain.clone(),
+            prepared: Vec::new(),
+        };
+        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            vec![F::from_u64(2); nv],
+            vec![F::from_u64(1)],
+            &committed.committed_group,
+        )
+        .unwrap()])
+        .unwrap();
+        let mut deferred =
+            akita_verifier::SetupClaimAccumulator::new(domain.clone()).with_advice(&mut advice);
+        verifier
+            .batched_verify(
+                &proof,
+                DOMAIN,
+                GroupBatchStatement::new(selection, claims).unwrap(),
+                BasisMode::Lagrange,
+                Some(&mut deferred),
+                akita_verifier::SetupMode::Defer,
+            )
+            .unwrap();
+        let pending = deferred.into_pending();
+        assert!(!pending.is_empty());
+        let statement = SetupBatchStatement::new(domain.clone(), 32, pending).unwrap();
+        let batch = akita_prover::prove_setup_batch::<F, F, _>(
+            &producer,
+            &statement,
+            b"portable-setup-batch",
+            advice.prepared,
+        )
+        .unwrap();
+        let accumulator = akita_verifier::verify_setup_batch_deferred::<F, F>(
+            &domain,
+            &statement,
+            &batch,
+            b"portable-setup-batch",
+        )
+        .unwrap();
+        akita_verifier::decide_setup_accumulator(&setup.expanded, &accumulator).unwrap();
+    }
 }
 
 fn check_malformed_digits(

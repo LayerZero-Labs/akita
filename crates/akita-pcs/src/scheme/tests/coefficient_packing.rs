@@ -20,6 +20,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     )
     .expect("workspace schedule catalog");
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::singleton(20),
         precommitteds: Vec::new(),
     };
@@ -301,7 +302,14 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                 scheme
                     .verifier(verifier_setup.clone())
                     .and_then(|verifier| {
-                        verifier.batched_verify(proof.as_slice(), label, statement, basis)
+                        verifier.batched_verify(
+                            proof.as_slice(),
+                            label,
+                            statement,
+                            basis,
+                            None,
+                            akita_verifier::SetupMode::Check,
+                        )
                     })
                     .unwrap();
 
@@ -323,7 +331,9 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                             malformed.as_slice(),
                             label,
                             statement,
-                            basis
+                            basis,
+                            None,
+                            akita_verifier::SetupMode::Check,
                         ))
                         .is_err());
 

@@ -45,3 +45,8 @@ pub use relation::RelationMatrixEvaluator;
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::Stage1Verifier;
 pub use verifier::AkitaVerifier;
+
+mod setup_batch;
+mod setup_claims;
+pub use setup_batch::{decide_setup_accumulator, verify_setup_batch_deferred};
+pub use setup_claims::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};

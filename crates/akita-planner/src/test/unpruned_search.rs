@@ -295,6 +295,7 @@ pub(super) fn find_schedule(
         },
         policy,
         &schedule_key.opening_layout()?,
+        0,
         selected.folds.to_vec(),
         selected.terminal.as_ref().clone(),
     )?;

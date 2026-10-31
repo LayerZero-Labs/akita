@@ -107,6 +107,8 @@ where
         &decoded.transcript_domain,
         statement,
         BasisMode::Lagrange,
+        None,
+        akita_verifier::SetupMode::Check,
     );
     end_cycle_tracking("akita_verify");
     GuestStatus::for_verification(result).code()

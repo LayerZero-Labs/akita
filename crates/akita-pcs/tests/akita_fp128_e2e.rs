@@ -381,6 +381,8 @@ fn fp128_onehot_batched() {
                     session,
                     verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
                     BasisMode::Lagrange,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .unwrap_or_else(|e| panic!("onehot nv={nv} batch={batch_size}: {e:?}"));
@@ -443,6 +445,8 @@ fn fp128_dense_batched() {
                     session,
                     verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
                     BasisMode::Lagrange,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .unwrap_or_else(|e| panic!("dense nv={nv} batch={batch_size}: {e:?}"));
@@ -595,6 +599,8 @@ fn fp128_onehot_oversized_setup() {
                         scheme.schedules(),
                     ),
                     BasisMode::Lagrange,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .unwrap_or_else(|e| {
@@ -668,6 +674,8 @@ fn fp128_dense_monomial_basis() {
                         scheme.schedules(),
                     ),
                     BasisMode::Monomial,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 )
             })
             .expect("monomial verify");

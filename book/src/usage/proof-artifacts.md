@@ -36,7 +36,14 @@ a clear protocol owner.
 const SESSION: &[u8] = b"my-system/akita-opening/v1";
 
 let proof = scheme.batched_prove(&prover_setup, opening, &stacks, SESSION, basis)?;
-scheme.verifier(verifier_setup)?.batched_verify(&proof, SESSION, statement, basis)?;
+scheme.verifier(verifier_setup)?.batched_verify(
+    &proof,
+    SESSION,
+    statement,
+    basis,
+    None,
+    akita_verifier::SetupMode::Check,
+)?;
 ```
 
 The verifier binds the canonical Akita instance descriptor before replay. That

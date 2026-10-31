@@ -27,6 +27,8 @@ fn verify(
                 label,
                 GroupBatchStatement::new(roundtrip.selection, claims)?,
                 BasisMode::Lagrange,
+                None,
+                akita_verifier::SetupMode::Check,
             )
         })
 }

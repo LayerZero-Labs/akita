@@ -336,6 +336,13 @@ where
         statement: Statement<'_, Self>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        verifier.batched_verify(proof, session, statement, basis)
+        verifier.batched_verify(
+            proof,
+            session,
+            statement,
+            basis,
+            None,
+            akita_verifier::SetupMode::Check,
+        )
     }
 }

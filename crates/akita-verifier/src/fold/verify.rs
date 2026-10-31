@@ -20,6 +20,10 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
     /// Verify one authoritative Spongefish argument.
+    ///
+    /// `Defer` exports direct setup evaluations in the supplied accumulator.
+    /// Both modes fully verify ordinary and accumulated Stage 3 reductions.
+    /// `Check` closes direct setup obligations; pass `None` for an empty accumulator.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify(
@@ -28,7 +32,24 @@ where
         session: &[u8],
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
+        mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, Cfg::ExtField>>,
+        mode: crate::SetupMode,
     ) -> Result<(), AkitaError> {
+        if matches!(mode, crate::SetupMode::Defer) && accumulator.is_none() {
+            return Err(AkitaError::InvalidInput(
+                "deferred setup verification requires an accumulator".into(),
+            ));
+        }
+        if let Some(accumulator) = accumulator.as_ref() {
+            accumulator
+                .polynomial
+                .validate::<Cfg::Field, Cfg::ExtField>(self.setup.expanded())?;
+            if matches!(mode, crate::SetupMode::Check) && !accumulator.pending.is_empty() {
+                return Err(AkitaError::InvalidInput(
+                    "pending setup claims must be bound to a selected fold with from_batch".into(),
+                ));
+            }
+        }
         let setup = &self.setup;
         let schedules = &self.schedules;
         let selection = statement.selection();
@@ -67,6 +88,16 @@ where
             ));
         }
         let schedule = resolved.schedule();
+        if let Some((level, batch)) = accumulator.as_ref().and_then(|a| a.batch.as_ref()) {
+            if *level as usize >= schedule.num_fold_levels() - 1 {
+                return Err(AkitaError::InvalidInput(
+                    "setup batch target must be a nonterminal fold".into(),
+                ));
+            }
+            batch
+                .polynomial()
+                .validate::<Cfg::Field, Cfg::ExtField>(setup.expanded())?;
+        }
         let root_params = &schedule.root_fold().params;
         let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
             final_descriptor.group,
@@ -101,6 +132,17 @@ where
         )?;
         let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
         let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
+        if let Some((level, batch)) = accumulator.as_ref().and_then(|a| a.batch.as_ref()) {
+            akita_types::setup_claims::transcript::bind_outer_statement::<
+                Cfg::Field,
+                Cfg::ExtField,
+                _,
+            >(
+                akita_types::GrindingReplay::state_mut(&mut grinding),
+                *level,
+                batch,
+            )?;
+        }
         let raw_groups = claims
             .groups()
             .iter()
@@ -122,6 +164,8 @@ where
             root_params,
             schedule.recursive_folds.first(),
             &schedule.terminal,
+            accumulator.as_deref_mut(),
+            mode,
         )?;
         verify_suffix::<Cfg::Field, Cfg::ExtField>(
             setup,
@@ -136,8 +180,14 @@ where
                 witness_len: schedule.root_fold().output_witness_len,
                 setup_prefix_opening: root.setup_prefix_opening,
             },
+            accumulator.as_deref_mut(),
+            mode,
         )?;
-        grinding.finish().map(|_accepted| ())
+        let _accepted = grinding.finish()?;
+        if accumulator.as_ref().is_some_and(|a| a.batch.is_some()) {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
     }
 }
 

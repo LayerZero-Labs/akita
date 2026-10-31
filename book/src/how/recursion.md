@@ -285,3 +285,106 @@ minimum contraction policy described in
   identity.
 - `crates/akita-pcs/tests/transcript_hardening.rs` checks transcript agreement
   and the ordering of the final witness binding.
+
+## External setup accumulation
+
+Setup accumulation is part of the prover and verifier APIs. It lets an
+encapsulating program collect direct setup evaluations from inner proofs and
+close them together in an outer proof. Conditional verification retains all
+other Akita checks. It becomes complete acceptance only after the exported
+obligations are discharged.
+
+Write each setup claim as $a_i=\sum_x S(x)Q_i(x)$, with $S$ the authenticated
+public setup. The query $Q_i$ is derived by the verifier from the relation and
+transcript challenges. At a direct fold, deferred verification obtains a
+candidate answer from auxiliary advice and records the query and answer. It
+checks the Stage 2 terminal equation with that answer, without evaluating the
+setup functional. Advice supplies candidates; it does not authenticate them.
+
+The policy applies per fold because a proof can contain both direct and
+offloaded setup contributions:
+
+| Fold | `SetupMode::Defer` | `SetupMode::Check` |
+| --- | --- | --- |
+| Direct | Export the exact setup claim and preserve inherited claims | Check the inherited claims and the fold's own contribution |
+| Offloaded | Verify the full Stage 3 reduction and retain the successor opening | Verify the same Stage 3 reduction and successor opening |
+
+An outer prover accepts an inherited `SetupBatchStatement`. It binds that
+input before its opening transcript. A direct selected fold handles inherited
+claims in Stage 2. It samples independent coefficients for the inherited claims;
+`Check` checks their weighted equation against the setup, while `Defer` carries
+them forward. The current fold's setup contribution follows ordinary Stage 2
+verification: `Check` computes it, and `Defer` obtains advice and exports it.
+A direct fold emits no Stage 3 messages and prepares no Stage 3 backend state.
+
+At an offloaded selected fold, the prover binds its own setup query and answer
+$a_o$, then samples independent batching coefficients. The combined equation is
+
+$$
+\lambda_o a_o+\sum_i\lambda_i a_i
+=\sum_x S(x)\left(\lambda_o Q_o(x)+\sum_i\lambda_i Q_i(x)\right).
+$$
+
+An offloaded fold proves this equation with its existing degree-two Stage 3 in
+either verifier mode. At the resulting point $r$, both modes check
+
+$$
+C_{\mathrm{final}}
+=s\left(\lambda_o\widetilde Q_o(r)+\sum_i\lambda_i\widetilde Q_i(r)\right).
+$$
+
+The ordinary successor opens $\widetilde S(r)=s$. The input claims are thereby
+connected to the retained setup-prefix opening and need not remain individually
+pending. If the successor defers its own direct setup contribution, those new
+obligations replace the old list conditionally on the other checked Akita
+relations. Repeated outer proofs can therefore consume each inherited batch
+without retaining the entire history. Pending output depends on the current
+proof's direct folds. A direct deferred layer without a checked reduction still
+carries its inherited inputs until a later layer checks or offloads them.
+
+For offloaded folds, Stage 2 uses the outer answer $a_o$, never the combined
+answer. The verifier prepares the bound batch once. `verify_stage3` checks
+ordinary or accumulated Stage 3 regardless of mode; `validate_stage2_replay` checks the
+Stage 2 endpoint and either scans or exports direct setup claims. No Stage 3
+path merely consumes the transcript while omitting its terminal equation.
+
+`AkitaVerifier::batched_verify` takes an optional mutable
+`SetupClaimAccumulator` and a `SetupMode` value. Pass `None` and
+`SetupMode::Check` for ordinary verification. To collect direct obligations,
+construct `SetupClaimAccumulator::new(polynomial).with_advice(&mut advice)` and
+pass it with `SetupMode::Defer`. Consume its result with `into_pending`.
+The mode is a plain enum; auxiliary advice belongs to the accumulator.
+
+Use `SetupClaimAccumulator::from_batch` to attach an inherited collection to
+the nonterminal fold selected by `SelectedProverOpeningData::with_setup_batch`.
+The input stays fixed while other folds can contribute new pending claims.
+An empty collection selects the ordinary singleton computation and preserves
+its proof encoding. The enclosing program must bind the complete collection to
+its inner verifications. Queries share an authenticated setup identity; smaller
+supports may embed in a larger actual prefix. Offloaded batches must match the
+selected successor's exact actual prefix. The verifier may retain only the
+matrix coefficients needed by its direct folds; offloaded prefixes are
+identified by their public stream and authenticated by their commitments.
+Direct setup scans and prover preparation separately check that the complete
+requested prefix is materialized before compiling its query factors. Ordinary
+terminal checks remain.
+
+Archived proof bytes remain valid. A direct archived fold uses auxiliary
+advice during deferral; an archived offloaded fold verifies its original
+Stage 3 completely. Adding inherited inputs requires generating a new outer
+proof whose statement binds those inputs.
+
+For offloaded folds, the prover compiles inherited and outer query factors
+together and traverses the setup in blocks shared by all coefficient
+contractions. Sequential builds
+reuse each cached block with the singleton contraction; parallel builds fuse
+query updates for each coefficient. One further shared setup contraction follows
+the common coefficient challenges. The two source passes are independent of the
+number of claims. Ordinary and accumulated proofs use the same product-sumcheck
+kernel without allocating a full coefficient-by-index weight table or copying
+the setup into the extension field.
+
+The standalone `prove_setup_batch` and `verify_setup_batch_deferred` APIs remain
+available for a separate reduction. The integrated flow uses its existing
+Stage 3 and successor. SDK output sealing and the security argument for recursive
+Fiat-Shamir composition remain separate work.

@@ -152,6 +152,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_b_frozen = catalog_profile(&scheme, pre_b_key);
     let pre_c_frozen = catalog_profile(&scheme, pre_c_key);
     let multi_group_key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: akita_params::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
@@ -239,6 +240,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         )
         .expect("precommit B");
     let multi_group_key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: akita_params::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
@@ -467,6 +469,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 )
                 .expect("valid one-hot verifier statement"),
                 BasisMode::Lagrange,
+                None,
+                akita_verifier::SetupMode::Check,
             )
         })
         .expect("batched onehot verify");

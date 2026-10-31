@@ -85,6 +85,8 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
                     TRANSCRIPT_LABEL,
                     selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
                     BasisMode::Lagrange,
+                    None,
+                    akita_verifier::SetupMode::Check,
                 )
             })
     };

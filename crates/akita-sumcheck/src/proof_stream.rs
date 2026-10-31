@@ -316,26 +316,7 @@ where
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
-        let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
-        verifier_context(
-            channel.state_mut(),
-            context(
-                body_site,
-                SumcheckRole::RoundBody,
-                atom_count,
-                field_bytes::<F>(atom_count)?,
-                0,
-            )?,
-        );
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(degree_bound)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for _ in 0..degree_bound {
-            coefficients.push(receive_extension::<F, E>(channel.state_mut())?);
-        }
-        let compressed = CompressedPoly::new(coefficients);
+        let compressed = receive_round::<F, E, C>(channel, invocation, round_id, degree_bound)?;
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
         challenges.push(challenge);
@@ -345,6 +326,66 @@ where
         output_claim: claim,
         challenges,
     })
+}
+
+fn receive_round<'proof, F, E, C>(
+    channel: &mut C,
+    invocation: u32,
+    round: u32,
+    degree_bound: usize,
+) -> Result<CompressedPoly<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    C: SumcheckVerifierChannel<'proof, E>,
+{
+    let atom_count = extension_atom_count::<E, F>(degree_bound)?;
+    let body_site = channel.sumcheck_site(invocation, round, SumcheckRole::RoundBody);
+    verifier_context(
+        channel.state_mut(),
+        context(
+            body_site,
+            SumcheckRole::RoundBody,
+            atom_count,
+            field_bytes::<F>(atom_count)?,
+            0,
+        )?,
+    );
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(degree_bound)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    for _ in 0..degree_bound {
+        coefficients.push(receive_extension::<F, E>(channel.state_mut())?);
+    }
+    Ok(CompressedPoly::new(coefficients))
+}
+
+/// Consume the exact sumcheck grammar without checking its algebraic relation.
+/// The caller must export the original input obligation and retain all later openings.
+pub fn replay_sumcheck_transcript<'proof, F, E, C>(
+    channel: &mut C,
+    invocation: u32,
+    claim: E,
+    shape: SumcheckShape,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    C: SumcheckVerifierChannel<'proof, E>,
+{
+    let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
+    public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
+    let mut challenges = Vec::new();
+    challenges
+        .try_reserve_exact(shape.num_rounds())
+        .map_err(|_| AkitaError::InvalidProof)?;
+    for round in 0..shape.num_rounds() {
+        let round = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+        receive_round::<F, E, C>(channel, invocation, round, shape.degree_bound())?;
+        challenges.push(channel.round_challenge(invocation, round)?);
+    }
+    Ok(challenges)
 }
 
 /// Prove one equality-factored sumcheck into the argument stream.
@@ -880,7 +921,29 @@ mod tests {
         };
         let verifier_point = verify_sumcheck(&verifier_instance, &mut verifier, shape, 7).unwrap();
         assert_eq!(verifier_point, prover_point);
+        let mut deferred = TestVerifierChannel {
+            state: new_verifier_channel(b"native-sumcheck", b"fixture", &proof).unwrap(),
+            invocation: 7,
+        };
+        assert_eq!(
+            replay_sumcheck_transcript::<F, F, _>(&mut deferred, 7, claim, shape).unwrap(),
+            verifier_point,
+        );
+        assert_eq!(
+            deferred.round_challenge(8, 0).unwrap(),
+            verifier.round_challenge(8, 0).unwrap(),
+        );
         assert!(verifier.state.check_eof().is_ok());
+        assert!(deferred.state.check_eof().is_ok());
+        for end in 0..proof.len() {
+            let mut truncated = TestVerifierChannel {
+                state: new_verifier_channel(b"native-sumcheck", b"fixture", &proof[..end]).unwrap(),
+                invocation: 7,
+            };
+            assert!(
+                replay_sumcheck_transcript::<F, F, _>(&mut truncated, 7, claim, shape).is_err()
+            );
+        }
     }
 
     #[test]

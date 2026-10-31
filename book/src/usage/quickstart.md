@@ -166,7 +166,14 @@ let verifier_claims = OpeningClaims::from_groups(vec![
 ])?;
 let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
-verifier.batched_verify(&proof_bytes, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
+verifier.batched_verify(
+    &proof_bytes,
+    TRANSCRIPT_DOMAIN,
+    statement,
+    BasisMode::Lagrange,
+    None,
+    akita_verifier::SetupMode::Check,
+)?;
 ```
 
 Akita constructs fresh prover and verifier states and binds the complete

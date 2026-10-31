@@ -73,6 +73,8 @@ pub(crate) fn verify_fold<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: PreparedFoldReplay<'_, F, E>,
+    mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
+    mode: crate::SetupMode,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -144,17 +146,39 @@ where
         &opening_semantics,
         prepared.level_layout.stage2_sumcheck(),
     )?;
-    let stage3 = match prepared.stage3 {
-        Some(next_params) => Some(verify_stage3::<F, E>(
-            setup,
-            &rs,
-            &stage2_rounds.challenges,
-            next_params,
-            grinding,
-            level,
-        )?),
-        None => None,
+    let outer = if let Some(successor) = prepared.stage3 {
+        accumulator
+            .as_deref_mut()
+            .filter(|a| a.batch.as_ref().is_some_and(|(target, _)| *target == level))
+            .map(|accumulator| {
+                crate::setup_batch::prepare_outer_setup::<F, E>(
+                    setup,
+                    &rs,
+                    &stage2_rounds.challenges,
+                    successor,
+                    grinding,
+                    level,
+                    accumulator,
+                )
+            })
+            .transpose()?
+    } else {
+        None
     };
+    let stage3 = prepared
+        .stage3
+        .map(|next_params| {
+            verify_stage3::<F, E>(
+                setup,
+                &rs,
+                &stage2_rounds.challenges,
+                next_params,
+                grinding,
+                level,
+                outer.as_ref(),
+            )
+        })
+        .transpose()?;
     let stage2 = validate_stage2_replay(
         setup,
         stage1,
@@ -162,6 +186,11 @@ where
         stage3.as_ref().map(|replay| replay.claim),
         opening_semantics,
         stage2_rounds,
+        outer.as_ref(),
+        accumulator,
+        mode,
+        grinding,
+        level,
     )?;
     drop(stage2_span);
     Ok(FoldVerifyOutput {

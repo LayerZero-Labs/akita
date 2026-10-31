@@ -39,6 +39,22 @@ impl ResolvedScheduleRow {
         audit_resolved_schedule(&profiles, &schedule, policy)?;
         validate_schedule_ring_dims(&schedule)?;
         validate_canonical_transition_lengths(&profiles.opening_layout()?, &schedule, policy)?;
+        if let Some(prefix) = schedule
+            .recursive_folds
+            .first()
+            .and_then(|fold| fold.params.setup_prefix())
+        {
+            let expected = akita_params::active_setup_field_len(
+                &schedule.root.params,
+                &profiles.opening_layout()?,
+            )?
+            .max(schedule.root_accumulated_setup_prefix_len);
+            if prefix.setup_natural_len != Some(expected) {
+                return Err(AkitaError::InvalidSetup(
+                    "root setup prefix does not match the combined setup footprint".into(),
+                ));
+            }
+        }
         let selection = OpeningScheduleSelection {
             row_digest: schedule_row_digest(&profiles, &schedule)?,
         };

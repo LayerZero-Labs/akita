@@ -331,6 +331,9 @@ impl FoldSuccessor<'_> {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldSchedule {
+    /// Largest inherited setup-prefix domain aggregated by the offloaded root; zero is empty.
+    #[serde(default)]
+    pub root_accumulated_setup_prefix_len: usize,
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,
     pub terminal: TerminalFoldParams,
@@ -356,6 +359,12 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        if self.root_accumulated_setup_prefix_len != 0 {
+            crate::validate_setup_prefix_domain(
+                self.root_accumulated_setup_prefix_len,
+                self.root_accumulated_setup_prefix_len,
+            )?;
+        }
         let root_commitment = &self.root.params;
         root_commitment.validate_group_topology()?;
         if root_commitment.setup_prefix().is_some() {
