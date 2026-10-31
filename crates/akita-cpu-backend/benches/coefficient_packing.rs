@@ -116,7 +116,7 @@ fn bench_onehot_shape<F, E, const D: usize>(
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    const ONEHOT_K: usize = 256;
+    const ONEHOT_K: usize = akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
     let source_len = num_positions * D;
     let source_num_vars = source_len.trailing_zeros() as usize;
     assert_eq!(source_len, 1usize << source_num_vars);

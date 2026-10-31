@@ -87,9 +87,8 @@ RSS_PATTERNS = [
     re.compile(r"Maximum resident set size \(kbytes\):\s+(\d+)"),
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
 ]
-ONEHOT_ARITY = 256
-ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 9
+ONEHOT_WORKLOAD_LABEL = "one-hot (density unrecorded)"
+CASE_SCHEMA_VERSION = 10
 VALID_RELATION_MODES = frozenset(("quotient_lift", "reduced_evaluation"))
 REQUIRED_RUN_METRICS = (
     "setup_s",
@@ -306,6 +305,11 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    run_parser.add_argument(
+        "--baseline-policy", default="",
+        help="Per-case eligibility JSON from profile_bench_merge_base_policy.py.",
+    )
+
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
     )
@@ -330,6 +334,7 @@ def parse_args() -> argparse.Namespace:
         "failure-summary",
         help="Write a structured failure summary when the benchmark step produced none.",
     )
+    failure_parser.add_argument("--only-missing", action="store_true")
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
     )
@@ -771,9 +776,11 @@ def case_id(mode: str, num_vars: int, num_polys: int, setup_mode: str = "direct"
 
 
 def benchmark_name(
-    mode: str, num_vars: int, num_polys: int = 1, setup_mode: str = "direct"
+    mode: str, num_vars: int, num_polys: int = 1, setup_mode: str = "direct",
+    onehot_k: int | None = None,
 ) -> str:
     metadata = case_metadata(mode)
+    density_label = f"1-of-{onehot_k} one-hot" if onehot_k else "one-hot (density unrecorded)"
     setup_mode = normalize_setup_mode(setup_mode)
     setup_suffix = ""
     if setup_mode != "direct":
@@ -787,11 +794,11 @@ def benchmark_name(
         if num_polys > 1:
             return (
                 f"{metadata.field_family} {metadata.config} same-point "
-                f"1-of-{ONEHOT_ARITY} one-hot x{num_polys} with {num_vars} variables"
+                f"{density_label} x{num_polys} with {num_vars} variables"
                 f"{setup_suffix}"
             )
         return (
-            f"{metadata.field_family} {metadata.config} 1-of-{ONEHOT_ARITY} one-hot "
+            f"{metadata.field_family} {metadata.config} {density_label} "
             f"with {num_vars} variables{setup_suffix}"
         )
     if num_polys > 1:
@@ -876,6 +883,12 @@ def extract_summary(
         "case_id": case_id(mode, num_vars, num_polys, setup_mode),
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
+    observed_k = {int(k) for k in re.findall(r"1-of-(\d+)", log_text)}
+    observed_k.update(int(k) for k in re.findall(r'"onehot_k":\s*(\d+)', log_text))
+    if len(observed_k) > 1:
+        raise ValueError("benchmark emitted inconsistent one-hot densities")
+    if observed_k:
+        summary["onehot_k"] = observed_k.pop()
     planned_levels: dict[int, dict[str, object]] = {}
     planned_groups: dict[int, list[dict[str, object]]] = {}
     terminal_plan: dict[str, object] | None = None
@@ -1621,6 +1634,7 @@ def extract_summary(
                 )
             summary["native_non_nonce_bytes"] = proof_size - nonce_bytes
 
+    apply_workload_identity(summary)
     return summary
 
 
@@ -1857,6 +1871,8 @@ def combine_l2_grind_observations(
 
 SUMMARY_CSV_COLUMNS = (
     "case_id",
+    "comparison_id",
+    "onehot_k",
     "benchmark_shard",
     "status",
     "failure_phase",
@@ -1952,7 +1968,10 @@ def combine_grind_retry_observations(
 
 
 def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, object]:
-    combined = dict(summaries[0])
+    successful = [summary for summary in summaries if int(summary.get("exit_code", 0)) == 0]
+    if len({summary.get("onehot_k") for summary in successful}) > 1:
+        raise ValueError("successful benchmark samples have different source densities")
+    combined = dict((successful or summaries)[0])
     combined["runs"] = len(summaries)
     combined["samples"] = [compact_sample_summary(summary) for summary in summaries]
     l2_grind_observations = combine_l2_grind_observations(summaries)
@@ -2114,23 +2133,6 @@ def failure_summaries_by_case(
     return failures
 
 
-def propagate_sibling_case_failure(
-    case_summaries: list[dict[str, object]],
-    failure: dict[str, object],
-) -> list[dict[str, object]]:
-    """Mirror a paired-binary failure onto the sibling output root."""
-    if any(int(summary.get("exit_code", 0)) != 0 for summary in case_summaries):
-        return case_summaries
-    propagated = dict(failure)
-    propagated["error"] = (
-        "case cancelled after the paired binary failed: "
-        f"{failure.get('error', 'profile run failed')}"
-    )
-    propagated["exit_code"] = failure.get("exit_code", 1)
-    propagated["failure_phase"] = failure.get("failure_phase", "unknown")
-    return [*case_summaries, propagated]
-
-
 def write_aggregate_summaries(
     summary_dirs: list[pathlib.Path],
     cases: list[BenchmarkCaseSpec],
@@ -2155,19 +2157,50 @@ def write_aggregate_summaries(
                 if run.summary_dir == summary_dir and run.case.case_id == case.case_id
             ]
             failure = failures_by_case.get(case.case_id)
-            if failure is not None:
-                case_summaries = propagate_sibling_case_failure(case_summaries, failure)
             if case_summaries:
                 combined = combine_case_run_summaries(case_summaries)
-                if benchmark_shard:
-                    combined["benchmark_shard"] = benchmark_shard
-                aggregate["cases"].append(combined)
+            elif failure is not None:
+                combined = failure_case(case, "unknown", "case cancelled before execution")
+            else:
+                continue
+            if failure is not None and (
+                not case_summaries or int(combined.get("exit_code", 0)) == 0
+            ):
+                # Cancellation is case status, not a measurement from this binary.
+                combined["exit_code"] = failure.get("exit_code", 1)
+                combined["failure_phase"] = failure.get("failure_phase", "unknown")
+                combined["error"] = (
+                    "case cancelled after the paired binary failed: "
+                    f"{failure.get('error', 'profile run failed')}"
+                )
+            if benchmark_shard:
+                combined["benchmark_shard"] = benchmark_shard
+            aggregate["cases"].append(combined)
         summary_dir.mkdir(parents=True, exist_ok=True)
         write_text(
             summary_dir / "summary.json",
             json.dumps(aggregate, indent=2, sort_keys=True) + "\n",
         )
         write_summary_csv(summary_dir / "summary.csv", aggregate["cases"])
+
+
+def baseline_case_policy(
+    path: str, cases: list[BenchmarkCaseSpec]
+) -> dict[str, dict[str, object]]:
+    payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    decisions = {}
+    for item in payload["cases"]:
+        case = parse_case_spec(item["case"], "onehot_fp128")
+        if type(item["supported"]) is not bool or not isinstance(item["reason"], str):
+            raise ValueError("invalid baseline eligibility record")
+        if not item["supported"] and not item["reason"]:
+            raise ValueError("unsupported baseline requires a reason")
+        if case.case_id in decisions:
+            raise ValueError("duplicate baseline eligibility record")
+        decisions[case.case_id] = item
+    if set(decisions) != {case.case_id for case in cases}:
+        raise ValueError("baseline eligibility must cover exactly the requested cases")
+    return decisions
 
 
 def run_benchmark(args: argparse.Namespace) -> int:
@@ -2187,6 +2220,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
         binaries.append((args.baseline_binary, baseline_dir, True))
 
     cases = configured_cases(args)
+    policy_path = args.baseline_policy
+    policy = baseline_case_policy(policy_path, cases) if policy_path else {}
+    if policy and any(item["supported"] for item in policy.values()) and not args.baseline_binary:
+        raise ValueError("supported baseline cases require --baseline-binary")
     schedule: list[ScheduledRun] = []
     for case in cases:
         plans = [
@@ -2199,6 +2236,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 allow_legacy_relation_mode,
             )
             for binary, summary_dir, allow_legacy_relation_mode in binaries
+            if not allow_legacy_relation_mode or not policy or policy[case.case_id]["supported"]
         ]
         plan_lengths = {len(plan) for plan in plans}
         if len(plan_lengths) != 1:
@@ -2210,6 +2248,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         schedule.extend(run for slot in zip(*plans) for run in slot)
 
     results, overall_return_code = execute_schedule(schedule)
+    for run, summary in results:
+        if policy and run.summary_dir == output_dir:
+            decision = policy[run.case.case_id]
+            summary["baseline_status"] = "available" if decision["supported"] else "unsupported"
+            summary["baseline_reason"] = decision["reason"]
     write_aggregate_summaries(
         [summary_dir for _, summary_dir, _ in binaries],
         cases,
@@ -2220,53 +2263,72 @@ def run_benchmark(args: argparse.Namespace) -> int:
     return overall_return_code
 
 
+def failure_case(case: BenchmarkCaseSpec, phase: str, error: str, shard: str = "") -> dict:
+    metadata = case_metadata(case.mode)
+    return {
+        "schema_version": CASE_SCHEMA_VERSION,
+        "benchmark": benchmark_name(case.mode, case.num_vars, case.num_polys, case.setup_mode),
+        "mode": case.mode, "setup_contribution_mode": case.setup_mode,
+        "field_family": metadata.field_family, "workload": metadata.workload,
+        "workload_label": metadata.workload_label, "config": metadata.config,
+        "num_vars": case.num_vars, "num_polys": case.num_polys,
+        "case_id": case.case_id, "benchmark_shard": shard,
+        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "runs": 0, "samples": [], "exit_code": 1,
+        "failure_phase": phase, "error": error,
+    }
+
+
 def write_failure_summary(args: argparse.Namespace) -> int:
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    collected_at = datetime.now(timezone.utc).isoformat()
-
-    cases = []
+    path = output_dir / "summary.json"
+    aggregate = {"schema_version": 3, "generated_at": datetime.now(timezone.utc).isoformat(), "cases": []}
+    if args.only_missing and path.exists():
+        aggregate = load_summary(path)
+    recorded = {str(case["case_id"]) for case in aggregate["cases"]}
     for case in configured_cases(args):
-        metadata = case_metadata(case.mode)
-        cases.append(
-            {
-                "schema_version": CASE_SCHEMA_VERSION,
-                "benchmark": benchmark_name(
-                    case.mode, case.num_vars, case.num_polys, case.setup_mode
-                ),
-                "mode": case.mode,
-                "setup_contribution_mode": case.setup_mode,
-                "field_family": metadata.field_family,
-                "workload": metadata.workload,
-                "workload_label": metadata.workload_label,
-                "config": metadata.config,
-                "num_vars": case.num_vars,
-                "num_polys": case.num_polys,
-                "case_id": case.case_id,
-                "benchmark_shard": args.benchmark_shard,
-                "collected_at": collected_at,
-                "runs": 0,
-                "samples": [],
-                "exit_code": 1,
-                "failure_phase": args.failure_phase,
-                "error": args.error,
-            }
-        )
-
-    aggregate_summary: dict[str, object] = {
-        "schema_version": 3,
-        "generated_at": collected_at,
-        "cases": cases,
-    }
-    write_text(
-        output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
-    )
-    write_summary_csv(output_dir / "summary.csv", cases)
+        if case.case_id not in recorded:
+            aggregate["cases"].append(failure_case(
+                case, args.failure_phase, args.error, args.benchmark_shard
+            ))
+    write_text(path, json.dumps(aggregate, indent=2, sort_keys=True) + "\n")
+    write_summary_csv(output_dir / "summary.csv", aggregate["cases"])
     return 0
 
 
 def load_summary(path: pathlib.Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def apply_workload_identity(summary: dict[str, object]) -> None:
+    """Keep source density independent of the scheduling/output-directory ID."""
+    k = summary.get("onehot_k")
+    if k is None:
+        match = re.search(r"1-of-(\d+)", str(summary.get("workload_label", "")))
+        if match:
+            k = int(match.group(1))
+    if summary["workload"] == "onehot":
+        if k is not None and (type(k) is not int or k <= 0 or k & (k - 1)):
+            raise ValueError("invalid one-hot density metadata")
+        summary["onehot_k"] = k
+        summary["workload_label"] = f"1-of-{k} one-hot" if k else ONEHOT_WORKLOAD_LABEL
+        summary["comparison_id"] = f"{summary['case_id']}-k{k or 'unknown'}"
+    else:
+        summary["comparison_id"] = summary["case_id"]
+    summary["benchmark"] = benchmark_name(
+        str(summary["mode"]), int(summary["num_vars"]), int(summary.get("num_polys", 1)),
+        str(summary.get("setup_contribution_mode", "direct")), k,
+    )
+
+
+def compatible_baseline(current: dict, baseline: dict | None) -> dict | None:
+    if baseline is None or current.get("case_id") != baseline.get("case_id"):
+        return None
+    if current.get("workload") == "onehot":
+        if not current.get("onehot_k") or current.get("onehot_k") != baseline.get("onehot_k"):
+            return None
+    return baseline
 
 
 def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
@@ -2283,7 +2345,6 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     normalized["benchmark"] = benchmark_name(mode, num_vars, num_polys, setup_mode)
     normalized["field_family"] = metadata.field_family
     normalized["workload"] = metadata.workload
-    normalized["workload_label"] = metadata.workload_label
     normalized["config"] = metadata.config
     planned_levels = normalized.get("planned_levels")
     if isinstance(planned_levels, list):
@@ -2375,6 +2436,7 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     # width, so normalize their missing modulus width here.
     if normalized.get("crt_limb_bits") == 32:
         normalized.setdefault("crt_prime_modulus_bits", 30)
+    apply_workload_identity(normalized)
     return normalized
 
 
@@ -2860,10 +2922,13 @@ def render_profile_definitions(cases: list[dict[str, object]]) -> None:
         print(f"| {md_text(statement)} | {rendered_labels} |")
 
     if any(case.get("workload") == "onehot" for case in cases):
+        densities = sorted({str(case.get("onehot_k") or "unrecorded")
+                            for case in cases if case.get("workload") == "onehot"})
         print()
+        print("Observed one-hot K: " + ", ".join(code_text(k) for k in densities) + ".")
         print(
             "One-hot profiles generate deterministic witnesses with one `1` in every "
-            f"consecutive chunk of `{ONEHOT_ARITY}` coefficients. This witness shape is not "
+            "source chunk, with the observed density recorded per case. This witness shape is not "
             "a separate public claim."
         )
     if any(
@@ -3186,7 +3251,9 @@ def render_matrix_summary(
         )
 
         for current in current_cases:
-            baseline = main_baseline.get(str(current["case_id"])) if main_baseline else None
+            baseline = compatible_baseline(
+                current, main_baseline.get(str(current["case_id"])) if main_baseline else None
+            )
             row = [md_text(human_case_label(current))]
             if include_fold_schedule:
                 row.append(fold_dimension_schedule(current))
@@ -3437,6 +3504,26 @@ def render_report(args: argparse.Namespace) -> int:
         ("Merge base", load_optional_case_summaries(args.main_baseline_dir)),
         ("Prior PR run", load_optional_case_summaries(args.previous_baseline_dir)),
     ]
+    unsupported_ids = {
+        str(case["case_id"]) for case in current_cases
+        if case.get("baseline_status") == "unsupported"
+    }
+    if baselines[0][1] is not None:
+        baselines[0] = (baselines[0][0], {
+            key: value for key, value in baselines[0][1].items() if key not in unsupported_ids
+        })
+    incompatible = []
+    for index, (label, summaries) in enumerate(baselines):
+        if summaries is None:
+            continue
+        summaries = dict(summaries)
+        for current in current_cases:
+            key = str(current["case_id"])
+            baseline = summaries.get(key)
+            if baseline is not None and compatible_baseline(current, baseline) is None:
+                incompatible.append((current, label, baseline))
+                del summaries[key]
+        baselines[index] = (label, summaries)
     visible_baselines = [(label, summary) for label, summary in baselines if summary is not None]
 
     source_sha = os.environ.get("AKITA_BENCH_SOURCE_SHA")
@@ -3448,6 +3535,10 @@ def render_report(args: argparse.Namespace) -> int:
     previous_baseline_sha = os.environ.get("AKITA_BENCH_PREVIOUS_BASELINE_SHA")
     previous_baseline_label = os.environ.get("AKITA_BENCH_PREVIOUS_BASELINE_LABEL")
 
+    if os.environ.get("AKITA_BENCH_REPORT_ERROR"):
+        print("> [!WARNING]")
+        print("> Report metadata lookup failed: " + md_text(os.environ["AKITA_BENCH_REPORT_ERROR"]))
+        print()
     if len(current_cases) == 1:
         only_case = current_cases[0]
         print("## " f"{md_text(human_case_label(only_case))} " "Profile Benchmark")
@@ -3486,7 +3577,10 @@ def render_report(args: argparse.Namespace) -> int:
             elif previous_baseline_label:
                 print(f"- Prior PR run: {md_text(previous_baseline_label)}.")
     if base_ref and baselines[0][1] is None:
-        print(f"- Merge base: no reusable benchmark artifact found for `{base_ref}`.")
+        if any(case.get("baseline_status") == "unsupported" for case in current_cases):
+            print("- Merge base: no supported baseline cases for these workloads.")
+        else:
+            print(f"- Merge base: no reusable benchmark artifact found for `{base_ref}`.")
     if not args.compact:
         print("- Binary: `target/release/examples/profile`.")
         print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
@@ -3525,9 +3619,26 @@ def render_report(args: argparse.Namespace) -> int:
         if matching_base_cases != len(current_cases):
             print()
             print(
-                "Profiles without a matching merge-base mode are measured at the head only "
+                "Profiles without a supported merge-base case are measured at the head only "
                 "and are marked `no matching merge-base case` instead of showing a delta."
             )
+        print()
+    unsupported = [case for case in current_cases if case.get("baseline_status") == "unsupported"]
+    if unsupported:
+        print("### Unsupported merge-base cases")
+        print()
+        print("| Profile | Reason |")
+        print("| --- | --- |")
+        for case in unsupported:
+            print(f"| {md_text(human_case_label(case))} | {md_text(str(case['baseline_reason']))} |")
+        print()
+    if incompatible:
+        print("### Incompatible source workloads")
+        print()
+        for current, label, baseline in incompatible:
+            print(f"- {md_text(human_case_label(current))}: head "
+                  f"{md_text(current['workload_label'])}; {label} "
+                  f"{md_text(baseline['workload_label'])}. Percentage comparisons omitted.")
         print()
     render_profile_definitions(current_cases)
     print()
@@ -3566,7 +3677,7 @@ def render_report(args: argparse.Namespace) -> int:
         if current.get("workload") == "onehot":
             print(
                 f"- Benchmark witness: one `1` in every consecutive chunk of "
-                f"`{ONEHOT_ARITY}` coefficients in each generated polynomial."
+                f"`{current.get('onehot_k') or 'unrecorded'}` coefficients in each generated polynomial."
             )
         env = current.get("env", {})
         command_env = [
@@ -3599,11 +3710,11 @@ def render_report(args: argparse.Namespace) -> int:
         print()
 
         case_baselines = [
-            (label, summary.get(str(current["case_id"])) if summary is not None else None)
+            (label, compatible_baseline(current, summary.get(str(current["case_id"])) if summary is not None else None))
             for label, summary in visible_baselines
         ]
         main_case = (
-            baselines[0][1].get(str(current["case_id"]))
+            compatible_baseline(current, baselines[0][1].get(str(current["case_id"])))
             if baselines[0][1] is not None
             else None
         )

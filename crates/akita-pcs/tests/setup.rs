@@ -223,7 +223,7 @@ where
 }
 
 /// Onehot variant of [`run_dense_e2e`]. `K` is the onehot chunk size selected
-/// by the config; standard one-hot presets use `K = 256`.
+/// by the config; standard one-hot presets use `K = 16`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
