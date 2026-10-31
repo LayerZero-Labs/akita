@@ -19,7 +19,10 @@ pub mod module_map;
 pub mod signed;
 
 mod limb;
-pub use limb::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
+pub use limb::{
+    TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots, TrinomialQ24Accumulator,
+    TrinomialQ24PackedSlots, Q24_PACKED_SLOT_BYTES, Q24_REDUCTION_TERMS,
+};
 
 mod remainder;
 pub use remainder::shifted_remainder_evaluations;

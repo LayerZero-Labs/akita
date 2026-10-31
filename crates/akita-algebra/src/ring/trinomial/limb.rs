@@ -76,6 +76,7 @@ mod gather;
 mod interleaved;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 mod neon;
+mod q24;
 #[cfg(target_arch = "x86_64")]
 mod source_batch;
 #[cfg(test)]
@@ -94,6 +95,10 @@ use arithmetic::{Arithmetic, Split, Twiddle};
 use backend::available_backends;
 use backend::{selected_backend, Backend};
 use std::sync::OnceLock;
+
+pub use q24::{
+    TrinomialQ24Accumulator, TrinomialQ24PackedSlots, Q24_PACKED_SLOT_BYTES, Q24_REDUCTION_TERMS,
+};
 
 const DEGREE: usize = 648;
 const LANES: usize = 8;

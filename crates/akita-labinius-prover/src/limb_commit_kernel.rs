@@ -23,6 +23,8 @@ use rayon::prelude::*;
 
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
 mod packing;
+#[cfg(feature = "q24-packed-commit")]
+mod q24;
 mod setup;
 mod workspace;
 
@@ -49,6 +51,9 @@ pub struct PreparedLimbCommitMatrix {
     prepared_bytes: usize,
     workspace_bytes: usize,
     setup_digest: Option<[u8; 32]>,
+    /// Three-byte copies of `matrix` when the prime is q24.
+    #[cfg(feature = "q24-packed-commit")]
+    packed: Option<Vec<akita_algebra::ring::trinomial::TrinomialQ24PackedSlots>>,
 }
 
 impl PreparedLimbCommitMatrix {
@@ -167,6 +172,9 @@ impl PreparedLimbCommitMatrix {
                     })
                 })
                 .ok_or_else(|| AkitaError::InvalidSetup("limb workspace size overflow".into()))?;
+        #[cfg(feature = "q24-packed-commit")]
+        let (packed, prepared_bytes, workspace_bytes) =
+            q24::prepare_packed(&domain, &matrix, n_a, prepared_bytes, workspace_bytes)?;
         Ok(Self {
             domain,
             matrix,
@@ -176,6 +184,8 @@ impl PreparedLimbCommitMatrix {
             prepared_bytes,
             workspace_bytes,
             setup_digest: None,
+            #[cfg(feature = "q24-packed-commit")]
+            packed,
         })
     }
 
@@ -214,6 +224,15 @@ impl PreparedLimbCommitMatrix {
     /// Transformed matrix entries in row-major order, with per-entry prime tags.
     pub fn matrix_ntt(&self) -> &[TrinomialLimbSlots] {
         &self.matrix
+    }
+
+    /// Whether commitments use the packed q24 slots and delayed reduction.
+    ///
+    /// True exactly when the prime is q24; every other prime keeps the
+    /// unpacked accumulator. Both paths return identical images.
+    #[cfg(feature = "q24-packed-commit")]
+    pub fn uses_q24_packed_slots(&self) -> bool {
+        self.packed.is_some()
     }
 }
 

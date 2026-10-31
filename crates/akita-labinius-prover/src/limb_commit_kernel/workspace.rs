@@ -11,6 +11,8 @@ pub(super) struct Workspace<const B: usize> {
     // Row-major, with one accumulator per column in the block.
     accumulators: Vec<TrinomialLimbAccumulator>,
     coefficients: [i32; DEGREE],
+    #[cfg(feature = "q24-packed-commit")]
+    q24: Option<super::q24::Q24Workspace<B>>,
 }
 
 impl<const B: usize> Workspace<B> {
@@ -33,6 +35,8 @@ impl<const B: usize> Workspace<B> {
             transformed,
             accumulators,
             coefficients: [0; DEGREE],
+            #[cfg(feature = "q24-packed-commit")]
+            q24: super::q24::Q24Workspace::new(prepared)?,
         })
     }
 
@@ -84,6 +88,11 @@ impl<const B: usize> Workspace<B> {
                         .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
                 }
             }
+            #[cfg(feature = "q24-packed-commit")]
+            if let Some(q24) = self.q24.as_mut() {
+                q24.accumulate(prepared, start, end, &self.transformed, columns)?;
+                continue;
+            }
             let source_columns = self.transformed.each_ref().map(Vec::as_slice);
             let sources = source_columns
                 .get(..columns)
@@ -124,6 +133,12 @@ impl<const B: usize> Workspace<B> {
                     _ => return Err(AkitaError::InvalidProof),
                 }
             }
+        }
+        #[cfg(feature = "q24-packed-commit")]
+        if let Some(q24) = self.q24.as_mut() {
+            let coefficients = &mut self.coefficients;
+            let transformed = &mut self.transformed;
+            return q24.finish(prepared, transformed, coefficients, output);
         }
         for (column, image) in output.chunks_exact_mut(column_coefficients).enumerate() {
             let transformed = self
