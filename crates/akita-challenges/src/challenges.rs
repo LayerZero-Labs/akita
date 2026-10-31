@@ -1,6 +1,6 @@
 //! Sampled sparse challenges for one folding round.
 
-use crate::SparseChallenge;
+use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
@@ -19,7 +19,7 @@ const PARALLEL_FINE_LEAF_TERMS: usize = 1 << 13;
 const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
 
 /// Stage-1 fold challenges in claim-major block order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Challenges {
     /// Per-(claim, block) sparse challenges.
     challenges: std::sync::Arc<[SparseChallenge]>,
@@ -27,9 +27,39 @@ pub struct Challenges {
     num_live_blocks_per_claim: usize,
     /// Number of claims represented by this vector.
     num_claims: usize,
+    // Only the private sampler or an injective embedding may set this cache.
+    sampled_family: Option<(usize, SparseChallengeConfig)>,
 }
 
+impl PartialEq for Challenges {
+    fn eq(&self, other: &Self) -> bool {
+        self.num_live_blocks_per_claim == other.num_live_blocks_per_claim
+            && self.num_claims == other.num_claims
+            && self.challenges == other.challenges
+    }
+}
+impl Eq for Challenges {}
 impl Challenges {
+    pub(crate) fn from_sampled(
+        challenges: Vec<SparseChallenge>,
+        blocks: usize,
+        claims: usize,
+        ring_d: usize,
+        config: SparseChallengeConfig,
+    ) -> Result<Self, AkitaError> {
+        let mut result = Self::from_sparse(challenges, blocks, claims)?;
+        result.sampled_family = Some((ring_d, config));
+        Ok(result)
+    }
+    /// Whether immutable challenge storage was generated in this checked family.
+    /// Values supplied through `from_sparse` always require full validation.
+    #[must_use]
+    pub fn is_sampled_family(&self, ring_d: usize, config: &SparseChallengeConfig) -> bool {
+        self.sampled_family
+            .as_ref()
+            .is_some_and(|(d, c)| *d == ring_d && c == config)
+    }
+
     /// Construct challenges from a sampled vector and its claim/block layout.
     ///
     /// # Errors
@@ -53,6 +83,7 @@ impl Challenges {
             challenges: challenges.into(),
             num_live_blocks_per_claim,
             num_claims,
+            sampled_family: None,
         })
     }
 
@@ -101,7 +132,7 @@ impl Challenges {
         F: Field + Ring,
         E: Field + ExtField<F>,
     {
-        self.challenges
+        self.as_slice()
             .get(index)
             .ok_or_else(|| {
                 AkitaError::InvalidInput(format!(
@@ -191,7 +222,7 @@ impl Challenges {
             let end = start
                 .checked_add(self.num_live_blocks_per_claim)
                 .ok_or_else(|| AkitaError::InvalidSetup("challenge offset overflow".to_string()))?;
-            selected.extend_from_slice(self.challenges.get(start..end).ok_or(
+            selected.extend_from_slice(self.as_slice().get(start..end).ok_or(
                 AkitaError::InvalidSize {
                     expected: end,
                     actual: self.challenges.len(),
@@ -231,8 +262,22 @@ impl Challenges {
                 "subring challenge embedding dimensions are inconsistent".into(),
             ));
         }
+        let sampled = self
+            .sampled_family
+            .as_ref()
+            .is_some_and(|(d, _)| *d == challenge_subring_dimension);
+        if embedding_stride == 1 {
+            if !sampled {
+                for challenge in self.as_slice() {
+                    challenge.validate_dyn(challenge_subring_dimension)?;
+                }
+            }
+            return Ok(self.clone());
+        }
         let embed = |challenge: &SparseChallenge| {
-            challenge.validate_dyn(challenge_subring_dimension)?;
+            if !sampled {
+                challenge.validate_dyn(challenge_subring_dimension)?;
+            }
             let mut positions = crate::SparseChallengePositions::new();
             positions
                 .try_reserve_exact(challenge.positions.len())
@@ -289,7 +334,15 @@ impl Challenges {
             .iter()
             .map(embed)
             .collect::<Result<Vec<_>, _>>()?;
-        Self::from_sparse(embedded, self.num_live_blocks_per_claim, self.num_claims)
+        let mut result =
+            Self::from_sparse(embedded, self.num_live_blocks_per_claim, self.num_claims)?;
+        if sampled {
+            result.sampled_family = self
+                .sampled_family
+                .as_ref()
+                .map(|(_, config)| (ambient_ring_dimension, *config));
+        }
+        Ok(result)
     }
 }
 
@@ -350,5 +403,54 @@ mod tests {
         assert_eq!(embedded.as_slice()[1].coeffs, source.as_slice()[1].coeffs);
         assert!(source.embed_subring_positions(8, 0, 32).is_err());
         assert!(source.embed_subring_positions(8, 2, 32).is_err());
+    }
+}
+
+#[cfg(test)]
+mod sampled_family_tests {
+    use super::*;
+    #[test]
+    fn only_sampled_immutable_storage_carries_provenance() {
+        let config = SparseChallengeConfig {
+            count_pm1: 19,
+            count_pm2: 0,
+        };
+        let values =
+            crate::sampler::sample_indexed_challenges_from_seed(&[83; 32], 512, 2, &config, None)
+                .unwrap();
+        let plain = Challenges::from_sparse(values.clone(), 1, 2).unwrap();
+        let sampled = Challenges::from_sampled(values, 1, 2, 512, config).unwrap();
+        assert_eq!(plain, sampled);
+        assert!(!plain.is_sampled_family(512, &config));
+        assert!(sampled.is_sampled_family(512, &config));
+        assert!(!sampled.is_sampled_family(256, &config));
+        for stride in [1, 4] {
+            assert_eq!(
+                plain
+                    .embed_subring_positions(512, stride, 512 * stride)
+                    .unwrap(),
+                sampled
+                    .embed_subring_positions(512, stride, 512 * stride)
+                    .unwrap()
+            );
+        }
+        assert!(core::ptr::eq(
+            sampled.as_slice(),
+            sampled
+                .embed_subring_positions(512, 1, 512)
+                .unwrap()
+                .as_slice()
+        ));
+        let invalid = Challenges::from_sparse(
+            vec![SparseChallenge {
+                positions: vec![0, 0].into(),
+                coeffs: vec![1, 1].into(),
+            }],
+            1,
+            1,
+        )
+        .unwrap();
+        assert!(invalid.embed_subring_positions(512, 1, 512).is_err());
+        assert!(invalid.embed_subring_positions(512, 4, 2048).is_err());
     }
 }

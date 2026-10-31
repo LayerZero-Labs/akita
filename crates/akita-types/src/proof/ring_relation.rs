@@ -57,7 +57,9 @@ impl CoefficientPackingChallenges {
         subring_challenges: Challenges,
     ) -> Result<Self, AkitaError> {
         let config = geometry.fold_challenge_config();
-        validate_packing_challenge_weights(&subring_challenges, &config)?;
+        if !subring_challenges.is_sampled_family(geometry.challenge_subring_dimension(), &config) {
+            validate_packing_challenge_weights(&subring_challenges, &config)?;
+        }
         let embedded_a_challenges = subring_challenges.embed_subring_positions(
             geometry.challenge_subring_dimension(),
             geometry.subring_embedding_stride(),
