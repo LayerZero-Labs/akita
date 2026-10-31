@@ -35,6 +35,7 @@ pub(crate) struct CoefficientPackingCompactFactors<E: Field> {
     pub(super) affine_relation_families: Vec<CoefficientPackingAffineRelationFamily<E>>,
     pub(super) quotient_families: Vec<EqPairTensorFamily<E>>,
     pub(super) direct_opening_families: Vec<EqPairTensorFamily<E>>,
+    pub(super) packed_direct: Option<super::packed_direct::PackedDirect<E>>,
     pub(super) packing_z_families: Vec<EqPairTensorFamily<E>>,
 }
 
@@ -251,10 +252,20 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
                 eval_boolean_pair_tensor_families::<_, true, false>(left, point, families)
             }
         };
-        Ok(
-            evaluate(&self.direct_opening_point, &self.direct_opening_families)?
-                + evaluate(&self.packing_z_point, &self.packing_z_families)?,
-        )
+
+        let direct = if let Some(packed) = &self.packed_direct {
+            packed.evaluate(self.basis, &self.direct_opening_point, point)?
+        } else {
+            None
+        };
+        let direct = match direct {
+            Some(value) => value,
+            None => evaluate(&self.direct_opening_point, &self.direct_opening_families)?,
+        };
+
+        let z = evaluate(&self.packing_z_point, &self.packing_z_families)?;
+
+        Ok(direct + z)
     }
 }
 
@@ -732,7 +743,13 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
         &mut packing_z_point,
         group.prepared_point().position_point(),
     )?;
+    let packed_direct = super::packed_direct::PackedDirect::new(
+        group,
+        Arc::clone(&opening_gadget),
+        &claim_coefficients,
+    )?;
     Ok(CoefficientPackingCompactFactors {
+        packed_direct,
         basis: group.prepared_point().basis(),
         physical_field_len: group.physical_field_len(),
         coefficient_weights,
