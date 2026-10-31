@@ -133,26 +133,43 @@ pub(crate) fn sample_distinct_positions_into(
     if universe > out.len().saturating_mul(64) {
         return sample_distinct_positions_into_sparse(cursor, universe, out, scratch);
     }
-    match universe {
-        0..=8 => sample_distinct_positions_into_stack::<u8, 8>(cursor, universe, out),
-        9..=16 => sample_distinct_positions_into_stack::<u8, 16>(cursor, universe, out),
-        17..=32 => sample_distinct_positions_into_stack::<u8, 32>(cursor, universe, out),
-        33..=64 => sample_distinct_positions_into_stack::<u8, 64>(cursor, universe, out),
-        65..=128 => sample_distinct_positions_into_stack::<u8, 128>(cursor, universe, out),
-        129..=256 => sample_distinct_positions_into_stack::<u8, 256>(cursor, universe, out),
-        257..=512 => sample_distinct_positions_into_stack::<u16, 512>(cursor, universe, out),
-        513..=1024 => sample_distinct_positions_into_stack::<u16, 1024>(cursor, universe, out),
-        1025..=MAX_STACK_TIER_RING_DIM => sample_distinct_positions_into_stack::<
-            u16,
-            MAX_STACK_TIER_RING_DIM,
-        >(cursor, universe, out),
-        _ => {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring dimension must be <= {MAX_STACK_RING_DIM}"
-            )))
+    #[cfg(target_arch = "riscv64")]
+    {
+        match universe {
+            0..=8 => sample_distinct_positions_into_words::<8>(cursor, universe, out),
+            9..=16 => sample_distinct_positions_into_words::<16>(cursor, universe, out),
+            17..=32 => sample_distinct_positions_into_words::<32>(cursor, universe, out),
+            33..=64 => sample_distinct_positions_into_words::<64>(cursor, universe, out),
+            65..=128 => sample_distinct_positions_into_words::<128>(cursor, universe, out),
+            129..=256 => sample_distinct_positions_into_words::<256>(cursor, universe, out),
+            257..=512 => sample_distinct_positions_into_words::<512>(cursor, universe, out),
+            513..=1024 => sample_distinct_positions_into_words::<1024>(cursor, universe, out),
+            _ => sample_distinct_positions_into_words::<2048>(cursor, universe, out),
         }
-    }?;
-    Ok(())
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    {
+        match universe {
+            0..=8 => sample_distinct_positions_into_stack::<u8, 8>(cursor, universe, out),
+            9..=16 => sample_distinct_positions_into_stack::<u8, 16>(cursor, universe, out),
+            17..=32 => sample_distinct_positions_into_stack::<u8, 32>(cursor, universe, out),
+            33..=64 => sample_distinct_positions_into_stack::<u8, 64>(cursor, universe, out),
+            65..=128 => sample_distinct_positions_into_stack::<u8, 128>(cursor, universe, out),
+            129..=256 => sample_distinct_positions_into_stack::<u8, 256>(cursor, universe, out),
+            257..=512 => sample_distinct_positions_into_stack::<u16, 512>(cursor, universe, out),
+            513..=1024 => sample_distinct_positions_into_stack::<u16, 1024>(cursor, universe, out),
+            1025..=MAX_STACK_TIER_RING_DIM => sample_distinct_positions_into_stack::<
+                u16,
+                MAX_STACK_TIER_RING_DIM,
+            >(cursor, universe, out),
+            _ => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "ring dimension must be <= {MAX_STACK_RING_DIM}"
+                )))
+            }
+        }?;
+        Ok(())
+    }
 }
 
 #[inline]
@@ -178,6 +195,7 @@ fn sample_distinct_positions_into_sparse(
 }
 
 #[inline]
+#[cfg(any(not(target_arch = "riscv64"), test))]
 fn sample_distinct_positions_into_stack<T, const N: usize>(
     cursor: &mut XofCursor,
     universe: usize,
@@ -202,6 +220,37 @@ where
         let j = i + cursor.next_usize_mod(universe - i);
         perm.swap(i, j);
         *dst = u32::from(perm[i]);
+    }
+    Ok(())
+}
+
+/// Word-aligned scratch avoids guest subword memory virtualization while
+/// retaining exactly the same Fisher-Yates draws and XOF byte consumption.
+#[inline]
+#[cfg(any(target_arch = "riscv64", test))]
+fn sample_distinct_positions_into_words<const N: usize>(
+    cursor: &mut XofCursor,
+    universe: usize,
+    out: &mut [u32],
+) -> Result<(), AkitaError> {
+    if out.len() > universe || universe > N || N > MAX_STACK_TIER_RING_DIM {
+        return Err(AkitaError::InvalidInput(
+            "word permutation tier has invalid dimensions".into(),
+        ));
+    }
+    let mut permutation = [0usize; N];
+    for (i, slot) in permutation[..universe].iter_mut().enumerate() {
+        *slot = i;
+    }
+    let mut mask = universe.next_power_of_two() - 1;
+    for (i, dst) in out.iter_mut().enumerate() {
+        let modulus = universe - i;
+        if modulus <= (mask >> 1) + 1 {
+            mask >>= 1;
+        }
+        let j = i + cursor.next_usize_masked(modulus, mask);
+        permutation.swap(i, j);
+        *dst = u32::try_from(permutation[i]).map_err(|_| AkitaError::InvalidProof)?;
     }
     Ok(())
 }
@@ -256,6 +305,33 @@ mod tests {
                     sparse, dense,
                     "universe={universe}, weight={weight}, round={round}"
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod word_scratch_tests {
+    use super::*;
+    #[test]
+    fn word_scratch_preserves_draws_and_cursor_consumption() {
+        for universe in [8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
+            let prefix = crate::sampler::IndexedXofPrefix::new(&[37; 32]).unwrap();
+            for coordinate in 0..8 {
+                let mut a = XofCursor::from_indexed_prefix(&prefix, coordinate);
+                let mut b = XofCursor::from_indexed_prefix(&prefix, coordinate);
+                let weight = universe.min(41);
+                let mut old = vec![0; weight];
+                let mut new = vec![0; weight];
+                sample_distinct_positions_into_stack::<u16, 2048>(&mut a, universe, &mut old)
+                    .unwrap();
+                sample_distinct_positions_into_words::<2048>(&mut b, universe, &mut new).unwrap();
+                assert_eq!(old, new);
+                let mut suffix_a = [0; 200];
+                let mut suffix_b = [0; 200];
+                a.fill_bytes(&mut suffix_a);
+                b.fill_bytes(&mut suffix_b);
+                assert_eq!(suffix_a, suffix_b);
             }
         }
     }

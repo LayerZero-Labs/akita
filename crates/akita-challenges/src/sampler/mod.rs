@@ -142,7 +142,15 @@ impl IndexedChallengeWorker {
     ) -> Result<SparseChallenge, AkitaError> {
         self.cursor
             .reset_indexed_prefix(&self.prefix, coordinate_index);
+
         let IndexedSamplingPolicy::OperatorNorm { threshold, table } = &self.policy else {
+            #[cfg(target_arch = "riscv64")]
+            if ring_d == 64
+                && cfg.count_pm1 == crate::D64_PRODUCTION_PM1_COUNT
+                && cfg.count_pm2 == crate::D64_PRODUCTION_PM2_COUNT
+            {
+                return Ok(signed_sparse::sample_production64(&mut self.cursor));
+            }
             self.scratch
                 .sample(&mut self.cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
             return Ok(self.scratch.take_challenge());

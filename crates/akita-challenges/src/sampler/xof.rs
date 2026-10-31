@@ -100,7 +100,7 @@ impl XofCursor {
         *self = prefix.cursor(coordinate_index);
     }
 
-    #[inline]
+    #[inline(always)]
     fn next_u8(&mut self) -> u8 {
         if self.pos == SHAKE256_RATE {
             f1600(&mut self.state);
@@ -150,16 +150,24 @@ impl XofCursor {
             return 0;
         }
         let bits = usize::BITS - (modulus - 1).leading_zeros();
-        if bits <= 8 {
-            let mask = ((1u16 << bits) - 1) as u8;
+        self.next_usize_masked(modulus, (1usize << bits) - 1)
+    }
+
+    /// The caller supplies the exact rejection mask; stream consumption is unchanged.
+    #[inline(always)]
+    pub(crate) fn next_usize_masked(&mut self, modulus: usize, mask: usize) -> usize {
+        if modulus == 1 {
+            return 0;
+        }
+        if mask <= u8::MAX as usize {
+            let mask = mask as u8;
             loop {
                 let val = (self.next_u8() & mask) as usize;
                 if val < modulus {
                     return val;
                 }
             }
-        } else if bits <= 16 {
-            let mask = (1usize << bits) - 1;
+        } else if mask <= u16::MAX as usize {
             loop {
                 let lo = self.next_u8() as usize;
                 let hi = self.next_u8() as usize;
@@ -169,7 +177,6 @@ impl XofCursor {
                 }
             }
         } else {
-            let mask: usize = (1 << bits) - 1;
             loop {
                 let val = (self.next_u32() as usize) & mask;
                 if val < modulus {
