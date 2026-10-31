@@ -478,17 +478,19 @@ fn run_multi_group_mode<
     nv: usize,
     num_polys: usize,
 ) {
-    let row = match profile_setup_contribution_mode() {
+    let workload = match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => crate::contract::attest::<Cfg>(label, nv, num_polys),
         SetupContributionMode::Recursive => {
             crate::contract::attest::<RecursiveCommitmentConfig<Cfg>>(label, nv, num_polys)
         }
     };
-    let pre = row["precommitted"].as_array().expect("precommitted groups");
-    assert_eq!(
-        pre[0], pre[1],
-        "multi-group driver requires equal precommits"
-    );
+    let crate::contract::Workload::MultiGroup {
+        pre_num_vars,
+        final_num_polys,
+    } = workload
+    else {
+        panic!("multi-group driver requires a grouped workload");
+    };
     tracing::info!(
         "=== {label} (fp128, {}, {layout_note}) ===",
         fp128_prime_label()
@@ -496,9 +498,9 @@ fn run_multi_group_mode<
     run_recursive_multi_group_onehot::<F, D, Cfg>(
         chunking,
         label,
-        pre[0][0].as_u64().expect("pre arity") as usize,
+        pre_num_vars,
         nv,
-        row["final_polys"].as_u64().expect("final polynomial count") as usize,
+        final_num_polys,
     );
 }
 

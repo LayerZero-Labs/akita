@@ -1968,9 +1968,10 @@ def combine_grind_retry_observations(
 
 
 def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, object]:
-    if len({summary.get("onehot_k") for summary in summaries}) != 1:
-        raise ValueError("benchmark samples have different source densities")
-    combined = dict(summaries[0])
+    successful = [summary for summary in summaries if int(summary.get("exit_code", 0)) == 0]
+    if len({summary.get("onehot_k") for summary in successful}) > 1:
+        raise ValueError("successful benchmark samples have different source densities")
+    combined = dict((successful or summaries)[0])
     combined["runs"] = len(summaries)
     combined["samples"] = [compact_sample_summary(summary) for summary in summaries]
     l2_grind_observations = combine_l2_grind_observations(summaries)
@@ -2132,23 +2133,6 @@ def failure_summaries_by_case(
     return failures
 
 
-def propagate_sibling_case_failure(
-    case_summaries: list[dict[str, object]],
-    failure: dict[str, object],
-) -> list[dict[str, object]]:
-    """Mirror a paired-binary failure onto the sibling output root."""
-    if any(int(summary.get("exit_code", 0)) != 0 for summary in case_summaries):
-        return case_summaries
-    propagated = dict(failure)
-    propagated["error"] = (
-        "case cancelled after the paired binary failed: "
-        f"{failure.get('error', 'profile run failed')}"
-    )
-    propagated["exit_code"] = failure.get("exit_code", 1)
-    propagated["failure_phase"] = failure.get("failure_phase", "unknown")
-    return [*case_summaries, propagated]
-
-
 def write_aggregate_summaries(
     summary_dirs: list[pathlib.Path],
     cases: list[BenchmarkCaseSpec],
@@ -2173,13 +2157,25 @@ def write_aggregate_summaries(
                 if run.summary_dir == summary_dir and run.case.case_id == case.case_id
             ]
             failure = failures_by_case.get(case.case_id)
-            if failure is not None:
-                case_summaries = propagate_sibling_case_failure(case_summaries, failure)
             if case_summaries:
                 combined = combine_case_run_summaries(case_summaries)
-                if benchmark_shard:
-                    combined["benchmark_shard"] = benchmark_shard
-                aggregate["cases"].append(combined)
+            elif failure is not None:
+                combined = failure_case(case, "unknown", "case cancelled before execution")
+            else:
+                continue
+            if failure is not None and (
+                not case_summaries or int(combined.get("exit_code", 0)) == 0
+            ):
+                # Cancellation is case status, not a measurement from this binary.
+                combined["exit_code"] = failure.get("exit_code", 1)
+                combined["failure_phase"] = failure.get("failure_phase", "unknown")
+                combined["error"] = (
+                    "case cancelled after the paired binary failed: "
+                    f"{failure.get('error', 'profile run failed')}"
+                )
+            if benchmark_shard:
+                combined["benchmark_shard"] = benchmark_shard
+            aggregate["cases"].append(combined)
         summary_dir.mkdir(parents=True, exist_ok=True)
         write_text(
             summary_dir / "summary.json",

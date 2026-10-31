@@ -149,7 +149,8 @@ class OrchestrationFailureTests(unittest.TestCase):
             case = {"mode": "dense_fp32", "num_vars": 30, "num_polys": 1,
                     "exit_code": 0, "baseline_status": "available"}
             neighbor = {"mode": "onehot_fp32", "num_vars": 31, "num_polys": 1,
-                        "exit_code": 0, "onehot_k": 16, "baseline_status": "unsupported"}
+                        "exit_code": 0, "onehot_k": 16, "baseline_status": "unsupported",
+                        "baseline_reason": "missing catalog key"}
             (part / "summary.json").write_text(json.dumps({"cases": [case, neighbor]}))
             collect(root / "parts", root / "head", root / "base",
                     Path(".github/workflows/profile-bench.yml"))
