@@ -1,0 +1,20 @@
+{
+  "mac": {
+    "accumulation_s": 136.30447,
+    "accumulation_threads": 16,
+    "ntt_s": 83.583722,
+    "ntt_threads": 16,
+    "ntt_mode": "ntt-exact",
+    "speedup": 1.630753772845866,
+    "time_saved_percent": 38.67866402327085
+  },
+  "leopard": {
+    "accumulation_s": 81.72242,
+    "accumulation_threads": 16,
+    "ntt_s": 59.883384500000005,
+    "ntt_threads": 32,
+    "ntt_mode": "ntt-panel5@8x48x0",
+    "speedup": 1.364692738767963,
+    "time_saved_percent": 26.723432198899634
+  }
+}

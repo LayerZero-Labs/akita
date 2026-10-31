@@ -640,3 +640,35 @@ fn fused_signed_digit_transform_preserves_coefficients() {
         ntt: CyclotomicCrtNtt<i32, 6, 64>,
     }
 }
+
+#[test]
+fn binary_ntt_round_trip_and_invalid_values() {
+    use jolt_field::{Prime128OffsetA7F7, Ring};
+    fn check<const D: usize>() {
+        let params = CrtNttParamSet::<i32, 5, D>::new(std::array::from_fn(|i| {
+            crate::ntt::tables::q128_primes()[i]
+        }));
+        for mask in 0..16 {
+            let mut digits = [0i8; D];
+            for (i, digit) in digits.iter_mut().enumerate() {
+                *digit = ((mask >> (i % 4)) & 1) as i8;
+            }
+            let mut ntt = CyclotomicCrtNtt::zero();
+            ntt.assign_binary_with_params(&digits, &params).unwrap();
+            let actual: CyclotomicRing<Prime128OffsetA7F7, D> = ntt.to_ring(&params);
+            assert_eq!(
+                actual.coefficients(),
+                &digits.map(Prime128OffsetA7F7::from_i8)
+            );
+        }
+        for invalid in [-1, 2] {
+            let mut digits = [0i8; D];
+            digits[D - 1] = invalid;
+            assert!(CyclotomicCrtNtt::zero()
+                .assign_binary_with_params(&digits, &params)
+                .is_err());
+        }
+    }
+    check::<256>();
+    check::<512>();
+}

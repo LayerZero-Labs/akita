@@ -32,6 +32,7 @@ pub fn chunking(family: &str) -> ChunkedWitnessCfg {
         | "fp128_onehot"
         | "fp128_dense_recursive"
         | "fp128_onehot_recursive"
+        | "fp128_onehot_k16_recursive"
         | "fp32_dense"
         | "fp32_onehot"
         | "fp32_dense_recursive"
@@ -86,12 +87,13 @@ pub fn run(data: &[u8]) {
         19 => admit::<fp128::DenseMultiChunkW8R3>(bytes),
         20 => admit::<RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>>(bytes),
         21 => admit::<RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>>(bytes),
-        _ => admit::<RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>(bytes),
+        22 => admit::<RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>>(bytes),
+        _ => admit::<RecursiveCommitmentConfig<fp128::OneHotK16>>(bytes),
     }
 }
 
 /// Selector byte for each shipped family, in the order used by [`run`].
-pub const FAMILIES: [&str; 23] = [
+pub const FAMILIES: [&str; 24] = [
     "fp128_dense",
     "fp128_dense_bounded",
     "fp128_dense_multi_chunk",
@@ -115,4 +117,5 @@ pub const FAMILIES: [&str; 23] = [
     "fp128_onehot_recursive_multi_chunk_w2r3",
     "fp128_onehot_recursive_multi_chunk_w4r3",
     "fp128_onehot_recursive_multi_chunk_w8r3",
+    "fp128_onehot_k16_recursive",
 ];

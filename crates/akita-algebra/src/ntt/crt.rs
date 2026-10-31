@@ -136,6 +136,18 @@ impl CrtCapacity {
         required < self.product
     }
 
+    /// Maximum columns for a ring RHS with a proved per-ring L1 norm bound.
+    ///
+    /// Every output coefficient is bounded by `width * floor(q/2) * rhs_l1`.
+    /// This is the scalar capacity formula with that entire ring norm, not
+    /// a change to the degree of the transform or to the commitment ring.
+    pub fn max_safe_width_for_ring_l1<F: crate::Field + crate::CanonicalEncoding>(
+        &self,
+        rhs_l1: u64,
+    ) -> Option<usize> {
+        self.max_safe_width::<F, 1>(rhs_l1)
+    }
+
     /// Conservative maximum matrix width supported at one coefficient bound.
     pub fn max_safe_width<F: crate::Field + crate::CanonicalEncoding, const D: usize>(
         &self,

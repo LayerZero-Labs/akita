@@ -38,6 +38,7 @@ mod column_sweep;
 mod decompose_fold;
 mod entries;
 mod fold;
+mod index_storage;
 #[cfg(test)]
 mod inner_ajtai;
 mod ops;
