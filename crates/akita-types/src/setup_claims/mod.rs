@@ -1,6 +1,7 @@
 //! External setup obligations. Successful reduction remains conditional until its accumulator is decided.
 mod query;
 pub mod transcript;
+mod transport;
 
 use crate::{AkitaExpandedSetup, AkitaSetupSeed, FpExtEncoding};
 use akita_error::{checked, AkitaError};

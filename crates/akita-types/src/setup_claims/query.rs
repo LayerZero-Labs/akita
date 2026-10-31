@@ -29,6 +29,7 @@ enum Query<E: Field> {
         functional: PreparedCoefficientFunctional<E>,
     },
     Evaluation(Vec<E>),
+    Native(Arc<[NativeTerm<E>]>),
 }
 
 /// An exact checked functional of the canonical flat setup stream.
@@ -86,13 +87,17 @@ impl<E: Field> SetupWeightTerm<E> {
     }
 }
 
-struct NativeTerm<E: Field> {
-    coefficient: Vec<E>,
-    point: Vec<E>,
-    tensors: Vec<EqPairTensorFamily<E>>,
+#[derive(Clone)]
+pub(super) struct NativeTerm<E: Field> {
+    pub(super) coefficient: Vec<E>,
+    pub(super) point: Vec<E>,
+    pub(super) tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: Field> SetupQuery<E> {
+    pub(super) fn from_native_terms(terms: Vec<NativeTerm<E>>) -> Self {
+        Self(Query::Native(terms.into()))
+    }
     pub fn contribution(
         plan: SetupContributionPlan<E>,
         functional: PreparedCoefficientFunctional<E>,
@@ -126,6 +131,11 @@ impl<E: Field> SetupQuery<E> {
                 plan.projection_geometry().natural_field_len() <= polynomial.field_len()
             }
             Query::Evaluation(point) => point.len() == polynomial.num_variables(),
+            Query::Native(terms) => terms.iter().all(|t| {
+                !t.coefficient.is_empty()
+                    && t.coefficient.len().is_power_of_two()
+                    && t.coefficient.len() <= polynomial.field_len()
+            }),
         };
         if !fits {
             return Err(AkitaError::InvalidInput(
@@ -135,6 +145,11 @@ impl<E: Field> SetupQuery<E> {
         Ok(())
     }
     pub(super) fn validate_split(&self, coefficient_len: usize) -> Result<(), AkitaError> {
+        if let Query::Native(terms) = &self.0 {
+            if terms.iter().any(|t| coefficient_len > t.coefficient.len()) {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
         if let Query::Contribution { plan, .. } = &self.0 {
             if coefficient_len > plan.projection_geometry().base_ring_dim() {
                 return Err(AkitaError::InvalidInput(
@@ -177,7 +192,7 @@ impl<E: Field> SetupQuery<E> {
                     * SetupIndexWeightMle::new(plan)?.evaluate(index, *alpha)?
                     * high.iter().fold(E::one(), |v, &r| v * (E::one() - r)))
             }
-            Query::Contribution { .. } => {
+            Query::Contribution { .. } | Query::Native(_) => {
                 self.native_terms()?
                     .iter()
                     .try_fold(E::zero(), |sum, term| {
@@ -227,7 +242,7 @@ impl<E: Field> SetupQuery<E> {
                 index.resize(polynomial.field_len() / dim, E::zero());
                 vec![(scalar_powers(*alpha, dim).to_vec(), index, plan.required())]
             }
-            Query::Contribution { .. } => self
+            Query::Contribution { .. } | Query::Native(_) => self
                 .native_terms()?
                 .into_iter()
                 .map(|term| {
@@ -266,6 +281,9 @@ impl<E: Field> SetupQuery<E> {
     }
 
     fn native_terms(&self) -> Result<Vec<NativeTerm<E>>, AkitaError> {
+        if let Query::Native(terms) = &self.0 {
+            return Ok(terms.to_vec());
+        }
         let Query::Contribution { plan, functional } = &self.0 else {
             return Err(AkitaError::InvalidInput(
                 "evaluation has no native role tensors".into(),
@@ -414,7 +432,7 @@ impl<E: Field> SetupQuery<E> {
                 integer(bytes, 0)?;
                 fields::<F, E>(bytes, point)
             }
-            Query::Contribution { .. } => {
+            Query::Contribution { .. } | Query::Native(_) => {
                 integer(bytes, 1)?;
                 let terms = self.native_terms()?;
                 integer(bytes, terms.len())?;
