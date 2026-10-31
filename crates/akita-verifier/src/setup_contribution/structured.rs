@@ -502,6 +502,9 @@ where
         )
     }?;
 
+    if !uses_evaluation_trace_consistency {
+        return Ok(evaluation);
+    }
     let projection_lanes = (group.a_relation_ratio() != 1)
         .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_relation_ratio()))
         .transpose()?;
@@ -575,9 +578,5 @@ where
             &base_scales,
         )?
     };
-    Ok(if uses_evaluation_trace_consistency {
-        evaluation + group.consistency_weight() * z
-    } else {
-        evaluation
-    })
+    Ok(evaluation + group.consistency_weight() * z)
 }
