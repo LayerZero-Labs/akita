@@ -20,6 +20,7 @@ mod direct_evaluation_regressions;
 mod fused_scan;
 mod packed_direct;
 mod prepare;
+mod reduced_shared;
 mod span_evaluators;
 
 type F = Prime128OffsetA7F7;

@@ -182,6 +182,9 @@ pub(in crate::offset_eq) struct DenseLeftTensorView<'a, F: Field> {
     pub(in crate::offset_eq) residual: ResidualTerms<F>,
 }
 
+#[cfg(feature = "tensor-no-carry")]
+mod separate;
+
 impl<F: Field> DenseLeftTensorView<'_, F> {
     /// Number of nonzero-weight residual terms. Each axis count is at most
     /// its validated `len`, so this never exceeds the checked coordinate
@@ -443,8 +446,18 @@ impl<'a, F: Field> DenseLeftOverlap<'a, F> {
         equality: &OffsetEqWindow<F>,
         output_len: usize,
     ) -> Result<Vec<F>, AkitaError> {
+        #[cfg(feature = "tensor-no-carry")]
+        let separated = self
+            .views
+            .iter()
+            .map(|view| separate::SeparatedResidual::prepare(view, equality))
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         let evaluate_coordinate = |(coordinate, destination): (usize, &mut F)| {
+            #[cfg(feature = "tensor-no-carry")]
+            let mut separated_views = separated.iter();
             for view in &self.views {
+                #[cfg(feature = "tensor-no-carry")]
+                let prepared = separated_views.next().and_then(Option::as_ref);
                 if view.family.scalar.is_zero() {
                     continue;
                 }
@@ -457,6 +470,17 @@ impl<'a, F: Field> DenseLeftOverlap<'a, F> {
                     coordinate,
                     "right",
                 )?;
+                #[cfg(feature = "tensor-no-carry")]
+                if let Some(prepared) = prepared {
+                    let value = prepared.evaluate(equality, right_offset)?;
+                    let scalar = view.family.scalar;
+                    *destination += if scalar == F::one() {
+                        value
+                    } else {
+                        scalar * value
+                    };
+                    continue;
+                }
                 *destination += view.evaluate_residual(equality, right_offset)?;
             }
             Ok::<_, AkitaError>(())
@@ -465,6 +489,14 @@ impl<'a, F: Field> DenseLeftOverlap<'a, F> {
         let destination = output.get_mut(self.destination.clone()).ok_or_else(|| {
             AkitaError::Internal("validated tensor destination span exceeds the output".into())
         })?;
+        #[cfg(all(feature = "tensor-eq-runs", feature = "tensor-no-carry"))]
+        let runs_declined = separated.iter().any(Option::is_some);
+        #[cfg(all(feature = "tensor-eq-runs", not(feature = "tensor-no-carry")))]
+        let runs_declined = false;
+        #[cfg(feature = "tensor-eq-runs")]
+        if runs::try_accumulate(equality, &self.views, runs_declined, destination)? {
+            return Ok(output);
+        }
         // Tuned with `benches/offset_eq_window.rs::bench_materialize_disjoint_intervals`
         // on an Apple M4 Max (16 cores, 64 GiB).
         const PARALLEL_THRESHOLD: usize = 1 << 14;
@@ -542,3 +574,6 @@ fn visit_tensor_coordinates<F: Field>(
     }
     Ok(())
 }
+
+#[cfg(feature = "tensor-eq-runs")]
+mod runs;

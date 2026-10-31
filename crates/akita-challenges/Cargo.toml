@@ -11,13 +11,13 @@ readme = "../../README.md"
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 serde = { version = "1", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 keccak = { version = "0.1.6", features = ["asm"] }
-jolt-inlines-keccak256 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, optional = true }
+jolt-inlines-keccak256 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", default-features = false, optional = true }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 
 [dev-dependencies]
@@ -32,6 +32,9 @@ parallel = ["jolt-field/parallel"]
 # verifier); same permutation as the `keccak` crate.
 keccak-inline = ["dep:jolt-inlines-keccak256"]
 logging-transcript = ["akita-transcript/logging-transcript"]
+# Recursion option (default off): the D64 selective-L2 operator-norm
+# table reads its base tables from generated static data (same entries).
+ont-static-base = []
 
 [lints]
 workspace = true

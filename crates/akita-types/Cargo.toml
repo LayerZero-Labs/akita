@@ -13,11 +13,11 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -49,6 +49,10 @@ logging-transcript = [
   "akita-params/logging-transcript",
   "akita-transcript/logging-transcript",
 ]
+# Diagnostic: cross-checks every factored compression relation weight
+# evaluation against the per-event evaluation and counts the evaluation tiers.
+# Native diagnostic builds only; no default feature enables it.
+compression-weights-crosscheck = []
 
 [dev-dependencies]
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [

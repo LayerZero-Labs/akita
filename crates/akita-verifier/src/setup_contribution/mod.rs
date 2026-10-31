@@ -82,3 +82,6 @@ use reduced_role::{
     materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
 };
 use segments::scan_partition;
+
+// Appended after the last original line: the `lb2_alt!` selector and, with the feature, `PairSum`.
+mod lb2;

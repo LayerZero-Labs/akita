@@ -136,14 +136,14 @@ impl SparseChallenge {
 
     /// Evaluate this challenge against precomputed scalar powers.
     ///
-    /// The small integer coefficients are first embedded into the base field
-    /// `F`, then multiplied into `E` with a mixed base-field operation. The
-    /// ordinary base-field case is `E = F`.
+    /// Coefficients of magnitude one or two use signed addition in `E`.
+    /// Other coefficients are embedded into `F` and multiplied into `E` with
+    /// a mixed base-field operation. The ordinary base-field case is `E = F`.
     ///
     /// # Errors
     ///
-    /// Returns an error if `alpha_pows` does not have length `D`, or if a
-    /// term would index outside the supplied powers. This method assumes the
+    /// Returns an error for mismatched term counts, zero coefficients, or a
+    /// position outside the supplied powers. This method assumes the
     /// challenge came from the crate's fold-challenge sampler and therefore
     /// does not re-check uniqueness of positions on the hot path.
     pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
@@ -158,7 +158,7 @@ impl SparseChallenge {
             ));
         }
 
-        let mut acc = E::zero();
+        let mut signed_terms = true;
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
             if idx >= ring_d {
@@ -171,7 +171,32 @@ impl SparseChallenge {
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            accumulate_small_signed::<F, E>(&mut acc, alpha_pows[idx], i64::from(coeff));
+            signed_terms &= matches!(coeff, -2 | -1 | 1 | 2);
+        }
+        if signed_terms {
+            // The checked positions borrow canonical powers. Repeating a term
+            // for magnitude two preserves the polynomial over every field;
+            // field-inline guests keep the sum in one accumulator.
+            return Ok(E::signed_sum(
+                self.positions
+                    .iter()
+                    .zip(&self.coeffs)
+                    .flat_map(|(&position, &coefficient)| {
+                        std::iter::repeat_n(
+                            (&alpha_pows[position as usize], coefficient < 0),
+                            usize::from(coefficient.unsigned_abs()),
+                        )
+                    }),
+            ));
+        }
+
+        let mut acc = E::zero();
+        for (&position, &coefficient) in self.positions.iter().zip(&self.coeffs) {
+            accumulate_small_signed::<F, E>(
+                &mut acc,
+                alpha_pows[position as usize],
+                i64::from(coefficient),
+            );
         }
         Ok(acc)
     }
@@ -180,7 +205,7 @@ impl SparseChallenge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128Offset275;
+    use jolt_field::{One, Prime128Offset275, Zero};
 
     type F = Prime128Offset275;
     const D: usize = 4;
@@ -245,6 +270,66 @@ mod tests {
         let err = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap_err();
 
         assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("length mismatch")));
+    }
+
+    #[test]
+    fn eval_at_pows_matches_dense_polynomial_at_boundary_points() {
+        let coefficients = [1, -2, 2, -1, 1, -1, 2, -2];
+        let challenge = SparseChallenge {
+            positions: (0..coefficients.len() as u32).collect(),
+            coeffs: coefficients.into_iter().collect(),
+        };
+        for alpha in [F::zero(), F::one(), -F::one(), F::from_u64(13)] {
+            let mut powers = Vec::new();
+            let mut power = F::one();
+            for _ in coefficients {
+                powers.push(power);
+                power *= alpha;
+            }
+            let expected = coefficients
+                .iter()
+                .rev()
+                .fold(F::zero(), |value, &coefficient| {
+                    value * alpha + F::from_i64(i64::from(coefficient))
+                });
+            assert_eq!(challenge.eval_at_pows::<F, F>(&powers).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn eval_at_pows_retains_general_coefficient_and_duplicate_semantics() {
+        let powers = [F::from_u64(7), -F::one()];
+        for coefficients in [[i8::MIN, i8::MAX], [-2, 2], [-8, 3]] {
+            let challenge = SparseChallenge {
+                positions: vec![1, 1].into(),
+                coeffs: coefficients.into_iter().collect(),
+            };
+            let sum = i64::from(coefficients[0]) + i64::from(coefficients[1]);
+            assert_eq!(
+                challenge.eval_at_pows::<F, F>(&powers).unwrap(),
+                -F::from_i64(sum),
+            );
+            assert!(challenge.validate_dyn(powers.len()).is_err());
+        }
+        let empty = SparseChallenge {
+            positions: Default::default(),
+            coeffs: Default::default(),
+        };
+        assert_eq!(empty.eval_at_pows::<F, F>(&[]).unwrap(), F::zero());
+    }
+
+    #[test]
+    fn eval_at_pows_rejects_zero_after_valid_terms() {
+        for coefficients in [[1, 0], [3, 0]] {
+            let challenge = SparseChallenge {
+                positions: vec![0, 1].into(),
+                coeffs: coefficients.into_iter().collect(),
+            };
+            assert!(matches!(
+                challenge.eval_at_pows::<F, F>(&alpha_pows()),
+                Err(AkitaError::InvalidInput(message)) if message.contains("non-zero")
+            ));
+        }
     }
 
     #[test]

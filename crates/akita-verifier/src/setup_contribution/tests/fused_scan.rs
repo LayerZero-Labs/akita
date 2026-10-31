@@ -89,7 +89,7 @@ fn naive_physical_b_weights<E: Field>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reduced_direct_literal_oracle<E>(
+pub(super) fn reduced_direct_literal_oracle<E>(
     plan: &SetupContributionPlan<E>,
     setup: &AkitaExpandedSetup<F>,
     inputs: &TestSetupInputs,

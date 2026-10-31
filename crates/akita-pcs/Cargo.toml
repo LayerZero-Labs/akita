@@ -53,6 +53,9 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
+# Optional (default off): sums of products at the structured
+# sites of the verifier's setup scan (same field values).
+setup-sop-structured = ["akita-verifier/setup-sop-structured"]
 # Blake2b transcript and descriptor digests over the jolt-inlines hasher (a
 # RISC-V guest verifier); same bytes as the portable hasher.
 blake2-inline = ["akita-transcript/blake2-inline", "akita-params/blake2-inline"]
@@ -104,13 +107,14 @@ logging-transcript = [
   "akita-cpu-backend/logging-transcript",
 ]
 response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
+compression-weights-crosscheck = ["akita-types/compression-weights-crosscheck"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -125,7 +129,7 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [

@@ -673,3 +673,48 @@ fn fp128_dense_monomial_basis() {
             .expect("monomial verify");
     });
 }
+
+// ============================================================================
+// Compression relation weight cross-check (`compression-weights-crosscheck`)
+//
+// With the feature, every compression relation weight evaluation in this file
+// is also evaluated event by event at its own point and at seeded random
+// points, and every grouped builder family is compared with the canonical
+// per-event loop; a difference fails verification. This test runs dense,
+// one-hot and precommitted roundtrips and checks that the cross-check ran.
+// ============================================================================
+
+#[cfg(feature = "compression-weights-crosscheck")]
+#[test]
+fn fp128_compression_weights_crosscheck() {
+    use akita_types::proof::compression_relation_weights::crosscheck::{report, EXTRA_POINTS};
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let before = report();
+        prove_verify_dense_roundtrip::<fp128::Dense>(
+            ChunkedWitnessCfg::default_non_chunked(),
+            &[14, 16],
+            b"crosscheck/fp128_dense",
+        );
+        prove_verify_onehot_roundtrip::<fp128::OneHot>(
+            ChunkedWitnessCfg::default_non_chunked(),
+            &[12, 15],
+            b"crosscheck/fp128_onehot",
+        );
+        prove_verify_onehot_precommitted_roundtrip::<fp128::OneHot>(
+            ChunkedWitnessCfg::default_non_chunked(),
+            &[16],
+            b"crosscheck/fp128_onehot_pre",
+        );
+        let after = report();
+        // Other tests may run concurrently, so these are lower bounds.
+        let evaluations = after.evaluations - before.evaluations;
+        assert!(evaluations > 0, "no compression relation weight evaluation");
+        assert!(after.points - before.points >= evaluations * (1 + EXTRA_POINTS as u64));
+        assert!(after.builders.recomposition_groups > before.builders.recomposition_groups);
+        assert!(after.builders.compared > before.builders.compared);
+        assert_eq!(after.mismatches, 0);
+        assert_eq!(after.builders.mismatches, 0);
+        eprintln!("compression weights cross-check report: {after:?}");
+    });
+}

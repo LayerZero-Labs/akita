@@ -21,26 +21,26 @@ path = "src/main.rs"
 
 [dependencies]
 guest = { package = "akita-inline-parity-guest", path = "../guest" }
-jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", default-features = false, features = [
   "host",
 ] }
 # Pinned with `guest-std` so `#[jolt::provable]` builds the guest in std mode
 # without pulling ZeroOS musl into the host build (see `../../host/Cargo.toml`).
-jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", features = [
+jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", features = [
   "guest-std",
 ] }
 # Linked for their `inventory` registrations: Jolt expands an inline
 # instruction only when its crate's `host` feature is in the host binary.
-jolt-inlines-blake2 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", features = [
+jolt-inlines-blake2 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", features = [
   "host",
 ] }
-jolt-inlines-keccak256 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", features = [
+jolt-inlines-keccak256 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", features = [
   "host",
 ] }
-jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", features = [
+jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", features = [
   "host",
 ] }
-jolt-program = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", features = [
+jolt-program = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "718921695296180005c2bf028451f730886561bb", features = [
   "image",
 ] }
 akita-algebra = { path = "../../../../crates/akita-algebra" }

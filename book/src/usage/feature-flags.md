@@ -89,9 +89,18 @@ paths; every other target keeps the portable path.
 | --- | --- |
 | `logging-transcript` | Records transcript schedule events and checks that wire values are absorbed before challenges |
 | `response-model-diagnostics` | Measures complete source and response energies for planner model calibration |
+| `compression-weights-crosscheck` | Checks every factored compression relation weight evaluation against the per-event evaluation and counts its evaluation tiers |
 
 `response-model-diagnostics` scans witness data that normal proving does not
 scan. Use it for model calibration runs, not for ordinary performance numbers.
+
+`compression-weights-crosscheck` (on `akita-types`, forwarded by `akita-pcs`)
+evaluates every compression relation weight table both by factor and event by
+event, at the verifier's point and at seeded random points, and compares each
+grouped builder family with the per-event builder. A difference fails
+verification. Each evaluation emits one `tracing` event at `INFO` with its
+evaluation tiers and builder outcomes. It is for native diagnostic runs; it
+changes no proof, transcript or default build.
 
 The `transcript_schedule` example uses `logging-transcript`:
 

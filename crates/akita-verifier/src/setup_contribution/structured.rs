@@ -192,16 +192,16 @@ impl<E: Field> DirectScan<E> {
                 .checked_mul(e_stride)
                 .ok_or(AkitaError::InvalidProof)?;
             let e_eq = checked_slice(&weights.e, e_start, e_stride, "structured direct E slice")?;
-            let e = e_eq
+            #[rustfmt::skip] let e = lb2_alt! { off { e_eq
                 .iter()
                 .zip(direct_opening_gadget)
-                .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
+                .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget) } on { lb2_dot(e_eq, direct_opening_gadget) } };
 
             let t_start = block_claim
                 .checked_mul(t_stride)
                 .ok_or(AkitaError::InvalidProof)?;
             let t_eq = checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
-            let t = t_eq
+            #[rustfmt::skip] let t = lb2_alt! { off { t_eq
                 .chunks_exact(t_row_stride)
                 .zip(group.a_row_weights().iter())
                 .fold(E::zero(), |sum, (row, &row_weight)| {
@@ -210,7 +210,7 @@ impl<E: Field> DirectScan<E> {
                             .iter()
                             .zip(direct_commitment_gadget)
                             .fold(E::zero(), |inner, (&eq, &gadget)| inner + eq * gadget)
-                });
+                }) } on { lb2_t(t_eq, t_row_stride, group.a_row_weights(), direct_commitment_gadget) } };
             let block_challenge = *block_challenges
                 .get(block_claim)
                 .ok_or(AkitaError::InvalidProof)?;
@@ -247,10 +247,10 @@ impl<E: Field> DirectScan<E> {
                 group.depth_witness(),
                 "structured direct Z slice",
             )?;
-            let inner = eq
+            #[rustfmt::skip] let inner = lb2_alt! { off { eq
                 .iter()
                 .zip(direct_witness_gadget)
-                .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
+                .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget) } on { lb2_dot(eq, direct_witness_gadget) } };
             Ok(acc?
                 + *opening_a_evals
                     .get(position)
@@ -580,4 +580,33 @@ where
     } else {
         evaluation
     })
+}
+
+// Feature `setup-sop-structured`, default off. Appended after the last original line so the
+// feature-off source keeps every line number; the call sites above select these paths through `lb2_alt!`.
+use super::lb2::lb2_alt;
+#[cfg(feature = "setup-sop-structured")]
+use super::lb2::PairSum;
+
+/// `Σ a[i]·b[i]` over the shorter slice, the same value as the plain zip-fold. Two or more products go through
+/// `Field::dot_product` (one readout on a field-inline guest); a single product keeps the plain fold.
+#[cfg(feature = "setup-sop-structured")]
+#[inline(always)]
+fn lb2_dot<E: Field>(a: &[E], b: &[E]) -> E {
+    if a.len().min(b.len()) >= 2 {
+        E::dot_product(a, b)
+    } else {
+        a.iter().zip(b).fold(E::zero(), |sum, (&x, &y)| sum + x * y)
+    }
+}
+
+/// The structured T term, `Σ_row row_weight · dot(row, gadget)` with the outer sum through `PairSum`.
+#[cfg(feature = "setup-sop-structured")]
+#[inline(always)]
+fn lb2_t<E: Field>(t_eq: &[E], t_row_stride: usize, row_weights: &[E], gadget: &[E]) -> E {
+    let mut sum = PairSum::new();
+    for (row, &row_weight) in t_eq.chunks_exact(t_row_stride).zip(row_weights.iter()) {
+        sum.push(row_weight, lb2_dot(row, gadget));
+    }
+    sum.finish()
 }
