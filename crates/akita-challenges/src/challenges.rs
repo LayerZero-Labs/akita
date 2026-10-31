@@ -29,13 +29,17 @@ pub struct Challenges {
     num_claims: usize,
     // Only the private sampler or an injective embedding may set this cache.
     sampled_family: Option<(usize, SparseChallengeConfig)>,
+    embedding_stride: usize,
+    materialized: std::sync::Arc<std::sync::OnceLock<Vec<SparseChallenge>>>,
 }
 
 impl PartialEq for Challenges {
     fn eq(&self, other: &Self) -> bool {
         self.num_live_blocks_per_claim == other.num_live_blocks_per_claim
             && self.num_claims == other.num_claims
-            && self.challenges == other.challenges
+            && ((self.embedding_stride == other.embedding_stride
+                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges))
+                || self.as_slice() == other.as_slice())
     }
 }
 impl Eq for Challenges {}
@@ -84,6 +88,8 @@ impl Challenges {
             num_live_blocks_per_claim,
             num_claims,
             sampled_family: None,
+            embedding_stride: 1,
+            materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
         })
     }
 
@@ -91,7 +97,29 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn as_slice(&self) -> &[SparseChallenge] {
-        &self.challenges
+        if self.embedding_stride == 1 {
+            return &self.challenges;
+        }
+        self.materialized
+            .get_or_init(|| {
+                self.challenges
+                    .iter()
+                    .map(|challenge| {
+                        // The checked embedding constructor bounds every product by u32::MAX.
+                        SparseChallenge {
+                            positions: challenge
+                                .positions
+                                .iter()
+                                .map(|&p| ((p as usize) * self.embedding_stride) as u32)
+                                .collect(),
+                            coeffs: crate::SparseChallengeCoefficients::from_slice(
+                                &challenge.coeffs,
+                            ),
+                        }
+                    })
+                    .collect()
+            })
+            .as_slice()
     }
 
     /// Number of block challenges represented by this value.
@@ -162,7 +190,11 @@ impl Challenges {
         } else {
             Vec::new()
         };
-        let source = self.challenges.as_ref();
+        let source = if sampled.is_some() {
+            self.challenges.as_ref()
+        } else {
+            self.as_slice()
+        };
         let evaluate = |challenge: &SparseChallenge| {
             if sampled.is_some() {
                 // Sampler provenance guarantees the shape, range and +/-1/2 family.
@@ -175,7 +207,10 @@ impl Challenges {
                             } else {
                                 alpha_pows
                             };
-                            (&powers[(position as usize)], coefficient < 0)
+                            (
+                                &powers[(position as usize) * self.embedding_stride],
+                                coefficient < 0,
+                            )
                         },
                     ),
                 ))
@@ -303,18 +338,37 @@ impl Challenges {
             }
             return Ok(self.clone());
         }
+        if sampled
+            && ambient_ring_dimension
+                .checked_sub(1)
+                .is_some_and(|maximum| maximum <= u32::MAX as usize)
+        {
+            let stride = self
+                .embedding_stride
+                .checked_mul(embedding_stride)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("subring embedding stride overflow".into())
+                })?;
+            return Ok(Self {
+                challenges: std::sync::Arc::clone(&self.challenges),
+                num_live_blocks_per_claim: self.num_live_blocks_per_claim,
+                num_claims: self.num_claims,
+                sampled_family: self
+                    .sampled_family
+                    .as_ref()
+                    .map(|(_, config)| (ambient_ring_dimension, *config)),
+                embedding_stride: stride,
+                materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+            });
+        }
+        let source = self.as_slice();
         let embed = |challenge: &SparseChallenge| {
             if !sampled {
                 challenge.validate_dyn(challenge_subring_dimension)?;
             }
-            let mut positions = crate::SparseChallengePositions::new();
-            positions
-                .try_reserve_exact(challenge.positions.len())
-                .map_err(|_| {
-                    AkitaError::InvalidInput("subring challenge position allocation failed".into())
-                })?;
-            for &position in &challenge.positions {
-                let embedded_position = usize::try_from(position)
+            let mut positions = crate::SparseChallengePositions::from_slice(&challenge.positions);
+            for position in positions.iter_mut() {
+                let embedded_position = usize::try_from(*position)
                     .ok()
                     .and_then(|position| position.checked_mul(embedding_stride))
                     .filter(|&position| position < ambient_ring_dimension)
@@ -324,20 +378,19 @@ impl Challenges {
                             "subring challenge embedded position overflow".into(),
                         )
                     })?;
-                positions.push(embedded_position);
+                *position = embedded_position;
             }
             Ok::<_, AkitaError>(SparseChallenge {
                 positions,
-                coeffs: challenge.coeffs.clone(),
+                coeffs: crate::SparseChallengeCoefficients::from_slice(&challenge.coeffs),
             })
         };
         #[cfg(feature = "parallel")]
         let embedded = {
-            let work = self
-                .challenges
+            let work = source
                 .len()
                 .checked_mul(
-                    self.challenges
+                    source
                         .first()
                         .map_or(0, |challenge| challenge.positions.len()),
                 )
@@ -346,30 +399,23 @@ impl Challenges {
                 })?;
             const PARALLEL_THRESHOLD: usize = 1 << 14;
             if work >= PARALLEL_THRESHOLD {
-                self.challenges
+                source
                     .par_iter()
                     .map(embed)
                     .collect::<Result<Vec<_>, _>>()?
             } else {
-                self.challenges
-                    .iter()
-                    .map(embed)
-                    .collect::<Result<Vec<_>, _>>()?
+                source.iter().map(embed).collect::<Result<Vec<_>, _>>()?
             }
         };
         #[cfg(not(feature = "parallel"))]
-        let embedded = self
-            .challenges
-            .iter()
-            .map(embed)
-            .collect::<Result<Vec<_>, _>>()?;
+        let embedded = source.iter().map(embed).collect::<Result<Vec<_>, _>>()?;
         let mut result =
             Self::from_sparse(embedded, self.num_live_blocks_per_claim, self.num_claims)?;
         if sampled {
             result.sampled_family = self
                 .sampled_family
                 .as_ref()
-                .map(|(_, config)| (ambient_ring_dimension, *config));
+                .map(|(_, c)| (ambient_ring_dimension, *c));
         }
         Ok(result)
     }
@@ -517,5 +563,44 @@ mod signed_evaluation_tests {
                 .collect();
             assert_eq!(batch.evals_at_pows::<F, F>(&powers).unwrap(), expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod embedding_view_tests {
+    use super::*;
+    use jolt_field::Prime128OffsetA7F7 as F;
+    #[test]
+    fn checked_embeddings_are_lazy_composable_and_preserve_public_values() {
+        let config = SparseChallengeConfig {
+            count_pm1: 31,
+            count_pm2: 10,
+        };
+        let values =
+            crate::sampler::sample_indexed_challenges_from_seed(&[18; 32], 64, 1024, &config, None)
+                .unwrap();
+        let source = Challenges::from_sampled(values, 1, 1024, 64, config).unwrap();
+        let once = source.embed_subring_positions(64, 4, 256).unwrap();
+        assert!(once.materialized.get().is_none());
+        assert!(std::sync::Arc::ptr_eq(&source.challenges, &once.challenges));
+        let powers: Vec<F> = (0..256).map(|i| F::from_u64(i as u64 * 7 + 11)).collect();
+        let result = once.evals_at_pows::<F, F>(&powers).unwrap();
+        assert!(once.materialized.get().is_none());
+        for (i, c) in source.as_slice().iter().enumerate() {
+            let expected = c.positions.iter().zip(&c.coeffs).fold(
+                F::from_u64(0),
+                |sum, (&p, &coefficient)| {
+                    sum + powers[p as usize * 4] * F::from_i64(coefficient as i64)
+                },
+            );
+            assert_eq!(result[i], expected);
+        }
+        let twice = once.embed_subring_positions(256, 2, 512).unwrap();
+        let direct = source.embed_subring_positions(64, 8, 512).unwrap();
+        assert_eq!(twice, direct);
+        let subset = once.select_claims(&[7, 1]).unwrap();
+        assert_eq!(subset.as_slice()[0], once.as_slice()[7]);
+        let eager = Challenges::from_sparse(once.as_slice().to_vec(), 1, 1024).unwrap();
+        assert_eq!(once, eager);
     }
 }
