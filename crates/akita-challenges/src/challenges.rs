@@ -153,7 +153,36 @@ impl Challenges {
         F: Field + Ring,
         E: Field + ExtField<F>,
     {
-        let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
+        let sampled = self
+            .sampled_family
+            .as_ref()
+            .filter(|(d, _)| *d == alpha_pows.len());
+        let doubles = if sampled.is_some_and(|(_, config)| config.count_pm2 != 0) {
+            alpha_pows.iter().map(|&v| v + v).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let source = self.challenges.as_ref();
+        let evaluate = |challenge: &SparseChallenge| {
+            if sampled.is_some() {
+                // Sampler provenance guarantees the shape, range and +/-1/2 family.
+                // Bounds-checked indexing is retained at this immutable boundary.
+                Ok(E::signed_sum(
+                    challenge.positions.iter().zip(&challenge.coeffs).map(
+                        |(&position, &coefficient)| {
+                            let powers = if coefficient == 2 || coefficient == -2 {
+                                &doubles[..]
+                            } else {
+                                alpha_pows
+                            };
+                            (&powers[(position as usize)], coefficient < 0)
+                        },
+                    ),
+                ))
+            } else {
+                challenge.eval_at_pows::<F, E>(alpha_pows)
+            }
+        };
         #[cfg(feature = "parallel")]
         let parallel_candidate = {
             // Same M4 Max benchmark above: smaller batches never amortized
@@ -163,13 +192,13 @@ impl Challenges {
         };
         #[cfg(feature = "parallel")]
         if parallel_candidate {
-            let sparse_terms = self.challenges.iter().try_fold(0usize, |sum, challenge| {
+            let sparse_terms = source.iter().try_fold(0usize, |sum, challenge| {
                 sum.checked_add(challenge.positions.len()).ok_or_else(|| {
                     AkitaError::InvalidInput("sparse challenge term count overflow".into())
                 })
             })?;
             if sparse_terms <= PARALLEL_COARSE_LEAF_TERMS {
-                return self.challenges.iter().map(evaluate).collect();
+                return source.iter().map(evaluate).collect();
             }
             let leaf_terms = if sparse_terms > PARALLEL_FINE_TOTAL_TERMS {
                 PARALLEL_FINE_LEAF_TERMS
@@ -190,18 +219,18 @@ impl Challenges {
             evaluations.resize(self.challenges.len(), E::zero());
             evaluations
                 .par_chunks_mut(leaf_challenges)
-                .zip(self.challenges.par_chunks(leaf_challenges))
+                .zip(source.par_chunks(leaf_challenges))
                 .try_for_each(|(evaluation_chunk, challenge_chunk)| {
                     for (evaluation, challenge) in evaluation_chunk.iter_mut().zip(challenge_chunk)
                     {
-                        *evaluation = challenge.eval_at_pows::<F, E>(alpha_pows)?;
+                        *evaluation = evaluate(challenge)?;
                     }
                     Ok::<(), AkitaError>(())
                 })?;
             return Ok(evaluations);
         }
 
-        self.challenges.iter().map(evaluate).collect()
+        source.iter().map(evaluate).collect()
     }
 
     /// Select complete claims in the requested order.
@@ -452,5 +481,41 @@ mod sampled_family_tests {
         .unwrap();
         assert!(invalid.embed_subring_positions(512, 1, 512).is_err());
         assert!(invalid.embed_subring_positions(512, 4, 2048).is_err());
+    }
+}
+
+#[cfg(test)]
+mod signed_evaluation_tests {
+    use super::*;
+    use jolt_field::Prime128OffsetA7F7 as F;
+    #[test]
+    fn sampled_signed_batches_match_the_sparse_polynomial() {
+        let config = SparseChallengeConfig {
+            count_pm1: 31,
+            count_pm2: 10,
+        };
+        let values =
+            crate::sampler::sample_indexed_challenges_from_seed(&[42; 32], 64, 16, &config, None)
+                .unwrap();
+        let sampled = Challenges::from_sampled(values, 1, 16, 64, config).unwrap();
+        for stride in [1, 4] {
+            let batch = sampled
+                .embed_subring_positions(64, stride, 64 * stride)
+                .unwrap();
+            let mut power = F::from_u64(1);
+            let powers: Vec<F> = (0..64 * stride)
+                .map(|_| {
+                    let v = power;
+                    power *= F::from_u64(37);
+                    v
+                })
+                .collect();
+            let expected: Vec<F> = batch
+                .as_slice()
+                .iter()
+                .map(|c| c.eval_at_pows::<F, F>(&powers).unwrap())
+                .collect();
+            assert_eq!(batch.evals_at_pows::<F, F>(&powers).unwrap(), expected);
+        }
     }
 }
