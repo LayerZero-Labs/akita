@@ -416,7 +416,7 @@ where
                 .as_ref()
                 .is_some_and(|(target, _)| *target == level)
     }) {
-        let (_, inherited) = accumulator.batch.take().ok_or(AkitaError::InvalidProof)?;
+        let (_, inherited) = accumulator.batch.as_ref().ok_or(AkitaError::InvalidProof)?;
         if inherited.polynomial() != &accumulator.polynomial {
             return Err(AkitaError::InvalidInput(
                 "setup batch domain mismatch".into(),
@@ -428,7 +428,7 @@ where
         )?;
         match mode {
             crate::SetupMode::Check => {
-                decide_setup_batch(setup.expanded(), &inherited, &coefficients)?;
+                decide_setup_batch(setup.expanded(), inherited, &coefficients)?;
             }
             crate::SetupMode::Defer => {
                 accumulator

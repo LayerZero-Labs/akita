@@ -2,6 +2,7 @@ use super::*;
 use crate::setup_claims::{SetupClaim, SetupPolynomialId, SetupQuery};
 use crate::{AkitaExpandedSetup, AkitaSetupDescriptor};
 use jolt_field::{CanonicalBytes, One, Ring};
+mod extension;
 type F = jolt_field::Prime128OffsetA7F7;
 fn fixture() -> (SetupPolynomialId, Vec<u8>) {
     let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
@@ -67,7 +68,7 @@ fn native(p: &[u8], left: u64, right: u64, len: u64, stride: u64, weights: u64) 
 fn canonical_native_transport_preserves_the_exact_functional() {
     let (poly, p) = fixture();
     let b = native(&p, 0, 0, 4, 1, 0);
-    let s = SetupBatchStatement::<F>::from_descriptor_bytes(&b, &poly).unwrap();
+    let s = SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&b, &poly).unwrap();
     assert_eq!(s.descriptor_bytes::<F>().unwrap(), b);
     let point = (2..8).map(F::from_u64).collect::<Vec<_>>();
     let mut expected = F::from_u64(0);
@@ -106,25 +107,25 @@ fn canonical_transport_rejects_malformed_bounds_and_noncanonical_bytes() {
         native(&p, 0, 0, 4, 1, 1),
         native(&p, 0, 0, 4, 1, 2),
     ] {
-        assert!(SetupBatchStatement::<F>::from_descriptor_bytes(&b, &poly).is_err());
+        assert!(SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&b, &poly).is_err());
     }
     for n in 0..valid.len() {
-        assert!(SetupBatchStatement::<F>::from_descriptor_bytes(&valid[..n], &poly).is_err());
+        assert!(SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&valid[..n], &poly).is_err());
     }
     let mut b = valid.clone();
     b.push(0);
-    assert!(SetupBatchStatement::<F>::from_descriptor_bytes(&b, &poly).is_err());
+    assert!(SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&b, &poly).is_err());
     let mut b = valid.clone();
     b[0] ^= 1;
-    assert!(SetupBatchStatement::<F>::from_descriptor_bytes(&b, &poly).is_err());
+    assert!(SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&b, &poly).is_err());
     let mut b = valid.clone();
     let n = b.len();
     b[n - 16..].fill(255);
-    assert!(SetupBatchStatement::<F>::from_descriptor_bytes(&b, &poly).is_err());
+    assert!(SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&b, &poly).is_err());
     let mut b = valid.clone();
     b[p.len()..p.len() + 8].copy_from_slice(&3u64.to_le_bytes());
-    assert!(SetupBatchStatement::<F>::from_descriptor_bytes(&b, &poly).is_err());
+    assert!(SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&b, &poly).is_err());
     let mut b = valid;
     b[p.len() + 8..p.len() + 16].copy_from_slice(&u64::MAX.to_le_bytes());
-    assert!(SetupBatchStatement::<F>::from_descriptor_bytes(&b, &poly).is_err());
+    assert!(SetupBatchStatement::<F>::from_descriptor_bytes::<F>(&b, &poly).is_err());
 }

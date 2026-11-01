@@ -12,7 +12,7 @@ pub(crate) struct PreparedOuterSetup<E: Field> {
     pub(crate) relation_weight: E,
 }
 
-/// Consume the inherited batch and bind its combination with this fold's query.
+/// Bind the inherited batch together with this fold's query.
 pub(crate) fn prepare_outer_setup<F, E>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
@@ -20,14 +20,14 @@ pub(crate) fn prepare_outer_setup<F, E>(
     successor: &CommittedGroupParams,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    accumulator: &mut SetupClaimAccumulator<'_, E>,
+    accumulator: &SetupClaimAccumulator<'_, E>,
 ) -> Result<PreparedOuterSetup<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + Ring + MulBaseUnreduced<F>,
 {
-    let (target, inherited) = accumulator.batch.take().ok_or(AkitaError::InvalidProof)?;
-    if target != level || inherited.polynomial() != &accumulator.polynomial {
+    let (target, inherited) = accumulator.batch.as_ref().ok_or(AkitaError::InvalidProof)?;
+    if *target != level || inherited.polynomial() != &accumulator.polynomial {
         return Err(AkitaError::InvalidInput(
             "setup batch target or domain mismatch".into(),
         ));
@@ -41,7 +41,7 @@ where
         .prefix_slots()
         .get(&id)
         .ok_or(AkitaError::InvalidProof)?;
-    transcript::bind_outer_prefix(&inherited, slot, successor, grinding, level)?;
+    transcript::bind_outer_prefix(inherited, slot, successor, grinding, level)?;
     let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
     let mut claims = inherited.claims().to_vec();
     let relation_weight = rs

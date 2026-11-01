@@ -24,6 +24,7 @@ where
     /// `Defer` exports direct setup evaluations in the supplied accumulator.
     /// Both modes fully verify ordinary and accumulated Stage 3 reductions.
     /// `Check` closes direct setup obligations; pass `None` for an empty accumulator.
+    /// Rejection preserves inherited and pending obligations. Advice may have been consulted.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify(
@@ -155,39 +156,48 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-        let root = verify_root::<Cfg::Field, Cfg::ExtField>(
-            setup,
-            &mut grinding,
-            &raw_claims,
-            &opening_batch,
-            basis,
-            root_params,
-            schedule.recursive_folds.first(),
-            &schedule.terminal,
-            accumulator.as_deref_mut(),
-            mode,
-        )?;
-        verify_suffix::<Cfg::Field, Cfg::ExtField>(
-            setup,
-            &self.terminal_ntt,
-            &mut grinding,
-            schedule,
-            SuffixVerifierState {
-                opening_point: root.challenges,
-                opening: root.opening,
-                witness: root.next_witness,
-                basis: BasisMode::Lagrange,
-                witness_len: schedule.root_fold().output_witness_len,
-                setup_prefix_opening: root.setup_prefix_opening,
-            },
-            accumulator.as_deref_mut(),
-            mode,
-        )?;
-        let _accepted = grinding.finish()?;
-        if accumulator.as_ref().is_some_and(|a| a.batch.is_some()) {
-            return Err(AkitaError::InvalidProof);
+        let pending_len = accumulator.as_ref().map_or(0, |a| a.pending.len());
+        let result = (|| {
+            let root = verify_root::<Cfg::Field, Cfg::ExtField>(
+                setup,
+                &mut grinding,
+                &raw_claims,
+                &opening_batch,
+                basis,
+                root_params,
+                schedule.recursive_folds.first(),
+                &schedule.terminal,
+                accumulator.as_deref_mut(),
+                mode,
+            )?;
+            verify_suffix::<Cfg::Field, Cfg::ExtField>(
+                setup,
+                &self.terminal_ntt,
+                &mut grinding,
+                schedule,
+                SuffixVerifierState {
+                    opening_point: root.challenges,
+                    opening: root.opening,
+                    witness: root.next_witness,
+                    basis: BasisMode::Lagrange,
+                    witness_len: schedule.root_fold().output_witness_len,
+                    setup_prefix_opening: root.setup_prefix_opening,
+                },
+                accumulator.as_deref_mut(),
+                mode,
+            )?;
+            let _accepted = grinding.finish()?;
+            Ok(())
+        })();
+        if let Some(accumulator) = accumulator {
+            if result.is_ok() {
+                // The validated target is one of the nonterminal folds replayed above.
+                accumulator.batch = None;
+            } else {
+                accumulator.pending.truncate(pending_len);
+            }
         }
-        Ok(())
+        result
     }
 }
 

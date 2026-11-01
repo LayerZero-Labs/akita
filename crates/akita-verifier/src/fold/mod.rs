@@ -73,7 +73,7 @@ pub(crate) fn verify_fold<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: PreparedFoldReplay<'_, F, E>,
-    mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
+    accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
     mode: crate::SetupMode,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
@@ -148,7 +148,7 @@ where
     )?;
     let outer = if let Some(successor) = prepared.stage3 {
         accumulator
-            .as_deref_mut()
+            .as_deref()
             .filter(|a| a.batch.as_ref().is_some_and(|(target, _)| *target == level))
             .map(|accumulator| {
                 crate::setup_batch::prepare_outer_setup::<F, E>(

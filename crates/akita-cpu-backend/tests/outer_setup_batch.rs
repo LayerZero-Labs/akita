@@ -42,6 +42,16 @@ fn direct_outer_closes_collected_claims_without_an_extra_sumcheck() {
 }
 
 #[test]
+fn quadratic_outer_round_trips_collected_claims_through_transport() {
+    run::<akita_config::proof_optimized::fp64::Dense>(14, false);
+}
+
+#[test]
+fn quartic_outer_round_trips_collected_claims_through_transport() {
+    run::<akita_config::proof_optimized::fp32::Dense>(20, false);
+}
+
+#[test]
 fn offloaded_outer_consumes_inherited_claims_in_both_modes() {
     run::<akita_config::RecursiveCommitmentConfig<akita_config::proof_optimized::fp128::Dense>>(
         24, true,
@@ -309,6 +319,13 @@ where
     }
     let ordinary_advice_calls = advice.calls;
     let inherited = SetupBatchStatement::new(polynomial.clone(), 32, pending).unwrap();
+    let encoded = inherited.descriptor_bytes::<Cfg::Field>().unwrap();
+    let inherited = SetupBatchStatement::<Cfg::ExtField>::from_descriptor_bytes::<Cfg::Field>(
+        &encoded,
+        &polynomial,
+    )
+    .unwrap();
+    assert_eq!(inherited.descriptor_bytes::<Cfg::Field>().unwrap(), encoded);
     let mut invalid = SetupClaimAccumulator::from_batch((levels - 1) as u32, inherited.clone());
     assert!(verifier
         .batched_verify(
@@ -474,6 +491,65 @@ where
             "a direct batch target uses ordinary Stage 2 advice, without a Stage 3 claim"
         );
     }
+    let mut trailing = outer.clone();
+    trailing.push(0);
+    for mode in [SetupMode::Check, SetupMode::Defer] {
+        let mut retry =
+            SetupClaimAccumulator::from_batch(level, inherited.clone()).with_advice(&mut advice);
+        assert!(verifier
+            .batched_verify(
+                &trailing,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                Some(&mut retry),
+                mode,
+            )
+            .is_err());
+        verifier
+            .batched_verify(
+                &outer,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                Some(&mut retry),
+                mode,
+            )
+            .expect("a rejected proof must preserve the input for retry");
+        assert_eq!(
+            retry.into_pending().len(),
+            if mode == SetupMode::Check {
+                0
+            } else {
+                direct_folds
+                    + if offloaded {
+                        0
+                    } else {
+                        inherited.claims().len()
+                    }
+            },
+            "failed replay must not leak newly collected claims"
+        );
+    }
+    let mut trailing = ordinary.clone();
+    trailing.push(0);
+    let mut collected = SetupClaimAccumulator::new(polynomial.clone()).with_advice(&mut advice);
+    for (proof, accepted) in [(&ordinary, true), (&trailing, false), (&ordinary, true)] {
+        let result = verifier.batched_verify(
+            proof,
+            SESSION,
+            GroupBatchStatement::new(selection, claims()).unwrap(),
+            BasisMode::Lagrange,
+            Some(&mut collected),
+            SetupMode::Defer,
+        );
+        assert_eq!(result.is_ok(), accepted);
+    }
+    assert_eq!(
+        collected.into_pending().len(),
+        2 * direct_folds,
+        "rollback must preserve existing pending claims and discard only failed replay output"
+    );
     let mut changed = inherited.claims().to_vec();
     changed[0] = SetupClaim::new(
         polynomial.clone(),
@@ -498,7 +574,8 @@ where
     } else {
         // A direct prover only binds inherited inputs; the verifier checks them.
         let invalid_proof = prove(Some((level, &changed))).unwrap();
-        let mut invalid = SetupClaimAccumulator::from_batch(level, changed);
+        let inherited_count = changed.claims().len();
+        let mut invalid = SetupClaimAccumulator::from_batch(level, changed.clone());
         assert!(verifier
             .batched_verify(
                 &invalid_proof,
@@ -509,6 +586,28 @@ where
                 SetupMode::Check,
             )
             .is_err());
+        assert!(verifier
+            .batched_verify(
+                &ordinary,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                Some(&mut invalid),
+                SetupMode::Check,
+            )
+            .is_err());
+        let pending = invalid.into_pending();
+        assert_eq!(pending.len(), inherited_count);
+        let recovered = SetupBatchStatement::new(
+            changed.polynomial().clone(),
+            changed.coefficient_len(),
+            pending,
+        )
+        .unwrap();
+        assert_eq!(
+            recovered.descriptor_bytes::<Cfg::Field>().unwrap(),
+            changed.descriptor_bytes::<Cfg::Field>().unwrap()
+        );
     }
 }
 

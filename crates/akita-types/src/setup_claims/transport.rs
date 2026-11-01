@@ -1,7 +1,8 @@
 //! Canonical, bounded transport for a statement authenticated by a recursive guest's public output.
 use super::{query::NativeTerm, SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery};
 use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights};
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
+use akita_params::dispatch::{ntt_max_ring_d, protocol_dispatch_tier};
 use akita_serialization::AkitaDeserialize;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
@@ -13,25 +14,49 @@ impl Reader<'_> {
     fn integer(&mut self) -> Result<usize, AkitaError> {
         usize::deserialize_compressed(&mut self.0, &()).map_err(|_| invalid())
     }
-    fn field<F: Field + CanonicalEncoding>(&mut self) -> Result<F, AkitaError> {
-        let bytes = self.0.get(..F::NUM_BYTES).ok_or_else(invalid)?;
-        let value = F::from_bytes_le_checked(bytes).ok_or_else(invalid)?;
-        self.0 = &self.0[F::NUM_BYTES..];
+    fn field<F, E>(&mut self) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let width = checked::product([F::NUM_BYTES, E::DEGREE])
+            .filter(|&width| width != 0)
+            .ok_or_else(invalid)?;
+        let bytes = self.0.get(..width).ok_or_else(invalid)?;
+        let value = if E::DEGREE == 1 {
+            E::lift_base(F::from_bytes_le_checked(bytes).ok_or_else(invalid)?)
+        } else {
+            let coordinates = bytes
+                .chunks_exact(F::NUM_BYTES)
+                .map(|bytes| F::from_bytes_le_checked(bytes).ok_or_else(invalid))
+                .collect::<Result<Vec<_>, _>>()?;
+            // The checked width gives exactly E::DEGREE canonical base coordinates.
+            E::from_base_slice(&coordinates)
+        };
+        self.0 = &self.0[width..];
         Ok(value)
     }
-    fn fields<F: Field + CanonicalEncoding>(&mut self) -> Result<Vec<F>, AkitaError> {
+    fn fields<F, E>(&mut self) -> Result<Vec<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
         let n = self.integer()?;
-        if n > self.0.len() / F::NUM_BYTES {
+        let width = checked::product([F::NUM_BYTES, E::DEGREE])
+            .filter(|&width| width != 0)
+            .ok_or_else(invalid)?;
+        if n > self.0.len() / width {
             return Err(invalid());
         }
-        (0..n).map(|_| self.field()).collect()
+        (0..n).map(|_| self.field::<F, E>()).collect()
     }
-    fn query<F: Field + CanonicalEncoding>(
-        &mut self,
-        fields: usize,
-    ) -> Result<SetupQuery<F>, AkitaError> {
+    fn query<F, E>(&mut self, fields: usize) -> Result<SetupQuery<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
         match self.integer()? {
-            0 => SetupQuery::evaluation(self.fields()?),
+            0 => SetupQuery::evaluation(self.fields::<F, E>()?),
             1 => {
                 let n = self.integer()?;
                 if n == 0 || n > 4096 || n > self.0.len() / 8 {
@@ -39,12 +64,15 @@ impl Reader<'_> {
                 }
                 let mut terms = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let coefficient: Vec<F> = self.fields()?;
+                    let coefficient: Vec<E> = self.fields::<F, E>()?;
                     let d = coefficient.len();
-                    if !(2..=1024).contains(&d) || !d.is_power_of_two() || d > fields {
+                    if !(2..=ntt_max_ring_d(protocol_dispatch_tier::<F>())).contains(&d)
+                        || !d.is_power_of_two()
+                        || d > fields
+                    {
                         return Err(invalid());
                     }
-                    let point: Vec<F> = self.fields()?;
+                    let point: Vec<E> = self.fields::<F, E>()?;
                     let right_limit = 1usize
                         .checked_shl(point.len().try_into().map_err(|_| invalid())?)
                         .ok_or_else(invalid)?;
@@ -56,7 +84,7 @@ impl Reader<'_> {
                     for _ in 0..count {
                         let left_offset = self.integer()?;
                         let right_offset = self.integer()?;
-                        let scalar: Vec<F> = self.fields()?;
+                        let scalar: Vec<E> = self.fields::<F, E>()?;
                         if scalar.len() != 1 {
                             return Err(invalid());
                         }
@@ -86,7 +114,7 @@ impl Reader<'_> {
                             let weights = match self.integer()? {
                                 0 => EqPairTensorWeights::Unit,
                                 1 => {
-                                    let v: Vec<F> = self.fields()?;
+                                    let v: Vec<E> = self.fields::<F, E>()?;
                                     if v.len() != len {
                                         return Err(invalid());
                                     }
@@ -100,7 +128,7 @@ impl Reader<'_> {
                                     let mut v = Vec::with_capacity(bits);
                                     for _ in 0..bits {
                                         v.push(
-                                            self.fields::<F>()?
+                                            self.fields::<F, E>()?
                                                 .try_into()
                                                 .map_err(|_| invalid())?,
                                         );
@@ -138,13 +166,18 @@ impl Reader<'_> {
         }
     }
 }
-impl<F: Field + CanonicalEncoding + ExtField<F>> SetupBatchStatement<F> {
+impl<E: Field> SetupBatchStatement<E> {
     /// Decode the exact canonical descriptor, bound to the caller's expected public setup identity.
+    /// Use the same base field `F` as `descriptor_bytes::<F>()`.
     /// Acceptance still requires binding these bytes to the verified program's public output.
-    pub fn from_descriptor_bytes(
+    pub fn from_descriptor_bytes<F>(
         bytes: &[u8],
         expected: &SetupPolynomialId,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
         let mut identity = Vec::new();
         expected.encode(&mut identity)?;
         let rest = bytes
@@ -158,8 +191,8 @@ impl<F: Field + CanonicalEncoding + ExtField<F>> SetupBatchStatement<F> {
         }
         let mut claims = Vec::with_capacity(n);
         for _ in 0..n {
-            let query = input.query(expected.field_len())?;
-            let value = input.field()?;
+            let query = input.query::<F, E>(expected.field_len())?;
+            let value = input.field::<F, E>()?;
             claims.push(SetupClaim::new(expected.clone(), query, value)?);
         }
         if !input.0.is_empty() {
