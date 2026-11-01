@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 /// Returns an error for malformed geometry, address overflow, unsupported
 /// equality arity, or recurrence work above
 /// [`crate::offset_eq::MAX_COMPACT_STRIDE_TERMS`].
-pub fn eval_boolean_pair_tensor_families<
+pub(super) fn eval_unfactored_tensor_families<
     F: Field,
     const LEFT_MONOMIAL: bool,
     const RIGHT_MONOMIAL: bool,
