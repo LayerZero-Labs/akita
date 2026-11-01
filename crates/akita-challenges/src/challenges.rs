@@ -175,7 +175,7 @@ impl Challenges {
                             } else {
                                 alpha_pows
                             };
-                            (&powers[(position as usize)], coefficient < 0)
+                            (&powers[position as usize], coefficient < 0)
                         },
                     ),
                 ))
