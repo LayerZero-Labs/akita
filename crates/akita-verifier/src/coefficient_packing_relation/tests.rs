@@ -561,6 +561,7 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
     };
     let family_scalar = family.scalar;
     let compact = CoefficientPackingCompactFactors {
+        packed_direct: None,
         basis: BasisMode::Lagrange,
         physical_field_len: 1usize << point.len(),
         coefficient_weights: coefficient_weights.clone().into(),
@@ -625,6 +626,7 @@ fn affine_coefficient_length_is_checked_before_the_contraction_cache() {
         .map(|bit| Extension::from_u64(3 + bit))
         .collect::<Vec<_>>();
     let compact = |families| CoefficientPackingCompactFactors {
+        packed_direct: None,
         basis: BasisMode::Lagrange,
         physical_field_len: 1usize << point.len(),
         coefficient_weights: scalar_powers(Extension::from_u64(5), 8).into(),
