@@ -55,7 +55,32 @@ pub fn binary_direct_a_weights<E: Field>(
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
+    let response_digits = plan
+        .repacking()
+        .segments()
+        .first()
+        .ok_or(AkitaError::InvalidProof)?
+        .digits;
+    let image_digits = plan
+        .repacking()
+        .segments()
+        .get(1)
+        .ok_or(AkitaError::InvalidProof)?
+        .digits;
+    let response_terms = if matrix.is_some() {
+        checked::product([owners, plan.rank(), rows, 648, response_digits])
+            .ok_or(AkitaError::InvalidProof)?
+    } else {
+        0
+    };
+    let image_terms = checked::product([owners, plan.rank(), columns, 648, image_digits])
+        .ok_or(AkitaError::InvalidProof)?;
+    let term_count = checked::sum([response_terms, image_terms, padding_weights.len()])
+        .ok_or(AkitaError::InvalidProof)?;
     let mut terms = Vec::new();
+    terms
+        .try_reserve_exact(term_count)
+        .map_err(|_| AkitaError::InvalidProof)?;
     for owner in 0..owners {
         for i in 0..plan.rank() {
             let row_index =

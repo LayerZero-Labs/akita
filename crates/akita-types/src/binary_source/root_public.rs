@@ -213,7 +213,7 @@ impl BinaryRootPublic {
             checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
         )
         .ok_or(AkitaError::InvalidProof)?;
-        let mut algebra = self.plan.relation_weights(
+        let algebra = self.plan.relation_weights(
             self.claim.as_ref(),
             matrix,
             challenges,
@@ -222,9 +222,8 @@ impl BinaryRootPublic {
             batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
             batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;
-        let mut extra = Vec::new();
-        if let Some(segment) = self.plan.prime_segment() {
-            extra.push(super::prime_plane_relation_weights(
+        let prime_weights = if let Some(segment) = self.plan.prime_segment() {
+            Some(super::prime_plane_relation_weights(
                 self.manifest.descriptor(),
                 &self.prime,
                 self.plan.repacking(),
@@ -233,17 +232,10 @@ impl BinaryRootPublic {
                 challenges,
                 alpha,
                 batches.get(prime_rows).ok_or(AkitaError::InvalidProof)?,
-            )?);
-        }
-        if !extra.is_empty() {
-            let mut terms = algebra.terms().to_vec();
-            let mut target = algebra.claim();
-            for weights in extra {
-                terms.extend_from_slice(weights.terms());
-                target += weights.claim();
-            }
-            algebra = NativeRootWeights::new(self.plan.repacking().domain_len(), terms, target)?;
-        }
+            )?)
+        } else {
+            None
+        };
         let b_weights = binary_digit_authentication_weights(
             &self.plan,
             &[1],
@@ -280,27 +272,16 @@ impl BinaryRootPublic {
         };
         let components = [
             Some(algebra),
+            prime_weights,
             Some(b_weights),
             Some(d_weights),
             ordinary_weights,
         ];
-        let count = checked::sum(
-            components
-                .iter()
-                .flatten()
-                .map(|weights| weights.terms().len()),
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-        let mut terms = Vec::new();
-        terms
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let mut claim = projection_claim;
-        for weights in components.iter().flatten() {
-            terms.extend_from_slice(weights.terms());
-            claim += weights.claim();
-        }
-        let linear = NativeRootWeights::new(self.plan.repacking().domain_len(), terms, claim)?;
+        let linear = NativeRootWeights::merge(
+            self.plan.repacking().domain_len(),
+            components.into_iter().flatten(),
+            projection_claim,
+        )?;
         let mut negative_weights = Vec::new();
         negative_weights
             .try_reserve_exact(self.negative_binary_addresses.len())
