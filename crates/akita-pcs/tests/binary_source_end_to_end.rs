@@ -2,10 +2,14 @@
 #![cfg(feature = "labinius-trinomial")]
 
 mod common;
+#[path = "binary_source_end_to_end/compatibility.rs"]
+mod compatibility;
 #[path = "binary_source_end_to_end/fault_backend.rs"]
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
 mod field_switch;
+#[path = "binary_source_end_to_end/prime_plane.rs"]
+mod prime_plane;
 #[path = "binary_source_end_to_end/projection.rs"]
 mod projection;
 #[path = "binary_source_end_to_end/reference.rs"]
@@ -413,6 +417,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         )
         .unwrap();
     let proof = prover.narg_string().to_vec();
+    compatibility::assert_base_bytes(&proof, mixed, word_width);
     eprintln!(
         "{} ordinary grouped proof (word width {}): {} bytes",
         if mixed {
@@ -500,7 +505,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         assert!(outcome.is_ok(), "malformed opening caused a verifier panic");
         assert!(outcome.unwrap().is_err(), "malformed opening was accepted");
     };
-    projection::mutate_values(&proof, successor_coefficients, |bytes| {
+    projection::mutate_values(&proof, successor_coefficients, true, 1, |bytes| {
         rejects(bytes, &claim, &ordinary_point, ordinary_value);
     });
     let mut value = *claim.value();

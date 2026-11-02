@@ -6,7 +6,7 @@ use jolt_field::Field;
 
 use super::{BinaryProjectionBounds, BINARY_PROJECTION_COUNT, BINARY_SOURCE_Q};
 
-/// Seven independent rows, each covering every rank/648 residual coefficient.
+/// Seven independent rows, each covering every polynomial/rank/coefficient residual entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryProjectionRows {
     rows: Vec<Vec<[u32; 648]>>,
@@ -29,7 +29,7 @@ impl BinaryProjectionRows {
             },
             b"binary exact divisibility rows",
         )?;
-        Self::from_blocks(bounds.rank(), || channel.challenge_block())
+        Self::from_blocks(bounds.residual_rows(), || channel.challenge_block())
     }
 
     fn from_blocks(
@@ -89,7 +89,7 @@ impl BinaryProjectionRows {
         bounds: &BinaryProjectionBounds,
     ) -> Result<[i128; BINARY_PROJECTION_COUNT], AkitaError> {
         if residual.len() != self.rank
-            || bounds.rank() != self.rank
+            || bounds.residual_rows() != self.rank
             || residual
                 .iter()
                 .flatten()
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn projection_integer_dot_products_check_shape_and_envelope() {
-        let bounds = BinaryProjectionBounds::new(1, 2, 1, u128::MAX - 274).unwrap();
+        let bounds = BinaryProjectionBounds::new(1, 2, 1, 1, u128::MAX - 274).unwrap();
         let rows = BinaryProjectionRows::from_blocks(1, || {
             let mut bytes = [0; 32];
             for chunk in bytes.chunks_exact_mut(3) {
@@ -176,6 +176,27 @@ mod tests {
         assert!(rows.project(&[], &bounds).is_err());
         residual[0][0] = bounds.residual_bound() as i128 + 1;
         assert!(rows.project(&residual, &bounds).is_err());
+    }
+
+    #[test]
+    fn projection_rows_join_every_polynomial_before_integer_batching() {
+        let bounds = BinaryProjectionBounds::new(1, 2, 3, 2, u128::MAX - 274).unwrap();
+        let rows = BinaryProjectionRows::from_blocks(bounds.residual_rows(), || {
+            let mut bytes = [0; 32];
+            for chunk in bytes.chunks_exact_mut(3) {
+                chunk[0] = 1;
+            }
+            Ok(bytes)
+        })
+        .unwrap();
+        let mut residual = [[0; 648]; 6];
+        residual[0][0] = i128::from(BINARY_SOURCE_Q);
+        residual[5][647] = 2 * i128::from(BINARY_SOURCE_Q);
+        assert_eq!(
+            rows.project(&residual, &bounds).unwrap(),
+            [3 * i128::from(BINARY_SOURCE_Q); 7]
+        );
+        assert!(rows.project(&residual[..3], &bounds).is_err());
     }
 
     #[test]

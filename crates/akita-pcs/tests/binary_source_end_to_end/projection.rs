@@ -6,10 +6,16 @@ use akita_types::binary_source::{
     BinaryProjectionRows, BINARY_SOURCE_Q,
 };
 
-pub(super) fn mutate_values(proof: &[u8], successor_coefficients: usize, rejects: impl Fn(&[u8])) {
-    // The fixture has three frontend rounds, a 128-field U payload, then one
-    // canonical LEB128 response nonce and the scheduled outgoing payload.
-    let nonce_start = 128 * 16 + 3 * 42 + 21 + 128 * 16;
+pub(super) fn mutate_values(
+    proof: &[u8],
+    successor_coefficients: usize,
+    word: bool,
+    polynomials: usize,
+    rejects: impl Fn(&[u8]),
+) {
+    // A word claim contributes three frontend rounds. The 128-field D payload,
+    // response nonce, and scheduled outgoing payload are present in every case.
+    let nonce_start = usize::from(word) * (128 * 16 + 3 * 42 + 21) + 128 * 16;
     let nonce_len = proof[nonce_start..]
         .iter()
         .position(|byte| byte & 0x80 == 0)
@@ -17,7 +23,7 @@ pub(super) fn mutate_values(proof: &[u8], successor_coefficients: usize, rejects
         + 1;
     let outgoing = nonce_start + nonce_len;
     let start = outgoing + successor_coefficients * 16;
-    let bounds = BinaryProjectionBounds::new(1, 2, 3, u128::MAX - 274).unwrap();
+    let bounds = BinaryProjectionBounds::new(1, 2, 3, polynomials, u128::MAX - 274).unwrap();
     let signed_bytes = |value: i128| {
         let mut bytes = value.unsigned_abs().to_le_bytes()[..12].to_vec();
         if value < 0 {
@@ -81,7 +87,7 @@ pub(super) fn mutate_values(proof: &[u8], successor_coefficients: usize, rejects
 
 #[test]
 fn projection_challenges_bind_commitment_and_every_output() {
-    let bounds = BinaryProjectionBounds::new(1, 2, 3, u128::MAX - 274).unwrap();
+    let bounds = BinaryProjectionBounds::new(1, 2, 3, 1, u128::MAX - 274).unwrap();
     let run = |commitment: u8, values: [i128; 7]| {
         let mut prover = new_prover_channel(b"binary-projection-fixation", b"caller").unwrap();
         // Stand in for the outgoing commitment atom; test the production sampler

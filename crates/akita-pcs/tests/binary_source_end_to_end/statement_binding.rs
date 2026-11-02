@@ -66,7 +66,9 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
         binary_root_statement::<F, F, _>(
             &mut prover,
             manifest,
-            claim,
+            Some(claim),
+            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), &[])
+                .unwrap(),
             binary,
             Some((64, ordinary, point, values)),
         )
@@ -74,7 +76,9 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
         binary_root_statement::<F, F, _>(
             &mut verifier,
             manifest,
-            claim,
+            Some(claim),
+            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), &[])
+                .unwrap(),
             binary,
             Some((64, ordinary, point, values)),
         )
@@ -87,8 +91,8 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
             inner: VerifierFoldDraw::new(&mut verifier, 0, 0),
             first: None,
         };
-        let sent = binary_root_challenges(&mut sent_draw, 2).unwrap();
-        let replayed = binary_root_challenges(&mut replayed_draw, 2).unwrap();
+        let sent = binary_root_challenges(&mut sent_draw, 2, 1).unwrap();
+        let replayed = binary_root_challenges(&mut replayed_draw, 2, 1).unwrap();
         assert_eq!(sent, replayed, "prover/verifier sampled challenges differ");
         assert_eq!(
             sent_draw.first, replayed_draw.first,

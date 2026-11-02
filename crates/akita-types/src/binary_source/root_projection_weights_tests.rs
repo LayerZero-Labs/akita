@@ -8,7 +8,7 @@ use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
 fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_rows() {
     let descriptor = BinarySourceDescriptor::new(
         BinaryIndexMap::new(128, 8, 8, 2).unwrap(),
-        vec![[1; 32]],
+        vec![[1; 32], [9; 32]],
         BinaryCommitmentProfiles {
             a: [2; 32],
             b: [3; 32],
@@ -17,14 +17,14 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     .unwrap();
     let plan = BinaryRootWitnessPlan::new(&descriptor, 3, 256).unwrap();
     let challenges = Challenges::from_sparse(
-        (0..2)
+        (0..4)
             .map(|column| SparseChallenge {
                 positions: vec![0, 81, 161].into(),
                 coeffs: vec![1, -1, if column == 0 { 1 } else { -1 }].into(),
             })
             .collect(),
         2,
-        1,
+        2,
     )
     .unwrap();
     let matrix: Vec<Vec<[i128; 648]>> = (0..3)
@@ -34,7 +34,7 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
             })]
         })
         .collect();
-    let rho: Vec<[F; 648]> = (0..3)
+    let rho: Vec<[F; 648]> = (0..6)
         .map(|i| std::array::from_fn(|t| F::from_u64((t * 17 + i * 29 + 1) as u64)))
         .collect();
     let mut natural = plan
@@ -63,24 +63,26 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
                 .sum::<i128>()
         })
     };
-    let response = recompose(0, 0, 4);
     let scalar = binary_scalar_challenges(&descriptor, &challenges).unwrap();
     let mut expected = F::zero();
-    for (i, row) in matrix.iter().enumerate() {
-        let mut residual =
-            signed_trinomial_product::<648, MinusTrinomial>(&row[0], &response).unwrap();
-        for (column, scalar) in scalar.iter().enumerate() {
-            let challenge =
-                pack_signed_components(&[*scalar, [0; 162], [0; 162], [0; 162]]).unwrap();
-            let image = recompose(1, column * 3 + i, 8);
-            let product =
-                signed_trinomial_product::<648, MinusTrinomial>(&challenge, &image).unwrap();
-            for (value, term) in residual.iter_mut().zip(product) {
-                *value -= term;
+    for owner in 0..2 {
+        let response = recompose(0, owner, 4);
+        for (i, row) in matrix.iter().enumerate() {
+            let mut residual =
+                signed_trinomial_product::<648, MinusTrinomial>(&row[0], &response).unwrap();
+            for (column, scalar) in scalar[owner * 2..(owner + 1) * 2].iter().enumerate() {
+                let challenge =
+                    pack_signed_components(&[*scalar, [0; 162], [0; 162], [0; 162]]).unwrap();
+                let image = recompose(1, (owner * 2 + column) * 3 + i, 8);
+                let product =
+                    signed_trinomial_product::<648, MinusTrinomial>(&challenge, &image).unwrap();
+                for (value, term) in residual.iter_mut().zip(product) {
+                    *value -= term;
+                }
             }
-        }
-        for (&weight, value) in rho[i].iter().zip(residual) {
-            expected += weight * F::from_i128(value);
+            for (&weight, value) in rho[owner * 3 + i].iter().zip(residual) {
+                expected += weight * F::from_i128(value);
+            }
         }
     }
     let padding = (0..plan.repacking().domain_len())

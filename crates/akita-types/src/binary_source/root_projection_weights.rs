@@ -13,7 +13,8 @@ use jolt_field::Field;
 
 /// Evaluate the binary A term directly from the typed q24 setup matrix.
 ///
-/// The coefficient functional `rho[i][t]` batches seven exact projections.
+/// The coefficient functional `rho[polynomial * rank + row][t]` batches
+/// seven exact projections over the entire group in polynomial-major order.
 /// It compiles `sum_i <rho_i, rem_Psi(A*z-sum c*T)_i>`, with no quotient.
 /// The caller supplies the authenticated public projection target.
 /// The field E must extend the admitted proof field.

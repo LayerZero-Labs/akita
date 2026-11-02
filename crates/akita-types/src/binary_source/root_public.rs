@@ -62,7 +62,8 @@ pub fn binary_root_matrix(
 #[derive(Clone, Debug)]
 pub struct BinaryRootPublic {
     manifest: BinaryCommittedGroupManifest,
-    claim: BinaryTerminalClaim,
+    claim: Option<BinaryTerminalClaim>,
+    prime: super::PrimePlaneManifest,
     setup: AkitaSetupDescriptor,
     plan: BinaryRootWitnessPlan,
     matrix: Vec<Vec<[i128; 648]>>,
@@ -75,25 +76,25 @@ pub struct BinaryRootPublic {
 impl BinaryRootPublic {
     pub fn new(
         manifest: &BinaryCommittedGroupManifest,
-        claim: &BinaryTerminalClaim,
+        claim: Option<&BinaryTerminalClaim>,
+        prime: &super::PrimePlaneManifest,
         setup: &AkitaSetupDescriptor,
         logical_len: usize,
         destination_ring_dimension: usize,
         ordinary_profile: Option<GroupCommitPhaseParams>,
     ) -> Result<Self, AkitaError> {
         manifest.validate()?;
-        claim.validate(manifest.descriptor())?;
-        if manifest.descriptor().polynomials().len() != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "binary root requires exactly one terminal polynomial".into(),
-            ));
+        if let Some(claim) = claim {
+            claim.validate(manifest.descriptor())?;
         }
+        super::PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
         let domain_len = witness_commitment_domain_len(logical_len, destination_ring_dimension)?;
         let mut plan = BinaryRootWitnessPlan::new(
             manifest.descriptor(),
             manifest.a_rank(),
             destination_ring_dimension,
-        )?;
+        )?
+        .with_prime_planes(claim.is_some(), prime.planes().len())?;
         let ordinary = ordinary_profile
             .map(|profile| OrdinaryNativeRootPlan::new(profile, plan.repacking().segments().len()))
             .transpose()?;
@@ -122,7 +123,8 @@ impl BinaryRootPublic {
             .and_then(|authentication| {
                 checked::sum([
                     7,
-                    2,
+                    if claim.is_some() { 2 } else { 0 },
+                    checked::product([2, prime.planes().len()])?,
                     authentication,
                     padding_count,
                     ordinary
@@ -135,7 +137,8 @@ impl BinaryRootPublic {
         let matrix = binary_root_matrix(&setup.setup_seed.seed, manifest)?;
         Ok(Self {
             manifest: manifest.clone(),
-            claim: claim.clone(),
+            claim: claim.cloned(),
+            prime: prime.clone(),
             setup: setup.clone(),
             plan,
             matrix,
@@ -150,7 +153,8 @@ impl BinaryRootPublic {
         &self.plan
     }
 
-    /// Seven projection outputs, parity/value, B/D, padding, ordinary rows, then negative-bit batches.
+    /// Seven projection outputs, optional word parity/value, B/D, padding,
+    /// ordinary rows, negative bits, then two batches for every prime plane.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
@@ -159,7 +163,8 @@ impl BinaryRootPublic {
     ///
     /// Batch coordinates are independent field challenges, including one for
     /// each padding coefficient. `commitment` is the public B payload; `d_payload`
-    /// is the order-three U commitment. The future setup adjoint replaces direct
+    /// is the order-three commitment to the selected word and prime views.
+    /// The future setup adjoint replaces direct
     /// setup evaluation without changing this authenticated coefficient map.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
@@ -189,7 +194,8 @@ impl BinaryRootPublic {
             .iter()
             .zip(projected_values)
             .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
-        let terminal = checked::range(7, 2).ok_or(AkitaError::InvalidProof)?;
+        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
+            .ok_or(AkitaError::InvalidProof)?;
         let b =
             checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
         let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
@@ -203,23 +209,45 @@ impl BinaryRootPublic {
         .ok_or(AkitaError::InvalidProof)?;
         let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
             .ok_or(AkitaError::InvalidProof)?;
-        let terminal_batches: [E; 2] = batches
-            .get(terminal)
-            .ok_or(AkitaError::InvalidProof)?
-            .try_into()
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let algebra = self.plan.relation_weights(
-            &self.claim,
+        let prime_rows = checked::range(
+            negative_bits.end,
+            checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+        let mut algebra = self.plan.relation_weights(
+            self.claim.as_ref(),
             &self.matrix,
             challenges,
             alpha,
             &rho,
-            terminal_batches,
+            batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
             batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;
+        let mut extra = Vec::new();
+        if let Some(segment) = self.plan.prime_segment() {
+            extra.push(super::prime_plane_relation_weights(
+                self.manifest.descriptor(),
+                &self.prime,
+                self.plan.repacking(),
+                0,
+                segment,
+                challenges,
+                alpha,
+                batches.get(prime_rows).ok_or(AkitaError::InvalidProof)?,
+            )?);
+        }
+        if !extra.is_empty() {
+            let mut terms = algebra.terms().to_vec();
+            let mut target = algebra.claim();
+            for weights in extra {
+                terms.extend_from_slice(weights.terms());
+                target += weights.claim();
+            }
+            algebra = NativeRootWeights::new(self.plan.repacking().domain_len(), terms, target)?;
+        }
         let b_weights = binary_digit_authentication_weights(
             &self.plan,
-            1,
+            &[1],
             &self.setup.setup_seed.seed,
             self.manifest.b_label(),
             commitment,
@@ -228,7 +256,7 @@ impl BinaryRootPublic {
         )?;
         let d_weights = binary_digit_authentication_weights(
             &self.plan,
-            2,
+            &self.plan.opening_segments(),
             &self.setup.setup_seed.seed,
             SetupStreamLabel {
                 role: SetupStreamRole::WitnessCommitment,

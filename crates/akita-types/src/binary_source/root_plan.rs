@@ -27,8 +27,10 @@ pub use projection_weights::binary_direct_a_weights;
 pub struct BinaryRootWitnessPlan {
     descriptor: BinarySourceDescriptor,
     rank: usize,
-    repacking: RootCoefficientRepacking,
+    pub(super) repacking: RootCoefficientRepacking,
     projection_bounds: BinaryProjectionBounds,
+    pub(super) word: bool,
+    pub(super) prime_planes: usize,
 }
 
 impl BinaryRootWitnessPlan {
@@ -48,7 +50,7 @@ impl BinaryRootWitnessPlan {
         let ring_rows = checked::exact_div(scalar_rows, 4).ok_or(AkitaError::InvalidProof)?;
         let owners = descriptor.polynomials().len();
         let projection_bounds =
-            BinaryProjectionBounds::new(ring_rows, columns, rank, BINARY_SETUP_P)?;
+            BinaryProjectionBounds::new(ring_rows, columns, rank, owners, BINARY_SETUP_P)?;
         BinaryEvaluationBounds::new(scalar_rows, columns, BINARY_SETUP_P)?;
         let ring = RelationRowGeometry::for_polynomial(
             RelationPolynomial::minus_trinomial(648)?,
@@ -76,6 +78,8 @@ impl BinaryRootWitnessPlan {
             descriptor: descriptor.clone(),
             rank,
             projection_bounds,
+            word: true,
+            prime_planes: 0,
             repacking: RootCoefficientRepacking::new(segments, destination_ring_dimension)?,
         })
     }
@@ -123,15 +127,21 @@ impl BinaryRootWitnessPlan {
     #[allow(clippy::too_many_arguments)]
     pub fn relation_weights<E: Field>(
         &self,
-        claim: &BinaryTerminalClaim,
+        claim: Option<&BinaryTerminalClaim>,
         matrix: &[Vec<[i128; 648]>],
         challenges: &Challenges,
         alpha: E,
         rho: &[[E; 648]],
-        terminal_batches: [E; 2],
+        terminal_batches: impl AsRef<[E]>,
         padding_weights: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError> {
         let a = binary_direct_a_weights(self, matrix, challenges, rho, padding_weights)?;
+        let Some(claim) = claim else {
+            if !terminal_batches.as_ref().is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
+            return Ok(a);
+        };
         let terminal = claim.relation_weights(
             &self.descriptor,
             &self.repacking,
@@ -143,7 +153,10 @@ impl BinaryRootWitnessPlan {
             },
             challenges,
             alpha,
-            terminal_batches,
+            terminal_batches
+                .as_ref()
+                .try_into()
+                .map_err(|_| AkitaError::InvalidProof)?,
             BINARY_SETUP_P,
         )?;
         let mut terms = a.terms().to_vec();

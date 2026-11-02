@@ -18,30 +18,36 @@ pub struct BinaryProjectionBounds {
     residual_bound: u128,
     projection_bound: u128,
     rank: usize,
+    polynomials: usize,
+    residual_rows: usize,
 }
 
 impl BinaryProjectionBounds {
     /// Admit geometry only when `2 U_J < P` and `U_J < 2^95`.
     ///
     /// `L_R = 972 m B_A B_Z + C Gamma B_T`, where the trinomial
-    /// coefficient kernel has maximum absolute row sum 972. The other bounds
+    /// coefficient kernel has maximum absolute row sum 972. Each projection
+    /// spans `a = rank * polynomials * 648` coefficients in polynomial-major
+    /// order, and `U_J = (q-1) * a * L_R`. The other bounds
     /// are the canonical centered matrix interval, enforced response interval,
     /// challenge multiplication operator norm, and enforced image interval.
     pub fn new(
         source_rows: usize,
         columns: usize,
         rank: usize,
+        polynomials: usize,
         proof_modulus: u128,
     ) -> Result<Self, AkitaError> {
         let overflow = || AkitaError::InvalidInput("binary projection bound overflow".into());
-        if source_rows == 0 || columns == 0 || rank == 0 {
+        if source_rows == 0 || columns == 0 || rank == 0 || polynomials == 0 {
             return Err(AkitaError::InvalidInput(
                 "binary projection geometry must be nonempty".into(),
             ));
         }
         checked::product([source_rows, 648]).ok_or_else(overflow)?;
         checked::product([columns, 648]).ok_or_else(overflow)?;
-        let coefficients = checked::product([rank, 648]).ok_or_else(overflow)?;
+        let residual_rows = checked::product([rank, polynomials]).ok_or_else(overflow)?;
+        let coefficients = checked::product([residual_rows, 648]).ok_or_else(overflow)?;
         let challenge = BinaryChallengeProfile::bounded_weight(
             BinaryScalarRing::Cyclotomic243,
             FoldChallengeFamily::BinaryRoot.weight(),
@@ -76,6 +82,8 @@ impl BinaryProjectionBounds {
             residual_bound,
             projection_bound,
             rank,
+            polynomials,
+            residual_rows,
         })
     }
 
@@ -87,6 +95,13 @@ impl BinaryProjectionBounds {
     }
     pub fn rank(&self) -> usize {
         self.rank
+    }
+    pub fn polynomials(&self) -> usize {
+        self.polynomials
+    }
+    /// Number of rank rows across all polynomials, in polynomial-major order.
+    pub fn residual_rows(&self) -> usize {
+        self.residual_rows
     }
 }
 

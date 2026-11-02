@@ -8,12 +8,14 @@ use akita_challenges::{Challenges, FoldChallengeFamily};
 use akita_cpu_backend::binary_root::{
     binary_row_partials, BinaryEvaluationWitness, BinaryRootRelation,
 };
-use akita_types::binary_source::{binary_root_matrix, BINARY_SOURCE_Q};
+use akita_types::binary_source::{binary_root_matrix, PrimePlaneManifest, BINARY_SOURCE_Q};
 use akita_types::root_repacking::RootCoefficientRepacking;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn reconstruct(
     manifest: &BinaryCommittedGroupManifest,
-    claim: &BinaryTerminalClaim,
+    claim: Option<&BinaryTerminalClaim>,
+    prime: &PrimePlaneManifest,
     plan: &BinaryRootWitnessPlan,
     seed: &[u8; 32],
     words: &[u128],
@@ -52,25 +54,28 @@ pub(super) fn reconstruct(
     )?;
     let (response_plan, response_digits) =
         response.successor_table(plan.repacking().destination_ring_dimension())?;
-    let partials = binary_row_partials(descriptor, claim, &sources)?;
-    let evaluation = BinaryEvaluationWitness::build(
-        descriptor,
-        claim,
-        &partials,
-        &response.response,
-        challenges,
-        u128::MAX - 274,
-    )?;
-    let native: Vec<Vec<i8>> = (0..2)
+    let mut native: Vec<Vec<i8>> = (0..2)
         .map(|segment| extract(&response_plan, &response_digits, segment))
         .collect();
-    plan.repacking().repack(&[
-        &native[0],
-        &native[1],
-        &partials,
-        &evaluation.parity_digits,
-        &evaluation.value_digits,
-    ])
+    if let Some(claim) = claim {
+        let partials = binary_row_partials(descriptor, claim, &sources)?;
+        let evaluation = BinaryEvaluationWitness::build(
+            descriptor,
+            claim,
+            &partials,
+            &response.response,
+            challenges,
+            u128::MAX - 274,
+        )?;
+        native.extend([partials, evaluation.parity_digits, evaluation.value_digits]);
+    }
+    if plan.prime_segment().is_some() {
+        native.push(akita_cpu_backend::binary_root::prime_plane_digits::<F>(
+            descriptor, prime, &sources,
+        )?);
+    }
+    plan.repacking()
+        .repack(&native.iter().map(Vec::as_slice).collect::<Vec<_>>())
 }
 
 fn extract(plan: &RootCoefficientRepacking, table: &[i8], segment: usize) -> Vec<i8> {

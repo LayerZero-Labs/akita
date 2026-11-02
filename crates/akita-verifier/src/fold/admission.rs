@@ -21,6 +21,7 @@ pub(super) fn validate_group_payload<F: Field>(
             GroupClaimKind::Binary {
                 manifest: claim_manifest,
                 claim,
+                prime,
             },
         ) => {
             if manifest != claim_manifest.as_ref() {
@@ -29,7 +30,13 @@ pub(super) fn validate_group_payload<F: Field>(
                 ));
             }
             manifest.validate_carrier(descriptor)?;
-            claim.validate(manifest.descriptor())?;
+            if let Some(claim) = claim {
+                claim.validate(manifest.descriptor())?;
+            }
+            akita_types::binary_source::PrimePlaneManifest::new(
+                manifest.descriptor(),
+                prime.planes(),
+            )?;
             if committed.rows().coeff_len()
                 != akita_types::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
             {
