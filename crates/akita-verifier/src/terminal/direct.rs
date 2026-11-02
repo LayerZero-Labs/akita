@@ -110,6 +110,37 @@ where
         }
         Ok(block)
     }
+
+    /// Recover the omitted last `e` block and the omitted last `t` block, and
+    /// return the `e` block once both match their digests.
+    ///
+    /// Each relation holds for its recovered block by construction, so the
+    /// digest comparison is the only check that binds the recovered blocks to
+    /// the prover's earlier messages.
+    fn recover_last_blocks(
+        &self,
+        e_partial: CyclotomicRing<F, D>,
+        e_target: &CyclotomicRing<F, D>,
+        a_rows: ARowSides<F, D>,
+        digests: &LastBlockDigests,
+    ) -> Result<CyclotomicRing<F, D>, AkitaError>
+    where
+        F: CanonicalEncoding,
+    {
+        let e_last = self.solve(e_partial, e_target)?;
+        let t_last = a_rows
+            .t_partials
+            .into_iter()
+            .zip(&a_rows.a_z)
+            .map(|(partial, target)| self.solve(partial, target))
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        if field_digest(e_last.coefficients()) != digests.e
+            || field_digest(RingVec::from_ring_elems(&t_last).coeffs()) != digests.t
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(e_last)
+    }
 }
 
 #[inline]
@@ -163,8 +194,15 @@ where
     Ok(CyclotomicRing::from_coefficients(sum))
 }
 
+/// Both sides of the A rows `sum_b c_b * t_b == A * z`, one entry per row.
+struct ARowSides<F: Field, const D: usize> {
+    /// The left side, folded over the transmitted `t` blocks only.
+    t_partials: Vec<CyclotomicRing<F, D>>,
+    /// `A * z`.
+    a_z: Vec<CyclotomicRing<F, D>>,
+}
+
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
-#[allow(clippy::type_complexity)]
 fn a_row_sides<F, const D: usize>(
     terminal_ntt: &TerminalNttCache,
     t: &[CyclotomicRing<F, D>],
@@ -172,7 +210,7 @@ fn a_row_sides<F, const D: usize>(
     challenges: &[SparseChallenge],
     n_a: usize,
     n_a_cols: usize,
-) -> Result<(Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), AkitaError>
+) -> Result<ARowSides<F, D>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
@@ -203,7 +241,10 @@ where
     if lhs.len() != rhs.len() {
         return Err(AkitaError::InvalidProof);
     }
-    Ok((lhs, rhs))
+    Ok(ARowSides {
+        t_partials: lhs,
+        a_z: rhs,
+    })
 }
 
 /// Check reduced consistency and A rows for a quotient-free terminal witness.
@@ -384,20 +425,9 @@ where
                 }
             );
             let (folded, reduced) = consistency?;
-            let (t_folded, a_z) = a_rows?;
             let _span = tracing::info_span!("terminal_direct_a_recover", rows = n_a).entered();
-            let e_last = last_block.solve(folded, &reduced)?;
-            let t_last = t_folded
-                .into_iter()
-                .zip(&a_z)
-                .map(|(partial, target)| last_block.solve(partial, target))
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            let t_last = RingVec::from_ring_elems(&t_last);
-            if field_digest(e_last.coefficients()) != last_block_digests.e
-                || field_digest(t_last.coeffs()) != last_block_digests.t
-            {
-                return Err(AkitaError::InvalidProof);
-            }
+            let e_last =
+                last_block.recover_last_blocks(folded, &reduced, a_rows?, last_block_digests)?;
             let mut e_fields = witness.e_fields.coeffs().to_vec();
             e_fields.extend_from_slice(e_last.coefficients());
             Ok::<_, AkitaError>(RingVec::from_coeffs(e_fields))
@@ -693,6 +723,70 @@ mod tests {
             LastBlockRecovery::<F, 64>::new(&zero),
             Err(AkitaError::InvalidProof)
         ));
+    }
+
+    /// Recovery succeeds on any relation-consistent input, so only the digests
+    /// can reject a wrong block; each mis-bound digest must reject.
+    #[test]
+    fn recover_last_blocks_binds_both_blocks_to_their_digests() {
+        const D: usize = 64;
+        let challenge = SparseChallenge {
+            positions: vec![1, 5, (D - 2) as u32].into(),
+            coeffs: vec![1, -2, 1].into(),
+        };
+        let ramp = |step: i64| {
+            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+                F::from_i64(index as i64 * step - 7)
+            }))
+        };
+        let complete = |partial: CyclotomicRing<F, D>, block: &CyclotomicRing<F, D>| {
+            partial
+                + sparse_challenge_dot(std::slice::from_ref(&challenge), [block].into_iter())
+                    .expect("valid sparse challenge")
+        };
+        let (e_partial, e_block) = (ramp(-5), ramp(3));
+        let e_target = complete(e_partial, &e_block);
+        let t_partials = vec![ramp(2), ramp(-11)];
+        let t_blocks = [ramp(7), ramp(13)];
+        let a_z: Vec<_> = t_partials
+            .iter()
+            .zip(&t_blocks)
+            .map(|(partial, block)| complete(*partial, block))
+            .collect();
+
+        let recovery = LastBlockRecovery::<F, D>::new(&challenge).expect("challenge is a unit");
+        let recover = |digests: LastBlockDigests| {
+            recovery.recover_last_blocks(
+                e_partial,
+                &e_target,
+                ARowSides {
+                    t_partials: t_partials.clone(),
+                    a_z: a_z.clone(),
+                },
+                &digests,
+            )
+        };
+        let e = field_digest(e_block.coefficients());
+        let t = field_digest(RingVec::from_ring_elems(&t_blocks).coeffs());
+        assert_eq!(recover(LastBlockDigests { e, t }), Ok(e_block));
+
+        let flip = |mut digest: [u8; FIELD_DIGEST_BYTES]| {
+            digest[0] ^= 1;
+            digest
+        };
+        let first_t_row_only = field_digest(t_blocks[0].coefficients());
+        for digests in [
+            LastBlockDigests { e: flip(e), t },
+            LastBlockDigests { e, t: flip(t) },
+            LastBlockDigests { e: t, t: e },
+            LastBlockDigests { e, t: e },
+            LastBlockDigests {
+                e,
+                t: first_t_row_only,
+            },
+        ] {
+            assert_eq!(recover(digests), Err(AkitaError::InvalidProof));
+        }
     }
 
     #[test]
