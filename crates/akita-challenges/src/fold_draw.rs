@@ -15,8 +15,9 @@ use akita_transcript::ProofChannel;
 
 /// Algebraic domain of one fold-challenge draw.
 ///
-/// Coefficient packing adds an explicit method domain and challenge-subring
-/// dimension before the challenge message is squeezed.
+/// Coefficient packing draws in a challenge subring whose dimension must equal
+/// the family's ring dimension. Like the family, the domain is bound by the
+/// descriptor, not absorbed by the draw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FoldChallengeDrawDomain {
     EvaluationTrace,
