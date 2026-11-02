@@ -229,7 +229,7 @@ const KNOWN_ANSWER_Q64: [u8; 32] = super::encoding::digest_from_hex(
     "60794d92812d0ca59a490a68dc6bdf5e10bd9aecb9c3456b9f65ca68d2413a64",
 );
 const KNOWN_ANSWER_Q128: [u8; 32] = super::encoding::digest_from_hex(
-    "592ed04e776ff8c6e3b4ca85b83ddeff42d5c838dfba8ffd3112eaf871a6f9b0",
+    "1cc9063401505625c3e48c3679377156dd6f2dd5ff4c791b85ae1da33543e413",
 );
 
 /// `H(tag || u32(corpus_version) || test_stream_identity || list(...))`, the
