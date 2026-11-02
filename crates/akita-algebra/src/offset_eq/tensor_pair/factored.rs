@@ -30,11 +30,33 @@ pub fn eval_boolean_pair_tensor_families<
         );
     }
     let mut batches = BTreeMap::<(usize, usize), Vec<EqPairTensorFamily<E>>>::new();
+    let mut stage = |key, family| {
+        let batch = batches.entry(key).or_default();
+        batch.try_reserve(1).map_err(|_| {
+            AkitaError::InvalidInput("paired tensor batch allocation failed".into())
+        })?;
+        batch.push(family);
+        Ok::<_, AkitaError>(())
+    };
     for source in families {
         source
             .axes
             .iter()
             .try_for_each(EqPairTensorAxis::validate_weights)?;
+        if source.scalar.is_zero() {
+            continue;
+        }
+        let mut axes = Vec::new();
+        axes.try_reserve_exact(source.axes.len()).map_err(|_| {
+            AkitaError::InvalidInput("paired tensor family allocation failed".into())
+        })?;
+        axes.extend_from_slice(&source.axes);
+        let mut family = EqPairTensorFamily {
+            left_offset: source.left_offset,
+            right_offset: source.right_offset,
+            scalar: source.scalar,
+            axes,
+        };
         // Zero-length axes and clipped addresses keep this family on the
         // unfactored path, which owns their selection semantics.
         let mut fits = source.axes.iter().all(|axis| axis.len != 0);
@@ -50,10 +72,9 @@ pub fn eval_boolean_pair_tensor_families<
             fits = maximum[0] < (1usize << left.len()) && maximum[1] < (1usize << right.len());
         }
         if !fits {
-            batches.entry((0, 0)).or_default().push(source.clone());
+            stage((0, 0), family)?;
             continue;
         }
-        let mut family = source.clone();
         let (mut lb, mut rb) = (0usize, 0usize);
         loop {
             let candidate = family
@@ -131,7 +152,7 @@ pub fn eval_boolean_pair_tensor_families<
                 rb += bits;
             }
         }
-        batches.entry((lb, rb)).or_default().push(family);
+        stage((lb, rb), family)?;
     }
     let mut result = E::zero();
     for ((lb, rb), batch) in batches {
