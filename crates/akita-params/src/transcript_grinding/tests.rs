@@ -130,6 +130,8 @@ fn nonce_slack_provisions_exactly_128_expected_trials() {
 
 #[test]
 fn plan_encoding_covers_every_discriminator() {
+    use jolt_transcript::{DigestHash, DIGEST_HASH};
+
     let capacity = 128;
     let sites = [
         GrindingSite::EvaluationBatch { level: 0 },
@@ -198,13 +200,17 @@ fn plan_encoding_covers_every_discriminator() {
     assert!(bytes.starts_with(GRINDING_PLAN_DOMAIN));
     assert_eq!(plan.expanded_query_count(), 24);
     assert_eq!(plan.total_nonce_bits(), 18 * 9 + 12);
-    assert_eq!(
-        plan.digest().unwrap(),
-        [
+    let expected = match DIGEST_HASH {
+        DigestHash::Sha3_256 => [
             221, 22, 158, 189, 155, 93, 120, 42, 5, 41, 246, 165, 27, 108, 42, 131, 33, 24, 42,
-            117, 186, 242, 72, 28, 68, 63, 194, 27, 30, 155, 183, 104
-        ]
-    );
+            117, 186, 242, 72, 28, 68, 63, 194, 27, 30, 155, 183, 104,
+        ],
+        DigestHash::Keccak256 => [
+            11, 136, 121, 17, 189, 178, 228, 156, 140, 13, 44, 197, 14, 106, 216, 153, 182, 33, 6,
+            39, 32, 93, 40, 79, 110, 102, 1, 173, 120, 210, 246, 149,
+        ],
+    };
+    assert_eq!(plan.digest().unwrap(), expected);
 }
 
 #[test]
