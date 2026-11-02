@@ -57,12 +57,22 @@ pub(crate) enum NextWitnessPlan {
     TerminalT { coefficient_count: usize },
 }
 
+/// Witness a fold hands to its successor, in the shape [`NextWitnessPlan`] fixed.
+pub(crate) enum NextWitness<F: Field> {
+    /// Outer payload carried into the next recursive fold.
+    OuterPayload(RingVec<F>),
+    /// Terminal `t` state without its last block, which the terminal
+    /// recomputes and checks against `last_block_digest`.
+    TerminalT {
+        sent: RingVec<F>,
+        last_block_digest: [u8; FIELD_DIGEST_BYTES],
+    },
+}
+
 pub(crate) struct FoldVerifyOutput<F: Field, E: Field> {
     pub(crate) challenges: Vec<E>,
     pub(crate) setup_prefix_opening: Option<SetupPrefixOpening<E>>,
-    pub(crate) next_witness: RingVec<F>,
-    /// Digest of the last `t` block, sent when the successor is the terminal.
-    pub(crate) next_witness_last_block_digest: Option<[u8; FIELD_DIGEST_BYTES]>,
+    pub(crate) next_witness: NextWitness<F>,
     pub(crate) opening: E,
 }
 
@@ -92,7 +102,7 @@ where
     )?;
     let relation_instance =
         assemble_relation_instance(&prepared, &relation_geometry, group_challenges)?;
-    let (next_witness, next_witness_last_block_digest) = receive_next_witness(grinding, &prepared)?;
+    let next_witness = receive_next_witness(grinding, &prepared)?;
     let rs = ring_switch_verifier::<F, E>(
         &RingSwitchReplay {
             setup: setup.expanded(),
@@ -171,7 +181,6 @@ where
         challenges: stage2.point,
         setup_prefix_opening: stage3.map(|replay| (replay.challenges, replay.setup_prefix_eval)),
         next_witness,
-        next_witness_last_block_digest,
         opening: stage2.witness_eval,
     })
 }
@@ -183,12 +192,12 @@ where
 fn receive_next_witness<F, E>(
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: &PreparedFoldReplay<'_, F, E>,
-) -> Result<(RingVec<F>, Option<[u8; FIELD_DIGEST_BYTES]>), AkitaError>
+) -> Result<NextWitness<F>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: Field,
 {
-    let next_witness = match prepared.next_witness {
+    let witness = match prepared.next_witness {
         NextWitnessPlan::OuterPayload { coefficient_count } => {
             if coefficient_count != prepared.level_layout.next_outer_payload_coeffs() {
                 return Err(AkitaError::InvalidSetup(
@@ -216,21 +225,26 @@ where
         }
     }
     .map(RingVec::from_coeffs)?;
-    if prepared.next_witness_ring_dim == 0
-        || matches!(prepared.next_witness, NextWitnessPlan::TerminalT { .. })
-            && !next_witness.can_decode_vec(prepared.next_witness_ring_dim)
-    {
+    if prepared.next_witness_ring_dim == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let last_block_digest = match prepared.next_witness {
-        NextWitnessPlan::TerminalT { .. } => Some(akita_transcript::receive_field_digest(
-            grinding.state_mut(),
-            akita_types::FoldSite::NextWitnessInnerStateDigest {
-                level: prepared.level,
+    match prepared.next_witness {
+        NextWitnessPlan::OuterPayload { .. } => Ok(NextWitness::OuterPayload(witness)),
+        NextWitnessPlan::TerminalT { .. } => {
+            if !witness.can_decode_vec(prepared.next_witness_ring_dim) {
+                return Err(AkitaError::InvalidProof);
             }
-            .id()?,
-        )?),
-        NextWitnessPlan::OuterPayload { .. } => None,
-    };
-    Ok((next_witness, last_block_digest))
+            let last_block_digest = akita_transcript::receive_field_digest(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessInnerStateDigest {
+                    level: prepared.level,
+                }
+                .id()?,
+            )?;
+            Ok(NextWitness::TerminalT {
+                sent: witness,
+                last_block_digest,
+            })
+        }
+    }
 }

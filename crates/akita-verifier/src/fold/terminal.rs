@@ -2,6 +2,7 @@
 //! response to the direct terminal checks.
 
 use super::suffix::SuffixVerifierState;
+use super::NextWitness;
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::verify_extension_claim_terminal_suffix;
 use akita_challenges::FoldDraw;
@@ -34,16 +35,25 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
+    let NextWitness::TerminalT {
+        sent: t_sent,
+        last_block_digest: t_last_block_digest,
+    } = &current_state.witness
+    else {
+        return Err(AkitaError::Internal(
+            "terminal scheduled after an outer payload witness".into(),
+        ));
+    };
     if scheduled.response_shape.layout.groups.len() != 1
-        || current_state.witness.coeff_len() != group.t_field_elems
-        || !current_state.witness.can_decode_vec(scheduled.d_a())
+        || t_sent.coeff_len() != group.t_field_elems
+        || !t_sent.can_decode_vec(scheduled.d_a())
     {
         return Err(AkitaError::InvalidProof);
     }
     akita_transcript::public_fields_verifier(
         grinding.state_mut(),
         akita_types::FoldSite::TerminalTFields { level }.id()?,
-        current_state.witness.coeffs(),
+        t_sent.coeffs(),
     )?;
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
@@ -114,9 +124,7 @@ where
     // digest next to the carried state, and the `e` digest arrives here, before
     // the fold challenges.
     let last_block_digests = crate::terminal::direct::LastBlockDigests {
-        t: current_state
-            .witness_last_block_digest
-            .ok_or(AkitaError::InvalidProof)?,
+        t: *t_last_block_digest,
         e: akita_transcript::receive_field_digest(
             grinding.state_mut(),
             akita_types::FoldSite::TerminalEDigest { level }.id()?,
@@ -157,7 +165,7 @@ where
         layout: scheduled.response_shape.layout.clone(),
         z_payloads: vec![z_payload],
         e_fields,
-        t_fields: current_state.witness.clone(),
+        t_fields: t_sent.clone(),
     };
     let e_fields = crate::terminal::direct::verify_terminal_ring_relations(
         terminal_ntt,

@@ -1,5 +1,5 @@
 use super::terminal::verify_terminal_suffix;
-use super::{verify_fold, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
+use super::{verify_fold, NextWitness, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::{
     finalize_claims, prepare_single_field_suffix_groups, verify_coefficient_packing_suffix_prefix,
@@ -20,9 +20,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMer
 pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
     pub opening: E,
-    pub witness: RingVec<F>,
-    /// Digest of the last `t` block when `witness` is the terminal `t` state.
-    pub witness_last_block_digest: Option<[u8; akita_transcript::FIELD_DIGEST_BYTES]>,
+    pub witness: NextWitness<F>,
     pub basis: BasisMode,
     pub witness_len: usize,
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
@@ -96,8 +94,13 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
 {
+    let NextWitness::OuterPayload(witness) = &current_state.witness else {
+        return Err(AkitaError::Internal(
+            "recursive fold scheduled after a terminal t witness".into(),
+        ));
+    };
     let payload_geometry = lp.outer_payload_geometry()?;
-    if current_state.witness.coeff_len() != payload_geometry.transmitted_coefficients() {
+    if witness.coeff_len() != payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
     akita_transcript::public_fields_verifier(
@@ -107,7 +110,7 @@ where
             ring_dimension: payload_geometry.transcript_ring_dimension(),
         }
         .id()?,
-        current_state.witness.coeffs(),
+        witness.coeffs(),
     )?;
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
@@ -206,7 +209,7 @@ where
     .map(RingVec::from_coeffs)?;
     let prefix = finalize_claims::<F, E>(&opening_batch, material, grinding, level)?;
     let commitment_payloads =
-        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, &current_state.witness)?;
+        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, witness)?;
     let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
         if let Some(next) = next_params {
             let ring_dim = next.params.d_a();
@@ -311,7 +314,6 @@ where
             opening_point: output.challenges,
             opening: output.opening,
             witness: output.next_witness,
-            witness_last_block_digest: output.next_witness_last_block_digest,
             basis: BasisMode::Lagrange,
             witness_len: step.output_witness_len,
             setup_prefix_opening: output.setup_prefix_opening,
