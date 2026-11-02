@@ -146,7 +146,6 @@ pub fn run(data: &[u8]) {
     } else {
         FoldChallengeDrawDomain::EvaluationTrace
     };
-    let group_index = usize::from(reader.u8() % 8);
     let num_live_blocks = 1 + usize::from(reader.u8() % 16);
     let num_claims = 1 + usize::from(reader.u8() % 4);
     let statement: [u8; 32] = reader.bytes();
@@ -161,8 +160,8 @@ pub fn run(data: &[u8]) {
             message_lens: Vec::new(),
             messages: Vec::new(),
         };
-        let results: Vec<_> = (group_index..group_index + groups)
-            .map(|group| draw.draw_fold_challenges(&family, group, num_live_blocks, num_claims))
+        let results: Vec<_> = (0..groups)
+            .map(|_| draw.draw_fold_challenges(&family, num_live_blocks, num_claims))
             .collect();
         (results, draw.message_lens, draw.messages)
     };

@@ -137,7 +137,7 @@ where
     let family = scheduled.fold_challenge_family()?;
     let challenges = {
         let mut draw = akita_challenges::VerifierFoldDraw::new(grinding.state_mut(), level, 0);
-        draw.draw_fold_challenges(&family, 0, scheduled.blocks.live_blocks, 1)?
+        draw.draw_fold_challenges(&family, scheduled.blocks.live_blocks, 1)?
             .ok_or(AkitaError::InvalidProof)?
     };
     grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks)?;

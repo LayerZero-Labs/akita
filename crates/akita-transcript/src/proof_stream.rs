@@ -936,6 +936,10 @@ impl FoldWork {
                 "live transcript diverged from the fold preview".into(),
             ));
         }
+        // Spongefish has no call that writes proof bytes without absorbing,
+        // so this makes one empty absorb on the live sponge. It cannot reach
+        // the transcript: the next line replaces that sponge with the
+        // preview's.
         state.prover_message_with(
             &self.argument,
             |_| [0u8; 0],

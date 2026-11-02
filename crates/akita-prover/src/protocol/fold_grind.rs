@@ -103,7 +103,7 @@ where
             let work = preview_state.take_work()?;
             let mut preview = PreviewFoldDraw::new(&mut preview_state);
             let Some(challenges) =
-                preview.draw_fold_challenges(&family, 0, params.blocks.live_blocks, 1)?
+                preview.draw_fold_challenges(&family, params.blocks.live_blocks, 1)?
             else {
                 return Ok(None);
             };
@@ -137,7 +137,7 @@ where
         })?;
     grinding.commit_fold_response(site, work)?;
     let mut live = ProverFoldDraw::new(grinding.state_mut(), level, 0);
-    let live_challenges = live.draw_fold_challenges(&family, 0, params.blocks.live_blocks, 1)?;
+    let live_challenges = live.draw_fold_challenges(&family, params.blocks.live_blocks, 1)?;
     if live_challenges.as_ref() != Some(&challenges) {
         return Err(AkitaError::Internal(
             "terminal grind preview did not match live transcript replay".into(),
@@ -240,7 +240,6 @@ where
                     let Some(challenges) = draw_group_fold_challenges::<F, E, _>(
                         &mut preview,
                         &group.params,
-                        group.group_index,
                         group.num_polynomials,
                     )?
                     else {
@@ -313,7 +312,6 @@ where
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
-                    group.group_index,
                     group.num_polynomials,
                 )?
             };
@@ -511,10 +509,9 @@ mod tests {
             SparseChallengeConfig::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
-        let challenges =
-            draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 3, 2)
-                .unwrap()
-                .unwrap();
+        let challenges = draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 2)
+            .unwrap()
+            .unwrap();
         assert_eq!(draw.draws, 1);
         let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
@@ -562,8 +559,7 @@ mod tests {
             params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();
             assert!(
-                draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 0, 1)
-                    .is_err()
+                draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 1).is_err()
             );
             assert_eq!(draw.draws, 0);
         }

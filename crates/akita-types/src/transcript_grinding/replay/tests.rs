@@ -493,9 +493,9 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     let (work, preview) = {
         let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
         let work = preview_state.take_work().unwrap();
-        let preview = draw(&mut |group, blocks, claims| {
+        let preview = draw(&mut |_, blocks, claims| {
             PreviewFoldDraw::new(&mut preview_state)
-                .draw_fold_challenges(&family, group, blocks, claims)
+                .draw_fold_challenges(&family, blocks, claims)
                 .unwrap()
                 .unwrap()
         });
@@ -504,7 +504,7 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     prover.commit_fold_response(site, work).unwrap();
     let live = draw(&mut |group, blocks, claims| {
         let challenges = ProverFoldDraw::new(prover.state_mut(), 3, group as u32)
-            .draw_fold_challenges(&family, group, blocks, claims)
+            .draw_fold_challenges(&family, blocks, claims)
             .unwrap()
             .unwrap();
         prover.record_fold_challenges(3, group as u32, 2).unwrap();
@@ -520,7 +520,7 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     assert_eq!(verifier.read_fold_response(site).unwrap(), nonce);
     let verified = draw(&mut |group, blocks, claims| {
         let challenges = VerifierFoldDraw::new(verifier.state_mut(), 3, group as u32)
-            .draw_fold_challenges(&family, group, blocks, claims)
+            .draw_fold_challenges(&family, blocks, claims)
             .unwrap()
             .unwrap();
         verifier.record_fold_challenges(3, group as u32, 2).unwrap();

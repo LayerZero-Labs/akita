@@ -253,7 +253,7 @@ impl SparseChallengeShell {
             None => count,
             Some(rejection) => pool_len(count, &operator_norm_rates(rejection)?.0)?,
         };
-        candidates
+        let message_len = candidates
             .checked_mul(self.candidate_bits)
             .map(|bits| bits.div_ceil(WORD_BITS) * WORD_BYTES)
             .filter(|&bytes| bytes <= MAX_MESSAGE_BYTES)
@@ -266,6 +266,7 @@ impl SparseChallengeShell {
             shell: *self,
             count,
             candidates,
+            message_len,
         })
     }
 }
@@ -276,15 +277,15 @@ pub struct SparseChallengeStream {
     shell: SparseChallengeShell,
     count: usize,
     candidates: usize,
+    message_len: usize,
 }
 
 impl SparseChallengeStream {
     /// Exact byte length of the group's challenge message: the candidate bits
     /// rounded up to whole `u64` words.
     #[must_use]
-    pub fn message_len(&self) -> usize {
-        // `new` checked that this product fits.
-        (self.candidates * self.shell.candidate_bits).div_ceil(WORD_BITS) * WORD_BYTES
+    pub const fn message_len(&self) -> usize {
+        self.message_len
     }
 
     /// Guaranteed `log2` size of the set each challenge is uniform on: `K` for

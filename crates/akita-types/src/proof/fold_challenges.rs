@@ -41,7 +41,6 @@ impl OpeningFamily<Challenges, CoefficientPackingChallenges> {
 pub fn draw_group_fold_challenges<F, E, D>(
     draw: &mut D,
     params: &akita_params::GroupOpenPhaseParams,
-    group_index: usize,
     num_claims: usize,
 ) -> Result<Option<GroupFoldChallenges>, AkitaError>
 where
@@ -70,7 +69,7 @@ where
         }
     };
     let Some(challenges) =
-        draw.draw_fold_challenges(&family, group_index, params.num_live_blocks(), num_claims)?
+        draw.draw_fold_challenges(&family, params.num_live_blocks(), num_claims)?
     else {
         return Ok(None);
     };
