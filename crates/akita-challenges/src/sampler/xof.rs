@@ -143,6 +143,7 @@ impl XofCursor {
     /// Uniformly sample from `0..modulus` using bitmask rejection sampling
     /// with minimal XOF consumption. Uses 1-byte reads when the modulus
     /// fits in 8 bits, 2-byte reads for 16 bits, else 4 bytes.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn next_usize_mod(&mut self, modulus: usize) -> usize {
         debug_assert!(modulus > 0);
@@ -153,12 +154,22 @@ impl XofCursor {
         self.next_usize_masked(modulus, (1usize << bits) - 1)
     }
 
-    /// Uniformly sample from `0..modulus` by rejection under `mask`, which must
-    /// be `modulus.next_power_of_two() - 1`, the mask [`Self::next_usize_mod`]
-    /// derives. A smaller mask narrows the support and a larger one changes the
-    /// bytes consumed.
+    /// Advance the rejection mask when the remaining range decreases by one.
+    /// Initialize `mask` to `universe.next_power_of_two() - 1` before the first
+    /// draw; callers bound the universe at the sampler boundary.
+    #[inline(always)]
+    pub(super) fn next_usize_rolling(&mut self, modulus: usize, mask: &mut usize) -> usize {
+        if modulus <= (*mask >> 1) + 1 {
+            *mask >>= 1;
+        }
+        self.next_usize_masked(modulus, *mask)
+    }
+
+    /// Requires a positive modulus and `mask == modulus.next_power_of_two() - 1`
+    /// for modulus > 1, preserving the canonical rejection stream.
     #[inline(always)]
     pub(crate) fn next_usize_masked(&mut self, modulus: usize, mask: usize) -> usize {
+        debug_assert!(modulus > 0);
         debug_assert!(modulus <= 1 || mask == modulus.next_power_of_two() - 1);
         if modulus == 1 {
             return 0;

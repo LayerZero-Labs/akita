@@ -6,8 +6,6 @@
 //! coefficient is ±1.
 
 use crate::sampler::position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
-#[cfg(any(target_arch = "riscv64", test))]
-use crate::sampler::position_sample::{sample_distinct_positions_into_stack, NarrowSlot};
 use crate::sampler::xof::XofCursor;
 use crate::{SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions};
 
@@ -45,7 +43,18 @@ impl SignedSparseScratch {
         debug_assert_eq!(self.total, count_pm1 + count_pm2);
         sample_distinct_positions_into(cursor, d, &mut self.positions, &mut self.position_scratch)?;
         self.coeffs.resize(self.total, 0);
-        fill_signed_magnitudes(cursor, count_pm1, &mut self.coeffs);
+        let mut sign_bytes = [0u8; SIGN_BYTE_CHUNK];
+        let mut written = 0;
+        while written < self.total {
+            let take = (self.total - written).min(SIGN_BYTE_CHUNK);
+            cursor.fill_bytes(&mut sign_bytes[..take]);
+            for (offset, &byte) in sign_bytes[..take].iter().enumerate() {
+                let i = written + offset;
+                self.coeffs[i] = signed_coefficient(i, count_pm1, byte);
+            }
+            written += take;
+        }
+
         Ok(())
     }
 
@@ -67,63 +76,82 @@ impl SignedSparseScratch {
     }
 }
 
-/// Draw one sign byte per coefficient, in chunks of [`SIGN_BYTE_CHUNK`]: the
-/// first `count_pm1` coefficients get magnitude 1, the rest magnitude 2.
-#[inline]
-fn fill_signed_magnitudes(cursor: &mut XofCursor, count_pm1: usize, coeffs: &mut [i8]) {
-    #[repr(align(8))]
-    struct SignBytes([u8; SIGN_BYTE_CHUNK]);
-    let mut sign_bytes = SignBytes([0u8; SIGN_BYTE_CHUNK]);
-    for (chunk_index, chunk) in coeffs.chunks_mut(SIGN_BYTE_CHUNK).enumerate() {
-        let bytes = &mut sign_bytes.0[..chunk.len()];
-        cursor.fill_bytes(bytes);
-        for (offset, (coeff, &b)) in chunk.iter_mut().zip(bytes.iter()).enumerate() {
-            let magnitude = if chunk_index * SIGN_BYTE_CHUNK + offset < count_pm1 {
-                1
-            } else {
-                2
-            };
-            *coeff = if b & 1 == 0 { magnitude } else { -magnitude };
-        }
+#[repr(align(8))]
+struct Aligned<T>(T);
+
+/// Canonical sign/magnitude decoding shared by fixed and dynamic buffers.
+#[inline(always)]
+fn signed_coefficient(index: usize, count_pm1: usize, sign_byte: u8) -> i8 {
+    let magnitude = if index < count_pm1 { 1 } else { 2 };
+    if sign_byte & 1 == 0 {
+        magnitude
+    } else {
+        -magnitude
     }
 }
 
-/// The production D64 family drawn into fixed stack storage, through the same
-/// shuffle and sign rule as the general sampler, so every byte consumed matches.
-#[cfg(any(target_arch = "riscv64", test))]
-pub(super) fn sample_production64(
+/// Fixed stack output for any statically known family. The shared dense
+/// shuffle retains the D64 mask shortcut. Dispatch keeps very sparse families
+/// on reusable virtual scratch rather than initializing D dense slots.
+#[inline]
+pub(super) fn sample_fixed<const D: usize, const PM1: usize, const WEIGHT: usize>(
     cursor: &mut XofCursor,
-) -> Result<SparseChallenge, akita_error::AkitaError> {
-    const WEIGHT: usize = crate::D64_PRODUCTION_PM1_COUNT + crate::D64_PRODUCTION_PM2_COUNT;
-    const _: () = assert!(WEIGHT <= 64);
-    #[repr(align(8))]
-    struct Positions([u32; WEIGHT]);
-    let mut positions = Positions([0u32; WEIGHT]);
-    sample_distinct_positions_into_stack::<NarrowSlot, 64>(cursor, 64, &mut positions.0)?;
-    let mut coeffs = [0i8; WEIGHT];
-    fill_signed_magnitudes(cursor, crate::D64_PRODUCTION_PM1_COUNT, &mut coeffs);
-    Ok(SparseChallenge {
+) -> SparseChallenge {
+    const {
+        assert!(PM1 <= WEIGHT && WEIGHT <= D && D <= super::MAX_STACK_RING_DIM);
+    }
+    let mut positions = Aligned([0u32; WEIGHT]);
+    let mut permutation: [usize; D] = std::array::from_fn(|i| i);
+    if D == 64 && WEIGHT <= 48 {
+        super::position_sample::shuffle_positions::<_, true>(
+            cursor,
+            &mut positions.0,
+            &mut permutation,
+        );
+    } else {
+        super::position_sample::shuffle_positions::<_, false>(
+            cursor,
+            &mut positions.0,
+            &mut permutation,
+        );
+    }
+    let mut signs = Aligned([0u8; WEIGHT]);
+    cursor.fill_bytes(&mut signs.0);
+    let coeffs: [i8; WEIGHT] = std::array::from_fn(|i| signed_coefficient(i, PM1, signs.0[i]));
+    SparseChallenge {
         positions: SparseChallengePositions::from_slice(&positions.0),
         coeffs: SparseChallengeCoefficients::from_slice(&coeffs),
-    })
+    }
 }
-
 #[cfg(test)]
 mod fixed_tests {
     use super::*;
     use crate::sampler::IndexedXofPrefix;
     #[test]
     fn production64_preserves_challenges_and_xof_consumption() {
-        use crate::{D64_PRODUCTION_PM1_COUNT as PM1, D64_PRODUCTION_PM2_COUNT as PM2};
         let prefix = IndexedXofPrefix::new(&[91; 32]).unwrap();
-        let mut scratch = SignedSparseScratch::new(PM1, PM2);
+        let mut scratch = SignedSparseScratch::new(
+            crate::D64_PRODUCTION_PM1_COUNT,
+            crate::D64_PRODUCTION_PM2_COUNT,
+        );
         for index in 0..128 {
             let mut general = XofCursor::from_indexed_prefix(&prefix, index);
             let mut fixed = XofCursor::from_indexed_prefix(&prefix, index);
-            scratch.sample(&mut general, 64, PM1, PM2).unwrap();
+            scratch
+                .sample(
+                    &mut general,
+                    64,
+                    crate::D64_PRODUCTION_PM1_COUNT,
+                    crate::D64_PRODUCTION_PM2_COUNT,
+                )
+                .unwrap();
             assert_eq!(
                 scratch.take_challenge(),
-                sample_production64(&mut fixed).unwrap()
+                sample_fixed::<
+                    64,
+                    { crate::D64_PRODUCTION_PM1_COUNT },
+                    { crate::D64_PRODUCTION_PM1_COUNT + crate::D64_PRODUCTION_PM2_COUNT },
+                >(&mut fixed)
             );
             let (mut a, mut b) = ([0; 300], [0; 300]);
             general.fill_bytes(&mut a);

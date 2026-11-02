@@ -1,0 +1,21 @@
+[package]
+name = "akita-sampler-guest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+guest = ["jolt/guest-std", "jolt/stdout", "jolt/random"]
+
+[dependencies]
+akita-challenges = { path = "../../../../crates/akita-challenges", default-features = false, features = [
+  "transcript-blake2b",
+  "keccak-inline",
+] }
+akita-error = { path = "../../../../crates/akita-error" }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(feature, values("field-inline"))',
+] }
