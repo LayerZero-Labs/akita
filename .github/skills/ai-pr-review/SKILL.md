@@ -61,6 +61,8 @@ Read and apply both Cursor skills embedded below, plus [review-rubric.md](refere
 
 Challenge each candidate against surrounding code, contracts, tests, prior discussions and later stack commits. When reading cannot settle a question about behavior, run it: a throwaway reproduction, probe or fault injection in an isolated checkout. Record the command and result in the local report and keep the probe out of the PR. Don't ask for new tests by default; suggest a committed test only when it guards a contract likely to regress that existing tests leave uncovered. Discard disproven claims; keep unresolved suspicions as local questions, not asserted inline bugs. A dismissal needs the same consequence statement as a finding: low likelihood lowers a finding's priority but is not a reason to dismiss it, and candidates with equal consequences get the same treatment. Separate inherited problems from regressions introduced or newly exposed here. Do not invent findings to meet a quota.
 
+Before returning the review, make a final consistency pass over the conclusions. Recheck consequential claims against source and available evidence, revisit interactions across component boundaries and any changed theory or invariants, and remove contradictions, duplicate findings and unsupported conclusions. Ensure the readiness assessment reflects unresolved findings and coverage gaps. Use the existing report or structured result; this pass adds no new output format.
+
 Keep the requirement map, coverage ledger and unresolved questions locally. If access, time or tooling prevents completion, say which PRs or behaviors remain unreviewed; never present a partial pass as a clean review.
 
 ## Findings and stack classification
