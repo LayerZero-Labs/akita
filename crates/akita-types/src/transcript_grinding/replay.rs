@@ -6,14 +6,14 @@ use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_sumcheck::SumcheckProverChannel;
 use akita_sumcheck::{SumcheckRole, SumcheckVerifierChannel};
 use akita_transcript::{
-    ext_challenges, nonce_encoded_len, nonce_max_bytes, receive_nonce, reject, verifier_context,
-    ChallengeCodec, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
-    VerifierChannel, VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS,
-    SITE_FAMILY_SUMCHECK,
+    ext_challenges, nonce_max_bytes, receive_nonce, reject, verifier_context, ChallengeCodec,
+    ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, VerifierChannel,
+    VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS, SITE_FAMILY_SUMCHECK,
 };
 #[cfg(feature = "prover")]
 use akita_transcript::{
-    prover_context, send_nonce, FoldPreview, FoldWork, ProverChannel, ProverTranscript,
+    nonce_encoded_len, prover_context, send_nonce, FoldPreview, FoldWork, ProverChannel,
+    ProverTranscript,
 };
 use std::marker::PhantomData;
 
@@ -503,7 +503,6 @@ impl<'plan> ProverGrinding<'plan> {
 pub struct VerifierGrinding<'proof, 'plan> {
     state: &'plan mut VerifierChannel<'proof>,
     cursor: GrindingPlanCursor<'plan>,
-    serialized_nonce_bytes: usize,
     invalid: bool,
 }
 
@@ -553,7 +552,6 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
-            serialized_nonce_bytes: 0,
             invalid: false,
         }
     }
@@ -595,10 +593,6 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
         if !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidProof);
         }
-        self.serialized_nonce_bytes = self
-            .serialized_nonce_bytes
-            .checked_add(nonce_encoded_len(counter))
-            .ok_or(AkitaError::InvalidProof)?;
         self.grind_query_inner(
             GrindingSite::FoldChallengeWork {
                 level: site.level(),
@@ -642,11 +636,6 @@ impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
             self.poison();
             return Err(AkitaError::InvalidProof);
         }
-        tracing::info!(
-            role = "verifier",
-            native_nonce_bytes_actual = self.serialized_nonce_bytes,
-            "native proof nonce bytes"
-        );
         Ok(PendingEof { _private: () })
     }
 }
