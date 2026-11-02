@@ -989,32 +989,46 @@ each owner an independent security budget.
 
 ## Measured proof sizes
 
-The eight-carrier, C=2 test fixture uses the selected typed-root ordinary suffix catalog.
-Each plane in these measurements has a distinct prime point. Sizes include the
-whole grouped opening inside the caller's transcript.
+The eight-carrier, C=2 fixtures retain their existing source and suffix geometry.
+The following complete grouped proofs were measured from all 27 end-to-end
+tests in both protocol modes after merging projections, prime planes and typed
+Stage 3. Each plane in these measurements has a distinct prime point. Every
+binary group uses one Stage 3 inside the caller's transcript.
 
 | Reading | Planes | Current protocol bytes | `dev-protocol` bytes |
 | --- | ---: | ---: | ---: |
-| Prime only | 1 | 75,782 | 70,698 |
-| Prime only | 2 | 75,761 | 70,707 |
-| Prime only | 5 | 75,760 | 70,682 |
-| Word and prime | 1 | 77,938 | 72,840 |
-| Word and prime | 2 | 77,937 | 72,831 |
-| Word and prime | 5 | 77,897 | 72,910 |
-| Word and prime, mixed ordinary | 1 | 92,129 | 87,019 |
-| Word and prime, mixed ordinary | 2 | 92,120 | 87,101 |
-| Word and prime, mixed ordinary | 5 | 92,110 | 87,072 |
+| Prime only | 1 | 83,880 | 78,758 |
+| Prime only | 2 | 83,863 | 78,851 |
+| Prime only | 5 | 83,896 | 78,803 |
+| Word and prime | 1 | 86,010 | 80,974 |
+| Word and prime | 2 | 86,043 | 80,997 |
+| Word and prime | 5 | 86,075 | 80,979 |
+| Prime only, mixed ordinary | 1 | 83,987 | 78,940 |
+| Prime only, mixed ordinary | 2 | 84,009 | 78,875 |
+| Prime only, mixed ordinary | 5 | 83,974 | 78,864 |
+| Word and prime, mixed ordinary | 1 | 86,160 | 81,091 |
+| Word and prime, mixed ordinary | 2 | 86,189 | 81,118 |
+| Word and prime, mixed ordinary | 5 | 86,200 | 81,125 |
 
 The word-only fixtures use the same typed Stage 3 root without prime planes:
 
 | Fixture | Current protocol bytes | `dev-protocol` bytes |
 | --- | ---: | ---: |
-| Binary word, width 128 | 77,936 | 72,877 |
-| Binary word, width 8 | 77,937 | 72,898 |
-| Binary word and ordinary group | 92,101 | 87,119 |
+| Binary word, width 128 | 86,092 | 80,953 |
+| Binary word, width 8 | 86,035 | 81,004 |
+| Binary word and ordinary group | 86,159 | 81,068 |
 
-The compatibility fixture pins full proof digests of the merged typed Stage 3
-protocol in both modes. The unselected ordinary extension retains its existing bytes.
-Duplicate requests also produce identical proof bytes. The new two-polynomial,
-one-plane prime-only mutation fixture measures 75,869 bytes in the current
-protocol and 70,855 bytes in the dev protocol.
+The separate ordinary regression remains 70,541 bytes in the current protocol,
+with the extension feature both disabled and enabled.
+The compatibility fixture pins all six binary word-only proof lengths and
+full digests. Duplicate prime requests also produce identical proof bytes.
+
+Several-polynomial measurements use two source polynomials, still sharing one
+projection set, one A prefix, and one Stage 3:
+
+| Two-polynomial reading | Planes | Current protocol bytes | `dev-protocol` bytes |
+| --- | ---: | ---: | ---: |
+| Word only | 0 | 85,265 | 80,173 |
+| Prime only, projection mutation fixture | 1 | 83,072 | 77,948 |
+| Prime only | 2 | 83,014 | 78,019 |
+| Word and prime | 2 | 85,292 | 80,197 |
