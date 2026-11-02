@@ -169,6 +169,63 @@ impl PinnedMatrixPrefix {
     }
 }
 
+/// A verifier setup whose setup-prefix commitments the host computed itself,
+/// for a custom deployment whose rows need profiles outside every anchored
+/// universe. No manifest digest checks those commitments.
+///
+/// Produced only by a host-only crate downstream of `akita-cpu-backend`
+/// (`akita-preprocess`), which derives the matrix and every commitment from
+/// the seed in its own process, and accepted only by the `unsafe`
+/// [`crate::AkitaVerifier::from_locally_derived`]. Never available in a
+/// guest. The verifier never imports a commitment from a prover or a file.
+///
+/// ```compile_fail
+/// use akita_verifier::preprocessing::LocallyDerivedVerifierSetup;
+/// fn forge(
+///     setup: akita_types::AkitaVerifierSetup<akita_config::proof_optimized::fp128::Field>,
+/// ) -> LocallyDerivedVerifierSetup<akita_config::proof_optimized::fp128::Field> {
+///     LocallyDerivedVerifierSetup { setup }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use akita_verifier::{preprocessing::LocallyDerivedVerifierSetup, AkitaVerifier};
+/// use akita_config::proof_optimized::fp128::{Field, OneHot};
+/// fn build(
+///     setup: LocallyDerivedVerifierSetup<Field>,
+///     catalog: akita_config::TrustedScheduleCatalog<OneHot>,
+/// ) {
+///     let _ = AkitaVerifier::<OneHot>::from_locally_derived(setup, catalog);
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct LocallyDerivedVerifierSetup<F: jolt_field::Field> {
+    setup: AkitaVerifierSetup<F>,
+}
+
+impl<F: jolt_field::Field> LocallyDerivedVerifierSetup<F> {
+    /// Wrap a setup derived in this process.
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract: the caller derived the matrix from its seed and
+    /// computed every setup-prefix commitment from that seed itself; it
+    /// imported no commitment from a prover or a file.
+    #[must_use]
+    pub unsafe fn assume_locally_derived(setup: AkitaVerifierSetup<F>) -> Self {
+        Self { setup }
+    }
+
+    /// The verifier setup.
+    pub fn setup(&self) -> &AkitaVerifierSetup<F> {
+        &self.setup
+    }
+
+    pub(crate) fn into_setup(self) -> AkitaVerifierSetup<F> {
+        self.setup
+    }
+}
+
 /// Load a verifier for every row the set admits, or, with `selection`, for
 /// that admitted row only, whose catalog is then the selected-row view of the
 /// catalog identity.
@@ -194,6 +251,7 @@ where
 {
     let (record, stream) = open_set::<Cfg>(release, set_name)?;
     let admission = Admission::admit(
+        release,
         record,
         load_set_catalog::<Cfg>(release, record, files)?,
         program,

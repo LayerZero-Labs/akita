@@ -45,7 +45,8 @@ pub(crate) fn on_large_stack<T: Send + 'static>(test: impl FnOnce() -> T + Send 
 #[test]
 fn each_role_writes_only_its_files() {
     on_large_stack(|| {
-        let generated = generate(&repo_root(), &small_description("role-test")).unwrap();
+        let generated =
+            generate(&AkitaConfigs, &repo_root(), &small_description("role-test")).unwrap();
         let manifest = ReleaseManifest::decode(&generated.manifest).unwrap();
         assert!(!manifest.registry.is_empty());
         let root = std::env::temp_dir().join(format!("akita-roles-{}", std::process::id()));
@@ -105,7 +106,7 @@ fn bundle_id_does_not_depend_on_thread_count() {
                 .stack_size(64 * 1024 * 1024)
                 .build()
                 .unwrap()
-                .install(|| generate(&repo_root(), &description).unwrap())
+                .install(|| generate(&AkitaConfigs, &repo_root(), &description).unwrap())
         };
         assert_eq!(run(1).manifest, run(4).manifest);
     });
@@ -115,7 +116,7 @@ fn bundle_id_does_not_depend_on_thread_count() {
 fn generation_ignores_a_poisoned_ambient_cache() {
     on_large_stack(|| {
         let description = small_description("poison-test");
-        let honest = generate(&repo_root(), &description).unwrap();
+        let honest = generate(&AkitaConfigs, &repo_root(), &description).unwrap();
         let cache =
             std::env::temp_dir().join(format!("akita-poisoned-cache-{}", std::process::id()));
         let release = cache.join("akita/releases").join(honest.bundle_id.to_hex());
@@ -128,7 +129,7 @@ fn generation_ignores_a_poisoned_ambient_cache() {
         }
         std::fs::write(release.join(MANIFEST_FILE), b"poisoned").unwrap();
         std::env::set_var("LOCALAPPDATA", &cache);
-        let regenerated = generate(&repo_root(), &description).unwrap();
+        let regenerated = generate(&AkitaConfigs, &repo_root(), &description).unwrap();
         std::env::remove_var("LOCALAPPDATA");
         std::fs::remove_dir_all(&cache).unwrap();
         assert_eq!(regenerated.manifest, honest.manifest);

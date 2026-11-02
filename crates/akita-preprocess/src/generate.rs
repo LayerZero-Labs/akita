@@ -2,7 +2,8 @@
 //! file and the manifest.
 
 use crate::description::{ReleaseDescription, MANIFEST_FILE};
-use crate::plan::{insert_profile, plan_set, RowPlan, SetPlan};
+use crate::plan::{insert_profile, RowPlan, SetPlan};
+use crate::ConfigRegistry;
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
 use akita_params::sis::SisModulusProfileId;
@@ -80,14 +81,16 @@ pub struct GeneratedRelease {
 /// Generate a release from scratch.
 ///
 /// The output depends only on the description, the code, and the digest-hash
-/// selection: no cache, previous bundle, or candidate is read. Catalog paths
-/// in the description are relative to `repo_root`.
+/// selection: no cache, previous bundle, or candidate is read. `configs`
+/// names the compiled configuration of each set. Catalog paths in the
+/// description are relative to `repo_root`.
 ///
 /// # Errors
 ///
 /// Returns an error for an invalid description, an unknown config, or a
 /// failed commitment.
 pub fn generate(
+    configs: &dyn ConfigRegistry,
     repo_root: &Path,
     description: &ReleaseDescription,
 ) -> Result<GeneratedRelease, AkitaError> {
@@ -96,13 +99,7 @@ pub fn generate(
     let plans = description
         .sets
         .iter()
-        .map(|set| {
-            crate::dispatch_config!(set.config.as_str(), |Cfg| plan_set::<Cfg>(
-                repo_root,
-                set,
-                &setup_seed
-            ))
-        })
+        .map(|set| configs.plan_set(repo_root, set, &setup_seed))
         .collect::<Result<Vec<_>, _>>()?;
     let mut by_stream = BTreeMap::<StreamId, Vec<&SetPlan>>::new();
     for plan in &plans {

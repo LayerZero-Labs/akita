@@ -69,7 +69,7 @@ pub use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, Truste
 /// Pinned preprocessing releases: manifests, anchors, and both loaders.
 pub mod preprocessing {
     pub use akita_config::preprocessing::{
-        PrefixCommitmentDeriver, PrefixCommitmentSource, ProgramRows,
+        PrefixCommitmentDeriver, PrefixCommitmentSource, ProducerProfiles, ProgramRow, ProgramRows,
     };
     pub use akita_cpu_backend::{load_prover_setup, CpuPrefixDeriver, PinnedProverSetup};
     pub use akita_types::preprocessing::*;

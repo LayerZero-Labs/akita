@@ -19,8 +19,8 @@ use akita_types::AkitaSetupSeed;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// Everything generation needs to know about one set.
-pub(crate) struct SetPlan {
+/// Everything generation needs to know about one set, from [`plan_set`].
+pub struct SetPlan {
     pub(crate) record: SetRecord,
     pub(crate) stream: StreamIdentity,
     pub(crate) field: SisModulusProfileId,
@@ -41,8 +41,15 @@ pub(crate) struct RowPlan {
     pub(crate) verifier_capacity: usize,
 }
 
-/// Plan one set under the compiled config `Cfg`.
-pub(crate) fn plan_set<Cfg: CommitmentConfig>(
+/// Plan one set under the compiled config `Cfg`: its catalog, the rows
+/// within its limits, every profile they use or its universe adds, and its
+/// set record.
+///
+/// # Errors
+///
+/// Returns an error when `Cfg` does not have the set's config family, a file
+/// cannot be read, or the catalog admits no row within the limits.
+pub fn plan_set<Cfg: CommitmentConfig>(
     repo_root: &Path,
     set: &SetDescription,
     setup_seed: &AkitaSetupSeed,
