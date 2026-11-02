@@ -1,0 +1,200 @@
+[
+  {
+    "mode": "dense_fp32",
+    "setup_mode": "direct",
+    "family": "fp32_dense",
+    "num_vars": null,
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "onehot_fp32",
+    "setup_mode": "direct",
+    "family": "fp32_onehot",
+    "num_vars": null,
+    "num_polys": null,
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "dense_fp64",
+    "setup_mode": "direct",
+    "family": "fp64_dense",
+    "num_vars": null,
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "onehot_fp64",
+    "setup_mode": "direct",
+    "family": "fp64_onehot",
+    "num_vars": null,
+    "num_polys": null,
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "dense_fp128",
+    "setup_mode": "direct",
+    "family": "fp128_dense",
+    "num_vars": null,
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "onehot_fp128",
+    "setup_mode": "direct",
+    "family": "fp128_onehot",
+    "num_vars": [
+      32,
+      33,
+      36,
+      40
+    ],
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "dense_fp32",
+    "setup_mode": "recursive",
+    "family": "fp32_dense_recursive",
+    "num_vars": null,
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "dense_fp128_multi_chunk_w8r2",
+    "setup_mode": "direct",
+    "family": "fp128_dense_multi_chunk",
+    "num_vars": [
+      16
+    ],
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "onehot_fp128",
+    "setup_mode": "recursive",
+    "family": "fp128_onehot_recursive",
+    "num_vars": [
+      33,
+      36
+    ],
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "onehot_fp128_multi_group",
+    "setup_mode": "direct",
+    "family": "fp128_onehot",
+    "num_vars": [
+      31
+    ],
+    "num_polys": [
+      4
+    ],
+    "precommitted": [
+      [
+        16,
+        1
+      ],
+      [
+        16,
+        1
+      ]
+    ],
+    "final_polys": 2
+  },
+  {
+    "mode": "onehot_fp128_multi_group_recursive",
+    "setup_mode": "recursive",
+    "family": "fp128_onehot_recursive",
+    "num_vars": [
+      31
+    ],
+    "num_polys": [
+      4
+    ],
+    "precommitted": [
+      [
+        16,
+        1
+      ],
+      [
+        16,
+        1
+      ]
+    ],
+    "final_polys": 2
+  },
+  {
+    "mode": "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
+    "setup_mode": "recursive",
+    "family": "fp128_onehot_recursive_multi_chunk_w8r2",
+    "num_vars": [
+      29
+    ],
+    "num_polys": [
+      4
+    ],
+    "precommitted": [
+      [
+        16,
+        1
+      ],
+      [
+        16,
+        1
+      ]
+    ],
+    "final_polys": 2
+  },
+  {
+    "mode": "onehot_fp128_multi_chunk_w2r2",
+    "setup_mode": "direct",
+    "family": "fp128_onehot_multi_chunk_w2r2",
+    "num_vars": null,
+    "num_polys": null,
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "onehot_fp128_multi_chunk_w4r2",
+    "setup_mode": "direct",
+    "family": "fp128_onehot_multi_chunk_w4r2",
+    "num_vars": null,
+    "num_polys": null,
+    "precommitted": [],
+    "final_polys": null
+  },
+  {
+    "mode": "onehot_fp128_multi_chunk_w8r2",
+    "setup_mode": "direct",
+    "family": "fp128_onehot_multi_chunk",
+    "num_vars": null,
+    "num_polys": null,
+    "precommitted": [],
+    "final_polys": null
+  }
+]

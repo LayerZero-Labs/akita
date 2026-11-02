@@ -23,13 +23,6 @@ use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 
 type F = fp128::Field;
 
-const MULTI_GROUP_PRE_NUM_VARS: usize = 16;
-const MULTI_GROUP_FINAL_NUM_VARS: usize = 34;
-const MULTI_GROUP_W8R2_FINAL_NUM_VARS: usize = 32;
-const MULTI_GROUP_PRE_GROUPS: usize = 2;
-const MULTI_GROUP_FINAL_POLYS: usize = 2;
-const MULTI_GROUP_TOTAL_POLYS: usize = MULTI_GROUP_PRE_GROUPS + MULTI_GROUP_FINAL_POLYS;
-
 fn fp128_prime_label() -> String {
     match <F as PseudoMersenne>::OFFSET {
         // Prime128OffsetA7F7: p = 2^128 - 2^32 + 22537 = 2^128 - 0xFFFFA7F7.
@@ -61,6 +54,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     title: &str,
     nv: usize,
+    num_polys: usize,
 ) where
     FF: CanonicalEncoding
         + CanonicalBytes
@@ -77,6 +71,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + 'static,
     Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
+    crate::contract::attest::<Cfg>(label, nv, num_polys);
     let scheme = load_workspace_scheme::<Cfg>(ChunkedWitnessCfg::default_non_chunked())
         .expect("workspace schedule artifact");
     // The dense profile opens one polynomial at one point, so the schedule key
@@ -117,6 +112,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + 'static,
     Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
+    crate::contract::attest::<Cfg>(label, nv, num_polys);
     let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule artifact");
     tracing::info!("{}", title);
     let group = PolynomialGroupLayout::new(nv, num_polys);
@@ -354,13 +350,6 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp64",
 ];
 
-fn assert_singleton_mode(mode: &str, num_polys: usize) {
-    assert_eq!(
-        num_polys, 1,
-        "{mode} currently profiles only singleton commitments"
-    );
-}
-
 const SMALL_FIELD_SCHEDULE_SOURCE: &str = "generated schedule catalog";
 
 fn small_field_onehot_title<Cfg: CommitmentConfig>(
@@ -388,7 +377,7 @@ fn small_field_dense_title(field_label: &str) -> String {
 
 fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     type Cfg = fp128::Dense;
-    assert_singleton_mode("dense_fp128", num_polys);
+    crate::contract::attest::<Cfg>("dense_fp128", nv, num_polys);
     let prime = fp128_prime_label();
     let title = format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ===");
     let scheme = load_workspace_scheme::<Cfg>(ChunkedWitnessCfg::default_non_chunked())
@@ -405,8 +394,7 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
 
 fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
     type Cfg = fp128::DenseMultiChunk;
-    assert_eq!(nv, 16, "dense W8R2 profiles nv=16");
-    assert_singleton_mode("dense_fp128_multi_chunk_w8r2", num_polys);
+    crate::contract::attest::<Cfg>("dense_fp128_multi_chunk_w8r2", nv, num_polys);
     let prime = fp128_prime_label();
     let scheme = load_workspace_scheme::<Cfg>(MultiChunkProfileId::W8R2.cfg())
         .expect("workspace schedule artifact");
@@ -428,7 +416,6 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
         }
         SetupContributionMode::Recursive => {
             type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
-            assert_eq!(nv, 36, "recursive onehot_fp128 profiles nv=36");
             run_profile_onehot_fp128_with_cfg::<256, Cfg>("onehot_fp128", nv, num_polys);
         }
     }
@@ -442,11 +429,7 @@ fn run_profile_onehot_fp128_with_cfg<
     nv: usize,
     num_polys: usize,
 ) {
-    assert!(
-        matches!(nv, 32 | 36 | 40),
-        "fp128 one-hot profile supports generated nv=32, nv=36, and nv=40 rows"
-    );
-    assert_singleton_mode(label, num_polys);
+    crate::contract::attest::<Cfg>(label, nv, num_polys);
 
     let scheme = load_workspace_scheme::<Cfg>(ChunkedWitnessCfg::default_non_chunked())
         .expect("workspace schedule artifact");
@@ -483,9 +466,7 @@ fn run_profile_onehot_fp128_with_cfg<
     run_onehot::<F, D, Cfg>(&scheme, label, nv, &layout, Some(&schedule), false);
 }
 
-/// Shared driver for the multi-group profiles. Every such profile fixes the
-/// shape declared by the `MULTI_GROUP_*` constants above; only the base preset
-/// (`Cfg`) and the `layout_note` describing its witness layout differ.
+/// Shared driver for multi-group shapes declared in `workloads.json`.
 fn run_multi_group_mode<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ExtField = F>
@@ -496,23 +477,30 @@ fn run_multi_group_mode<
     layout_note: &str,
     nv: usize,
     num_polys: usize,
-    expected_final_nv: usize,
 ) {
-    assert_eq!(nv, expected_final_nv, "{label} fixes the main-group arity");
-    assert_eq!(
-        num_polys, MULTI_GROUP_TOTAL_POLYS,
-        "{label} opens two precommitted singleton groups plus two main polynomials"
-    );
+    let workload = match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => crate::contract::attest::<Cfg>(label, nv, num_polys),
+        SetupContributionMode::Recursive => {
+            crate::contract::attest::<RecursiveCommitmentConfig<Cfg>>(label, nv, num_polys)
+        }
+    };
+    let crate::contract::Workload::MultiGroup {
+        pre_num_vars,
+        final_num_polys,
+    } = workload
+    else {
+        panic!("multi-group driver requires a grouped workload");
+    };
     tracing::info!(
-        "=== {label} (fp128, {}, source fixture view D={D}, flat public setup, generated per-level dimensions, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {expected_final_nv}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, {layout_note}) ===",
         fp128_prime_label()
     );
     run_recursive_multi_group_onehot::<F, D, Cfg>(
         chunking,
         label,
-        MULTI_GROUP_PRE_NUM_VARS,
-        expected_final_nv,
-        MULTI_GROUP_FINAL_POLYS,
+        pre_num_vars,
+        nv,
+        final_num_polys,
     );
 }
 
@@ -529,7 +517,6 @@ fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
         "generated per-level dimensions",
         nv,
         num_polys,
-        MULTI_GROUP_FINAL_NUM_VARS,
     );
 }
 
@@ -541,7 +528,6 @@ fn run_profile_onehot_fp128_multi_group_recursive(nv: usize, num_polys: usize) {
         "adaptive ring dimensions + recursive setup",
         nv,
         num_polys,
-        MULTI_GROUP_FINAL_NUM_VARS,
     );
 }
 
@@ -553,7 +539,6 @@ fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, nu
         "adaptive ring dimensions + recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
         nv,
         num_polys,
-        MULTI_GROUP_W8R2_FINAL_NUM_VARS,
     );
 }
 
@@ -622,25 +607,23 @@ fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_dense_fp32(nv: usize, num_polys: usize) {
-    assert_singleton_mode("dense_fp32", num_polys);
     let title = small_field_dense_title("fp32");
     match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
             type Cfg = fp32::Dense;
-            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv, num_polys);
         }
         SetupContributionMode::Recursive => {
             type Cfg = RecursiveCommitmentConfig<fp32::Dense>;
-            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
+            run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv, num_polys);
         }
     }
 }
 
 fn run_profile_dense_fp64(nv: usize, num_polys: usize) {
     type Cfg = fp64::Dense;
-    assert_singleton_mode("dense_fp64", num_polys);
     let title = small_field_dense_title("fp64");
-    run_dense_mode_for::<fp64::Field, 256, Cfg>("dense_fp64", &title, nv);
+    run_dense_mode_for::<fp64::Field, 256, Cfg>("dense_fp64", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp64(nv: usize, num_polys: usize) {

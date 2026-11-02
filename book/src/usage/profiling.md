@@ -27,7 +27,7 @@ debugging the harness itself.
 
 `onehot_fp128` commits to one multilinear polynomial with $2^{36}$ entries and
 opens it at one 36 coordinate point. The source stores one selected position in
-each 256 entry chunk.
+each 16 entry chunk.
 
 The public statement proves commitment and opening consistency. One hot is the
 prover representation that lets Akita skip zero work. A host constraint system
