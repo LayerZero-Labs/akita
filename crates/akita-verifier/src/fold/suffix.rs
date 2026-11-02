@@ -1,5 +1,5 @@
 use super::terminal::verify_terminal_suffix;
-use super::{verify_fold, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
+use super::{verify_fold, NextWitness, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::{
     finalize_claims, prepare_single_field_suffix_groups, verify_coefficient_packing_suffix_prefix,
@@ -21,7 +21,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMer
 pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
     pub opening: E,
-    pub witness: RingVec<F>,
+    pub witness: NextWitness<F>,
     pub basis: BasisMode,
     pub witness_len: usize,
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
@@ -100,8 +100,13 @@ where
         + MulBaseUnreduced<F>
         + ChallengeCodec,
 {
+    let NextWitness::OuterPayload(witness) = &current_state.witness else {
+        return Err(AkitaError::Internal(
+            "recursive fold scheduled after a terminal t witness".into(),
+        ));
+    };
     let payload_geometry = lp.outer_payload_geometry()?;
-    if current_state.witness.coeff_len() != payload_geometry.transmitted_coefficients() {
+    if witness.coeff_len() != payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
     // The outer payload was absorbed when it was received as the next witness.
@@ -202,7 +207,7 @@ where
     .map(RingVec::from_coeffs)?;
     let prefix = finalize_claims::<F, E>(&opening_batch, material, grinding, level)?;
     let commitment_payloads =
-        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, &current_state.witness)?;
+        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, witness)?;
     let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
         if let Some(next) = next_params {
             let ring_dim = next.params.d_a();

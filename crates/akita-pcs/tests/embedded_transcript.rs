@@ -411,7 +411,8 @@ fn sent_witness_values_are_absorbed_once() {
                 assert_ne!(record.kind, public, "next witness must be a prover message");
             }
         }
-        // One next-witness message per fold level, with the atom count the
+        // Each fold level's next-witness messages (a terminal `t` prefix is
+        // followed by its last-block digest), with the atom counts the
         // verifier's level grammar expects, sent before that level's
         // ring-switch challenge.
         let next_witness = |records: &[akita_transcript::ProtocolContextRecord]| {

@@ -119,6 +119,26 @@ pub struct TerminalFoldParams {
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM: u128 = 1;
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN: u128 = 2;
 
+/// Split `segment` into `sent` field elements and an omitted last block of
+/// exactly `block` field elements.
+fn split_last_block<'a, T>(
+    name: &str,
+    segment: &'a [T],
+    sent: usize,
+    block: usize,
+) -> Result<(&'a [T], &'a [T]), AkitaError> {
+    segment
+        .split_at_checked(sent)
+        .filter(|(_, last)| last.len() == block)
+        .ok_or_else(|| {
+            AkitaError::Internal(format!(
+                "terminal {name} segment has {} field elements, expected a {sent}-element \
+                 prefix and a {block}-element last block",
+                segment.len()
+            ))
+        })
+}
+
 impl TerminalFoldParams {
     /// Project a fold's params into terminal parameters.
     ///
@@ -224,6 +244,33 @@ impl TerminalFoldParams {
     #[inline]
     pub fn inner_width(&self) -> usize {
         self.inner.matrix.input_width()
+    }
+
+    /// Split a complete terminal `e` segment into its scheduled wire prefix and
+    /// the omitted last block, which must be exactly one ring.
+    pub fn split_last_e_block<'a, T>(&self, e: &'a [T]) -> Result<(&'a [T], &'a [T]), AkitaError> {
+        let sent = self.terminal_group()?.e_field_elems;
+        split_last_block("e", e, sent, self.d_a())
+    }
+
+    /// Split a complete terminal `t` state into its scheduled wire prefix and
+    /// the omitted last block, which must be exactly `n_A` rings.
+    pub fn split_last_t_block<'a, T>(&self, t: &'a [T]) -> Result<(&'a [T], &'a [T]), AkitaError> {
+        let sent = self.terminal_group()?.t_field_elems;
+        let block = self
+            .d_a()
+            .checked_mul(self.inner.matrix.output_rank())
+            .ok_or_else(|| AkitaError::Internal("terminal t block length overflows".into()))?;
+        split_last_block("t", t, sent, block)
+    }
+
+    fn terminal_group(&self) -> Result<&crate::TailSegmentGroupLayout, AkitaError> {
+        match self.response_shape.layout.groups.as_slice() {
+            [group] => Ok(group),
+            _ => Err(AkitaError::Internal(
+                "terminal response shape does not have exactly one group".into(),
+            )),
+        }
     }
 
     /// Logical opening-point width for the witness entering the terminal fold.

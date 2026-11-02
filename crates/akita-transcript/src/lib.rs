@@ -40,6 +40,7 @@ pub use proof_stream::{
     SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
     SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL, STANDALONE_SESSION_TAG,
 };
+pub use proof_stream::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 #[cfg(feature = "prover")]
 pub use proof_stream::{FoldPreview, FoldWork};
 

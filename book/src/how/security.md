@@ -427,10 +427,18 @@ the [fold argument](../../../specs/transcript-grinding.md#fold-message-bound).
 The packed consistency equation still gives one polynomial identity in `E[Y]`.
 After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
 conditional polynomial-check error is `(2s-1)/|E|`. This term must be composed
-with the CWSS, random-oracle, sum-check, collision, and MSIS terms. The active
+with the CWSS, random-oracle, sum-check, collision, terminal-digest collision,
+and MSIS terms. The active
 [subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
 gives the algebraic relation and its separate field-check loss. The fold
 contribution is accounted by the fold message bound above.
+
+The terminal omits the last live block of `e` and of `t` and sends a digest of
+each. In the extraction tree, forks that share a digest recover the same block
+unless the digest hash collides among the tree's queries. This adds the
+terminal-digest collision term above. The
+[terminal check](./verifying/terminal.md#why-omitting-the-block-is-sound)
+gives the argument.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

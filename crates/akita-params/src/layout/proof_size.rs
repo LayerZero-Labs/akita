@@ -2,6 +2,7 @@
 
 use akita_error::AkitaError;
 
+use crate::layout::tail_segments::TERMINAL_BLOCK_DIGEST_BYTES;
 use crate::{PolynomialGroupLayout, TerminalResponseShape};
 
 /// Degree bound for one witness factor times one transparent reduction factor.
@@ -15,22 +16,12 @@ pub fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
 }
 
-/// Serialized byte size for a terminal direct witness shape.
-pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -> usize {
-    crate::layout::tail_segments::terminal_response_upper_bound_bytes(
-        field_bits,
-        &shape.layout,
-        shape.layout.z_payload_bytes(),
-    )
-}
-
 /// Maximum bytes emitted by the native terminal suffix grammar.
 ///
 /// The proof bound reserves the scheduled `e` and `t` field payload budget
-/// across the predecessor-to-suffix boundary. The suffix uses one `u32` length
-/// followed by the bounded `z` payload for each group.
-/// This differs from the legacy structured response only in using four, not
-/// eight, framing bytes per group.
+/// across the predecessor-to-suffix boundary. Each group adds one `u32`
+/// length followed by the bounded `z` payload, and
+/// [`TERMINAL_BLOCK_DIGEST_BYTES`] for the blocks the verifier recomputes.
 pub fn terminal_response_max_bytes(
     field_bits: u32,
     shape: &TerminalResponseShape,
@@ -58,10 +49,12 @@ fn checked_terminal_response_bytes(
     let field_payload_bytes = field_count
         .checked_mul(field_bytes(field_bits))
         .ok_or_else(|| AkitaError::InvalidSetup("native terminal field-size overflow".into()))?;
-    let framing_bytes =
-        shape.layout.groups.len().checked_mul(4).ok_or_else(|| {
-            AkitaError::InvalidSetup("native terminal framing-size overflow".into())
-        })?;
+    let framing_bytes = shape
+        .layout
+        .groups
+        .len()
+        .checked_mul(4 + TERMINAL_BLOCK_DIGEST_BYTES)
+        .ok_or_else(|| AkitaError::InvalidSetup("native terminal framing-size overflow".into()))?;
     field_payload_bytes
         .checked_add(z_payload_bytes)
         .and_then(|value| value.checked_add(framing_bytes))
@@ -409,11 +402,14 @@ mod tests {
     }
 
     #[test]
-    fn terminal_bound_uses_u32_group_framing() {
+    fn terminal_bound_uses_u32_group_framing_and_block_digests() {
         let shape = sample_terminal_shape();
-        let legacy = terminal_response_bytes(64, &shape);
-        let max_bytes = terminal_response_max_bytes(64, &shape).unwrap();
-        assert_eq!(legacy - max_bytes, 4 * shape.layout.groups.len());
+        let group = shape.layout.groups[0];
+        let field_payload = (group.e_field_elems + group.t_field_elems) * field_bytes(64);
+        assert_eq!(
+            terminal_response_max_bytes(64, &shape).unwrap(),
+            4 + group.z_payload_bytes + field_payload + TERMINAL_BLOCK_DIGEST_BYTES
+        );
     }
 
     #[test]

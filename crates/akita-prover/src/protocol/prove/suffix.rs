@@ -184,13 +184,24 @@ where
             "terminal commitment material disagrees with the terminal plan".into(),
         ));
     }
-    // `t` was absorbed when it was sent as the next-witness inner state.
+    let group = scheduled
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .ok_or_else(|| AkitaError::Internal("terminal response shape has no group".into()))?;
+    // The `t` prefix and its last-block digest were absorbed when the
+    // predecessor fold sent them as the next witness.
     let fold_level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    let t_state = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
+    let mut t_sent = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
         backend,
         commitment_material,
-    )?;
+    )?
+    .into_coeffs();
+    let t_sent_len = scheduled.split_last_t_block(&t_sent)?.0.len();
+    t_sent.truncate(t_sent_len);
+    let t_sent = akita_types::RingVec::from_coeffs(t_sent);
 
     let consumer = backend;
     let context = backend.proof_context(session, fold_level)?;
@@ -301,10 +312,17 @@ where
                 let e_folded = folded_by_claim.into_iter().next().ok_or_else(|| {
                     AkitaError::Internal("terminal backend returned no folded opening".into())
                 })?;
+                let (e_sent, e_last_block) = params.split_last_e_block(e_folded.coeffs())?;
+                let e_sent_len = e_sent.len();
                 akita_transcript::send_field_group(
                     grinding.state_mut(),
                     akita_types::FoldSite::TerminalEFields { level: fold_level }.id()?,
-                    e_folded.coeffs(),
+                    e_sent,
+                )?;
+                akita_transcript::send_field_digest(
+                    grinding.state_mut(),
+                    akita_types::FoldSite::TerminalEDigest { level: fold_level }.id()?,
+                    e_last_block,
                 )?;
                 let output = crate::protocol::fold_grind::sample_terminal_fold_response::<
                     F,
@@ -320,11 +338,13 @@ where
                     witness_source,
                     &scheduled.response_shape,
                 )?;
+                let mut e_sent = e_folded.into_coeffs();
+                e_sent.truncate(e_sent_len);
                 let terminal_response = akita_types::build_terminal_response_from_payload::<F>(
                     params,
                     &scheduled.response_shape,
-                    &e_folded,
-                    t_state.clone(),
+                    akita_types::RingVec::from_coeffs(e_sent),
+                    t_sent,
                     output.encoded_payload,
                 )?;
                 Ok::<_, AkitaError>(terminal_response)
@@ -332,12 +352,6 @@ where
         )?
     };
     crate::backend::OpaqueResourceReleaseKernel::release_witness_handle(consumer, witness_handle)?;
-    let group = scheduled
-        .response_shape
-        .layout
-        .groups
-        .first()
-        .ok_or_else(|| AkitaError::Internal("terminal response shape has no group".into()))?;
     let z_payload = terminal_response
         .z_payloads
         .first()
