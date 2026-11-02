@@ -243,11 +243,12 @@ pub(crate) fn parse_hex(hex: &str) -> Result<Vec<u8>, AkitaError> {
 
 /// Parse slot-id lines: one hex-encoded uncompressed `SetupPrefixSlotId` per
 /// line, skipping blank lines and `#` comments. `origin` names the text in
-/// errors.
-pub(crate) fn parse_slot_ids(
-    text: &str,
-    origin: &str,
-) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
+/// errors. Universe files and the known-answer corpus use this format.
+///
+/// # Errors
+///
+/// Returns an error when a line is not a valid, checked slot id.
+pub fn parse_slot_ids(text: &str, origin: &str) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
     text.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
