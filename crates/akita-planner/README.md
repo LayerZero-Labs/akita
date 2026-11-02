@@ -201,7 +201,7 @@ recursion. Runtime verification never invokes this search.
 The planner uses the same byte formulas that runtime schedule expansion uses:
 
 - `nonterminal_level_layout` for a fold level's fixed messages.
-- `terminal_response_bytes` for the terminal witness.
+- `terminal_response_planner_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
 - the canonical grinding plan for additive per-message nonce maxima.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
@@ -212,7 +212,8 @@ ordinary recursive edges and zero outgoing-commitment bytes for the
 `TerminalInnerState` handoff. Level bodies contain no nonce field. The exact
 stream byte count is rounded once across the complete plan. Terminal proof
 bodies contain only any extension-opening reduction; their clear witness is
-priced by `terminal_response_bytes`.
+priced by `terminal_response_planner_bytes`, which is bounded by the
+wire cap `terminal_response_max_bytes`.
 
 The planner materializes this accounting directly into the expanded
 `FoldSchedule` stored in each external artifact row.

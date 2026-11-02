@@ -35,7 +35,7 @@ use akita_error::AkitaError;
 use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::nonterminal_level_layout;
 use akita_params::{
-    extension_opening_reduction_level_bytes, sumcheck_rounds, terminal_response_bytes,
+    extension_opening_reduction_level_bytes, sumcheck_rounds, terminal_response_max_bytes,
     CommitmentPayloadMode, CommittedGroupBatchProfile, DigitRangePlan, OpeningClaimsLayout,
     PolynomialGroupLayout, RingRelationMode, SisModulusProfileId, TailSegmentGroupLayout,
     TailSegmentLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
@@ -604,21 +604,9 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
 
 fn terminal_response_fixture(
     lp: &CommittedGroupParams,
-    num_claims: usize,
 ) -> (TerminalResponse<F>, TerminalResponseShape) {
-    let field_bits = F::MODULUS_BITS;
-    let shape = TerminalResponseShape::from_groups(
-        lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            num_claims,
-            num_claims,
-            1,
-            127,
-        )],
-    )
-    .expect("terminal response shape");
+    let terminal = TerminalFoldParams::from_expanded_group(lp.clone());
+    let shape = TerminalResponseShape::derive(&terminal, 127).expect("terminal response shape");
     let layout = shape.layout.clone();
     let group = layout.groups[0];
     let rice_low_bits = group.z_rice_low_bits;
@@ -773,7 +761,6 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
 fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    let num_claims = 3;
 
     for log_basis in 2..=6 {
         let mut lp = CommittedGroupParams::params_only(
@@ -803,7 +790,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 inner.ring_dimension(),
             );
 
-        let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
+        let (terminal_response, witness_shape) = terminal_response_fixture(&lp);
         let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
@@ -811,7 +798,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         );
 
         // The planner accounts for the final witness separately
-        // (`terminal_response_bytes` on the terminal plan). Subtract
+        // (`terminal_response_max_bytes` on the terminal plan). Subtract
         // it from the serialized terminal level. Nonce messages
         // stream is accounted separately.
         let serialized_without_witness =
@@ -823,7 +810,8 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                  (less terminal_response) at log_basis={log_basis}"
         );
 
-        let scheduled_bytes = terminal_response_bytes(128, &witness_shape);
+        let scheduled_bytes =
+            terminal_response_max_bytes(128, &witness_shape).expect("terminal bound");
         assert!(
             scheduled_bytes >= terminal_response_bytes_runtime,
             "scheduled direct witness budget must cover serialized terminal response \

@@ -4,31 +4,14 @@ use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::tail_golomb_rice_low_bits::wire_rice_low_bits;
 use akita_params::test_fixtures::test_lp;
 use akita_params::CommittedGroupParams;
-use jolt_field::CanonicalEncoding;
 use jolt_field::{Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;
 const TEST_ADMISSION_CAP: u128 = 127;
 
-fn scalar_group_layout(
-    lp: &CommittedGroupParams,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_z_segments: usize,
-    field_bits: u32,
-) -> Result<TailSegmentLayout, AkitaError> {
-    TerminalResponseShape::from_groups(
-        lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            num_w_vectors,
-            num_t_vectors,
-            num_z_segments,
-            TEST_ADMISSION_CAP,
-        )],
-    )
-    .map(|shape| shape.layout)
+fn scalar_group_layout(lp: &CommittedGroupParams) -> Result<TailSegmentLayout, AkitaError> {
+    let terminal = akita_params::TerminalFoldParams::from_expanded_group(lp.clone());
+    TerminalResponseShape::derive(&terminal, TEST_ADMISSION_CAP).map(|shape| shape.layout)
 }
 
 #[test]
@@ -126,20 +109,7 @@ fn terminal_decoder_rejects_coefficient_outside_i16() {
 #[test]
 fn direct_terminal_layout_contains_only_z_e_t_planes() {
     let lp = test_lp();
-    let field_bits = F::MODULUS_BITS;
-    let layout = TerminalResponseShape::from_groups(
-        &lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            1usize,
-            1usize,
-            1usize,
-            TEST_ADMISSION_CAP,
-        )],
-    )
-    .expect("direct terminal layout")
-    .layout;
+    let layout = scalar_group_layout(&lp).expect("direct terminal layout");
     assert_eq!(layout.groups.len(), 1);
     assert_eq!(layout.logical_num_elems % lp.d_a(), 0);
 }
@@ -147,11 +117,9 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
 #[test]
 fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
-    use jolt_field::CanonicalEncoding;
 
     let lp = test_lp();
-    let field_bits = F::MODULUS_BITS;
-    let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
+    let layout = scalar_group_layout(&lp).unwrap();
     let scheduled_z_bytes = layout.z_payload_bytes();
     assert!(
         scheduled_z_bytes > 16,
