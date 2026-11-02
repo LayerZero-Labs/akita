@@ -73,11 +73,13 @@ the base modulus and `e` is the challenge extension degree. In the supported
 logarithm. The nominal modulus bit width cannot replace the field cardinality.
 
 Before drawing the protected challenge, the prover searches for a nonce after
-which the next `ceil(g/8)` squeezed check bytes have `g` zero low-order bits,
-read as a little-endian integer. One candidate passes with probability
-`2^-g`, so the expected search is about `2^g` candidates. Since protocol v8 the
-search and check are `grind` and `check_grind` from `jolt-transcript`; before
-v8 Akita squeezed a 32-byte check.
+which the next 8 squeezed check bytes, read as a little-endian `u64`, have `g`
+zero low-order bits. One candidate passes with probability `2^-g`, so the
+expected search is about `2^g` candidates. Since protocol v8 the search and
+check are `grind` and `check_grind` from `jolt-transcript`: the nonce is
+canonical unsigned LEB128 in the proof string and is absorbed as one
+little-endian `u64` word, and the last candidate is `2^(g+7) - 1`. Before v8
+Akita squeezed a 32-byte check.
 
 This does not add entropy and does not make the protected challenge larger.
 It makes each accepted attempt more expensive. Conditioned on a passing
@@ -158,16 +160,18 @@ The grinding plan is derived only from trusted public data:
 Its digest is bound into the instance descriptor. Proof bytes do not choose the
 number, order, width, or meaning of grinding entries.
 
-There are three kinds of plan entries:
+There are four kinds of plan entries:
 
 | Kind | Purpose | Nonce bytes? |
 | --- | --- | --- |
 | `ProofOfWork` | Price a Fiat--Shamir query's algebraic loss | Only when `g > 0` |
 | `FoldResponse` | Bounded search for an acceptable folded response | Always one 12-bit nonce |
-| `FoldChallengeGroup` | Audit one group root and all indexed coordinates | No nonce |
+| `FoldChallengeWork` | Price one fold's group messages against its sparse challenge set | Only when `g > 0` |
+| `FoldChallengeGroup` | Record one group's sparse challenge message | No nonce |
 
-The last kind is important for query counting and replay order but is not
-additional proof-of-work.
+`FoldChallengeGroup` is important for query counting and replay order but is
+not proof-of-work. `FoldChallengeWork` and the sparse message layout are
+specified in [sparse-challenge-stream](sparse-challenge-stream.md).
 
 ### 2.1 Nonterminal fold level
 
@@ -725,19 +729,24 @@ For PoW:
 7. The verifier reads and absorbs exactly those proof bytes, one byte at a
    time, before squeezing and checking the same check bytes.
 
-Since protocol v8 these steps are Jolt's `grind` and `check_grind`, and the
-check is `ceil(g/8)` bytes rather than 32.
+Since protocol v8 these steps are Jolt's `grind` and `check_grind`. The
+nonce is still one prover message with canonical LEB128 wire bytes, but the
+transcript absorbs it as one little-endian `u64` word, and the check is 8
+squeezed bytes rather than 32.
 
-Fold-response search similarly previews by absorbing one LEB128 nonce, derives
-all group roots in canonical order, and commits the accepted nonce once before
-repeating that sequence on the live state.
+Fold-response search similarly previews by absorbing one nonce, runs the
+fold's proof of work and squeezes every group's sparse challenge message in
+canonical order, and commits the accepted nonce once before repeating that
+sequence on the live state. Since protocol v8 that nonce, too, is LEB128 on
+the wire and absorbed as one little-endian `u64` word.
 
 There is no nonce prefix, count, width field, or separate packed suffix. The
 public positional grammar and grinding-plan cursor say when a nonce must occur;
 LEB128 says where that individual integer ends.
 
-Because the LEB128 proof bytes are now the absorbed transcript bytes, this is a
-protocol change rather than only a storage change. Challenges differ from main,
+Because the LEB128 proof bytes became the absorbed transcript bytes, PR #37
+was a protocol change rather than only a storage change. Protocol v8 changed
+the absorbed form again, to one `u64` word per nonce. Challenges differ from main,
 and the protocol uses a new version.
 
 ## 8. Detailed size comparison

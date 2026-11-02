@@ -23,6 +23,9 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
     /// Verify one standalone Spongefish argument under `session`.
+    ///
+    /// This is [`Self::batched_verify_embedded`] on a fresh state for
+    /// `session`, followed at once by the end-of-proof check.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify(
@@ -40,10 +43,15 @@ where
     /// Verify Akita's messages inside the caller's transcript.
     ///
     /// Akita reads its messages from `state`'s argument string and squeezes
-    /// its challenges from `state`'s sponge. On any error the state is
-    /// poisoned before this returns. On success the caller continues its own
-    /// protocol and must pass the state to [`PendingEof::check_eof`] after its
-    /// last message; only that call accepts the proof.
+    /// its challenges from `state`'s sponge. It absorbs its own statement
+    /// first: the protocol tag, the instance descriptor, each opened group's
+    /// commitment digest, the opening points and the claimed values. The
+    /// caller need not absorb any of these; it binds only what its own
+    /// challenges depend on, and calls this at the point of the transcript
+    /// where the prover called `batched_prove_embedded`. On any error the
+    /// state is poisoned before this returns. On success the caller continues
+    /// its own protocol and must pass the state to [`PendingEof::check_eof`]
+    /// after its last message; only that call accepts the proof.
     ///
     /// # Errors
     ///

@@ -15,10 +15,10 @@
 //!   norm `max_k |c(zeta_k)|` at most the policy threshold, recomputed here with
 //!   a floating-point DFT (flagged only beyond a rounding allowance far above
 //!   f64 error, so the check never fires on a boundary case);
-//! - drawing again from the same statement yields the same challenges, and a
-//!   different group index yields a different transcript payload;
+//! - drawing again from the same statement yields the same challenges, and the
+//!   next group's draw squeezes a different message;
 //! - an operator-norm pool running out is a liveness failure (at most `2^-161`
-//!   per honest message), never an expected outcome.
+//!   per honest message at the sizing rate), never an expected outcome.
 
 use crate::input::Reader;
 use crate::stats;

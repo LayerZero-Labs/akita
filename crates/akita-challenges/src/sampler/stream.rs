@@ -23,8 +23,10 @@
 //! candidate is accepted does not depend on the accepted values, so the
 //! challenges of a message that does not run out are exactly uniform on the
 //! accepted set. The pool size only bounds how often an honest message runs
-//! out: at most `2^-161` at the measured predicate rate, and at most `2^-32`
-//! at the certified lower bound.
+//! out: at most `2^-161` at the sizing rate below the measured predicate rate.
+//! At the certified rate the bound depends on the count `W`: at most `2^-32`
+//! for D64 with `W <= 64` and `2^-79` for D128 with `W <= 191`, and no useful
+//! bound for D64 past about `W = 200`.
 
 use super::ChallengePolicy;
 use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
@@ -55,11 +57,13 @@ const PARALLEL_DECODE_WORK_THRESHOLD: usize = 1 << 14;
 
 /// Lower bounds used to size an operator-norm pool.
 ///
-/// `accept` is a rational lower bound `u / v` on the probability that one
-/// candidate is accepted: the exact in-range rate times the measured predicate
-/// rate lowered by more than ten standard errors. `fail_bits` is a rational
-/// lower bound on `-log2(1 - u / v)`. A wrong bound changes only how often an
-/// honest message runs out, never which challenges are accepted.
+/// `accept` is a rational `u / v` for the probability that one candidate is
+/// accepted: the exact in-range rate times a sizing predicate rate about 3.7
+/// (D64) or 3.8 (D128) standard errors below the rate measured on 20,000
+/// draws. It is an estimate, not a proven bound; the certificate proves only
+/// a lower combined rate. `fail_bits` is a rational lower bound on
+/// `-log2(1 - u / v)`. A wrong rate changes only how often an honest message
+/// runs out, never which challenges are accepted.
 struct PoolRates {
     accept: (u128, u128),
     fail_bits: (u128, u128),
@@ -68,8 +72,9 @@ struct PoolRates {
 /// Pool rates and certified accepted-set exponent of one rejection policy.
 fn operator_norm_rates(rejection: OperatorNormRejection) -> Result<(PoolRates, u32), AkitaError> {
     match rejection {
-        // In-range rate 0.5557, predicate rate at least 0.65 (measured 0.6623).
-        // The certificate retains 2^128.062 accepted challenges.
+        // In-range rate 0.5557, sizing predicate rate 0.65 (measured 0.6623).
+        // The certificate retains 2^128.062 accepted challenges, a combined
+        // rate of at least 0.1305.
         OperatorNormRejection::D64_SELECTIVE_L2 => Ok((
             PoolRates {
                 accept: (3611, 10_000),
@@ -77,8 +82,9 @@ fn operator_norm_rates(rejection: OperatorNormRejection) -> Result<(PoolRates, u
             },
             128,
         )),
-        // In-range rate 0.7692, predicate rate at least 0.78 (measured 0.7908).
-        // The certificate retains 2^128.563 accepted challenges.
+        // In-range rate 0.7692, sizing predicate rate 0.78 (measured 0.7908).
+        // The certificate retains 2^128.563 accepted challenges, a combined
+        // rate of at least 0.3694.
         OperatorNormRejection::D128_SELECTIVE_L2 => Ok((
             PoolRates {
                 accept: (5999, 10_000),

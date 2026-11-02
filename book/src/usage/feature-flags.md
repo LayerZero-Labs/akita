@@ -65,6 +65,27 @@ build with `--no-default-features` and enable `transcript-blake2b`.
 The transcript backend is part of proof compatibility. Prover and verifier
 must use the same backend and protocol revision.
 
+### Digest hash
+
+`keccak256-digests` (on `akita-pcs` and `akita-transcript`) replaces SHA3-256
+with Keccak-256 for every digest Akita binds: the instance descriptor's
+digests, commitment digests, and the schedule and planner-policy digests. It
+is for an application whose recursion guest checks those digests with Jolt's
+Keccak-256 inline. The protocol tag names the selection, so a proof made under
+one digest hash never verifies under the other. The feature is independent of
+the transcript backend.
+
+The checked-in `.aks` catalogs carry SHA3-256 digests. A build with
+`keccak256-digests` rejects them with `AkitaError::InvalidSetup` at the
+planner-policy digest check, so such an application must regenerate its
+catalogs with `gen_schedule_artifacts` built under the same feature (for
+example `--features akita-transcript/keccak256-digests`).
+
+Cargo unifies features across a build, so any crate in the dependency graph
+that enables `keccak256-digests` turns it on for every Akita crate in that
+build. Check the resolved feature set with `cargo tree -e features` when a
+catalog that loads elsewhere fails this check.
+
 ### Prover-side transcript feature
 
 `akita-transcript`, `akita-challenges`, and `akita-types` each have a `prover`

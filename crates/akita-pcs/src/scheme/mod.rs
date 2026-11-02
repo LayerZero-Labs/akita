@@ -119,6 +119,9 @@ where
     /// Produce a fused batched opening proof from retained commitments, in a
     /// standalone transcript under `session`.
     ///
+    /// This is [`Self::batched_prove_embedded`] on a fresh channel for
+    /// `session`, and the returned bytes are that channel's proof string.
+    ///
     /// Each handle retains its exact source. The backend validates public claims
     /// against that commitment before creating independent proof state.
     ///
@@ -165,9 +168,14 @@ where
 
     /// Produce a fused batched opening proof inside the caller's transcript.
     ///
-    /// The proof bytes are appended to `channel`'s proof string. The caller
-    /// must have absorbed the [`akita_transcript::CommitmentDigest`] of every
-    /// group it opens before this call.
+    /// The proof bytes are appended to `channel`'s proof string, and the
+    /// challenges come from `channel`'s sponge. Akita absorbs its own
+    /// statement first: the protocol tag, the instance descriptor, each opened
+    /// group's [`akita_transcript::CommitmentDigest`], the opening points and
+    /// the claimed values. The caller need not absorb any of these; it binds
+    /// only what its own challenges depend on, before it squeezes them. The
+    /// verifier must call `AkitaVerifier::batched_verify_embedded` at the same
+    /// point of the same transcript.
     ///
     /// # Errors
     ///

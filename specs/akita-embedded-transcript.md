@@ -4,7 +4,7 @@
 |---------------|--------------------------------|
 | Author(s)     | Quang Dao, Claude              |
 | Created       | 2026-10-20                     |
-| Status        | proposed                       |
+| Status        | implemented                    |
 | PR            | [#254](https://github.com/LayerZero-Labs/akita/pull/254) |
 | Supersedes    |                                |
 | Superseded-by |                                |
@@ -260,12 +260,12 @@ In embedded mode the "session" row is the caller's own session.
 
 ### Existing assumptions, unchanged
 
-- **Descriptor sub-digests are 32-byte Blake2b-256**, computed by
+- **Descriptor sub-digests are 32-byte digests under Jolt's digest hash**
+  (SHA3-256, or Keccak-256 under `keccak256-digests`), computed by
   `akita_params::digest_descriptor_bytes`, whatever the sponge. Their width
   meets the target, like the commitment digest. The inputs are honest public
   parameters from an admitted catalog, so an attack needs two admitted
-  schedules that collide. This change leaves them as they are; moving them
-  to the sponge's hash is a follow-up.
+  schedules that collide. This change leaves them as they are.
 - **The verifier setup comes from the bound seed.** The setup-prefix slot
   commitments are not absorbed; the setup seed and each slot's id are. So
   soundness holds only if the verifier's setup is derived from the bound
@@ -452,11 +452,10 @@ pending.check_eof(state)               Jolt's remaining messages, then pending.c
 
 Follow-ups, not in this change:
 
-- Compute the descriptor sub-digests with the selected sponge instead of
-  Blake2b-256, so a recursive verifier needs one hash primitive. The
-  verifier recomputes the grinding-plan, opening-layout and schedule digests
-  on every call, and schedule row digests are also stored in the generated
-  catalog artifacts, so the change regenerates those artifacts.
+- Descriptor sub-digests already use Jolt's digest hash rather than
+  Blake2b-256, and `keccak256-digests` lets a recursive verifier use one
+  Keccak primitive for them. Schedule row digests are stored in the generated
+  catalog artifacts, so a build under that feature regenerates them.
 
 - Drop the public absorbs of challenge-derived values, one at a time, each
   with its own audit.

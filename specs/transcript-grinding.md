@@ -51,7 +51,8 @@ comparisons use exact integer arithmetic in
 supported field towers whose cardinality is just below `2^128`, a power-of-two
 loss needs one more bit than its binary logarithm. The modulus bit width alone
 is not a challenge-set cardinality. A successful nonce
-makes the next `ceil(g/8)` squeezed check bytes have `g` zero low-order bits.
+makes the next 8 squeezed check bytes, read as a little-endian `u64`, have `g`
+zero low-order bits.
 The prover searches at most `2^(g+7)` candidates. Production policy rejects
 `g > 57`, the largest target `jolt_transcript::MAX_POW_BITS` accepts, so the
 nonce width `g+7` always fits `u64`. Honest exhaustion is at most
@@ -72,8 +73,8 @@ bad-event rate. Accepting any satisfying in-range nonce is sound; the
 verifier MUST NOT require the prover's first solution.
 
 The proof-of-work check and the protected challenge are distinct random-oracle
-queries. The check absorbs the candidate nonce and squeezes `ceil(g/8)` bytes;
-the protected challenge is the next squeeze after it. The check bytes MUST NOT
+queries. The check absorbs the candidate nonce as one little-endian `u64` word
+and squeezes 8 bytes; the protected challenge is the next squeeze after it. The check bytes MUST NOT
 be reused as the protocol challenge. The versioned protocol identifier and descriptor bind the positional
 grammar; context records are diagnostics and are not absorbed.
 
@@ -127,16 +128,17 @@ For every proof-of-work entry with `g > 0`:
 1. Record diagnostic metadata for the canonical plan site, target, nonce width,
    and `GrindingNonce` kind when transcript logging is enabled.
 2. For each candidate in `[0, 2^(g+7))`, in increasing order, clone only the
-   public duplex state, absorb the canonical nonce one byte at a time, and
-   squeeze `ceil(g/8)` check bytes.
+   public duplex state, absorb the candidate as one little-endian `u64` word,
+   and squeeze 8 check bytes.
 3. Select the first candidate whose check bytes, read as a little-endian
-   integer, have `g` zero low-order bits. Exhaustion returns an error.
-4. Commit the winner as one single-byte prover message per nonce byte, then
-   squeeze the check bytes. Steps 2--4 are `jolt_transcript::ProverTranscript::grind`.
-   The verifier runs `VerifierTranscript::check_grind`: it reads the nonce
-   byte by byte, rejects a noncanonical encoding or a value of `2^(g+7)` or
-   more, squeezes the check bytes, and rejects a failed check. Any failure
-   poisons the verifier state.
+   `u64`, have `g` zero low-order bits. Exhaustion returns an error.
+4. Commit the winner as one prover message: canonical unsigned LEB128 in the
+   proof string, one little-endian `u64` word absorbed. Then squeeze the 8
+   check bytes. Steps 2--4 are `jolt_transcript::ProverTranscript::grind`.
+   The verifier runs `VerifierTranscript::check_grind`: it reads the LEB128
+   nonce, rejects a noncanonical encoding or a value of `2^(g+7)` or more,
+   absorbs the same word, squeezes the check bytes, and rejects a failed
+   check. Any failure poisons the verifier state.
 5. Record the protected challenge's diagnostic site and draw every challenge
    of the site in one message.
 
@@ -155,8 +157,9 @@ groups in that fold.
 
 For candidate `c`:
 
-1. Clone the current public sponge state and absorb the canonical unsigned
-   LEB128 encoding of `c`.
+1. Clone the current public sponge state and absorb `c` as one little-endian
+   `u64` word. The live prover sends `c` as canonical unsigned LEB128 in the
+   proof string and absorbs the same word.
 2. Run the fold proof of work (`FoldChallengeWork`) on the clone. With `g = 0`
    this step does nothing.
 3. In canonical group order, squeeze each group's challenge message. Nothing
@@ -419,7 +422,8 @@ freedom.
 
 | Source | What it establishes |
 |---|---|
-| `crates/akita-challenges/src/fold_draw.rs` | Method, group, dimensions, family, and counts bound before each group message; packing rejects operator filtering |
+| `crates/akita-params/src/descriptor_bytes.rs` and `crates/akita-params/src/schedule/descriptor.rs` | Method, group, dimensions, family, and counts bound through the instance descriptor before any group message |
+| `crates/akita-challenges/src/fold_draw.rs` | One fixed-length squeezed message per group, with nothing absorbed; packing rejects operator filtering |
 | `crates/akita-challenges/src/sampler/stream.rs` | Slot width, pool size, message length, and the bijective colex decoder |
 | `crates/akita-challenges/src/config.rs` and `sampler/mod.rs` in that crate | Production support ladder, fixed operator policies, runtime certificate containment |
 | `crates/akita-params/src/transcript_grinding/plan.rs` and `crates/akita-params/src/transcript_grinding.rs` | Geometry-derived runs, the per-fold `FoldChallengeWork` price, structural count, response nonce width |

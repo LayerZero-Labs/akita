@@ -37,6 +37,8 @@ policy and the checker use the same live set in
 | [`sparse-challenge-stream`](../../../specs/sparse-challenge-stream.md) | implemented | One challenge message per sparse fold group, its decoder, and the fold proof of work. |
 | [`positional-word-aligned-transcript`](../../../specs/positional-word-aligned-transcript.md) | active | Positional, word-aligned absorbs and squeezes; the version-6 descriptor; fold draws that absorb nothing. |
 | [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains current inline-LEB128 nonces and compares them with the historical packed representation. |
+| [`jolt-transcript-adoption`](../../../specs/jolt-transcript-adoption.md) | active | Akita's adoption of `jolt-transcript`: the session, codec, poisoning and proof-of-work check of protocol v8. |
+| [`akita-embedded-transcript`](../../../specs/akita-embedded-transcript.md) | implemented | Running Akita inside a caller's transcript: the protocol tag, the embedded entries, and the caller contract. |
 
 ## Archived records
 

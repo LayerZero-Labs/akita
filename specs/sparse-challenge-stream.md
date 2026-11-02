@@ -75,10 +75,17 @@ bound.
 - **Priced per message.** Each fold's proof of work satisfies
   `L * 2^128 <= |C| * 2^g` with `L` the fold's total pair count, computed with
   Jolt's `grind_bits_for_loss`. No other check is relaxed.
-- **Uniform signs.** The `w` sign bits of every challenge are exactly uniform
-  and independent of the positions and of each other. The fold-response
-  completeness argument ([fold-linf-rejection](fold-linf-rejection.md)) needs
-  only this, so a later decoder change MUST keep it.
+- **Uniform signs.** For an unfiltered family, the `w` sign bits of every
+  challenge are exactly uniform and independent of the positions and of each
+  other. The fold-response completeness argument
+  ([fold-linf-rejection](fold-linf-rejection.md)) needs only this, so a later
+  decoder change MUST keep it. An operator-norm family filters on the whole
+  vector, signs included, so its accepted signs are uniform only jointly with
+  the positions on the accepted set. Its completeness rests on the measured
+  challenge covariance and the planner's source envelope instead
+  ([selective-l2-fold-security-sizing](selective-l2-fold-security-sizing.md#measured-challenge-covariance)).
+  Soundness assumes neither: the verifier enforces the norm checks for every
+  accepted challenge.
 - **Verifier no-panic.** Message length, pool size, binomial tables and decode
   use checked arithmetic and fallible allocation. Malformed proofs produce
   `AkitaError`, never a panic.
@@ -100,7 +107,8 @@ expands pair `i` from `SHAKE256(root || u64_le(i))`. Positions use a partial
 Fisher-Yates shuffle with bitmask rejection, one byte per sign. Operator-norm
 families retry within the same stream, up to 4096 candidates.
 
-Measured on 20,000 to 200,000 draws per family (sandbox, current code):
+Measured on 20,000 to 200,000 draws per family (sandbox, the sampler this
+spec replaces); the operator-norm acceptance rates come from 20,000 draws:
 
 | Family (`d`, ±1, ±2) | Permutations per pair | Operator-norm acceptance |
 |---|---|---|
@@ -123,10 +131,12 @@ Each nonterminal and terminal fold runs, in order:
 
 1. The fold-response nonce, unchanged: the prover sends it, both sides absorb
    it.
-2. The fold proof of work. With `g > 0` the prover runs Jolt's `grind(g)`
-   (least nonce below `2^(g+7)`, LEB128, one prover message per byte, then
-   `ceil(g/8)` check bytes squeezed). The verifier runs `check_grind(g)`. With
-   `g = 0` nothing happens.
+2. The fold proof of work. With `g > 0` the prover runs Jolt's `grind(g)`:
+   the least nonce below `2^(g+7)` whose 8 squeezed check bytes, read as a
+   little-endian `u64`, have `g` zero low bits. The nonce is one prover
+   message, canonical unsigned LEB128 in the proof string and absorbed as one
+   little-endian `u64` word. The verifier runs `check_grind(g)`. With `g = 0`
+   nothing happens.
 3. For each commitment group, in canonical order: the diagnostic context
    record and one squeeze of exactly `message_len` bytes. The public draw
    payload this spec first kept is gone: the descriptor and the group's
@@ -200,9 +210,12 @@ message order, are the challenges.
 | D64 (31,11), threshold 18 | 131 | 0.55565 | 0.6623 | 0.3680 | `0.3611 <= 0.65 * 0.55565` | `>= 2^128.062` |
 | D128 (31,0), threshold 13 | 130 | 0.76918 | 0.7908 | 0.6083 | `0.5999 <= 0.78 * 0.76918` | `>= 2^128.563` |
 
-The certificates prove predicate rates of at least 0.1305 (D64) and 0.3694
-(D128); the measured rates above come from 20,000 draws and are used only to
-size the pool.
+The certificates prove combined acceptance rates of at least 0.1305 (D64)
+and 0.3694 (D128), that is `2^128.062 / 2^131` and `2^128.563 / 2^130`
+(predicate rates 0.2349 and 0.4803 on the in-range part). The measured
+predicate rates come from 20,000 draws and are used only to size the pool.
+The sizing rates 0.65 and 0.78 sit about 3.7 and 3.8 standard errors below
+them.
 
 ### Pool size for the operator-norm families
 
@@ -222,7 +235,7 @@ among `B`. `B` is the least value passing either integer test:
 Both are exact integer conditions in `u128`. The union bound wins for small
 `W`, the Chernoff bound for large `W`:
 
-| Family | `W` | `B` | message bytes | exact tail `log2 P[run out]` |
+| Family | `W` | `B` | message bytes | exact tail `log2 P[run out]` at the sizing `p` |
 |---|---|---|---|---|
 | D64 | 4 | 297 | 4864 | -172.4 |
 | D64 | 6 | 327 | 5360 | -180.7 |
@@ -239,12 +252,24 @@ the accepted family; when it runs out, the verifier rejects. For any bad set
 of challenge vectors, `P[accept and bad] <= P_ideal[bad]`, with no bias term.
 
 The sizing rate is measured, not proven, so the `2^-161` column is a
-completeness estimate. At the certified lower rates the same pools still run
-out with probability at most `2^-32` (D64, `W = 64`), `2^-44` (D64,
-`W <= 8`) and `2^-80` (D128). Running out costs the honest prover one more
-fold-response candidate, never a failed proof. An exact tail at the certified
-rates would need pools 2 to 3 times larger (D64, `W = 8`: 988 candidates)
-for no soundness gain.
+completeness estimate. At the certified combined rates the same pools give a
+bound that depends on the count `W`:
+
+| Family | `W` | `log2 P[run out]` at the certified rate, at most |
+|---|---|---|
+| D64 | `<= 32` | -43.8 |
+| D64 | `<= 64` | -32.1 |
+| D64 | 65 to about 200 | weakens from -31.6 to about -1 |
+| D64 | `>= 200` | no useful bound (`B * 0.1305` is about `W`) |
+| D128 | `<= 191` | -79.1 |
+| D128 | 256 | -60.8 |
+| D128 | 512 | -20.2 |
+
+A count past these ranges is complete only under the measured rate. Running
+out costs the honest prover one more fold-response candidate, never a failed
+proof. An exact tail at the certified rates would need pools 2 to 3.4 times
+larger (D64, `W = 8`: 1197 candidates instead of 357; D128, `W = 8`: 347
+instead of 172) for no soundness gain.
 
 ### Fold proof-of-work pricing
 
@@ -270,9 +295,9 @@ Standard fp128 one-hot recursive profile, `nv = 36`:
 | 2 | 79 (64, 31, 10) | 79 | 128 | 7 | 1264 |
 | 3 | 30 (64, 31, 10) | 30 | 128 | 5 | 480 |
 | 4 | 9 (64, 31, 10) | 9 | 128 | 4 | 144 |
-| 5 | 8 (D64 operator norm) | 8 | 128 | 3 | 5846 |
+| 5 | 8 (D64 operator norm) | 8 | 128 | 3 | 5848 |
 | 6 | 4 (D64 operator norm) | 4 | 128 | 2 | 4864 |
-| terminal | 6 (D64 operator norm) | 6 | 128 | 3 | 5355 |
+| terminal | 6 (D64 operator norm) | 6 | 128 | 3 | 5360 |
 
 The expected honest search is `2^g` permutations per fold-response
 candidate, 1732 in total for one candidate per fold. The verifier pays one

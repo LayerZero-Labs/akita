@@ -154,8 +154,8 @@ accepting. The caller finishes its own messages and then calls
 obtain acceptance. The standalone verifier calls it right away.
 
 Production absorbs and squeezes are positional. Context records and callsite
-labels are diagnostics and do not enter sponge bytes. The backend-specific
-protocol tag, length-framed session, canonical instance descriptor,
+labels are diagnostics and do not enter sponge bytes. The protocol tag,
+length-framed session, canonical instance descriptor,
 commitment digests, messages, and replay order do enter the cryptographic state. Renaming a
 diagnostic label therefore differs from changing any of those bound values.
 
@@ -260,7 +260,7 @@ about $2^{-128}$ chance of breaking soundness. Fold extraction fails at a
 fixed transcript prefix with probability at most $W / 2^K$, where $W$ is the
 number of pairs in the fold and $2^K$ is the size of the smallest challenge
 set among its groups. With $W$ in the thousands at the first fold, one message
-would miss the target by up to 11 bits. The proof of work restores it: the
+would miss the target by up to 15 bits in the current catalogs. The proof of work restores it: the
 plan chooses the least $g$ with $W \cdot 2^{128} \le 2^K \cdot 2^g$, so a
 fresh fold message costs about $2^g$ hash calls. The prover pays this once per
 fold-response attempt; the verifier pays one check per fold.
@@ -304,14 +304,15 @@ Every digest inside the descriptor, such as the schedule, setup seed,
 grinding plan and opening-layout digests, is Jolt's digest hash: SHA3-256 by
 default. An application whose recursion guest checks the descriptor with
 Jolt's `jolt-inlines-keccak256` inline selects Keccak-256 (the `0x01` pad
-byte) with the `keccak256-digests` feature, and the session tag names the
+byte) with the `keccak256-digests` feature, and the protocol tag names the
 selection, so a proof made under one never verifies under the other. The
 transcript sponge feature does not change the digest hash.
 
-Akita uses FIPS 202 primitives only: SHA3-256 for digests, SHAKE128 for the
-session identifier and Keccak-f[1600] for the duplex sponge. Keccak-256 is a
-swap an application selects. The Fiat-Shamir duplex itself is not a
-FIPS-approved mode.
+With the default features Akita uses FIPS 202 primitives only: SHA3-256 for
+digests, SHAKE128 for the session identifier and Keccak-f[1600] for the duplex
+sponge. Two swaps leave that set: `transcript-blake2b` runs the duplex over
+BLAKE2b, and `keccak256-digests` selects Keccak-256 digests. The Fiat-Shamir
+duplex itself is not a FIPS-approved mode.
 
 The effective schedule includes the level geometry, payload modes, and each
 nonterminal `RingRelationMode`. Switching between quotient lifting and
@@ -531,11 +532,12 @@ other versions. Pin an exact Akita revision and rerun prove and verify
 integration tests when upgrading; the repository does not promise
 compatibility across revisions.
 
-Binding an instance initializes the transcript state for that instance.
-Application code should use the intended session label and let the scheme's
-shared binding path construct the descriptor before replay. Prepending
-application messages to a transcript that will then be rebound does not
-preserve those messages in the new state.
+Binding an instance absorbs the protocol tag and the descriptor where Akita
+starts; it does not reset the state. On a standalone session it is the first
+absorb. Inside a caller's transcript, everything the caller absorbed before
+stays bound, and Akita's challenges depend on it. Application code should let
+the scheme's shared binding path construct the descriptor rather than absorb
+its own copy, and should not absorb Akita's statement again.
 
 The current descriptor's `SetupSection.protocol_features.zk` is
 `false`. Transcript binding does not add hiding or zero knowledge.

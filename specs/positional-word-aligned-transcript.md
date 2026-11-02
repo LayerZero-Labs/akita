@@ -50,14 +50,15 @@ it alone, because removing it would change the known-answer vectors.
 
 ### Invariants
 
-- **Tag.** `SESSION_TAG` is `akita-pcs/transcript/v8`, zero-padded to 32
-  bytes, for both sponges. It names only the protocol and its version. The
-  doc comment of `PROTOCOL_VERSION` lists what version 8 fixes: the challenge
-  codec, the proof-of-work layout, the absorb layout, the sparse message
-  codec, and the constants bound only by the tag. Test:
-  `session_tag_is_the_padded_protocol_name`.
-- **Same session id for both sponges.** The tag no longer names the sponge,
-  so `transcript-keccak` and `transcript-blake2b` derive the same session id.
+- **Tag.** `PROTOCOL_TAG` is `akita-pcs/transcript/v8/sha3`
+  (`akita-pcs/transcript/v8/keccak` under `keccak256-digests`), zero-padded to
+  32 bytes, for both sponges. It names the protocol, its version and the
+  digest hash, not the sponge. The doc comment of `PROTOCOL_VERSION` lists
+  what version 8 fixes: the challenge codec, the proof-of-work layout, the
+  absorb layout, the sparse message codec, and the constants bound only by the
+  tag. Test: `tags_are_the_padded_protocol_names`.
+- **Same tag for both sponges.** The tag does not name the sponge, so
+  `transcript-keccak` and `transcript-blake2b` absorb the same tag.
   This is acceptable: the sponge already changes every absorb and squeeze, so
   two backends cannot produce colliding transcripts in the random-oracle
   model. See Alternatives Considered.

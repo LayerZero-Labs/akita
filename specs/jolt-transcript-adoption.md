@@ -154,7 +154,7 @@ so an unsupported field fails to compile.
 `book/src/how/transcript.md` describes the session, the codec, poisoning and
 the proof-of-work check. `book/src/usage/feature-flags.md` documents the
 `prover` feature. `specs/transcript-grinding.md` and
-`specs/grinding-nonce-encoding.md` describe the `ceil(g/8)`-byte check.
+`specs/grinding-nonce-encoding.md` describe the 8-byte check.
 
 ## References
 

@@ -154,8 +154,9 @@ at least 638, the largest of these figures. The retired 128-bit gate needed
 484, between ML-DSA-44 (423) and ML-DSA-65.
 
 The quantum cost applies to the SIS tables only. Field challenges and grinding are
-sized for a 128-bit per-query rate, and indexed fold coordinates for a 128-bit
-per-address rate, both in the classical random-oracle model. Akita has no
+sized for a 128-bit per-query rate, and each fold's sparse challenge messages,
+behind one fold proof of work, for a 128-bit per-call rate, both in the
+classical random-oracle model. Akita has no
 quantum-random-oracle analysis. See
 [Introduction → Security status](../intro.md#security-status).
 
