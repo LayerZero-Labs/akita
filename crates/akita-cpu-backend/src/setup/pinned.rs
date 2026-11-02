@@ -204,6 +204,33 @@ where
     Ok(hint)
 }
 
+/// A prover setup's own slots serve a host loader in place of deriving
+/// them again: an in-process verifier takes the commitments its prover
+/// already holds, and the loader still compares each with the manifest.
+impl<F: Field> PrefixCommitmentDeriver<F> for AkitaProverSetup<F> {
+    fn derive_prefix_commitments(
+        &self,
+        setup_seed: &AkitaSetupSeed,
+        ids: &[SetupPrefixSlotId],
+    ) -> Result<Vec<SetupPrefixPublicCommitment<F>>, AkitaError> {
+        if self.expanded().descriptor().setup_seed != *setup_seed {
+            return Err(AkitaError::InvalidSetup(
+                "prover setup belongs to another stream".into(),
+            ));
+        }
+        ids.iter()
+            .map(|id| {
+                self.prefix_slots()
+                    .get(id)
+                    .map(|slot| slot.commitment.clone())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("prover setup lacks a requested slot".into())
+                    })
+            })
+            .collect()
+    }
+}
+
 /// Seed-derived mode for host loaders: commits each requested prefix from
 /// the seed with the CPU reference path, streaming its source.
 #[derive(Debug, Clone, Copy, Default)]

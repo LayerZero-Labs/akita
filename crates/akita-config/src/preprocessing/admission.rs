@@ -18,7 +18,8 @@ use crate::{
 use akita_error::AkitaError;
 use akita_params::{
     verifier_setup_matrix_capacity_for_schedule, CommittedGroupBatchProfile, FoldSchedule,
-    GroupCommitPhaseParams, OpeningScheduleSelection, SetupMatrixCapacity, SetupPrefixSlotId,
+    GroupCommitPhaseParams, OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
+    SetupPrefixSlotId,
 };
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::preprocessing::{
@@ -121,6 +122,34 @@ impl ProducerProfiles {
         }
         self.sets.insert(set_name.to_owned(), profiles);
         Ok(())
+    }
+
+    /// The frozen profile of `layout` in the loaded producer set `set_name`,
+    /// as a program planning its rows must use it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the set was not loaded or admits no
+    /// single-group row of that layout.
+    pub fn frozen_profile(
+        &self,
+        set_name: &str,
+        layout: PolynomialGroupLayout,
+    ) -> Result<GroupCommitPhaseParams, AkitaError> {
+        self.sets
+            .get(set_name)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("producer set {set_name:?} was not loaded"))
+            })?
+            .get(&(layout.num_vars(), layout.num_polynomials()))
+            .copied()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "producer set {set_name:?} admits no group of {} variables and {} polynomials",
+                    layout.num_vars(),
+                    layout.num_polynomials()
+                ))
+            })
     }
 
     /// Require every precommitted group of every row to carry the frozen
