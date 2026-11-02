@@ -147,12 +147,12 @@ impl Reader<'_> {
                         if left >= fields / d || right >= right_limit {
                             return Err(invalid());
                         }
-                        tensors.push(EqPairTensorFamily {
-                            left_offset,
-                            right_offset,
-                            scalar: scalar[0],
-                            axes,
-                        });
+                        // Canonical bytes carry the normalized family, so a
+                        // non-normalized encoding fails the re-encoding check.
+                        tensors.push(
+                            EqPairTensorFamily::new(left_offset, right_offset, scalar[0], axes)
+                                .map_err(|_| invalid())?,
+                        );
                     }
                     terms.push(NativeTerm {
                         coefficient,

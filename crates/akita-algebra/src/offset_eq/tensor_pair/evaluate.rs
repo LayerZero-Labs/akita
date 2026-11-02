@@ -529,6 +529,9 @@ fn collect_residual_seeds<F: Field>(
         .axes
         .get(axis_index)
         .ok_or_else(|| AkitaError::Internal("residual seed recursion axis is absent".into()))?;
+    // Charge every visited coordinate before the loop; see
+    // `collect_tensor_family_seeds`.
+    charge_work(work, axis.len)?;
     for coordinate in 0..axis.len {
         let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
             AkitaError::InvalidInput("residual seed axis coordinate weight is absent".into())
@@ -685,6 +688,9 @@ fn collect_tensor_family_seeds<F: Field>(
         .axes
         .get(axis_index)
         .ok_or_else(|| AkitaError::Internal("tensor seed recursion axis is absent".into()))?;
+    // Charge every visited coordinate, including zero-weight ones that never
+    // reach a seed, before the loop so a long axis cannot bypass the bound.
+    charge_work(work, axis.len)?;
     for coordinate in 0..axis.len {
         let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
             AkitaError::InvalidInput("tensor seed axis coordinate weight is absent".into())
