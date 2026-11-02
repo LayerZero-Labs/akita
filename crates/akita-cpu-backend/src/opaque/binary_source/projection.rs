@@ -40,7 +40,7 @@ where
     let relation = crate::binary_root::BinaryRootRelation::build(
         source.manifest.descriptor(),
         &source.matrix,
-        &source.sources,
+        &source.sources.expanded(source.manifest.descriptor())?,
         &source.images,
         &request.challenges,
         akita_challenges::FoldChallengeFamily::BinaryRoot,

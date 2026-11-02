@@ -165,6 +165,25 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         )
         .unwrap();
     let commitment = committed.committed_group;
+    // Width 128 stores one logical word per carrier, including every owner.
+    let packed_source = backend
+        .import_packed_binary_source(manifest.clone(), carrier, 8, words.clone())
+        .unwrap();
+    let packed = backend
+        .commit(
+            scheme.schedules(),
+            &packed_source,
+            GroupContext::explicit(&carrier),
+        )
+        .unwrap();
+    let mut logical_bytes = Vec::new();
+    let mut packed_bytes = Vec::new();
+    commitment.serialize_compressed(&mut logical_bytes).unwrap();
+    packed
+        .committed_group
+        .serialize_compressed(&mut packed_bytes)
+        .unwrap();
+    assert_eq!(packed_bytes, logical_bytes);
     let word_claim = word.then(|| honest_claim(&descriptor, &words[0]));
     let primes = (0..planes)
         .map(|plane| {
@@ -237,7 +256,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             &prefixes.get(&first_prefix).unwrap().public,
         )
         .unwrap();
-    let prove = |primes: Vec<PrimePlaneClaim>| {
+    let prove = |primes: Vec<PrimePlaneClaim>, handle| {
         let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
             commitment.clone(),
             word_claim.clone(),
@@ -245,7 +264,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         )
         .unwrap();
         let mut groups = vec![binary];
-        let mut handles = vec![committed.private_handle.clone()];
+        let mut handles = vec![handle];
         if let Some(ordinary) = &ordinary {
             groups.push(
                 PolynomialGroupClaims::new(
@@ -304,7 +323,15 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             ranges,
         )
     };
-    let (proof, continuation, successor_coefficients, ranges) = prove(primes.clone());
+    let (proof, continuation, successor_coefficients, ranges) =
+        prove(primes.clone(), committed.private_handle.clone());
+    let packed_proof = prove(primes.clone(), packed.private_handle);
+    assert_eq!(packed_proof.0, proof, "packed prime/projection proof drift");
+    assert_eq!(packed_proof.1, continuation, "packed continuation drift");
+    byte_contract::compare_baseline(
+        &proof,
+        &format!("binary-prime-{mixed}-{word}-{planes}-{owners}.bin"),
+    );
     eprintln!(
         "prime_plane dev={} mixed={mixed} word={word} owners={owners} planes={planes}: {} bytes",
         akita_params::DEV_PROTOCOL,
@@ -360,7 +387,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     if planes == 1 {
         let mut duplicated = primes.clone();
         duplicated.push(primes[0].clone());
-        let duplicate = prove(duplicated);
+        let duplicate = prove(duplicated, committed.private_handle.clone());
         assert_eq!(
             proof, duplicate.0,
             "identical requests must share one plane and canonical statement"
