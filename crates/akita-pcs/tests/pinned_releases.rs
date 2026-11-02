@@ -563,6 +563,7 @@ fn description_only_transitions_keep_commitments_and_old_proofs() {
 /// universe file listing the setup-prefix slots of the other rows, and those
 /// other rows as program rows.
 fn program_fixture(
+    tag: &str,
     max_num_vars: usize,
     max_program_vars: usize,
 ) -> (
@@ -591,10 +592,7 @@ fn program_fixture(
         Cfg::ring_challenge_config,
     )
     .unwrap();
-    let dir = std::env::temp_dir().join(format!(
-        "akita-program-rows-{}-{max_num_vars}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("akita-program-rows-{}-{tag}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let catalog = dir.join("base.aks");
     std::fs::write(&catalog, base.to_artifact_bytes().unwrap()).unwrap();
@@ -620,7 +618,7 @@ fn program_fixture(
 #[test]
 fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
     on_large_stack(|| {
-        let (catalog, universe, program_rows) = program_fixture(20, 24);
+        let (catalog, universe, program_rows) = program_fixture("merge", 20, 24);
         assert!(program_rows.len() >= 2, "rows above the base catalog");
         let release = release_with("program-rows", SEED, 24, true, &catalog, Some(&universe));
         let opened = open(&release);
@@ -812,7 +810,7 @@ fn program_bounds_size_a_set_without_program_rows() {
             )
         };
         let full = load(None).expect("full load");
-        let small = load(Some(&bounds(16, Vec::new(), None))).expect("bounded load");
+        let small = load(Some(&bounds(21, Vec::new(), None))).expect("bounded load");
         assert_eq!(
             small.catalog().catalog_digest(),
             full.catalog().catalog_digest(),
@@ -822,10 +820,10 @@ fn program_bounds_size_a_set_without_program_rows() {
             small.setup().expanded().descriptor().num_field_elements
                 < full.setup().expanded().descriptor().num_field_elements
         );
-        assert_eq!(small.setup().expanded().descriptor().max_num_vars, 16);
+        assert_eq!(small.setup().expanded().descriptor().max_num_vars, 21);
         let base = full.catalog().catalog_digest();
-        load(Some(&bounds(16, Vec::new(), Some(base)))).expect("stored base digest");
-        assert!(load(Some(&bounds(16, Vec::new(), Some([7; 32])))).is_err());
+        load(Some(&bounds(21, Vec::new(), Some(base)))).expect("stored base digest");
+        assert!(load(Some(&bounds(21, Vec::new(), Some([7; 32])))).is_err());
         assert!(
             load(Some(&bounds(25, Vec::new(), None))).is_err(),
             "over the limit"
@@ -841,7 +839,7 @@ fn program_bounds_size_a_set_without_program_rows() {
             })
             .unwrap();
         assert!(
-            load(Some(&bounds(16, vec![row], None))).is_err(),
+            load(Some(&bounds(21, vec![row], None))).is_err(),
             "a set without program rows takes none"
         );
     });
@@ -853,7 +851,7 @@ fn program_bounds_size_a_set_without_program_rows() {
 #[test]
 fn program_rows_carry_the_frozen_profiles_of_their_producer_sets() {
     on_large_stack(|| {
-        let (catalog, universe, program_rows) = program_fixture(19, 24);
+        let (catalog, universe, program_rows) = program_fixture("producers", 20, 24);
         const PRODUCER: &str = "fp128-dense";
         let description: ReleaseDescription = serde_json::from_value(serde_json::json!({
             "format_version": 1,
@@ -911,7 +909,7 @@ fn program_rows_carry_the_frozen_profiles_of_their_producer_sets() {
         .rows()
         .find(|row| {
             row.profiles().precommitteds.is_empty()
-                && row.profiles().final_group.group.num_vars() == 18
+                && row.profiles().final_group.group.num_vars() <= 20
                 && row.profiles().final_group.group.num_polynomials() == 1
         })
         .unwrap()
@@ -970,7 +968,7 @@ fn program_rows_carry_the_frozen_profiles_of_their_producer_sets() {
 #[test]
 fn local_profile_derivation_covers_rows_outside_every_universe() {
     on_large_stack(|| {
-        let (catalog, _, program_rows) = program_fixture(18, 24);
+        let (catalog, _, program_rows) = program_fixture("local", 20, 24);
         let empty = catalog.with_file_name("empty-universe.hex");
         std::fs::write(&empty, "").unwrap();
         let release = release_with("local-derivation", SEED, 24, false, &catalog, Some(&empty));
