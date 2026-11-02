@@ -1,4 +1,6 @@
-use super::compact::{CoefficientPackingAffineRelationFamily, CoefficientPackingCompactFactors};
+use super::compact::{
+    CoefficientPackingAffineRelationFamily, CoefficientPackingCompactFactors, DirectOpening,
+};
 use super::*;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
@@ -258,6 +260,11 @@ fn compact_factors_match_dense_event_and_stage2_oracles() {
         2,
         2,
     );
+    let (compact, _) = prepare_compact_and_oracles(&fixture, E::from_u64(17), 23);
+    assert!(matches!(
+        compact.compact_factors().direct_opening,
+        DirectOpening::Packed(_)
+    ));
     assert_compact_factors_match_dense(&fixture, [E::zero(), E::one(), E::from_u64(17)], 23);
 }
 
@@ -287,6 +294,11 @@ fn compact_factors_match_dense_oracles_under_monomial_basis() {
         &point_values,
     )
     .unwrap();
+    let (compact, _) = prepare_compact_and_oracles(&fixture, E::from_u64(17), 23);
+    assert!(matches!(
+        compact.compact_factors().direct_opening,
+        DirectOpening::Packed(_)
+    ));
     assert_compact_factors_match_dense(&fixture, [E::zero(), E::one(), E::from_u64(17)], 23);
 }
 
@@ -311,6 +323,11 @@ fn assert_compact_factors_match_dense_at_genuine_extension_values<Base, Extensio
         fixture.prepared_point =
             genuine_extension_point::<Base, Extension>(&fixture.prepared_point, basis, 300);
         let alphas = [400, 401, 402].map(genuine_extension::<Base, Extension>);
+        let (compact, _) = prepare_compact_and_oracles(&fixture, alphas[0], 500);
+        assert!(matches!(
+            compact.compact_factors().direct_opening,
+            DirectOpening::Packed(_)
+        ));
         assert_compact_factors_match_dense(&fixture, alphas, 500);
     }
 }
@@ -331,13 +348,13 @@ fn compact_factors_match_dense_oracles_at_genuine_extension_values() {
         2,
         2,
     ));
-    for d_d in [64, 128] {
+    for (d_d, challenge_subring_dim) in [(64, 64), (128, 64), (64, 128)] {
         assert_compact_factors_match_dense_at_genuine_extension_values(
             coefficient_packing_fixture::<Prime32Offset99, FpExt4<Prime32Offset99>>(
                 SisModulusProfileId::Q32Offset99,
                 1024,
                 d_d,
-                64,
+                challenge_subring_dim,
                 6,
                 4,
                 13,
@@ -393,7 +410,7 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
             6,
             4,
             12,
-            2,
+            1,
             2,
         );
     assert_compact_factors_match_dense(
@@ -407,7 +424,9 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
         29,
     );
     let role_stride = recursive_role_subcolumns.params.open().digits.num_digits * 64;
-    let direct_families = &compact.compact_factors().direct_opening_families;
+    let DirectOpening::Families(direct_families) = &compact.compact_factors().direct_opening else {
+        panic!("single-claim groups must retain the tensor-family representation");
+    };
     assert!(direct_families
         .iter()
         .any(|family| family.axes.iter().any(|axis| axis.len == 8
@@ -561,7 +580,7 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
     };
     let family_scalar = family.scalar;
     let compact = CoefficientPackingCompactFactors {
-        packed_direct: None,
+        direct_opening: DirectOpening::Families(Vec::new()),
         basis: BasisMode::Lagrange,
         physical_field_len: 1usize << point.len(),
         coefficient_weights: coefficient_weights.clone().into(),
@@ -569,7 +588,6 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
         packing_z_point: Arc::from([]),
         affine_relation_families: vec![family],
         quotient_families: Vec::new(),
-        direct_opening_families: Vec::new(),
         packing_z_families: Vec::new(),
     };
 
@@ -626,7 +644,7 @@ fn affine_coefficient_length_is_checked_before_the_contraction_cache() {
         .map(|bit| Extension::from_u64(3 + bit))
         .collect::<Vec<_>>();
     let compact = |families| CoefficientPackingCompactFactors {
-        packed_direct: None,
+        direct_opening: DirectOpening::Families(Vec::new()),
         basis: BasisMode::Lagrange,
         physical_field_len: 1usize << point.len(),
         coefficient_weights: scalar_powers(Extension::from_u64(5), 8).into(),
@@ -634,7 +652,6 @@ fn affine_coefficient_length_is_checked_before_the_contraction_cache() {
         packing_z_point: Arc::from([]),
         affine_relation_families: families,
         quotient_families: Vec::new(),
-        direct_opening_families: Vec::new(),
         packing_z_families: Vec::new(),
     };
     compact(vec![family(2)])

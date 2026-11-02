@@ -9,11 +9,11 @@
 
 use akita_error::{checked, AkitaError};
 
-use super::{AffineWeight, AffineWeightSource, OffsetEqWindow};
+use super::{AffineWeight, AffineWeightSource, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use crate::{eq_poly::EqPolynomial, Field};
 
 /// Widest prepared row; wider rows keep the general affine contraction.
-const MAX_PREPARED_STRIDE: usize = 512;
+pub const MAX_PREPARED_STRIDE: usize = 512;
 
 /// Interleaved geometric lane periods recognized by the prepared recurrence.
 const GEOMETRIC_PERIODS: [usize; 5] = [1, 2, 4, 8, 16];
@@ -184,8 +184,12 @@ impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the row window exceeds `weights` or the last
-    /// address leaves the equality domain.
+    /// Returns an error when the row window exceeds `weights`, the last
+    /// address leaves the equality domain, or `rows` exceeds
+    /// [`MAX_COMPACT_STRIDE_TERMS`]. Prepared work is bounded independently of
+    /// the general evaluator's carry-state estimate: preparation uses at most
+    /// `MAX_PREPARED_STRIDE²` residue/digit terms and two 16-bit equality
+    /// tables, followed by one bounded equality update per row.
     pub fn accumulate<H: AffineWeightSource<F, A> + ?Sized>(
         &self,
         out: &mut A,
@@ -194,6 +198,12 @@ impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
         rows: usize,
         weights: &H,
     ) -> Result<(), AkitaError> {
+        if rows > MAX_COMPACT_STRIDE_TERMS {
+            return Err(AkitaError::InvalidSize {
+                expected: MAX_COMPACT_STRIDE_TERMS,
+                actual: rows,
+            });
+        }
         let end = first
             .checked_add(rows)
             .filter(|&end| end <= weights.len())
@@ -244,7 +254,8 @@ impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
         for row in first..end {
             let block = address >> self.bits;
             if block != cached_block {
-                debug_assert_eq!(block, cached_block + 1);
+                // Construction makes stride no greater than the block width,
+                // so a changed block is exactly the next cached block.
                 cached_block = block;
                 left = right;
                 right = self.high.eval(block + 1);
@@ -433,6 +444,13 @@ mod tests {
             .is_none());
         let p = prepare(&point, &[F::one(); 43], &[F::one(); 2]);
         let mut out = F::zero();
+        assert!(matches!(
+            p.accumulate(&mut out, 0, 0, MAX_COMPACT_STRIDE_TERMS + 1, &weights),
+            Err(AkitaError::InvalidSize {
+                expected: MAX_COMPACT_STRIDE_TERMS,
+                ..
+            })
+        ));
         assert!(p.accumulate(&mut out, usize::MAX, 0, 1, &weights).is_err());
         assert!(p.accumulate(&mut out, 1020, 0, 1, &weights).is_err());
         assert!(p.accumulate(&mut out, 0, 19, 2, &weights).is_err());

@@ -380,7 +380,12 @@ where
         ));
     }
 
-    let prepared_t = PreparedDigits::new(point, commitment_digits, outer_low)?;
+    // PreparedDigits caps table preparation and row visits independently of
+    // the general evaluator's carry-state work estimate.
+    let prepared_t = (group.physical_b().logical_rows()? != 0)
+        .then(|| PreparedDigits::new(point, commitment_digits, outer_low))
+        .transpose()?
+        .flatten();
 
     // `build_group_role_tensors` emits D/B families unit-major with claim
     // inside each unit. The evaluation fold itself is claim-major, so this
@@ -470,27 +475,27 @@ where
 
         if let Some(b_tensor) = b_tensor {
             let t_high_weights = AffineWeightProduct::new(claim_challenges, group.a_row_weights())?;
-            let t_outer_start = global_block_start
+            let t_first_row = global_block_start
                 .checked_mul(group.n_a())
-                .and_then(|start| start.checked_mul(outer_subcolumns))
                 .ok_or(AkitaError::InvalidProof)?;
-            let t_live_len = unit_blocks
+            let t_rows = unit_blocks
                 .checked_mul(group.n_a())
-                .and_then(|len| len.checked_mul(outer_subcolumns))
                 .ok_or(AkitaError::InvalidProof)?;
             if let Some(prepared) = &prepared_t {
                 prepared.accumulate(
                     &mut contribution,
                     b_tensor.right_offset,
-                    global_block_start
-                        .checked_mul(group.n_a())
-                        .ok_or(AkitaError::InvalidProof)?,
-                    unit_blocks
-                        .checked_mul(group.n_a())
-                        .ok_or(AkitaError::InvalidProof)?,
+                    t_first_row,
+                    t_rows,
                     &t_high_weights,
                 )?;
             } else {
+                let t_outer_start = t_first_row
+                    .checked_mul(outer_subcolumns)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_live_len = t_rows
+                    .checked_mul(outer_subcolumns)
+                    .ok_or(AkitaError::InvalidProof)?;
                 contribution += eval_affine_digit_intervals(
                     point,
                     &[b_tensor.right_offset],
@@ -507,7 +512,6 @@ where
         }
         Ok(acc? + contribution)
     };
-
     let evaluation = if family_count == 1 {
         fold_family(Ok(E::zero()), 0)
     } else {
@@ -596,6 +600,5 @@ where
             &base_scales,
         )?
     };
-
     Ok(evaluation + group.consistency_weight() * z)
 }
