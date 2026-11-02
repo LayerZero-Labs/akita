@@ -52,14 +52,10 @@ pub(super) fn reconstruct(
         challenges,
         FoldChallengeFamily::BinaryRoot,
     )?;
-    let quotient = response.committed_quotient(
-        descriptor,
-        &matrix,
-        challenges,
-        plan.repacking().destination_ring_dimension(),
-    )?;
-    let mut native: Vec<Vec<i8>> = (0..3)
-        .map(|segment| extract(quotient.relation.repacking(), &quotient.digits, segment))
+    let (response_plan, response_digits) =
+        response.successor_table(plan.repacking().destination_ring_dimension())?;
+    let mut native: Vec<Vec<i8>> = (0..2)
+        .map(|segment| extract(&response_plan, &response_digits, segment))
         .collect();
     if let Some(claim) = claim {
         let partials = binary_row_partials(descriptor, claim, &sources)?;

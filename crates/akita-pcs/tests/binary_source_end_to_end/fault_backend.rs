@@ -38,19 +38,17 @@ pub(super) enum Fault {
     Partials,
     ParityCarry,
     ValueCarry,
-    QuotientCarry,
     Padding,
     PrimePlane,
 }
 
 impl Fault {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 6] = [
         Self::Image,
         Self::Response,
         Self::Partials,
         Self::ParityCarry,
         Self::ValueCarry,
-        Self::QuotientCarry,
         Self::Padding,
     ];
 
@@ -60,10 +58,9 @@ impl Fault {
             Self::PrimePlane => plan.prime_segment().unwrap(),
             Self::Response => 0,
             Self::Image => 1,
-            Self::QuotientCarry => 2,
-            Self::Partials => 3,
-            Self::ParityCarry => 4,
-            Self::ValueCarry => 5,
+            Self::Partials => 2,
+            Self::ParityCarry => 3,
+            Self::ValueCarry => 4,
             Self::Padding => {
                 return (0..plan.repacking().domain_len())
                     .find(|&address| plan.repacking().is_padding_address(address).unwrap())
@@ -149,7 +146,9 @@ impl FaultBackend {
         let (mut payload, native) = self
             .inner
             .prepare_root_group(session, context, handle, request)?;
-        if request.is::<akita_types::binary_source::BinaryFieldSwitchSourceRequest>() {
+        if request.is::<akita_types::binary_source::BinaryFieldSwitchSourceRequest>()
+            || request.is::<akita_types::binary_source::BinaryProjectionRequest>()
+        {
             return Ok((payload, native));
         }
         let request = request
@@ -325,9 +324,9 @@ pub(super) fn authenticate_terminal_relation(
         plan.repacking(),
         akita_types::binary_source::BinaryEvaluationSegments {
             response: 0,
-            partials: 3,
-            parity_carry: 4,
-            value_carry: 5,
+            partials: 2,
+            parity_carry: 3,
+            value_carry: 4,
         },
         challenges,
         F::from_u64(1),

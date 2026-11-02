@@ -105,6 +105,12 @@ fn prime_plane_several_polynomials_do_not_share() {
     });
 }
 
+#[test]
+fn projection_two_polynomials_and_prime_plane_rejects_y_mutations() {
+    init_rayon_pool();
+    run_on_large_stack(|| fixture(false, false, 1, 2, true));
+}
+
 fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: bool) {
     let layout = PolynomialGroupLayout::new(if mixed { 23 } else { 18 }, owners);
     let catalog = if owners == 1 {
@@ -217,6 +223,16 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             handles,
             scheme.schedules(),
         );
+        let successor_coefficients = scheme
+            .schedules()
+            .resolve_selection(data.selection())
+            .unwrap()
+            .schedule()
+            .recursive_folds[0]
+            .params
+            .outer_payload_geometry()
+            .unwrap()
+            .transmitted_coefficients();
         let mut prover = new_prover_channel(b"prime-plane-e2e", b"caller").unwrap();
         prover.public_message(b"application-prefix");
         scheme
@@ -230,9 +246,13 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             .unwrap();
         let bytes = prover.narg_string().to_vec();
         prover.public_message(b"application-suffix");
-        (bytes, prover.verifier_message::<[u8; 32]>())
+        (
+            bytes,
+            prover.verifier_message::<[u8; 32]>(),
+            successor_coefficients,
+        )
     };
-    let (proof, continuation) = prove(primes.clone());
+    let (proof, continuation, successor_coefficients) = prove(primes.clone());
     eprintln!(
         "prime_plane mixed={mixed} word={word} owners={owners} planes={planes}: {} bytes",
         proof.len()
@@ -305,6 +325,9 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         assert!(result.is_ok(), "{label} caused verifier panic");
         assert!(result.unwrap().is_err(), "{label} accepted");
     };
+    projection::mutate_values(&proof, successor_coefficients, word, owners, |bytes| {
+        rejects("projection output", bytes, &commitment, primes.clone());
+    });
     for index in 0..primes.len() {
         let mut altered = primes.clone();
         altered[index].value ^= 1;
@@ -342,7 +365,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             GroupContext::explicit(&carrier),
         )
         .unwrap();
-    if planes == 1 && !word && !mixed {
+    if planes == 1 && !word && !mixed && owners == 1 {
         for (fault, public) in [
             (Fault::PrimePlane, &commitment),
             (Fault::ForeignCommitment, &foreign.committed_group),

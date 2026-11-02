@@ -7,8 +7,8 @@ use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 use jolt_field::Field;
 
 use super::{
-    binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
-    BinaryTerminalClaim, OrdinaryNativeRootPlan,
+    binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryProjectionRows,
+    BinaryRootWitnessPlan, BinaryTerminalClaim, OrdinaryNativeRootPlan,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -122,10 +122,7 @@ impl BinaryRootPublic {
         let batch_count = checked::product([2, manifest.b_rows()])
             .and_then(|authentication| {
                 checked::sum([
-                    checked::product([
-                        manifest.a_rank(),
-                        manifest.descriptor().polynomials().len(),
-                    ])?,
+                    7,
                     if claim.is_some() { 2 } else { 0 },
                     checked::product([2, prime.planes().len()])?,
                     authentication,
@@ -156,7 +153,8 @@ impl BinaryRootPublic {
         &self.plan
     }
 
-    /// A, parity/value, B/D, padding, ordinary rows, then negative-bit batches.
+    /// Seven projection outputs, optional word parity/value, B/D, padding,
+    /// ordinary rows, negative bits, then two batches for every prime plane.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
@@ -165,14 +163,17 @@ impl BinaryRootPublic {
     ///
     /// Batch coordinates are independent field challenges, including one for
     /// each padding coefficient. `commitment` is the public B payload; `d_payload`
-    /// is the order-three U commitment. The future setup adjoint replaces direct
+    /// is the order-three commitment to the selected word and prime views.
+    /// The future setup adjoint replaces direct
     /// setup evaluation without changing this authenticated coefficient map.
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
         &self,
         challenges: &Challenges,
         alpha: E,
         batches: &[E],
+        projections: &BinaryProjectionRows,
+        projected_values: &[i128; 7],
         commitment: &[E],
         d_payload: &[E],
         ordinary_claim: Option<(&[E], E, &[E])>,
@@ -183,12 +184,17 @@ impl BinaryRootPublic {
                 actual: batches.len(),
             });
         }
-        let rank = checked::product([
-            self.manifest.a_rank(),
-            self.manifest.descriptor().polynomials().len(),
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        let terminal = checked::range(rank, if self.claim.is_some() { 2 } else { 0 })
+        let mu: [E; 7] = batches
+            .get(..7)
+            .ok_or(AkitaError::InvalidProof)?
+            .try_into()
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let rho = projections.batch(&mu)?;
+        let projection_claim = mu
+            .iter()
+            .zip(projected_values)
+            .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
+        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
             .ok_or(AkitaError::InvalidProof)?;
         let b =
             checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
@@ -213,7 +219,7 @@ impl BinaryRootPublic {
             &self.matrix,
             challenges,
             alpha,
-            batches.get(..rank).ok_or(AkitaError::InvalidProof)?,
+            &rho,
             batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
             batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;
@@ -290,7 +296,7 @@ impl BinaryRootPublic {
         terms
             .try_reserve_exact(count)
             .map_err(|_| AkitaError::InvalidProof)?;
-        let mut claim = E::zero();
+        let mut claim = projection_claim;
         for weights in components.iter().flatten() {
             terms.extend_from_slice(weights.terms());
             claim += weights.claim();

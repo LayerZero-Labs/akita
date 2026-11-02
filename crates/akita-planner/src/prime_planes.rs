@@ -179,7 +179,7 @@ mod tests {
     fn prime_plane_small_fixture_prices_every_plane() {
         let manifest = manifest(3, 2, 1);
         for (planes, expected_cells, expected_d) in
-            [(1, 104192, 223), (2, 126208, 441), (5, 192256, 1094)]
+            [(1, 79616, 223), (2, 101632, 441), (5, 167680, 1094)]
         {
             let price =
                 price_binary_root_planes(&manifest, true, &prime(&manifest, planes), 64, None)
@@ -205,7 +205,7 @@ mod tests {
                         None,
                     )
                     .unwrap();
-                    let base = if bits == 22 { 23174912 } else { 39952128 };
+                    let base = if bits == 22 { 23138048 } else { 39915264 };
                     let expected = base + planes * 2818048 - if word { 0 } else { 69376 };
                     assert_eq!(price.outgoing_physical_cells, expected);
                     assert_eq!(price.d_columns, planes * 27864 + if word { 648 } else { 0 });

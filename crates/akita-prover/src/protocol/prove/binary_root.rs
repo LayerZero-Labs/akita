@@ -4,7 +4,10 @@ use akita_params::{
     DigitRangePlan, FlatBooleanDomain, GrindingSite, NextWitnessBindingPolicy,
     SetupContributionMode,
 };
-use akita_types::binary_source::{binary_root_challenges, binary_root_statement, BinaryRootPublic};
+use akita_types::binary_source::{
+    binary_projection_values, binary_root_challenges, binary_root_statement,
+    BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
+};
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
 use jolt_field::{AdditiveGroup, Zero};
@@ -218,6 +221,24 @@ where
         witness,
     )?;
     let mut witness = committed.witness_handle;
+    let bounds = public.plan().projection_bounds();
+    let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
+    let (_, residual) = backend.prepare_root_group(
+        proof_session,
+        &context.for_group(0),
+        handles.first().ok_or(AkitaError::InvalidProof)?,
+        &BinaryProjectionRequest {
+            challenges: challenges.clone(),
+        },
+    )?;
+    let residual = residual
+        .downcast_ref::<Vec<[i128; 648]>>()
+        .ok_or_else(|| AkitaError::Internal("backend projection residual type mismatch".into()))?;
+    let projected_values = binary_projection_values(
+        grinding.state_mut(),
+        bounds,
+        &projections.project(residual, bounds)?,
+    )?;
     let alpha = grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(
         GrindingSite::RingSwitchAlpha { level: 0 },
     )?;
@@ -275,6 +296,8 @@ where
         &challenges,
         alpha,
         &batches,
+        &projections,
+        &projected_values,
         &payload,
         &d_payload,
         ordinary_claim,
