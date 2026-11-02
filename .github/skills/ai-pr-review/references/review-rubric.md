@@ -65,6 +65,8 @@ Investigate relevant risks rather than mechanically applying every category:
 - Feature combinations, supported platforms, packaging, deployment/configuration wiring, observability, and recovery where affected.
 - Stale documentation, missing release/migration notes, fixtures, schemas, generated artifacts, or required integration tests.
 
+Before judging a risk, establish the runtime context of the changed code from the repository: how it is invoked, what runs concurrently with it, which boundaries catch failures, and which state outlives a call. Then follow each risk to its consequence: what the caller, later operations, other users and persisted state observe, for how long, and how the system returns to a correct state. "It fails", "it returns an error" or "it is handled" describes a path; an assessment states the consequence and the recovery.
+
 Use the base revision when needed to distinguish a new defect from existing behavior. If a change exposes an old defect through a newly reachable path, explain that causal link.
 
 ## Required Cursor review passes

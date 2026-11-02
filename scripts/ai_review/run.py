@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--directory", required=True)
     args = parser.parse_args()
     # A job rerun can reuse artifacts without rerunning the reservation job.
-    # Require a fresh author command instead, including after an API timeout.
+    # Require a fresh eligible command instead, including after an API timeout.
     if args.stage in ("reserve", "review") and os.environ.get("GITHUB_RUN_ATTEMPT") != "1":
         raise ReviewError("Review attempts cannot be rerun; post a new /ai-review command")
     root = args.directory
@@ -41,7 +41,7 @@ def main():
             print("Request already reviewed")
     elif args.stage == "review":
         proposal = review(load_json(snapshot_path), os.environ["OPENAI_API_KEY"],
-                          os.environ.get("AI_REVIEW_MODEL", "gpt-6-astra"))
+                          os.environ.get("AI_REVIEW_MODEL", "gpt-6.1-sol"))
         save_json(result_path, proposal)
         coverage = "complete" if proposal["result"]["complete"] else "incomplete"
         print(f"Prepared {len(proposal['result']['findings'])} inline findings; coverage {coverage}")
