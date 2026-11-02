@@ -726,7 +726,7 @@ mod tests {
     }
 
     /// Recovery succeeds on any relation-consistent input, so only the digests
-    /// can reject a wrong block; each mis-bound digest must reject.
+    /// can reject a wrong block; each wrongly bound digest must reject.
     #[test]
     fn recover_last_blocks_binds_both_blocks_to_their_digests() {
         const D: usize = 64;

@@ -317,6 +317,19 @@ Three points keep the argument exact:
 - The argument records the prover's oracle queries, so it is a classical
   one. This page makes no claim for a prover with quantum access to $H$.
 
+Akita's security claim is about the Fiat-Shamir protocol, whose extractor
+builds a tree of accepting transcripts that fork after shared prefixes
+([security](../security.md)). Forks that share a prefix share its digests,
+but each fork recovers its own block from its own challenges and response.
+Two such forks recover the same block unless $H$ collides among the queries
+made while the tree is built. Outside that event, the extractor for the
+full-response protocol applies unchanged. The digest therefore adds a
+collision term over all $H$ queries to the Fiat-Shamir bound. Bound (11) does
+not carry over as written. A prover that restores state can expose a fresh
+digest in every prefix it queries, so the hit term grows with the number of
+$H$ queries times the number of digests exposed, not with $2Q$. Both terms
+remain negligible at 256 bits.
+
 The last fold challenge is always a unit, so an honest proof is never
 rejected for a missing inverse. For Akita's fields $X^D+1$ splits into
 $k\in\{2,4\}$ irreducible factors $X^{D/k}-\omega$. A nonzero challenge
@@ -331,8 +344,8 @@ $c_{m-1}$ lies in a ring of half the degree, and repeats until one field
 inversion remains. It then multiplies each candidate from (10) back by the
 sparse challenge and checks (4) and (5) as written. A wrong inverse can
 therefore only cause a rejection. A challenge with no inverse is rejected.
-The $1+n_A$ multiplications by $c_{m-1}^{-1}$ are the terminal's only dense
-ring products.
+Recovery adds the inversion and $1+n_A$ dense multiplications by
+$c_{m-1}^{-1}$ to the existing NTT product $A\cdot z$.
 
 In the code, `terminal_sent_blocks` in
 `crates/akita-params/src/layout/tail_segments.rs` sets the layout,
