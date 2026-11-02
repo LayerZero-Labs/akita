@@ -152,10 +152,13 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let openings = [opening];
     let selection = scheme
         .schedules()
-        .resolve_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitments[0].profile(),
-            precommitteds: Vec::new(),
-        })
+        .resolve_profiles(
+            &CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            },
+            0,
+        )
         .expect("select generated schedule row")
         .selection();
 
@@ -393,10 +396,13 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     let openings = [opening];
     let selection = scheme
         .schedules()
-        .resolve_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitments[0].profile(),
-            precommitteds: Vec::new(),
-        })
+        .resolve_profiles(
+            &CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            },
+            0,
+        )
         .expect("select generated schedule row")
         .selection();
 

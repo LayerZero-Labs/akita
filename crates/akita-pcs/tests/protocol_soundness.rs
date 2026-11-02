@@ -45,10 +45,13 @@ fn selection_for<Cfg: CommitmentConfig>(
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> OpeningScheduleSelection {
     schedules
-        .resolve_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitment.profile(),
-            precommitteds: Vec::new(),
-        })
+        .resolve_profiles(
+            &CommittedGroupBatchProfile {
+                final_group: *commitment.profile(),
+                precommitteds: Vec::new(),
+            },
+            0,
+        )
         .expect("select schedule")
         .selection()
 }

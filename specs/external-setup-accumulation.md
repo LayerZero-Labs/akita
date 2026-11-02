@@ -144,7 +144,9 @@ collection for archived direct folds; `from_batch` attaches bound inputs to
 the same selected fold as the prover. Empty inputs select ordinary proof grammar.
 All other Akita checks and the ordinary terminal checks remain enabled.
 The offloaded path requires the batch domain to match the selected successor's
-actual prefix. It does not change the admitted schedule or add a sumcheck.
+actual prefix. When a root batch's domain differs from that prefix,
+`with_setup_batch` reselects the catalog row admitted for the accumulated root
+domain through `resolve_profiles`. The batch adds no sumcheck.
 The standalone reduction helpers remain optional utilities. They are not part
 of the integrated outer flow. SDK preparation, guest epilogues, authenticated
 execution-output envelopes and guest-cycle measurements belong to Jolt integration.

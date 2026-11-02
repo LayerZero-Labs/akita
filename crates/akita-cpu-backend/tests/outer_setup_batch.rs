@@ -182,7 +182,7 @@ where
         #[cfg(feature = "logging-transcript")]
         akita_transcript::clear_thread_events();
         let opening = match batch {
-            Some((level, batch)) => opening().with_setup_batch(level, batch),
+            Some((level, batch)) => opening().with_setup_batch(level, batch, &catalog).unwrap(),
             None => opening(),
         };
         let proof = akita_prover::batched_prove::<Cfg, _>(

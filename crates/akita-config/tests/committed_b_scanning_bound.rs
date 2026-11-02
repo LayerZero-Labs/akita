@@ -178,7 +178,7 @@ fn round_trip_corrected_schedule<Cfg: CommitmentConfig>(num_vars: usize, rank: u
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     )
     .unwrap();
-    let row = loaded.resolve_profiles(&profiles).unwrap();
+    let row = loaded.resolve_profiles(&profiles, 0).unwrap();
     assert_eq!(row.schedule(), &schedule);
     let occurrences = row.schedule().sis_occurrences().unwrap();
     let b = occurrences

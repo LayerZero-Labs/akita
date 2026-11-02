@@ -428,12 +428,17 @@ impl ValidatedScheduleCatalog {
         self.resolve_key_matching(key, None)
     }
 
-    /// Resolve the canonical honest prover row for exact committed profiles.
+    /// Resolve the canonical honest prover row for exact committed profiles and
+    /// the inherited setup-prefix domain its root accumulates (zero for none).
     pub fn resolve_profiles(
         &self,
         profiles: &CommittedGroupBatchProfile,
+        root_accumulated_setup_prefix_len: usize,
     ) -> Result<&ResolvedScheduleRow, AkitaError> {
-        self.resolve_key_matching(&key_for_profiles(profiles, 0), Some(profiles))
+        self.resolve_key_matching(
+            &key_for_profiles(profiles, root_accumulated_setup_prefix_len),
+            Some(profiles),
+        )
     }
 
     fn resolve_key_matching(

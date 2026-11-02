@@ -146,7 +146,7 @@ where
             .map(|group| *group.commitment().profile())
             .collect(),
     };
-    let selection = scheme.schedules.resolve_profiles(&profiles)?.selection();
+    let selection = scheme.schedules.resolve_profiles(&profiles, 0)?.selection();
     GroupBatchStatement::new(selection, claims)
 }
 
