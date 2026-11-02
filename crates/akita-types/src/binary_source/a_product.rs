@@ -14,24 +14,6 @@ use super::{binary_root_matrix, BinaryCommittedGroupManifest, BinaryRootWitnessP
 const DEGREE: usize = 648;
 const STRIDE: usize = 1024;
 
-/// Coefficient functional for the committed-quotient relation.
-///
-/// The offload itself accepts arbitrary per-row `rho`; replacing the quotient
-/// with other linear tests changes only the caller constructing this input.
-pub fn binary_a_rho<E: Field>(alpha: E, batches: &[E]) -> Vec<[E; DEGREE]> {
-    batches
-        .iter()
-        .map(|&batch| {
-            let mut power = batch;
-            core::array::from_fn(|_| {
-                let value = power;
-                power *= alpha;
-                value
-            })
-        })
-        .collect()
-}
-
 /// Canonical typed prefix: source row, padded rank row, padded coefficient.
 /// All padding is zero, including any extra capacity of the selected prefix.
 /// This function is for setup preparation and proving, never online verification.
@@ -87,7 +69,9 @@ pub fn binary_a_prefix_identity(
 ///
 /// The response occupies the first segment, with four digits and coefficient
 /// stride 1024. Its digit contraction is included in `h`; the remaining point
-/// addresses source rows. The signed reduction adjoint uses two exact length
+/// addresses source rows and owners. The owner equality is contracted into one
+/// coefficient factor, so every polynomial in the group shares one product.
+/// Owner rows are combined before the adjoint, which uses two exact length
 /// 1295 convolutions per rank row, independently of the matrix width.
 #[derive(Clone, Debug)]
 pub struct BinaryAProduct<E: Field> {
@@ -109,8 +93,10 @@ impl<E: Field> BinaryAProduct<E> {
             .segments()
             .first()
             .ok_or(AkitaError::InvalidProof)?;
-        if rho.len() != plan.rank()
-            || plan.descriptor().polynomials().len() != 1
+        let owners = plan.descriptor().polynomials().len();
+        let rows = checked::exact_div(response.elements, owners).ok_or(AkitaError::InvalidProof)?;
+        if rho.len() != checked::product([owners, plan.rank()]).ok_or(AkitaError::InvalidProof)?
+            || !rows.is_power_of_two()
             || response.digits != 4
             || response.geometry.physical_coefficient_width() != STRIDE
             || stage2_point.len() != plan.repacking().domain_len().trailing_zeros() as usize
@@ -121,13 +107,21 @@ impl<E: Field> BinaryAProduct<E> {
             ));
         }
         let row_stride = coefficient_len(plan.rank())?;
-        validate_prefix(response.elements, row_stride, prefix_len)?;
+        validate_prefix(rows, row_stride, prefix_len)?;
         let coefficient_point = stage2_point.get(..10).ok_or(AkitaError::InvalidProof)?;
         let digit_point = stage2_point.get(10..12).ok_or(AkitaError::InvalidProof)?;
+        let row_end =
+            checked::sum([12, rows.trailing_zeros() as usize]).ok_or(AkitaError::InvalidProof)?;
         let row_point = stage2_point
-            .get(12..)
+            .get(12..row_end)
             .ok_or(AkitaError::InvalidProof)?
             .to_vec();
+        let owner_point = stage2_point
+            .get(row_end..)
+            .ok_or(AkitaError::InvalidProof)?;
+        if owners > checked::pow2(owner_point.len()).ok_or(AkitaError::InvalidProof)? {
+            return Err(AkitaError::InvalidProof);
+        }
         let v = EqPolynomial::evals_prefix(coefficient_point, DEGREE)?;
         let digits = EqPolynomial::evals(digit_point)?;
         let mut power = E::one();
@@ -138,22 +132,31 @@ impl<E: Field> BinaryAProduct<E> {
         }
         let adjoint = TrinomialAdjoint::<DEGREE, MinusTrinomial>::new()?;
         let mut coefficient_factor = field_buffer(row_stride)?;
-        for (i, row) in rho.iter().enumerate() {
-            let offset = checked::product([i, STRIDE]).ok_or(AkitaError::InvalidProof)?;
-            let range = checked::range(offset, DEGREE).ok_or(AkitaError::InvalidProof)?;
-            for (slot, weight) in coefficient_factor
-                .get_mut(range)
-                .ok_or(AkitaError::InvalidProof)?
-                .iter_mut()
-                .zip(adjoint.apply(row, &v)?)
-            {
+        // All owners share A. Fold owner equality into rho first, so the
+        // one rectangular product needs only one adjoint per matrix rank row.
+        let combined_len =
+            checked::product([plan.rank(), DEGREE]).ok_or(AkitaError::InvalidProof)?;
+        let mut combined = field_buffer(combined_len)?;
+        for (owner, owner_rho) in rho.chunks_exact(plan.rank()).enumerate() {
+            let owner_weight = eq_eval_at_index(owner_point, owner);
+            for (target, row) in combined.chunks_exact_mut(DEGREE).zip(owner_rho) {
+                for (target, &weight) in target.iter_mut().zip(row) {
+                    *target += owner_weight * weight;
+                }
+            }
+        }
+        for (target, row) in coefficient_factor
+            .chunks_exact_mut(STRIDE)
+            .zip(combined.chunks_exact(DEGREE))
+        {
+            for (slot, weight) in target.iter_mut().zip(adjoint.apply(row, &v)?) {
                 *slot = digit_weight * weight;
             }
         }
         Ok(Self {
             coefficient_factor,
             row_point,
-            rows: response.elements,
+            rows,
             prefix_rows: prefix_len / row_stride,
         })
     }

@@ -97,6 +97,20 @@ pub(super) fn reject_each_message(
     prefix_rounds: usize,
     mut reject: impl FnMut(&[u8]),
 ) {
+    for offset in message_offsets(ranges, prefix_rounds) {
+        let mut altered = proof.to_vec();
+        altered[offset] ^= 1;
+        reject(&altered);
+    }
+}
+
+/// Every binary group contributes one product, one quadratic sumcheck and one
+/// prefix evaluation, including a group containing several polynomials.
+pub(super) fn message_offsets(
+    ranges: &[akita_transcript::ProofMessageRange],
+    prefix_rounds: usize,
+) -> Vec<usize> {
+    let mut offsets = Vec::new();
     let mut round_messages = 0;
     let mut terminal_messages = 0;
     for range in ranges {
@@ -112,9 +126,7 @@ pub(super) fn reject_each_message(
         if round || terminal {
             assert!(range.len.is_multiple_of(16));
             for offset in (range.start..range.start + range.len).step_by(16) {
-                let mut altered = proof.to_vec();
-                altered[offset] ^= 1;
-                reject(&altered);
+                offsets.push(offset);
                 if round {
                     round_messages += 1;
                 } else {
@@ -128,6 +140,7 @@ pub(super) fn reject_each_message(
         terminal_messages, 2,
         "one product claim and one prefix evaluation"
     );
+    offsets
 }
 
 pub(super) fn reject_foreign_prefixes(

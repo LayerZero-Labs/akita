@@ -82,6 +82,7 @@ fn prime_cap_counts_owners_and_components_and_reuses_duplicates() {
             polynomial: 0,
             point: vec![i; 11],
             tensor_component: 0,
+            value: 0,
         })
         .collect();
     assert_eq!(
@@ -97,6 +98,7 @@ fn prime_cap_counts_owners_and_components_and_reuses_duplicates() {
         polynomial: 0,
         point: vec![5; 11],
         tensor_component: 0,
+        value: 0,
     });
     assert!(PrimePlaneManifest::new(&s, &claims).is_err());
     claims.pop();

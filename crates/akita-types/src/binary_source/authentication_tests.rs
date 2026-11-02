@@ -42,7 +42,7 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
             vec![0i8; shape.elements * shape.digits * shape.geometry.polynomial_modulus_dimension()]
         })
         .collect::<Vec<_>>();
-    for segment in [1, 3] {
+    for segment in [1, 2] {
         for (index, digit) in natural[segment].iter_mut().enumerate() {
             *digit = (index % 8) as i8 - 4;
         }
@@ -58,14 +58,14 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
     let seed = [41; 32];
     for (segment, role) in [
         (1, SetupStreamRole::ImageCommitment),
-        (3, SetupStreamRole::WitnessCommitment),
+        (2, SetupStreamRole::WitnessCommitment),
     ] {
         let label = label(role);
         let payload = binary_public_digit_commitment::<F>(&seed, label, &natural[segment]).unwrap();
         assert_eq!(payload.len(), 128);
         let weights = binary_digit_authentication_weights(
             &plan,
-            segment,
+            &[segment],
             &seed,
             label,
             &payload,
@@ -97,7 +97,7 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
         altered_payload[0] += F::one();
         let altered = binary_digit_authentication_weights(
             &plan,
-            segment,
+            &[segment],
             &seed,
             label,
             &altered_payload,
@@ -108,7 +108,7 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
         assert!(altered.check_table(&table).is_err());
         let wrong_seed = binary_digit_authentication_weights(
             &plan,
-            segment,
+            &[segment],
             &[42; 32],
             label,
             &payload,
@@ -137,7 +137,7 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
     assert_ne!(payload, image_role);
     assert!(binary_digit_authentication_weights(
         &plan,
-        3,
+        &[2],
         &[8; 32],
         label(SetupStreamRole::ImageCommitment),
         &payload,
@@ -147,7 +147,7 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
     .is_err());
     assert!(binary_digit_authentication_weights(
         &plan,
-        3,
+        &[2],
         &[8; 32],
         setup,
         &payload[..127],
@@ -157,7 +157,7 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
     .is_err());
     assert!(binary_digit_authentication_weights(
         &plan,
-        3,
+        &[2],
         &[8; 32],
         setup,
         &payload,

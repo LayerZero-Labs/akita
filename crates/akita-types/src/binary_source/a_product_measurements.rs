@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::binary_source::{
-    binary_direct_a_weights, binary_quotient_weights, BinaryCommitmentProfiles, BinaryIndexMap,
-    BinarySourceDescriptor, CANONICAL_IMAGE_WINDOW,
+    binary_direct_a_weights, BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor,
+    CANONICAL_IMAGE_WINDOW,
 };
 use akita_challenges::{Challenges, SparseChallenge};
 use jolt_field::{Prime128Offset275 as F, Ring, Zero};
@@ -46,9 +46,9 @@ fn stage3_release_a_arithmetic_measurements() {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let alpha = F::from_u64(17);
-        let batches = [F::from_u64(19), F::from_u64(23), F::from_u64(29)];
-        let rho = binary_a_rho(alpha, &batches);
+        let rho = (0..rank)
+            .map(|i| core::array::from_fn(|t| F::from_u64((i * 17 + t * 13 + 1) as u64)))
+            .collect::<Vec<_>>();
         let point = (0..plan.repacking().domain_len().trailing_zeros())
             .map(|_| F::from_u64(rng.gen_range(2..=1000)))
             .collect::<Vec<_>>();
@@ -68,14 +68,13 @@ fn stage3_release_a_arithmetic_measurements() {
             .filter(|&address| plan.repacking().is_padding_address(address).unwrap())
             .map(|_| F::zero())
             .collect::<Vec<_>>();
-        // Use the existing pre-offload compiler, including its fixed T/KA and
-        // zero-padding work, rather than a second direct A implementation.
+        // Use the canonical compiler, including the fixed T and zero-padding
+        // work, rather than a second direct A implementation.
         let start = Instant::now();
-        let direct =
-            binary_direct_a_weights(&plan, &matrix, &challenges, alpha, &batches, &padding)
-                .unwrap()
-                .evaluate(&point)
-                .unwrap();
+        let direct = binary_direct_a_weights(&plan, Some(&matrix), &challenges, &rho, &padding)
+            .unwrap()
+            .evaluate(&point)
+            .unwrap();
         black_box(direct);
         let direct_elapsed = start.elapsed();
 
@@ -90,18 +89,18 @@ fn stage3_release_a_arithmetic_measurements() {
         }
         let factored_elapsed = start.elapsed() / 8;
         let start = Instant::now();
-        let non_a = binary_quotient_weights(&plan, None, &challenges, &rho, &padding)
+        let non_a = binary_direct_a_weights(&plan, None, &challenges, &rho, &padding)
             .unwrap()
             .evaluate(&point)
             .unwrap();
         black_box(non_a);
         let non_a_elapsed = start.elapsed();
-        // Both totals include the quotient row's T/KA and zero-padding compiler
+        // Both totals include the projected relation's T and zero-padding compiler
         // work. The new total adds factored A preparation and terminal weight
         // evaluation, but excludes Stage 3 transcript/sumcheck replay overhead.
         let factored_total = non_a_elapsed + factored_elapsed;
         eprintln!(
-            "stage3 A arithmetic rows={rows} rank={rank} prefix={prefix_len} stage2_domain={} direct_quotient_compiler_and_mle_us={} factored_a_prepare_and_terminal_us={} non_a_quotient_compiler_and_mle_us={} non_a_plus_factored_arithmetic_total_us={}",
+            "stage3 A arithmetic rows={rows} rank={rank} prefix={prefix_len} stage2_domain={} direct_projection_compiler_and_mle_us={} factored_a_prepare_and_terminal_us={} non_a_projection_compiler_and_mle_us={} non_a_plus_factored_arithmetic_total_us={}",
             plan.repacking().domain_len(), direct_elapsed.as_micros(), factored_elapsed.as_micros(),
             non_a_elapsed.as_micros(), factored_total.as_micros(),
         );

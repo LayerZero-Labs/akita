@@ -105,7 +105,7 @@ pub fn binary_public_digit_commitment<F: Field>(
 #[allow(clippy::too_many_arguments)]
 pub fn binary_digit_authentication_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
-    segment: usize,
+    segments: &[usize],
     seed: &[u8; 32],
     label: SetupStreamLabel,
     payload: &[E],
@@ -113,12 +113,14 @@ pub fn binary_digit_authentication_weights<E: Field>(
     row_batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
     let rows = validate_label::<E>(label)?;
-    if !matches!(
-        (segment, label.role),
-        (1, SetupStreamRole::ImageCommitment) | (3, SetupStreamRole::WitnessCommitment)
-    ) {
+    let expected_segments = match label.role {
+        SetupStreamRole::ImageCommitment => vec![1],
+        SetupStreamRole::WitnessCommitment => plan.opening_segments(),
+        _ => return Err(AkitaError::InvalidProof),
+    };
+    if segments != expected_segments {
         return Err(AkitaError::InvalidSetup(
-            "binary digit authentication role differs from its segment".into(),
+            "binary digit authentication role differs from its segments".into(),
         ));
     }
     let expected =
@@ -126,18 +128,37 @@ pub fn binary_digit_authentication_weights<E: Field>(
     if payload.len() != expected || row_batches.len() != rows {
         return Err(AkitaError::InvalidProof);
     }
-    let shape = plan
-        .repacking()
-        .segments()
-        .get(segment)
+    let mut addresses = Vec::new();
+    for &segment in segments {
+        let shape = plan
+            .repacking()
+            .segments()
+            .get(segment)
+            .ok_or(AkitaError::InvalidProof)?;
+        let width = checked::product([
+            shape.geometry.polynomial_modulus_dimension(),
+            shape.geometry.coordinate_plane_count(),
+        ])
         .ok_or(AkitaError::InvalidProof)?;
-    let width = checked::product([
-        shape.geometry.polynomial_modulus_dimension(),
-        shape.geometry.coordinate_plane_count(),
-    ])
-    .ok_or(AkitaError::InvalidProof)?;
-    let count =
-        checked::product([shape.elements, shape.digits, width]).ok_or(AkitaError::InvalidProof)?;
+        let count = checked::product([shape.elements, shape.digits, width])
+            .ok_or(AkitaError::InvalidProof)?;
+        addresses
+            .try_reserve_exact(count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for element in 0..shape.elements {
+            for digit in 0..shape.digits {
+                for coefficient in 0..width {
+                    addresses.push(plan.repacking().coefficient_address(
+                        segment,
+                        element,
+                        digit,
+                        coefficient,
+                    )?);
+                }
+            }
+        }
+    }
+    let count = addresses.len();
     let columns =
         checked::div_ceil(count, BINARY_DIGIT_COMMITMENT_DEGREE).ok_or(AkitaError::InvalidProof)?;
     let term_count = checked::product([rows, count]).ok_or(AkitaError::InvalidProof)?;
@@ -168,13 +189,7 @@ pub fn binary_digit_authentication_weights<E: Field>(
                 if compact >= count {
                     break;
                 }
-                let lane = compact / width;
-                let address = plan.repacking().coefficient_address(
-                    segment,
-                    lane / shape.digits,
-                    lane % shape.digits,
-                    compact % width,
-                )?;
+                let address = *addresses.get(compact).ok_or(AkitaError::InvalidProof)?;
                 terms.push((address, batch * weight));
             }
         }

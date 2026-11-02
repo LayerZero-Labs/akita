@@ -4,10 +4,14 @@ use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn plan(rows: usize, rank: usize) -> BinaryRootWitnessPlan {
+    group_plan(rows, rank, 1)
+}
+
+fn group_plan(rows: usize, rank: usize, owners: usize) -> BinaryRootWitnessPlan {
     let index = BinaryIndexMap::new(128, 1, 4 * rows, 1).unwrap();
     let descriptor = BinarySourceDescriptor::new(
         index,
-        vec![[1; 32]],
+        (0..owners).map(|owner| [owner as u8 + 1; 32]).collect(),
         BinaryCommitmentProfiles {
             a: [2; 32],
             b: [3; 32],
@@ -54,21 +58,24 @@ fn direct_response_weights(
     rho: &[[F; DEGREE]],
 ) -> Vec<[F; DEGREE]> {
     let rows = matrix[0].len();
-    let mut weights = vec![[F::zero(); DEGREE]; rows];
-    for (matrix_row, row) in matrix.iter().zip(rho) {
-        let reduced_monomials = monomial_row(row);
-        for (target, entry) in weights.iter_mut().zip(matrix_row) {
-            for (response_coefficient, weight) in target.iter_mut().enumerate() {
-                *weight +=
-                    entry
-                        .iter()
-                        .enumerate()
-                        .fold(F::zero(), |sum, (setup_coefficient, &value)| {
+    let mut weights = Vec::new();
+    for owner_rho in rho.chunks_exact(matrix.len()) {
+        let mut owner_weights = vec![[F::zero(); DEGREE]; rows];
+        for (matrix_row, row) in matrix.iter().zip(owner_rho) {
+            let reduced_monomials = monomial_row(row);
+            for (target, entry) in owner_weights.iter_mut().zip(matrix_row) {
+                for (response_coefficient, weight) in target.iter_mut().enumerate() {
+                    *weight += entry.iter().enumerate().fold(
+                        F::zero(),
+                        |sum, (setup_coefficient, &value)| {
                             sum + F::from_i128(value)
                                 * reduced_monomials[setup_coefficient + response_coefficient]
-                        });
+                        },
+                    );
+                }
             }
         }
+        weights.extend(owner_weights);
     }
     weights
 }
@@ -88,116 +95,152 @@ fn matrix_claim(matrix: &[Vec<[i128; DEGREE]>], index: &[F], coefficient: &[F]) 
 
 #[test]
 fn stage3_rho_boundary_matches_coefficient_functional() {
-    for alpha in [F::zero(), F::one(), F::from_u64(7)] {
-        let batches = [F::zero(), F::from_u64(3), -F::one()];
-        let rho = binary_a_rho(alpha, &batches);
-        for (row, batch) in rho.iter().zip(batches) {
-            for (exponent, &value) in row.iter().enumerate() {
-                let mut power = F::one();
-                let mut square = alpha;
-                let mut exponent = exponent;
-                while exponent != 0 {
-                    if exponent & 1 != 0 {
-                        power *= square;
-                    }
-                    square *= square;
-                    exponent >>= 1;
-                }
-                assert_eq!(value, batch * power);
-            }
+    let plan = group_plan(2, 3, 2);
+    let point = vec![F::from_u64(7); plan.repacking().domain_len().trailing_zeros() as usize];
+    let mu = [
+        F::zero(),
+        F::one(),
+        F::from_u64(3),
+        -F::one(),
+        F::from_u64(9),
+        F::zero(),
+        F::from_u64(11),
+    ];
+    let projections = (0..7)
+        .map(|l| {
+            (0..6)
+                .map(|row| {
+                    core::array::from_fn(|t| F::from_u64(((l * 13 + row * 17 + t) % 101) as u64))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let rho = (0..6)
+        .map(|row| {
+            core::array::from_fn(|t| {
+                projections
+                    .iter()
+                    .zip(mu)
+                    .fold(F::zero(), |sum, (j, mu)| sum + mu * j[row][t])
+            })
+        })
+        .collect::<Vec<_>>();
+    let prefix = 2 * 4 * STRIDE;
+    let (_, joined) = BinaryAProduct::new(&plan, &rho, &point, prefix)
+        .unwrap()
+        .factors()
+        .unwrap();
+    let mut expected = vec![F::zero(); joined.len()];
+    for (j, mu) in projections.iter().zip(mu) {
+        let (_, factor) = BinaryAProduct::new(&plan, j, &point, prefix)
+            .unwrap()
+            .factors()
+            .unwrap();
+        for (target, coefficient) in expected.iter_mut().zip(factor) {
+            *target += mu * coefficient;
         }
     }
-    assert!(binary_a_rho(F::one(), &[]).is_empty());
+    assert_eq!(joined, expected);
 }
 
 #[test]
 fn stage3_a_product_matches_independent_signed_remainder_and_response_digits() {
     let mut rng = StdRng::seed_from_u64(0xa753_0239);
-    for rows in [1usize, 2, 3, 5] {
-        for rank in [1usize, 3] {
-            // Public descriptors currently require power-of-two source rows.
-            // An internal live-row cutoff also exercises odd-row arithmetic.
-            let plan = plan(rows.next_power_of_two(), rank);
-            let row_stride = rank.next_power_of_two() * STRIDE;
-            let prefix_len = (rows * row_stride).next_power_of_two() * 2;
-            let point = (0..plan.repacking().domain_len().trailing_zeros())
-                .map(|_| random_scalar(&mut rng))
-                .collect::<Vec<_>>();
-            let rho = (0..rank)
-                .map(|_| core::array::from_fn(|_| random_scalar(&mut rng)))
-                .collect::<Vec<_>>();
-            let matrix = (0..rank)
-                .map(|_| {
-                    (0..rows)
-                        .map(|_| core::array::from_fn(|_| rng.gen_range(-31..=31)))
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            let mut product = BinaryAProduct::new(&plan, &rho, &point, prefix_len).unwrap();
-            product.rows = rows;
-            let (index, coefficient) = product.factors().unwrap();
-            let direct_weights = direct_response_weights(&matrix, &rho);
-            let mut direct_at_point = F::zero();
-            for (j, weights) in direct_weights.iter().enumerate() {
-                let mut digit_power = F::one();
-                for digit in 0..4 {
-                    for (k, &weight) in weights.iter().enumerate() {
-                        let address = plan
-                            .repacking()
-                            .coefficient_address(0, j, digit, k)
-                            .unwrap();
-                        direct_at_point += eq_eval_at_index(&point, address) * digit_power * weight;
-                    }
-                    digit_power *= F::from_u64(8);
-                }
-            }
-            assert_eq!(
-                matrix_claim(&matrix, &index, &coefficient),
-                direct_at_point,
-                "rows={rows}, rank={rank}"
-            );
-
-            // Contract arbitrary response digits at their actual repacking addresses.
-            let mut table = vec![0i128; plan.repacking().domain_len()];
-            let mut response = vec![[0i128; DEGREE]; rows];
-            let mut weight_claim = F::zero();
-            for (j, response) in response.iter_mut().enumerate() {
-                let mut digit_power = 1i128;
-                for digit in 0..4 {
-                    for (k, response) in response.iter_mut().enumerate() {
-                        let address = plan
-                            .repacking()
-                            .coefficient_address(0, j, digit, k)
-                            .unwrap();
-                        table[address] = rng.gen_range(-4..=3);
-                        *response += digit_power * table[address];
-                        weight_claim +=
-                            direct_weights[j][k] * F::from_i128(digit_power * table[address]);
-                    }
-                    digit_power *= 8;
-                }
-            }
-            let mut rem_claim = F::zero();
-            for (matrix_row, rho) in matrix.iter().zip(&rho) {
-                let mut convolution = vec![0i128; 2 * DEGREE - 1];
-                for (entry, response) in matrix_row.iter().zip(&response) {
-                    for (s, &a) in entry.iter().enumerate() {
-                        for (k, &z) in response.iter().enumerate() {
-                            convolution[s + k] += a * z;
+    for owners in [1, 2] {
+        for rows in [1usize, 2, 3, 5] {
+            for rank in [1usize, 3] {
+                // Public descriptors currently require power-of-two source rows.
+                // An internal live-row cutoff also exercises odd-row arithmetic.
+                let plan = group_plan(rows.next_power_of_two(), rank, owners);
+                let row_stride = rank.next_power_of_two() * STRIDE;
+                let prefix_len = (rows * row_stride).next_power_of_two() * 2;
+                let point = (0..plan.repacking().domain_len().trailing_zeros())
+                    .map(|_| random_scalar(&mut rng))
+                    .collect::<Vec<_>>();
+                let rho = (0..owners * rank)
+                    .map(|_| core::array::from_fn(|_| random_scalar(&mut rng)))
+                    .collect::<Vec<_>>();
+                let matrix = (0..rank)
+                    .map(|_| {
+                        (0..rows)
+                            .map(|_| core::array::from_fn(|_| rng.gen_range(-31..=31)))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let mut product = BinaryAProduct::new(&plan, &rho, &point, prefix_len).unwrap();
+                product.rows = rows;
+                let (index, coefficient) = product.factors().unwrap();
+                let direct_weights = direct_response_weights(&matrix, &rho);
+                let mut direct_at_point = F::zero();
+                for (j, weights) in direct_weights.iter().enumerate() {
+                    let element = (j / rows) * rows.next_power_of_two() + j % rows;
+                    let mut digit_power = F::one();
+                    for digit in 0..4 {
+                        for (k, &weight) in weights.iter().enumerate() {
+                            let address = plan
+                                .repacking()
+                                .coefficient_address(0, element, digit, k)
+                                .unwrap();
+                            direct_at_point +=
+                                eq_eval_at_index(&point, address) * digit_power * weight;
                         }
+                        digit_power *= F::from_u64(8);
                     }
                 }
-                rem_claim += signed_remainder(convolution)
-                    .into_iter()
-                    .zip(rho)
-                    .fold(F::zero(), |sum, (value, &rho)| {
-                        sum + F::from_i128(value) * rho
-                    });
+                assert_eq!(
+                    matrix_claim(&matrix, &index, &coefficient),
+                    direct_at_point,
+                    "rows={rows}, rank={rank}"
+                );
+
+                // Contract arbitrary response digits at their actual repacking addresses.
+                let mut table = vec![0i128; plan.repacking().domain_len()];
+                let mut response = vec![[0i128; DEGREE]; owners * rows];
+                let mut weight_claim = F::zero();
+                for (j, response) in response.iter_mut().enumerate() {
+                    let element = (j / rows) * rows.next_power_of_two() + j % rows;
+                    let mut digit_power = 1i128;
+                    for digit in 0..4 {
+                        for (k, response) in response.iter_mut().enumerate() {
+                            let address = plan
+                                .repacking()
+                                .coefficient_address(0, element, digit, k)
+                                .unwrap();
+                            table[address] = rng.gen_range(-4..=3);
+                            *response += digit_power * table[address];
+                            weight_claim +=
+                                direct_weights[j][k] * F::from_i128(digit_power * table[address]);
+                        }
+                        digit_power *= 8;
+                    }
+                }
+                let mut rem_claim = F::zero();
+                for (owner, owner_rho) in rho.chunks_exact(rank).enumerate() {
+                    for (matrix_row, rho) in matrix.iter().zip(owner_rho) {
+                        let mut convolution = vec![0i128; 2 * DEGREE - 1];
+                        for (entry, response) in matrix_row
+                            .iter()
+                            .zip(&response[owner * rows..(owner + 1) * rows])
+                        {
+                            for (s, &a) in entry.iter().enumerate() {
+                                for (k, &z) in response.iter().enumerate() {
+                                    convolution[s + k] += a * z;
+                                }
+                            }
+                        }
+                        rem_claim += signed_remainder(convolution)
+                            .into_iter()
+                            .zip(rho)
+                            .fold(F::zero(), |sum, (value, &rho)| {
+                                sum + F::from_i128(value) * rho
+                            });
+                    }
+                }
+                assert_eq!(
+                    weight_claim, rem_claim,
+                    "response contraction owners={owners}, rows={rows}, rank={rank}"
+                );
             }
-            assert_eq!(
-                weight_claim, rem_claim,
-                "response contraction rows={rows}, rank={rank}"
-            );
         }
     }
 }

@@ -2,10 +2,16 @@
 #![cfg(feature = "labinius-trinomial")]
 
 mod common;
+#[path = "binary_source_end_to_end/compatibility.rs"]
+mod compatibility;
 #[path = "binary_source_end_to_end/fault_backend.rs"]
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
 mod field_switch;
+#[path = "binary_source_end_to_end/prime_plane.rs"]
+mod prime_plane;
+#[path = "binary_source_end_to_end/projection.rs"]
+mod projection;
 #[path = "binary_source_end_to_end/reference.rs"]
 mod reference;
 #[path = "binary_source_end_to_end/stage3.rs"]
@@ -23,8 +29,8 @@ use akita_config::{
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{
-    sis::CommittedSourceClass, BasisMode, DecompositionParams, PolynomialGroupLayout,
-    ScheduleLookupKey, SisModulusProfileId,
+    sis::CommittedSourceClass, BasisMode, ChunkedWitnessCfg, DecompositionParams,
+    PolynomialGroupLayout, ScheduleLookupKey, SisModulusProfileId,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -114,7 +120,19 @@ fn stage3_binary_group_opens_once_inside_the_callers_transcript() {
 }
 
 #[test]
+fn projection_binary_group_opens_once_inside_the_callers_transcript() {
+    init_rayon_pool();
+    run_on_large_stack(|| run_fixture(false, None, 128));
+}
+
+#[test]
 fn stage3_binary_and_ordinary_groups_share_one_opening() {
+    init_rayon_pool();
+    run_on_large_stack(|| run_fixture(true, None, 128));
+}
+
+#[test]
+fn binary_and_ordinary_groups_share_one_opening() {
     init_rayon_pool();
     run_on_large_stack(|| run_fixture(true, None, 128));
 }
@@ -297,6 +315,16 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     }
     let claims = OpeningClaims::from_groups(groups).unwrap();
     let data = selected_prover_data::<BinaryTestSuffix>(claims, handles, scheme.schedules());
+    let successor_coefficients = scheme
+        .schedules()
+        .resolve_selection(data.selection())
+        .unwrap()
+        .schedule()
+        .recursive_folds[0]
+        .params
+        .outer_payload_geometry()
+        .unwrap()
+        .transmitted_coefficients();
     let statement = |claim: &BinaryWordClaim, point: &[F], value: F| {
         let owned =
             PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim.clone()).unwrap();
@@ -431,6 +459,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     akita_transcript::finish_proof_ranges(&prover);
     let stage3_ranges = akita_transcript::thread_proof_ranges();
     let proof = prover.narg_string().to_vec();
+    compatibility::assert_base_bytes(&proof, mixed, word_width);
     eprintln!(
         "{} ordinary grouped proof (word width {}): {} bytes",
         if mixed {
@@ -540,6 +569,9 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         first_prefix.n_prefix().unwrap().trailing_zeros() as usize,
         |altered| rejects(altered, &claim, &ordinary_point, ordinary_value),
     );
+    projection::mutate_values(&proof, successor_coefficients, true, 1, |bytes| {
+        rejects(bytes, &claim, &ordinary_point, ordinary_value);
+    });
     let mut value = *claim.value();
     value[0] ^= 1;
     let altered = BinaryWordClaim::new(

@@ -329,8 +329,8 @@ fn q24_root_rows_authenticate_the_repacked_response_image_and_padding() {
 #[path = "binary_root_mixed_tests.rs"]
 mod mixed;
 
-#[path = "binary_root/quotient_tests.rs"]
-mod quotient;
+#[path = "binary_root/projection_tests.rs"]
+mod projection;
 
 #[path = "binary_root/evaluation_tests.rs"]
 mod evaluation_tests;

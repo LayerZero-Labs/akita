@@ -1,5 +1,5 @@
 use super::*;
-use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
+use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, CANONICAL_IMAGE_WINDOW};
 use akita_challenges::SparseChallenge;
 use jolt_field::{One, Prime128Offset275, Ring, Zero};
 
@@ -18,7 +18,7 @@ fn descriptor() -> BinarySourceDescriptor {
 }
 
 #[test]
-fn six_segments_share_addresses_when_scheduled_domain_grows() {
+fn five_segments_share_addresses_when_scheduled_domain_grows() {
     let descriptor = descriptor();
     let plan = BinaryRootWitnessPlan::new(&descriptor, 2, 256).unwrap();
     assert_eq!(plan.repacking().domain_len(), 65536);
@@ -28,10 +28,10 @@ fn six_segments_share_addresses_when_scheduled_domain_grows() {
             .iter()
             .map(|shape| (shape.elements, shape.digits))
             .collect::<Vec<_>>(),
-        vec![(1, 4), (4, 8), (2, 8), (2, 1), (1, 9), (1, 6)]
+        vec![(1, 4), (4, 8), (2, 1), (1, 9), (1, 6)]
     );
     let larger = plan.clone().with_domain_len(131072).unwrap();
-    for segment in 0..6 {
+    for segment in 0..5 {
         assert_eq!(
             plan.repacking().segment_range(segment).unwrap(),
             larger.repacking().segment_range(segment).unwrap()
@@ -76,11 +76,11 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
         .count();
     let weights = plan
         .relation_weights(
-            &claim,
+            Some(&claim),
             Some(&matrix),
             &challenges,
             F::from_u64(17),
-            &crate::binary_source::binary_a_rho(F::from_u64(17), &[F::one(); 2]),
+            &[[F::one(); 648]; 2],
             [F::from_u64(19), F::from_u64(23)],
             &vec![F::one(); padding_count],
         )
@@ -91,7 +91,6 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
         plan.repacking().coefficient_address(2, 0, 0, 0).unwrap(),
         plan.repacking().coefficient_address(3, 0, 0, 0).unwrap(),
         plan.repacking().coefficient_address(4, 0, 0, 0).unwrap(),
-        plan.repacking().coefficient_address(5, 0, 0, 0).unwrap(),
         131071,
     ] {
         let mut altered = table.clone();
@@ -102,10 +101,9 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
     invalid_matrix[0][0][0] = i128::from(CANONICAL_IMAGE_WINDOW.1) + 1;
     assert!(binary_direct_a_weights(
         &plan,
-        &invalid_matrix,
+        Some(&invalid_matrix),
         &challenges,
-        F::one(),
-        &[F::one(); 2],
+        &[[F::one(); 648]; 2],
         &vec![F::one(); padding_count]
     )
     .is_err());

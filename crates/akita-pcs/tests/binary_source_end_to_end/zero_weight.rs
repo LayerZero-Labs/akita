@@ -105,6 +105,7 @@ fn field_switch_zero_multiplier_authenticates_terminal() {
         let challenges = akita_types::binary_source::binary_root_challenges(
             &mut ProverFoldDraw::new(&mut challenge_channel, 0, 0),
             2,
+            1,
         )
         .unwrap();
         fault_backend::authenticate_terminal(&manifest, &terminal, &source, &challenges).unwrap();

@@ -1,4 +1,4 @@
-//! Quotient relation on the canonical digit addresses, with an explicit rho.
+//! Projected A relation on canonical digit addresses, with an explicit rho.
 
 use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::module_map::pack_signed_components;
@@ -7,15 +7,18 @@ use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
-use super::{
-    binary_scalar_challenges, BinaryRootWitnessPlan, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
+use crate::binary_source::{
+    binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,
 };
 use crate::native_root_relation::NativeRootWeights;
 
 /// Compile the A identity's coefficient weights. Proving supplies A; online
 /// verification omits it and authenticates its contribution through Stage 3.
-/// The T and committed KA terms, and all padding equations, are identical.
-pub fn binary_quotient_weights<E: Field>(
+/// `rho[polynomial * rank + row][coefficient]` batches all seven public
+/// projections over the joined residual. This compiles the signed remainder
+/// `sum_i <rho_i, rem_Psi(A*z-sum c*T)_i>`; the caller supplies its projection
+/// target. The T terms and every padding equation remain in the root oracle.
+pub fn binary_direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
     matrix: Option<&[Vec<[i128; 648]>]>,
     challenges: &Challenges,
@@ -88,14 +91,6 @@ pub fn binary_quotient_weights<E: Field>(
                     terms.extend(plan.repacking().coefficient_weights(1, element, t, -w)?);
                 }
             }
-            for (t, &w) in weights.iter().enumerate() {
-                terms.extend(plan.repacking().coefficient_weights(
-                    2,
-                    row_index,
-                    t,
-                    -E::from_u64(u64::from(BINARY_SOURCE_Q)) * w,
-                )?);
-            }
         }
     }
     let mut padding = padding_weights.iter();
@@ -114,3 +109,7 @@ pub fn binary_quotient_weights<E: Field>(
     }
     NativeRootWeights::new(plan.repacking().domain_len(), terms, E::zero())
 }
+
+#[cfg(test)]
+#[path = "root_projection_weights_tests.rs"]
+mod tests;

@@ -10,7 +10,10 @@ use akita_params::{
     SetupContributionMode, SumcheckProtocol,
 };
 use akita_serialization::AkitaSerialize;
-use akita_types::binary_source::{binary_root_challenges, binary_root_statement, BinaryRootPublic};
+use akita_types::binary_source::{
+    binary_projection_values, binary_root_challenges, binary_root_statement, BinaryProjectionRows,
+    BinaryRootPublic,
+};
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{
     AkitaVerifierSetup, Commitment, DigitRangeEqualityPoint, FpExtEncoding, GrindingReplay,
@@ -39,7 +42,12 @@ where
         ));
     }
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
-    let GroupClaimKind::Binary { manifest, claim } = group.kind() else {
+    let GroupClaimKind::Binary {
+        manifest,
+        claim,
+        prime,
+    } = group.kind()
+    else {
         return Err(AkitaError::InvalidProof);
     };
     let ordinary = claims.groups().get(1);
@@ -93,18 +101,25 @@ where
     binary_root_statement::<F, E, _>(
         grinding.state_mut(),
         manifest,
-        claim,
+        claim.as_ref(),
+        prime,
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
-    let terminal = crate::binary_field_switch::verify_field_switch(
-        manifest.descriptor(),
-        claim,
-        grinding.state_mut(),
-    )?;
+    let terminal = claim
+        .as_ref()
+        .map(|claim| {
+            crate::binary_field_switch::verify_field_switch(
+                manifest.descriptor(),
+                claim,
+                grinding.state_mut(),
+            )
+        })
+        .transpose()?;
     let public = BinaryRootPublic::new(
         manifest,
-        &terminal,
+        terminal.as_ref(),
+        prime,
         &setup.expanded().descriptor,
         logical_len,
         next.params.d_a(),
@@ -130,11 +145,16 @@ where
     )?;
     grinding.read_fold_response(GrindingSite::FoldResponse { level: 0 })?;
     let columns = manifest.descriptor().index_map().columns();
+    let owners = manifest.descriptor().polynomials().len();
     let challenges = {
         let mut draw = VerifierFoldDraw::new(grinding.state_mut(), 0, 0);
-        binary_root_challenges(&mut draw, columns)?
+        binary_root_challenges(&mut draw, columns, owners)?
     };
-    grinding.record_fold_challenges(0, 0, columns)?;
+    grinding.record_fold_challenges(
+        0,
+        0,
+        akita_error::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
+    )?;
 
     let successor_payload_len = next
         .params
@@ -146,6 +166,9 @@ where
         successor_payload_len,
     )
     .map(RingVec::from_coeffs)?;
+    let bounds = public.plan().projection_bounds();
+    let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
+    let projected_values = binary_projection_values(grinding.state_mut(), bounds, &[0; 7])?;
     let alpha =
         grinding.grinded_ext_challenge::<F, E>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let tau0 =
@@ -169,20 +192,21 @@ where
             ))
         })
         .transpose()?;
-    let rho = akita_types::binary_source::binary_a_rho(
-        alpha,
-        batches
-            .get(..manifest.a_rank())
-            .ok_or(AkitaError::InvalidProof)?,
-    );
+    let mu = batches
+        .get(..7)
+        .ok_or(AkitaError::InvalidProof)?
+        .try_into()
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let rho = projections.batch(&mu)?;
     let (relation, negative_bits) = public.relation(
         &challenges,
         alpha,
         &batches,
+        &rho,
+        &projected_values,
         &lift(group.commitment().rows().coeffs()),
         &lift(&d_payload),
         ordinary_claim,
-        &rho,
         None,
     )?;
 
