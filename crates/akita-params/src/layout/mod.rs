@@ -47,10 +47,9 @@ pub use params::{
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    padded_boolean_opening_vars, sumcheck_rounds, terminal_response_bytes,
-    terminal_response_max_bytes, terminal_response_planner_bytes,
-    try_extension_opening_reduction_level_bytes, EXTENSION_OPENING_REDUCTION_DEGREE,
-    SETUP_SUMCHECK_DEGREE,
+    padded_boolean_opening_vars, sumcheck_rounds, terminal_response_max_bytes,
+    terminal_response_planner_bytes, try_extension_opening_reduction_level_bytes,
+    EXTENSION_OPENING_REDUCTION_DEGREE, SETUP_SUMCHECK_DEGREE,
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_layout::{
@@ -77,6 +76,6 @@ pub use setup_prefix_slots::{
 pub use setup_projection::SetupProjectionGeometry;
 pub use subring_packing_geometry::SubringCoefficientPackingGeometry;
 pub use tail_segments::{
-    terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponseShape,
+    terminal_sent_blocks, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
+    TERMINAL_BLOCK_DIGEST_BYTES,
 };

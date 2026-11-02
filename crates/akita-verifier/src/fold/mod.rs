@@ -26,6 +26,7 @@ use crate::stages::stage3::verify_stage3;
 use akita_error::AkitaError;
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::FIELD_DIGEST_BYTES;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, RingVec};
 use challenges::derive_multi_group_stage1_challenges;
@@ -63,10 +64,22 @@ pub(crate) enum NextWitnessPlan {
     TerminalT { coefficient_count: usize },
 }
 
+/// Witness a fold hands to its successor, in the shape [`NextWitnessPlan`] fixed.
+pub(crate) enum NextWitness<F: Field> {
+    /// Outer payload carried into the next recursive fold.
+    OuterPayload(RingVec<F>),
+    /// Terminal `t` state without its last block, which the terminal
+    /// recomputes and checks against `last_block_digest`.
+    TerminalT {
+        sent: RingVec<F>,
+        last_block_digest: [u8; FIELD_DIGEST_BYTES],
+    },
+}
+
 pub(crate) struct FoldVerifyOutput<F: Field, E: Field> {
     pub(crate) challenges: Vec<E>,
     pub(crate) setup_prefix_opening: Option<SetupPrefixOpening<E>>,
-    pub(crate) next_witness: RingVec<F>,
+    pub(crate) next_witness: NextWitness<F>,
     pub(crate) opening: E,
 }
 
@@ -235,15 +248,18 @@ where
 }
 
 /// Receive the successor witness payload for the next fold or the terminal.
+///
+/// The terminal recomputes the last block of its `t` state, so that block
+/// arrives as a digest.
 fn receive_next_witness<F, E>(
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: &PreparedFoldReplay<'_, F, E>,
-) -> Result<RingVec<F>, AkitaError>
+) -> Result<NextWitness<F>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: Field,
 {
-    let next_witness = match prepared.next_witness {
+    let witness = match prepared.next_witness {
         NextWitnessPlan::OuterPayload { coefficient_count } => {
             if coefficient_count != prepared.level_layout.next_outer_payload_coeffs() {
                 return Err(AkitaError::InvalidSetup(
@@ -271,11 +287,26 @@ where
         }
     }
     .map(RingVec::from_coeffs)?;
-    if prepared.next_witness_ring_dim == 0
-        || matches!(prepared.next_witness, NextWitnessPlan::TerminalT { .. })
-            && !next_witness.can_decode_vec(prepared.next_witness_ring_dim)
-    {
+    if prepared.next_witness_ring_dim == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(next_witness)
+    match prepared.next_witness {
+        NextWitnessPlan::OuterPayload { .. } => Ok(NextWitness::OuterPayload(witness)),
+        NextWitnessPlan::TerminalT { .. } => {
+            if !witness.can_decode_vec(prepared.next_witness_ring_dim) {
+                return Err(AkitaError::InvalidProof);
+            }
+            let last_block_digest = akita_transcript::receive_field_digest(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessInnerStateDigest {
+                    level: prepared.level,
+                }
+                .id()?,
+            )?;
+            Ok(NextWitness::TerminalT {
+                sent: witness,
+                last_block_digest,
+            })
+        }
+    }
 }
