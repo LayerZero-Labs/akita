@@ -341,6 +341,19 @@ fn seed_derived_mode_reads_no_registry_files_and_matches_registry_mode() {
         let pinned = load_prover_setup::<Cfg>(&opened, &catalog_only, SET, None).expect("prover");
         let scheme = AkitaCommitmentScheme::new(pinned.catalog().clone());
         let proved = prove(&scheme, pinned.setup(), 24);
+
+        // An in-process verifier takes its prover's checked slots instead of
+        // deriving them again, and issues the same state.
+        let from_prover = load_verifier_setup::<Cfg>(
+            &opened,
+            &catalog_only,
+            SET,
+            None,
+            None,
+            PrefixCommitmentSource::SeedDerived(pinned.setup()),
+        )
+        .expect("commitments from the prover setup");
+        assert_eq!(from_prover.setup(), registry.setup());
         verify(&AkitaVerifier::from_pinned(derived).unwrap(), &proved)
             .expect("seed-derived verifier");
 
