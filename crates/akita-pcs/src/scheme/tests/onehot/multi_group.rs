@@ -286,8 +286,7 @@ where
                 b"test/multi-group-unequal",
                 GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("multi-group verify");
@@ -318,8 +317,7 @@ where
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 ))
                 .is_err(),
             "swapped group commitments must reject"
@@ -343,8 +341,7 @@ where
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 ))
                 .is_err(),
             "tampered group opening must reject"

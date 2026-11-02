@@ -469,8 +469,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 )
                 .expect("valid one-hot verifier statement"),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("batched onehot verify");

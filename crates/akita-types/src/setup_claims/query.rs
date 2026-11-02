@@ -1,3 +1,5 @@
+mod compilation;
+
 use super::{point_domain, SetupPolynomialId};
 use crate::setup_contribution::setup_index_weight::{
     build_group_b_setup_tensors, lift_role_tensor,
@@ -9,10 +11,7 @@ use crate::{
 };
 use akita_algebra::{
     eq_poly::EqPolynomial,
-    offset_eq::{
-        eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorFamily,
-        EqPairTensorWeights, OffsetEqWindow,
-    },
+    offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily, EqPairTensorWeights},
     poly::multilinear_eval,
     ring::{evaluate_power_sequence_mle, scalar_powers},
 };
@@ -45,6 +44,18 @@ pub struct SetupWeightTerm<E: Field> {
     active_index_len: usize,
 }
 impl<E: Field> SetupWeightTerm<E> {
+    /// Scale a compiled term in place without allocating another coefficient vector.
+    pub fn scale(&mut self, scale: E) {
+        for coefficient in &mut self.coefficient {
+            *coefficient *= scale;
+        }
+    }
+    pub const fn lane(&self) -> usize {
+        self.lane
+    }
+    pub const fn lanes(&self) -> usize {
+        self.lanes
+    }
     pub fn coefficient(&self) -> &[E] {
         &self.coefficient
     }
@@ -210,74 +221,6 @@ impl<E: Field> SetupQuery<E> {
                     })
             }
         }
-    }
-
-    /// Compile structured native factors, preserving the existing lifted index materializer.
-    pub fn compile(
-        &self,
-        polynomial: &SetupPolynomialId,
-        coefficient_len: usize,
-    ) -> Result<Vec<SetupWeightTerm<E>>, AkitaError> {
-        self.validate(polynomial)?;
-        polynomial.validate_split(coefficient_len)?;
-        self.validate_split(coefficient_len)?;
-        let native = match &self.0 {
-            Query::Evaluation(point) => {
-                let bits = coefficient_len.trailing_zeros() as usize;
-                let (low, high) = point
-                    .split_at_checked(bits)
-                    .ok_or(AkitaError::InvalidProof)?;
-                vec![(
-                    EqPolynomial::evals(low)?,
-                    EqPolynomial::evals(high)?,
-                    polynomial.field_len() / coefficient_len,
-                )]
-            }
-            Query::Contribution {
-                plan,
-                functional: PreparedCoefficientFunctional::LiftedPower { alpha },
-            } => {
-                let dim = plan.projection_geometry().base_ring_dim();
-                let mut index = plan.materialize_setup_index_weights(*alpha)?;
-                index.resize(polynomial.field_len() / dim, E::zero());
-                vec![(scalar_powers(*alpha, dim).to_vec(), index, plan.required())]
-            }
-            Query::Contribution { .. } | Query::Native(_) => self
-                .native_terms()?
-                .into_iter()
-                .map(|term| {
-                    let equality = OffsetEqWindow::new(&term.point)?;
-                    let index = materialize_eq_tensor_left(
-                        &equality,
-                        &term.tensors,
-                        polynomial.field_len() / term.coefficient.len(),
-                    )?;
-                    let active = index
-                        .iter()
-                        .rposition(|weight| !weight.is_zero())
-                        .map_or(0, |last| last + 1);
-                    Ok((term.coefficient, index, active))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?,
-        };
-        let mut terms = Vec::new();
-        for (coefficient, index, active) in native {
-            let lanes = checked::exact_div(coefficient.len(), coefficient_len)
-                .ok_or(AkitaError::InvalidProof)?;
-            let index: Arc<[E]> = index.into();
-            checked::product([index.len(), lanes]).ok_or(AkitaError::InvalidProof)?;
-            for (lane, coefficient) in coefficient.chunks_exact(coefficient_len).enumerate() {
-                terms.push(SetupWeightTerm {
-                    coefficient: coefficient.to_vec(),
-                    index: Arc::clone(&index),
-                    lane,
-                    lanes,
-                    active_index_len: checked::product([active, lanes])
-                        .ok_or(AkitaError::InvalidProof)?,
-                });
-            }
-        }
-        Ok(terms)
     }
 
     fn native_terms(&self) -> Result<Vec<NativeTerm<E>>, AkitaError> {

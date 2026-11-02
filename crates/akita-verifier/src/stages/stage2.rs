@@ -3,9 +3,9 @@
 use crate::coefficient_packing_relation::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
+use crate::fold::FoldSetup;
 use crate::relation::evaluation_trace::PreparedEvaluationTrace;
 use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
-use crate::setup_batch::{decide_setup_batch, PreparedOuterSetup};
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::stages::stage1::Stage1Replay;
 use akita_algebra::{
@@ -391,7 +391,6 @@ where
 }
 
 /// Resolve this fold's setup contribution and check the Stage 2 output claim.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn validate_stage2_replay<F, E>(
     setup: &AkitaVerifierSetup<F>,
     stage1: Stage1Replay<'_, E>,
@@ -399,60 +398,23 @@ pub(crate) fn validate_stage2_replay<F, E>(
     setup_claim: Option<E>,
     opening_semantics: Stage2OpeningSemantics<'_, E>,
     replay: Stage2RoundReplay<E>,
-    outer: Option<&PreparedOuterSetup<E>>,
-    mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
-    mode: crate::SetupMode,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
-    level: u32,
+    fold_setup: FoldSetup<'_, '_, E>,
 ) -> Result<Stage2Output<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
 {
-    if let Some(accumulator) = accumulator.as_deref_mut().filter(|accumulator| {
-        setup_claim.is_none()
-            && accumulator
-                .batch
-                .as_ref()
-                .is_some_and(|(target, _)| *target == level)
-    }) {
-        let (_, inherited) = accumulator.batch.as_ref().ok_or(AkitaError::InvalidProof)?;
-        if inherited.polynomial() != &accumulator.polynomial {
-            return Err(AkitaError::InvalidInput(
-                "setup batch domain mismatch".into(),
-            ));
-        }
-        let coefficients = akita_types::setup_claims::transcript::batch_coefficients::<F, E, _>(
-            grinding,
-            level,
-            inherited.claims().len(),
-        )?;
-        match mode {
-            crate::SetupMode::Check => {
-                decide_setup_batch(setup.expanded(), inherited, &coefficients)?;
-            }
-            crate::SetupMode::Defer => {
-                accumulator
-                    .pending
-                    .extend(inherited.claims().iter().cloned());
-            }
-        }
-    }
-    let external_relation_weight = if let Some(outer) = outer {
-        // The checked offloaded reduction consumed its inherited input claims.
-        Some(outer.relation_weight)
-    } else if setup_claim.is_none() && mode == crate::SetupMode::Defer {
-        let accumulator = accumulator.ok_or(AkitaError::InvalidProof)?;
-        Some(
+    let external_relation_weight = match fold_setup {
+        FoldSetup::Ordinary => None,
+        FoldSetup::Offloaded(outer) => Some(outer.relation_weight),
+        FoldSetup::Deferred(accumulator) => Some(
             rs.relation_matrix_evaluator
                 .eval_flat_at_point_with_external_setup::<F>(
                     &replay.challenges,
                     rs.alpha,
                     |query| accumulator.resolve(query),
                 )?,
-        )
-    } else {
-        None
+        ),
     };
 
     let witness_eval = replay.witness_eval;

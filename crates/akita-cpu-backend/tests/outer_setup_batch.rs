@@ -1,3 +1,7 @@
+#[cfg(feature = "logging-transcript")]
+#[path = "outer_setup_batch/transcript_order.rs"]
+mod transcript_order;
+
 use akita_config::{test_support::workspace_schedule_catalog, CommitmentConfig, SetupRequirements};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
@@ -14,7 +18,7 @@ use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
     SetupPrefixVerifierRegistry,
 };
-use akita_verifier::{AkitaVerifier, SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
+use akita_verifier::{AkitaVerifier, SetupClaimAccumulator, SetupClaimAdvice, SetupPolicy};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, One, PseudoMersenne, Ring};
 
 struct Advice<'a, F: Field, E: Field> {
@@ -213,6 +217,17 @@ where
                 }
             }
         }
+        #[cfg(feature = "logging-transcript")]
+        if proof.is_ok() {
+            if let Some((level, _)) = batch.filter(|(_, batch)| !batch.claims().is_empty()) {
+                let target_offloaded = row
+                    .schedule()
+                    .recursive_folds
+                    .get(level as usize)
+                    .is_some_and(|fold| fold.params.setup_prefix().is_some());
+                transcript_order::assert_order(level, target_offloaded);
+            }
+        }
         proof
     };
     let ordinary = prove(None).unwrap();
@@ -224,8 +239,7 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            None,
-            akita_verifier::SetupMode::Check,
+            akita_verifier::SetupPolicy::Check(None),
         )
         .unwrap();
     let (level, len) = selected.unwrap_or((0, capacity.num_field_elements));
@@ -240,8 +254,7 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut empty_accumulator),
-            SetupMode::Check,
+            SetupPolicy::Check(Some(&mut empty_accumulator)),
         )
         .unwrap();
     assert!(empty_accumulator.into_pending().is_empty());
@@ -250,17 +263,31 @@ where
         polynomial: &polynomial,
         calls: 0,
     };
+    let mut missing_advice = SetupClaimAccumulator::new(polynomial.clone());
     assert!(matches!(
         verifier.batched_verify(
             &ordinary,
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            None,
-            SetupMode::Defer,
+            SetupPolicy::Defer(&mut missing_advice),
         ),
         Err(AkitaError::InvalidInput(_))
     ));
+    assert!(missing_advice.into_pending().is_empty());
+    let mut unexpected_advice =
+        SetupClaimAccumulator::new(polynomial.clone()).with_advice(&mut advice);
+    assert!(matches!(
+        verifier.batched_verify(
+            &ordinary,
+            SESSION,
+            GroupBatchStatement::new(selection, claims()).unwrap(),
+            BasisMode::Lagrange,
+            SetupPolicy::Check(Some(&mut unexpected_advice)),
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(unexpected_advice.into_pending().is_empty());
     assert_eq!(advice.calls, 0);
     let mut checked = SetupClaimAccumulator::new(polynomial.clone());
     verifier
@@ -269,8 +296,7 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut checked),
-            SetupMode::Check,
+            SetupPolicy::Check(Some(&mut checked)),
         )
         .unwrap();
     assert!(checked.into_pending().is_empty());
@@ -281,8 +307,7 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut collected),
-            SetupMode::Defer,
+            SetupPolicy::Defer(&mut collected),
         )
         .unwrap();
     let pending = collected.into_pending();
@@ -333,13 +358,17 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut invalid),
-            SetupMode::Check,
+            SetupPolicy::Check(Some(&mut invalid)),
         )
         .is_err());
     let outer = prove(Some((level, &inherited))).unwrap();
     #[cfg(feature = "logging-transcript")]
-    assert_eq!(sumcheck_rounds(), ordinary_rounds);
+    let prover_events = {
+        assert_eq!(sumcheck_rounds(), ordinary_rounds);
+        let events = akita_transcript::thread_events();
+        akita_transcript::clear_thread_events();
+        events
+    };
     let mut checked = SetupClaimAccumulator::from_batch(level, inherited.clone());
     verifier
         .batched_verify(
@@ -347,19 +376,22 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut checked),
-            SetupMode::Check,
+            SetupPolicy::Check(Some(&mut checked)),
         )
         .unwrap();
     assert!(checked.into_pending().is_empty());
+    #[cfg(feature = "logging-transcript")]
+    {
+        transcript_order::assert_order(level, offloaded);
+        assert_eq!(akita_transcript::thread_events(), prover_events);
+    }
     assert!(verifier
         .batched_verify(
             &outer,
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            None,
-            SetupMode::Check,
+            SetupPolicy::Check(None),
         )
         .is_err());
     let advice_calls_before_outer = advice.calls;
@@ -371,8 +403,7 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut carried),
-            SetupMode::Defer,
+            SetupPolicy::Defer(&mut carried),
         )
         .unwrap();
     let carried = carried.into_pending();
@@ -407,8 +438,7 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut checked),
-                SetupMode::Check,
+                SetupPolicy::Check(Some(&mut checked)),
             )
             .unwrap();
         assert!(checked.into_pending().is_empty());
@@ -420,8 +450,7 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut deferred),
-                SetupMode::Defer,
+                SetupPolicy::Defer(&mut deferred),
             )
             .unwrap();
         assert_eq!(
@@ -451,8 +480,7 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut checked),
-                SetupMode::Check,
+                SetupPolicy::Check(Some(&mut checked)),
             )
             .unwrap();
         assert!(checked.into_pending().is_empty());
@@ -465,8 +493,7 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut carried),
-                SetupMode::Defer,
+                SetupPolicy::Defer(&mut carried),
             )
             .unwrap();
         // Pending claims must not disappear when the caller changes the mode.
@@ -476,8 +503,7 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut carried),
-                SetupMode::Check,
+                SetupPolicy::Check(Some(&mut carried)),
             ),
             Err(AkitaError::InvalidInput(_))
         ));
@@ -493,17 +519,22 @@ where
     }
     let mut trailing = outer.clone();
     trailing.push(0);
-    for mode in [SetupMode::Check, SetupMode::Defer] {
-        let mut retry =
-            SetupClaimAccumulator::from_batch(level, inherited.clone()).with_advice(&mut advice);
+    for defer in [false, true] {
+        let mut retry = SetupClaimAccumulator::from_batch(level, inherited.clone());
+        if defer {
+            retry = retry.with_advice(&mut advice);
+        }
         assert!(verifier
             .batched_verify(
                 &trailing,
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut retry),
-                mode,
+                if defer {
+                    SetupPolicy::Defer(&mut retry)
+                } else {
+                    SetupPolicy::Check(Some(&mut retry))
+                },
             )
             .is_err());
         verifier
@@ -512,13 +543,16 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut retry),
-                mode,
+                if defer {
+                    SetupPolicy::Defer(&mut retry)
+                } else {
+                    SetupPolicy::Check(Some(&mut retry))
+                },
             )
             .expect("a rejected proof must preserve the input for retry");
         assert_eq!(
             retry.into_pending().len(),
-            if mode == SetupMode::Check {
+            if !defer {
                 0
             } else {
                 direct_folds
@@ -540,8 +574,7 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut collected),
-            SetupMode::Defer,
+            SetupPolicy::Defer(&mut collected),
         );
         assert_eq!(result.is_ok(), accepted);
     }
@@ -565,8 +598,7 @@ where
             SESSION,
             GroupBatchStatement::new(selection, claims()).unwrap(),
             BasisMode::Lagrange,
-            Some(&mut invalid),
-            SetupMode::Check,
+            SetupPolicy::Check(Some(&mut invalid)),
         )
         .is_err());
     if offloaded {
@@ -582,8 +614,7 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut invalid),
-                SetupMode::Check,
+                SetupPolicy::Check(Some(&mut invalid)),
             )
             .is_err());
         assert!(verifier
@@ -592,8 +623,7 @@ where
                 SESSION,
                 GroupBatchStatement::new(selection, claims()).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut invalid),
-                SetupMode::Check,
+                SetupPolicy::Check(Some(&mut invalid)),
             )
             .is_err());
         let pending = invalid.into_pending();

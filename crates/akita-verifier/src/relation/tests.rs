@@ -541,7 +541,7 @@ fn external_setup_queries_match_direct_mixed_role_relations() {
         )
         .unwrap();
         let query = SetupQuery::contribution(plan(), functional).unwrap();
-        let terms = query.compile(&polynomial, 32).unwrap();
+        let terms = query.compile(&polynomial, 32, None).unwrap();
         let dense = (0..polynomial.field_len())
             .map(|j| {
                 terms.iter().fold(MixedF::zero(), |sum, term| {
@@ -554,6 +554,18 @@ fn external_setup_queries_match_direct_mixed_role_relations() {
             .zip(setup.shared_matrix().as_field_slice())
             .fold(MixedF::zero(), |sum, (&w, &s)| sum + w * s);
         assert_eq!(reference, contraction, "{mode:?}");
+        let batch = akita_types::setup_claims::SetupBatchStatement::new(
+            polynomial.clone(),
+            32,
+            vec![akita_types::setup_claims::SetupClaim::new(
+                polynomial.clone(),
+                query.clone(),
+                reference,
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        crate::setup_batch::decide_setup_batch(&setup, &batch, &[MixedF::from_u64(17)]).unwrap();
         let z = (0..polynomial.num_variables())
             .map(|i| MixedF::from_u64(71 + i as u64))
             .collect::<Vec<_>>();

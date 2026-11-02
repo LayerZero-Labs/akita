@@ -122,10 +122,12 @@ and proof format.
 
 ## External setup accumulation
 
-Setup accumulation needs no Cargo feature. The verifier takes an optional
-mutable setup accumulator and a `SetupMode::Check` or `SetupMode::Defer` value.
-For ordinary verification, pass `None` and `akita_verifier::SetupMode::Check`.
-Both modes check Stage 3 completely; only direct setup evaluations are deferred.
+Setup accumulation needs no Cargo feature. The verifier takes a `SetupPolicy`:
+`Check(None)` for ordinary verification, `Check(Some(&mut accumulator))` for
+inherited claims or an empty accumulator, or `Defer(&mut accumulator)` to export
+direct setup evaluations. For ordinary verification, pass
+`akita_verifier::SetupPolicy::Check(None)`.
+Every policy checks Stage 3 completely; only direct setup evaluations are deferred.
 Attach auxiliary archived-proof advice with `SetupClaimAccumulator::with_advice`.
 See [external setup accumulation](../how/recursion.md#external-setup-accumulation)
 for inheritance and final-discharge requirements.

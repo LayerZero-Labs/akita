@@ -364,8 +364,7 @@ where
                 LABEL,
                 GroupBatchStatement::new(selection, verifier_claims).expect("statement"),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("honest proof verifies");

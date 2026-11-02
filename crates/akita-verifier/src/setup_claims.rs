@@ -7,11 +7,23 @@ pub trait SetupClaimAdvice<E: Field> {
     fn answer(&mut self, query: &SetupQuery<E>) -> Result<E, AkitaError>;
 }
 
-/// Direct setup verification policy. Stage 3 reductions are checked in both modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SetupMode {
-    Defer,
-    Check,
+/// Setup obligations for one verification. Stage 3 reductions are always checked.
+pub enum SetupPolicy<'a, 'b, E: Field> {
+    /// Check this proof and any inherited batch. `None` is ordinary verification;
+    /// an empty accumulator is also accepted. Pending claims and advice are
+    /// rejected at entry; bind pending claims with `from_batch` first.
+    Check(Option<&'a mut SetupClaimAccumulator<'b, E>>),
+    /// Export direct setup evaluations using the accumulator's untrusted advice.
+    Defer(&'a mut SetupClaimAccumulator<'b, E>),
+}
+
+impl<'a, 'b, E: Field> SetupPolicy<'a, 'b, E> {
+    pub(crate) fn accumulator(&mut self) -> Option<&mut SetupClaimAccumulator<'b, E>> {
+        match self {
+            Self::Check(accumulator) => accumulator.as_deref_mut(),
+            Self::Defer(accumulator) => Some(accumulator),
+        }
+    }
 }
 
 /// Input and output setup obligations for one proof verification.
@@ -24,7 +36,7 @@ pub struct SetupClaimAccumulator<'a, E: Field> {
     // Keep the bound input separate from claims collected during this replay.
     pub(crate) batch: Option<(u32, SetupBatchStatement<E>)>,
     pub(crate) pending: Vec<SetupClaim<E>>,
-    advice: Option<&'a mut dyn SetupClaimAdvice<E>>,
+    pub(crate) advice: Option<&'a mut dyn SetupClaimAdvice<E>>,
 }
 
 impl<'a, E: Field> SetupClaimAccumulator<'a, E> {

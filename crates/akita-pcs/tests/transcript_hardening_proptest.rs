@@ -91,8 +91,7 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
                     scheme.schedules(),
                 ),
                 basis_mode,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
@@ -105,8 +104,7 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
             b"hardening/proptest/native",
             verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules(),),
             basis_mode,
-            None,
-            akita_verifier::SetupMode::Check,
+            akita_verifier::SetupPolicy::Check(None),
         ))
         .is_err());
 }

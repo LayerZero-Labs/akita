@@ -452,8 +452,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             b"profile",
             statement,
             BasisMode::Lagrange,
-            None,
-            akita_verifier::SetupMode::Check,
+            akita_verifier::SetupPolicy::Check(None),
         )
     };
     run_verifier_timings(label, pools, "multi-group profile", prepare, verify);

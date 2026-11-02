@@ -65,7 +65,7 @@ where
     let point = (30..36).map(value).collect::<Vec<_>>();
     for (expected, actual) in statement.claims().iter().zip(decoded.claims()) {
         assert_eq!(expected.value(), actual.value());
-        let terms = expected.query().compile(&polynomial, 2).unwrap();
+        let terms = expected.query().compile(&polynomial, 2, None).unwrap();
         let dense = (0..64)
             .map(|flat| {
                 terms.iter().fold(E::zero(), |sum, term| {

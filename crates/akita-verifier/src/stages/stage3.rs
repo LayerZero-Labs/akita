@@ -1,7 +1,7 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::setup_batch::PreparedOuterSetup;
+use crate::fold::FoldSetup;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 #[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
@@ -80,7 +80,7 @@ pub(crate) fn verify_stage3<F, E>(
     next_params: &CommittedGroupParams,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    outer: Option<&PreparedOuterSetup<E>>,
+    fold_setup: &FoldSetup<'_, '_, E>,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -88,7 +88,7 @@ where
 {
     let singleton;
     let unit_coefficient = [E::one()];
-    let (statement, coefficients, claim) = if let Some(outer) = outer {
+    let (statement, coefficients, claim) = if let FoldSetup::Offloaded(outer) = fold_setup {
         (&outer.statement, outer.coefficients.as_slice(), outer.claim)
     } else {
         let setup_coefficient_bits = rs

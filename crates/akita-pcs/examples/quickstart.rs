@@ -71,8 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         TRANSCRIPT_DOMAIN,
         statement,
         BasisMode::Lagrange,
-        None,
-        akita_verifier::SetupMode::Check,
+        akita_verifier::SetupPolicy::Check(None),
     )?;
 
     println!("Akita proof verified");

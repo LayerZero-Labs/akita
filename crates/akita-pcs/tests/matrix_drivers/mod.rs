@@ -128,8 +128,7 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
                     transcript_domain,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .expect("recursive direct verify");
@@ -199,8 +198,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| panic!("verify dense nv={nv}: {e:?}"));
@@ -259,8 +257,7 @@ pub(super) fn prove_verify_onehot_roundtrip<Cfg>(
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| panic!("verify onehot nv={nv}: {e:?}"));
@@ -391,8 +388,7 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| {
@@ -498,8 +494,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| {

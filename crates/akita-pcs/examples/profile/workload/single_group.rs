@@ -244,8 +244,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             b"profile",
             claims,
             BasisMode::Lagrange,
-            None,
-            akita_verifier::SetupMode::Check,
+            akita_verifier::SetupPolicy::Check(None),
         )
     };
     run_verifier_timings(label, pools, "profile", prepare, verify);

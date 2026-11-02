@@ -41,8 +41,7 @@ scheme.verifier(verifier_setup)?.batched_verify(
     SESSION,
     statement,
     basis,
-    None,
-    akita_verifier::SetupMode::Check,
+    akita_verifier::SetupPolicy::Check(None),
 )?;
 ```
 

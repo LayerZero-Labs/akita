@@ -112,8 +112,7 @@ fn roundtrip(storage: Storage, len: usize) {
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
             .unwrap();
         proof_bytes.push(proof);

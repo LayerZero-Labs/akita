@@ -186,8 +186,7 @@ fn run(signed: bool) {
             DOMAIN,
             GroupBatchStatement::new(selection, claims).unwrap(),
             BasisMode::Lagrange,
-            None,
-            akita_verifier::SetupMode::Check,
+            akita_verifier::SetupPolicy::Check(None),
         )
         .unwrap();
     {
@@ -238,8 +237,7 @@ fn run(signed: bool) {
                 DOMAIN,
                 GroupBatchStatement::new(selection, claims).unwrap(),
                 BasisMode::Lagrange,
-                Some(&mut deferred),
-                akita_verifier::SetupMode::Defer,
+                akita_verifier::SetupPolicy::Defer(&mut deferred),
             )
             .unwrap();
         let pending = deferred.into_pending();

@@ -1,8 +1,11 @@
 use super::*;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
-use crate::SetupClaimAccumulator;
 use akita_params::CommittedGroupParams;
-use akita_types::{setup_claims::transcript, AkitaVerifierSetup, GrindingReplay};
+use akita_types::{
+    setup_claims::{transcript, SetupWeightTerm},
+    AkitaVerifierSetup, GrindingReplay,
+};
+use std::collections::BTreeMap;
 
 /// Transcript-bound setup statement shared by the two outer stage checks.
 pub(crate) struct PreparedOuterSetup<E: Field> {
@@ -20,19 +23,12 @@ pub(crate) fn prepare_outer_setup<F, E>(
     successor: &CommittedGroupParams,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
-    accumulator: &SetupClaimAccumulator<'_, E>,
+    inherited: &SetupBatchStatement<E>,
 ) -> Result<PreparedOuterSetup<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + Ring + MulBaseUnreduced<F>,
 {
-    let (target, inherited) = accumulator.batch.as_ref().ok_or(AkitaError::InvalidProof)?;
-    if *target != level || inherited.polynomial() != &accumulator.polynomial {
-        return Err(AkitaError::InvalidInput(
-            "setup batch target or domain mismatch".into(),
-        ));
-    }
-    inherited.polynomial().validate::<F, E>(setup.expanded())?;
     let id = successor
         .setup_prefix()
         .and_then(|prefix| prefix.slot_id())
@@ -48,7 +44,7 @@ where
         .relation_matrix_evaluator
         .eval_flat_at_point_with_external_setup::<F>(point, rs.alpha, |query| {
             claims.push(akita_types::setup_claims::SetupClaim::new(
-                accumulator.polynomial.clone(),
+                inherited.polynomial().clone(),
                 query,
                 claim,
             )?);
@@ -69,7 +65,12 @@ where
     })
 }
 
-/// One setup traversal for the weighted collection. Only factor tables are retained.
+/// Maximum retained compilation storage for direct inherited-batch discharge.
+/// The prover and offloaded verifier retain their existing memory policies.
+const MAX_SETUP_BATCH_COMPILED_BYTES: usize = 256 * 1024 * 1024;
+
+/// One setup traversal for the weighted collection, with lane-local terms and
+/// one reusable coefficient buffer per parallel reduction worker.
 pub(crate) fn decide_setup_batch<F, E>(
     setup: &AkitaExpandedSetup<F>,
     statement: &SetupBatchStatement<E>,
@@ -84,21 +85,49 @@ where
         .validate_materialized::<F, E>(setup)?;
     let expected = statement.input_claim(coefficients)?;
     let coefficient_len = statement.coefficient_len();
-    let mut terms = Vec::new();
+    // Reject the aggregate before compiling even the first claim. The compiler
+    // uses this same accounting before allocating any query's factor tables.
+    let required = statement.claims().iter().try_fold(0, |bytes, claim| {
+        checked::sum([
+            bytes,
+            claim
+                .query()
+                .compilation_bytes(statement.polynomial(), coefficient_len)?,
+        ])
+        .ok_or(AkitaError::InvalidSize {
+            expected: MAX_SETUP_BATCH_COMPILED_BYTES,
+            actual: usize::MAX,
+        })
+    })?;
+    if required > MAX_SETUP_BATCH_COMPILED_BYTES {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_SETUP_BATCH_COMPILED_BYTES,
+            actual: required,
+        });
+    }
+    let mut remaining_bytes = MAX_SETUP_BATCH_COMPILED_BYTES;
+    let mut groups = BTreeMap::new();
+    let mut active_rows = 0;
     for (claim, &scale) in statement.claims().iter().zip(coefficients) {
-        for term in claim
-            .query()
-            .compile(statement.polynomial(), coefficient_len)?
-        {
-            if term.coefficient().len() != coefficient_len {
-                return Err(AkitaError::InvalidProof);
-            }
-            let scaled = term
-                .coefficient()
-                .iter()
-                .map(|&coefficient| scale * coefficient)
-                .collect::<Vec<_>>();
-            terms.push((scaled, term));
+        for mut term in claim.query().compile(
+            statement.polynomial(),
+            coefficient_len,
+            Some(&mut remaining_bytes),
+        )? {
+            term.scale(scale);
+            active_rows = active_rows.max(term.active_index_len());
+            let lanes: &mut Vec<Vec<SetupWeightTerm<E>>> = groups
+                .entry(term.lanes())
+                .or_insert_with(|| (0..term.lanes()).map(|_| Vec::new()).collect());
+            lanes
+                .get_mut(term.lane())
+                .ok_or_else(|| AkitaError::Internal("compiled setup lane is missing".into()))?
+                .push(term);
+        }
+    }
+    for lanes in groups.values_mut() {
+        for terms in lanes {
+            terms.sort_unstable_by_key(|term| std::cmp::Reverse(term.active_index_len()));
         }
     }
     let source = setup
@@ -106,31 +135,52 @@ where
         .as_field_slice()
         .get(..statement.polynomial().field_len())
         .ok_or(AkitaError::InvalidProof)?;
-    let mut weight = vec![E::zero(); coefficient_len];
-    let mut value = E::zero();
-    for (row, chunk) in source.chunks_exact(coefficient_len).enumerate() {
-        // A term's index weight is zero off its own lane and past its active
-        // index, so only the terms live on this row are contracted.
-        let mut live = false;
-        for (scaled, term) in &terms {
-            let index = term.index_weight(row);
-            if index.is_zero() {
-                continue;
+    let value = cfg_fold_reduce!(
+        0..active_rows,
+        || Ok((E::zero(), vec![E::zero(); coefficient_len])),
+        |state: Result<(E, Vec<E>), AkitaError>, row| {
+            let (mut sum, mut weight) = state?;
+            let mut live = false;
+            for (&lane_count, lanes) in &groups {
+                let terms = lanes
+                    .get(row % lane_count)
+                    .ok_or_else(|| AkitaError::Internal("compiled setup lane is missing".into()))?;
+                for term in terms
+                    .iter()
+                    .take_while(|term| row < term.active_index_len())
+                {
+                    let index = term.index_weight(row);
+                    if index.is_zero() {
+                        continue;
+                    }
+                    if !live {
+                        weight.fill(E::zero());
+                        live = true;
+                    }
+                    for (weight, &coefficient) in weight.iter_mut().zip(term.coefficient()) {
+                        *weight += index * coefficient;
+                    }
+                }
             }
-            if !live {
-                weight.fill(E::zero());
-                live = true;
+            if live {
+                let range = checked::range(
+                    checked::product([row, coefficient_len]).ok_or(AkitaError::InvalidProof)?,
+                    coefficient_len,
+                )
+                .ok_or(AkitaError::InvalidProof)?;
+                let chunk = source.get(range).ok_or(AkitaError::InvalidProof)?;
+                for (&weight, &base) in weight.iter().zip(chunk) {
+                    sum += E::reduce_product(weight.mul_base_unreduced(base));
+                }
             }
-            for (weight, &coefficient) in weight.iter_mut().zip(scaled) {
-                *weight += index * coefficient;
-            }
+            Ok((sum, weight))
+        },
+        |left: Result<(E, Vec<E>), AkitaError>, right: Result<(E, Vec<E>), AkitaError>| {
+            let (sum, weight) = left?;
+            Ok((sum + right?.0, weight))
         }
-        if live {
-            for (&weight, &base) in weight.iter().zip(chunk) {
-                value += E::reduce_product(weight.mul_base_unreduced(base));
-            }
-        }
-    }
+    )?
+    .0;
     if value != expected {
         return Err(AkitaError::InvalidProof);
     }
@@ -144,7 +194,7 @@ mod tests {
         setup_claims::{SetupClaim, SetupQuery},
         AkitaSetupDescriptor,
     };
-    use jolt_field::{One, Prime128OffsetA7F7 as F};
+    use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
 
     #[test]
     fn direct_batch_rejects_false_answers_that_cancel_without_weights() {
@@ -188,5 +238,36 @@ mod tests {
             .collect();
         let wrong = SetupBatchStatement::new(domain, 8, wrong).unwrap();
         assert!(decide_setup_batch(&setup, &wrong, &weights).is_err());
+    }
+
+    #[test]
+    fn direct_batch_rejects_aggregate_compilation_before_allocating_tables() {
+        const LEN: usize = 4096;
+        let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 12,
+                max_num_batched_polys: 1,
+                num_field_elements: LEN,
+                setup_seed: [19; 32].into(),
+            },
+            akita_types::derive_public_matrix_prefix(LEN, &[19; 32].into()),
+        );
+        let polynomial = SetupPolynomialId::new::<F, F>(&setup, LEN).unwrap();
+        let query = SetupQuery::evaluation(vec![F::one(); 12]).unwrap();
+        let per_claim = query.compilation_bytes(&polynomial, 2).unwrap();
+        let count = MAX_SETUP_BATCH_COMPILED_BYTES / per_claim + 1;
+        assert!(count <= akita_params::MAX_SETUP_BATCH_CLAIMS);
+        let claim = SetupClaim::new(polynomial.clone(), query, F::zero()).unwrap();
+        let batch = SetupBatchStatement::new(polynomial.clone(), 2, vec![claim; count]).unwrap();
+        let batch = SetupBatchStatement::<F>::from_descriptor_bytes::<F>(
+            &batch.descriptor_bytes::<F>().unwrap(),
+            &polynomial,
+        )
+        .unwrap();
+        assert!(matches!(
+            decide_setup_batch(&setup, &batch, &vec![F::one(); count]),
+            Err(AkitaError::InvalidSize { expected: MAX_SETUP_BATCH_COMPILED_BYTES, actual })
+                if actual == per_claim * count
+        ));
     }
 }

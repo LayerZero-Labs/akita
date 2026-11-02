@@ -837,7 +837,57 @@ fn external_setup_queries_preserve_sliced_physical_b_and_overlap() {
                 .unwrap();
             let domain = SetupPolynomialId::new::<F, F>(&setup, len).unwrap();
             let query = SetupQuery::contribution(plan(), functional).unwrap();
-            let terms = query.compile(&domain, 32).unwrap();
+            let required = query.compilation_bytes(&domain, 32).unwrap();
+            let mut budget = required;
+            let terms = query.compile(&domain, 32, Some(&mut budget)).unwrap();
+            assert_eq!(budget, 0);
+            let evaluation_point = (0..domain.num_variables())
+                .map(|i| if i % 2 == 0 { F::zero() } else { F::one() })
+                .collect::<Vec<_>>();
+            let evaluation = akita_algebra::poly::multilinear_eval(
+                setup.shared_matrix().as_field_slice(),
+                &evaluation_point,
+            )
+            .unwrap();
+            let evaluation_query = SetupQuery::evaluation(evaluation_point).unwrap();
+            let batch = akita_types::setup_claims::SetupBatchStatement::new(
+                domain.clone(),
+                32,
+                vec![
+                    akita_types::setup_claims::SetupClaim::new(
+                        domain.clone(),
+                        query.clone(),
+                        expected,
+                    )
+                    .unwrap(),
+                    akita_types::setup_claims::SetupClaim::new(
+                        domain.clone(),
+                        evaluation_query.clone(),
+                        evaluation,
+                    )
+                    .unwrap(),
+                ],
+            )
+            .unwrap();
+            let coefficients = [test_scalar(17), test_scalar(23)];
+            crate::setup_batch::decide_setup_batch(&setup, &batch, &coefficients).unwrap();
+            let tampered = akita_types::setup_claims::SetupBatchStatement::new(
+                domain.clone(),
+                32,
+                vec![
+                    batch.claims()[0].clone(),
+                    akita_types::setup_claims::SetupClaim::new(
+                        domain.clone(),
+                        evaluation_query,
+                        evaluation + F::one(),
+                    )
+                    .unwrap(),
+                ],
+            )
+            .unwrap();
+            assert!(
+                crate::setup_batch::decide_setup_batch(&setup, &tampered, &coefficients).is_err()
+            );
             let dense = (0..len)
                 .map(|j| {
                     terms.iter().fold(F::zero(), |sum, t| {

@@ -238,8 +238,7 @@ where
                 session,
                 verify_input::<Cfg>(selection, &point, claimed, &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
     };

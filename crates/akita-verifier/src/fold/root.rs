@@ -21,8 +21,7 @@ pub(super) fn verify_root<F, E>(
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&FoldParams>,
     terminal: &TerminalFoldParams,
-    accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
-    mode: crate::SetupMode,
+    setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -171,7 +170,6 @@ where
             stage3,
             evaluation_trace_basis: basis,
         },
-        accumulator,
-        mode,
+        setup_policy,
     )
 }

@@ -150,8 +150,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                             LABEL,
                             statement(selection, &point, opening, &commitment),
                             BasisMode::Lagrange,
-                            None,
-                            akita_verifier::SetupMode::Check,
+                            akita_verifier::SetupPolicy::Check(None),
                         )
                     })
                     .unwrap_or_else(|error| panic!("honest {name} proof must verify: {error:?}"));
@@ -180,8 +179,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                                 LABEL,
                                 statement(wrong_selection, &point, opening, &commitment),
                                 BasisMode::Lagrange,
-                                None,
-                                akita_verifier::SetupMode::Check,
+                                akita_verifier::SetupPolicy::Check(None),
                             )
                         })
                 }));

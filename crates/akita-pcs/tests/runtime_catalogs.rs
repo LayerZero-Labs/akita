@@ -136,8 +136,7 @@ fn independent_runtime_catalogs_prove_verify_and_reject_each_other() {
                         DOMAIN,
                         statement,
                         BasisMode::Lagrange,
-                        None,
-                        akita_verifier::SetupMode::Check,
+                        akita_verifier::SetupPolicy::Check(None),
                     );
                     if verifier_index == proof_index {
                         result.expect("the owning catalog verifies its proof");

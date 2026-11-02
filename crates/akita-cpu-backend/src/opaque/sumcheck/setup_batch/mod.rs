@@ -138,7 +138,7 @@ where
         polynomial.validate_materialized::<F, E>(setup)?;
         let compiled = queries
             .into_iter()
-            .map(|query| Ok((query, query.compile(polynomial, coefficient_len)?)))
+            .map(|query| Ok((query, query.compile(polynomial, coefficient_len, None)?)))
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let source = setup
             .shared_matrix()

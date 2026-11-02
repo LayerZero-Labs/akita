@@ -74,8 +74,7 @@ macro_rules! onehot_roundtrip {
                     b"native-port-onehot",
                     statement,
                     basis,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap();
@@ -178,8 +177,7 @@ fn dense_fp128_roundtrip_inner() {
                 b"native-port-smoke",
                 statement,
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .unwrap();

@@ -307,8 +307,7 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                             label,
                             statement,
                             basis,
-                            None,
-                            akita_verifier::SetupMode::Check,
+                            akita_verifier::SetupPolicy::Check(None),
                         )
                     })
                     .unwrap();
@@ -332,8 +331,7 @@ fn packing_round_trip(prefixed_fold_count: usize) {
                             label,
                             statement,
                             basis,
-                            None,
-                            akita_verifier::SetupMode::Check,
+                            akita_verifier::SetupPolicy::Check(None),
                         ))
                         .is_err());
 

@@ -216,8 +216,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                 transcript_domain,
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("generated-profile recursive verify");
@@ -235,8 +234,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                     transcript_domain,
                     verify_claims(final_openings.clone()),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             });
         assert!(
@@ -254,8 +252,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                     transcript_domain,
                     verify_claims(final_openings.clone()),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             });
         assert!(
@@ -295,8 +292,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
                 transcript_domain,
                 verify_claims(tampered),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         });
     assert!(

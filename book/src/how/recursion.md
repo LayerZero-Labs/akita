@@ -304,7 +304,7 @@ setup functional. Advice supplies candidates; it does not authenticate them.
 The policy applies per fold because a proof can contain both direct and
 offloaded setup contributions:
 
-| Fold | `SetupMode::Defer` | `SetupMode::Check` |
+| Fold | `SetupPolicy::Defer` | `SetupPolicy::Check` |
 | --- | --- | --- |
 | Direct | Export the exact setup claim and preserve inherited claims | Check the inherited claims and the fold's own contribution |
 | Offloaded | Verify the full Stage 3 reduction and retain the successor opening | Verify the same Stage 3 reduction and successor opening |
@@ -344,20 +344,27 @@ carries its inherited inputs until a later layer checks or offloads them.
 
 For offloaded folds, Stage 2 uses the outer answer $a_o$, never the combined
 answer. The verifier prepares the bound batch once. `verify_stage3` checks
-ordinary or accumulated Stage 3 regardless of mode; `validate_stage2_replay` checks the
-Stage 2 endpoint and either scans or exports direct setup claims. No Stage 3
+ordinary or accumulated Stage 3 regardless of policy. Fold orchestration
+selects the setup behavior once and draws batching challenges after Stage 2
+rounds; `validate_stage2_replay` checks the Stage 2 endpoint and obtains advice
+only for a deferred direct fold. No Stage 3
 path merely consumes the transcript while omitting its terminal equation.
 
-`AkitaVerifier::batched_verify` takes an optional mutable
-`SetupClaimAccumulator` and a `SetupMode` value. Pass `None` and
-`SetupMode::Check` for ordinary verification. To collect direct obligations,
+`AkitaVerifier::batched_verify` takes a `SetupPolicy`. Pass
+`SetupPolicy::Check(None)` for ordinary verification. To collect direct obligations,
 construct `SetupClaimAccumulator::new(polynomial).with_advice(&mut advice)` and
-pass it with `SetupMode::Defer`. Consume its result with `into_pending`.
-The mode is a plain enum; auxiliary advice belongs to the accumulator.
+pass `SetupPolicy::Defer(&mut accumulator)`. Consume its result with
+`into_pending`. Use `SetupPolicy::Check(Some(&mut accumulator))` to check an
+inherited batch; discharge rejects pending output and attached advice instead
+of silently ignoring them. Auxiliary advice belongs to the accumulator.
 
 Use `SetupClaimAccumulator::from_batch` to attach an inherited collection to
 the nonterminal fold selected by `SelectedProverOpeningData::with_setup_batch`.
 The input stays fixed while other folds can contribute new pending claims.
+Direct discharge combines weights from terms on each live setup row before
+contracting that row once, using parallel reduction when enabled. Its retained
+factor tables and lane metadata have a 256 MiB compilation budget, checked for
+the entire batch before allocation; exceeding it returns `InvalidSize`.
 An empty collection selects the ordinary singleton computation and preserves
 its proof encoding. The enclosing program must bind the complete collection to
 its inner verifications. Queries share an authenticated setup identity; smaller

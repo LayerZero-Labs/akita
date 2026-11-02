@@ -206,8 +206,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         DOMAIN,
         statement,
         BasisMode::Lagrange,
-        None,
-        akita_verifier::SetupMode::Check,
+        akita_verifier::SetupPolicy::Check(None),
     )?;
     if check_failures {
         let destination = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);

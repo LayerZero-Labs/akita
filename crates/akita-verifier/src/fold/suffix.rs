@@ -283,8 +283,7 @@ pub(super) fn verify_suffix<F, E>(
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     schedule: &FoldSchedule,
     mut current_state: SuffixVerifierState<F, E>,
-    mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
-    mode: crate::SetupMode,
+    setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
@@ -306,7 +305,7 @@ where
             next,
             &schedule.terminal,
         )?;
-        let output = verify_fold(setup, grinding, prepared, accumulator.as_deref_mut(), mode)?;
+        let output = verify_fold(setup, grinding, prepared, setup_policy)?;
         current_state = SuffixVerifierState {
             opening_point: output.challenges,
             opening: output.opening,

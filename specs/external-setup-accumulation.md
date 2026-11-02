@@ -5,7 +5,7 @@
 | Author(s) | Akita maintainers and Codex |
 | Created | 2026-10-20 |
 | Status | implemented |
-| PR | Unpublished implementation branch |
+| PR | [#294](https://github.com/LayerZero-Labs/akita/pull/294) |
 | Supersedes | None |
 | Superseded-by | None |
 | Book-chapter | how/recursion.md |
@@ -82,8 +82,11 @@ that composition requires protocol review before production deployment.
 ## Implementation and invariants
 
 - Setup accumulation is unconditional in the types, prover, verifier, CPU
-  backend and PCS crates. `SetupMode` is a plain `Check`/`Defer` enum. The mode
-  changes only direct setup verification policy, never proof grammar or schedules.
+  backend and PCS crates. `SetupPolicy` selects checking with an optional
+  accumulator or deferred collection with a required accumulator. The policy changes only direct setup
+  verification, never proof grammar or schedules. Fold orchestration resolves
+  the target once and owns batching challenge order; Stage 2 validation draws
+  no transcript challenges.
 - Relation preparation owns the query before setup traversal. Reduced
   structured contractions share the existing arithmetic without requiring
   direct-scan segment construction.
@@ -137,11 +140,13 @@ Direct deferred folds preserve inherited inputs until a checked reduction or
 direct discharge consumes them.
 
 `SelectedProverOpeningData::with_setup_batch` selects one nonterminal fold.
-`AkitaVerifier::batched_verify` takes an optional mutable `SetupClaimAccumulator`
-and a `SetupMode` value. Ordinary verification passes `None` and
-`SetupMode::Check`. `SetupClaimAccumulator::new(...).with_advice(...)` starts
-collection for archived direct folds; `from_batch` attaches bound inputs to
-the same selected fold as the prover. Empty inputs select ordinary proof grammar.
+`AkitaVerifier::batched_verify` takes a `SetupPolicy`. Ordinary verification
+passes `SetupPolicy::Check(None)`. `SetupPolicy::Defer(&mut accumulator)` collects
+claims using `SetupClaimAccumulator::new(...).with_advice(...)` for archived
+direct folds. `from_batch` attaches bound inputs to the same selected fold as
+the prover; `SetupPolicy::Check(Some(&mut accumulator))` checks those inputs.
+`Check` rejects pending output or attached advice at entry. Empty inputs
+select ordinary proof grammar.
 All other Akita checks and the ordinary terminal checks remain enabled.
 The offloaded path requires the batch domain to match the selected successor's
 actual prefix. When a root batch's domain differs from that prefix,
@@ -151,9 +156,26 @@ The standalone reduction helpers remain optional utilities. They are not part
 of the integrated outer flow. SDK preparation, guest epilogues, authenticated
 execution-output envelopes and guest-cycle measurements belong to Jolt integration.
 
+Direct inherited discharge groups compiled terms by native lane count and
+lane, sorts each lane by active support, and reduces rows in parallel when the
+`parallel` feature is selected. Each reduction worker reuses a coefficient
+buffer; each live setup row is contracted once after combining all active
+terms. Coefficients are scaled in place and index factors stay shared across
+lane views. A 256 MiB aggregate compilation budget is checked before any query
+is compiled, using the compiler's own factor and lane-storage accounting.
+Oversized collections return `InvalidSize`. The prover's retain/regenerate
+policies and the offloaded verifier's compact terminal evaluation are unchanged.
+
 No schedule artifact changes are needed. Broader security certification and
 performance acceptance remain review gates rather than claims inferred from
-implementation.
+implementation. The `implemented` status records code completion, not approval
+for production deployment. Adoption as a change to the current protocol on
+`main` requires the maintainer protocol/spec review described in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) and [`docs/branches.md`](../docs/branches.md).
+If maintained as an opt-in extension instead, it belongs on `dev` under that
+branch's extension contract. The landing classification remains a maintainer
+decision; passing per-query grinding checks or tests does not establish the
+recursive composition security argument required before production use.
 
 ## Evaluation
 

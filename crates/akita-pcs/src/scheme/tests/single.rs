@@ -50,8 +50,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
                         b"test/prove",
                         verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
                         BasisMode::Lagrange,
-                        None,
-                        akita_verifier::SetupMode::Check,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
                 .expect("production verifier must replay the reduced-relation suffix");
@@ -66,8 +65,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
                         b"test/prove",
                         verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
                         BasisMode::Lagrange,
-                        None,
-                        akita_verifier::SetupMode::Check,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
                 .expect_err("production verifier must reject a tampered reduced stage2 proof");
@@ -142,8 +140,7 @@ fn verify_rejects_wrong_opening() {
                     &commitments[0],
                 ),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         });
 
@@ -214,8 +211,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("native verification");
@@ -227,8 +223,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening + F::one()], &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("native verification must bind the claimed opening");
@@ -240,8 +235,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                 b"test/different-session",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("native verification must bind the session");
@@ -253,8 +247,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening, opening], &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("the statement must fit the setup's batch capacity");
@@ -275,8 +268,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                 b"test/prove",
                 verifier_claims(&scheme, short_point, &[opening], &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("a claim point shorter than its commitment profile must reject");
@@ -297,8 +289,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("truncated native proof must reject");
@@ -312,8 +303,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
-                None,
-                akita_verifier::SetupMode::Check,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("trailing native proof bytes must reject");
@@ -329,8 +319,7 @@ fn spongefish_roundtrip_and_statement_binding_inner() {
                     b"test/prove",
                     verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                     BasisMode::Lagrange,
-                    None,
-                    akita_verifier::SetupMode::Check,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
     }));

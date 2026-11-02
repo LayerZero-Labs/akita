@@ -21,9 +21,9 @@ where
 {
     /// Verify one authoritative Spongefish argument.
     ///
-    /// `Defer` exports direct setup evaluations in the supplied accumulator.
-    /// Both modes fully verify ordinary and accumulated Stage 3 reductions.
-    /// `Check` closes direct setup obligations; pass `None` for an empty accumulator.
+    /// `SetupPolicy::Defer` exports direct setup evaluations in its accumulator.
+    /// Every policy fully verifies ordinary and accumulated Stage 3 reductions.
+    /// `SetupPolicy::Check` closes direct setup obligations and any inherited batch.
     /// Rejection preserves inherited and pending obligations. Advice may have been consulted.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
@@ -33,23 +33,19 @@ where
         session: &[u8],
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
-        mut accumulator: Option<&mut crate::SetupClaimAccumulator<'_, Cfg::ExtField>>,
-        mode: crate::SetupMode,
+        mut setup_policy: crate::SetupPolicy<'_, '_, Cfg::ExtField>,
     ) -> Result<(), AkitaError> {
-        if matches!(mode, crate::SetupMode::Defer) && accumulator.is_none() {
-            return Err(AkitaError::InvalidInput(
-                "deferred setup verification requires an accumulator".into(),
-            ));
+        if let crate::SetupPolicy::Check(Some(accumulator)) = &setup_policy {
+            if !accumulator.pending.is_empty() || accumulator.advice.is_some() {
+                return Err(AkitaError::InvalidInput(
+                    "checked setup accumulator cannot contain pending claims or advice".into(),
+                ));
+            }
         }
-        if let Some(accumulator) = accumulator.as_ref() {
+        if let Some(accumulator) = setup_policy.accumulator() {
             accumulator
                 .polynomial
                 .validate::<Cfg::Field, Cfg::ExtField>(self.setup.expanded())?;
-            if matches!(mode, crate::SetupMode::Check) && !accumulator.pending.is_empty() {
-                return Err(AkitaError::InvalidInput(
-                    "pending setup claims must be bound to a selected fold with from_batch".into(),
-                ));
-            }
         }
         let setup = &self.setup;
         let schedules = &self.schedules;
@@ -89,15 +85,12 @@ where
             ));
         }
         let schedule = resolved.schedule();
-        if let Some((level, batch)) = accumulator.as_ref().and_then(|a| a.batch.as_ref()) {
+        if let Some((level, _)) = setup_policy.accumulator().and_then(|a| a.batch.as_ref()) {
             if *level as usize >= schedule.num_fold_levels() - 1 {
                 return Err(AkitaError::InvalidInput(
                     "setup batch target must be a nonterminal fold".into(),
                 ));
             }
-            batch
-                .polynomial()
-                .validate::<Cfg::Field, Cfg::ExtField>(setup.expanded())?;
         }
         let root_params = &schedule.root_fold().params;
         let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
@@ -130,14 +123,14 @@ where
             selection,
             schedule,
             basis,
-            accumulator
-                .as_ref()
+            setup_policy
+                .accumulator()
                 .and_then(|a| a.batch.as_ref())
                 .map(|(level, _)| *level),
         )?;
         let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
         let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
-        if let Some((level, batch)) = accumulator.as_ref().and_then(|a| a.batch.as_ref()) {
+        if let Some((level, batch)) = setup_policy.accumulator().and_then(|a| a.batch.as_ref()) {
             akita_types::setup_claims::transcript::bind_outer_statement::<
                 Cfg::Field,
                 Cfg::ExtField,
@@ -160,7 +153,7 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-        let pending_len = accumulator.as_ref().map_or(0, |a| a.pending.len());
+        let pending_len = setup_policy.accumulator().map_or(0, |a| a.pending.len());
         let result = (|| {
             let root = verify_root::<Cfg::Field, Cfg::ExtField>(
                 setup,
@@ -171,8 +164,7 @@ where
                 root_params,
                 schedule.recursive_folds.first(),
                 &schedule.terminal,
-                accumulator.as_deref_mut(),
-                mode,
+                &mut setup_policy,
             )?;
             verify_suffix::<Cfg::Field, Cfg::ExtField>(
                 setup,
@@ -187,13 +179,12 @@ where
                     witness_len: schedule.root_fold().output_witness_len,
                     setup_prefix_opening: root.setup_prefix_opening,
                 },
-                accumulator.as_deref_mut(),
-                mode,
+                &mut setup_policy,
             )?;
             let _accepted = grinding.finish()?;
             Ok(())
         })();
-        if let Some(accumulator) = accumulator {
+        if let Some(accumulator) = setup_policy.accumulator() {
             if result.is_ok() {
                 // The validated target is one of the nonterminal folds replayed above.
                 accumulator.batch = None;

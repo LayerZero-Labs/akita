@@ -228,7 +228,7 @@ where
                     let factors = match weights {
                         SetupProductWeights::Retained(factors) => factors,
                         SetupProductWeights::Regenerate { polynomial, query } => {
-                            query.compile(&polynomial, self.coefficient_len)?
+                            query.compile(&polynomial, self.coefficient_len, None)?
                         }
                         SetupProductWeights::Dense(_) => return Err(AkitaError::InvalidProof),
                     };

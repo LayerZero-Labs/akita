@@ -256,8 +256,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             b"profile",
             claims,
             BasisMode::Lagrange,
-            None,
-            akita_verifier::SetupMode::Check,
+            akita_verifier::SetupPolicy::Check(None),
         )
     };
     run_verifier_timings(label, pools, "batched profile", prepare, verify);

@@ -341,8 +341,7 @@ where
             session,
             statement,
             basis,
-            None,
-            akita_verifier::SetupMode::Check,
+            akita_verifier::SetupPolicy::Check(None),
         )
     }
 }

@@ -210,8 +210,7 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
                         SESSION,
                         GroupBatchStatement::new(selection, claims).unwrap(),
                         BasisMode::Lagrange,
-                        None,
-                        akita_verifier::SetupMode::Check,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                     .unwrap();
             }
