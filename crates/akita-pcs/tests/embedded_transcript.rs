@@ -366,7 +366,7 @@ fn sent_witness_values_are_absorbed_once() {
     run_on_large_stack(|| {
         let fixture = Fixture::new();
         akita_transcript::clear_thread_events();
-        fixture.prove_standalone();
+        let proof = fixture.prove_standalone();
         let records = akita_transcript::thread_events()
             .into_iter()
             .map(|TranscriptEvent::Context(record)| record)
@@ -411,8 +411,62 @@ fn sent_witness_values_are_absorbed_once() {
                 assert_ne!(record.kind, public, "next witness must be a prover message");
             }
         }
-        assert!(records
-            .iter()
-            .any(|record| site(record).family == akita_transcript::SITE_FAMILY_NEXT_WITNESS));
+        // One next-witness message per fold level, with the atom count the
+        // verifier's level grammar expects, sent before that level's
+        // ring-switch challenge.
+        let next_witness = |records: &[akita_transcript::ProtocolContextRecord]| {
+            records
+                .iter()
+                .enumerate()
+                .filter(|(_, record)| {
+                    site(record).family == akita_transcript::SITE_FAMILY_NEXT_WITNESS
+                })
+                .map(|(index, record)| (index, site(record).level, record.atom_count))
+                .collect::<Vec<_>>()
+        };
+        let sent = next_witness(&records);
+        assert!(!sent.is_empty(), "the schedule folds at least once");
+        akita_transcript::clear_thread_events();
+        fixture
+            .verify_standalone(
+                &proof,
+                SESSION,
+                &fixture.point,
+                fixture.opening,
+                &fixture.commitment,
+            )
+            .expect("honest proof verifies");
+        let verifier_records = akita_transcript::thread_events()
+            .into_iter()
+            .map(|TranscriptEvent::Context(record)| record)
+            .collect::<Vec<_>>();
+        let expected = next_witness(&verifier_records);
+        assert_eq!(
+            sent.iter()
+                .map(|&(_, level, atoms)| (level, atoms))
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|&(_, level, atoms)| (level, atoms))
+                .collect::<Vec<_>>(),
+            "the prover sends each level's next witness once, at the expected size"
+        );
+        let challenge = ProtocolMessageKind::Challenge as u32;
+        for &(index, level, _) in &sent {
+            let ring_switch = akita_params::GrindingSite::RingSwitchAlpha { level }.site_id(0);
+            let ring_switch_challenge = records
+                .iter()
+                .position(|record| {
+                    let site = site(record);
+                    record.kind == challenge
+                        && site.family == ring_switch.family
+                        && site.level == level
+                })
+                .expect("every folded level draws a ring-switch challenge");
+            assert!(
+                index < ring_switch_challenge,
+                "level {level}'s next witness is sent after its ring-switch challenge"
+            );
+        }
     });
 }
