@@ -4,14 +4,15 @@
 mod common;
 
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend};
+use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_transcript::{
-    new_prover_channel, new_verifier_channel, public_bytes, receive_byte_group, send_byte_group,
-    ProtocolSiteId, VerifierChannel,
+    new_prover_channel, new_verifier_channel, ProverChannel, ProverTranscript, VerifierChannel,
 };
 use akita_types::{AkitaVerifierSetup, PendingEof};
 use common::*;
 use jolt_field::One;
+use jolt_transcript::BytesMsg;
 
 const NUM_VARS: usize = 14;
 const SESSION: &[u8] = b"embedded/onehot";
@@ -100,8 +101,8 @@ impl Fixture {
     /// and the caller's challenge after its last message.
     fn prove_embedded(&self) -> (Vec<u8>, [u8; 32]) {
         let mut state = new_prover_channel(SESSION);
-        public_bytes(&mut state, caller_site(0), CALLER_STATEMENT).unwrap();
-        send_byte_group(&mut state, caller_site(1), CALLER_BEFORE).unwrap();
+        state.public_message(&BytesMsg(CALLER_STATEMENT));
+        send_caller_message(&mut state, CALLER_BEFORE);
         self.scheme
             .batched_prove_embedded(
                 &self.setup,
@@ -117,7 +118,7 @@ impl Fixture {
                 BasisMode::Lagrange,
             )
             .expect("embedded prove");
-        send_byte_group(&mut state, caller_site(2), CALLER_AFTER).unwrap();
+        send_caller_message(&mut state, CALLER_AFTER);
         let challenge = state.verifier_message::<[u8; 32]>();
         (state.narg_string().to_vec(), challenge)
     }
@@ -129,7 +130,7 @@ impl Fixture {
         point: &[F],
         opening: F,
         commitment: &CommittedGroup<F>,
-    ) -> Result<(), akita_error::AkitaError> {
+    ) -> Result<(), AkitaError> {
         self.scheme
             .verifier(self.verifier_setup.clone())?
             .batched_verify(
@@ -147,9 +148,9 @@ impl Fixture {
         point: &[F],
         opening: F,
         commitment: &CommittedGroup<F>,
-    ) -> Result<PendingEof, akita_error::AkitaError> {
-        public_bytes(state, caller_site(0), CALLER_STATEMENT)?;
-        let before = receive_byte_group(state, caller_site(1), CALLER_BEFORE.len())?;
+    ) -> Result<PendingEof, AkitaError> {
+        state.public_message(&BytesMsg(CALLER_STATEMENT));
+        let before = receive_caller_message(state)?;
         assert_eq!(before, CALLER_BEFORE);
         self.scheme
             .verifier(self.verifier_setup.clone())?
@@ -172,12 +173,17 @@ impl Fixture {
     }
 }
 
-fn caller_site(stage: u32) -> ProtocolSiteId {
-    ProtocolSiteId {
-        family: u32::MAX,
-        stage,
-        ..ProtocolSiteId::default()
-    }
+/// Caller messages are length-prefixed `BytesMsg`s, as a real caller frames
+/// variable-length data; Akita's byte groups bind no length.
+fn send_caller_message(state: &mut ProverChannel, message: &[u8]) {
+    ProverTranscript::send(state, &BytesMsg(message));
+}
+
+fn receive_caller_message(state: &mut VerifierChannel<'_>) -> Result<Vec<u8>, AkitaError> {
+    state
+        .prover_message::<BytesMsg>()
+        .map(|message| message.0)
+        .map_err(|_| AkitaError::InvalidProof)
 }
 
 #[test]
@@ -243,7 +249,7 @@ fn embedded_proof_round_trips_between_caller_messages() {
                 &fixture.commitment,
             )
             .expect("embedded verify");
-        let after = receive_byte_group(&mut state, caller_site(2), CALLER_AFTER.len()).unwrap();
+        let after = receive_caller_message(&mut state).unwrap();
         assert_eq!(after, CALLER_AFTER);
         assert_eq!(state.verifier_message::<[u8; 32]>(), prover_challenge);
         pending.check_eof(state).expect("eof");
@@ -257,7 +263,8 @@ fn embedded_rejection_poisons_the_caller_state() {
         let fixture = Fixture::new();
         let (mut proof, _) = fixture.prove_embedded();
         // Flip one byte inside Akita's part of the argument string.
-        let akita_start = CALLER_BEFORE.len();
+        // The caller message before Akita is an 8-byte length and its body.
+        let akita_start = 8 + CALLER_BEFORE.len();
         proof[akita_start + 40] ^= 1;
         let mut state = new_verifier_channel(SESSION, &proof);
         assert!(fixture
@@ -268,7 +275,7 @@ fn embedded_rejection_poisons_the_caller_state() {
                 &fixture.commitment,
             )
             .is_err());
-        assert!(receive_byte_group(&mut state, caller_site(2), CALLER_AFTER.len()).is_err());
+        assert!(receive_caller_message(&mut state).is_err());
         assert!(state.check_eof().is_err());
     });
 }
@@ -310,7 +317,7 @@ fn standalone_rejects_trailing_bytes() {
                 &fixture.commitment,
             )
             .expect("Akita's part is honest");
-        receive_byte_group(&mut state, caller_site(2), CALLER_AFTER.len()).unwrap();
+        receive_caller_message(&mut state).unwrap();
         assert!(pending.check_eof(state).is_err());
     });
 }
@@ -347,7 +354,7 @@ fn root_statement_binds_every_item() {
             let accepted = fixture
                 .verify_embedded_prefix(&mut state, point, opening, commitment)
                 .and_then(|pending| {
-                    receive_byte_group(&mut state, caller_site(2), CALLER_AFTER.len())?;
+                    receive_caller_message(&mut state)?;
                     pending.check_eof(state)
                 });
             assert!(accepted.is_err());
@@ -361,7 +368,7 @@ fn root_statement_binds_every_item() {
 #[cfg(feature = "logging-transcript")]
 #[test]
 fn sent_witness_values_are_absorbed_once() {
-    use akita_transcript::{ProtocolMessageKind, TranscriptEvent};
+    use akita_transcript::{ProtocolMessageKind, ProtocolSiteId, TranscriptEvent};
     init_rayon_pool();
     run_on_large_stack(|| {
         let fixture = Fixture::new();

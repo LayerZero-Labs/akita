@@ -135,6 +135,7 @@ dependencies = [
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "jolt-transcript",
  "libc",
  "num-bigint 0.5.1",
  "p3-baby-bear",

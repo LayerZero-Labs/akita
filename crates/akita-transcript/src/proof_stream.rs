@@ -522,7 +522,15 @@ fn group_record(
     ))
 }
 
-/// Emit a schedule-bounded byte sequence as one labelled proof group.
+/// Emit a byte sequence as one proof message.
+///
+/// # Contract
+///
+/// The bytes are zero-padded to a word and their length is not absorbed, so
+/// `b"abc"` and `b"abc\0"` leave the same sponge state. Callers must take the
+/// length from data bound earlier, such as the schedule. A caller message of
+/// variable length should use a length-prefixed encoding such as
+/// `jolt_transcript::BytesMsg` instead.
 pub fn send_byte_group(
     state: &mut ProverChannel,
     site: ProtocolSiteId,
@@ -536,8 +544,16 @@ pub fn send_byte_group(
     Ok(())
 }
 
-/// Receive an exact schedule-bounded labelled proof group. An empty group makes
-/// no absorb call, like [`send_byte_group`].
+/// Receive a proof message of exactly `len` bytes sent by [`send_byte_group`].
+/// An empty group makes no absorb call, like [`send_byte_group`].
+///
+/// # Contract
+///
+/// The bytes are zero-padded to a word and their length is not absorbed, so
+/// `b"abc"` and `b"abc\0"` leave the same sponge state. Callers must take the
+/// length from data bound earlier, such as the schedule. A caller message of
+/// variable length should use a length-prefixed encoding such as
+/// `jolt_transcript::BytesMsg` instead.
 pub fn receive_byte_group(
     state: &mut VerifierChannel<'_>,
     site: ProtocolSiteId,
@@ -615,6 +631,14 @@ pub fn receive_bounded_bytes(
 }
 
 /// Absorb one public byte string and record its diagnostic site.
+///
+/// # Contract
+///
+/// The bytes are zero-padded to a word and their length is not absorbed, so
+/// `b"abc"` and `b"abc\0"` leave the same sponge state. Callers must take the
+/// length from data bound earlier, such as the schedule. A caller message of
+/// variable length should use a length-prefixed encoding such as
+/// `jolt_transcript::BytesMsg` instead.
 pub fn public_bytes<S: ProofChannel>(
     state: &mut S,
     site: ProtocolSiteId,
