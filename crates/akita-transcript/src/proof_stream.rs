@@ -12,6 +12,8 @@ use spongefish::{
     VerifierState,
 };
 use std::marker::PhantomData;
+#[cfg(feature = "prover")]
+use std::sync::LazyLock;
 
 use crate::{ProverChannel, VerifierChannel};
 
@@ -93,7 +95,7 @@ pub const SITE_FAMILY_STAGE1: u32 = 4;
 pub const SITE_FAMILY_PHYSICAL_L2: u32 = 5;
 /// Stable family identifier for recursive setup-product stage 3.
 pub const SITE_FAMILY_STAGE3: u32 = 6;
-/// Stable family identifier for indexed sparse fold-challenge roots.
+/// Stable family identifier for fold-challenge draws.
 pub const SITE_FAMILY_FOLD_CHALLENGE: u32 = 7;
 /// Stable family identifier for ring-relation opening payloads.
 pub const SITE_FAMILY_OPENING_PAYLOAD: u32 = 8;
@@ -924,9 +926,12 @@ impl FoldPreview {
     /// live channel will when it sends the nonce.
     #[must_use]
     pub fn new(state: &ProverChannel, nonce: u32) -> Self {
-        // A fresh channel has an empty argument string; its sponge is then
-        // replaced by the live one.
-        let mut detached = new_prover_channel(&[]);
+        // The preview draws no private randomness and its sponge is replaced
+        // by the live one, so it takes a fixed seed instead of OS entropy and
+        // derives the session identifier once.
+        static PREVIEW_SESSION: LazyLock<SessionId> = LazyLock::new(standalone_session_id);
+        let mut detached =
+            ProverChannel::new_with_seed(&PREVIEW_SESSION, &BytesMsg(Vec::new()), [0; 32]);
         detached.duplex_sponge_state = state.duplex_sponge_state.clone();
         let mut state = detached;
         state.public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
