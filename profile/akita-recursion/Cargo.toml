@@ -31,8 +31,6 @@ members = [
   "host",
   "inline-parity/guest",
   "inline-parity/host",
-  "sampler/guest",
-  "sampler/host",
 ]
 # Default to building the binaries (`host` + `artifact`) only. They each
 # pull in `guest` / `glue` as path deps with the right feature
@@ -66,11 +64,3 @@ akita-sumcheck = { path = "../../crates/akita-sumcheck" }
 akita-transcript = { path = "../../crates/akita-transcript" }
 akita-types = { path = "../../crates/akita-types" }
 akita-verifier = { path = "../../crates/akita-verifier" }
-
-# Match the pinned Jolt recursion branch's guest optimization profile.
-[profile.sampler-guest]
-inherits = "release"
-debug = false
-lto = "fat"
-strip = false
-codegen-units = 1

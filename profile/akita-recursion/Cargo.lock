@@ -277,30 +277,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-sampler-guest"
-version = "0.1.0"
-dependencies = [
- "akita-challenges",
- "akita-error",
- "jolt-sdk",
-]
-
-[[package]]
-name = "akita-sampler-host"
-version = "0.1.0"
-dependencies = [
- "akita-challenges",
- "akita-sampler-guest",
- "common",
- "jolt-host",
- "jolt-inlines-keccak256",
- "jolt-program",
- "postcard",
- "tracer",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "akita-schedules"
 version = "0.1.0"
 dependencies = [
