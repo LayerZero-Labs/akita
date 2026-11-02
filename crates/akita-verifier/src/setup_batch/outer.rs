@@ -83,13 +83,22 @@ where
         .polynomial()
         .validate_materialized::<F, E>(setup)?;
     let expected = statement.input_claim(coefficients)?;
+    let coefficient_len = statement.coefficient_len();
     let mut terms = Vec::new();
     for (claim, &scale) in statement.claims().iter().zip(coefficients) {
         for term in claim
             .query()
-            .compile(statement.polynomial(), statement.coefficient_len())?
+            .compile(statement.polynomial(), coefficient_len)?
         {
-            terms.push((scale, term));
+            if term.coefficient().len() != coefficient_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            let scaled = term
+                .coefficient()
+                .iter()
+                .map(|&coefficient| scale * coefficient)
+                .collect::<Vec<_>>();
+            terms.push((scaled, term));
         }
     }
     let source = setup
@@ -97,20 +106,29 @@ where
         .as_field_slice()
         .get(..statement.polynomial().field_len())
         .ok_or(AkitaError::InvalidProof)?;
+    let mut weight = vec![E::zero(); coefficient_len];
     let mut value = E::zero();
-    for (row, chunk) in source.chunks_exact(statement.coefficient_len()).enumerate() {
-        for (column, &base) in chunk.iter().enumerate() {
-            let weight = terms.iter().try_fold(E::zero(), |sum, (scale, term)| {
-                Ok::<_, AkitaError>(
-                    sum + *scale
-                        * term.index_weight(row)
-                        * *term
-                            .coefficient()
-                            .get(column)
-                            .ok_or(AkitaError::InvalidProof)?,
-                )
-            })?;
-            value += E::reduce_product(weight.mul_base_unreduced(base));
+    for (row, chunk) in source.chunks_exact(coefficient_len).enumerate() {
+        // A term's index weight is zero off its own lane and past its active
+        // index, so only the terms live on this row are contracted.
+        let mut live = false;
+        for (scaled, term) in &terms {
+            let index = term.index_weight(row);
+            if index.is_zero() {
+                continue;
+            }
+            if !live {
+                weight.fill(E::zero());
+                live = true;
+            }
+            for (weight, &coefficient) in weight.iter_mut().zip(scaled) {
+                *weight += index * coefficient;
+            }
+        }
+        if live {
+            for (&weight, &base) in weight.iter().zip(chunk) {
+                value += E::reduce_product(weight.mul_base_unreduced(base));
+            }
         }
     }
     if value != expected {
