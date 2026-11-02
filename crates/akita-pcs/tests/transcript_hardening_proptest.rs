@@ -49,8 +49,8 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
         .collect();
 
     let setup = scheme.setup_prover(num_vars, total_claims).unwrap();
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier = self_derived_verifier(&scheme, &setup);
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
@@ -78,32 +78,23 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
         )
         .expect("prove");
 
-    scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                b"hardening/proptest/native",
-                verify_input::<DenseCfg>(
-                    &opening_point,
-                    &openings,
-                    &commitment,
-                    scheme.schedules(),
-                ),
-                basis_mode,
-            )
-        })
+    verifier
+        .batched_verify(
+            &proof,
+            b"hardening/proptest/native",
+            verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules()),
+            basis_mode,
+        )
         .expect("verify");
     let mut trailing = proof.clone();
     trailing.push(0);
-    assert!(scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| verifier.batched_verify(
+    assert!(verifier
+        .batched_verify(
             &trailing,
             b"hardening/proptest/native",
             verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules(),),
             basis_mode
-        ))
+        )
         .is_err());
 }
 

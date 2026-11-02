@@ -2,6 +2,7 @@
 
 use crate::layout::SisModulusProfileId;
 use jolt_transcript::DigestHasher;
+pub use jolt_transcript::{DigestHash, DIGEST_HASH};
 use sha3::Digest;
 
 /// Descriptor schema version for the in-development transcript preamble.
@@ -10,11 +11,13 @@ pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 6;
 /// Fixed-size digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
 
-pub(crate) fn push_usize(bytes: &mut Vec<u8>, value: usize) {
+/// Append `value` as a little-endian `u64`.
+pub fn push_usize(bytes: &mut Vec<u8>, value: usize) {
     bytes.extend_from_slice(&(value as u64).to_le_bytes());
 }
 
-pub(crate) fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+/// Append `value` as a little-endian `u32`.
+pub fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
@@ -41,10 +44,36 @@ pub fn sis_modulus_profile_tag(family: SisModulusProfileId) -> u8 {
 /// descriptor. This shared primitive prevents catalog and transcript identity
 /// code from implementing divergent hash truncation rules.
 pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
-    let digest = DigestHasher::digest(bytes);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
+    let mut hasher = DescriptorHasher::new();
+    hasher.update(bytes);
+    hasher.finalize()
+}
+
+/// Incremental form of [`digest_descriptor_bytes`] for inputs assembled from
+/// several large parts, such as preprocessing files hashed with their names.
+#[derive(Clone, Default)]
+pub struct DescriptorHasher(DigestHasher);
+
+impl DescriptorHasher {
+    /// Start an empty input.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(DigestHasher::new())
+    }
+
+    /// Append bytes to the hash input.
+    pub fn update(&mut self, bytes: &[u8]) {
+        Digest::update(&mut self.0, bytes);
+    }
+
+    /// Finish the hash.
+    #[must_use]
+    pub fn finalize(self) -> DescriptorDigest {
+        let digest = self.0.finalize();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&digest);
+        out
+    }
 }
 
 #[cfg(test)]

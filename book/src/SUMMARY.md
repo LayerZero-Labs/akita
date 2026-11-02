@@ -17,6 +17,7 @@
     - [Setup and prepared compute state](./usage/setup-runtime.md)
     - [Proof encoding and transcripts](./usage/proof-artifacts.md)
     - [Verifier only integration](./usage/verifier-only.md)
+- [Preprocessing releases](./usage/preprocessing-releases.md)
   - [Operating Akita](./usage/operating.md)
     - [Feature flags and build recipes](./usage/feature-flags.md)
     - [Profiling a workload](./usage/profiling.md)

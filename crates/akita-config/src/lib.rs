@@ -58,6 +58,7 @@ macro_rules! impl_catalog_family {
     };
 }
 
+pub mod preprocessing;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 #[cfg(test)]

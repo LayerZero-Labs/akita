@@ -17,7 +17,7 @@ fn profile_commit_group_returns_exact_frozen_layout() {
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: _hint,
@@ -67,7 +67,7 @@ fn with_precommit_stack<R>(
     let setup = scheme
         .setup_prover(max_num_vars, max_num_polys)
         .expect("setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
     run(&setup, &stack)
 }
 
@@ -217,7 +217,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let setup = scheme
         .setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("protocol setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: pre_a_commitment,
         private_handle: _pre_a_hint,
@@ -337,7 +337,7 @@ fn commit_group_returns_frozen_exact_layout() {
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: _hint,
@@ -418,8 +418,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).unwrap();
     let stack =
-        CpuBackend::with_ring_switch_cache_limit(setup.expanded.clone(), usize::MAX).unwrap();
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        CpuBackend::with_ring_switch_cache_limit(setup.expanded().clone(), usize::MAX).unwrap();
+    let verifier = self_derived_verifier(&scheme, &setup);
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
@@ -449,26 +449,23 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
-    scheme
-        .verifier(verifier_setup.clone())
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                b"test/batched-onehot-shape",
-                selected_statement::<OneHotCfg>(
-                    &scheme,
-                    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                        point,
-                        openings,
-                        &commitments[0],
-                    )
-                    .expect("valid one-hot verifier group")])
-                    .expect("valid one-hot verifier claims"),
+    verifier
+        .batched_verify(
+            &proof,
+            b"test/batched-onehot-shape",
+            selected_statement::<OneHotCfg>(
+                &scheme,
+                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                    point,
+                    openings,
+                    &commitments[0],
                 )
-                .expect("valid one-hot verifier statement"),
-                BasisMode::Lagrange,
+                .expect("valid one-hot verifier group")])
+                .expect("valid one-hot verifier claims"),
             )
-        })
+            .expect("valid one-hot verifier statement"),
+            BasisMode::Lagrange,
+        )
         .expect("batched onehot verify");
 }
 

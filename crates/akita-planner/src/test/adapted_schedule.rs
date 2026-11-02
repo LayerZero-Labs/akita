@@ -152,6 +152,7 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
         Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
+        None,
     )
     .expect("adapted grouped schedule");
 
@@ -236,6 +237,7 @@ fn adapted_schedule_plans_many_interchangeable_producers() {
         Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
+        None,
     )
     .expect("many interchangeable producers must adapt");
     assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
@@ -260,6 +262,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
         Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
+        None,
     )
     .expect_err("adaptation without precommits must fail");
     assert!(matches!(scalar_error, AkitaError::InvalidInput(_)));
@@ -275,6 +278,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
         Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
+        None,
     )
     .expect_err("a different main layout must fail");
     assert!(matches!(mismatch_error, AkitaError::InvalidInput(_)));
@@ -301,6 +305,7 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
         Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
+        None,
     )
     .expect("guided search must materialize its frozen split directly");
     assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
@@ -335,6 +340,7 @@ fn adapted_schedule_falls_back_to_the_full_search_when_the_frozen_suffix_is_infe
         &source_contracts,
         &policy,
         OneHot::ring_challenge_config,
+        None,
     )
     .expect_err("the frozen suffix cannot absorb this precommit");
     assert!(matches!(guided, AkitaError::UnsupportedSchedule(_)));
@@ -345,6 +351,7 @@ fn adapted_schedule_falls_back_to_the_full_search_when_the_frozen_suffix_is_infe
         OneHot::committed_source_contract().unwrap(),
         &policy,
         OneHot::ring_challenge_config,
+        None,
     )
     .expect("adaptation falls back to the full search");
     let full = find_schedule(
@@ -392,6 +399,7 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
         OneHot::committed_source_contract().unwrap(),
         &policy,
         OneHot::ring_challenge_config,
+        None,
     )
     .expect("guided one-hot adaptation");
     assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
@@ -449,6 +457,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
         RecursiveOneHot::committed_source_contract().unwrap(),
         &policy,
         RecursiveOneHot::ring_challenge_config,
+        None,
     )
     .expect("guided recursive adaptation");
     assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
@@ -572,6 +581,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
             &request.source_contracts(),
             &policy,
             OneHot::ring_challenge_config,
+            None,
         );
         let micros = started.elapsed().as_micros();
         let full_started = std::time::Instant::now();
@@ -667,6 +677,7 @@ fn benchmark_interchangeable_producer_scaling() {
             Dense::committed_source_contract().unwrap(),
             &policy,
             Dense::ring_challenge_config,
+            None,
         )
         .expect("adapted schedule");
         let adapted_millis = started.elapsed().as_millis();

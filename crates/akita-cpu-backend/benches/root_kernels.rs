@@ -68,7 +68,7 @@ fn bench_dense_root_matvec(c: &mut Criterion) {
     let log_basis = layout.inner().digits.log_basis;
     let ntt_shared = prepare_ntt_cache(
         setup
-            .expanded
+            .expanded()
             .shared_matrix()
             .ring_view::<D>(1, n_a * inner_width)
             .unwrap(),

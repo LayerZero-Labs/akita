@@ -105,7 +105,8 @@ crates/akita-types/src/lib.rs
 crates/akita-types/src/ntt_cache.rs
 crates/akita-types/src/ntt_cache/prepared_artifact.rs
 crates/akita-types/src/proof/setup.rs
-crates/akita-verifier/src/prepared_cache.rs'
+crates/akita-verifier/src/prepared_cache.rs
+crates/akita-verifier/src/preprocessing.rs'
 if [ "$trusted_view_files" != "$expected_trusted_view_files" ]; then
     echo "error: trusted in-place setup views escaped their reviewed allowlist" >&2
     printf '%s\n' "$trusted_view_files" >&2

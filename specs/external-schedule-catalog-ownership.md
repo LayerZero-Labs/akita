@@ -477,10 +477,21 @@ list, and rejects any encoding that does not re-encode to the same bytes.
 
 A view is as trusted as its bytes. It reproduces the full catalog's digest, but
 it does not authenticate the omitted identities: an application that needs the
-full catalog's identity must pin the view bytes or bind the catalog digest into
-its own statement, as Jolt's transcript does. A view never sizes a setup and
-never re-exports as a JSON catalog; `validate_complete` rejects it where a
-complete catalog is required.
+full catalog's identity must pin the view bytes or check the catalog digest
+against a trusted value. A view never sizes a setup and never re-exports as a
+JSON catalog; `validate_complete` rejects it where a complete catalog is
+required.
+
+A guest may embed a view checked against an anchored release
+([`pinned-preprocessing-releases.md`](pinned-preprocessing-releases.md)). A
+release publishes `catalog-view/<set>/<row digest>` for the rows of a set's
+base catalog; the guest loader checks the file against the manifest and
+requires the view to reproduce the set record's catalog digest. Rows a program
+plans for itself after publication (program rows) are not in any release:
+the catalog identity is then the merged catalog of the base rows and the
+program's rows, whose digest the program preprocessing stores. The guest
+build step derives the merged catalog's selected-row view, and the guest
+loader requires it to reproduce that stored digest.
 
 ### Deferred authenticated recursion layer
 

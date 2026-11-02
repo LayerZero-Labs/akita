@@ -8,7 +8,7 @@ It is not a substitute for a third-party audit.
 Akita has four main trust boundaries:
 
 - Proof bytes, commitments, claims, and opening points may be attacker controlled.
-- Verifier preprocessing is recomputed by the verifier or authenticated by the deployment, and soundness assumes it was derived as claimed; see [Verifier Preprocessing](#verifier-preprocessing).
+- Verifier preprocessing comes from a pinned release that the binary's compiled trust anchor names, and soundness assumes the release was derived as claimed; see [Verifier Preprocessing](#verifier-preprocessing).
 - Prover witnesses and intermediate polynomials may contain private application data.
 - Build inputs, Git dependencies, and GitHub Actions influence the binary that users run.
 
@@ -45,9 +45,18 @@ Avoiding it is the reason preprocessing exists, and recomputing the setup-prefix
 
 Akita's soundness claim assumes that the derivation claim holds for every preprocessed object the verifier uses.
 A verifier that loads preprocessing that neither it nor a party it trusts has derived is outside that claim, in the same way as a verifier that is given the wrong verifying key.
-Akita does not authenticate preprocessing bytes itself.
-It has no release manifest, digest pin, or signature for the catalog, the registry, or the cache.
-A deployment that loads any of them without recomputing it must state the trust root that authenticated the bytes.
+
+Akita authenticates preprocessing bytes with pinned releases ([`specs/pinned-preprocessing-releases.md`](../specs/pinned-preprocessing-releases.md)).
+A release is the generator's deterministic output for a description under `params/`, named by one manifest whose hash is the release's `bundle_id`.
+A binary trusts only the `(bundle_id, set name)` pairs of its compiled trust anchor (`akita-anchors` for Akita).
+The loaders check the anchor before decoding the manifest and compare each set record with the compiled configuration; their per-object checks are listed below.
+A required merge check regenerates every anchored release from scratch, so an anchored release is what the code at that commit produces.
+The derivation claim for a production verifier therefore rests on the repository, the build, and the merge check, and `akita-preprocess check` lets anyone repeat it.
+
+Production verifiers are built only from loader values: `PinnedVerifierSetup` and `PinnedTerminalCache` have private fields, no public constructor, and no deserializer.
+Every path that builds a setup from loaded bytes without that check is an `unsafe fn` whose contract is that the caller guarantees derivation: `AkitaVerifierSetup::from_parts` and its decoder, `AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked`, the `borrow_trusted` views, `AkitaProverSetup::to_verifier_setup`, `AkitaVerifier::new` and `for_selection`, and the `AkitaCommitmentScheme` verifier helpers.
+Here `unsafe` marks a soundness contract, not a memory-safety one.
+Tests and benchmarks use these paths with setups they derived themselves.
 
 The schedule catalog is not a function of the seed, so its derivation claim has a different shape.
 Catalog admission recomputes what can be recomputed, which is the SIS audit of each row.
@@ -67,12 +76,12 @@ Akita also keeps cheap admission checks where an honest but faulty generator cou
 The SIS audit of catalog rows is the example.
 A check is not needed when the fault it guards against makes every honest proof fail, because tests cover that.
 
-What Akita checks today, per object:
+What the loader checks, per object:
 
-- **Public matrix.** Validated decoding re-derives it from the seed, so the derivation claim is checked. Constructors and decoders named `trusted` or `unchecked` skip the re-derivation and rely on the caller.
-- **Schedule catalog.** Admission audits each row. The origin of the catalog bytes is not checked.
-- **Setup-prefix registry.** It is checked for encoding, for binding to the setup seed, and for slot structure. The commitments are not recomputed. The registry is structurally validated, not provenance validated.
-- **Terminal NTT cache.** The verifier derives it from the setup when it prepares the cache itself. A supplied owned cache is checked for identity, shape, and residue ranges, and its contents are not recomputed. A trusted in-place view checks identity and shape while the caller vouches for residue ranges.
+- **Public matrix.** The loader derives the prefix its admitted rows need from the release's seed. Validated decoding also re-derives it. Only a guest takes an embedded prefix instead, under the contract of `PinnedMatrixPrefix::embedded_unchecked`.
+- **Schedule catalog.** The catalog file matches its manifest hash and the set record's catalog digest, and admission audits each row. Program rows arrive with the program preprocessing whose digest authenticates them, and pass the same audit.
+- **Setup-prefix registry.** Each payload matches its file hash and its recomputed prefix commitment digest matches the manifest, in registry mode; in seed-derived mode the loader derives the payload and compares the same digest. Protocol Stage 3 absorbs that digest in every proof.
+- **Terminal NTT cache.** The verifier derives it from the setup when it prepares the cache itself. A release cache is checked against its manifest hash and then for identity, shape, and residue ranges. A guest-embedded view checks identity and shape; its contents rest on the contract of `PinnedTerminalCache::embedded_unchecked`.
 
 [`specs/flat-public-matrix-and-exact-ntt-cache.md`](../specs/flat-public-matrix-and-exact-ntt-cache.md#setup-provenance-and-validation) is the design record for these claims.
 It also fixes the intended proof of derivation, a certificate chain that ends at a prefix small enough to derive directly.
@@ -117,7 +126,10 @@ Verifier-facing crates should avoid unsafe code unless a spec explicitly justifi
 
 A RISC-V guest verifier reads its setup from its own program image. Copying and
 range-checking that matrix would dominate the guest's cost, so three paths view
-trusted, `'static`, little-endian setup bytes in place:
+trusted, `'static`, little-endian setup bytes in place. They are used only on
+bytes the loader checked or on embedded guest bytes issued through the
+guest-only `unsafe fn`s `PinnedMatrixPrefix::embedded_unchecked` and
+`PinnedTerminalCache::embedded_unchecked`.
 
 - `AkitaDeserialize::borrow_many_trusted`, and the `borrow_trusted` methods built
   on it, reinterpret field words as elements. They check length and alignment.

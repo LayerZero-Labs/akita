@@ -673,14 +673,7 @@ where
                     stage2_challenges: sumcheck_challenges,
                     address_geometry: relation_address_geometry,
                 })?;
-            let mut encoded_slot = Vec::new();
-            slot.public
-                .id
-                .serialize_compressed(&mut encoded_slot)
-                .map_err(|error| {
-                    AkitaError::Internal(format!("setup-prefix slot serialization failed: {error}"))
-                })?;
-            akita_types::stage3_public_slot(grinding, level, &encoded_slot)?;
+            akita_types::stage3_public_slot(grinding, level, &expanded.setup_seed, &slot.public)?;
             akita_types::stage3_claim::<F, E, _>(grinding, level, setup_product_claim)?;
             let mut kernel = Stage3Sumcheck {
                 backend,

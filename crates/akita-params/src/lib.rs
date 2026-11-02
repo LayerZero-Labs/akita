@@ -34,7 +34,7 @@ pub use compression::{
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use descriptor_bytes::{
-    digest_descriptor_bytes, DescriptorDigest, AKITA_INSTANCE_DESCRIPTOR_VERSION,
+    digest_descriptor_bytes, DescriptorDigest, DescriptorHasher, AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
 pub use golomb_rice::{
     golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_total_wire_bits,

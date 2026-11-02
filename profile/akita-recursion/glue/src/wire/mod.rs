@@ -740,13 +740,15 @@ where
                 )
             })?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        AkitaVerifierSetup::from_parts(
-            Arc::new(AkitaExpandedSetup::from_verified_parts(
-                seed,
-                shared_matrix,
-            )?),
-            prefix_slots,
-        )
+        unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(AkitaExpandedSetup::from_verified_parts(
+                    seed,
+                    shared_matrix,
+                )?),
+                prefix_slots,
+            )
+        }
         .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 

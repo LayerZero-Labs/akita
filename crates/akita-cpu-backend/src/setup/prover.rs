@@ -3,32 +3,99 @@
 use akita_error::AkitaError;
 
 use crate::commitment::SetupPrefixProverRegistry;
-use akita_params::{FlatMatrix, SetupMatrixCapacity};
+use akita_params::{FlatMatrix, SetupMatrixCapacity, SetupPrefixSlotId};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
-    derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
-    AkitaVerifierSetup, SetupPrefixVerifierRegistry,
+    sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup,
+    SetupPrefixVerifierRegistry,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
 /// Prover setup artifact.
 ///
 /// Backend-prepared compute state is intentionally not stored here. Host code
 /// prepares a compute backend from the expanded setup when it wants to prove.
+///
+/// Fields are private: a prover setup is derived from its seed in this
+/// process, with commitments exported here, or issued by the release loader
+/// as a [`crate::PinnedProverSetup`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaProverSetup<F: Field> {
     /// Expanded matrix stage used by the prover.
-    pub expanded: Arc<AkitaExpandedSetup<F>>,
+    pub(crate) expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
     ///
     /// D-free (S4): the registry stores flat ring-coefficient commitment rows and
     /// D-free hints; concrete-D selection happens at backend-prepare /
     /// per-operation time, not on this artifact.
-    pub prefix_slots: SetupPrefixProverRegistry<F>,
+    pub(crate) prefix_slots: SetupPrefixProverRegistry<F>,
 }
 
 impl<F: Field> AkitaProverSetup<F> {
+    /// Expanded matrix stage used by the prover.
+    pub fn expanded(&self) -> &Arc<AkitaExpandedSetup<F>> {
+        &self.expanded
+    }
+
+    /// Setup-prefix commitment slots for setup-claim offloading.
+    pub fn prefix_slots(&self) -> &SetupPrefixProverRegistry<F> {
+        &self.prefix_slots
+    }
+
+    /// Derive the setup `descriptor` describes, with no setup-prefix slots.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the descriptor is malformed.
+    #[tracing::instrument(skip_all, name = "AkitaProverSetup::derive")]
+    pub fn derive(descriptor: AkitaSetupDescriptor) -> Result<Self, AkitaError>
+    where
+        F: CanonicalEncoding,
+    {
+        let setup_seed = descriptor.setup_seed.clone();
+        Ok(Self {
+            expanded: Arc::new(AkitaExpandedSetup::derive(descriptor)?),
+            prefix_slots: SetupPrefixProverRegistry::new(setup_seed),
+        })
+    }
+
+    /// Commit to the setup prefixes `ids` not stored yet, from this setup's
+    /// matrix, and store them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a slot does not fit the matrix or export fails.
+    pub fn export_setup_prefixes(&mut self, ids: &[SetupPrefixSlotId]) -> Result<(), AkitaError>
+    where
+        F: CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
+    {
+        let missing = ids
+            .iter()
+            .filter(|id| self.prefix_slots.get(id).is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        // Prefix commitments depend only on the setup and the slot ids, so the
+        // base field fills the exporting backend's extension parameter.
+        let exported = crate::CpuBackend::<F, F>::new(self.expanded.clone())?
+            .export_setup_prefixes(&missing)?;
+        let validated = self.prefix_slots.is_empty() || self.prefix_slots.is_backend_validated();
+        for (_, slot) in exported.iter() {
+            self.prefix_slots.insert(slot.clone())?;
+        }
+        if validated {
+            self.prefix_slots.mark_backend_validated();
+        }
+        tracing::info!(
+            slots = self.prefix_slots.len(),
+            "materialized exact setup-prefix commitments"
+        );
+        Ok(())
+    }
+
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// The caller supplies config-derived provisioning bounds in base-field
@@ -46,28 +113,13 @@ impl<F: Field> AkitaProverSetup<F> {
         setup_capacity: SetupMatrixCapacity,
     ) -> Result<Self, AkitaError>
     where
-        F: Field + CanonicalEncoding + AkitaSerialize,
+        F: CanonicalEncoding,
     {
-        let setup_seed = sample_akita_setup_seed();
-        let seed = AkitaSetupDescriptor {
+        Self::derive(AkitaSetupDescriptor {
             max_num_vars,
             max_num_batched_polys,
             num_field_elements: setup_capacity.num_field_elements,
-            setup_seed: setup_seed.clone(),
-        };
-        seed.check().map_err(|err| {
-            AkitaError::InvalidSetup(format!("setup seed validation failed: {err}"))
-        })?;
-
-        let shared_flat =
-            derive_public_matrix_prefix::<F>(setup_capacity.num_field_elements, &setup_seed);
-        let expanded = Arc::new(
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
-        );
-
-        Ok(Self {
-            expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(setup_seed),
+            setup_seed: sample_akita_setup_seed(),
         })
     }
 
@@ -84,7 +136,14 @@ impl<F: Field> AkitaProverSetup<F> {
     /// Returns an error if `matrix_capacity` is empty or exceeds the prover
     /// matrix, or if prover prefix-slot metadata cannot be converted into
     /// verifier-visible prefix slots.
-    pub fn to_verifier_setup(
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract of [`AkitaVerifierSetup::from_parts`]: the caller
+    /// accepts this prover's commitments as honest. That holds for a setup
+    /// derived and exported in this process; a production verifier is
+    /// instead loaded from a release.
+    pub unsafe fn to_verifier_setup(
         &self,
         matrix_capacity: SetupMatrixCapacity,
     ) -> Result<AkitaVerifierSetup<F>, AkitaError>
@@ -111,12 +170,14 @@ impl<F: Field> AkitaProverSetup<F> {
         } else {
             let mut descriptor = self.expanded.descriptor().clone();
             descriptor.num_field_elements = verifier_matrix.len();
-            Arc::new(
+            // SAFETY: a prefix of this setup's matrix, which was derived
+            // from its seed.
+            Arc::new(unsafe {
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     descriptor,
                     FlatMatrix::from_flat_data(verifier_matrix.to_vec()),
-                ),
-            )
+                )
+            })
         };
         let mut prefix_slots =
             SetupPrefixVerifierRegistry::new(self.expanded.descriptor().setup_seed.clone());
@@ -128,7 +189,8 @@ impl<F: Field> AkitaProverSetup<F> {
         for slot in self.prefix_slots.verifier_slots() {
             prefix_slots.insert(slot)?;
         }
-        AkitaVerifierSetup::from_parts(expanded, prefix_slots)
+        // SAFETY: forwarded to the caller.
+        unsafe { AkitaVerifierSetup::from_parts(expanded, prefix_slots) }
     }
 }
 
@@ -173,11 +235,12 @@ mod tests {
         )
         .expect("generate setup");
 
-        let verifier = setup
-            .to_verifier_setup(SetupMatrixCapacity {
+        let verifier = unsafe {
+            setup.to_verifier_setup(SetupMatrixCapacity {
                 num_field_elements: 3,
             })
-            .expect("narrow verifier setup");
+        }
+        .expect("narrow verifier setup");
         assert_eq!(verifier.expanded().descriptor().num_field_elements, 3);
         assert_eq!(verifier.expanded().shared_matrix().num_field_elements(), 3);
         assert_eq!(
@@ -185,11 +248,12 @@ mod tests {
             &setup.expanded.shared_matrix().as_field_slice()[..3]
         );
         assert!(
-            setup
-                .to_verifier_setup(SetupMatrixCapacity {
+            unsafe {
+                setup.to_verifier_setup(SetupMatrixCapacity {
                     num_field_elements: 9,
                 })
-                .is_err(),
+            }
+            .is_err(),
             "conversion must not extend beyond the prover matrix"
         );
     }
@@ -205,11 +269,12 @@ mod tests {
         )
         .unwrap();
         setup.prefix_slots = SetupPrefixProverRegistry::new([7; 32].into());
-        assert!(setup
-            .to_verifier_setup(SetupMatrixCapacity {
-                num_field_elements: 8
+        assert!(unsafe {
+            setup.to_verifier_setup(SetupMatrixCapacity {
+                num_field_elements: 8,
             })
-            .is_err());
+        }
+        .is_err());
     }
 
     #[test]

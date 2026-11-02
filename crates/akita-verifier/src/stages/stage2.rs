@@ -647,7 +647,7 @@ mod tests {
                 extension_degree: <E as ExtField<F>>::DEGREE,
             },
         };
-        let setup: AkitaExpandedSetup<F> =
+        let setup: AkitaExpandedSetup<F> = unsafe {
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                 AkitaSetupDescriptor {
                     max_num_vars: 0,
@@ -656,7 +656,8 @@ mod tests {
                     setup_seed: [0u8; 32].into(),
                 },
                 FlatMatrix::from_flat_data(Vec::new()),
-            );
+            )
+        };
         let domain = relation_address_geometry.digit_witness_domain();
         let scalar_opening = E::from_u64(19);
         let verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {

@@ -38,8 +38,8 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).expect("L2 setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier = self_derived_verifier(&scheme, &setup);
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
@@ -77,16 +77,12 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         )
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
-        scheme
-            .verifier(verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    candidate,
-                    TRANSCRIPT_LABEL,
-                    selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier.batched_verify(
+            candidate,
+            TRANSCRIPT_LABEL,
+            selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
+            BasisMode::Lagrange,
+        )
     };
     verify(&proof).expect("valid L2 proof");
 

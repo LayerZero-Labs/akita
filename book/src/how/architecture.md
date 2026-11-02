@@ -23,11 +23,13 @@ orchestration lives in `akita-pcs`.
 | `akita-planner` | `Cfg`-free offline schedule search and artifact emission |
 | `akita-schedules` | Versioned schedule artifacts, semantic row audit, and validated owned catalogs |
 | `akita-config` | Runtime presets, the `CommitmentConfig` trait, trusted artifact loading, `policy_of::<Cfg>(chunking)`, and transcript binding |
-| `akita-setup` | Config-backed setup construction and optional setup cache |
+| `akita-setup` | Local setup construction and the release-file cache |
 | `akita-verifier` | Verifier replay without prover-only polynomial backends; directly `<Cfg>`-generic |
 | `akita-prover` | Protocol sequencing, public geometry checks, proof assembly, opaque operation contracts |
 | `akita-cpu-backend` | Backend-owned sources, commitment and witness arithmetic, prepared setup resources, caches |
 | `akita-pcs` | Umbrella crate: `AkitaCommitmentScheme`, re-exports, examples, benches, integration tests |
+| `akita-preprocess` | Generator and auditor of pinned preprocessing releases |
+| `akita-anchors` | Akita's compiled trust anchor of the releases under `params/` |
 
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](https://github.com/LayerZero-Labs/akita/blob/main/docs/crate-graph.md).
 CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.

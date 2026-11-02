@@ -640,18 +640,10 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
             expected
         );
 
-        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: plan.required() * role_dims.d_a(),
-                setup_seed: [0u8; 32].into(),
-            },
-            FlatMatrix::from_flat_data(
-                (0..plan.required() * role_dims.d_a())
-                    .map(|index| test_scalar(1_201 + index as u128))
-                    .collect(),
-            ),
+        let setup = coefficient_setup(
+            (0..plan.required() * role_dims.d_a())
+                .map(|index| test_scalar(1_201 + index as u128))
+                .collect(),
         );
         let alpha = test_scalar(3);
         let alpha_pows_a = scalar_powers(alpha, role_dims.d_a());

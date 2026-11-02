@@ -52,21 +52,13 @@ fn commit_prove_verify<Cfg, P>(
     )
     .expect("verifier group")])
     .expect("verifier claims");
-    scheme
-        .verifier(
-            scheme
-                .setup_verifier(setup)
-                .expect("verifier setup")
-                .clone(),
+    self_derived_verifier(scheme, setup)
+        .batched_verify(
+            &proof,
+            label,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
         )
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                label,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
-        })
         .expect("verify");
 }
 
@@ -121,7 +113,7 @@ fn fp32_combined_setup_proves_recursive_and_onehot_families() {
         assert_eq!(combined.prefix_slot_ids(), recursive_slots.as_slice());
 
         let setup = akita_pcs::new_prover_setup::<F>(&combined).expect("combined setup");
-        let backend = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let backend = CpuBackend::new(setup.expanded().clone()).expect("backend");
 
         let n = 1usize << MAX_NV;
         let evals = (0..n)

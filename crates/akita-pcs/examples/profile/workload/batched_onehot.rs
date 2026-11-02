@@ -73,7 +73,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let setup = scheme.setup_prover(nv, num_polys).unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let backend = CpuBackend::new(setup.expanded().clone()).unwrap();
         if let Some(schedule) = plan {
             backend
                 .prewarm(schedule)
@@ -85,7 +85,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
         report_timing(label, "setup", t0.elapsed().as_secs_f64());
-        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+        let num_setup_field_elements = setup.expanded().shared_matrix().num_field_elements();
         report_setup_sizes(
             label,
             num_setup_field_elements,
@@ -216,8 +216,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        scheme
-            .setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
+        unsafe { scheme.setup_verifier_for_schedule(&setup, &schedule, &opening_batch) }
             .expect("verifier setup")
     });
     report_timing(
@@ -240,9 +239,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &commitments[0],
         )
     };
-    let verifier = scheme
-        .verifier(verifier_setup.clone())
-        .expect("verifier for the profile setup");
+    let verifier =
+        unsafe { scheme.verifier(verifier_setup.clone()) }.expect("verifier for the profile setup");
     let verify = |claims| verifier.batched_verify(&proof, b"profile", claims, BasisMode::Lagrange);
     run_verifier_timings(label, pools, "batched profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());

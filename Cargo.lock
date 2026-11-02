@@ -39,6 +39,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-anchors"
+version = "0.1.0"
+dependencies = [
+ "akita-types",
+]
+
+[[package]]
 name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
@@ -122,6 +129,7 @@ dependencies = [
  "akita-error",
  "akita-params",
  "akita-planner",
+ "akita-preprocess",
  "akita-prover",
  "akita-schedules",
  "akita-serialization",
@@ -163,6 +171,23 @@ dependencies = [
  "akita-schedules",
  "akita-sis-estimator",
  "libm",
+]
+
+[[package]]
+name = "akita-preprocess"
+version = "0.1.0"
+dependencies = [
+ "akita-config",
+ "akita-cpu-backend",
+ "akita-error",
+ "akita-params",
+ "akita-serialization",
+ "akita-types",
+ "akita-verifier",
+ "jolt-field",
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

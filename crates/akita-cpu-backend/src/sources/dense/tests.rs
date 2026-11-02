@@ -38,7 +38,7 @@ fn setup_prefix_sources_share_the_setup_and_survive_owner_drop() {
     drop(large);
     assert_eq!(clone.field_coeffs(), expected);
     // A short polynomial must have zeros beyond its own domain, not more setup data.
-    let setup = Arc::new(
+    let setup = Arc::new(unsafe {
         akita_types::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             akita_types::AkitaSetupDescriptor {
                 max_num_vars: 12,
@@ -47,8 +47,8 @@ fn setup_prefix_sources_share_the_setup_and_survive_owner_drop() {
                 setup_seed: akita_types::sample_akita_setup_seed(),
             },
             FlatMatrix::from_flat_data(vec![F::from_u64(7); 4096]),
-        ),
-    );
+        )
+    });
     let short = DensePoly::from_setup_prefix(setup, 8).unwrap();
     assert!(short.field_coeffs()[..256]
         .iter()

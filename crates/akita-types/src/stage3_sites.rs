@@ -1,7 +1,9 @@
 //! Proof-stream grammar for recursive setup-product stage 3.
 
-use crate::GrindingReplay;
+use crate::preprocessing::{prefix_commitment_digest, StreamIdentity};
+use crate::{AkitaSetupSeed, GrindingReplay, SetupPrefixVerifierSlot};
 use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::{
     exchange_extension_group, public_bytes, ProtocolSiteId, SITE_FAMILY_STAGE3,
 };
@@ -21,17 +23,29 @@ fn site(level: u32, role: u32) -> ProtocolSiteId {
     }
 }
 
-/// Bind the selected public setup-prefix slot.
-pub fn stage3_public_slot<G: GrindingReplay>(
+/// Bind the selected setup-prefix slot:
+/// `serialize_compressed(slot id) || prefix_commitment_digest`, the digest
+/// recomputed from `slot` in every proof.
+pub fn stage3_public_slot<F, G>(
     grinding: &mut G,
     level: u32,
-    encoded_slot: &[u8],
-) -> Result<(), AkitaError> {
-    public_bytes(
-        grinding.state_mut(),
-        site(level, ROLE_SETUP_SLOT),
-        encoded_slot,
-    )
+    setup_seed: &AkitaSetupSeed,
+    slot: &SetupPrefixVerifierSlot<F>,
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    G: GrindingReplay,
+{
+    let mut bound = Vec::with_capacity(slot.id.compressed_size() + 32);
+    slot.id
+        .serialize_compressed(&mut bound)
+        .map_err(|error| AkitaError::InvalidSetup(format!("setup-prefix slot id: {error}")))?;
+    let stream = StreamIdentity::for_field::<F>(setup_seed)?;
+    bound.extend_from_slice(
+        prefix_commitment_digest(&stream, &slot.id.commitment_profile, &slot.commitment)?
+            .as_bytes(),
+    );
+    public_bytes(grinding.state_mut(), site(level, ROLE_SETUP_SLOT), &bound)
 }
 
 /// Exchange the setup-product input claim before sumcheck challenges.
@@ -90,12 +104,24 @@ mod tests {
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
-        let slot = b"canonical setup slot";
+        let id = akita_params::scheduled_setup_prefix(
+            64,
+            crate::proof::setup::tests::prefix_commitment_params(64, 64),
+        )
+        .slot_id()
+        .unwrap();
+        let slot = SetupPrefixVerifierSlot {
+            id,
+            commitment: crate::SetupPrefixPublicCommitment {
+                rows: vec![crate::RingVec::from_coeffs(vec![F::from_u64(3); 16])],
+            },
+        };
+        let seed = AkitaSetupSeed::shake256_paged_v1([5; 32]);
         let claim = E::from_u64(17);
         let prefix_eval = E::from_u64(29);
         let mut state = new_prover_channel(b"native-stage3");
         let mut prover = ProverGrinding::new(&mut state, &plan);
-        stage3_public_slot(&mut prover, 3, slot).unwrap();
+        stage3_public_slot(&mut prover, 3, &seed, &slot).unwrap();
         stage3_claim::<F, E, _>(&mut prover, 3, claim).unwrap();
         stage3_prefix_eval::<F, E, _>(&mut prover, 3, prefix_eval).unwrap();
         prover.finish().unwrap();
@@ -103,7 +129,7 @@ mod tests {
 
         let mut state = new_verifier_channel(b"native-stage3", &proof);
         let mut verifier = VerifierGrinding::new(&mut state, &plan);
-        stage3_public_slot(&mut verifier, 3, slot).unwrap();
+        stage3_public_slot(&mut verifier, 3, &seed, &slot).unwrap();
         assert_eq!(
             stage3_claim::<F, E, _>(&mut verifier, 3, E::zero()).unwrap(),
             claim

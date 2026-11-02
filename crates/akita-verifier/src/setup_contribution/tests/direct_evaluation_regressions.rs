@@ -46,18 +46,10 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
         CommitmentRingDims::uniform(TEST_D),
     );
     let setup_len = 12;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * TEST_D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_len * TEST_D)
+            .map(|idx| test_scalar(211 + idx as u128))
+            .collect(),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
     let expected = scan

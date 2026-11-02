@@ -102,7 +102,8 @@ In embedded mode the "session" row is the caller's own session.
 
 - **Every input is bound before the first challenge that depends on it.**
   In both modes, Akita's own code absorbs everything its acceptance depends
-  on, before its first challenge, apart from the setup-prefix slot rows and
+  on, before its first challenge, apart from the setup-prefix commitment
+  rows, which Stage 3 binds through their prefix commitment digests, and
   the extension field's defining polynomial (see
   [Existing assumptions, unchanged](#existing-assumptions-unchanged)):
   - the protocol tag;
@@ -266,11 +267,16 @@ In embedded mode the "session" row is the caller's own session.
   parameters from an admitted catalog, so an attack needs two admitted
   schedules that collide. This change leaves them as they are; moving them
   to the sponge's hash is a follow-up.
-- **The verifier setup comes from the bound seed.** The setup-prefix slot
-  commitments are not absorbed; the setup seed and each slot's id are. So
-  soundness holds only if the verifier's setup is derived from the bound
-  seed. `AkitaVerifierSetup::from_parts` trusts its inputs and does not
-  check this, so the caller that builds the setup is responsible.
+- **The verifier setup comes from the bound seed.** The setup seed is
+  absorbed in the descriptor, and at protocol Stage 3 each slot's id is
+  absorbed followed by its prefix commitment digest, recomputed in every
+  proof from the registry entry the fold reads
+  ([`pinned-preprocessing-releases.md`](pinned-preprocessing-releases.md#transcript-binding)).
+  The digest names the commitment a proof was checked against; soundness
+  still needs the commitment to be derived from the bound seed, which the
+  release loader checks against an anchored manifest.
+  `AkitaVerifierSetup::from_parts` trusts its inputs, so it is an `unsafe fn`
+  whose caller guarantees derivation.
 - **The extension field is fixed at compile time.** Its defining polynomial
   is not absorbed.
 

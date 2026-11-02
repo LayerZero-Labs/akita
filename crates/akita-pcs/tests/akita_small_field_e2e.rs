@@ -172,8 +172,8 @@ macro_rules! small_field_test {
                         2,
                     )
                     .expect("setup");
-                    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-                    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+                    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+                    let verifier = self_derived_verifier(&scheme, &setup);
 
                     let pre_poly = akita_cpu_backend::DensePoly::<$sf>::from_field_evals(
                         PRE_NV,
@@ -250,9 +250,8 @@ scheme.schedules());
                     });
 
                     two_group_verify_roundtrip::<$cfg>(
-                        &scheme,
                         &proof,
-                        &verifier_setup,
+                        &verifier,
                         selection,
                         (&pre_commitment, &point[..PRE_NV], pre_opening),
                         (&final_commitment, &point[..final_nv], final_opening),
@@ -339,8 +338,8 @@ scheme.schedules());
                         2,
                     )
                     .expect("setup");
-                    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-                    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+                    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+                    let verifier = self_derived_verifier(&scheme, &setup);
 
                     let pre_poly = akita_cpu_backend::OneHotPoly::<$sf, u8>::new(
                         onehot_k,
@@ -427,9 +426,8 @@ scheme.schedules());
                     });
 
                     two_group_verify_roundtrip::<$cfg>(
-                        &scheme,
                         &proof,
-                        &verifier_setup,
+                        &verifier,
                         selection,
                         (&pre_commitment, &point[..PRE_NV], pre_opening),
                         (&final_commitment, &point[..final_nv], final_opening),
@@ -542,7 +540,7 @@ fn fp32_onehot_multi_group() {
         let pre_poly = grouped_poly(pre_params, 1);
 
         let pre_setup = scheme.setup_prover(PRE_NV, 1).expect("pre setup");
-        let pre_stack = CpuBackend::new(pre_setup.expanded.clone()).unwrap();
+        let pre_stack = CpuBackend::new(pre_setup.expanded().clone()).unwrap();
         let akita_cpu_backend::CommitOutput {
             committed_group: pre_commitment,
             private_handle: pre_hint,
@@ -569,11 +567,11 @@ fn fp32_onehot_multi_group() {
         let final_poly = grouped_poly(final_params, 2);
 
         let setup = scheme.setup_prover(FINAL_NV, 2).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
         let pre_hint = stack
             .import_commitment(&pre_hint)
             .expect("validated precommit transfer");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let verifier = self_derived_verifier(&scheme, &setup);
 
         let precommitteds =
             PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
@@ -634,16 +632,13 @@ fn fp32_onehot_multi_group() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        scheme
-            .verifier(verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                    BasisMode::Lagrange,
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
             .expect("fp32 multi-group verify");
     });
 }
