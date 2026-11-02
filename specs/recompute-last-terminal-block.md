@@ -18,7 +18,7 @@ determine both once the rest of the response is known. This change omits
 those blocks and sends a 32-byte digest of each in their place. The verifier
 solves each relation for the omitted block, re-checks the relation, and
 compares the digest. Every catalog row shrinks by 4,032 to 6,080 bytes, about
-6%, and 79 of the 115 rows save 5,056 bytes. The cost is two digests per
+6%, and 87 of the 126 rows save 5,056 bytes. The cost is two digests per
 terminal group.
 
 The change first landed on `dev` behind the `dev-protocol` feature in

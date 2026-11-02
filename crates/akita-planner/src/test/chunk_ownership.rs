@@ -547,7 +547,8 @@ fn contracting_chunk_search_matches_unpruned_complete_objective() {
             crate::SelectionPolicyId::for_policy(policy.recursive_setup_planning);
         policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         policy.inner_basis_range.1 = policy.inner_basis_range.0;
-        let key = PolynomialGroupLayout::singleton(20);
+        // K=16 needs a smaller root to keep the exhaustive oracle bounded.
+        let key = PolynomialGroupLayout::singleton(19);
         let lookup_key = ScheduleLookupKey::single(key);
         let selected = crate::planner::find_schedule(
             &lookup_key,
