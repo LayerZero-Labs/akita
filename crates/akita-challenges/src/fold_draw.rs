@@ -152,7 +152,15 @@ pub trait FoldDraw {
         #[cfg(feature = "logging-transcript")]
         self.record_challenge_range(group_index, total);
         challenges
-            .map(|challenges| Challenges::from_sparse(challenges, num_live_blocks, num_claims))
+            .map(|challenges| {
+                Challenges::from_sampled(
+                    challenges,
+                    num_live_blocks,
+                    num_claims,
+                    family.ring_d(),
+                    family.config(),
+                )
+            })
             .transpose()
     }
 }
