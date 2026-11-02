@@ -8,6 +8,8 @@
 mod op_norm;
 mod op_norm_accumulate;
 mod position_sample;
+#[cfg(test)]
+mod sampling_equivalence;
 mod signed_sparse;
 mod xof;
 
@@ -142,6 +144,7 @@ impl IndexedChallengeWorker {
     ) -> Result<SparseChallenge, AkitaError> {
         self.cursor
             .reset_indexed_prefix(&self.prefix, coordinate_index);
+
         let IndexedSamplingPolicy::OperatorNorm { threshold, table } = &self.policy else {
             self.scratch
                 .sample(&mut self.cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
@@ -180,8 +183,44 @@ pub(crate) fn sample_indexed_challenges_from_seed(
     let policy = IndexedSamplingPolicy::new(ring_d, cfg, rejection)?;
     let prefix =
         IndexedXofPrefix::new(seed).map_err(|message| AkitaError::InvalidSetup(message.into()))?;
+    if matches!(policy, IndexedSamplingPolicy::Unrestricted) {
+        // Statically specialize the entire draw loop once per batch. This
+        // preserves constant sizes without a function-pointer call per draw.
+        macro_rules! dispatch_fixed_family {
+            ($(($d:literal, $pm1:expr, $pm2:expr, $bits:literal)),+ $(,)?) => {
+                match (ring_d, cfg.count_pm1, cfg.count_pm2) {
+                    $((d, a, b) if d == $d && a == $pm1 && b == $pm2
+                        && !position_sample::uses_sparse_positions($d, $pm1 + $pm2) => {
+                        return sample_indexed_challenges_with(&prefix, n, cfg, &policy, true, |worker, index| {
+                            worker.cursor.reset_indexed_prefix(&worker.prefix, index);
+                            Ok(signed_sparse::sample_fixed::<$d, { $pm1 }, { $pm1 + $pm2 }>(
+                                &mut worker.cursor,
+                            ))
+                        });
+                    })+
+                    _ => {}
+                }
+            };
+        }
+        crate::config::production_fold_challenge_families!(dispatch_fixed_family);
+    }
+    sample_indexed_challenges_with(&prefix, n, cfg, &policy, true, |worker, index| {
+        worker.sample(index, ring_d, cfg)
+    })
+}
+
+fn sample_indexed_challenges_with(
+    prefix: &IndexedXofPrefix,
+    n: usize,
+    cfg: &SparseChallengeConfig,
+    policy: &IndexedSamplingPolicy,
+    allow_parallel: bool,
+    sample: impl Fn(&mut IndexedChallengeWorker, u64) -> Result<SparseChallenge, AkitaError> + Sync,
+) -> Result<Vec<SparseChallenge>, AkitaError> {
+    #[cfg(not(feature = "parallel"))]
+    let _ = allow_parallel;
     #[cfg(feature = "parallel")]
-    {
+    if allow_parallel {
         let work = n
             .checked_mul(cfg.weight())
             .ok_or_else(|| AkitaError::InvalidSetup("sparse challenge work overflow".into()))?;
@@ -189,48 +228,26 @@ pub(crate) fn sample_indexed_challenges_from_seed(
             return (0..n)
                 .into_par_iter()
                 .map_init(
-                    || IndexedChallengeWorker::new(&prefix, cfg, &policy),
+                    || IndexedChallengeWorker::new(prefix, cfg, policy),
                     |worker, index| {
-                        let coordinate_index = u64::try_from(index).map_err(|_| {
+                        let index = u64::try_from(index).map_err(|_| {
                             AkitaError::InvalidSetup(
                                 "sparse challenge coordinate index exceeds u64".into(),
                             )
                         })?;
-                        worker.sample(coordinate_index, ring_d, cfg)
+                        sample(worker, index)
                     },
                 )
                 .collect();
         }
     }
-    sample_indexed_challenges_sequential(&prefix, ring_d, n, cfg, &policy)
-}
-
-fn sample_indexed_challenges_sequential(
-    prefix: &IndexedXofPrefix,
-    ring_d: usize,
-    n: usize,
-    cfg: &SparseChallengeConfig,
-    policy: &IndexedSamplingPolicy,
-) -> Result<Vec<SparseChallenge>, AkitaError> {
-    sample_indexed_challenges_sequential_with(prefix, n, cfg, policy, |worker, index| {
-        worker.sample(index, ring_d, cfg)
-    })
-}
-
-fn sample_indexed_challenges_sequential_with(
-    prefix: &IndexedXofPrefix,
-    n: usize,
-    cfg: &SparseChallengeConfig,
-    policy: &IndexedSamplingPolicy,
-    mut sample: impl FnMut(&mut IndexedChallengeWorker, u64) -> Result<SparseChallenge, AkitaError>,
-) -> Result<Vec<SparseChallenge>, AkitaError> {
     let mut worker = IndexedChallengeWorker::new(prefix, cfg, policy);
     (0..n)
         .map(|index| {
-            let coordinate_index = u64::try_from(index).map_err(|_| {
+            let index = u64::try_from(index).map_err(|_| {
                 AkitaError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
             })?;
-            sample(&mut worker, coordinate_index)
+            sample(&mut worker, index)
         })
         .collect()
 }
@@ -276,11 +293,12 @@ mod tests {
             .unwrap();
         assert_ne!(alternate_answer, before[7]);
 
-        let forked = sample_indexed_challenges_sequential_with(
+        let forked = sample_indexed_challenges_with(
             &prefix,
             before.len(),
             &cfg,
             &policy,
+            false,
             |worker, index| {
                 if index == 7 {
                     Ok(alternate_answer.clone())
@@ -347,9 +365,15 @@ mod tests {
                 .unwrap();
         let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
         let prefix = IndexedXofPrefix::new(&seed).unwrap();
-        let sequential =
-            sample_indexed_challenges_sequential(&prefix, ring_d, challenge_count, &cfg, &policy)
-                .unwrap();
+        let sequential = sample_indexed_challenges_with(
+            &prefix,
+            challenge_count,
+            &cfg,
+            &policy,
+            false,
+            |worker, index| worker.sample(index, ring_d, &cfg),
+        )
+        .unwrap();
         assert_eq!(parallel, sequential);
     }
 }

@@ -100,7 +100,7 @@ impl XofCursor {
         *self = prefix.cursor(coordinate_index);
     }
 
-    #[inline]
+    #[inline(always)]
     fn next_u8(&mut self) -> u8 {
         if self.pos == SHAKE256_RATE {
             f1600(&mut self.state);
@@ -140,26 +140,35 @@ impl XofCursor {
         u32::from_le_bytes(std::array::from_fn(|_| self.next_u8()))
     }
 
-    /// Uniformly sample from `0..modulus` using bitmask rejection sampling
-    /// with minimal XOF consumption. Uses 1-byte reads when the modulus
-    /// fits in 8 bits, 2-byte reads for 16 bits, else 4 bytes.
-    #[inline]
-    pub(crate) fn next_usize_mod(&mut self, modulus: usize) -> usize {
+    /// Advance the rejection mask when the remaining range decreases by one.
+    /// Initialize `mask` to `universe.next_power_of_two() - 1` before the first
+    /// draw; callers bound the universe at the sampler boundary.
+    #[inline(always)]
+    pub(super) fn next_usize_rolling(&mut self, modulus: usize, mask: &mut usize) -> usize {
+        if modulus <= (*mask >> 1) + 1 {
+            *mask >>= 1;
+        }
+        self.next_usize_masked(modulus, *mask)
+    }
+
+    /// Requires a positive modulus and `mask == modulus.next_power_of_two() - 1`
+    /// for modulus > 1, preserving the canonical rejection stream.
+    #[inline(always)]
+    pub(crate) fn next_usize_masked(&mut self, modulus: usize, mask: usize) -> usize {
         debug_assert!(modulus > 0);
+        debug_assert!(modulus <= 1 || mask == modulus.next_power_of_two() - 1);
         if modulus == 1 {
             return 0;
         }
-        let bits = usize::BITS - (modulus - 1).leading_zeros();
-        if bits <= 8 {
-            let mask = ((1u16 << bits) - 1) as u8;
+        if mask <= u8::MAX as usize {
+            let mask = mask as u8;
             loop {
                 let val = (self.next_u8() & mask) as usize;
                 if val < modulus {
                     return val;
                 }
             }
-        } else if bits <= 16 {
-            let mask = (1usize << bits) - 1;
+        } else if mask <= u16::MAX as usize {
             loop {
                 let lo = self.next_u8() as usize;
                 let hi = self.next_u8() as usize;
@@ -169,7 +178,6 @@ impl XofCursor {
                 }
             }
         } else {
-            let mask: usize = (1 << bits) - 1;
             loop {
                 let val = (self.next_u32() as usize) & mask;
                 if val < modulus {

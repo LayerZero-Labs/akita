@@ -154,20 +154,32 @@ macro_rules! production_fold_challenge_ring_dims {
     };
 }
 
-production_fold_challenge_ring_dims!(64, 128, 256, 512, 1024, 2048);
+// Each consumer uses this one production-family catalog: policy tables and
+// sampler specializations cannot independently drift in dimensions or weights.
+macro_rules! production_fold_challenge_families {
+    ($consumer:ident) => {
+        $consumer! {
+            (64, $crate::config::D64_PRODUCTION_PM1_COUNT, $crate::config::D64_PRODUCTION_PM2_COUNT, 128),
+            (128, 31, 0, 129),
+            (256, 23, 0, 131),
+            (512, 19, 0, 132),
+            (1024, 16, 0, 131),
+            (2048, 14, 0, 131),
+        }
+    };
+}
+pub(crate) use production_fold_challenge_families;
 
-// The last coordinate is floor(log2(support)). It lets the verifier and the
-// offline planner validate the fixed production families without repeatedly
-// evaluating dozens of floating-point logarithms. The tests below recompute
-// every value from the canonical support formula.
-const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize, u32)] = &[
-    (64, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT, 128),
-    (128, 31, 0, 129),
-    (256, 23, 0, 131),
-    (512, 19, 0, 132),
-    (1024, 16, 0, 131),
-    (2048, 14, 0, 131),
-];
+macro_rules! define_production_families {
+    ($(($dim:literal, $pm1:expr, $pm2:expr, $bits:literal)),+ $(,)?) => {
+        production_fold_challenge_ring_dims!($($dim),+);
+        // floor(log2(support)), independently recomputed by the entropy tests.
+        const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize, u32)] = &[
+            $(($dim, $pm1, $pm2, $bits)),+
+        ];
+    };
+}
+production_fold_challenge_families!(define_production_families);
 
 /// Fixed-weight sparse ring fold challenge family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
