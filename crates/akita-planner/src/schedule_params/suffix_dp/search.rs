@@ -172,6 +172,11 @@ fn price_planned_fold_candidate(
         || active_setup_field_len(&params, search.opening_layout),
         Ok,
     )?;
+    let offloaded_setup_field_len = natural_len.max(
+        ctx.root_lookup_key
+            .filter(|_| ctx.level_zero_is_root && state.level == 0)
+            .map_or(0, |key| key.root_accumulated_setup_prefix_len),
+    );
     let direct_edge_is_admissible =
         state
             .topology
@@ -229,7 +234,7 @@ fn price_planned_fold_candidate(
             next_witness_len,
             next_source_moment,
 
-            natural_setup_field_len: natural_len,
+            natural_setup_field_len: offloaded_setup_field_len,
             direct_edge_is_admissible,
             prune_direct_edge,
         },
@@ -241,6 +246,7 @@ fn price_planned_fold_candidate(
         LevelCandidateEdge {
             params: &params,
             natural_setup_field_len: natural_len,
+            offloaded_setup_field_len,
             require_child_fold: search.require_child_fold,
         },
         CandidateChildren {

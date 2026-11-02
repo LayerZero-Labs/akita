@@ -98,6 +98,7 @@ fn main() -> Result<(), akita_error::AkitaError> {
         &independent.schedule.root.params,
     )?;
     let recursive_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };

@@ -374,6 +374,7 @@ where
             *commit_params
         } else {
             let key = ScheduleLookupKey {
+                root_accumulated_setup_prefix_len: 0,
                 final_group: polynomial_group_layout,
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };

@@ -164,7 +164,7 @@ where
             .collect(),
     };
     let selection = schedules
-        .resolve_profiles(&profiles)
+        .resolve_profiles(&profiles, 0)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid selected verifier statement")
@@ -191,7 +191,7 @@ where
         precommitteds: Vec::new(),
     };
     let selection = schedules
-        .resolve_profiles(&profiles)
+        .resolve_profiles(&profiles, 0)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")

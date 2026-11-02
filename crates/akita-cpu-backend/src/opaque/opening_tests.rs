@@ -617,6 +617,7 @@ fn proof_schedule_from_layout_includes_entire_batch() {
         .final_group;
     let schedule = catalog
         .resolve_key(&ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
         })

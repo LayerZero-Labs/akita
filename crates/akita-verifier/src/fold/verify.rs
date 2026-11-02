@@ -20,6 +20,11 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
     /// Verify one authoritative Spongefish argument.
+    ///
+    /// `SetupPolicy::Defer` exports direct setup evaluations in its accumulator.
+    /// Every policy fully verifies ordinary and accumulated Stage 3 reductions.
+    /// `SetupPolicy::Check` closes direct setup obligations and any inherited batch.
+    /// Rejection preserves inherited and pending obligations. Advice may have been consulted.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify(
@@ -28,7 +33,20 @@ where
         session: &[u8],
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
+        mut setup_policy: crate::SetupPolicy<'_, '_, Cfg::ExtField>,
     ) -> Result<(), AkitaError> {
+        if let crate::SetupPolicy::Check(Some(accumulator)) = &setup_policy {
+            if !accumulator.pending.is_empty() || accumulator.advice.is_some() {
+                return Err(AkitaError::InvalidInput(
+                    "checked setup accumulator cannot contain pending claims or advice".into(),
+                ));
+            }
+        }
+        if let Some(accumulator) = setup_policy.accumulator() {
+            accumulator
+                .polynomial
+                .validate::<Cfg::Field, Cfg::ExtField>(self.setup.expanded())?;
+        }
         let setup = &self.setup;
         let schedules = &self.schedules;
         let selection = statement.selection();
@@ -67,6 +85,13 @@ where
             ));
         }
         let schedule = resolved.schedule();
+        if let Some((level, _)) = setup_policy.accumulator().and_then(|a| a.batch.as_ref()) {
+            if *level as usize >= schedule.num_fold_levels() - 1 {
+                return Err(AkitaError::InvalidInput(
+                    "setup batch target must be a nonterminal fold".into(),
+                ));
+            }
+        }
         let root_params = &schedule.root_fold().params;
         let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
             final_descriptor.group,
@@ -98,9 +123,24 @@ where
             selection,
             schedule,
             basis,
+            setup_policy
+                .accumulator()
+                .and_then(|a| a.batch.as_ref())
+                .map(|(level, _)| *level),
         )?;
         let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
         let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
+        if let Some((level, batch)) = setup_policy.accumulator().and_then(|a| a.batch.as_ref()) {
+            akita_types::setup_claims::transcript::bind_outer_statement::<
+                Cfg::Field,
+                Cfg::ExtField,
+                _,
+            >(
+                akita_types::GrindingReplay::state_mut(&mut grinding),
+                *level,
+                batch,
+            )?;
+        }
         let raw_groups = claims
             .groups()
             .iter()
@@ -113,31 +153,46 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-        let root = verify_root::<Cfg::Field, Cfg::ExtField>(
-            setup,
-            &mut grinding,
-            &raw_claims,
-            &opening_batch,
-            basis,
-            root_params,
-            schedule.recursive_folds.first(),
-            &schedule.terminal,
-        )?;
-        verify_suffix::<Cfg::Field, Cfg::ExtField>(
-            setup,
-            &self.terminal_ntt,
-            &mut grinding,
-            schedule,
-            SuffixVerifierState {
-                opening_point: root.challenges,
-                opening: root.opening,
-                witness: root.next_witness,
-                basis: BasisMode::Lagrange,
-                witness_len: schedule.root_fold().output_witness_len,
-                setup_prefix_opening: root.setup_prefix_opening,
-            },
-        )?;
-        grinding.finish().map(|_accepted| ())
+        let pending_len = setup_policy.accumulator().map_or(0, |a| a.pending.len());
+        let result = (|| {
+            let root = verify_root::<Cfg::Field, Cfg::ExtField>(
+                setup,
+                &mut grinding,
+                &raw_claims,
+                &opening_batch,
+                basis,
+                root_params,
+                schedule.recursive_folds.first(),
+                &schedule.terminal,
+                &mut setup_policy,
+            )?;
+            verify_suffix::<Cfg::Field, Cfg::ExtField>(
+                setup,
+                &self.terminal_ntt,
+                &mut grinding,
+                schedule,
+                SuffixVerifierState {
+                    opening_point: root.challenges,
+                    opening: root.opening,
+                    witness: root.next_witness,
+                    basis: BasisMode::Lagrange,
+                    witness_len: schedule.root_fold().output_witness_len,
+                    setup_prefix_opening: root.setup_prefix_opening,
+                },
+                &mut setup_policy,
+            )?;
+            let _accepted = grinding.finish()?;
+            Ok(())
+        })();
+        if let Some(accumulator) = setup_policy.accumulator() {
+            if result.is_ok() {
+                // The validated target is one of the nonterminal folds replayed above.
+                accumulator.batch = None;
+            } else {
+                accumulator.pending.truncate(pending_len);
+            }
+        }
+        result
     }
 }
 

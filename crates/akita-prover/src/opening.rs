@@ -9,11 +9,13 @@ use akita_types::GrindingReplay;
 use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
-pub struct SelectedProverOpeningData<'a, E: Clone, H, F: Field> {
+pub struct SelectedProverOpeningData<'a, E: Field, H, F: Field> {
+    profile: CommittedGroupBatchProfile,
     selection: OpeningScheduleSelection,
     opening_data: ProverOpeningData<'a, E, H, F>,
+    pub(crate) setup_batch: Option<(u32, &'a akita_types::setup_claims::SetupBatchStatement<E>)>,
 }
-impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningData<'a, E, H, F> {
+impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningData<'a, E, H, F> {
     pub fn from_committed_claims<Cfg: CommitmentConfig<Field = F, ExtField = E>>(
         claims: OpeningClaims<'a, E, CommittedGroup<F>>,
         handles: Vec<H>,
@@ -31,7 +33,7 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
                 .map(|group| *group.commitment().profile())
                 .collect(),
         )?;
-        let selection = schedules.resolve_profiles(&profile)?.selection();
+        let selection = schedules.resolve_profiles(&profile, 0)?.selection();
         let opening_layout = claims.committed_layout()?;
         for ((layout, handle), claim) in opening_layout
             .groups()
@@ -76,6 +78,8 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
+            setup_batch: None,
+            profile,
             selection,
             opening_data: ProverOpeningData::from_parts(
                 OpeningClaims::from_groups(groups)?,
@@ -83,6 +87,42 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
                 handles,
             )?,
         })
+    }
+    /// Close the complete inherited collection at this nonterminal fold.
+    /// The enclosing argument must authenticate which inner proofs produced it.
+    ///
+    /// A batch offloaded at the root whose domain the selected successor prefix
+    /// does not open reselects the row admitted for that accumulated domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the catalog has no row for the accumulated domain.
+    pub fn with_setup_batch<Cfg: CommitmentConfig<Field = F, ExtField = E>>(
+        mut self,
+        level: u32,
+        statement: &'a akita_types::setup_claims::SetupBatchStatement<E>,
+        schedules: &TrustedScheduleCatalog<Cfg>,
+    ) -> Result<Self, AkitaError> {
+        if statement.claims().is_empty() {
+            self.setup_batch = None;
+            return Ok(self);
+        }
+        let domain = statement.polynomial().field_len();
+        let successor_prefix = schedules
+            .resolve_selection(self.selection)?
+            .schedule()
+            .recursive_folds
+            .get(level as usize)
+            .and_then(|fold| fold.params.setup_prefix())
+            .map(|prefix| prefix.n_prefix())
+            .transpose()?;
+        if level == 0 && successor_prefix.is_some_and(|n_prefix| n_prefix != domain) {
+            self.selection = schedules
+                .resolve_profiles(&self.profile, domain)?
+                .selection();
+        }
+        self.setup_batch = Some((level, statement));
+        Ok(self)
     }
     pub fn selection(&self) -> OpeningScheduleSelection {
         self.selection

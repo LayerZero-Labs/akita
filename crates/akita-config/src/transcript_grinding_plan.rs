@@ -9,6 +9,7 @@ use jolt_field::{CanonicalEncoding, ExtField};
 pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
+    setup_batch_level: Option<u32>,
 ) -> Result<GrindingPlan, AkitaError>
 where
     Cfg::Field: CanonicalEncoding,
@@ -31,6 +32,7 @@ where
         root_layout,
         challenge_order,
         extension_degree,
+        setup_batch_level,
     )
 }
 
@@ -52,7 +54,7 @@ mod tests {
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
-        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
+        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout, None)
             .expect("grinding plan");
 
         assert_eq!(
@@ -111,7 +113,7 @@ mod tests {
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
-        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
+        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout, None)
             .expect("grinding plan");
         let root = &row.schedule().root;
         let rounds = akita_params::sumcheck_rounds(root.params.d_a(), root.output_witness_len);
@@ -179,7 +181,7 @@ mod tests {
                 .expect("workspace schedule catalog");
             for row in catalog.rows() {
                 let layout = row.profiles().opening_layout().expect("opening layout");
-                let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout)
+                let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout, None)
                     .expect("complete grinding plan");
                 let count = |kind| plan.runs().iter().filter(|run| run.kind() == kind).count();
                 assert_eq!(

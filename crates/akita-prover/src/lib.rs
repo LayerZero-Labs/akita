@@ -45,3 +45,6 @@ pub use protocol::{
     SuffixProverState,
 };
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
+
+mod setup_batch;
+pub use setup_batch::prove_setup_batch;
