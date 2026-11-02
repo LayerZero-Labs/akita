@@ -141,11 +141,11 @@ a configuration whose field has no codec does not compile.
 
 A verifier failure poisons the Spongefish state. This covers malformed proof
 bytes, failed checks, and errors such as an oversized group record that the
-protocol code routes through `ProofChannel::guard`. Every later read and fold
-root draw fails, and the final end-of-proof check fails, even if a caller
-ignores the error that reported the first failure. Acceptance requires that end-of-proof check: the
-whole proof is consumed, nothing is left over, and the state is not
-poisoned.
+protocol code routes through `ProofChannel::guard`. Every later read and
+challenge draw fails, and the final end-of-proof check fails, even if a caller
+ignores the error that reported the first failure. Acceptance requires that
+end-of-proof check: the whole proof is consumed, nothing is left over, and the
+state is not poisoned.
 
 The embedded verifier poisons the borrowed state on any error before it
 returns, and on success it returns a `#[must_use]` `PendingEof` instead of
@@ -409,7 +409,8 @@ Nonzero proof-of-work sites and every fold-response site carry an inline
 canonical unsigned LEB128 nonce at the exact protocol position where it is
 used. A decoder does not
 obtain a nonce count or policy from proof bytes. The plan cursor checks sites in
-order and must be exhausted when EOF is checked.
+order. `VerifierGrinding::finish` rejects a cursor that is not exhausted, before
+it returns the `PendingEof` that the end-of-proof check spends.
 
 The planner accepts only complete schedules whose expanded grinding query
 count is less than `u32::MAX`. If the objective-best candidate exceeds that

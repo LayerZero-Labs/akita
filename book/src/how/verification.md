@@ -88,12 +88,13 @@ its own last message. See
 
 At a high level:
 
-1. **Bind the instance** and absorb the opening batch shape into the transcript.
-2. **Resolve the exact trusted row** named by
+1. **Resolve the exact trusted row** named by
    `OpeningScheduleSelection`. Artifact identity and row digests are checked
    before the
    ordered `GroupCommitPhaseParams` values are compared with the resolved row.
    The verifier never runs planner search.
+2. **Bind the instance**: absorb the protocol tag and the instance descriptor,
+   which carries the opening batch shape and the grinding-plan digest.
 3. **Replay the structural folds** in `fold/`: the root fold followed by
    every recursive fold, using the schedule-selected `CommittedGroupParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`
