@@ -5,7 +5,9 @@
 //! `count_pm2` at magnitude 2. When `count_pm2 == 0` every non-zero
 //! coefficient is ±1.
 
-use crate::sampler::position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
+use crate::sampler::position_sample::{
+    sample_distinct_positions_into, shuffle_positions, DistinctPositionScratch, LargeSlot,
+};
 use crate::sampler::xof::XofCursor;
 use crate::{SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions};
 
@@ -101,20 +103,9 @@ pub(super) fn sample_fixed<const D: usize, const PM1: usize, const WEIGHT: usize
         assert!(PM1 <= WEIGHT && WEIGHT <= D && D <= super::MAX_STACK_RING_DIM);
     }
     let mut positions = Aligned([0u32; WEIGHT]);
-    let mut permutation: [usize; D] = std::array::from_fn(|i| i);
-    if D == 64 && WEIGHT <= 48 {
-        super::position_sample::shuffle_positions::<_, true>(
-            cursor,
-            &mut positions.0,
-            &mut permutation,
-        );
-    } else {
-        super::position_sample::shuffle_positions::<_, false>(
-            cursor,
-            &mut positions.0,
-            &mut permutation,
-        );
-    }
+    // D is bounded at compile time, so every index fits even native u16 slots.
+    let mut permutation: [LargeSlot; D] = std::array::from_fn(|i| i as LargeSlot);
+    shuffle_positions(cursor, &mut positions.0, &mut permutation);
     let mut signs = Aligned([0u8; WEIGHT]);
     cursor.fill_bytes(&mut signs.0);
     let coeffs: [i8; WEIGHT] = std::array::from_fn(|i| signed_coefficient(i, PM1, signs.0[i]));

@@ -2,11 +2,37 @@
 use super::{signed_sparse, IndexedXofPrefix, SignedSparseScratch, XofCursor};
 use crate::{SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions};
 
+// Preserve the base sampler's bits-based rejection independently of the
+// optimized cursor helpers, including the exact number of bytes per attempt.
+fn reference_usize_mod(cursor: &mut XofCursor, modulus: usize) -> usize {
+    assert!(modulus > 0);
+    if modulus == 1 {
+        return 0;
+    }
+    let bits = usize::BITS - (modulus - 1).leading_zeros();
+    let width = if bits <= 8 {
+        1
+    } else if bits <= 16 {
+        2
+    } else {
+        4
+    };
+    let mask = (1usize << bits) - 1;
+    loop {
+        let mut bytes = [0u8; 4];
+        cursor.fill_bytes(&mut bytes[..width]);
+        let value = (u32::from_le_bytes(bytes) as usize) & mask;
+        if value < modulus {
+            return value;
+        }
+    }
+}
+
 fn reference(cursor: &mut XofCursor, d: usize, pm1: usize, weight: usize) -> SparseChallenge {
     let mut permutation: Vec<u32> = (0..d as u32).collect();
     let mut positions = SparseChallengePositions::new();
     for i in 0..weight {
-        let j = i + cursor.next_usize_mod(d - i);
+        let j = i + reference_usize_mod(cursor, d - i);
         permutation.swap(i, j);
         positions.push(permutation[i]);
     }

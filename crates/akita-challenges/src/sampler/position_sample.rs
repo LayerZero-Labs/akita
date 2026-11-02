@@ -20,9 +20,17 @@ type SmallSlot = usize;
 #[cfg(not(target_arch = "riscv64"))]
 type SmallSlot = u8;
 #[cfg(target_arch = "riscv64")]
-type LargeSlot = usize;
+pub(super) type LargeSlot = usize;
 #[cfg(not(target_arch = "riscv64"))]
-type LargeSlot = u16;
+pub(super) type LargeSlot = u16;
+
+/// Last draw count for which the D64 shortcut needs only masks 63 and 31.
+const MAX_D64_SHORT_DRAWS: usize = 48;
+
+/// Whether partial Fisher-Yates should retain only the touched swaps.
+pub(super) const fn uses_sparse_positions(universe: usize, weight: usize) -> bool {
+    universe > weight.saturating_mul(64)
+}
 
 /// Reused sparse representation of the swaps performed by partial
 /// Fisher-Yates. Missing entries retain their identity-permutation value.
@@ -140,7 +148,7 @@ pub(crate) fn sample_distinct_positions_into(
     // A dense challenge already has output size Theta(universe), and the flat
     // permutation has the best concrete locality. Sparse production families
     // instead retain only the O(weight) swaps touched by partial Fisher-Yates.
-    if universe > out.len().saturating_mul(64) {
+    if uses_sparse_positions(universe, out.len()) {
         return sample_distinct_positions_into_sparse(cursor, universe, out, scratch);
     }
     match universe {
@@ -211,31 +219,27 @@ where
             AkitaError::Internal("stack permutation position does not fit its tier type".into())
         })?;
     }
-    if universe == 64 && out.len() <= 48 {
-        shuffle_positions::<T, true>(cursor, out, &mut perm[..universe]);
-    } else {
-        shuffle_positions::<T, false>(cursor, out, &mut perm[..universe]);
-    }
+    shuffle_positions(cursor, out, &mut perm[..universe]);
     Ok(())
 }
 
 /// Canonical partial Fisher-Yates loop. Callers validate the output length
 /// and initialize permutation slots to 0..universe; every selected value is
 /// therefore bounded by MAX_STACK_RING_DIM before narrowing to u32.
+/// The D64 shortcut applies only while the remaining range needs a 63 or 31 mask;
+/// all other dimensions and draw counts use the general rolling mask.
 #[inline(always)]
-pub(super) fn shuffle_positions<T, const D64_SHORT_MASKS: bool>(
-    cursor: &mut XofCursor,
-    out: &mut [u32],
-    perm: &mut [T],
-) where
+pub(super) fn shuffle_positions<T>(cursor: &mut XofCursor, out: &mut [u32], perm: &mut [T])
+where
     T: Copy,
     usize: From<T>,
 {
     let universe = perm.len();
+    let d64_short_masks = universe == 64 && out.len() <= MAX_D64_SHORT_DRAWS;
     let mut mask = universe.next_power_of_two() - 1;
     for (i, dst) in out.iter_mut().enumerate() {
         let modulus = universe - i;
-        let offset = if D64_SHORT_MASKS {
+        let offset = if d64_short_masks {
             cursor.next_usize_masked(modulus, if i < 32 { 63 } else { 31 })
         } else {
             cursor.next_usize_rolling(modulus, &mut mask)

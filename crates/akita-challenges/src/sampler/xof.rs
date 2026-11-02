@@ -140,20 +140,6 @@ impl XofCursor {
         u32::from_le_bytes(std::array::from_fn(|_| self.next_u8()))
     }
 
-    /// Uniformly sample from `0..modulus` using bitmask rejection sampling
-    /// with minimal XOF consumption. Uses 1-byte reads when the modulus
-    /// fits in 8 bits, 2-byte reads for 16 bits, else 4 bytes.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn next_usize_mod(&mut self, modulus: usize) -> usize {
-        debug_assert!(modulus > 0);
-        if modulus == 1 {
-            return 0;
-        }
-        let bits = usize::BITS - (modulus - 1).leading_zeros();
-        self.next_usize_masked(modulus, (1usize << bits) - 1)
-    }
-
     /// Advance the rejection mask when the remaining range decreases by one.
     /// Initialize `mask` to `universe.next_power_of_two() - 1` before the first
     /// draw; callers bound the universe at the sampler boundary.

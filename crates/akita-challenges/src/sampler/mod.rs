@@ -190,7 +190,7 @@ pub(crate) fn sample_indexed_challenges_from_seed(
             ($(($d:literal, $pm1:expr, $pm2:expr, $bits:literal)),+ $(,)?) => {
                 match (ring_d, cfg.count_pm1, cfg.count_pm2) {
                     $((d, a, b) if d == $d && a == $pm1 && b == $pm2
-                        && $d <= ($pm1 + $pm2) * 64 => {
+                        && !position_sample::uses_sparse_positions($d, $pm1 + $pm2) => {
                         return sample_indexed_challenges_with(&prefix, n, cfg, &policy, true, |worker, index| {
                             worker.cursor.reset_indexed_prefix(&worker.prefix, index);
                             Ok(signed_sparse::sample_fixed::<$d, { $pm1 }, { $pm1 + $pm2 }>(
