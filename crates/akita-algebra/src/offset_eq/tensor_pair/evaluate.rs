@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 /// # Errors
 ///
 /// Returns an error for malformed geometry, address overflow, unsupported
-/// equality arity, or recurrence work above
+/// equality arity, or recurrence work that takes `work` above
 /// [`crate::offset_eq::MAX_COMPACT_STRIDE_TERMS`].
 pub(super) fn eval_unfactored_tensor_families<
     F: Field,
@@ -29,6 +29,7 @@ pub(super) fn eval_unfactored_tensor_families<
     left_challenges: &[F],
     right_challenges: &[F],
     families: &[EqPairTensorFamily<F>],
+    work: &mut usize,
 ) -> Result<F, AkitaError> {
     if left_challenges.len() >= usize::BITS as usize
         || right_challenges.len() >= usize::BITS as usize
@@ -46,7 +47,6 @@ pub(super) fn eval_unfactored_tensor_families<
     let mut multi_axis_batches =
         BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<&EqPairTensorFamily<F>>>::new();
     let mut scalar_seeds = Vec::new();
-    let mut work = 0usize;
     let mut acc = F::zero();
     for family in families {
         if family.scalar.is_zero() {
@@ -56,7 +56,7 @@ pub(super) fn eval_unfactored_tensor_families<
             left_challenges,
             right_challenges,
             family,
-            &mut work,
+            work,
         )? {
             acc += value;
             continue;
@@ -92,7 +92,7 @@ pub(super) fn eval_unfactored_tensor_families<
                     right_challenges,
                     &[family],
                     &recurrence_geometry,
-                    &mut work,
+                    work,
                 )?;
             } else {
                 multi_axis_batches
@@ -122,7 +122,7 @@ pub(super) fn eval_unfactored_tensor_families<
             family.scalar,
             &mut batches,
             &mut scalar_seeds,
-            &mut work,
+            work,
         )?;
     }
     for (recurrence_geometry, families) in multi_axis_batches {
@@ -131,7 +131,7 @@ pub(super) fn eval_unfactored_tensor_families<
             right_challenges,
             &families,
             &recurrence_geometry,
-            &mut work,
+            work,
         )?;
     }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
@@ -147,7 +147,7 @@ pub(super) fn eval_unfactored_tensor_families<
             right_stride,
             len,
             &seeds,
-            &mut work,
+            work,
         )?;
     }
     Ok(acc)

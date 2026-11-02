@@ -1,14 +1,19 @@
 //! Remove independent aligned low coordinate axes before the general carry
 //! recurrence. This is an exact contraction, including Boolean challenges.
 use super::evaluate::eval_unfactored_tensor_families;
-use super::{EqPairTensorFamily, EqPairTensorWeights};
+use super::{
+    charge_work, checked_axis_offset, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
+};
 use akita_error::AkitaError;
 use jolt_field::Field;
 use std::collections::BTreeMap;
-fn invalid() -> AkitaError {
-    AkitaError::InvalidInput("invalid factored equality geometry".into())
-}
 /// Evaluate paired tensor families, contracting independent aligned axes first.
+///
+/// # Errors
+///
+/// Returns an error for malformed geometry, address overflow, unsupported
+/// equality arity, or work above [`crate::offset_eq::MAX_COMPACT_STRIDE_TERMS`]
+/// across the whole call: peeled axes and every residual batch share one budget.
 pub fn eval_boolean_pair_tensor_families<
     E: Field,
     const LEFT_MONOMIAL: bool,
@@ -18,48 +23,35 @@ pub fn eval_boolean_pair_tensor_families<
     right: &[E],
     families: &[EqPairTensorFamily<E>],
 ) -> Result<E, AkitaError> {
+    let mut work = 0usize;
     if RIGHT_MONOMIAL || left.len() >= usize::BITS as usize || right.len() >= usize::BITS as usize {
         return eval_unfactored_tensor_families::<E, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-            left, right, families,
+            left, right, families, &mut work,
         );
     }
     let mut batches = BTreeMap::<(usize, usize), Vec<EqPairTensorFamily<E>>>::new();
     for source in families {
-        if source.axes.iter().any(|axis| axis.len == 0) {
-            return eval_unfactored_tensor_families::<E, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                left, right, families,
-            );
-        }
-        let mut maximum = [source.left_offset, source.right_offset];
-        for axis in &source.axes {
-            match &axis.weights {
-                EqPairTensorWeights::Unit => (),
-                EqPairTensorWeights::Dense(v) if v.len() == axis.len => (),
-                EqPairTensorWeights::BitProduct(v)
-                    if u32::try_from(v.len())
-                        .ok()
-                        .and_then(|b| 1usize.checked_shl(b))
-                        == Some(axis.len) => {}
-                _ => return Err(invalid()),
+        source
+            .axes
+            .iter()
+            .try_for_each(EqPairTensorAxis::validate_weights)?;
+        // Zero-length axes and clipped addresses keep this family on the
+        // unfactored path, which owns their selection semantics.
+        let mut fits = source.axes.iter().all(|axis| axis.len != 0);
+        if fits {
+            let mut maximum = [source.left_offset, source.right_offset];
+            for axis in &source.axes {
+                let last = axis.len - 1;
+                maximum = [
+                    checked_axis_offset(maximum[0], axis.left_stride, last, "left")?,
+                    checked_axis_offset(maximum[1], axis.right_stride, last, "right")?,
+                ];
             }
-            for (m, stride) in maximum
-                .iter_mut()
-                .zip([axis.left_stride, axis.right_stride])
-            {
-                *m = m
-                    .checked_add(
-                        axis.len
-                            .checked_sub(1)
-                            .and_then(|n| n.checked_mul(stride))
-                            .ok_or_else(invalid)?,
-                    )
-                    .ok_or_else(invalid)?;
-            }
+            fits = maximum[0] < (1usize << left.len()) && maximum[1] < (1usize << right.len());
         }
-        if maximum[0] >= (1usize << left.len()) || maximum[1] >= (1usize << right.len()) {
-            return eval_unfactored_tensor_families::<E, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                left, right, families,
-            );
+        if !fits {
+            batches.entry((0, 0)).or_default().push(source.clone());
+            continue;
         }
         let mut family = source.clone();
         let (mut lb, mut rb) = (0usize, 0usize);
@@ -101,11 +93,10 @@ pub fn eval_boolean_pair_tensor_families<
             let bits = axis.len.trailing_zeros() as usize;
             let mut factor = E::one();
             for bit in 0..bits {
-                let w = match &axis.weights {
-                    EqPairTensorWeights::Unit => [E::one(); 2],
-                    EqPairTensorWeights::BitProduct(v) => v[bit],
-                    _ => return Err(invalid()),
-                };
+                charge_work(&mut work, 2)?;
+                let w = axis.bit_factors(bit).ok_or_else(|| {
+                    AkitaError::Internal("peeled tensor axis bit factors are absent".into())
+                })?;
                 let l = if axis.left_stride == 0 {
                     [E::one(); 2]
                 } else if LEFT_MONOMIAL {
@@ -148,6 +139,7 @@ pub fn eval_boolean_pair_tensor_families<
             &left[lb..],
             &right[rb..],
             &batch,
+            &mut work,
         )?;
     }
     Ok(result)
@@ -205,11 +197,13 @@ mod tests {
                 assert_eq!(
                     eval_boolean_pair_tensor_families::<_, false, false>(&l, &r, &families)
                         .unwrap(),
-                    eval_unfactored_tensor_families::<_, false, false>(&l, &r, &families).unwrap()
+                    eval_unfactored_tensor_families::<_, false, false>(&l, &r, &families, &mut 0)
+                        .unwrap()
                 );
                 assert_eq!(
                     eval_boolean_pair_tensor_families::<_, true, false>(&l, &r, &families).unwrap(),
-                    eval_unfactored_tensor_families::<_, true, false>(&l, &r, &families).unwrap()
+                    eval_unfactored_tensor_families::<_, true, false>(&l, &r, &families, &mut 0)
+                        .unwrap()
                 );
             }
         }
