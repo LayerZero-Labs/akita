@@ -2,8 +2,10 @@
 
 One canonical security narrative: the hardness assumption, how Ajtai ranks
 connect to security bits, the weak-binding fold price, and the current SIS table
-model. Keep the marketing claim separate from audited reality. See
-[Reviewing and auditing Akita](../introduction/reviewing-akita.md).
+model. [Introduction → Security status](../intro.md#security-status) states
+what the security targets cover. See
+[Reviewing and auditing Akita](../introduction/reviewing-akita.md) for what has
+been audited.
 
 ## SIS / MSIS and Ajtai sizing
 
@@ -115,10 +117,11 @@ PR may retain a head-pinned TSV under `specs/evidence/`, but that snapshot is
 review evidence rather than runtime authority.
 
 The reported value is the minimum scalarized SIS attack cost under the
-policy's ADPS16 quantum/LGSA model. It is not an unqualified concrete-security
-claim: the scalar estimator does not price attacks that exploit ring or module
-structure, CRT splitting, subfield projection, or role-specific matrix
-structure.
+policy's ADPS16 quantum cost model. The coefficient-$L_\infty$ route uses an
+LGSA estimate; the Euclidean route prices the collision's $L_2$ length directly.
+This is not an unqualified concrete-security claim: the scalar estimator does
+not price attacks that exploit ring or module structure, CRT splitting,
+subfield projection, or role-specific matrix structure.
 
 The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
@@ -126,7 +129,7 @@ estimator at verification time.
 
 ### Quantum policy
 
-The production rule is the ADPS16 quantum LGSA model with a 169-bit target. It
+The production rule is the ADPS16 quantum cost model with a 169-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
 
@@ -150,9 +153,11 @@ A 169-bit gate therefore requires every Akita SIS instance to need block size
 at least 638, the largest of these figures. The retired 128-bit gate needed
 484, between ML-DSA-44 (423) and ML-DSA-65.
 
-This target covers lattice hardness only. The Fiat-Shamir grinding target,
-the challenge fields, and the sparse fold challenge entropy floor still provide
-128 bits; see [`sis-nist-level3-policy`](../../../specs/sis-nist-level3-policy.md#non-goals).
+The quantum cost applies to the SIS tables only. Field challenges and grinding are
+sized for a 128-bit per-query rate, and indexed fold coordinates for a 128-bit
+per-address rate, both in the classical random-oracle model. Akita has no
+quantum-random-oracle analysis. See
+[Introduction → Security status](../intro.md#security-status).
 
 The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
 previously evaluated the newer idealized BCSS23 `0.2563 * beta` sieve as an
@@ -163,10 +168,11 @@ review line. That diagnostic has not been rerun at the 169-bit target. The
 idealized model remains documented sensitivity evidence rather than a
 production constraint.
 
-LGSA is likewise an explicit attacker strategy: rerandomize the q-ary basis so
-BKZ forgets its canonical q-vectors. On representative widened q64 and q128
-rows, LGSA is no more expensive than ordinary GSA and is cheaper than the
-determinant-preserving Chen-Nguyen profile simulations. The optional symmetric
+For the coefficient-$L_\infty$ route, LGSA is an explicit attacker strategy:
+rerandomize the q-ary basis so BKZ forgets its canonical q-vectors. On
+representative widened q64 and q128 rows, LGSA is no more expensive than
+ordinary GSA and is cheaper than the determinant-preserving Chen-Nguyen
+profile simulations. The optional symmetric
 ZGSA compatibility path caps its paired smoothing steps at the smaller of the
 q-vector and identity-vector zones, preserving the lattice determinant even
 when q-vectors are the majority.

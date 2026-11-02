@@ -191,8 +191,10 @@ prices each role separately.
 
 ## The production security tables
 
-Akita targets 169-bit quantum security under the ADPS16 quantum LGSA attack
-model. That is NIST security category 3: under the same model, forging an
+Akita prices its scalarized SIS instances at a 169-bit quantum attack-cost
+target under the ADPS16 cost model. The coefficient-$L_\infty$ table uses an
+LGSA estimate; the Euclidean table prices the collision's $L_2$ length directly.
+The target follows NIST security category 3: under the same model, forging an
 ML-DSA-65 signature also costs 169 bits, and every Akita SIS instance needs at
 least the BKZ block size, 638, that the forgery needs. The estimator runs
 offline. It searches scalar lattice attack parameters, certifies the accepted

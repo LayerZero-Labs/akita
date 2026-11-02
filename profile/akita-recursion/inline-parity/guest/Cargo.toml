@@ -1,0 +1,44 @@
+[package]
+name = "akita-inline-parity-guest"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+description = "Jolt guest that runs Akita's transcript, challenge, and CRT+NTT paths with every guest inline enabled."
+license = "Apache-2.0 OR MIT"
+publish = false
+
+[features]
+# `jolt build` passes `--features guest` for the RISC-V build. `random`
+# backs the `getrandom` source some dependencies seed from.
+guest = ["jolt/guest-std", "jolt/stdout", "jolt/random"]
+
+[dependencies]
+akita-algebra = { path = "../../../../crates/akita-algebra", features = [
+  "ntt-inline",
+] }
+akita-challenges = { path = "../../../../crates/akita-challenges", default-features = false, features = [
+  "transcript-blake2b",
+  "keccak-inline",
+] }
+akita-params = { path = "../../../../crates/akita-params", default-features = false, features = [
+  "transcript-blake2b",
+  "blake2-inline",
+] }
+akita-transcript = { path = "../../../../crates/akita-transcript", default-features = false, features = [
+  "transcript-blake2b",
+  "blake2-inline",
+] }
+# Aliased as `jolt` so `#[jolt::provable]` resolves as in the Jolt examples.
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+
+# `#[jolt::provable]` expands `cfg(feature = "field-inline")` checks; this guest
+# has no field-inline build.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(feature, values("field-inline"))',
+] }

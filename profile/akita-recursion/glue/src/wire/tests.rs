@@ -169,7 +169,10 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
         32_767,
     )
     .expect("audited prefix A bound");
-    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(inner_key, 1)
+    let inner_digits = akita_params::sis::compute_num_digits_field_width(
+        SisModulusProfileId::Q128OffsetA7F7.field_bits(), 1,
+    );
+    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(inner_key, inner_digits)
         .expect("audited prefix A matrix");
     let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
@@ -191,7 +194,7 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
             blocks: akita_params::BlockGeometry::new(1, 1, 1),
             outer_slice_count: akita_params::CommitmentSliceCount::ONE,
             inner: akita_params::RoleParams::new(
-                akita_params::GadgetDigits::new(1, 1),
+                akita_params::GadgetDigits::new(1, inner_digits),
                 inner_commit_matrix,
             ),
             outer: akita_params::RoleParams::new(
