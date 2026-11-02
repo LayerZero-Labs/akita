@@ -11,7 +11,7 @@
 mod admission;
 mod commitments;
 
-pub use admission::{Admission, ProgramRows};
+pub use admission::{Admission, ProducerProfiles, ProgramRow, ProgramRows};
 pub use commitments::{
     check_prefix_commitment, load_prefix_commitments, PrefixCommitmentDeriver,
     PrefixCommitmentSource,

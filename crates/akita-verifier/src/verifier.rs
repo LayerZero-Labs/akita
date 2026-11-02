@@ -77,6 +77,27 @@ where
         unsafe { Self::for_selection(setup, schedules, selection, Some(cache.as_trusted())) }
     }
 
+    /// Build a verifier from a setup whose commitments this host derived
+    /// itself, for local profile derivation (opt-in, host only).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract: the deployment accepts setup-prefix commitments
+    /// that no anchored manifest digest checks, because both sides derived
+    /// them from the seed themselves. Production verifiers use
+    /// [`Self::from_pinned`].
+    pub unsafe fn from_locally_derived(
+        setup: crate::preprocessing::LocallyDerivedVerifierSetup<Cfg::Field>,
+        schedules: TrustedScheduleCatalog<Cfg>,
+    ) -> Result<Self, AkitaError> {
+        // SAFETY: forwarded to the caller.
+        unsafe { Self::new(setup.into_setup(), schedules) }
+    }
+
     /// Admit every catalog row `setup` supports and prepare their terminal matrices.
     ///
     /// # Errors

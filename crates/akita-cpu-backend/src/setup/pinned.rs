@@ -104,6 +104,7 @@ where
 {
     let (record, stream) = open_set::<Cfg>(release, set_name)?;
     let admission = Admission::admit(
+        release,
         record,
         load_set_catalog::<Cfg>(release, record, files)?,
         program,

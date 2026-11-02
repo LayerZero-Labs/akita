@@ -3,13 +3,17 @@
 //! verifier loaders in every mode.
 #![allow(missing_docs)]
 
-use akita_config::preprocessing::{PrefixCommitmentSource, ProgramRows};
+use akita_config::preprocessing::{
+    PrefixCommitmentSource, ProducerProfiles, ProgramRow, ProgramRows,
+};
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{load_prover_setup, CpuBackend, CpuPrefixDeriver, DensePoly, GroupContext};
 use akita_params::{BasisMode, ChunkedWitnessCfg, OpeningScheduleSelection};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_preprocess::{generate, ReleaseDescription, RISCV64_TARGET};
+use akita_preprocess::{
+    derive_local_verifier_setup, generate, AkitaConfigs, ReleaseDescription, RISCV64_TARGET,
+};
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaSerialize, TrustedBytes};
 use akita_types::preprocessing::{
@@ -86,7 +90,7 @@ fn release_with(
         "sets": [set]
     }))
     .expect("description");
-    let generated = generate(&repo_root(), &description).expect("generate");
+    let generated = generate(&AkitaConfigs, &repo_root(), &description).expect("generate");
     Release {
         manifest: generated.manifest,
         files: generated.files,
@@ -605,14 +609,22 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
     on_large_stack(|| {
         let (catalog, universe, program_rows) = program_fixture(20, 24);
         assert!(program_rows.len() >= 2, "rows above the base catalog");
-        let program = |rows: Vec<_>, digest| ProgramRows {
-            max_num_vars: 24,
-            max_num_batched_polys: 1,
-            rows,
-            merged_catalog_digest: digest,
-        };
         let release = release_with("program-rows", SEED, 24, true, &catalog, Some(&universe));
         let opened = open(&release);
+        let program = |rows: Vec<(_, _)>, digest| ProgramRows {
+            max_num_vars: 24,
+            max_num_batched_polys: 1,
+            rows: rows
+                .into_iter()
+                .map(|(profiles, schedule)| ProgramRow {
+                    profiles,
+                    schedule,
+                    producer_sets: Vec::new(),
+                })
+                .collect(),
+            merged_catalog_digest: digest,
+            producers: ProducerProfiles::new(&opened),
+        };
 
         let host = load_verifier_setup::<Cfg>(
             &opened,
@@ -682,22 +694,32 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             &catalog,
             Some(&empty),
         );
+        let narrow_opened = open(&narrow);
+        let narrow_program = ProgramRows {
+            producers: ProducerProfiles::new(&narrow_opened),
+            ..program(program_rows.clone(), None)
+        };
         assert!(load_verifier_setup::<Cfg>(
-            &open(&narrow),
+            &narrow_opened,
             &narrow.files,
             SET,
             None,
-            Some(&program(program_rows.clone(), None)),
+            Some(&narrow_program),
             PrefixCommitmentSource::Registry
         )
         .is_err());
         let none = release_with("program-rows-none", SEED, 24, true, &catalog, None);
+        let none_opened = open(&none);
+        let none_program = ProgramRows {
+            producers: ProducerProfiles::new(&none_opened),
+            ..program(program_rows.clone(), None)
+        };
         assert!(load_verifier_setup::<Cfg>(
-            &open(&none),
+            &none_opened,
             &none.files,
             SET,
             None,
-            Some(&program(program_rows.clone(), None)),
+            Some(&none_program),
             PrefixCommitmentSource::Registry
         )
         .is_err());
@@ -748,6 +770,250 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
         let guest = guest(&view).expect("guest load");
         assert_eq!(guest.catalog().catalog_digest(), merged);
         verify(&AkitaVerifier::from_pinned(guest).unwrap(), &proved).expect("guest verifier");
+        std::fs::remove_dir_all(catalog.parent().unwrap()).unwrap();
+    });
+}
+
+/// Program bounds size a set without program rows: a small program admits
+/// only the rows within its bounds and derives only their matrix.
+#[test]
+fn program_bounds_size_a_set_without_program_rows() {
+    on_large_stack(|| {
+        let release = release("program-bounds", SEED, 24, false, &default_catalog());
+        let opened = open(&release);
+        let bounds = |max_num_vars, rows: Vec<ProgramRow>, digest| ProgramRows {
+            max_num_vars,
+            max_num_batched_polys: 1,
+            rows,
+            merged_catalog_digest: digest,
+            producers: ProducerProfiles::new(&opened),
+        };
+        let load = |program: Option<&ProgramRows>| {
+            load_verifier_setup::<Cfg>(
+                &opened,
+                &release.files,
+                SET,
+                None,
+                program,
+                PrefixCommitmentSource::Registry,
+            )
+        };
+        let full = load(None).expect("full load");
+        let small = load(Some(&bounds(16, Vec::new(), None))).expect("bounded load");
+        assert_eq!(
+            small.catalog().catalog_digest(),
+            full.catalog().catalog_digest(),
+            "bounds never change the catalog identity"
+        );
+        assert!(
+            small.setup().expanded().descriptor().num_field_elements
+                < full.setup().expanded().descriptor().num_field_elements
+        );
+        assert_eq!(small.setup().expanded().descriptor().max_num_vars, 16);
+        let base = full.catalog().catalog_digest();
+        load(Some(&bounds(16, Vec::new(), Some(base)))).expect("stored base digest");
+        assert!(load(Some(&bounds(16, Vec::new(), Some([7; 32])))).is_err());
+        assert!(
+            load(Some(&bounds(25, Vec::new(), None))).is_err(),
+            "over the limit"
+        );
+        let row = full
+            .catalog()
+            .rows()
+            .next()
+            .map(|row| ProgramRow {
+                profiles: row.profiles().clone(),
+                schedule: row.schedule().clone(),
+                producer_sets: Vec::new(),
+            })
+            .unwrap();
+        assert!(
+            load(Some(&bounds(16, vec![row], None))).is_err(),
+            "a set without program rows takes none"
+        );
+    });
+}
+
+/// A program row's precommitted group must carry the frozen profile of its
+/// layout in the anchored producer set it names, loaded from the same
+/// release.
+#[test]
+fn program_rows_carry_the_frozen_profiles_of_their_producer_sets() {
+    on_large_stack(|| {
+        let (catalog, universe, program_rows) = program_fixture(19, 24);
+        const PRODUCER: &str = "fp128-dense";
+        let description: ReleaseDescription = serde_json::from_value(serde_json::json!({
+            "format_version": 1,
+            "name": "producer-sets",
+            "kind": "akita",
+            "generator_version": "akita-preprocess test",
+            "seed": SEED,
+            "max_file_part": 1u64 << 30,
+            "sets": [
+                {
+                    "name": SET,
+                    "config": "fp128_dense_recursive",
+                    "catalog": catalog,
+                    "num_chunks": 1,
+                    "num_activated_levels": 0,
+                    "max_num_vars": 24,
+                    "max_num_batched_polys": 1,
+                    "program_rows": { "universe_slots": [universe] }
+                },
+                {
+                    "name": PRODUCER,
+                    "config": "fp128_dense",
+                    "catalog": "artifacts/schedules/fp128_dense.aks",
+                    "num_chunks": 1,
+                    "num_activated_levels": 0,
+                    "max_num_vars": 20,
+                    "max_num_batched_polys": 1
+                }
+            ]
+        }))
+        .unwrap();
+        let generated = generate(&AkitaConfigs, &repo_root(), &description).unwrap();
+        let opened = open_anchored_manifest(
+            &anchor(&[(&generated.manifest, SET), (&generated.manifest, PRODUCER)]),
+            ReleaseKind::Akita,
+            &generated.manifest,
+            &[SET, PRODUCER],
+        )
+        .unwrap();
+        let mut producers = ProducerProfiles::new(&opened);
+        assert!(
+            producers
+                .load::<Cfg>(&opened, &generated.files, PRODUCER)
+                .is_err(),
+            "a producer set opens only for its own configuration"
+        );
+        producers
+            .load::<fp128::Dense>(&opened, &generated.files, PRODUCER)
+            .unwrap();
+        let frozen = TrustedScheduleCatalog::<fp128::Dense>::from_artifact_bytes(
+            &std::fs::read(repo_root().join("artifacts/schedules/fp128_dense.aks")).unwrap(),
+            ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .unwrap()
+        .rows()
+        .find(|row| {
+            row.profiles().precommitteds.is_empty()
+                && row.profiles().final_group.group.num_vars() == 18
+                && row.profiles().final_group.group.num_polynomials() == 1
+        })
+        .unwrap()
+        .profiles()
+        .final_group;
+        let (profiles, schedule) = program_rows[0].clone();
+        let with = |precommitteds, producer_sets: &[&str], producers: &ProducerProfiles| {
+            let mut profiles = profiles.clone();
+            profiles.precommitteds = precommitteds;
+            load_verifier_setup::<Cfg>(
+                &opened,
+                &generated.files,
+                SET,
+                None,
+                Some(&ProgramRows {
+                    max_num_vars: 24,
+                    max_num_batched_polys: 1,
+                    rows: vec![ProgramRow {
+                        profiles,
+                        schedule: schedule.clone(),
+                        producer_sets: producer_sets.iter().map(|set| (*set).to_owned()).collect(),
+                    }],
+                    merged_catalog_digest: None,
+                    producers: producers.clone(),
+                }),
+                PrefixCommitmentSource::Registry,
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        assert!(with(vec![], &[PRODUCER], &producers).contains("one producer set per"));
+        assert!(with(vec![frozen], &[], &producers).contains("one producer set per"));
+        assert!(with(vec![frozen], &[SET], &producers).contains("was not loaded"));
+        let mut altered = frozen;
+        altered.outer_slice_count = akita_params::CommitmentSliceCount::ALL
+            .into_iter()
+            .find(|count| *count != frozen.outer_slice_count)
+            .unwrap();
+        assert!(with(vec![altered], &[PRODUCER], &producers).contains("frozen profile"));
+        let other = release("producer-other", SEED, 24, false, &default_catalog());
+        let other = open(&other);
+        assert!(
+            with(vec![frozen], &[PRODUCER], &ProducerProfiles::new(&other))
+                .contains("another release")
+        );
+        // The frozen profile passes the producer check; this fake row then
+        // fails only when the merged catalog audits its schedule.
+        let audited = with(vec![frozen], &[PRODUCER], &producers);
+        assert!(!audited.contains("producer"), "{audited}");
+        std::fs::remove_dir_all(catalog.parent().unwrap()).unwrap();
+    });
+}
+
+/// Local profile derivation admits program rows outside the universe, which
+/// no loader accepts, and the verifier it produces checks honest proofs.
+#[test]
+fn local_profile_derivation_covers_rows_outside_every_universe() {
+    on_large_stack(|| {
+        let (catalog, _, program_rows) = program_fixture(18, 24);
+        let empty = catalog.with_file_name("empty-universe.hex");
+        std::fs::write(&empty, "").unwrap();
+        let release = release_with("local-derivation", SEED, 24, false, &catalog, Some(&empty));
+        let opened = open(&release);
+        let program = ProgramRows {
+            max_num_vars: 24,
+            max_num_batched_polys: 1,
+            rows: program_rows
+                .iter()
+                .cloned()
+                .map(|(profiles, schedule)| ProgramRow {
+                    profiles,
+                    schedule,
+                    producer_sets: Vec::new(),
+                })
+                .collect(),
+            merged_catalog_digest: None,
+            producers: ProducerProfiles::new(&opened),
+        };
+        assert!(load_verifier_setup::<Cfg>(
+            &opened,
+            &release.files,
+            SET,
+            None,
+            Some(&program),
+            PrefixCommitmentSource::Registry,
+        )
+        .is_err());
+        let (setup, catalog_identity) =
+            derive_local_verifier_setup::<Cfg>(&opened, &release.files, SET, Some(&program))
+                .expect("local derivation");
+        let admission = akita_config::preprocessing::Admission::admit_any_profile(
+            &opened,
+            opened.set(SET).unwrap(),
+            akita_config::preprocessing::load_set_catalog::<Cfg>(
+                &opened,
+                opened.set(SET).unwrap(),
+                &release.files,
+            )
+            .unwrap(),
+            Some(&program),
+        )
+        .unwrap();
+        let prover_setup =
+            akita_pcs::new_prover_setup(&admission.prover_requirements().unwrap()).unwrap();
+        let scheme = AkitaCommitmentScheme::new(catalog_identity.clone());
+        let num_vars = program_rows
+            .iter()
+            .map(|(profiles, _)| profiles.final_group.group.num_vars())
+            .max()
+            .unwrap();
+        let proved = prove(&scheme, &prover_setup, num_vars);
+        // SAFETY: both sides derived every commitment from the seed here.
+        let verifier = unsafe { AkitaVerifier::from_locally_derived(setup, catalog_identity) }
+            .expect("verifier");
+        verify(&verifier, &proved).expect("locally derived verifier");
         std::fs::remove_dir_all(catalog.parent().unwrap()).unwrap();
     });
 }

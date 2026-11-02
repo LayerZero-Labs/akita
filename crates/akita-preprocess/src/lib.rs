@@ -12,128 +12,106 @@
 //! It depends on neither `akita-setup`, whose cache it must not read, nor an
 //! anchor crate, so adding a release never changes a `bundle_id`.
 
+mod cli;
 mod description;
 mod generate;
 pub mod known_answer;
+mod local;
 mod plan;
 
+pub use cli::cli_main;
 pub use description::{
     ProgramRowsDescription, ReleaseDescription, SetDescription, DESCRIPTION_FILE,
     DESCRIPTION_FORMAT_VERSION, MANIFEST_FILE, RISCV64_TARGET,
 };
 pub use generate::{generate, write_release, GeneratedRelease, Role};
+pub use local::derive_local_verifier_setup;
+pub use plan::{plan_set, SetPlan};
 
 use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::{AkitaDeserialize, Valid};
 use akita_types::preprocessing::{BundleId, ReleaseManifest};
+use akita_types::AkitaSetupSeed;
 use std::path::{Path, PathBuf};
 
-/// Run `$body` with `$cfg` bound to the compiled config of family `$family`.
-macro_rules! dispatch_config {
-    ($family:expr, |$cfg:ident| $body:expr) => {{
+/// Maps a description's `config` name to a compiled
+/// [`CommitmentConfig`](akita_config::CommitmentConfig).
+///
+/// A generator plans each set under the configuration its `config` names by
+/// calling [`plan_set`] with that type. [`AkitaConfigs`] covers Akita's own
+/// families; an integration with its own configurations, such as Jolt,
+/// implements this for its generator binary.
+pub trait ConfigRegistry {
+    /// Plan `set` with [`plan_set`] under the configuration named
+    /// `set.config`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no configuration has that name, or planning
+    /// fails.
+    fn plan_set(
+        &self,
+        repo_root: &Path,
+        set: &SetDescription,
+        setup_seed: &AkitaSetupSeed,
+    ) -> Result<SetPlan, AkitaError>;
+}
+
+/// Akita's compiled configurations, by `schedule_family_name()`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AkitaConfigs;
+
+impl ConfigRegistry for AkitaConfigs {
+    fn plan_set(
+        &self,
+        repo_root: &Path,
+        set: &SetDescription,
+        setup_seed: &AkitaSetupSeed,
+    ) -> Result<SetPlan, AkitaError> {
         use akita_config::proof_optimized::{fp128, fp32, fp64};
         use akita_config::RecursiveCommitmentConfig as Recursive;
-        match $family {
-            "fp128_dense" => {
-                type $cfg = fp128::Dense;
-                $body
-            }
-            "fp128_dense_bounded" => {
-                type $cfg = fp128::DenseBounded;
-                $body
-            }
-            "fp128_dense_multi_chunk" => {
-                type $cfg = fp128::DenseMultiChunk;
-                $body
-            }
-            "fp128_dense_multi_chunk_w8r3" => {
-                type $cfg = fp128::DenseMultiChunkW8R3;
-                $body
-            }
-            "fp128_dense_recursive" => {
-                type $cfg = Recursive<fp128::Dense>;
-                $body
-            }
-            "fp128_onehot" => {
-                type $cfg = fp128::OneHot;
-                $body
-            }
-            "fp128_onehot_multi_chunk" => {
-                type $cfg = fp128::OneHotMultiChunk;
-                $body
-            }
-            "fp128_onehot_multi_chunk_w2r2" => {
-                type $cfg = fp128::OneHotMultiChunkW2R2;
-                $body
-            }
-            "fp128_onehot_multi_chunk_w2r3" => {
-                type $cfg = fp128::OneHotMultiChunkW2R3;
-                $body
-            }
-            "fp128_onehot_multi_chunk_w4r2" => {
-                type $cfg = fp128::OneHotMultiChunkW4R2;
-                $body
-            }
-            "fp128_onehot_multi_chunk_w4r3" => {
-                type $cfg = fp128::OneHotMultiChunkW4R3;
-                $body
-            }
-            "fp128_onehot_multi_chunk_w8r3" => {
-                type $cfg = fp128::OneHotMultiChunkW8R3;
-                $body
-            }
-            "fp128_onehot_recursive" => {
-                type $cfg = Recursive<fp128::OneHot>;
-                $body
-            }
+        macro_rules! plan {
+            ($cfg:ty) => {
+                plan_set::<$cfg>(repo_root, set, setup_seed)
+            };
+        }
+        match set.config.as_str() {
+            "fp128_dense" => plan!(fp128::Dense),
+            "fp128_dense_bounded" => plan!(fp128::DenseBounded),
+            "fp128_dense_multi_chunk" => plan!(fp128::DenseMultiChunk),
+            "fp128_dense_multi_chunk_w8r3" => plan!(fp128::DenseMultiChunkW8R3),
+            "fp128_dense_recursive" => plan!(Recursive<fp128::Dense>),
+            "fp128_onehot" => plan!(fp128::OneHot),
+            "fp128_onehot_multi_chunk" => plan!(fp128::OneHotMultiChunk),
+            "fp128_onehot_multi_chunk_w2r2" => plan!(fp128::OneHotMultiChunkW2R2),
+            "fp128_onehot_multi_chunk_w2r3" => plan!(fp128::OneHotMultiChunkW2R3),
+            "fp128_onehot_multi_chunk_w4r2" => plan!(fp128::OneHotMultiChunkW4R2),
+            "fp128_onehot_multi_chunk_w4r3" => plan!(fp128::OneHotMultiChunkW4R3),
+            "fp128_onehot_multi_chunk_w8r3" => plan!(fp128::OneHotMultiChunkW8R3),
+            "fp128_onehot_recursive" => plan!(Recursive<fp128::OneHot>),
             "fp128_onehot_recursive_multi_chunk_w2r3" => {
-                type $cfg = Recursive<fp128::OneHotMultiChunkW2R3>;
-                $body
+                plan!(Recursive<fp128::OneHotMultiChunkW2R3>)
             }
             "fp128_onehot_recursive_multi_chunk_w4r3" => {
-                type $cfg = Recursive<fp128::OneHotMultiChunkW4R3>;
-                $body
+                plan!(Recursive<fp128::OneHotMultiChunkW4R3>)
             }
-            "fp128_onehot_recursive_multi_chunk_w8r2" => {
-                type $cfg = Recursive<fp128::OneHotMultiChunk>;
-                $body
-            }
+            "fp128_onehot_recursive_multi_chunk_w8r2" => plan!(Recursive<fp128::OneHotMultiChunk>),
             "fp128_onehot_recursive_multi_chunk_w8r3" => {
-                type $cfg = Recursive<fp128::OneHotMultiChunkW8R3>;
-                $body
+                plan!(Recursive<fp128::OneHotMultiChunkW8R3>)
             }
-            "fp32_dense" => {
-                type $cfg = fp32::Dense;
-                $body
-            }
-            "fp32_dense_recursive" => {
-                type $cfg = Recursive<fp32::Dense>;
-                $body
-            }
-            "fp32_onehot" => {
-                type $cfg = fp32::OneHot;
-                $body
-            }
-            "fp64_dense" => {
-                type $cfg = fp64::Dense;
-                $body
-            }
-            "fp64_dense_recursive" => {
-                type $cfg = Recursive<fp64::Dense>;
-                $body
-            }
-            "fp64_onehot" => {
-                type $cfg = fp64::OneHot;
-                $body
-            }
-            other => Err(akita_error::AkitaError::InvalidInput(format!(
+            "fp32_dense" => plan!(fp32::Dense),
+            "fp32_dense_recursive" => plan!(Recursive<fp32::Dense>),
+            "fp32_onehot" => plan!(fp32::OneHot),
+            "fp64_dense" => plan!(fp64::Dense),
+            "fp64_dense_recursive" => plan!(Recursive<fp64::Dense>),
+            "fp64_onehot" => plan!(fp64::OneHot),
+            other => Err(AkitaError::InvalidInput(format!(
                 "no compiled config has schedule family {other:?}"
             ))),
         }
-    }};
+    }
 }
-pub(crate) use dispatch_config;
 
 /// Run `$body` with `$field` bound to the base field of SIS modulus profile
 /// `$profile`.
@@ -160,13 +138,18 @@ pub(crate) use dispatch_field;
 /// Regenerate the release under `release_dir` from scratch, require its
 /// manifest to equal the checked-in one byte for byte, and require every
 /// profile it publishes to fall in a known-answer corpus class. This is the
-/// merge check and audit mode.
+/// merge check and audit mode. `configs` names each set's compiled
+/// configuration.
 ///
 /// # Errors
 ///
 /// Returns an error naming the first differing part of the manifest, or the
 /// corpus lines that would cover the missing classes.
-pub fn check_release(repo_root: &Path, release_dir: &Path) -> Result<BundleId, AkitaError> {
+pub fn check_release(
+    configs: &dyn ConfigRegistry,
+    repo_root: &Path,
+    release_dir: &Path,
+) -> Result<BundleId, AkitaError> {
     let description = ReleaseDescription::read(&release_dir.join(DESCRIPTION_FILE))?;
     if release_dir.file_name().and_then(|name| name.to_str()) != Some(description.name.as_str()) {
         return Err(AkitaError::InvalidInput(format!(
@@ -178,7 +161,7 @@ pub fn check_release(repo_root: &Path, release_dir: &Path) -> Result<BundleId, A
     let checked_in = std::fs::read(&manifest_path).map_err(|error| {
         AkitaError::InvalidInput(format!("cannot read {}: {error}", manifest_path.display()))
     })?;
-    let generated = generate(repo_root, &description)?;
+    let generated = generate(configs, repo_root, &description)?;
     if generated.manifest != checked_in {
         return Err(AkitaError::InvalidSetup(format!(
             "release {:?} does not regenerate: {}",
