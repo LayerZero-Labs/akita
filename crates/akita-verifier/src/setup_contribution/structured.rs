@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::{
-    offset_eq::{eval_affine_digit_intervals, AffineWeightProduct},
+    offset_eq::{eval_affine_digit_intervals, AffineWeightProduct, PreparedDigits},
     ring::scalar_powers_with_stride,
 };
 
@@ -380,6 +380,13 @@ where
         ));
     }
 
+    // PreparedDigits caps table preparation and row visits independently of
+    // the general evaluator's carry-state work estimate.
+    let prepared_t = (group.physical_b().logical_rows()? != 0)
+        .then(|| PreparedDigits::new(point, commitment_digits, outer_low))
+        .transpose()?
+        .flatten();
+
     // `build_group_role_tensors` emits D/B families unit-major with claim
     // inside each unit. The evaluation fold itself is claim-major, so this
     // explicit conversion is the single ordering boundary between them.
@@ -468,26 +475,40 @@ where
 
         if let Some(b_tensor) = b_tensor {
             let t_high_weights = AffineWeightProduct::new(claim_challenges, group.a_row_weights())?;
-            let t_outer_start = global_block_start
+            let t_first_row = global_block_start
                 .checked_mul(group.n_a())
-                .and_then(|start| start.checked_mul(outer_subcolumns))
                 .ok_or(AkitaError::InvalidProof)?;
-            let t_live_len = unit_blocks
+            let t_rows = unit_blocks
                 .checked_mul(group.n_a())
-                .and_then(|len| len.checked_mul(outer_subcolumns))
                 .ok_or(AkitaError::InvalidProof)?;
-            contribution += eval_affine_digit_intervals(
-                point,
-                &[b_tensor.right_offset],
-                t_outer_start,
-                t_live_len,
-                commitment_digits.len(),
-                1,
-                commitment_digits,
-                &t_high_weights,
-                outer_low,
-                &[],
-            )?;
+            if let Some(prepared) = &prepared_t {
+                prepared.accumulate(
+                    &mut contribution,
+                    b_tensor.right_offset,
+                    t_first_row,
+                    t_rows,
+                    &t_high_weights,
+                )?;
+            } else {
+                let t_outer_start = t_first_row
+                    .checked_mul(outer_subcolumns)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_live_len = t_rows
+                    .checked_mul(outer_subcolumns)
+                    .ok_or(AkitaError::InvalidProof)?;
+                contribution += eval_affine_digit_intervals(
+                    point,
+                    &[b_tensor.right_offset],
+                    t_outer_start,
+                    t_live_len,
+                    commitment_digits.len(),
+                    1,
+                    commitment_digits,
+                    &t_high_weights,
+                    outer_low,
+                    &[],
+                )?;
+            }
         }
         Ok(acc? + contribution)
     };
@@ -501,6 +522,10 @@ where
             |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
         )
     }?;
+
+    if !uses_evaluation_trace_consistency {
+        return Ok(evaluation);
+    }
 
     let projection_lanes = (group.a_relation_ratio() != 1)
         .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_relation_ratio()))
@@ -575,9 +600,5 @@ where
             &base_scales,
         )?
     };
-    Ok(if uses_evaluation_trace_consistency {
-        evaluation + group.consistency_weight() * z
-    } else {
-        evaluation
-    })
+    Ok(evaluation + group.consistency_weight() * z)
 }
