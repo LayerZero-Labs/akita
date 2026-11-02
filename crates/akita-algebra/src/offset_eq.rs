@@ -1260,17 +1260,11 @@ impl<F: Field> OffsetEqWindow<F> {
         }
     }
 
-    /// Construct a window only when the requested evaluations match or exceed
-    /// the number of materialized table entries.
-    fn new_if_amortized(
-        challenges: &[F],
-        evaluation_count: usize,
-    ) -> Result<Option<Self>, AkitaError> {
-        if challenges.is_empty() {
-            return Ok(None);
-        }
-        let low_bits = Self::split_low_bits(challenges.len(), OFFSET_EQ_LOW_BITS_CAP);
-        let high_bits = challenges.len() - low_bits;
+    /// Number of equality table entries [`Self::new`] materializes for
+    /// `challenge_count` coordinates.
+    fn materialized_len(challenge_count: usize) -> Result<usize, AkitaError> {
+        let low_bits = Self::split_low_bits(challenge_count, OFFSET_EQ_LOW_BITS_CAP);
+        let high_bits = challenge_count - low_bits;
         let low_len = checked::pow2(low_bits)
             .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
         let high_len = if high_bits <= OFFSET_EQ_HIGH_BITS_CAP {
@@ -1279,9 +1273,17 @@ impl<F: Field> OffsetEqWindow<F> {
         } else {
             0
         };
-        let materialized_values = checked::sum([low_len, high_len])
-            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
-        if evaluation_count < materialized_values {
+        checked::sum([low_len, high_len])
+            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))
+    }
+
+    /// Construct a window only when the requested evaluations match or exceed
+    /// the number of materialized table entries.
+    fn new_if_amortized(
+        challenges: &[F],
+        evaluation_count: usize,
+    ) -> Result<Option<Self>, AkitaError> {
+        if challenges.is_empty() || evaluation_count < Self::materialized_len(challenges.len())? {
             return Ok(None);
         }
         Self::new(challenges).map(Some)

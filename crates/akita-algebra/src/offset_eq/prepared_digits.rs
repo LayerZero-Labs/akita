@@ -7,7 +7,7 @@
 //! and at most one new high equality evaluation. Callers share one prepared
 //! window across base offsets, claims and witness units on the same point.
 
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 
 use super::{AffineWeight, AffineWeightSource, OffsetEqWindow};
 use crate::{eq_poly::EqPolynomial, Field};
@@ -259,7 +259,9 @@ impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
 }
 
 /// Contract an eligible affine interval through a prepared window when its
-/// work is below the general contraction's `general_work`.
+/// work is below the general contraction's `general_work`. Prepared work counts
+/// the row tables, the high equality window built by [`PreparedDigits::new`],
+/// and one table lookup per row and base.
 ///
 /// Eligible intervals have adjacent digits (`digit_stride = 1`), one digit
 /// block per outer index (`outer_stride = digits.len()`) and a row-aligned
@@ -295,10 +297,17 @@ where
     }
     let rows = live_len / lanes;
     let prepared_work = outer_stride.checked_mul(lanes).and_then(|stride| {
-        let preparation = stride.checked_next_power_of_two()?.checked_mul(stride)?;
-        preparation.checked_add(rows.checked_mul(base_offsets.len())?)
+        let width = stride.checked_next_power_of_two()?;
+        let high_point = challenges
+            .len()
+            .checked_sub(width.trailing_zeros() as usize)?;
+        checked::sum([
+            width.checked_mul(stride)?,
+            OffsetEqWindow::<F>::materialized_len(high_point).ok()?,
+            rows.checked_mul(base_offsets.len())?,
+        ])
     });
-    if !prepared_work.is_some_and(|work| work < general_work) {
+    if prepared_work.is_none_or(|work| work >= general_work) {
         return Ok(None);
     }
     let Some(prepared) = PreparedDigits::new(challenges, digit_weights, low_weights)? else {
