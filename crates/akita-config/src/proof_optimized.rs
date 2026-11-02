@@ -42,7 +42,7 @@ const fn proof_optimized_inner_basis_range(
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
 /// This is an offline sizing-policy input, not runtime group geometry. Akita's
-/// built-in external schedule artifacts use K=256; downstream configurations
+/// built-in external schedule artifacts use K=16; downstream configurations
 /// may generate artifacts from another policy-owned chunk size.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
     akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
