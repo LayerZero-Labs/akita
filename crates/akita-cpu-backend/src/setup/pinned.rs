@@ -69,6 +69,12 @@ impl<Cfg: CommitmentConfig> PinnedProverSetup<Cfg> {
     pub fn set_name(&self) -> &str {
         &self.set_name
     }
+
+    /// The prover setup and catalog identity, for a prover that keeps them
+    /// separately.
+    pub fn into_parts(self) -> (AkitaProverSetup<Cfg::Field>, TrustedScheduleCatalog<Cfg>) {
+        (self.setup, self.catalog)
+    }
 }
 
 /// Load the prover setup of one anchored parameter set.
