@@ -226,7 +226,7 @@ pub fn decode_terminal_z_golomb_payload(
 pub fn build_terminal_response_from_payload<F>(
     params: &TerminalFoldParams,
     scheduled_shape: &TerminalResponseShape,
-    e_folded: &RingVec<F>,
+    e_fields: RingVec<F>,
     t_fields: RingVec<F>,
     z_payload: Vec<u8>,
 ) -> Result<TerminalResponse<F>, AkitaError>
@@ -237,7 +237,7 @@ where
         AkitaError::InvalidInput("terminal response schedule has no group".into())
     })?;
     if scheduled_shape.layout.groups.len() != 1
-        || e_folded.coeff_len() != group.e_field_elems
+        || e_fields.coeff_len() != group.e_field_elems
         || t_fields.coeff_len() != group.t_field_elems
         || !t_fields.can_decode_vec(params.d_a())
     {
@@ -250,7 +250,7 @@ where
     Ok(TerminalResponse {
         layout: scheduled_shape.layout.clone(),
         z_payloads: vec![z_payload],
-        e_fields: e_folded.clone().into_compact(),
+        e_fields: e_fields.into_compact(),
         t_fields: t_fields.into_compact(),
     })
 }

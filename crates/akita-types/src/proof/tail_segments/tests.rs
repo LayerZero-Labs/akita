@@ -47,7 +47,7 @@ fn terminal_response_from_payload_rejects_empty_schedule_groups() {
         build_terminal_response_from_payload(
             &params,
             &scheduled_shape,
-            &e_folded,
+            e_folded,
             t_fields,
             Vec::new(),
         ),

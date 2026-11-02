@@ -199,19 +199,15 @@ where
     akita_transcript::public_fields_prover(
         grinding.state_mut(),
         akita_types::FoldSite::TerminalTFields { level: fold_level }.id()?,
-        terminal_message
-            .fields()
-            .get(..group.t_field_elems)
-            .ok_or_else(|| {
-                AkitaError::Internal("terminal t state is shorter than its scheduled prefix".into())
-            })?,
+        scheduled.split_last_t_block(terminal_message.fields())?.0,
     )?;
     let mut t_sent = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
         backend,
         commitment_material,
     )?
     .into_coeffs();
-    t_sent.truncate(group.t_field_elems);
+    let t_sent_len = scheduled.split_last_t_block(&t_sent)?.0.len();
+    t_sent.truncate(t_sent_len);
     let t_sent = akita_types::RingVec::from_coeffs(t_sent);
 
     let consumer = backend;
@@ -323,14 +319,8 @@ where
                 let e_folded = folded_by_claim.into_iter().next().ok_or_else(|| {
                     AkitaError::Internal("terminal backend returned no folded opening".into())
                 })?;
-                let (e_sent, e_last_block) = e_folded
-                    .coeffs()
-                    .split_at_checked(group.e_field_elems)
-                    .ok_or_else(|| {
-                        AkitaError::Internal(
-                            "terminal folded opening is shorter than its scheduled prefix".into(),
-                        )
-                    })?;
+                let (e_sent, e_last_block) = params.split_last_e_block(e_folded.coeffs())?;
+                let e_sent_len = e_sent.len();
                 akita_transcript::send_field_group(
                     grinding.state_mut(),
                     akita_types::FoldSite::TerminalEFields { level: fold_level }.id()?,
@@ -356,11 +346,13 @@ where
                     witness_source,
                     &scheduled.response_shape,
                 )?;
+                let mut e_sent = e_folded.into_coeffs();
+                e_sent.truncate(e_sent_len);
                 let terminal_response = akita_types::build_terminal_response_from_payload::<F>(
                     params,
                     &scheduled.response_shape,
-                    &akita_types::RingVec::from_coeffs(e_sent.to_vec()),
-                    t_sent.clone(),
+                    akita_types::RingVec::from_coeffs(e_sent),
+                    t_sent,
                     output.encoded_payload,
                 )?;
                 Ok::<_, AkitaError>(terminal_response)

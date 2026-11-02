@@ -558,14 +558,7 @@ where
             };
             // The scheduled prefix stops before the last block, which travels
             // as a digest.
-            let (sent, last_block) = message
-                .fields()
-                .split_at_checked(terminal.response_shape.layout.t_field_elems())
-                .ok_or_else(|| {
-                    AkitaError::Internal(
-                        "terminal inner state is shorter than its scheduled prefix".into(),
-                    )
-                })?;
+            let (sent, last_block) = terminal.split_last_t_block(message.fields())?;
             akita_transcript::send_field_group(
                 grinding.state_mut(),
                 akita_types::FoldSite::NextWitnessInnerState { level }.id()?,
