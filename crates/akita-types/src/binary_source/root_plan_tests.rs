@@ -76,7 +76,7 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
         .count();
     let weights = plan
         .relation_weights(
-            &claim,
+            Some(&claim),
             &matrix,
             &challenges,
             F::from_u64(17),

@@ -32,6 +32,9 @@ pub mod emit;
 pub mod generated_families;
 mod planner;
 mod policy;
+/// Extension seam: opt-in binary plane pricing; <https://github.com/LayerZero-Labs/akita/issues/285>.
+#[cfg(feature = "labinius-trinomial")]
+pub mod prime_planes;
 mod response_model;
 pub mod schedule_params;
 

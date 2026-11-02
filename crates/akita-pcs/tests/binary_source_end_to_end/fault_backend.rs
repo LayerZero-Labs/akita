@@ -8,7 +8,7 @@ use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryRootWitnessRequest,
-    BinaryTerminalClaim,
+    BinaryTerminalClaim, PrimePlaneManifest,
 };
 use akita_types::{AkitaSetupDescriptor, Commitment};
 use jolt_field::{Field, Ring, Zero};
@@ -40,6 +40,7 @@ pub(super) enum Fault {
     ValueCarry,
     QuotientCarry,
     Padding,
+    PrimePlane,
 }
 
 impl Fault {
@@ -56,6 +57,7 @@ impl Fault {
     fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
         let segment = match self {
             Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
+            Self::PrimePlane => plan.prime_segment().unwrap(),
             Self::Response => 0,
             Self::Image => 1,
             Self::QuotientCarry => 2,
@@ -77,7 +79,8 @@ impl Fault {
 struct FaultPreparation {
     native: Box<dyn Any + Send + Sync>,
     manifest: BinaryCommittedGroupManifest,
-    claim: BinaryTerminalClaim,
+    claim: Option<BinaryTerminalClaim>,
+    prime: PrimePlaneManifest,
     plan: BinaryRootWitnessPlan,
 }
 
@@ -90,6 +93,37 @@ pub(super) struct FaultBackend {
 }
 
 impl FaultBackend {
+    /// Complete an adversarial opening with its deliberately false public oracle.
+    pub(super) fn prove_prime_fault(
+        &self,
+        setup: &akita_cpu_backend::AkitaProverSetup<F>,
+        schedules: &TrustedScheduleCatalog<super::BinaryTestSuffix>,
+        data: akita_prover::SelectedProverOpeningData<'_, F, C, F>,
+        prover: &mut akita_transcript::ProverSession,
+    ) -> Result<(), AkitaError> {
+        let resolved = schedules.resolve_selection(data.selection())?;
+        let required = akita_config::required_setup_prefix_slot_ids_for_schedule(
+            resolved.schedule(),
+            data.opening_layout(),
+        )?;
+        let prefixes = self
+            .inner
+            .import_setup_prefixes(&setup.prefix_slots, &required)?;
+        let mut registry = akita_prover::BackendRegistry::<super::BinaryTestSuffix>::new()?;
+        let root = registry.register(self, &prefixes)?;
+        let mut route =
+            akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+        akita_prover::batched_prove_in_session::<super::BinaryTestSuffix, _>(
+            setup.expanded.descriptor(),
+            schedules,
+            &registry,
+            data,
+            prover,
+            akita_params::BasisMode::Lagrange,
+            &mut route,
+        )
+    }
+
     pub(super) fn new(
         inner: Arc<NativeBackend>,
         seed: [u8; 32],
@@ -124,7 +158,7 @@ impl FaultBackend {
         if matches!(self.fault, Fault::ForeignPartials) {
             let foreign = fault_witness::foreign_partial_payload(
                 &request.manifest,
-                &request.claim,
+                request.claim.as_ref().unwrap(),
                 &self.words,
                 &self.seed,
             )?;
@@ -144,6 +178,7 @@ impl FaultBackend {
                 native,
                 manifest: request.manifest.clone(),
                 claim: request.claim.clone(),
+                prime: request.prime.clone(),
                 plan: request.plan.clone(),
             }),
         ))
@@ -175,7 +210,8 @@ impl FaultBackend {
         }
         let mut digits = fault_witness::reconstruct(
             &preparation.manifest,
-            &preparation.claim,
+            preparation.claim.as_ref(),
+            &preparation.prime,
             &preparation.plan,
             &self.seed,
             &self.words,
@@ -253,7 +289,15 @@ pub(super) fn authenticate_terminal(
     challenges: &akita_challenges::Challenges,
 ) -> Result<(), AkitaError> {
     let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
-    fault_witness::reconstruct(manifest, claim, &plan, &[53; 32], source, challenges)?;
+    fault_witness::reconstruct(
+        manifest,
+        Some(claim),
+        &PrimePlaneManifest::new(manifest.descriptor(), &[])?,
+        &plan,
+        &[53; 32],
+        source,
+        challenges,
+    )?;
     Ok(())
 }
 
@@ -267,8 +311,15 @@ pub(super) fn authenticate_terminal_relation(
     challenges: &akita_challenges::Challenges,
 ) -> Result<(), AkitaError> {
     let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
-    let digits =
-        fault_witness::reconstruct(manifest, honest, &plan, &[53; 32], source, challenges)?;
+    let digits = fault_witness::reconstruct(
+        manifest,
+        Some(honest),
+        &PrimePlaneManifest::new(manifest.descriptor(), &[])?,
+        &plan,
+        &[53; 32],
+        source,
+        challenges,
+    )?;
     let weights = received.relation_weights(
         manifest.descriptor(),
         plan.repacking(),

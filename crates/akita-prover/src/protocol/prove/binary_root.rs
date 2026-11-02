@@ -51,7 +51,12 @@ where
         ));
     }
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
-    let GroupClaimKind::Binary { manifest, claim } = group.kind() else {
+    let GroupClaimKind::Binary {
+        manifest,
+        claim,
+        prime,
+    } = group.kind()
+    else {
         return Err(AkitaError::InvalidProof);
     };
     let next = schedule
@@ -93,32 +98,40 @@ where
     binary_root_statement::<Cfg::Field, Cfg::ExtField, _>(
         grinding.state_mut(),
         manifest,
-        claim,
+        claim.as_ref(),
+        prime,
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
     let context = backend.proof_context(proof_session, 0)?;
-    let (_, source) = backend.prepare_root_group(
-        proof_session,
-        &context.for_group(0),
-        handles.first().ok_or(AkitaError::InvalidProof)?,
-        &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
-            manifest: manifest.as_ref().clone(),
-            polynomial: *claim.polynomial(),
-        },
-    )?;
-    let carriers = source
-        .downcast_ref::<Vec<u128>>()
-        .ok_or_else(|| AkitaError::Internal("backend field-switch source type mismatch".into()))?;
-    let terminal = crate::binary_field_switch::prove_field_switch(
-        manifest.descriptor(),
-        claim,
-        carriers,
-        grinding.state_mut(),
-    )?;
+    let terminal = if let Some(claim) = claim {
+        Some({
+            let (_, source) = backend.prepare_root_group(
+                proof_session,
+                &context.for_group(0),
+                handles.first().ok_or(AkitaError::InvalidProof)?,
+                &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
+                    manifest: manifest.as_ref().clone(),
+                    polynomial: *claim.polynomial(),
+                },
+            )?;
+            let carriers = source.downcast_ref::<Vec<u128>>().ok_or_else(|| {
+                AkitaError::Internal("backend field-switch source type mismatch".into())
+            })?;
+            crate::binary_field_switch::prove_field_switch(
+                manifest.descriptor(),
+                claim,
+                carriers,
+                grinding.state_mut(),
+            )?
+        })
+    } else {
+        None
+    };
     let public = BinaryRootPublic::new(
         manifest,
-        &terminal,
+        terminal.as_ref(),
+        prime,
         expanded,
         logical_len,
         next.params.d_a(),
@@ -128,6 +141,7 @@ where
     let request = akita_types::binary_source::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),
         claim: terminal,
+        prime: prime.clone(),
         plan: public.plan().clone(),
         ordinary: ordinary_profile
             .map(|profile| {
@@ -157,11 +171,13 @@ where
         &d_payload,
     )?;
     let columns = manifest.descriptor().index_map().columns();
+    let owners = manifest.descriptor().polynomials().len();
     let site = GrindingSite::FoldResponse { level: 0 };
     let mut accepted = None;
     for nonce in 0..akita_params::FOLD_RESPONSE_ATTEMPTS {
         let mut preview = grinding.preview_fold_response(site, nonce)?;
-        let challenges = binary_root_challenges(&mut PreviewFoldDraw::new(&mut preview), columns)?;
+        let challenges =
+            binary_root_challenges(&mut PreviewFoldDraw::new(&mut preview), columns, owners)?;
         if let Some(witness) = backend.build_root_group(
             proof_session,
             &context,
@@ -180,13 +196,18 @@ where
     let challenges = binary_root_challenges(
         &mut ProverFoldDraw::new(grinding.state_mut(), 0, 0),
         columns,
+        owners,
     )?;
     if challenges != preview_challenges {
         return Err(AkitaError::Internal(
             "binary response preview disagrees with replay".into(),
         ));
     }
-    grinding.record_fold_challenges(0, 0, columns)?;
+    grinding.record_fold_challenges(
+        0,
+        0,
+        akita_error::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
+    )?;
     let committed = fold::commit_next_witness::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         grinding,

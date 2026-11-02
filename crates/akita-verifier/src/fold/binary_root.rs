@@ -39,7 +39,12 @@ where
         ));
     }
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
-    let GroupClaimKind::Binary { manifest, claim } = group.kind() else {
+    let GroupClaimKind::Binary {
+        manifest,
+        claim,
+        prime,
+    } = group.kind()
+    else {
         return Err(AkitaError::InvalidProof);
     };
     let ordinary = claims.groups().get(1);
@@ -81,18 +86,25 @@ where
     binary_root_statement::<F, E, _>(
         grinding.state_mut(),
         manifest,
-        claim,
+        claim.as_ref(),
+        prime,
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
-    let terminal = crate::binary_field_switch::verify_field_switch(
-        manifest.descriptor(),
-        claim,
-        grinding.state_mut(),
-    )?;
+    let terminal = claim
+        .as_ref()
+        .map(|claim| {
+            crate::binary_field_switch::verify_field_switch(
+                manifest.descriptor(),
+                claim,
+                grinding.state_mut(),
+            )
+        })
+        .transpose()?;
     let public = BinaryRootPublic::new(
         manifest,
-        &terminal,
+        terminal.as_ref(),
+        prime,
         &setup.expanded().descriptor,
         logical_len,
         next.params.d_a(),
@@ -118,11 +130,16 @@ where
     )?;
     grinding.read_fold_response(GrindingSite::FoldResponse { level: 0 })?;
     let columns = manifest.descriptor().index_map().columns();
+    let owners = manifest.descriptor().polynomials().len();
     let challenges = {
         let mut draw = VerifierFoldDraw::new(grinding.state_mut(), 0, 0);
-        binary_root_challenges(&mut draw, columns)?
+        binary_root_challenges(&mut draw, columns, owners)?
     };
-    grinding.record_fold_challenges(0, 0, columns)?;
+    grinding.record_fold_challenges(
+        0,
+        0,
+        akita_error::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
+    )?;
 
     let successor_payload_len = next
         .params
