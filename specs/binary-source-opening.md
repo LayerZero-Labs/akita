@@ -433,7 +433,9 @@ binary manifest and scheduled slot. Online verification requires that identity.
 A different typed A table or the ordinary stream's table fails preparation;
 a different manifest cannot reuse the prepared verifier view. Scoped contexts
 are transient: serialization rejects before writing bytes, so a persisted
-ordinary setup must have its typed prefix prepared again after loading.
+ordinary setup must have its typed prefix prepared again after loading. The
+recursion glue blob has no field for a context, and its encoder rejects a
+scoped setup the same way. That glue does not yet carry binary statements.
 The first typed slot cannot be reused as an outgoing ordinary setup slot later
 in the same schedule. Ordinary prefix caches remain unchanged.
 

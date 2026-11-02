@@ -5,7 +5,8 @@ use akita_params::sis::sis_table_key_for_linf_bound;
 use akita_params::{
     scheduled_setup_prefix, CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams,
     GroupOpeningPlan, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+    SetupPrefixSlotId, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, RingVec, SetupPrefixPublicCommitment,
@@ -307,8 +308,12 @@ fn opening_point_len_must_match_num_vars_before_allocation() {
     assert!(err.to_string().contains("opening-point arity 3"));
 }
 
-#[test]
-fn strict_setup_decoder_preserves_prefix_slots() {
+fn prefix_setup_parts() -> (
+    AkitaSetupDescriptor,
+    FlatMatrix<TestF>,
+    SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry<TestF>,
+) {
     let setup_seed = sample_akita_setup_seed();
     let seed = AkitaSetupDescriptor {
         max_num_vars: 8,
@@ -340,6 +345,12 @@ fn strict_setup_decoder_preserves_prefix_slots() {
             },
         })
         .expect("insert prefix slot");
+    (seed, shared_matrix, id, prefix_slots)
+}
+
+#[test]
+fn strict_setup_decoder_preserves_prefix_slots() {
+    let (seed, shared_matrix, id, prefix_slots) = prefix_setup_parts();
 
     let mut bytes = Vec::new();
     seed.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
@@ -370,6 +381,55 @@ fn strict_setup_decoder_preserves_prefix_slots() {
     assert!(rest.is_empty());
     assert!(decoded.prefix_slots().get(&id).is_some());
     assert_eq!(decoded.prefix_slots().len(), 1);
+}
+
+#[test]
+fn encoder_rejects_scoped_setup_instead_of_dropping_its_identity() {
+    let (seed, shared_matrix, id, prefix_slots) = prefix_setup_parts();
+    let ordinary = AkitaVerifierSetup::from_parts(
+        Arc::new(
+            AkitaExpandedSetup::from_verified_parts(seed, shared_matrix)
+                .expect("verified setup parts"),
+        ),
+        prefix_slots,
+    )
+    .expect("ordinary setup");
+    let profile = prefix_commitment_params().profile;
+    let payload_coefficients = profile
+        .outer_compression_plan()
+        .expect("commitment compression plan")
+        .terminal_coefficients();
+    let inputs = |verifier_setup| AkitaJoltInputs::<TestF, TEST_D> {
+        case: AkitaJoltCase::OneHotFp128Direct,
+        transcript_domain: Vec::new(),
+        num_vars: 0,
+        opening_point: Vec::new(),
+        openings: Vec::new(),
+        precommitted_groups: Vec::new(),
+        schedule_selection: OpeningScheduleSelection {
+            row_digest: akita_params::ScheduleRowDigest::from_bytes([0; 32]),
+        },
+        commitment: CommittedGroup::new(
+            profile,
+            akita_types::Commitment::new(RingVec::from_coeffs(vec![
+                TestF::zero();
+                payload_coefficients
+            ])),
+        ),
+        verifier_setup,
+        proof: Vec::new(),
+    };
+
+    inputs(ordinary.clone())
+        .write_to_bytes()
+        .expect("ordinary setup encodes");
+    let scoped = ordinary
+        .with_prefix_context(id, b"typed source identity".to_vec())
+        .expect("install context");
+    let err = inputs(scoped)
+        .write_to_bytes()
+        .expect_err("scoped setup must not lose its identity");
+    assert!(err.to_string().contains("transient prefix contexts"));
 }
 
 #[test]

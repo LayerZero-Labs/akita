@@ -165,6 +165,20 @@ impl<F: Field> AkitaVerifierSetup<F> {
         Ok(self)
     }
 
+    /// Extension seam: refuse an encoding that would drop scoped prefix identities.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// Every encoder of this setup calls this before writing, including one
+    /// that writes the matrix and prefix registry as separate fields.
+    pub fn ensure_no_prefix_contexts(&self) -> Result<(), SerializationError> {
+        if self.prefix_contexts.is_empty() {
+            return Ok(());
+        }
+        Err(SerializationError::InvalidData(
+            "verifier setup has transient prefix contexts; prepare scoped prefixes again after loading the ordinary setup".into(),
+        ))
+    }
+
     /// Extension seam: inspect the trusted identity installed for a scoped prefix.
     /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub fn prefix_context(&self, id: &SetupPrefixSlotId) -> Option<&[u8]> {
@@ -704,11 +718,7 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
         writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        if !self.prefix_contexts.is_empty() {
-            return Err(SerializationError::InvalidData(
-                "verifier setup has transient prefix contexts; prepare scoped prefixes again after loading the ordinary setup".into(),
-            ));
-        }
+        self.ensure_no_prefix_contexts()?;
         let mut writer = writer;
         self.expanded.serialize_with_mode(&mut writer, compress)?;
         self.prefix_slots.serialize_with_mode(writer, compress)
