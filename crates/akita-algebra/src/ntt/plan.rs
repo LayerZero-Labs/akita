@@ -1,8 +1,8 @@
-//! Host kernel selection for one prepared CRT+NTT parameter set.
+//! Kernel selection for one prepared CRT+NTT parameter set.
 
 use super::prime::PrimeWidth;
 
-/// Host kernels selected once when a CRT+NTT parameter set is prepared.
+/// Kernels selected once when a CRT+NTT parameter set is prepared.
 ///
 /// AVX2 is the default x86 backend for both transforms and pointwise
 /// arithmetic; AVX-512 is an opt-in (see [`super::avx::avx_ntt_mode`]).
@@ -21,13 +21,21 @@ enum NttKernelKind {
     /// AVX-512 transforms and pointwise arithmetic, with the AVX2 `i16`
     /// kernels and `i32` dot product.
     Avx512,
+    /// A Jolt RISC-V guest's 64-point `i32` NTT and pointwise-dot inlines
+    /// (the `ntt-inline` feature).
+    JoltInline,
 }
 
 impl NttKernelPlan {
     pub(crate) const SCALAR: Self = Self(NttKernelKind::Scalar);
 
-    /// Detect the best enabled host plan for residue width `W`.
+    /// Detect the best enabled plan for residue width `W`.
     pub fn detect<W: PrimeWidth>() -> Self {
+        #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+        if W::R_LOG == 32 {
+            return Self(NttKernelKind::JoltInline);
+        }
+
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if matches!(core::mem::size_of::<W>(), 2 | 4) && super::avx::use_avx2_transform_ntt() {
@@ -67,12 +75,17 @@ impl NttKernelPlan {
         match self.0 {
             NttKernelKind::Avx2 => Some(super::avx::AvxNttMode::Avx2),
             NttKernelKind::Avx512 => Some(super::avx::AvxNttMode::Avx512),
-            NttKernelKind::Scalar | NttKernelKind::Neon => None,
+            NttKernelKind::Scalar | NttKernelKind::Neon | NttKernelKind::JoltInline => None,
         }
     }
 
     #[cfg(target_arch = "aarch64")]
     pub(crate) const fn uses_neon(self) -> bool {
         matches!(self.0, NttKernelKind::Neon)
+    }
+
+    #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+    pub(crate) const fn uses_jolt_inline(self) -> bool {
+        matches!(self.0, NttKernelKind::JoltInline)
     }
 }
