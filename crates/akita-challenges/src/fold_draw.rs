@@ -126,12 +126,15 @@ pub trait FoldDraw {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
         let seed = self.absorb_and_squeeze(&absorb_buf)?;
+
         let challenges = crate::sampler::sample_indexed_challenges_from_seed(
             &seed, ring_d, total, cfg, rejection,
         )?;
+
         #[cfg(feature = "logging-transcript")]
         self.record_challenge_range(group_index, total);
-        Challenges::from_sparse(challenges, num_live_blocks, num_claims)
+
+        Challenges::from_sampled(challenges, num_live_blocks, num_claims, ring_d, *cfg)
     }
 }
 
