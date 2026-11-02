@@ -2,6 +2,7 @@
 //! response to the direct terminal checks.
 
 use super::suffix::SuffixVerifierState;
+use super::NextWitness;
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::verify_extension_claim_terminal_suffix;
 use akita_challenges::FoldDraw;
@@ -34,16 +35,25 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
+    let NextWitness::TerminalT {
+        sent: t_sent,
+        last_block_digest: t_last_block_digest,
+    } = &current_state.witness
+    else {
+        return Err(AkitaError::Internal(
+            "terminal scheduled after an outer payload witness".into(),
+        ));
+    };
     if scheduled.response_shape.layout.groups.len() != 1
-        || current_state.witness.coeff_len() != group.t_field_elems
-        || !current_state.witness.can_decode_vec(scheduled.d_a())
+        || t_sent.coeff_len() != group.t_field_elems
+        || !t_sent.can_decode_vec(scheduled.d_a())
     {
         return Err(AkitaError::InvalidProof);
     }
     akita_transcript::public_fields_verifier(
         grinding.state_mut(),
         akita_types::FoldSite::TerminalTFields { level }.id()?,
-        current_state.witness.coeffs(),
+        t_sent.coeffs(),
     )?;
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
@@ -110,6 +120,16 @@ where
         group.e_field_elems,
     )
     .map(RingVec::from_coeffs)?;
+    // Both segments omit their last block. The predecessor fold bound the `t`
+    // digest next to the carried state, and the `e` digest arrives here, before
+    // the fold challenges.
+    let last_block_digests = crate::terminal::direct::LastBlockDigests {
+        t: *t_last_block_digest,
+        e: akita_transcript::receive_field_digest(
+            grinding.state_mut(),
+            akita_types::FoldSite::TerminalEDigest { level }.id()?,
+        )?,
+    };
     grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
@@ -145,14 +165,15 @@ where
         layout: scheduled.response_shape.layout.clone(),
         z_payloads: vec![z_payload],
         e_fields,
-        t_fields: current_state.witness.clone(),
+        t_fields: t_sent.clone(),
     };
-    crate::terminal::direct::verify_terminal_ring_relations(
+    let e_fields = crate::terminal::direct::verify_terminal_ring_relations(
         terminal_ntt,
         &challenges,
         &prepared_point.ring_multiplier_point,
         scheduled,
         &terminal_response,
+        &last_block_digests,
     )?;
     let (target, scale) = match final_relation {
         Some((claims, factors)) => (
@@ -164,7 +185,7 @@ where
     crate::terminal::direct::verify_terminal_trace(
         &prepared_point.ring_multiplier_point,
         scheduled,
-        &terminal_response,
+        &e_fields,
         &prepared_point,
         &[E::one()],
         None,
