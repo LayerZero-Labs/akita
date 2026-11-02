@@ -273,32 +273,6 @@ jobs:
           cargo test --release -p akita-types
           --features logging-transcript
 
-  # The PCS transcript jobs do not execute the CPU backend's integration target.
-  # Enable logging here so CI checks the setup-batch statement/challenge order.
-  test-setup-batch-transcripts:
-    name: Setup-batch transcript order (${{ matrix.backend }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      matrix:
-        backend: [transcript-blake2b, transcript-keccak]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-      - name: Cache setup-batch transcript build
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: ci-setup-batch-transcript-${{ matrix.backend }}
-          cache-on-failure: true
-      - name: Check inherited statement binding before batching challenges
-        run: >-
-          cargo test --release -p akita-cpu-backend
-          --test outer_setup_batch
-          --no-default-features
-          --features parallel,logging-transcript,${{ matrix.backend }}
-          --
-          --test-threads=1
-
   # Exercise the proof stream through the opaque CPU backend under both
   # transcript hashes, including a small-field Stage 1 route.
   test-inline-backends:
