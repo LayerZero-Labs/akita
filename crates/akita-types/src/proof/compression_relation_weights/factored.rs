@@ -1221,6 +1221,41 @@ mod tests {
         assert_all_agree(&weights, &mut stream, "columns");
     }
 
+    #[test]
+    fn block_cache_distinguishes_point_offsets_for_same_table() {
+        let table = GroupTable::new(vec![F::from_u64(2), F::from_u64(7)], false);
+        let point = [F::from_u64(3), F::from_u64(5), F::from_u64(11)];
+        let mut blocks = BlockCache::new();
+        let mut results = Vec::new();
+        for low_bits in [0, 1, 0, 1] {
+            let high_point = &point[low_bits..];
+            let expected = table
+                .values
+                .iter()
+                .enumerate()
+                .map(|(i, &value)| value * eq_bits(high_point, i))
+                .sum::<F>();
+            let actual = CompressionRelationWeights::<F>::dyadic_sum(
+                &table,
+                &table.values,
+                0,
+                high_point,
+                low_bits,
+                0,
+                0,
+                &mut blocks,
+            )
+            .unwrap();
+            assert_eq!(actual, expected);
+            results.push(actual);
+        }
+        assert_ne!(results[0], results[1]);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].0, (0, 0, 1, 0));
+        assert_eq!(blocks[1].0, (0, 0, 1, 1));
+        assert_ne!(blocks[0].1, blocks[1].1);
+    }
+
     /// Errors are the canonical errors: a progression leaving the domain or a
     /// misaligned block falls back to the canonical loop and fails the same way.
     #[test]
