@@ -480,7 +480,6 @@ pub struct CandidateTerminalResponse {
     /// [`akita_params::FoldChallengeCost::terminal`] of `params`, priced once
     /// for every planner edge that ends in this terminal.
     pub fold_cost: akita_params::FoldChallengeCost,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
     pub input_witness_len: usize,
     pub estimated_direct_payload_bytes: usize,
     pub response_shape: TerminalResponseShape,
@@ -736,7 +735,6 @@ pub fn materialize_candidate_schedule(
             })
             .collect(),
         terminal: TerminalFoldParams {
-            fold_challenge_config: terminal_response.sparse_challenge_config,
             response_shape: terminal_response.response_shape.clone(),
             input_witness_len: terminal_response.input_witness_len,
             ..terminal_response.params.clone()

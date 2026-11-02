@@ -779,7 +779,7 @@ fn price_terminal_candidate(
             || direct_step.params.blocks.positions_per_block != guide.blocks.positions_per_block
             || direct_step.params.inner.digits.log_basis != guide.inner.digits.log_basis
             || direct_step.params.fold.log_basis != guide.fold.log_basis
-            || direct_step.sparse_challenge_config != guide.fold_challenge_config
+            || direct_step.params.fold_challenge_config != guide.fold_challenge_config
             || !route_kind_matches
         {
             return Ok(());

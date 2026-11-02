@@ -79,7 +79,6 @@ pub(crate) fn terminal_direct_suffix_cost(
     }
     let (mut terminal_params, certified_linf_cap) =
         akita_params::TerminalFoldParams::try_from_expanded_group(terminal_lp.clone())?;
-    let mut sparse_challenge_config = terminal_lp.fold_challenge_config();
     if route_guide != Some(CandidateInnerRoute::Linf) {
         if let Some(l2_challenge) =
             akita_challenges::selective_l2_challenge_config(terminal_params.d_a())
@@ -118,7 +117,6 @@ pub(crate) fn terminal_direct_suffix_cost(
                 {
                     terminal_params.inner.matrix = l2_matrix;
                     terminal_params.fold_challenge_config = l2_challenge;
-                    sparse_challenge_config = l2_challenge;
                 }
             }
         }
@@ -129,7 +127,7 @@ pub(crate) fn terminal_direct_suffix_cost(
         .ok_or_else(|| AkitaError::InvalidSetup("terminal response length overflow".into()))?;
     let modeled_encoding_scale = source_moment.and_then(|moment| {
         moment.response_linf_cap(
-            sparse_challenge_config.challenge_l2_sq_max(),
+            terminal_params.fold_challenge_config.challenge_l2_sq_max(),
             terminal_params.blocks.live_blocks,
             1,
             num_fold_coeffs,
@@ -156,7 +154,6 @@ pub(crate) fn terminal_direct_suffix_cost(
     let direct = CandidateTerminalResponse {
         fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)?,
         params: terminal_params,
-        sparse_challenge_config,
         input_witness_len,
         estimated_direct_payload_bytes: 0,
         response_shape: witness_shape,
@@ -271,7 +268,7 @@ mod tests {
             InnerCommitSecurityRoute::Linf(_)
         ));
         assert_eq!(
-            guided.sparse_challenge_config,
+            guided.params.fold_challenge_config,
             candidate.fold_challenge_config()
         );
 

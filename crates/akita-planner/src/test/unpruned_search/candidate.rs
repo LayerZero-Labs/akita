@@ -134,7 +134,6 @@ pub(super) fn terminal(
             Err(AkitaError::InvalidSetup(_)) => return Ok(None),
             Err(error) => return Err(error),
         };
-    let mut sparse_challenge_config = params.fold_challenge_config();
     if let Some(l2_challenge) =
         akita_challenges::selective_l2_challenge_config(terminal_params.d_a())
     {
@@ -172,7 +171,6 @@ pub(super) fn terminal(
             if l2_matrix.output_rank() < terminal_params.inner.matrix.output_rank() {
                 terminal_params.inner.matrix = l2_matrix;
                 terminal_params.fold_challenge_config = l2_challenge;
-                sparse_challenge_config = l2_challenge;
             }
         }
     }
@@ -184,7 +182,7 @@ pub(super) fn terminal(
         })?;
     let modeled_encoding_scale = state.source_moment.and_then(|moment| {
         moment.response_linf_cap(
-            sparse_challenge_config.challenge_l2_sq_max(),
+            terminal_params.fold_challenge_config.challenge_l2_sq_max(),
             terminal_params.blocks.live_blocks,
             1,
             num_fold_coeffs,
@@ -226,7 +224,6 @@ pub(super) fn terminal(
         terminal: Arc::new(CandidateTerminalResponse {
             fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)?,
             params: terminal_params,
-            sparse_challenge_config,
             input_witness_len,
             estimated_direct_payload_bytes: opening_reduction_bytes,
             response_shape,
@@ -447,7 +444,6 @@ pub(in crate::schedule_params) fn prepend_root(
         })?,
         recursive_folds: folds.collect(),
         terminal: akita_params::TerminalFoldParams {
-            fold_challenge_config: candidate.terminal.sparse_challenge_config,
             response_shape: candidate.terminal.response_shape.clone(),
             input_witness_len: candidate.terminal.input_witness_len,
             ..candidate.terminal.params.clone()

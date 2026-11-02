@@ -151,7 +151,6 @@ fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
                 terminal: std::sync::Arc::new(CandidateTerminalResponse {
                     params: terminal_params.clone(),
                     fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)?,
-                    sparse_challenge_config: challenge,
                     input_witness_len: 64,
                     estimated_direct_payload_bytes: 0,
                     response_shape: response_shape.clone(),

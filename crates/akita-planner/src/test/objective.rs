@@ -230,7 +230,6 @@ fn complete_candidate(
         fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)
             .expect("terminal fold cost"),
         params: terminal_params,
-        sparse_challenge_config: challenge,
         input_witness_len: output_witness_len,
         estimated_direct_payload_bytes: 0,
         response_shape,

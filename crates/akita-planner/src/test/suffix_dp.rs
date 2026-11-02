@@ -342,7 +342,6 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
         terminal: std::sync::Arc::new(super::CandidateTerminalResponse {
             params: terminal_params.clone(),
             fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params).unwrap(),
-            sparse_challenge_config: challenge,
             input_witness_len: 512,
             estimated_direct_payload_bytes: 0,
             response_shape: response_shape.clone(),
