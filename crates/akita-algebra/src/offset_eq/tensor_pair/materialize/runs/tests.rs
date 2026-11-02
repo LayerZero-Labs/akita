@@ -6,6 +6,37 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 type F = Fp64<4294967197>;
 
 #[test]
+fn zero_scalar_overflowing_right_offset_matches_runs_off() {
+    let point = [F::from_u64(3); 12];
+    let runs_on = OffsetEqWindow::new(&point).unwrap();
+    let mut runs_off = OffsetEqWindow::new(&point).unwrap();
+    // Without the high table, runs decline and scalar evaluation is unchanged.
+    runs_off.eq_high = None;
+    assert!(runs_on.eq_high.is_some());
+    assert!(runs_off.eq_high.is_none());
+    let families = [(F::zero(), usize::MAX), (F::from_u64(2), 0)]
+        .into_iter()
+        .map(|(scalar, right_offset)| {
+            EqPairTensorFamily::new(
+                0,
+                right_offset,
+                scalar,
+                vec![EqPairTensorAxis::unit(16, 1, 1)],
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let expected = (0..16)
+        .map(|i| F::from_u64(2) * eq_eval_at_index(&point, i))
+        .collect::<Vec<_>>();
+    let off = super::super::materialize_eq_tensor_left(&runs_off, &families, 16).unwrap();
+    assert_eq!(off, expected);
+    let on = super::super::materialize_eq_tensor_left(&runs_on, &families, 16).unwrap();
+    assert_eq!(on, off);
+    assert_eq!(on, expected);
+}
+
+#[test]
 fn runs_match_scalar_equality_across_carries_and_domain_end() {
     check_runs::<F>();
 }

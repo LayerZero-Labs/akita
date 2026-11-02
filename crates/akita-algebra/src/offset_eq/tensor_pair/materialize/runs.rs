@@ -24,6 +24,9 @@ pub(super) fn try_accumulate<F: Field>(
         return Ok(false);
     }
     for view in views {
+        if view.family.scalar.is_zero() {
+            continue;
+        }
         // Runs need the tabulated residual; a streamed residual declines.
         let ResidualTerms::Table(residual) = &view.residual else {
             return Ok(false);
@@ -46,12 +49,10 @@ pub(super) fn try_accumulate<F: Field>(
             view.family.right_offset.checked_add(span).ok_or_else(|| {
                 AkitaError::InvalidInput("tensor run right offset overflow".into())
             })?;
-        if !view.family.scalar.is_zero() {
-            for &(offset, _) in residual {
-                last.checked_add(offset).ok_or_else(|| {
-                    AkitaError::InvalidInput("tensor run residual offset overflow".into())
-                })?;
-            }
+        for &(offset, _) in residual {
+            last.checked_add(offset).ok_or_else(|| {
+                AkitaError::InvalidInput("tensor run residual offset overflow".into())
+            })?;
         }
     }
     for view in views {
