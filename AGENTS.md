@@ -123,4 +123,4 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example infinity_width_table -- --format rust-split --profile local-minimum` |
 | Direct generated-schedule SIS report | `cargo run --release -p akita-planner --features catalog-security --example catalog_security -- --check` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |
-| Pinned preprocessing releases | [`specs/pinned-preprocessing-releases.md`](specs/pinned-preprocessing-releases.md); regenerate and compare with `cargo run --release -p akita-preprocess -- check` |
+| Pinned preprocessing releases | [`book/src/usage/preprocessing-releases.md`](book/src/usage/preprocessing-releases.md), [`specs/pinned-preprocessing-releases.md`](specs/pinned-preprocessing-releases.md); regenerate and compare with `cargo run --release -p akita-preprocess -- check` |

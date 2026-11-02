@@ -8,6 +8,10 @@
 //! [`check_release`] regenerates a release and compares the manifest with the
 //! checked-in one.
 //!
+//! The Akita Book's usage page *Preprocessing releases*
+//! (`book/src/usage/preprocessing-releases.md`) walks through writing a
+//! description, generating, anchoring, publishing, and loading a release.
+//!
 //! This crate is the only component that publishes setup-prefix commitments.
 //! It depends on neither `akita-setup`, whose cache it must not read, nor an
 //! anchor crate, so adding a release never changes a `bundle_id`.
