@@ -16,8 +16,7 @@ pub use cyclotomic::{
     WideCyclotomicRing,
 };
 pub use eval::{
-    eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, evaluate_power_sequence_mle,
-    scalar_powers, scalar_powers_with_stride,
+    eval_ring_at, evaluate_power_sequence_mle, scalar_powers, scalar_powers_with_stride,
 };
 pub use ifma52::{Ifma52NttMatrix, Ifma52Params};
 pub use residue::{residue_kernel, terminal_residue_kernel, ResidueKernelPoint};

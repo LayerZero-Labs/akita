@@ -18,6 +18,7 @@ pub mod ntt;
 pub mod offset_eq;
 pub mod poly;
 pub mod ring;
+pub mod row_batch;
 pub mod split_eq;
 
 // Flat re-exports for convenience.

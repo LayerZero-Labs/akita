@@ -55,6 +55,8 @@ transcript-keccak = [
 ]
 # Keccak-256 instead of SHA3-256 digests; see `akita-transcript`.
 keccak256-digests = ["akita-transcript/keccak256-digests"]
+# 64-point NTT and pointwise-dot inlines for a RISC-V guest verifier.
+ntt-inline = ["akita-algebra/ntt-inline"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
