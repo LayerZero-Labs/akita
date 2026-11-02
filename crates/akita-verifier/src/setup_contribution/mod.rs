@@ -26,7 +26,6 @@
 
 mod direct_scan;
 mod kernels;
-pub(crate) mod prepared_digits;
 mod scan;
 mod segments;
 mod structured;

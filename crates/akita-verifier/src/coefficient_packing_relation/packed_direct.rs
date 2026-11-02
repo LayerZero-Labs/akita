@@ -1,9 +1,8 @@
 //! Contract direct-opening digits once per point, then stream physical blocks.
 //! Claim and witness-unit offsets stay in the authenticated physical geometry.
-use crate::setup_contribution::prepared_digits::PreparedDigits;
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::PreparedDigits;
 use akita_error::AkitaError;
-use akita_params::BasisMode;
+use akita_params::{basis_weights, BasisMode};
 use akita_types::ValidatedCoefficientPackingGroup;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
@@ -26,22 +25,6 @@ struct Unit<E: Field> {
 }
 fn invalid() -> AkitaError {
     AkitaError::InvalidInput("invalid packed direct-opening geometry".into())
-}
-fn table<E: Field>(point: &[E], basis: BasisMode) -> Result<Vec<E>, AkitaError> {
-    if point.len() > 18 {
-        return Err(invalid());
-    }
-    if basis == BasisMode::Lagrange {
-        return EqPolynomial::evals(point);
-    }
-    let mut values = vec![E::one()];
-    for &r in point {
-        let n = values.len();
-        for i in 0..n {
-            values.push(values[i] * r);
-        }
-    }
-    Ok(values)
 }
 impl<E: Field> PackedDirect<E> {
     pub(super) fn new<F: Field + CanonicalEncoding>(
@@ -126,8 +109,8 @@ impl<E: Field> PackedDirect<E> {
         if left.len() - cb - rb > 18 {
             return Ok(None);
         }
-        let roles = table(&left[cb..cb + rb], basis)?;
-        let blocks = table(&left[cb + rb..], basis)?;
+        let roles = basis_weights(&left[cb..cb + rb], basis)?;
+        let blocks = basis_weights(&left[cb + rb..], basis)?;
         let mut digits = vec![E::zero(); self.width];
         for (plane, &plane_weight) in self.basis.iter().enumerate() {
             for (role, &role_weight) in roles.iter().enumerate() {
@@ -148,7 +131,7 @@ impl<E: Field> PackedDirect<E> {
                 }
             }
         }
-        let Some(prepared) = PreparedDigits::new(&right[cb..], &digits, &[])? else {
+        let Some(prepared) = PreparedDigits::<E, E>::new(&right[cb..], &digits, &[])? else {
             return Ok(None);
         };
         let mut coefficient = E::one();
@@ -162,7 +145,9 @@ impl<E: Field> PackedDirect<E> {
         let mut value = E::zero();
         for unit in &self.units {
             for &(base, weight) in &unit.bases {
-                value += weight * prepared.evaluate(base, unit.first, unit.rows, &blocks)?;
+                let mut rows = E::zero();
+                prepared.accumulate(&mut rows, base, unit.first, unit.rows, &blocks)?;
+                value += weight * rows;
             }
         }
         Ok(Some(self.scalar * coefficient * value))

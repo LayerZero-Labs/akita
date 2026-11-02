@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::{
-    offset_eq::{eval_affine_digit_intervals, AffineWeightProduct},
+    offset_eq::{eval_affine_digit_intervals, AffineWeightProduct, PreparedDigits},
     ring::scalar_powers_with_stride,
 };
 
@@ -380,8 +380,7 @@ where
         ));
     }
 
-    let prepared_t =
-        super::prepared_digits::PreparedDigits::new(point, commitment_digits, outer_low)?;
+    let prepared_t = PreparedDigits::new(point, commitment_digits, outer_low)?;
 
     // `build_group_role_tensors` emits D/B families unit-major with claim
     // inside each unit. The evaluation fold itself is claim-major, so this
@@ -479,8 +478,9 @@ where
                 .checked_mul(group.n_a())
                 .and_then(|len| len.checked_mul(outer_subcolumns))
                 .ok_or(AkitaError::InvalidProof)?;
-            contribution += if let Some(prepared) = &prepared_t {
-                prepared.evaluate(
+            if let Some(prepared) = &prepared_t {
+                prepared.accumulate(
+                    &mut contribution,
                     b_tensor.right_offset,
                     global_block_start
                         .checked_mul(group.n_a())
@@ -489,9 +489,9 @@ where
                         .checked_mul(group.n_a())
                         .ok_or(AkitaError::InvalidProof)?,
                     &t_high_weights,
-                )?
+                )?;
             } else {
-                eval_affine_digit_intervals(
+                contribution += eval_affine_digit_intervals(
                     point,
                     &[b_tensor.right_offset],
                     t_outer_start,
@@ -502,8 +502,8 @@ where
                     &t_high_weights,
                     outer_low,
                     &[],
-                )?
-            };
+                )?;
+            }
         }
         Ok(acc? + contribution)
     };
@@ -597,9 +597,5 @@ where
         )?
     };
 
-    Ok(if uses_evaluation_trace_consistency {
-        evaluation + group.consistency_weight() * z
-    } else {
-        evaluation
-    })
+    Ok(evaluation + group.consistency_weight() * z)
 }
