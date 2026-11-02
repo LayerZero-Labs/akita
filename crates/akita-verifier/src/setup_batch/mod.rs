@@ -4,10 +4,12 @@ use akita_error::{checked, AkitaError};
 use akita_sumcheck::{verify_sumcheck_rounds, SumcheckShape};
 use akita_types::{
     setup_claims::{
-        transcript::{batch_coefficients, setup_evaluation, SetupBatchVerifierChannel},
+        transcript::{
+            batch_coefficients, setup_evaluation, standalone_grinding_plan, standalone_verifier,
+        },
         SetupAccumulator, SetupBatchProof, SetupBatchStatement, SetupPolynomialId,
     },
-    AkitaExpandedSetup, FpExtEncoding,
+    AkitaExpandedSetup, FpExtEncoding, GrindingReplay, GrindingSumcheckVerifier,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -28,21 +30,30 @@ where
             "unexpected setup batch polynomial".into(),
         ));
     }
-    let mut channel = SetupBatchVerifierChannel::<F, E>::new(session, statement, proof.argument())?;
-    let coefficients = batch_coefficients::<F, E, _>(&mut channel.state, statement.claims().len())?;
+    let plan = standalone_grinding_plan::<F, E>(statement)?;
+    let mut grinding = standalone_verifier::<F, E>(session, statement, &plan, proof.argument())?;
+    let coefficients = batch_coefficients::<F, E, _>(&mut grinding, 0, statement.claims().len())?;
     let input_claim = statement.input_claim(&coefficients)?;
     let replay = verify_sumcheck_rounds::<F, E, _>(
-        &mut channel,
+        &mut GrindingSumcheckVerifier::<F, E>::new(
+            &mut grinding,
+            akita_params::SumcheckProtocol::SetupBatch,
+            0,
+            0,
+        ),
         0,
         input_claim,
-        SumcheckShape::new(expected.num_variables(), 2)?,
+        SumcheckShape::new(
+            expected.num_variables(),
+            akita_params::SETUP_SUMCHECK_DEGREE,
+        )?,
     )?;
-    let value = setup_evaluation::<F, E, _>(&mut channel.state, E::zero())?;
+    let value = setup_evaluation::<F, E, _>(grinding.state_mut(), E::zero())?;
     let weight = statement.evaluate_weight(&coefficients, &replay.challenges)?;
     if replay.output_claim != value * weight {
         return Err(AkitaError::InvalidProof);
     }
-    channel.state.check_eof()?;
+    grinding.finish()?;
     SetupAccumulator::new(expected.clone(), replay.challenges, value)
 }
 

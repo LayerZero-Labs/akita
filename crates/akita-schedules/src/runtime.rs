@@ -651,6 +651,7 @@ fn expanded_schedule_proof_components(
         &key.opening_layout()?,
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
+        None,
     )?;
     let fixed_bytes = total
         .checked_add(terminal_eor)
@@ -768,6 +769,7 @@ pub fn materialize_candidate_schedule(
         root_layout,
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
+        None,
     )?;
     if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
         || grinding_plan.nonce_max_bytes() != cached_grinding_cost.nonce_max_bytes

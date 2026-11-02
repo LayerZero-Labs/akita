@@ -60,8 +60,7 @@ where
         claims,
     )?;
     transcript::bind_outer_statement::<F, E, _>(grinding.state_mut(), level, &statement)?;
-    let coefficients =
-        batch_coefficients::<F, E, _>(grinding.state_mut(), statement.claims().len())?;
+    let coefficients = batch_coefficients::<F, E, _>(grinding, level, statement.claims().len())?;
     Ok(PreparedOuterSetup {
         statement,
         coefficients,

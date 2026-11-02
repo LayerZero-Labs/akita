@@ -147,6 +147,7 @@ pub(crate) fn prove_matching_byte_model<Cfg: CommitmentConfig>(
         &key.opening_layout().expect("opening layout"),
         policy.transcript_grinding_order().expect("grinding order"),
         policy.claim_ext_degree,
+        None,
     )
     .expect("grinding plan")
     .nonce_max_bytes();

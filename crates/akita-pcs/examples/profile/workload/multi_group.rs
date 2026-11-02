@@ -379,8 +379,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     };
 
     assert_observed_proof_size(label, &proof);
-    let grinding_plan = derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout)
-        .expect("profile grinding plan");
+    let grinding_plan =
+        derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout, None)
+            .expect("profile grinding plan");
     print_proof_summary(label, &proof, &schedule, &grinding_plan);
     report_proof_size_against_planner(
         label,

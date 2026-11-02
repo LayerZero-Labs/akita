@@ -255,8 +255,13 @@ where
     H: CommitmentHandleMetadata + 'static,
 {
     let setup_batch = opening.setup_batch;
-    let (resolved, claims, grinding_plan, descriptor_bytes) =
-        root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
+    let (resolved, claims, grinding_plan, descriptor_bytes) = root::resolve_root::<Cfg, H>(
+        expanded,
+        schedules,
+        opening,
+        basis,
+        setup_batch.map(|(level, _)| level),
+    )?;
     if setup_batch
         .is_some_and(|(level, _)| level as usize >= resolved.schedule().num_fold_levels() - 1)
     {

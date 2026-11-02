@@ -6,7 +6,7 @@ use crate::{
     powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
     CommittedGroupParams, DigitRangePlan, FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun,
     GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
-    TranscriptGrindingCost,
+    TranscriptGrindingCost, MAX_SETUP_BATCH_CLAIMS,
 };
 use akita_error::{
     narrowing::{usize_to_u32, usize_to_u64},
@@ -47,6 +47,7 @@ pub fn transcript_grinding_cost_for_planner_edge(
         relation_geometry.relation_point_variable_count(),
         layout,
         successor,
+        false,
     )?;
     if let FoldSuccessor::Terminal(terminal) = successor {
         append_terminal(
@@ -64,11 +65,15 @@ pub fn transcript_grinding_cost_for_planner_edge(
 }
 
 /// Derive the only accepted grinding plan from field metadata and public protocol shape.
+///
+/// `setup_batch_level` names the nonterminal fold whose Stage 3 also reduces a
+/// setup-claim batch, when the call carries one.
 pub fn derive_transcript_grinding_plan_from_public_shape(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
     challenge_order: ChallengeFieldOrder,
     claim_extension_degree: usize,
+    setup_batch_level: Option<u32>,
 ) -> Result<GrindingPlan, AkitaError> {
     schedule.validate_structure()?;
     schedule.validate_nonterminal_opening_execution(claim_extension_degree)?;
@@ -96,6 +101,11 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
             schedule.root.output_witness_len,
         )?
         .relation_point_variable_count();
+    if setup_batch_level.is_some_and(|level| level as usize > schedule.recursive_folds.len()) {
+        return Err(AkitaError::InvalidSetup(
+            "setup batch target must be a nonterminal fold".into(),
+        ));
+    }
     let mut predecessor_rounds = append_nonterminal(
         &mut sink,
         challenge_order,
@@ -105,6 +115,7 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
         root_rounds,
         root_layout,
         root_successor,
+        setup_batch_level == Some(0),
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
@@ -126,15 +137,17 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
                 fold.output_witness_len,
             )?
             .relation_point_variable_count();
+        let level = usize_to_u32(index + 1, "grinding level")?;
         predecessor_rounds = append_nonterminal(
             &mut sink,
             challenge_order,
             claim_extension_degree,
-            usize_to_u32(index + 1, "grinding level")?,
+            level,
             &fold.params,
             relation_rounds,
             &layout,
             successor,
+            setup_batch_level == Some(level),
         )?;
     }
 
@@ -162,6 +175,7 @@ fn append_nonterminal(
     relation_rounds: usize,
     layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
+    setup_batch: bool,
 ) -> Result<usize, AkitaError> {
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
@@ -286,6 +300,15 @@ fn append_nonterminal(
         rounds,
         degree: 3,
     })?;
+    // A setup batch draws its coefficients after Stage 2: Stage 3 then reduces
+    // the batch, or, without Stage 3, the verifier decides it directly.
+    if setup_batch {
+        sink.push(GrindingRun::proof_of_work(
+            GrindingSite::SetupBatch { level },
+            independent_batch_loss_factor(MAX_SETUP_BATCH_CLAIMS)?,
+            challenge_order,
+        )?)?;
+    }
     if let FoldSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
             sink.sumcheck_rounds(SumcheckRoundBatch {
@@ -294,11 +317,42 @@ fn append_nonterminal(
                 level,
                 stage: 0,
                 rounds: prefix.profile.group.num_vars(),
-                degree: 2,
+                degree: crate::SETUP_SUMCHECK_DEGREE,
             })?;
         }
     }
     Ok(rounds)
+}
+
+/// Derive the plan of one standalone setup-batch reduction: its coefficient
+/// query priced at the exact claim count, then its degree-two rounds.
+pub fn derive_setup_batch_grinding_plan(
+    challenge_order: ChallengeFieldOrder,
+    claims: usize,
+    rounds: usize,
+) -> Result<GrindingPlan, AkitaError> {
+    if claims == 0 || claims > MAX_SETUP_BATCH_CLAIMS {
+        return Err(AkitaError::InvalidInput("invalid setup batch shape".into()));
+    }
+    let mut runs = Vec::new();
+    let mut sink = |run| {
+        runs.push(run);
+        Ok(())
+    };
+    sink.push(GrindingRun::proof_of_work(
+        GrindingSite::SetupBatch { level: 0 },
+        independent_batch_loss_factor(claims)?,
+        challenge_order,
+    )?)?;
+    sink.sumcheck_rounds(SumcheckRoundBatch {
+        challenge_order,
+        protocol: SumcheckProtocol::SetupBatch,
+        level: 0,
+        stage: 0,
+        rounds,
+        degree: crate::SETUP_SUMCHECK_DEGREE,
+    })?;
+    GrindingPlan::new(runs, challenge_order)
 }
 
 fn append_terminal(
@@ -492,6 +546,7 @@ mod tests {
                         7,
                         &layout,
                         FoldSuccessor::Recursive(&successor),
+                        false,
                     )
                     .unwrap();
                     let alpha = runs
@@ -537,6 +592,7 @@ mod tests {
             expected_rounds,
             &layout,
             FoldSuccessor::Recursive(&successor),
+            false,
         )
         .expect("nonterminal grinding runs");
         assert_eq!(rounds, expected_rounds);
@@ -654,6 +710,7 @@ mod tests {
                             rounds,
                             &layout,
                             FoldSuccessor::Recursive(&successor),
+                            false,
                         )
                         .unwrap();
                         let mut priced = GrindingPlanAccumulator::new(challenge_order);
@@ -666,6 +723,7 @@ mod tests {
                             rounds,
                             &layout,
                             FoldSuccessor::Recursive(&successor),
+                            false,
                         )
                         .unwrap();
                         let materialized =
@@ -897,6 +955,7 @@ mod tests {
                 7,
                 &layout,
                 FoldSuccessor::Recursive(&successor),
+                false,
             )
             .unwrap();
             let batches = claim_batch_runs(&runs)

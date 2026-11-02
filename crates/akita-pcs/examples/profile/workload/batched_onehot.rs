@@ -162,8 +162,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         .schedule()
         .clone();
     let effective_schedule = plan.unwrap_or(&schedule);
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
-        .expect("profile grinding plan");
+    let grinding_plan =
+        derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch, None)
+            .expect("profile grinding plan");
     print_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     if let Some(plan) = plan {
         report_proof_size_against_planner(

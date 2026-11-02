@@ -595,7 +595,8 @@ where
         // The inherited statement was bound before the opening transcript.
         // Direct verification checks it separately from this fold's setup value.
         akita_types::setup_claims::transcript::batch_coefficients::<F, E, _>(
-            grinding.state_mut(),
+            grinding,
+            level,
             inherited.claims().len(),
         )?;
     }
@@ -703,10 +704,8 @@ where
     if let Some(statement) = batch_statement {
         use akita_types::setup_claims::transcript;
         transcript::bind_outer_statement::<F, E, _>(grinding.state_mut(), level, &statement)?;
-        let coefficients = transcript::batch_coefficients::<F, E, _>(
-            grinding.state_mut(),
-            statement.claims().len(),
-        )?;
+        let coefficients =
+            transcript::batch_coefficients::<F, E, _>(grinding, level, statement.claims().len())?;
         let claim = backend.bind_setup_batch(&mut stage3, &statement, &coefficients)?;
         return Ok((claim, stage3, rounds));
     }

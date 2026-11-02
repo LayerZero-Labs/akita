@@ -14,11 +14,11 @@ use akita_algebra::{
 };
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
+use akita_types::AkitaVerifierSetup;
 use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
     OpeningFamily, ReducedCompressionRelationWeights,
 };
-use akita_types::{AkitaVerifierSetup, GrindingReplay};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -423,7 +423,8 @@ where
             ));
         }
         let coefficients = akita_types::setup_claims::transcript::batch_coefficients::<F, E, _>(
-            grinding.state_mut(),
+            grinding,
+            level,
             inherited.claims().len(),
         )?;
         match mode {

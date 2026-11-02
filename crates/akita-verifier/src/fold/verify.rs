@@ -130,6 +130,10 @@ where
             selection,
             schedule,
             basis,
+            accumulator
+                .as_ref()
+                .and_then(|a| a.batch.as_ref())
+                .map(|(level, _)| *level),
         )?;
         let state = akita_transcript::new_verifier_channel(session, &descriptor_bytes, proof)?;
         let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);

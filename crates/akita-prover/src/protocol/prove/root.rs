@@ -9,6 +9,7 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
     schedules: &'s TrustedScheduleCatalog<Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
     basis: BasisMode,
+    setup_batch_level: Option<u32>,
 ) -> Result<
     (
         &'s akita_config::ResolvedScheduleRow,
@@ -42,6 +43,7 @@ where
             selection,
             resolved.schedule(),
             basis,
+            setup_batch_level,
         )?;
     Ok((resolved, claims, grinding_plan, descriptor_bytes))
 }

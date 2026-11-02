@@ -1,13 +1,14 @@
-//! Standalone batch grammar. All claims are absorbed by the channel's instance before randomization.
+//! Setup-batch grammar. Statements are bound before randomization, and every
+//! batch coefficient and reduction round is a grinding-priced query.
 use super::SetupBatchStatement;
+use crate::{GrindingReplay, ProverGrinding, VerifierGrinding};
 use akita_error::AkitaError;
-use akita_sumcheck::{SumcheckProverChannel, SumcheckRole, SumcheckVerifierChannel};
+use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingSite};
 use akita_transcript::{
-    exchange_extension_group, ext_challenge, new_prover_channel, new_verifier_channel,
-    ProofChannel, ProtocolSiteId, ProverChannel, VerifierChannel,
+    exchange_extension_group, new_prover_channel, new_verifier_channel, ProofChannel,
+    ProtocolSiteId,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
-use std::marker::PhantomData;
 
 const FAMILY: u32 = 0x53424154;
 fn site(invocation: u32, round: u32, detail: u32) -> ProtocolSiteId {
@@ -20,18 +21,18 @@ fn site(invocation: u32, round: u32, detail: u32) -> ProtocolSiteId {
     }
 }
 
-pub fn batch_coefficients<F, E, S>(state: &mut S, count: usize) -> Result<Vec<E>, AkitaError>
+/// Draw one independent coefficient per claim behind the batch's grinding query.
+pub fn batch_coefficients<F, E, G>(
+    grinding: &mut G,
+    level: u32,
+    count: usize,
+) -> Result<Vec<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    S: ProofChannel,
+    G: GrindingReplay,
 {
-    (0..count)
-        .map(|index| {
-            let index = u32::try_from(index).map_err(|_| AkitaError::InvalidProof)?;
-            ext_challenge::<F, E, _>(state, site(index, 0, 10))
-        })
-        .collect()
+    grinding.grinded_ext_challenges::<F, E>(GrindingSite::SetupBatch { level }, count)
 }
 
 pub fn setup_evaluation<F, E, S>(state: &mut S, mut value: E) -> Result<E, AkitaError>
@@ -44,66 +45,83 @@ where
     Ok(value)
 }
 
-pub struct SetupBatchProverChannel<F: Field, E> {
-    pub state: ProverChannel,
-    marker: PhantomData<(F, E)>,
-}
-impl<F: Field + CanonicalEncoding, E: ExtField<F>> SetupBatchProverChannel<F, E> {
-    pub fn new(session: &[u8], statement: &SetupBatchStatement<E>) -> Result<Self, AkitaError> {
-        Ok(Self {
-            state: new_prover_channel(session, &statement.descriptor_bytes::<F>()?)?,
-            marker: PhantomData,
-        })
-    }
-}
-impl<F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckProverChannel<E>
-    for SetupBatchProverChannel<F, E>
+/// Public grinding plan of a standalone reduction over `statement`.
+///
+/// Rejects field towers whose challenge sampling is uncertified, or whose
+/// queries cannot reach the 128-bit rate within the grinding limit.
+pub fn standalone_grinding_plan<F, E>(
+    statement: &SetupBatchStatement<E>,
+) -> Result<GrindingPlan, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
 {
-    fn state_mut(&mut self) -> &mut ProverChannel {
-        &mut self.state
+    if !akita_transcript::field_sampling_is_certified(
+        F::NUM_BYTES,
+        F::MODULUS_BITS,
+        akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT,
+    ) {
+        return Err(AkitaError::InvalidSetup(
+            "setup batch field-challenge sampling is not certified".into(),
+        ));
     }
-    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
-        site(invocation, round, role as u32)
-    }
-    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        ext_challenge::<F, E, _>(
-            &mut self.state,
-            site(invocation, round, SumcheckRole::Challenge as u32),
-        )
-    }
+    let challenge_order = ChallengeFieldOrder::from_field(
+        F::MODULUS_BITS,
+        E::DEGREE,
+        akita_params::field_modulus::<F>()?,
+    )?;
+    akita_params::derive_setup_batch_grinding_plan(
+        challenge_order,
+        statement.claims().len(),
+        statement.polynomial().num_variables(),
+    )
 }
 
-pub struct SetupBatchVerifierChannel<'proof, F: Field, E> {
-    pub state: VerifierChannel<'proof>,
-    marker: PhantomData<(F, E)>,
-}
-impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> SetupBatchVerifierChannel<'proof, F, E> {
-    pub fn new(
-        session: &[u8],
-        statement: &SetupBatchStatement<E>,
-        proof: &'proof [u8],
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
-            state: new_verifier_channel(session, &statement.descriptor_bytes::<F>()?, proof)?,
-            marker: PhantomData,
-        })
-    }
-}
-impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckVerifierChannel<'proof, E>
-    for SetupBatchVerifierChannel<'proof, F, E>
+/// Instance bytes of a standalone reduction: its statement, then its plan digest.
+fn standalone_instance<F, E>(
+    statement: &SetupBatchStatement<E>,
+    plan: &GrindingPlan,
+) -> Result<Vec<u8>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
 {
-    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
-        &mut self.state
-    }
-    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
-        site(invocation, round, role as u32)
-    }
-    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        ext_challenge::<F, E, _>(
-            &mut self.state,
-            site(invocation, round, SumcheckRole::Challenge as u32),
-        )
-    }
+    let mut bytes = statement.descriptor_bytes::<F>()?;
+    bytes.extend_from_slice(&plan.digest()?);
+    Ok(bytes)
+}
+
+/// Start the prover side of a standalone reduction under `plan`.
+pub fn standalone_prover<'plan, F, E>(
+    session: &[u8],
+    statement: &SetupBatchStatement<E>,
+    plan: &'plan GrindingPlan,
+) -> Result<ProverGrinding<'plan>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let state = new_prover_channel(session, &standalone_instance::<F, E>(statement, plan)?)?;
+    Ok(ProverGrinding::new(state, plan))
+}
+
+/// Start the verifier side of a standalone reduction under `plan`.
+pub fn standalone_verifier<'proof, 'plan, F, E>(
+    session: &[u8],
+    statement: &SetupBatchStatement<E>,
+    plan: &'plan GrindingPlan,
+    proof: &'proof [u8],
+) -> Result<VerifierGrinding<'proof, 'plan>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let state = new_verifier_channel(
+        session,
+        &standalone_instance::<F, E>(statement, plan)?,
+        proof,
+    )?;
+    Ok(VerifierGrinding::new(state, plan))
 }
 
 /// Bind a complete inherited or combined collection in the outer proof stream.

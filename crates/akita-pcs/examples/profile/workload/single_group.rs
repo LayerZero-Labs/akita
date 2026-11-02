@@ -146,8 +146,9 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .as_ref()
             .expect("runtime schedule was resolved")
     });
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
-        .expect("profile grinding plan");
+    let grinding_plan =
+        derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch, None)
+            .expect("profile grinding plan");
     print_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     tracing::info!(
         label,

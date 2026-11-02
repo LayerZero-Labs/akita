@@ -64,12 +64,20 @@ sumcheck. Terminal verification checks output = s * sum_i lambda_i W_i(r).
 The existing successor checks S(r) = s. A standalone reduction, when explicitly
 requested, instead returns this condition to its caller.
 
-For interactive uniform field challenges, random batching contributes at most
-1/|E| error for a fixed false vector of claims, and degree-two sumcheck adds
-at most 2n/|E| per reduction. Recursive composition must account for every
-layer and the underlying execution proof. These interactive bounds alone do
-not establish Fiat-Shamir accumulation security in the quantum random oracle
-model; that composition requires protocol review before production deployment.
+Every batching draw and reduction round is a transcript-grinding query priced
+to the 128-bit per-query rate of the transcript-grinding spec. The coefficients
+of one batch share a `SetupBatch` proof-of-work query with the independent-batch
+loss of its claim count. Inside an opening proof the public plan is fixed before
+the combined statement exists, so that query is priced at
+`MAX_SETUP_BATCH_CLAIMS`, the largest statement `SetupBatchStatement::new`
+admits; it sits after Stage 2, before any Stage 3 round of the target fold. A
+standalone reduction binds its own plan digest after the statement, prices the
+batch at its exact claim count, and grinds each degree-two round. A field tower
+that cannot reach the per-query rate within the grinding limit is rejected
+before any proof message. Recursive composition must account for every layer
+and the underlying execution proof. These per-query bounds alone do not
+establish Fiat-Shamir accumulation security in the quantum random oracle model;
+that composition requires protocol review before production deployment.
 
 ## Implementation and invariants
 

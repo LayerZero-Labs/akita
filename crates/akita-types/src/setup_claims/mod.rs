@@ -151,7 +151,7 @@ impl<E: Field> SetupBatchStatement<E> {
         coefficient_len: usize,
         claims: Vec<SetupClaim<E>>,
     ) -> Result<Self, AkitaError> {
-        if claims.len() > 65536 {
+        if claims.len() > akita_params::MAX_SETUP_BATCH_CLAIMS {
             return Err(AkitaError::InvalidInput("invalid setup batch shape".into()));
         }
         polynomial.validate_split(coefficient_len)?;

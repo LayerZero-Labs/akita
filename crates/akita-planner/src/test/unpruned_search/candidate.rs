@@ -453,6 +453,7 @@ pub(in crate::schedule_params) fn prepend_root(
         &opening_layout,
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
+        None,
     )?;
     let edge_wise_cost = candidate.cost.grinding_cost();
     if edge_wise_cost.total_nonce_bits != plan.total_nonce_bits()
