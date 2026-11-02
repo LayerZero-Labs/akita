@@ -153,9 +153,13 @@ impl XofCursor {
         self.next_usize_masked(modulus, (1usize << bits) - 1)
     }
 
-    /// The caller supplies the exact rejection mask; stream consumption is unchanged.
+    /// Uniformly sample from `0..modulus` by rejection under `mask`, which must
+    /// be `modulus.next_power_of_two() - 1`, the mask [`Self::next_usize_mod`]
+    /// derives. A smaller mask narrows the support and a larger one changes the
+    /// bytes consumed.
     #[inline(always)]
     pub(crate) fn next_usize_masked(&mut self, modulus: usize, mask: usize) -> usize {
+        debug_assert!(modulus <= 1 || mask == modulus.next_power_of_two() - 1);
         if modulus == 1 {
             return 0;
         }

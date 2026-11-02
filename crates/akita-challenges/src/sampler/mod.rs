@@ -149,7 +149,7 @@ impl IndexedChallengeWorker {
                 && cfg.count_pm1 == crate::D64_PRODUCTION_PM1_COUNT
                 && cfg.count_pm2 == crate::D64_PRODUCTION_PM2_COUNT
             {
-                return Ok(signed_sparse::sample_production64(&mut self.cursor));
+                return signed_sparse::sample_production64(&mut self.cursor);
             }
             self.scratch
                 .sample(&mut self.cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
