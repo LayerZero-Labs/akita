@@ -122,7 +122,7 @@ fn check_polynomials<F: Field, E: ExtField<F>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Prime128OffsetA7F7 as F, Ring};
+    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
     #[test]
     fn quotient_matches_exact_negacyclic_product_and_rejects_tampering() {
