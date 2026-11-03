@@ -10,6 +10,7 @@ use akita_algebra::row_batch::WeightedRowBatch;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SETUP_SUMCHECK_DEGREE};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 #[cfg(test)]
 use akita_types::AkitaExpandedSetup;
 use akita_types::{
@@ -38,7 +39,7 @@ fn verify_setup_sumcheck<F, E>(
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
     let input = statement.input_claim(coefficients)?;
     let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
@@ -84,7 +85,7 @@ pub(crate) fn verify_stage3<F, E>(
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + ExtField<F>,
+    E: FpExtEncoding<F> + ExtField<F> + ChallengeCodec,
 {
     let singleton;
     let unit_coefficient = [E::one()];
@@ -393,9 +394,9 @@ mod tests {
         .unwrap();
         for coefficient in [F::one(), F::from_u64(7)] {
             for endpoint in [value, value + F::one()] {
-                let state =
-                    akita_transcript::new_prover_channel(b"checked-stage3", b"fixture").unwrap();
-                let mut prover = ProverGrinding::new(state, &plan);
+                let mut state = akita_transcript::new_prover_channel(b"checked-stage3");
+                akita_transcript::bind_instance(&mut state, b"fixture").unwrap();
+                let mut prover = ProverGrinding::new(&mut state, &plan);
                 let mut channel = akita_types::GrindingSumcheckProver::<F, F>::new(
                     &mut prover,
                     akita_params::SumcheckProtocol::Stage3,
@@ -410,11 +411,11 @@ mod tests {
                 )
                 .unwrap();
                 akita_types::stage3_prefix_eval::<F, F, _>(&mut prover, 0, endpoint).unwrap();
-                let proof = prover.finish().unwrap();
-                let state =
-                    akita_transcript::new_verifier_channel(b"checked-stage3", b"fixture", &proof)
-                        .unwrap();
-                let mut verifier = VerifierGrinding::new(state, &plan);
+                prover.finish().unwrap();
+                let proof = state.narg_string().to_vec();
+                let mut state = akita_transcript::new_verifier_channel(b"checked-stage3", &proof);
+                akita_transcript::bind_instance(&mut state, b"fixture").unwrap();
+                let mut verifier = VerifierGrinding::new(&mut state, &plan);
                 let result = verify_setup_sumcheck::<F, F>(
                     &statement,
                     &[coefficient],
@@ -426,7 +427,7 @@ mod tests {
                     let replay = result.unwrap();
                     assert_eq!(replay.setup_prefix_eval, value);
                     assert_eq!(replay.claim, value);
-                    verifier.finish().unwrap();
+                    verifier.finish().unwrap().check_eof(state).unwrap();
                 } else {
                     assert!(matches!(result, Err(AkitaError::InvalidProof)));
                 }

@@ -79,5 +79,6 @@ pub use jolt_field::{
 pub use scheme::AkitaCommitmentScheme;
 
 pub use akita_prover::{
-    batched_prove, BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy,
+    batched_prove, batched_prove_embedded, BackendId, BackendRegistry, FixedFoldRoute,
+    FoldExecutionPolicy,
 };

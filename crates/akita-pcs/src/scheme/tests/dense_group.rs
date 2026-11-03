@@ -29,11 +29,11 @@ fn dense_group_commit_freezes_scalar_s_profile() {
         .expect("dense group commit");
 
     assert_eq!(
-        commitment.profile.group,
+        commitment.profile().group,
         akita_params::PolynomialGroupLayout::new(NUM_VARS, 1)
     );
     assert_eq!(
-        commitment.profile,
+        *commitment.profile(),
         catalog_profile(
             &scheme,
             akita_params::PolynomialGroupLayout::new(NUM_VARS, 1)
@@ -41,6 +41,6 @@ fn dense_group_commit_freezes_scalar_s_profile() {
     );
     assert_eq!(
         commitment.rows().count(),
-        commitment.profile.outer.matrix.output_rank()
+        commitment.profile().outer.matrix.output_rank()
     );
 }

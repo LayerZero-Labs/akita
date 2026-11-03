@@ -90,12 +90,12 @@ mod tests {
                 plan.digest().unwrap(),
             ),
             (
-                43,
-                52,
-                401,
+                45,
+                54,
+                411,
                 [
-                    69, 170, 107, 40, 179, 73, 208, 25, 96, 189, 197, 103, 207, 11, 78, 196, 240,
-                    182, 9, 18, 185, 206, 21, 150, 129, 87, 173, 190, 122, 143, 211, 191,
+                    48, 26, 181, 199, 118, 240, 1, 152, 204, 109, 49, 231, 66, 245, 116, 198, 0,
+                    73, 193, 192, 239, 238, 163, 129, 239, 145, 18, 65, 180, 182, 114, 79
                 ],
             )
         );
@@ -156,12 +156,9 @@ mod tests {
             )
             .unwrap();
             for exponent in 0..akita_params::MAX_GRINDING_BITS {
-                assert_eq!(
-                    akita_params::grind_bits_for_loss(1u64 << exponent, order).unwrap(),
-                    exponent + 1,
-                );
+                assert_eq!(order.grind_bits(1u64 << exponent).unwrap(), exponent + 1,);
             }
-            assert_eq!(akita_params::grind_bits_for_loss(3, order).unwrap(), 2);
+            assert_eq!(order.grind_bits(3).unwrap(), 2);
         }
         check::<fp128::OneHot>();
         check::<crate::proof_optimized::fp64::OneHot>();
@@ -186,6 +183,10 @@ mod tests {
                 let count = |kind| plan.runs().iter().filter(|run| run.kind() == kind).count();
                 assert_eq!(
                     count(GrindingQueryKind::FoldResponse),
+                    row.schedule().num_fold_levels()
+                );
+                assert_eq!(
+                    count(GrindingQueryKind::FoldChallengeWork),
                     row.schedule().num_fold_levels()
                 );
                 let expected_evaluation_batch_levels =

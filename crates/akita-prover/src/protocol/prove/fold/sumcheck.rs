@@ -1,4 +1,5 @@
 use super::*;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use jolt_poly::UnivariatePoly;
 
@@ -163,7 +164,15 @@ pub(super) fn prove_stage1<F, E, B>(
 ) -> Result<Stage1ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Send + Sync + 'static,
-    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + Send + Sync + 'static,
+    E: ExtField<F>
+        + Unreduced
+        + Fold
+        + Ring
+        + AkitaSerialize
+        + Send
+        + Sync
+        + 'static
+        + ChallengeCodec,
     B: crate::backend::OpaqueStage1Kernel<F, E>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -250,7 +259,7 @@ where
             ));
         }
         akita_types::stage1_child_claims::<F, E, _>(grinding, level, stage, &mut child_claims)?;
-        let gamma = grinding.grinded_ext_challenge::<F, E>(
+        let gamma = grinding.grinded_ext_challenge::<E>(
             akita_params::GrindingSite::Stage1InterstageBatch { level, stage },
         )?;
         let weights = plan
@@ -300,7 +309,7 @@ where
         let norm_claim = if subclaims.is_empty() {
             E::from_u128(response_l2_sq)
         } else {
-            let gamma = grinding.grinded_ext_challenge::<F, E>(
+            let gamma = grinding.grinded_ext_challenge::<E>(
                 akita_params::GrindingSite::L2SubclaimBatch { level },
             )?;
             crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
@@ -317,7 +326,7 @@ where
             })
         };
         let merge = grinding
-            .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2NormMerge { level })?;
+            .grinded_ext_challenge::<E>(akita_params::GrindingSite::L2NormMerge { level })?;
         crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
             ctx.backend(),
             &mut session_handle,
@@ -498,7 +507,7 @@ pub(super) fn prove_stage2<F, E, B>(
 ) -> Result<Stage2ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + ChallengeCodec,
     B: crate::backend::OpaqueStage2Kernel<F, E>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -631,7 +640,8 @@ where
         + ExtField<F>
         + AkitaSerialize
         + jolt_field::Unreduced
-        + jolt_field::MulBaseUnreduced<F>,
+        + jolt_field::MulBaseUnreduced<F>
+        + ChallengeCodec,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
     let id = next_level_params
@@ -733,6 +743,7 @@ pub(super) fn prove_stage3<F, E, B>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + Ring
         + ExtField<F>
         + AkitaSerialize

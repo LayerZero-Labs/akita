@@ -120,7 +120,7 @@ pub(super) fn consider_child_suffixes<'a>(
 fn parent_visible_cost(
     policy: &PlannerPolicy,
     first: Option<&akita_params::CommittedGroupParams>,
-    terminal: Option<&akita_params::TerminalFoldParams>,
+    terminal: Option<&super::CandidateTerminalResponse>,
 ) -> Result<ParentObservableKey, AkitaError> {
     ParentObservableKey::new(policy, first, terminal)
 }
@@ -135,7 +135,7 @@ fn first_parent_visible_cost(
         candidate
             .folds
             .is_empty()
-            .then_some(&candidate.terminal.params),
+            .then_some(candidate.terminal.as_ref()),
     )
 }
 

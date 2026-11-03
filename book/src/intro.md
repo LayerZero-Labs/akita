@@ -208,22 +208,25 @@ classical or quantum.
   do not account for the loss of the reduction from a successful prover to a
   Module-SIS solution.
 - **Fiat-Shamir.** Transcript checks are analyzed in the classical
-  random-oracle model. Sparse fold-challenge addresses have a 128-bit
-  per-address rate under the grinding specification's indexed fold bound.
-  That bound assumes the accepting-tree extraction described in the binding
-  chapter, the ability to sample each complete indexed oracle stream with its
-  exact distribution conditioned on the selected challenge value, and an
-  address that binds each challenge to its preceding transcript prefix. Every accepted challenge set has at least $2^{128}$ elements,
+  random-oracle model. Each commitment group of a fold draws its sparse
+  challenges from one fixed-length squeezed message, with nothing absorbed
+  between groups; the instance descriptor binds each group's opening method,
+  dimensions, challenge family and counts. One proof of work per fold, the
+  least $g$ with $W \cdot 2^{128} \le |C| \cdot 2^g$ for the fold's $W$
+  pairs and its smallest challenge set $C$, gives each fold message a 128-bit
+  per-call rate under the grinding specification's fold bound. That bound
+  assumes the accepting-tree extraction described in the binding chapter and
+  that one accepted challenge of a message can be resampled with its exact
+  distribution, which the specification shows for both decoder families. Every accepted challenge set has at least $2^{128}$ elements,
   but support size alone does not give the rate. Each typed field challenge
   is priced so that its local algebraic loss meets a 128-bit per-query rate,
   with proof-of-work where needed. Extending that rate to the complete
   extraction tree also requires, at every field site, a proof that its
   full-tree debit is at most the local loss, or a target raised to price the
   debit. Akita has no such field-address ledger. A complete claim also needs
-  an adversarial query budget, the fold-coordinate completion bound
-  instantiated for the selected schedule, bounds on field challenges first
-  queried by final verification and on the distinct transcript contexts that
-  produce group roots, a certificate that the extraction tree has polynomial
+  an adversarial query budget, bounds on the field challenges and fold
+  messages first queried by final verification, a certificate that the
+  extraction tree has polynomial
   size, and Module-SIS success probabilities evaluated at the extractor's
   expected running time. None of these is declared today. The total over an
   attacker's query budget grows with the budget and is not reported per

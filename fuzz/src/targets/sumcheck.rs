@@ -17,7 +17,7 @@ use akita_sumcheck::{
     SumcheckVerifierChannel,
 };
 use akita_transcript::{
-    ext_challenge, new_prover_channel, new_verifier_channel, ProtocolSiteId,
+    ext_challenge, new_prover_channel, new_verifier_channel, ChallengeCodec, ProtocolSiteId,
     ProverChannel as ProverState, VerifierChannel as VerifierState, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -48,7 +48,7 @@ struct ProverChannel<F, E> {
     _marker: PhantomData<(F, E)>,
 }
 
-impl<F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckProverChannel<E>
+impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> SumcheckProverChannel<E>
     for ProverChannel<F, E>
 {
     fn state_mut(&mut self) -> &mut ProverState {
@@ -60,7 +60,7 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckProverChannel<E>
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        ext_challenge::<F, E, _>(
+        ext_challenge::<E, _>(
             &mut self.state,
             site(invocation, round, SumcheckRole::Challenge),
         )
@@ -73,8 +73,8 @@ struct VerifierChannel<'proof, F, E> {
     _marker: PhantomData<(F, E)>,
 }
 
-impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckVerifierChannel<'proof, E>
-    for VerifierChannel<'proof, F, E>
+impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>
+    SumcheckVerifierChannel<'proof, E> for VerifierChannel<'proof, F, E>
 {
     fn state_mut(&mut self) -> &mut VerifierState<'proof> {
         &mut self.state
@@ -85,7 +85,7 @@ impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F>> SumcheckVerifierChann
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
-        ext_challenge::<F, E, _>(
+        ext_challenge::<E, _>(
             &mut self.state,
             site(invocation, round, SumcheckRole::Challenge),
         )
@@ -190,7 +190,7 @@ impl<E: Field> SumcheckInstanceVerifier<E> for ProductVerifier<E> {
     }
 }
 
-fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
+fn case<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(reader: &mut Reader<'_>) {
     // The negative-check choice leads the input so large tables cannot starve it.
     let negative = reader.u8() % 4;
     let tamper_offset = reader.u32() as usize;
@@ -226,7 +226,7 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
         claim,
     };
     let mut prover = ProverChannel::<F, E> {
-        state: new_prover_channel(&session, b"akita-fuzz/sumcheck").expect("bounded session"),
+        state: new_prover_channel(&session),
         _marker: PhantomData,
     };
     let (challenges, final_claim) = prove_sumcheck::<F, E, _, _>(
@@ -253,8 +253,7 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
             claim,
         };
         let mut channel = VerifierChannel::<F, E> {
-            state: new_verifier_channel(&session, b"akita-fuzz/sumcheck", proof)
-                .expect("bounded session"),
+            state: new_verifier_channel(&session, proof),
             _marker: PhantomData,
         };
         let replayed = verify_sumcheck::<F, E, _, _>(&verifier, &mut channel, shape, invocation)?;

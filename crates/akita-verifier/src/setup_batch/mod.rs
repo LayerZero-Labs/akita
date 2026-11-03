@@ -2,14 +2,16 @@
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_error::{checked, AkitaError};
 use akita_sumcheck::{verify_sumcheck_rounds, SumcheckShape};
+use akita_transcript::ChallengeCodec;
 use akita_types::{
     setup_claims::{
         transcript::{
-            batch_coefficients, setup_evaluation, standalone_grinding_plan, standalone_verifier,
+            batch_coefficients, setup_evaluation, standalone_grinding_plan,
+            standalone_verifier_channel,
         },
         SetupAccumulator, SetupBatchProof, SetupBatchStatement, SetupPolynomialId,
     },
-    AkitaExpandedSetup, FpExtEncoding, GrindingReplay, GrindingSumcheckVerifier,
+    AkitaExpandedSetup, FpExtEncoding, GrindingReplay, GrindingSumcheckVerifier, VerifierGrinding,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -23,7 +25,7 @@ pub fn verify_setup_batch_deferred<F, E>(
 ) -> Result<SetupAccumulator<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + ExtField<F>,
+    E: FpExtEncoding<F> + ExtField<F> + ChallengeCodec,
 {
     if statement.polynomial() != expected {
         return Err(AkitaError::InvalidInput(
@@ -31,7 +33,9 @@ where
         ));
     }
     let plan = standalone_grinding_plan::<F, E>(statement)?;
-    let mut grinding = standalone_verifier::<F, E>(session, statement, &plan, proof.argument())?;
+    let mut state =
+        standalone_verifier_channel::<F, E>(session, statement, &plan, proof.argument())?;
+    let mut grinding = VerifierGrinding::new(&mut state, &plan);
     let coefficients = batch_coefficients::<F, E, _>(&mut grinding, 0, statement.claims().len())?;
     let input_claim = statement.input_claim(&coefficients)?;
     let replay = verify_sumcheck_rounds::<F, E, _>(
@@ -53,7 +57,7 @@ where
     if replay.output_claim != value * weight {
         return Err(AkitaError::InvalidProof);
     }
-    grinding.finish()?;
+    grinding.finish()?.check_eof(state)?;
     SetupAccumulator::new(expected.clone(), replay.challenges, value)
 }
 

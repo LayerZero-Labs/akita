@@ -95,7 +95,11 @@ fn fused_preparation_scans_once_and_preserves_answers_and_proof_bytes() {
 fn fused_preparation<B, E>()
 where
     B: Field + CanonicalEncoding,
-    E: FpExtEncoding<B> + ExtField<B> + Ring + MulBaseUnreduced<B>,
+    E: FpExtEncoding<B>
+        + ExtField<B>
+        + Ring
+        + MulBaseUnreduced<B>
+        + akita_transcript::ChallengeCodec,
 {
     let source = setup::<B>(512);
     let backend = CpuBackend::<B, E>::new(Arc::clone(&source)).unwrap();

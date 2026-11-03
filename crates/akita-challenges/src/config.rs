@@ -85,17 +85,6 @@ impl OperatorNormRejection {
         }
         Ok(())
     }
-
-    /// Canonical transcript-domain bytes for this rejection policy.
-    pub fn domain_separator_bytes(self) -> [u8; 17] {
-        let mut out = [0u8; 17];
-        out[0] = 2;
-        out[1..5].copy_from_slice(&self.threshold.to_le_bytes());
-        out[5..9].copy_from_slice(&self.fractional_bits.to_le_bytes());
-        out[9..13].copy_from_slice(&self.root_coordinate_error_units.to_le_bytes());
-        out[13..17].copy_from_slice(&self.rounding_margin_units.to_le_bytes());
-        out
-    }
 }
 
 /// Exact challenge config paired with
@@ -154,32 +143,20 @@ macro_rules! production_fold_challenge_ring_dims {
     };
 }
 
-// Each consumer uses this one production-family catalog: policy tables and
-// sampler specializations cannot independently drift in dimensions or weights.
-macro_rules! production_fold_challenge_families {
-    ($consumer:ident) => {
-        $consumer! {
-            (64, $crate::config::D64_PRODUCTION_PM1_COUNT, $crate::config::D64_PRODUCTION_PM2_COUNT, 128),
-            (128, 31, 0, 129),
-            (256, 23, 0, 131),
-            (512, 19, 0, 132),
-            (1024, 16, 0, 131),
-            (2048, 14, 0, 131),
-        }
-    };
-}
-pub(crate) use production_fold_challenge_families;
+production_fold_challenge_ring_dims!(64, 128, 256, 512, 1024, 2048);
 
-macro_rules! define_production_families {
-    ($(($dim:literal, $pm1:expr, $pm2:expr, $bits:literal)),+ $(,)?) => {
-        production_fold_challenge_ring_dims!($($dim),+);
-        // floor(log2(support)), independently recomputed by the entropy tests.
-        const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize, u32)] = &[
-            $(($dim, $pm1, $pm2, $bits)),+
-        ];
-    };
-}
-production_fold_challenge_families!(define_production_families);
+// The last coordinate is floor(log2(support)). It lets the verifier and the
+// offline planner validate the fixed production families without repeatedly
+// evaluating dozens of floating-point logarithms. The tests below recompute
+// every value from the canonical support formula.
+const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize, u32)] = &[
+    (64, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT, 128),
+    (128, 31, 0, 129),
+    (256, 23, 0, 131),
+    (512, 19, 0, 132),
+    (1024, 16, 0, 131),
+    (2048, 14, 0, 131),
+];
 
 /// Fixed-weight sparse ring fold challenge family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -322,16 +299,6 @@ impl SparseChallengeConfig {
     pub fn validate_for_ring_dim(&self, ring_d: usize) -> Result<(), &'static str> {
         self.validate_dyn(ring_d)?;
         self.validate_min_entropy_for_ring_dim(ring_d, MIN_FOLD_CHALLENGE_ENTROPY_BITS)
-    }
-
-    /// Canonical byte encoding used for transcript domain separation.
-    #[inline]
-    pub fn domain_separator_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + 16);
-        out.push(0);
-        out.extend_from_slice(&(self.count_pm1 as u64).to_le_bytes());
-        out.extend_from_slice(&(self.count_pm2 as u64).to_le_bytes());
-        out
     }
 
     /// Validate basic invariants for a given ring degree `D`.

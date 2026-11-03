@@ -40,7 +40,6 @@ pub(super) fn schedule_descriptor_bytes(
             output_witness_len: fold.output_witness_len,
         });
     let terminal = akita_params::TerminalFoldParams {
-        fold_challenge_config: candidate.terminal.sparse_challenge_config,
         response_shape: candidate.terminal.response_shape.clone(),
         input_witness_len: candidate.terminal.input_witness_len,
         ..candidate.terminal.params.clone()

@@ -26,6 +26,7 @@ use crate::stages::stage3::verify_stage3;
 use akita_error::AkitaError;
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_transcript::FIELD_DIGEST_BYTES;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, RingVec};
@@ -97,7 +98,12 @@ pub(crate) fn verify_fold<F, E>(
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     let level = prepared.level;
     let relation_geometry = validate_fold_payloads(&prepared)?;

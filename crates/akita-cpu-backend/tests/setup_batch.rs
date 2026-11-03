@@ -4,6 +4,7 @@ use akita_prover::backend::{SetupBatchBackend, SetupBatchKernel};
 use akita_prover::prove_setup_batch;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::SumcheckKernel;
+use akita_transcript::ChallengeCodec;
 use akita_types::{
     derive_public_matrix_prefix,
     setup_claims::{SetupAccumulator, SetupBatchProof, SetupClaim},
@@ -36,7 +37,7 @@ fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>>
 fn batch<B, E>(memory: SetupBatchMemory) -> Vec<u8>
 where
     B: Field + CanonicalEncoding,
-    E: FpExtEncoding<B> + ExtField<B> + Ring + MulBaseUnreduced<B>,
+    E: FpExtEncoding<B> + ExtField<B> + Ring + MulBaseUnreduced<B> + ChallengeCodec,
 {
     let source = setup::<B>(512);
     let backend = CpuBackend::<B, E>::new(Arc::clone(&source)).unwrap();

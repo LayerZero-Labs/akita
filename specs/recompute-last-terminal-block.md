@@ -65,10 +65,11 @@ and have the verifier recover and check both blocks.
 
 ### Non-Goals
 
-- Choosing the digest hash. `field_digest` uses a fresh instance of the
-  transcript sponge, so it follows the transcript backend. The transcript
-  stack starting at [#253](https://github.com/LayerZero-Labs/akita/pull/253)
-  owns any change to that hash.
+- Choosing the digest hash. Under the v8 transcript
+  ([#253](https://github.com/LayerZero-Labs/akita/pull/253)), `field_digest`
+  hashes with `jolt_transcript::DIGEST_HASH`, the hash that commitment digests
+  use and that the protocol tag names (SHA3-256, or Keccak-256 under
+  `keccak256-digests`).
 - A claim against a prover with quantum access to the digest oracle.
 - Omitting more than one block per segment.
 

@@ -5,6 +5,7 @@ use akita_error::AkitaError;
 use akita_params::{
     CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaimsLayout, OpeningScheduleSelection,
 };
+use akita_transcript::CommitmentDigest;
 use akita_types::GrindingReplay;
 use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -12,6 +13,9 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 pub struct SelectedProverOpeningData<'a, E: Field, H, F: Field> {
     profile: CommittedGroupBatchProfile,
     selection: OpeningScheduleSelection,
+    /// Digests of the root groups, in claim order, taken from the same
+    /// committed groups as the claims' rows.
+    digests: Vec<CommitmentDigest>,
     opening_data: ProverOpeningData<'a, E, H, F>,
     pub(crate) setup_batch: Option<(u32, &'a akita_types::setup_claims::SetupBatchStatement<E>)>,
 }
@@ -81,6 +85,11 @@ impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
             setup_batch: None,
             profile,
             selection,
+            digests: claims
+                .groups()
+                .iter()
+                .map(|group| *group.commitment().digest())
+                .collect(),
             opening_data: ProverOpeningData::from_parts(
                 OpeningClaims::from_groups(groups)?,
                 opening_layout,
@@ -132,8 +141,12 @@ impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
     }
     pub(crate) fn into_low_level_parts(
         self,
-    ) -> (OpeningScheduleSelection, ProverOpeningData<'a, E, H, F>) {
-        (self.selection, self.opening_data)
+    ) -> (
+        OpeningScheduleSelection,
+        Vec<CommitmentDigest>,
+        ProverOpeningData<'a, E, H, F>,
+    ) {
+        (self.selection, self.digests, self.opening_data)
     }
 }
 
@@ -188,9 +201,12 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             .map(PolynomialGroupClaims::commitment)
             .collect()
     }
+    /// Bind the root statement: each group's commitment digest, then each
+    /// group's opening point.
     pub(crate) fn append_to(
         &self,
         root_params: &CommittedGroupParams,
+        digests: &[CommitmentDigest],
         grinding: &mut akita_types::ProverGrinding<'_>,
     ) -> Result<(), AkitaError>
     where
@@ -203,7 +219,14 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             PointF::DEGREE,
         )?;
         let relation_layout = relation_geometry.rhs_layout();
-        for (group_index, commitment) in self.commitments().into_iter().enumerate() {
+        let commitments = self.commitments();
+        if digests.len() != commitments.len() {
+            return Err(AkitaError::Internal(
+                "root digest count differs from claim group count".into(),
+            ));
+        }
+        for (group_index, (commitment, digest)) in commitments.into_iter().zip(digests).enumerate()
+        {
             let compression = relation_layout.compression_plan_for_group(group_index)?;
             if commitment.rows().coeff_len() != compression.terminal_coefficients() {
                 return Err(AkitaError::InvalidInput(
@@ -217,14 +240,14 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
                     AkitaError::Internal("root commitment compression plan has no final map".into())
                 })?
                 .ring_dimension();
-            akita_transcript::public_fields_prover(
+            akita_transcript::public_bytes(
                 grinding.state_mut(),
                 akita_types::FoldSite::RootCommitment {
                     group: group_index,
                     ring_dimension: ring_dim,
                 }
                 .id()?,
-                commitment.rows().coeffs(),
+                digest.as_bytes(),
             )?;
         }
         for (group_index, group_claims) in self.opening_claims.groups().iter().enumerate() {

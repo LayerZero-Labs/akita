@@ -27,7 +27,7 @@ pub(crate) fn prepare_outer_setup<F, E>(
 ) -> Result<PreparedOuterSetup<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
 {
     let id = successor
         .setup_prefix()

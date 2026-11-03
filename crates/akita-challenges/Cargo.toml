@@ -11,27 +11,21 @@ readme = "../../README.md"
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 serde = { version = "1", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
-keccak = { version = "0.1.6", features = ["asm"] }
-jolt-inlines-keccak256 = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "83fcab4937c492615b068dc852ad848c3b20cde0", default-features = false, optional = true }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 
-[dev-dependencies]
-shake = "0.1.0"
-
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["jolt-field/parallel"]
-# Keccak-f[1600] through the jolt-inlines Keccak inline (a RISC-V guest
-# verifier); same permutation as the `keccak` crate.
-keccak-inline = ["dep:jolt-inlines-keccak256"]
 logging-transcript = ["akita-transcript/logging-transcript"]
+# Prover-only fold-response previews, which copy the public sponge state.
+prover = ["akita-transcript/prover"]
 
 [lints]
 workspace = true
