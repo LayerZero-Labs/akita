@@ -1,16 +1,16 @@
-# Author-requested automation
+# Author- or admin-requested automation
 
 This mode applies only when invoked by the trusted `ai-review.yml` workflow.
 It overrides manual label discovery, shell/test execution, publication,
 and approval instructions elsewhere in this skill. Editing or discussing this
-skill does not activate this mode. A validated author command is publication
-authorization for that one PR. No label is required. The command body must be
+skill does not activate this mode. A validated command from the PR author, or
+from a repository admin on any PR, is publication authorization for that one PR. No label is required. The command body must be
 exactly `/ai-review`, without whitespace, newlines or any additional text.
 
 The workflow permits at most three attempts per PR, including failed or incomplete
-attempts. A keyless job reserves each slot before collection and model access.
-Reruns cannot invoke the model again. Only a new eligible author command can use
-the next slot. Quota markers are excluded from evidence, and model instructions
+attempts; repository admins are not limited. A keyless job reserves each slot
+before collection and model access. Reruns cannot invoke the model again. Only a
+new eligible command can use the next slot. Quota markers are excluded from evidence, and model instructions
 or output cannot change this deterministic limit.
 Force pushes and rebases do not reset the PR's quota. A changed head during review
 blocks publication and still consumes the reserved attempt.
