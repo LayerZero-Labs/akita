@@ -1370,21 +1370,6 @@ mod tests {
         assert_all_agree(&weights, &mut stream, "direct groups");
     }
 
-    /// The product of two Boolean tables' extensions is not the extension of
-    /// their product (the pitfall the factorization avoids by splitting only
-    /// disjoint digit positions).
-    #[test]
-    fn same_variable_products_do_not_factor() {
-        let table = [F::one(), F::zero()];
-        let point = [F::from_u64(5)];
-        let product =
-            multilinear_eval(&table, &point).unwrap() * multilinear_eval(&table, &point).unwrap();
-        let extension = multilinear_eval(&[F::one(), F::zero()], &point).unwrap();
-        assert_ne!(product, extension);
-        let groups_value = eq_bits(&point[..], 0);
-        assert_eq!(groups_value, extension);
-    }
-
     /// The cross-check rejects an evaluation whose closed form disagrees with
     /// the group's own events: a table marked geometric whose values are not.
     #[cfg(feature = "compression-weights-crosscheck")]

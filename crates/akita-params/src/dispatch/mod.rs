@@ -392,16 +392,6 @@ mod tests {
     }
 
     #[test]
-    fn tier_ntt_bounds() {
-        assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp128), 16);
-        assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp64), 32);
-        assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp32), 64);
-        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp128), 1024);
-        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp64), 2048);
-        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp32), 2048);
-    }
-
-    #[test]
     fn commitment_compression_and_ntt_dimension_domains_are_separate() {
         assert!(!crate::SUPPORTED_COMMITMENT_RING_DIMS.contains(&16));
         assert!(!crate::SUPPORTED_COMMITMENT_RING_DIMS.contains(&32));

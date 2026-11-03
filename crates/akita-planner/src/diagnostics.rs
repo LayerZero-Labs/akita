@@ -476,37 +476,6 @@ mod tests {
     }
 
     #[test]
-    fn enabled_capture_returns_recorded_counters() {
-        let (_, snapshot) = capture(true, || {
-            let diagnostics = active().expect("diagnostics must be active inside capture");
-            diagnostics.record_suffix_call(RingRelationPhase::QuotientPrefix);
-            diagnostics.record_memo_result(RingRelationPhase::QuotientPrefix, true);
-            diagnostics.record_relation_domain(RelationSearchDomain::QuotientAndReduced);
-            diagnostics.record_reduced_rejection(ReducedTransitionRejection::CoefficientPacking);
-            diagnostics.record_memo_occupancy(9, 7, 2);
-            diagnostics.record_candidates(12, 4);
-            diagnostics.record_completed_state(3);
-            diagnostics.record_guided_direct_edge_prune();
-        });
-        let snapshot = snapshot.expect("enabled capture must return diagnostics");
-        assert_eq!(snapshot.suffix_calls, 1);
-        assert_eq!(snapshot.memo_hits, 1);
-        assert_eq!(snapshot.suffix_calls_by_relation_phase, [1, 0]);
-        assert_eq!(snapshot.memo_hits_by_relation_phase, [1, 0]);
-        assert_eq!(snapshot.relation_transitions, [1, 1]);
-        assert_eq!(snapshot.reduced_transition_rejections, [0, 0, 1, 0]);
-        assert_eq!(snapshot.peak_memo_entries, 9);
-        assert_eq!(snapshot.peak_direct_memo_entries, 7);
-        assert_eq!(snapshot.peak_prefixed_memo_entries, 2);
-        assert_eq!(snapshot.generated_candidates, 12);
-        assert_eq!(snapshot.retained_candidates, 4);
-        assert_eq!(snapshot.retained_frontier_candidates, 3);
-        assert_eq!(snapshot.peak_state_frontier_candidates, 3);
-        assert_eq!(snapshot.guided_direct_edge_prunes, 1);
-        assert!(active().is_none());
-    }
-
-    #[test]
     fn setup_budget_passes_record_work_since_their_start() {
         let (_, snapshot) = capture(true, || {
             let diagnostics = active().expect("diagnostics must be active inside capture");

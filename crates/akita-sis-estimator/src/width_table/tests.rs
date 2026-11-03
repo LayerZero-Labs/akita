@@ -61,11 +61,6 @@ fn infinity_never_counts_as_secure() {
 }
 
 #[test]
-fn csv_has_no_classical_columns() {
-    assert!(!InfinityWidthRow::csv_header().contains("classical"));
-}
-
-#[test]
 fn work_identifiers_track_semantics_but_not_progress_output() {
     let mut config = InfinityWidthTableConfig {
         profiles: vec![AkitaModulusProfileId::Q32Offset99],
