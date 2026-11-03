@@ -30,6 +30,7 @@ ignored = ["akita-setup"]
 [features]
 labinius-trinomial = [
   "akita-algebra/labinius-trinomial",
+  "akita-planner/labinius-trinomial",
   "akita-algebra/labinius-binary",
   "akita-challenges/labinius-challenges",
   "akita-cpu-backend/labinius-trinomial",

@@ -43,7 +43,7 @@ pub fn price_binary_root_planes(
     word: bool,
     prime: &PrimePlaneManifest,
     destination_ring_dimension: usize,
-    ordinary: Option<GroupCommitPhaseParams>,
+    ordinary: impl IntoIterator<Item = GroupCommitPhaseParams>,
 ) -> Result<BinaryPrimePlanePrice, AkitaError> {
     manifest.validate()?;
     PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
@@ -53,7 +53,7 @@ pub fn price_binary_root_planes(
         destination_ring_dimension,
     )?
     .with_prime_planes(word, prime.planes().len())?;
-    if let Some(profile) = ordinary {
+    for profile in ordinary {
         let ordinary = OrdinaryNativeRootPlan::new(profile, plan.repacking().segments().len())?;
         plan = plan.with_ordinary(&ordinary)?;
     }

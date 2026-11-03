@@ -6,7 +6,7 @@ use akita_params::{
 };
 use akita_types::binary_source::{
     binary_projection_values, binary_root_challenges, binary_root_statement,
-    BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
+    BinaryProjectionRequest, BinaryProjectionRows, BinaryRootAdmission,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
@@ -44,7 +44,7 @@ where
         + 'static,
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
-    if !(1..=2).contains(&claims.num_groups())
+    if claims.num_groups() == 0
         || handles.len() != claims.num_groups()
         || Cfg::ExtField::DEGREE != 1
         || basis != BasisMode::Lagrange
@@ -71,18 +71,37 @@ where
             "binary root requires a typed setup-prefix successor".into(),
         ));
     }
-    let ordinary_group = claims.groups().get(1);
-    let ordinary_profile = if let Some(ordinary) = ordinary_group {
-        if ordinary.kind() != &GroupClaimKind::Ordinary || ordinary.evaluations().len() != 1 {
-            return Err(AkitaError::InvalidProof);
-        }
-        Some(schedule.root.params.group_params(layout, 1)?.profile)
-    } else {
-        None
-    };
+    let ordinary_groups = claims.groups().get(1..).ok_or(AkitaError::InvalidProof)?;
+    let ordinary_profiles = ordinary_groups
+        .iter()
+        .enumerate()
+        .map(|(index, ordinary)| {
+            if ordinary.kind() != &GroupClaimKind::Ordinary {
+                return Err(AkitaError::InvalidProof);
+            }
+            let group_index =
+                akita_error::checked::sum([index, 1]).ok_or(AkitaError::InvalidProof)?;
+            Ok(schedule
+                .root
+                .params
+                .group_params(layout, group_index)?
+                .profile)
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
     let logical_len = schedule.root.output_witness_len;
-    let ordinary_statement = ordinary_group
-        .zip(ordinary_profile)
+    // Public geometry is admitted before any field-switch work or proof byte.
+    let admission = BinaryRootAdmission::new(
+        manifest,
+        claim.len(),
+        prime,
+        expanded,
+        logical_len,
+        next.params.d_a(),
+        ordinary_profiles.iter().copied(),
+    )?;
+    let ordinary_statement = ordinary_groups
+        .iter()
+        .zip(ordinary_profiles.iter())
         .map(|(ordinary, profile)| {
             let compression = profile.outer_compression_plan()?;
             let dimension = compression
@@ -97,63 +116,63 @@ where
                 ordinary.evaluations(),
             ))
         })
-        .transpose()?;
+        .collect::<Result<Vec<_>, _>>()?;
     binary_root_statement::<Cfg::Field, Cfg::ExtField, _>(
         grinding.state_mut(),
         manifest,
-        claim.as_ref(),
+        claim.iter(),
         prime,
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
     let context = backend.proof_context(proof_session, 0)?;
-    let terminal = if let Some(claim) = claim {
-        Some({
-            let (_, source) = backend.prepare_root_group(
-                proof_session,
-                &context.for_group(0),
-                handles.first().ok_or(AkitaError::InvalidProof)?,
-                &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
-                    manifest: manifest.as_ref().clone(),
-                    polynomial: *claim.polynomial(),
-                },
-            )?;
-            let carriers = source.downcast_ref::<Vec<u128>>().ok_or_else(|| {
-                AkitaError::Internal("backend field-switch source type mismatch".into())
-            })?;
-            crate::binary_field_switch::prove_field_switch(
-                manifest.descriptor(),
-                claim,
-                carriers,
-                grinding.state_mut(),
-            )?
-        })
-    } else {
-        None
-    };
-    let public = BinaryRootPublic::new(
-        manifest,
-        terminal.as_ref(),
-        prime,
-        expanded,
-        logical_len,
-        next.params.d_a(),
-        ordinary_profile,
-    )?;
+    let mut terminal = Vec::new();
+    terminal
+        .try_reserve_exact(claim.len())
+        .map_err(|_| AkitaError::InvalidProof)?;
+    for claim in claim {
+        let (_, source) = backend.prepare_root_group(
+            proof_session,
+            &context.for_group(0),
+            handles.first().ok_or(AkitaError::InvalidProof)?,
+            &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
+                manifest: manifest.as_ref().clone(),
+                polynomial: *claim.polynomial(),
+            },
+        )?;
+        let carriers = source.downcast_ref::<Vec<u128>>().ok_or_else(|| {
+            AkitaError::Internal("backend field-switch source type mismatch".into())
+        })?;
+        terminal.push(crate::binary_field_switch::prove_field_switch(
+            manifest.descriptor(),
+            claim,
+            carriers,
+            grinding.state_mut(),
+        )?);
+    }
+    let public = admission.with_terminals(terminal.iter())?;
 
     let request = akita_types::binary_source::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),
         claim: terminal,
         prime: prime.clone(),
         plan: public.plan().clone(),
-        ordinary: ordinary_profile
-            .map(|profile| {
-                Ok::<_, AkitaError>((
+        ordinary: ordinary_profiles
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, profile)| {
+                let group_index =
+                    akita_error::checked::sum([index, 1]).ok_or(AkitaError::InvalidProof)?;
+                Ok((
                     profile,
-                    handles.get(1).ok_or(AkitaError::InvalidProof)?.clone(),
+                    handles
+                        .get(group_index)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .clone(),
                 ))
             })
-            .transpose()?,
+            .collect::<Result<Vec<_>, AkitaError>>()?,
     };
     let (d_payload, preparation) = backend.prepare_root_group(
         proof_session,
@@ -269,29 +288,23 @@ where
         .into_iter()
         .map(Cfg::ExtField::lift_base)
         .collect::<Vec<_>>();
-    let ordinary_payload = ordinary_group.map(|ordinary| {
-        ordinary
-            .commitment()
-            .rows()
-            .coeffs()
-            .iter()
-            .copied()
-            .map(Cfg::ExtField::lift_base)
-            .collect::<Vec<_>>()
-    });
-    let ordinary_claim = ordinary_group
-        .zip(ordinary_payload.as_ref())
-        .map(|(group, payload)| {
-            Ok::<_, AkitaError>((
-                group.point(),
-                *group
-                    .evaluations()
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?,
-                payload.as_slice(),
-            ))
+    let ordinary_payload = ordinary_groups
+        .iter()
+        .map(|ordinary| {
+            ordinary
+                .commitment()
+                .rows()
+                .coeffs()
+                .iter()
+                .copied()
+                .map(Cfg::ExtField::lift_base)
+                .collect::<Vec<_>>()
         })
-        .transpose()?;
+        .collect::<Vec<_>>();
+    let ordinary_claims = ordinary_groups
+        .iter()
+        .zip(&ordinary_payload)
+        .map(|(group, payload)| (group.point(), group.evaluations(), payload.as_slice()));
     let mu = batches
         .get(..7)
         .ok_or(AkitaError::InvalidProof)?
@@ -308,7 +321,7 @@ where
         &projected_values,
         &payload,
         &d_payload,
-        ordinary_claim,
+        ordinary_claims,
         Some(&matrix),
     )?;
     let range = DigitRangePlan::new(8)?;

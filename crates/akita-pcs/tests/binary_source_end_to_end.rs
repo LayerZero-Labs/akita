@@ -8,6 +8,8 @@ mod compatibility;
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
 mod field_switch;
+#[path = "binary_source_end_to_end/grouped_surface.rs"]
+mod grouped_surface;
 #[path = "binary_source_end_to_end/prime_plane.rs"]
 mod prime_plane;
 #[path = "binary_source_end_to_end/projection.rs"]
@@ -529,6 +531,14 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     let mut replay =
         new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", &proof).unwrap();
     replay.public_message(b"application-prefix");
+    // Keep callsite interest enabled on concurrent threads without a scoped
+    // subscriber. Otherwise their first root-A span can cache `never` while
+    // the measurement below has the only live dispatcher.
+    static TRACE_REGISTRY: std::sync::Once = std::sync::Once::new();
+    TRACE_REGISTRY.call_once(|| {
+        tracing::subscriber::set_global_default(tracing_subscriber::registry())
+            .expect("the binary suite installs one global tracing registry");
+    });
     let ((), root_a_elapsed) = stage3::measure_root_a(|| {
         verifier
             .batched_verify_in_session(

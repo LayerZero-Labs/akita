@@ -339,7 +339,10 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             [43; 32],
             [47; 32],
         )?;
-        assert_eq!(opening.binary_reading(), &word_claim);
+        assert_eq!(
+            opening.binary_reading(),
+            &word_claim.clone().into_iter().collect::<Vec<_>>()
+        );
         assert_eq!(opening.prime_reading(), &primes);
         assert_eq!(opening.binding().session, [43; 32]);
         assert_eq!(opening.binding().group, [47; 32]);

@@ -76,7 +76,7 @@ impl Fault {
 struct FaultPreparation {
     native: Box<dyn Any + Send + Sync>,
     manifest: BinaryCommittedGroupManifest,
-    claim: Option<BinaryTerminalClaim>,
+    claim: Vec<BinaryTerminalClaim>,
     prime: PrimePlaneManifest,
     plan: BinaryRootWitnessPlan,
 }
@@ -151,7 +151,7 @@ impl FaultBackend {
         if matches!(self.fault, Fault::ForeignPartials) {
             let foreign = fault_witness::foreign_partial_payload(
                 &request.manifest,
-                request.claim.as_ref().unwrap(),
+                request.claim.first().unwrap(),
                 &self.words,
                 &self.seed,
             )?;
@@ -162,7 +162,7 @@ impl FaultBackend {
             payload = foreign;
         }
         assert!(
-            request.ordinary.is_none(),
+            request.ordinary.is_empty(),
             "fault injection uses the binary-only fixture"
         );
         Ok((
@@ -203,7 +203,7 @@ impl FaultBackend {
         }
         let mut digits = fault_witness::reconstruct(
             &preparation.manifest,
-            preparation.claim.as_ref(),
+            preparation.claim.first(),
             &preparation.prime,
             &preparation.plan,
             &self.seed,

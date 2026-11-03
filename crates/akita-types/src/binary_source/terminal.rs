@@ -75,6 +75,28 @@ impl BinaryTerminalClaim {
         Ok(())
     }
 
+    /// Validate that every internal terminal has a distinct committed owner.
+    pub fn validate_group(
+        descriptor: &BinarySourceDescriptor,
+        claims: &[Self],
+    ) -> Result<(), AkitaError> {
+        if claims.len() > descriptor.polynomials().len() {
+            return Err(AkitaError::InvalidInput(
+                "too many binary source terminals".into(),
+            ));
+        }
+        let mut owners = std::collections::BTreeSet::new();
+        for claim in claims {
+            claim.validate(descriptor)?;
+            if !owners.insert(*claim.polynomial()) {
+                return Err(AkitaError::InvalidInput(
+                    "binary source terminals must have distinct polynomial owners".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Sole transcript encoding, with distinct row and column coordinate lengths.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = b"AkitaBinaryTerminal\x01".to_vec();

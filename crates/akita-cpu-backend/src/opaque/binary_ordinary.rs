@@ -9,7 +9,7 @@ use jolt_field::{CanonicalEncoding, Field};
 
 /// Materialize S, T, F and H in the public native plan's natural digit order.
 ///
-/// This path admits one source with one inner gadget plane and coefficients in
+/// This path admits each polynomial with one inner gadget plane and coefficients in
 /// the shared base-eight alphabet. The real ordinary commitment still uses its
 /// frozen A/B matrices and complete F/H compression chain. Retained polynomial
 /// quotient images are unnecessary: the native rows reduce each product in its
@@ -31,12 +31,10 @@ where
             handle.committed.source.group_kind(),
             SourceGroupKind::Ordinary
         )
-        || profile.group.num_polynomials() != 1
         || profile.inner.digits.num_digits != 1
         || profile.inner.digits.log_basis < 3
         || profile.outer.digits.log_basis != 3
         || profile.outer.matrix.ring_dimension() != 64
-        || profile.outer_slice_count.get() != profile.blocks.live_blocks
         || !profile
             .inner
             .matrix
@@ -56,49 +54,67 @@ where
     let a_degree = profile.inner.matrix.ring_dimension();
     if checked::product([profile.blocks.live_ring_elements_per_claim, a_degree]) != Some(source_len)
         || handle.committed.metadata.num_vars() != profile.group.num_vars()
-        || handle.committed.metadata.num_polynomials() != 1
+        || handle.committed.metadata.num_polynomials() != profile.group.num_polynomials()
     {
         return Err(AkitaError::InvalidInput(
             "ordinary source length differs from its frozen profile".into(),
         ));
     }
     let polynomials = handle.committed.source.dense_polynomials()?;
-    let [polynomial] = polynomials.as_slice() else {
+    if polynomials.len() != profile.group.num_polynomials() {
         return Err(AkitaError::InvalidProof);
-    };
-    let coefficients = polynomial
-        .field_coeffs()
-        .get(..source_len)
-        .ok_or(AkitaError::InvalidProof)?;
+    }
+    let per_polynomial = checked::product([
+        profile.blocks.live_blocks,
+        profile.blocks.positions_per_block,
+        a_degree,
+    ])
+    .ok_or(AkitaError::InvalidProof)?;
+    let source_capacity =
+        checked::product([per_polynomial, polynomials.len()]).ok_or(AkitaError::InvalidProof)?;
     let alphabet = [-4i8, -3, -2, -1, 0, 1, 2, 3];
     let fields = alphabet.map(|digit| F::from_i64(i64::from(digit)));
     let mut source = Vec::new();
     source
-        .try_reserve_exact(source_len)
+        .try_reserve_exact(source_capacity)
         .map_err(|_| AkitaError::InvalidProof)?;
-    for coefficient in coefficients {
-        let position = fields
-            .iter()
-            .position(|field| field == coefficient)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "ordinary mixed-root source exceeds the base-eight alphabet".into(),
-                )
-            })?;
-        source.push(*alphabet.get(position).ok_or(AkitaError::InvalidProof)?);
+    for polynomial in polynomials {
+        let coefficients = polynomial
+            .field_coeffs()
+            .get(..source_len)
+            .ok_or(AkitaError::InvalidProof)?;
+        for coefficient in coefficients {
+            let position = fields
+                .iter()
+                .position(|field| field == coefficient)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "ordinary mixed-root source exceeds the base-eight alphabet".into(),
+                    )
+                })?;
+            source.push(*alphabet.get(position).ok_or(AkitaError::InvalidProof)?);
+        }
+        let padding = per_polynomial
+            .checked_sub(source_len)
+            .ok_or(AkitaError::InvalidProof)?;
+        let padded_len = checked::sum([source.len(), padding]).ok_or(AkitaError::InvalidProof)?;
+        source.resize(padded_len, 0);
     }
 
     let retained = handle.committed.ordinary_retained()?;
-    let [image] = retained.inner_rows() else {
-        return Err(AkitaError::InvalidProof);
-    };
+    let images = retained.inner_rows();
     let image_elements = checked::product([
         profile.blocks.live_blocks,
         profile.inner.matrix.output_rank(),
     ])
     .ok_or(AkitaError::InvalidProof)?;
-    if retained.ring_dim() != a_degree
-        || checked::product([image_elements, a_degree]) != Some(image.coeff_len())
+    let expected_coefficients =
+        checked::product([image_elements, a_degree]).ok_or(AkitaError::InvalidProof)?;
+    if images.len() != profile.group.num_polynomials()
+        || retained.ring_dim() != a_degree
+        || images
+            .iter()
+            .any(|image| image.coeff_len() != expected_coefficients)
     {
         return Err(AkitaError::InvalidInput(
             "ordinary inner image differs from its frozen profile".into(),
@@ -109,10 +125,14 @@ where
         F,
         a_degree,
         |D_A| {
-            let rings = image.as_ring_slice::<D_A>()?;
-            let block_rows = rings
-                .chunks_exact(profile.inner.matrix.output_rank())
-                .collect::<Vec<_>>();
+            let mut block_rows = Vec::new();
+            for image in images {
+                block_rows.extend(
+                    image
+                        .as_ring_slice::<D_A>()?
+                        .chunks_exact(profile.inner.matrix.output_rank()),
+                );
+            }
             crate::kernels::linear::decompose_commit_blocks_into::<F, D_A, 64>(
                 &block_rows,
                 profile.outer.digits.num_digits,
@@ -122,6 +142,7 @@ where
         }
     )?;
     let expected_t = checked::product([
+        profile.group.num_polynomials(),
         profile.blocks.live_blocks,
         profile.inner.matrix.output_rank(),
         profile.outer.digits.num_digits,

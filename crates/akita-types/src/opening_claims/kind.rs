@@ -12,8 +12,8 @@ pub enum GroupClaimKind {
     Binary {
         /// Frozen binary A/B contract, retained when mapping commitment payloads.
         manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
-        /// The caller's logical word MLE evaluation over GF(2^128).
-        claim: Option<crate::binary_source::BinaryWordClaim>,
+        /// Caller-supplied word MLE terminals over GF(2^128), with distinct owners.
+        claim: Vec<crate::binary_source::BinaryWordClaim>,
         /// Checked prime requests, shared by exact plane identity.
         prime: crate::binary_source::PrimePlaneManifest,
     },
@@ -44,18 +44,19 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                     manifest.descriptor(),
                     prime.planes(),
                 )?;
-                let Some(claim) = claim else {
-                    if prime.planes().is_empty() {
-                        return Err(akita_error::AkitaError::InvalidInput(
-                            "binary group has no claims".into(),
-                        ));
-                    }
-                    continue;
-                };
-                claim.validate(manifest.descriptor())?;
+                crate::binary_source::BinaryWordClaim::validate_group(
+                    manifest.descriptor(),
+                    claim,
+                )?;
+                if claim.is_empty() && prime.planes().is_empty() {
+                    return Err(akita_error::AkitaError::InvalidInput(
+                        "binary group has no claims".into(),
+                    ));
+                }
                 if groups.iter().take(position).any(|previous| {
-                    matches!(&previous.kind, GroupClaimKind::Binary { claim: Some(earlier), .. }
-                        if earlier.polynomial() == claim.polynomial())
+                    matches!(&previous.kind, GroupClaimKind::Binary { claim: earlier, .. }
+                        if earlier.iter().any(|old| claim.iter().any(|new|
+                            old.polynomial() == new.polynomial())))
                 }) {
                     return Err(akita_error::AkitaError::InvalidInput(
                         "one binary word claim per polynomial; reduce multiple points before opening"

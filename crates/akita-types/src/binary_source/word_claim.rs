@@ -11,6 +11,9 @@ use super::BinarySourceDescriptor;
 /// H is GF(2^128), with modulus `X^128 + X^7 + X^2 + X + 1`.
 /// The descriptor fixes the point split: low coordinates select a word within
 /// a carrier, and the remaining coordinates select the carrier address.
+/// A point may use either `ceil(log2(logical_len))` coordinates or the complete
+/// padded address space. Missing high coordinates in a logical point are zero;
+/// the public claim retains exactly the coordinates supplied by the caller.
 /// Applications reduce multiple points on one polynomial before opening;
 /// an opening rejects a second word claim for the same polynomial identifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,7 +24,7 @@ pub struct BinaryWordClaim {
 }
 
 impl BinaryWordClaim {
-    /// Validate the polynomial identity and descriptor's complete point shape.
+    /// Validate the polynomial identity and logical or complete padded point shape.
     /// Every 16-byte polynomial-basis encoding is a unique element of H.
     pub fn new(
         descriptor: &BinarySourceDescriptor,
@@ -54,10 +57,38 @@ impl BinaryWordClaim {
         let split = descriptor.index_map().claim_variable_split();
         let expected = checked::sum([split.intra_carrier, split.carrier_address])
             .ok_or_else(|| AkitaError::InvalidInput("binary word point size overflow".into()))?;
-        if !descriptor.polynomials().contains(&self.polynomial) || self.point.len() != expected {
+        let logical = checked::ceil_log2(descriptor.index_map().logical_len())
+            .ok_or_else(|| AkitaError::InvalidInput("binary logical point size overflow".into()))?;
+        if !descriptor.polynomials().contains(&self.polynomial)
+            || (self.point.len() != logical && self.point.len() != expected)
+        {
             return Err(AkitaError::InvalidInput(
                 "invalid binary word claim identity or coordinate split".into(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Validate the group-wide one-terminal-per-polynomial contract.
+    /// Each polynomial keeps its own field switch and authenticated source view.
+    pub fn validate_group(
+        descriptor: &BinarySourceDescriptor,
+        claims: &[Self],
+    ) -> Result<(), AkitaError> {
+        if claims.len() > descriptor.polynomials().len() {
+            return Err(AkitaError::InvalidInput(
+                "one binary word claim per polynomial; reduce multiple points before opening"
+                    .into(),
+            ));
+        }
+        let mut owners = std::collections::BTreeSet::new();
+        for claim in claims {
+            claim.validate(descriptor)?;
+            if !owners.insert(*claim.polynomial()) {
+                return Err(AkitaError::InvalidInput(
+                    "duplicate binary word owner; reduce multiple points before opening".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -75,21 +106,27 @@ impl BinaryWordClaim {
     }
 
     /// Carrier-address point, after removing the descriptor's word-slot axes.
+    /// Missing high logical axes are fixed to zero in the padded carrier table.
     pub fn carrier_point(
         &self,
         descriptor: &BinarySourceDescriptor,
     ) -> Result<Vec<BinaryField128>, AkitaError> {
         self.validate(descriptor)?;
         let split = descriptor.index_map().claim_variable_split();
-        let coordinates = self
-            .point
-            .get(split.intra_carrier..)
-            .ok_or_else(|| AkitaError::Internal("validated word point split missing".into()))?;
         let mut point = Vec::new();
         point
-            .try_reserve_exact(coordinates.len())
+            .try_reserve_exact(split.carrier_address)
             .map_err(|_| AkitaError::InvalidInput("binary word point allocation failed".into()))?;
-        point.extend(coordinates.iter().map(decode));
+        for axis in 0..split.carrier_address {
+            let logical_axis = checked::sum([split.intra_carrier, axis]).ok_or_else(|| {
+                AkitaError::InvalidInput("binary word point size overflow".into())
+            })?;
+            point.push(
+                self.point
+                    .get(logical_axis)
+                    .map_or(BinaryField128::ZERO, decode),
+            );
+        }
         Ok(point)
     }
 
@@ -110,27 +147,19 @@ impl BinaryWordClaim {
         self.validate(descriptor)?;
         let index = descriptor.index_map();
         let split = index.claim_variable_split();
-        let intra = self
-            .point
-            .get(..split.intra_carrier)
-            .ok_or_else(|| AkitaError::Internal("validated word point split missing".into()))?;
         let basis = BinaryField128::ONE.basis_products();
         let mut coefficients = [BinaryField128::ZERO; 128];
         for (s, coefficient) in coefficients.iter_mut().enumerate() {
             let slot = s / index.word_width();
-            let weight =
-                intra
-                    .iter()
-                    .enumerate()
-                    .fold(BinaryField128::ONE, |weight, (axis, bytes)| {
-                        let r = decode(bytes);
-                        weight
-                            * if (slot >> axis) & 1 == 0 {
-                                BinaryField128::ONE + r
-                            } else {
-                                r
-                            }
-                    });
+            let weight = (0..split.intra_carrier).fold(BinaryField128::ONE, |weight, axis| {
+                let r = self.point.get(axis).map_or(BinaryField128::ZERO, decode);
+                weight
+                    * if (slot >> axis) & 1 == 0 {
+                        BinaryField128::ONE + r
+                    } else {
+                        r
+                    }
+            });
             *coefficient = weight
                 * *basis.get(s % index.word_width()).ok_or_else(|| {
                     AkitaError::Internal("validated binary word basis missing".into())
@@ -225,6 +254,89 @@ mod tests {
                     claim.reconstructed_value(&descriptor, &partials).unwrap(),
                     words[0]
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn logical_points_match_small_zero_padded_word_mles() {
+        let mut rng = StdRng::seed_from_u64(0x05a1_110c);
+        for ell in [1usize, 2, 4, 8, 16, 32, 64, 128] {
+            let per_carrier = 128 / ell;
+            for logical_len in [1, 3, per_carrier, per_carrier + 1, 5 * per_carrier + 1] {
+                let descriptor = BinarySourceDescriptor::new(
+                    BinaryIndexMap::new(ell, logical_len, 8, 2).unwrap(),
+                    vec![[1; 32]],
+                    BinaryCommitmentProfiles {
+                        a: [2; 32],
+                        b: [3; 32],
+                    },
+                )
+                .unwrap();
+                let split = descriptor.index_map().claim_variable_split();
+                let padded_log =
+                    checked::sum([split.intra_carrier, split.carrier_address]).unwrap();
+                let logical_log = checked::ceil_log2(logical_len).unwrap();
+                let point = (0..logical_log)
+                    .map(|_| rng.gen::<u128>().to_le_bytes())
+                    .collect::<Vec<_>>();
+                let words = (0..logical_len)
+                    .map(|_| rng.gen::<u128>() & (u128::MAX >> (128 - ell)))
+                    .collect::<Vec<_>>();
+                // Evaluate the caller's logical table independently, without
+                // adding the source ring's physical padding dimensions.
+                let mut mle = words
+                    .iter()
+                    .map(|word| decode(&word.to_le_bytes()))
+                    .collect::<Vec<_>>();
+                mle.resize(checked::pow2(logical_log).unwrap(), BinaryField128::ZERO);
+                for coordinate in &point {
+                    let r = decode(coordinate);
+                    mle = mle
+                        .chunks_exact(2)
+                        .map(|pair| pair[0] * (BinaryField128::ONE + r) + pair[1] * r)
+                        .collect();
+                }
+                assert_eq!(mle.len(), 1);
+                let mut carriers = vec![0u128; 8];
+                for (word, value) in words.iter().enumerate() {
+                    carriers[word / per_carrier] |= value << ((word % per_carrier) * ell);
+                }
+                let logical_claim =
+                    BinaryWordClaim::new(&descriptor, [1; 32], point.clone(), [0; 16]).unwrap();
+                assert_eq!(logical_claim.point(), &point);
+                let carrier_point = logical_claim.carrier_point(&descriptor).unwrap();
+                assert_eq!(carrier_point.len(), split.carrier_address);
+                let partials =
+                    partial_evaluations(&carriers, &carrier_point, &mut Vec::new()).unwrap();
+                assert_eq!(
+                    logical_claim
+                        .reconstructed_value(&descriptor, &partials)
+                        .unwrap(),
+                    mle[0]
+                );
+                let mut padded_point = point.clone();
+                padded_point.resize(padded_log, [0; 16]);
+                let padded_claim =
+                    BinaryWordClaim::new(&descriptor, [1; 32], padded_point, [0; 16]).unwrap();
+                assert_eq!(
+                    padded_claim.carrier_point(&descriptor).unwrap(),
+                    carrier_point
+                );
+                assert_eq!(
+                    padded_claim
+                        .reconstructed_value(&descriptor, &partials)
+                        .unwrap(),
+                    mle[0]
+                );
+                for arity in 0..=padded_log + 1 {
+                    assert_eq!(
+                        BinaryWordClaim::new(&descriptor, [1; 32], vec![[0; 16]; arity], [0; 16])
+                            .is_ok(),
+                        arity == logical_log || arity == padded_log,
+                        "width={ell}, logical_len={logical_len}, arity={arity}",
+                    );
+                }
             }
         }
     }

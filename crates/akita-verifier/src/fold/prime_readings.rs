@@ -35,7 +35,7 @@ where
         basis: BasisMode,
         session_id: [u8; 32],
         group_id: [u8; 32],
-    ) -> Result<BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError> {
+    ) -> Result<BinaryOpening<Vec<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError> {
         self.verify_in_session_with_output(session, statement, basis, |claims| {
             let group = claims.groups().first().ok_or_else(|| {
                 AkitaError::InvalidInput("binary readings require a binary group".into())

@@ -61,32 +61,49 @@ pub fn binary_root_matrix(
 /// coefficient map is authenticated by the ordinary successor commitment;
 /// source image digits, U, all carries, and every virtual zero share that map.
 /// No security admission of the experimental source matrices is asserted.
+/// [`BinaryRootAdmission`] builds it.
 #[derive(Clone, Debug)]
 pub struct BinaryRootPublic {
     manifest: BinaryCommittedGroupManifest,
-    claim: Option<BinaryTerminalClaim>,
+    claim: Vec<BinaryTerminalClaim>,
     prime: super::PrimePlaneManifest,
     setup: AkitaSetupDescriptor,
     plan: BinaryRootWitnessPlan,
-    ordinary: Option<OrdinaryNativeRootPlan>,
+    ordinary: Vec<OrdinaryNativeRootPlan>,
     negative_binary_addresses: Vec<usize>,
     padding_count: usize,
     batch_count: usize,
 }
 
-impl BinaryRootPublic {
+/// Public binary root admission, before any opening byte is read.
+///
+/// It applies every geometry restriction of the binary group and of each
+/// ordinary group, including the ordinary single-digit, compression-map and
+/// native-degree limits. It reads and absorbs nothing, so it precedes the
+/// field switches. Their terminals then complete it through
+/// [`Self::with_terminals`].
+#[derive(Clone, Debug)]
+pub struct BinaryRootAdmission {
+    public: BinaryRootPublic,
+    words: usize,
+}
+
+impl BinaryRootAdmission {
+    /// `words` is the number of selected word claims in the public statement.
     pub fn new(
         manifest: &BinaryCommittedGroupManifest,
-        claim: Option<&BinaryTerminalClaim>,
+        words: usize,
         prime: &super::PrimePlaneManifest,
         setup: &AkitaSetupDescriptor,
         logical_len: usize,
         destination_ring_dimension: usize,
-        ordinary_profile: Option<GroupCommitPhaseParams>,
+        ordinary_profiles: impl IntoIterator<Item = GroupCommitPhaseParams>,
     ) -> Result<Self, AkitaError> {
         manifest.validate()?;
-        if let Some(claim) = claim {
-            claim.validate(manifest.descriptor())?;
+        if words > manifest.descriptor().polynomials().len() {
+            return Err(AkitaError::InvalidInput(
+                "too many binary source terminals".into(),
+            ));
         }
         super::PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
         let domain_len = witness_commitment_domain_len(logical_len, destination_ring_dimension)?;
@@ -95,19 +112,25 @@ impl BinaryRootPublic {
             manifest.a_rank(),
             destination_ring_dimension,
         )?
-        .with_prime_planes(claim.is_some(), prime.planes().len())?;
-        let ordinary = ordinary_profile
-            .map(|profile| OrdinaryNativeRootPlan::new(profile, plan.repacking().segments().len()))
-            .transpose()?;
-        if let Some(ordinary) = &ordinary {
-            plan = plan.with_ordinary(ordinary)?;
+        .with_prime_planes(words != 0, prime.planes().len())?;
+        let mut ordinary = Vec::new();
+        for profile in ordinary_profiles {
+            let ordinary_plan =
+                OrdinaryNativeRootPlan::new(profile, plan.repacking().segments().len())?;
+            plan = plan.with_ordinary(&ordinary_plan)?;
+            ordinary.push(ordinary_plan);
         }
         let plan = plan.with_domain_len(domain_len)?;
-        let negative_binary_addresses = ordinary
-            .as_ref()
-            .map(|ordinary| ordinary.negative_binary_addresses(plan.repacking()))
-            .transpose()?
-            .unwrap_or_default();
+        let mut negative_binary_addresses = Vec::new();
+        for ordinary in &ordinary {
+            negative_binary_addresses.extend(ordinary.negative_binary_addresses(plan.repacking())?);
+        }
+        let ordinary_batch_count = checked::sum(
+            ordinary
+                .iter()
+                .map(OrdinaryNativeRootPlan::linear_batch_count),
+        )
+        .ok_or(AkitaError::InvalidProof)?;
         let mut padding_count = 0usize;
         for address in 0..domain_len {
             let padding = plan.repacking().is_padding_address(address)?;
@@ -124,30 +147,60 @@ impl BinaryRootPublic {
             .and_then(|authentication| {
                 checked::sum([
                     7,
-                    if claim.is_some() { 2 } else { 0 },
+                    checked::product([2, words])?,
                     checked::product([2, prime.planes().len()])?,
                     authentication,
                     padding_count,
-                    ordinary
-                        .as_ref()
-                        .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
+                    ordinary_batch_count,
                     negative_binary_addresses.len(),
                 ])
             })
             .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
-            manifest: manifest.clone(),
-            claim: claim.cloned(),
-            prime: prime.clone(),
-            setup: setup.clone(),
-            plan,
-            ordinary,
-            negative_binary_addresses,
-            padding_count,
-            batch_count,
+            public: BinaryRootPublic {
+                manifest: manifest.clone(),
+                claim: Vec::new(),
+                prime: prime.clone(),
+                setup: setup.clone(),
+                plan,
+                ordinary,
+                negative_binary_addresses,
+                padding_count,
+                batch_count,
+            },
+            words,
         })
     }
 
+    /// Attach the field-switch terminals, one per admitted word claim.
+    pub fn with_terminals<'a>(
+        self,
+        claims: impl IntoIterator<Item = &'a BinaryTerminalClaim>,
+    ) -> Result<BinaryRootPublic, AkitaError> {
+        let Self { mut public, words } = self;
+        for terminal in claims {
+            if public.claim.len() >= words {
+                return Err(AkitaError::InvalidInput(
+                    "too many binary source terminals".into(),
+                ));
+            }
+            public
+                .claim
+                .try_reserve(1)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            public.claim.push(terminal.clone());
+        }
+        if public.claim.len() != words {
+            return Err(AkitaError::InvalidInput(
+                "missing binary source terminals".into(),
+            ));
+        }
+        BinaryTerminalClaim::validate_group(public.manifest.descriptor(), &public.claim)?;
+        Ok(public)
+    }
+}
+
+impl BinaryRootPublic {
     pub fn plan(&self) -> &BinaryRootWitnessPlan {
         &self.plan
     }
@@ -166,7 +219,7 @@ impl BinaryRootPublic {
     /// Proving supplies A; verification omits it and authenticates its contribution
     /// through the typed prefix. `rho` batches the public projection rows with mu.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-    pub fn relation<E: Field>(
+    pub fn relation<'a, E: Field + 'a>(
         &self,
         challenges: &Challenges,
         alpha: E,
@@ -175,7 +228,7 @@ impl BinaryRootPublic {
         projected_values: &[i128; 7],
         commitment: &[E],
         d_payload: &[E],
-        ordinary_claim: Option<(&[E], E, &[E])>,
+        ordinary_claims: impl IntoIterator<Item = (&'a [E], &'a [E], &'a [E])>,
         matrix: Option<&[Vec<[i128; 648]>]>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
         if batches.len() != self.batch_count {
@@ -193,17 +246,23 @@ impl BinaryRootPublic {
             .iter()
             .zip(projected_values)
             .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
-        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
-            .ok_or(AkitaError::InvalidProof)?;
+        let terminal = checked::range(
+            7,
+            checked::product([2, self.claim.len()]).ok_or(AkitaError::InvalidProof)?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
         let b =
             checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
         let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
         let padding = checked::range(d.end, self.padding_count).ok_or(AkitaError::InvalidProof)?;
         let ordinary_rows = checked::range(
             padding.end,
-            self.ordinary
-                .as_ref()
-                .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
+            checked::sum(
+                self.ordinary
+                    .iter()
+                    .map(OrdinaryNativeRootPlan::linear_batch_count),
+            )
+            .ok_or(AkitaError::InvalidProof)?,
         )
         .ok_or(AkitaError::InvalidProof)?;
         let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
@@ -214,7 +273,7 @@ impl BinaryRootPublic {
         )
         .ok_or(AkitaError::InvalidProof)?;
         let algebra = self.plan.relation_weights(
-            self.claim.as_ref(),
+            self.claim.iter(),
             matrix,
             challenges,
             alpha,
@@ -257,29 +316,30 @@ impl BinaryRootPublic {
             alpha,
             batches.get(d).ok_or(AkitaError::InvalidProof)?,
         )?;
-        let ordinary_weights = match (&self.ordinary, ordinary_claim) {
-            (Some(ordinary), Some((point, evaluation, payload))) => Some(ordinary.linear_weights(
+        let ordinary_claims = ordinary_claims.into_iter().collect::<Vec<_>>();
+        if ordinary_claims.len() != self.ordinary.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut components = vec![algebra, b_weights, d_weights];
+        components.extend(prime_weights);
+        let mut offset = ordinary_rows.start;
+        for (ordinary, (point, evaluations, payload)) in self.ordinary.iter().zip(ordinary_claims) {
+            let rows = checked::range(offset, ordinary.linear_batch_count())
+                .ok_or(AkitaError::InvalidProof)?;
+            offset = rows.end;
+            components.push(ordinary.linear_weights(
                 self.plan.repacking(),
                 &self.setup,
                 point,
-                evaluation,
+                evaluations,
                 payload,
                 alpha,
-                batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
-            )?),
-            (None, None) => None,
-            _ => return Err(AkitaError::InvalidProof),
-        };
-        let components = [
-            Some(algebra),
-            prime_weights,
-            Some(b_weights),
-            Some(d_weights),
-            ordinary_weights,
-        ];
+                batches.get(rows).ok_or(AkitaError::InvalidProof)?,
+            )?);
+        }
         let linear = NativeRootWeights::merge(
             self.plan.repacking().domain_len(),
-            components.into_iter().flatten(),
+            components,
             projection_claim,
         )?;
         let mut negative_weights = Vec::new();
