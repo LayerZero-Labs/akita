@@ -1188,7 +1188,9 @@ The logs are `$CARGO_TARGET_DIR/final-dev-<log>-<shape>.txt`.
 The optimized matrix invokes that saved executable's `--phase prove` and
 `--phase verify` in isolated processes, using the same arguments and committed
 TSV checks as the driver. The executable is built once for the optimized matrix.
-The script's `--dev-protocol` smoke is being validated separately.
+The script's separate `--dev-protocol` mixed smoke also verifies, reproducing
+its 82,314-byte proof with matching caller transcript continuation and
+forbidden online A reads.
 Every row reports a matching pinned digest, successful verification, matching
 caller transcript continuation and forbidden online A reads. Together with
 the current-protocol table, all sixteen full-size final proofs reproduce their
