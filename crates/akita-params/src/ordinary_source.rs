@@ -76,15 +76,27 @@ mod tests {
 
     #[test]
     fn signed_widths_use_canonical_balanced_depth_and_exact_endpoints() {
-        for (bits, digits) in [(2, 1), (9, 4), (18, 7), (33, 12)] {
+        for bits in 2..=64 {
+            let width = OrdinarySourceWidth::new(bits).unwrap();
+            assert_eq!(width.bits(), bits);
+            let offset = 1u128 << (bits - 1);
+            assert_eq!(width.offset(), offset);
+            let digits = num_digits_inner(width.decomposition(), true);
+            let (negative, positive) = width.producer_contract().unwrap().declared_bounds();
+            assert_eq!(negative, Some(offset));
+            assert_eq!(positive, Some(offset - 1));
+            let (negative, positive) = crate::sis::balanced_digit_representable_bounds(3, digits);
+            assert!(negative >= offset);
+            assert!(positive >= offset - 1);
+            if digits > 1 {
+                let (negative, positive) =
+                    crate::sis::balanced_digit_representable_bounds(3, digits - 1);
+                assert!(negative < offset || positive < offset - 1);
+            }
+        }
+        for (bits, digits) in [(2, 1), (9, 4), (18, 7), (33, 12), (34, 12), (64, 22)] {
             let width = OrdinarySourceWidth::new(bits).unwrap();
             assert_eq!(num_digits_inner(width.decomposition(), true), digits);
-            let (negative, positive) = width.producer_contract().unwrap().declared_bounds();
-            assert_eq!(negative, Some(width.offset()));
-            assert_eq!(positive, Some(width.offset() - 1));
-            let (negative, positive) = crate::sis::balanced_digit_representable_bounds(3, digits);
-            assert!(negative >= width.offset());
-            assert!(positive >= width.offset() - 1);
         }
         for bits in [0, 1, 65, u32::MAX] {
             assert!(OrdinarySourceWidth::new(bits).is_err());

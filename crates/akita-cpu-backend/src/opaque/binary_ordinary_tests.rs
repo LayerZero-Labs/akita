@@ -15,6 +15,7 @@ use akita_params::{
 use akita_types::binary_source::{OrdinaryNativeRootBatch, OrdinaryNativeRootClaim};
 use akita_types::root_repacking::RootCoefficientRepacking;
 use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 type F = Prime128Offset275;
@@ -168,7 +169,7 @@ fn fixture(profile: GroupCommitPhaseParams, bits: u32) -> Fixture {
 
 #[test]
 fn signed_extrema_all_slots_and_all_commitment_rows_authenticate() {
-    for (bits, slots) in [(2, 3), (9, 3), (18, 5), (33, 1)] {
+    for (bits, slots) in [(2, 3), (9, 3), (18, 5), (33, 1), (34, 1), (64, 1)] {
         for slices in [CommitmentSliceCount::ONE, CommitmentSliceCount::TWO] {
             let profile = profile(bits, slots, slices);
             let plan = OrdinaryNativeRootPlan::new_signed(
@@ -190,8 +191,56 @@ fn signed_extrema_all_slots_and_all_commitment_rows_authenticate() {
                 .iter()
                 .map(|&x| F::from_i64(i64::from(x)))
                 .collect::<Vec<_>>();
-            for address in plan.negative_binary_addresses(&repacking).unwrap() {
+            // Derive the complete membership set from the commitment maps and
+            // source cube, independently of the compiler's segment iterator.
+            let mut expected_addresses = BTreeSet::new();
+            let compression = profile.outer_compression_plan().unwrap();
+            for (stage, map) in compression.maps().iter().enumerate() {
+                for element in 0..map.input_width() {
+                    for coefficient in 0..map.ring_dimension() {
+                        expected_addresses.insert(
+                            repacking
+                                .coefficient_address(2 + stage, element, 0, coefficient)
+                                .unwrap(),
+                        );
+                    }
+                }
+            }
+            for owner in 0..slots {
+                for element in 0..N / D {
+                    for bit in 0..bits as usize {
+                        for coefficient in 0..D {
+                            expected_addresses.insert(
+                                repacking
+                                    .coefficient_address(
+                                        4,
+                                        owner * (N / D) + element,
+                                        bit,
+                                        coefficient,
+                                    )
+                                    .unwrap(),
+                            );
+                        }
+                    }
+                }
+            }
+            let addresses = plan.negative_binary_addresses(&repacking).unwrap();
+            assert_eq!(addresses.len(), expected_addresses.len());
+            assert_eq!(
+                addresses.iter().copied().collect::<BTreeSet<_>>(),
+                expected_addresses
+            );
+            for address in addresses {
                 assert!(table[address] == F::zero() || table[address] == -F::one());
+            }
+            if bits == 64 {
+                assert_eq!(profile.inner.digits.num_digits, 22);
+                assert_eq!(input.values[0][0], F::from_i128(-(1i128 << 63)));
+                assert_eq!(input.values[0][1], F::from_i128((1i128 << 63) - 1));
+                for (coefficient, expected) in [(0, F::zero()), (1, -F::one()), (3, -F::one())] {
+                    let address = repacking.coefficient_address(4, 0, 63, coefficient).unwrap();
+                    assert_eq!(table[address], expected);
+                }
             }
             for (owner, values) in input.values.iter().enumerate() {
                 for (coefficient, &expected) in values.iter().enumerate() {
@@ -280,7 +329,7 @@ fn signed_extrema_all_slots_and_all_commitment_rows_authenticate() {
 
 #[test]
 fn signed_width_rejects_values_beyond_both_endpoints_and_wrong_digit_depth() {
-    for bits in [2, 9, 18, 33] {
+    for bits in [2, 9, 18, 33, 34, 64] {
         let profile = profile(bits, 1, CommitmentSliceCount::ONE);
         let plan =
             OrdinaryNativeRootPlan::new_signed(profile, 0, OrdinarySourceWidth::new(bits).unwrap())
@@ -313,6 +362,58 @@ fn signed_width_rejects_values_beyond_both_endpoints_and_wrong_digit_depth() {
                 .is_err());
         }
     }
+}
+
+#[test]
+fn signed_offset_membership_rejects_non_boolean_linear_preserving_mutation() {
+    let profile = profile(2, 3, CommitmentSliceCount::ONE);
+    let width = OrdinarySourceWidth::new(2).unwrap();
+    let plan = OrdinaryNativeRootPlan::new_signed(profile, 0, width).unwrap();
+    let input = fixture(profile, 2);
+    let natural = input
+        .backend
+        .ordinary_root_preimage(&input.handle, &plan)
+        .unwrap();
+    let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), D).unwrap();
+    let digits = repacking
+        .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+        .unwrap();
+    assert!(digits.iter().all(|&digit| (-4..=3).contains(&digit)));
+    let mut table = digits
+        .iter()
+        .map(|&digit| F::from_i64(i64::from(digit)))
+        .collect::<Vec<_>>();
+    let addresses = plan.negative_binary_addresses(&repacking).unwrap();
+    assert!(addresses
+        .iter()
+        .all(|&address| (table[address] * (table[address] + F::one())).is_zero()));
+    assert_eq!(input.values[0][3], F::zero());
+    let low = repacking.coefficient_address(4, 0, 0, 3).unwrap();
+    let high = repacking.coefficient_address(4, 0, 1, 3).unwrap();
+    assert_eq!((table[low], table[high]), (F::zero(), -F::one()));
+    // Both (0, -1) and (-2, 0) recompose to -2 and stay in [-4, 3].
+    // Only the negative-binary predicate can reject this changed witness.
+    table[low] = F::from_i128(-2);
+    table[high] = F::zero();
+    for row in 0..plan.linear_batch_count() {
+        let mut batches = vec![F::zero(); plan.linear_batch_count()];
+        batches[row] = F::one();
+        plan.linear_weights(
+            &repacking,
+            input.setup.expanded.descriptor(),
+            &input.point,
+            &input.evaluations,
+            &input.payload,
+            F::from_u64(23),
+            &batches,
+        )
+        .unwrap()
+        .check_table(&table)
+        .unwrap();
+    }
+    assert!(addresses
+        .iter()
+        .any(|&address| !(table[address] * (table[address] + F::one())).is_zero()));
 }
 
 #[test]
