@@ -74,7 +74,7 @@ pub(super) fn proof(
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
-    let mut totals = BTreeMap::<(u32, u32, u32), (u64, usize)>::new();
+    let mut totals = BTreeMap::<(u32, u32, u32, u32), (u64, usize)>::new();
     let mut accounted = 0usize;
     let ranges = akita_transcript::thread_proof_ranges();
     let outgoing_site = akita_types::FoldSite::NextWitnessPayload { level: 0 }.id()?;
@@ -123,7 +123,7 @@ pub(super) fn proof(
     for range in ranges {
         let site = akita_transcript::ProtocolSiteId::from_bytes(range.context.site_id);
         let entry = totals
-            .entry((site.level, site.stage, site.family))
+            .entry((site.level, site.stage, site.family, site.invocation))
             .or_default();
         entry.0 = entry
             .0
@@ -136,19 +136,48 @@ pub(super) fn proof(
             checked::sum([range.start, range.len]).ok_or("range overflow")?,
         ));
         println!(
-            "proof_range level={} stage={} family={} kind={} start={} bytes={} atoms={}",
+            "proof_range level={} site_stage={} family={} invocation={} kind={} start={} bytes={} atoms={}",
             site.level,
             site.stage,
             site.family,
+            site.invocation,
             range.context.kind,
             range.start,
             range.len,
             range.context.atom_count
         );
     }
-    for ((level, stage, family), (atoms, bytes)) in totals {
+    let sumcheck_work_family = akita_params::GrindingSite::SumcheckRound {
+        protocol: akita_params::SumcheckProtocol::Stage1,
+        level: 0,
+        stage: 0,
+        round: 0,
+    }
+    .site_id(0)
+    .family;
+    for ((level, stage, family, invocation), (atoms, bytes)) in totals {
+        let protocol =
+            if family == akita_transcript::SITE_FAMILY_SUMCHECK || family == sumcheck_work_family {
+                Some(
+                    akita_params::SumcheckProtocol::from_tag(invocation)
+                        .ok_or("unknown sumcheck protocol in proof accounting")?,
+                )
+            } else {
+                match family {
+                    akita_transcript::SITE_FAMILY_STAGE1 => {
+                        Some(akita_params::SumcheckProtocol::Stage1)
+                    }
+                    akita_transcript::SITE_FAMILY_STAGE2 => {
+                        Some(akita_params::SumcheckProtocol::Stage2)
+                    }
+                    akita_transcript::SITE_FAMILY_STAGE3 => {
+                        Some(akita_params::SumcheckProtocol::Stage3)
+                    }
+                    _ => None,
+                }
+            };
         println!(
-            "proof_stage level={level} stage={stage} family={family} bytes={bytes} atoms={atoms}"
+            "proof_stage level={level} protocol={protocol:?} site_stage={stage} family={family} invocation={invocation} bytes={bytes} atoms={atoms}"
         );
     }
     coverage.sort_unstable();

@@ -17,7 +17,7 @@ pub(super) fn plan(
     carrier: &akita_params::GroupCommitPhaseParams,
     ordinary: Option<akita_params::GroupCommitPhaseParams>,
     dimension: usize,
-) -> Result<usize, AkitaError> {
+) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
     let descriptor = claims::descriptor(log)?;
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, carrier)?;
     let word = shape != "prime5";
@@ -78,7 +78,7 @@ pub(super) fn plan(
         ));
     }
     println!("planner_price planes={} d_live_digits={} d_columns={} d_rank={} outgoing_ring_elements={} canonical_plan_matches=true", price.planes, price.d_live_digits, price.d_columns, price.d_rank, price.outgoing_ring_elements);
-    Ok(canonical.repacking().domain_len())
+    Ok(price)
 }
 
 pub(super) fn build(
@@ -170,13 +170,18 @@ pub(super) fn build(
         };
         let dimension = first.params.role_dims().d_a();
         let carrier = carrier.unwrap_or(schedule.root.params.own_group().profile);
-        let required_domain = plan(log, shape, &carrier, ordinary_profile, dimension)?;
+        let price = plan(log, shape, &carrier, ordinary_profile, dimension)?;
+        let scheduled_domain = akita_params::witness_commitment_domain_len(
+            schedule.root.output_witness_len,
+            dimension,
+        )?;
         println!(
-            "schedule_candidate carrier_vars={carrier_vars} root_output={} prefix_domain={}",
+            "schedule_candidate carrier_vars={carrier_vars} root_output={} scheduled_domain={scheduled_domain} prefix_domain={}",
             schedule.root.output_witness_len,
             prefix.n_prefix()?
         );
-        if schedule.root.output_witness_len < required_domain
+        if schedule.root.output_witness_len < price.outgoing_physical_cells
+            || scheduled_domain < price.outgoing_domain_len
             || prefix.n_prefix()? < required_prefix
         {
             continue;
