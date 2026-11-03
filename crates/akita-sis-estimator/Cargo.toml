@@ -27,7 +27,11 @@ default = ["transcript-keccak"]
 parallel = ["dep:rayon"]
 transcript-blake2b = ["akita-params/transcript-blake2b"]
 transcript-keccak = ["akita-params/transcript-keccak"]
+# Offline LaBinius width tables. They never touch a transcript, but
+# `akita-params` links one, so the tables build on the workspace default
+# backend. No crate forwards this feature.
 labinius-sis = [
+  "transcript-keccak",
   "akita-params/labinius-sis",
   "dep:akita-challenges",
   "akita-challenges/labinius-challenges",
