@@ -311,6 +311,9 @@ where
         ordinary_claim,
         Some(&matrix),
     )?;
+    drop(matrix);
+    drop(batches);
+    let relation_claim = relation.claim();
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
     let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B>(
@@ -324,11 +327,12 @@ where
     for &(address, weight) in relation.terms() {
         *weights.get_mut(address).ok_or(AkitaError::InvalidProof)? += weight;
     }
+    drop(relation);
     let session = backend.begin_root_relation(
         &witness,
         weights,
         negative_binary_weights,
-        relation.claim(),
+        relation_claim,
         &stage1.point,
         stage1.range_image_evaluation,
         gamma,
@@ -339,7 +343,7 @@ where
         grinding,
         0,
         domain.num_vars(),
-        relation.claim() + gamma * stage1.range_image_evaluation,
+        relation_claim + gamma * stage1.range_image_evaluation,
     )?;
     akita_types::stage2_w_eval::<Cfg::Field, Cfg::ExtField, _>(
         grinding,

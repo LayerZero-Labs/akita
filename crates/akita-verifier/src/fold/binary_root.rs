@@ -212,6 +212,7 @@ where
         ordinary_claim,
         None,
     )?;
+    drop(batches);
 
     let equality_point =
         DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau0, num_vars, 0)?;
@@ -265,6 +266,7 @@ where
         + (negative_bit_weight + gamma * EqPolynomial::mle(&stage1.point, &replay.challenges)?)
             * witness_eval
             * (witness_eval + E::one());
+    drop(relation);
     if replay.output_claim != expected {
         return Err(AkitaError::InvalidProof);
     }
