@@ -116,14 +116,22 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
 ///
 /// Uses Karatsuba with a schoolbook leaf of at most 16 entries. Odd lengths
 /// split into floor/ceiling halves; only the half sums are zero-padded.
-/// Invalid lengths, size overflow, or allocation failure return an error.
+/// One output buffer and one checked scratch arena serve the entire recursive
+/// tree. Invalid lengths, size overflow, or allocation failure return an error.
 pub fn exact_convolution<F: Field>(lhs: &[F], rhs: &[F]) -> Result<Vec<F>, AkitaError> {
     if lhs.is_empty() || lhs.len() != rhs.len() {
         return Err(AkitaError::InvalidInput(
             "convolution needs equal nonempty lengths".into(),
         ));
     }
-    karatsuba(lhs, rhs)
+    let length = checked::product([2, lhs.len()])
+        .and_then(|n| n.checked_sub(1))
+        .ok_or_else(|| AkitaError::InvalidInput("convolution size overflow".into()))?;
+    let scratch_len = karatsuba_scratch_len(lhs.len())?;
+    let mut output = field_buffer(length)?;
+    let mut scratch = field_buffer(scratch_len)?;
+    karatsuba(lhs, rhs, &mut output, &mut scratch)?;
+    Ok(output)
 }
 
 // Fallible allocation checks both byte size and allocator capacity before
@@ -141,17 +149,76 @@ fn field_buffer<F: Field>(len: usize) -> Result<Vec<F>, AkitaError> {
         .try_reserve_exact(len)
         .map_err(|_| AkitaError::InvalidInput("adjoint allocation failed".into()))?;
     values.resize(len, F::zero());
+    #[cfg(test)]
+    if len > 0 {
+        ALLOCATIONS.with(|count| count.set(count.get() + 1));
+    }
     Ok(values)
 }
 
 // Recursive operands always have equal positive lengths, established by the
 // public boundary and preserved by the three splits below.
-fn karatsuba<F: Field>(lhs: &[F], rhs: &[F]) -> Result<Vec<F>, AkitaError> {
+struct KaratsubaSplit {
+    half: usize,
+    long: usize,
+    short_output_len: usize,
+    long_output_len: usize,
+    high_offset: usize,
+    local_fields: usize,
+}
+
+impl KaratsubaSplit {
+    fn new(n: usize) -> Result<Self, AkitaError> {
+        let half = n / 2;
+        let long = n - half;
+        let high_offset =
+            checked::product([2, half]).ok_or_else(|| internal("Karatsuba output offset"))?;
+        let short_output_len = high_offset
+            .checked_sub(1)
+            .ok_or_else(|| internal("Karatsuba short product length"))?;
+        let long_output_len = checked::product([2, long])
+            .and_then(|value| value.checked_sub(1))
+            .ok_or_else(|| internal("Karatsuba long product length"))?;
+        let local_fields = checked::sum([
+            long,
+            long,
+            short_output_len,
+            long_output_len,
+            long_output_len,
+        ])
+        .ok_or_else(|| internal("Karatsuba scratch length"))?;
+        Ok(Self {
+            half,
+            long,
+            short_output_len,
+            long_output_len,
+            high_offset,
+            local_fields,
+        })
+    }
+}
+
+// Each child reuses the same arena after its sibling returns. The longer child
+// bounds the shorter child's workspace: every local size is monotone in n.
+fn karatsuba_scratch_len(mut n: usize) -> Result<usize, AkitaError> {
+    let mut fields = 0;
+    while n > 16 {
+        let split = KaratsubaSplit::new(n)?;
+        fields = checked::sum([fields, split.local_fields])
+            .ok_or_else(|| internal("Karatsuba scratch length"))?;
+        n = split.long;
+    }
+    Ok(fields)
+}
+
+fn karatsuba<F: Field>(
+    lhs: &[F],
+    rhs: &[F],
+    output: &mut [F],
+    scratch: &mut [F],
+) -> Result<(), AkitaError> {
+    output.fill(F::zero());
     let n = lhs.len();
-    let length = checked::product([2, n])
-        .and_then(|n| n.checked_sub(1))
-        .ok_or_else(|| AkitaError::InvalidInput("convolution size overflow".into()))?;
-    let mut output = field_buffer(length)?;
     if n <= 16 {
         for (i, &a) in lhs.iter().enumerate() {
             for (j, &b) in rhs.iter().enumerate() {
@@ -162,17 +229,30 @@ fn karatsuba<F: Field>(lhs: &[F], rhs: &[F]) -> Result<Vec<F>, AkitaError> {
                     .ok_or_else(|| internal("schoolbook output index"))? += a * b;
             }
         }
-        return Ok(output);
+        return Ok(());
     }
-    let half = n / 2;
+    let split = KaratsubaSplit::new(n)?;
     let (a0, a1) = lhs
-        .split_at_checked(half)
+        .split_at_checked(split.half)
         .ok_or_else(|| internal("Karatsuba split"))?;
     let (b0, b1) = rhs
-        .split_at_checked(half)
+        .split_at_checked(split.half)
         .ok_or_else(|| internal("Karatsuba split"))?;
-    let mut a_sum = field_buffer(n - half)?;
-    let mut b_sum = field_buffer(n - half)?;
+    let (a_sum, tail) = scratch
+        .split_at_mut_checked(split.long)
+        .ok_or_else(|| internal("Karatsuba operand scratch"))?;
+    let (b_sum, tail) = tail
+        .split_at_mut_checked(split.long)
+        .ok_or_else(|| internal("Karatsuba operand scratch"))?;
+    let (low, tail) = tail
+        .split_at_mut_checked(split.short_output_len)
+        .ok_or_else(|| internal("Karatsuba product scratch"))?;
+    let (high, tail) = tail
+        .split_at_mut_checked(split.long_output_len)
+        .ok_or_else(|| internal("Karatsuba product scratch"))?;
+    let (middle, nested) = tail
+        .split_at_mut_checked(split.long_output_len)
+        .ok_or_else(|| internal("Karatsuba product scratch"))?;
     for (slot, &value) in a_sum.iter_mut().zip(a1) {
         *slot = value;
     }
@@ -185,23 +265,27 @@ fn karatsuba<F: Field>(lhs: &[F], rhs: &[F]) -> Result<Vec<F>, AkitaError> {
     for (slot, &value) in b_sum.iter_mut().zip(b0) {
         *slot += value;
     }
-    let low = karatsuba(a0, b0)?;
-    let high = karatsuba(a1, b1)?;
-    let mut middle = karatsuba(&a_sum, &b_sum)?;
-    for (slot, &value) in middle.iter_mut().zip(&low) {
+    karatsuba(a0, b0, low, nested)?;
+    karatsuba(a1, b1, high, nested)?;
+    karatsuba(a_sum, b_sum, middle, nested)?;
+    for (slot, &value) in middle.iter_mut().zip(low.iter()) {
         *slot -= value;
     }
-    for (slot, &value) in middle.iter_mut().zip(&high) {
+    for (slot, &value) in middle.iter_mut().zip(high.iter()) {
         *slot -= value;
     }
-    for (offset, values) in [(0, &low), (half, &middle), (2 * half, &high)] {
+    for (offset, values) in [
+        (0, &*low),
+        (split.half, &*middle),
+        (split.high_offset, &*high),
+    ] {
         for (i, &value) in values.iter().enumerate() {
             *output
                 .get_mut(offset + i)
                 .ok_or_else(|| internal("Karatsuba output index"))? += value;
         }
     }
-    Ok(output)
+    Ok(())
 }
 
 /// One row block of setup weights, factored as `eq(r_j,j) * h(s)`.
@@ -280,6 +364,7 @@ mod tests;
 #[cfg(test)]
 std::thread_local! {
     static MULTIPLICATIONS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    static ALLOCATIONS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -291,10 +376,12 @@ fn full_degree_adjoint_multiplication_count() {
     let rho = vec![Prime128Offset275::from_u64(7); 648];
     let v = vec![Prime128Offset275::from_u64(11); 648];
     MULTIPLICATIONS.with(|count| count.set(0));
+    ALLOCATIONS.with(|count| count.set(0));
     let h = adjoint.apply(&rho, &v).expect("valid vectors");
     let count = MULTIPLICATIONS.with(core::cell::Cell::get);
     assert_eq!(h.len(), 648);
     assert_eq!(count, 154_872);
+    assert_eq!(ALLOCATIONS.with(core::cell::Cell::get), 8);
     let dense = 648usize.pow(2);
     assert_eq!(dense, 419_904);
     assert!(count < dense);
