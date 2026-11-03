@@ -64,11 +64,12 @@ pub(super) fn prime_claim(
     descriptor: &BinarySourceDescriptor,
     owner: usize,
     words: &[u128],
-    plane: usize,
+    seed: usize,
+    tensor_component: u8,
 ) -> PrimePlaneClaim {
     let index = descriptor.index_map();
     let point = (0..8 + index.claim_variable_split().carrier_address)
-        .map(|axis| 19 + axis as u128 * 7 + plane as u128 * 13)
+        .map(|axis| 19 + axis as u128 * 7 + seed as u128 * 13)
         .collect::<Vec<_>>();
     let mut value = F::zero();
     // Scan the complete MLE domain, including zero padding and virtual slots.
@@ -93,7 +94,7 @@ pub(super) fn prime_claim(
     PrimePlaneClaim {
         polynomial: owner,
         point,
-        tensor_component: (plane % 4) as u8,
+        tensor_component,
         value: value.to_u128_checked().unwrap(),
     }
 }

@@ -1,6 +1,6 @@
 //! Caller terminal claims, dense widths, padding and polynomial ownership.
 use super::*;
-use akita_types::binary_source::{PrimePlaneClaim, PrimePlaneManifest};
+use akita_types::binary_source::{BinaryOpening, PrimePlaneClaim, PrimePlaneManifest};
 
 #[path = "grouped_surface_agreement.rs"]
 mod agreement;
@@ -53,6 +53,32 @@ fn grouped_surface_each_polynomial_owns_its_reduced_terminals() {
 }
 
 fn fixture(width: usize, length: usize, carriers: usize, owners: usize, word: bool, planes: usize) {
+    let index = BinaryIndexMap::new(width, length, carriers, 2).unwrap();
+    let words = (0..owners)
+        .map(|owner| claims::words(&index, owner))
+        .collect::<Vec<_>>();
+    let planes = (0..planes)
+        .map(|plane| (plane % owners, plane, (plane % 4) as u8))
+        .collect::<Vec<_>>();
+    open(&index, words, word, &planes, true);
+}
+
+/// Prove and verify one opening of `words`, one source per owner, returning the
+/// verifier's authenticated readings. Each plane is (owner, point seed,
+/// tensor component). With `mutate`, every claim and context change rejects.
+pub(super) fn open(
+    index: &BinaryIndexMap,
+    words: Vec<Vec<u128>>,
+    word: bool,
+    planes: &[(usize, usize, u8)],
+    mutate: bool,
+) -> BinaryOpening<Vec<BinaryWordClaim>, Vec<PrimePlaneClaim>> {
+    let owners = words.len();
+    let (width, length, carriers) = (
+        index.word_width(),
+        index.logical_len(),
+        index.padded_carriers(),
+    );
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog::catalog(owners));
     let resolved = scheme
         .schedules()
@@ -63,17 +89,13 @@ fn fixture(width: usize, length: usize, carriers: usize, owners: usize, word: bo
     let carrier = resolved.profiles().final_group;
     let setup = scheme.setup_prover(18, owners).unwrap();
     let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
-    let index = BinaryIndexMap::new(width, length, carriers, 2).unwrap();
     let descriptor = BinarySourceDescriptor::new(
         index.clone(),
         (0..owners).map(|owner| [29 + owner as u8; 32]).collect(),
-        BinaryCommittedGroupManifest::commitment_profiles(&index, owners, 0).unwrap(),
+        BinaryCommittedGroupManifest::commitment_profiles(index, owners, 0).unwrap(),
     )
     .unwrap();
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
-    let words = (0..owners)
-        .map(|owner| claims::words(&index, owner))
-        .collect::<Vec<_>>();
     let source = backend
         .import_binary_source(manifest.clone(), carrier, words.clone())
         .unwrap();
@@ -94,22 +116,23 @@ fn fixture(width: usize, length: usize, carriers: usize, owners: usize, word: bo
     } else {
         Vec::new()
     };
-    let primes = (0..planes)
-        .map(|plane| {
-            claims::prime_claim(&descriptor, plane % owners, &words[plane % owners], plane)
+    let primes = planes
+        .iter()
+        .map(|&(owner, seed, component)| {
+            claims::prime_claim(&descriptor, owner, &words[owner], seed, component)
         })
         .collect::<Vec<_>>();
     let prime_manifest = PrimePlaneManifest::new(&descriptor, &primes).unwrap();
-    assert_eq!(prime_manifest.planes().len(), planes);
-    if planes == 5 {
+    assert_eq!(prime_manifest.planes().len(), planes.len());
+    if mutate && planes.len() == 5 {
         let mut excessive = primes.clone();
-        excessive.push(claims::prime_claim(&descriptor, 0, &words[0], 5));
+        excessive.push(claims::prime_claim(&descriptor, 0, &words[0], 5, 1));
         assert!(matches!(
             PrimePlaneManifest::new(&descriptor, &excessive),
             Err(AkitaError::InvalidInput(_))
         ));
     }
-    if let Some(first) = terminals.first() {
+    if let (true, Some(first)) = (mutate, terminals.first()) {
         let mut duplicate = terminals.clone();
         duplicate.push(first.clone());
         assert!(matches!(
@@ -183,49 +206,51 @@ fn fixture(width: usize, length: usize, carriers: usize, owners: usize, word: bo
     let continuation: [u8; 32] = prover.verifier_message();
     prover.prover_message(&continuation);
     let proof = prover.narg_string().to_vec();
-    eprintln!("grouped_surface dev={} width={width} length={length} carriers={carriers} owners={owners} word={word} planes={planes}: {opening_bytes} bytes",
-        akita_params::DEV_PROTOCOL);
+    eprintln!("grouped_surface dev={} width={width} length={length} carriers={carriers} owners={owners} word={word} planes={}: {opening_bytes} bytes",
+        akita_params::DEV_PROTOCOL, planes.len());
     let verifier = scheme.verifier(verifier_setup).unwrap();
-    let verify = |bytes: &[u8],
-                  words: Vec<BinaryWordClaim>,
-                  primes: Vec<PrimePlaneClaim>,
-                  session: [u8; 32],
-                  group: [u8; 32]|
-     -> Result<(), AkitaError> {
-        let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
-            commitment.clone(),
-            words.clone(),
-            primes.clone(),
-        )?
-        .map_commitment(|_| &commitment);
-        let statement = selected_statement::<BinaryTestSuffix>(
-            OpeningClaims::from_groups(vec![binary])?,
-            scheme.schedules(),
-        );
-        let mut replay = new_verifier_channel(b"grouped-surface", b"caller", bytes)?;
-        replay.public_message(&session);
-        replay.public_message(&group);
-        assert_eq!(replay.prover_message::<[u8; 32]>()?, stage_message);
-        let challenge = replay.verifier_message::<[u8; 32]>()?;
-        let reading = verifier.batched_verify_readings_in_session(
-            &mut replay,
-            statement,
-            BasisMode::Lagrange,
-            session,
-            group,
-        )?;
-        assert_eq!(challenge, stage_challenge);
-        assert_eq!(reading.binary_reading(), &words);
-        assert_eq!(reading.prime_reading(), &primes);
-        assert_eq!(&reading.binding().source, &descriptor);
-        agreement::check(&reading);
-        // The opening leaves the caller's final message unread.
-        replay.public_message(b"caller-after-opening");
-        assert_eq!(replay.verifier_message::<[u8; 32]>()?, continuation);
-        assert_eq!(replay.prover_message::<[u8; 32]>()?, continuation);
-        replay.check_eof()
-    };
-    verify(
+    let verify =
+        |bytes: &[u8],
+         words: Vec<BinaryWordClaim>,
+         primes: Vec<PrimePlaneClaim>,
+         session: [u8; 32],
+         group: [u8; 32]|
+         -> Result<BinaryOpening<Vec<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError> {
+            let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
+                commitment.clone(),
+                words.clone(),
+                primes.clone(),
+            )?
+            .map_commitment(|_| &commitment);
+            let statement = selected_statement::<BinaryTestSuffix>(
+                OpeningClaims::from_groups(vec![binary])?,
+                scheme.schedules(),
+            );
+            let mut replay = new_verifier_channel(b"grouped-surface", b"caller", bytes)?;
+            replay.public_message(&session);
+            replay.public_message(&group);
+            assert_eq!(replay.prover_message::<[u8; 32]>()?, stage_message);
+            let challenge = replay.verifier_message::<[u8; 32]>()?;
+            let reading = verifier.batched_verify_readings_in_session(
+                &mut replay,
+                statement,
+                BasisMode::Lagrange,
+                session,
+                group,
+            )?;
+            assert_eq!(challenge, stage_challenge);
+            assert_eq!(reading.binary_reading(), &words);
+            assert_eq!(reading.prime_reading(), &primes);
+            assert_eq!(&reading.binding().source, &descriptor);
+            agreement::check(&reading);
+            // The opening leaves the caller's final message unread.
+            replay.public_message(b"caller-after-opening");
+            assert_eq!(replay.verifier_message::<[u8; 32]>()?, continuation);
+            assert_eq!(replay.prover_message::<[u8; 32]>()?, continuation);
+            replay.check_eof()?;
+            Ok(reading)
+        };
+    let reading = verify(
         &proof,
         terminals.clone(),
         primes.clone(),
@@ -233,6 +258,9 @@ fn fixture(width: usize, length: usize, carriers: usize, owners: usize, word: bo
         [47; 32],
     )
     .unwrap();
+    if !mutate {
+        return reading;
+    }
     let rejects = |words: Vec<BinaryWordClaim>, primes: Vec<PrimePlaneClaim>, session, group| {
         let result = catch_unwind(AssertUnwindSafe(|| {
             verify(&proof, words, primes, session, group)
@@ -283,4 +311,5 @@ fn fixture(width: usize, length: usize, carriers: usize, owners: usize, word: bo
     }
     rejects(terminals.clone(), primes.clone(), [44; 32], [47; 32]);
     rejects(terminals, primes, [43; 32], [48; 32]);
+    reading
 }
