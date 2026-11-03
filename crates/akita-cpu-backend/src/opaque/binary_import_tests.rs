@@ -115,3 +115,48 @@ fn compact_import_rejects_wrong_lengths_owners_and_nonzero_tail_bits() {
         }
     }
 }
+
+#[test]
+fn compact_import_enforces_expanded_budget_before_retaining_tiny_payloads() {
+    for (owners, padded_carriers, permitted) in [
+        (1, 1 << 16, false),
+        (2, 1 << 15, false),
+        (1, 1 << 15, true),
+        (2, 1 << 14, true),
+    ] {
+        let descriptor = BinarySourceDescriptor::new(
+            BinaryIndexMap::new(128, 1, padded_carriers, 2).unwrap(),
+            (0..owners).map(|owner| [owner as u8; 32]).collect(),
+            BinaryCommitmentProfiles {
+                a: [3; 32],
+                b: [4; 32],
+            },
+        )
+        .unwrap();
+        // Each owner supplies one carrier, but committed padding still costs
+        // 162 MiB in the rejected cases and 81 MiB in the permitted cases.
+        let carriers = vec![vec![1]; owners];
+        let packed = BinarySourceInput::Packed {
+            logical_len: 1,
+            carriers: carriers.clone(),
+        }
+        .prepare(&descriptor);
+        if permitted {
+            let BinarySourceCoefficients::Packed(storage) = packed.unwrap() else {
+                panic!("compact import retained an expanded source");
+            };
+            assert_eq!(storage.as_ref(), carriers.as_slice());
+        } else {
+            assert!(matches!(
+                packed,
+                Err(AkitaError::InvalidInput(message))
+                    if message == "binary source allocation exceeds its budget"
+            ));
+            assert!(matches!(
+                BinarySourceInput::Logical(carriers).prepare(&descriptor),
+                Err(AkitaError::InvalidInput(message))
+                    if message == "binary source allocation exceeds its budget"
+            ));
+        }
+    }
+}
