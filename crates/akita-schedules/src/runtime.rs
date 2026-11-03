@@ -651,6 +651,7 @@ fn expanded_schedule_proof_components(
         &key.opening_layout()?,
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
+        None,
     )?;
     let fixed_bytes = total
         .checked_add(terminal_eor)
@@ -704,6 +705,7 @@ pub fn materialize_candidate_schedule(
     cached: CandidateMaterializationCost,
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
+    root_accumulated_setup_prefix_len: usize,
     folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -719,6 +721,7 @@ pub fn materialize_candidate_schedule(
         )
     })?;
     let schedule = FoldSchedule {
+        root_accumulated_setup_prefix_len,
         root: FoldParams {
             params: (*root.params).clone(),
             input_witness_len: root.input_witness_len,
@@ -766,6 +769,7 @@ pub fn materialize_candidate_schedule(
         root_layout,
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
+        None,
     )?;
     if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
         || grinding_plan.nonce_max_bytes() != cached_grinding_cost.nonce_max_bytes

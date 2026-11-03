@@ -10,7 +10,9 @@ use akita_error::{checked, AkitaError};
 use crate::Field;
 use jolt_field::solinas::parallel::*;
 
+mod prepared_digits;
 mod tensor_pair;
+pub use prepared_digits::{PreparedDigits, MAX_PREPARED_STRIDE};
 pub use tensor_pair::{
     eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
     EqPairTensorFamily, EqPairTensorWeights,
@@ -154,7 +156,9 @@ impl<F: Field> AffineWeight<F> for F {
 /// states, reuses summaries for base offsets with the same low residue, and
 /// seeds their high rows into shared carry buckets. Guarded geometric-prefix
 /// and carry-bucketed contractions accelerate eligible layouts and
-/// transparently fall back to the general row contraction.
+/// transparently fall back to the general row contraction. Row-aligned
+/// adjacent-digit intervals use a [`PreparedDigits`] window when preparing it
+/// costs less than that contraction.
 /// Unaligned first and last rows are handled as exact low-factor subwindows, so
 /// distributed chunks and a partial final tensor row do not enumerate the
 /// Cartesian high-by-low domain. Boolean challenges require no inversion.
@@ -314,6 +318,22 @@ where
             expected: MAX_COMPACT_STRIDE_TERMS,
             actual: work,
         });
+    }
+    if let Some(value) = prepared_digits::try_eval_prepared_digit_intervals(
+        challenges,
+        base_offsets,
+        outer_start,
+        live_len,
+        outer_stride,
+        digit_stride,
+        digit_weights,
+        high_weights,
+        low_weights,
+        base_scales,
+        &template,
+        work,
+    )? {
+        return Ok(value);
     }
 
     let low_challenges = &challenges[..low_bits];
@@ -1240,17 +1260,11 @@ impl<F: Field> OffsetEqWindow<F> {
         }
     }
 
-    /// Construct a window only when the requested evaluations match or exceed
-    /// the number of materialized table entries.
-    fn new_if_amortized(
-        challenges: &[F],
-        evaluation_count: usize,
-    ) -> Result<Option<Self>, AkitaError> {
-        if challenges.is_empty() {
-            return Ok(None);
-        }
-        let low_bits = Self::split_low_bits(challenges.len(), OFFSET_EQ_LOW_BITS_CAP);
-        let high_bits = challenges.len() - low_bits;
+    /// Number of equality table entries [`Self::new`] materializes for
+    /// `challenge_count` coordinates.
+    fn materialized_len(challenge_count: usize) -> Result<usize, AkitaError> {
+        let low_bits = Self::split_low_bits(challenge_count, OFFSET_EQ_LOW_BITS_CAP);
+        let high_bits = challenge_count - low_bits;
         let low_len = checked::pow2(low_bits)
             .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
         let high_len = if high_bits <= OFFSET_EQ_HIGH_BITS_CAP {
@@ -1259,9 +1273,17 @@ impl<F: Field> OffsetEqWindow<F> {
         } else {
             0
         };
-        let materialized_values = checked::sum([low_len, high_len])
-            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
-        if evaluation_count < materialized_values {
+        checked::sum([low_len, high_len])
+            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))
+    }
+
+    /// Construct a window only when the requested evaluations match or exceed
+    /// the number of materialized table entries.
+    fn new_if_amortized(
+        challenges: &[F],
+        evaluation_count: usize,
+    ) -> Result<Option<Self>, AkitaError> {
+        if challenges.is_empty() || evaluation_count < Self::materialized_len(challenges.len())? {
             return Ok(None);
         }
         Self::new(challenges).map(Some)
@@ -1462,26 +1484,4 @@ pub fn eq_eval_at_index<F: Field>(x_challenges: &[F], index: usize) -> F {
 mod tests;
 
 #[cfg(test)]
-mod amortization_tests {
-    use super::*;
-    use jolt_field::{Fp64, Ring};
-
-    type F = Fp64<4294967197>;
-
-    #[test]
-    fn materialization_requires_table_reuse() {
-        let challenges = vec![F::from_u64(3); 8];
-        assert!(OffsetEqWindow::new_if_amortized(&challenges, 31)
-            .unwrap()
-            .is_none());
-
-        let window = OffsetEqWindow::new_if_amortized(&challenges, 32)
-            .unwrap()
-            .unwrap();
-        assert_eq!(window.eq_low.len(), 16);
-        assert_eq!(window.eq_high.as_ref().unwrap().len(), 16);
-        assert!(OffsetEqWindow::<F>::new_if_amortized(&[], usize::MAX)
-            .unwrap()
-            .is_none());
-    }
-}
+mod amortization_tests;

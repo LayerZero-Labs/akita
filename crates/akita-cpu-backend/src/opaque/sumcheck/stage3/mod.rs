@@ -1,14 +1,14 @@
-//! Setup-product sumcheck for a dense table against two disjoint factors.
+//! Shared setup-product sumcheck for ordinary and accumulated contributions.
 //!
 //! The table is laid out as `left * right_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
 //! `setup_index_weight(i) * alpha(y)` table.
 
-mod product_table;
+pub(super) mod product_table;
 #[cfg(test)]
 mod session_tests;
-mod utils;
+pub(super) mod utils;
 
 use crate::opaque::OperationBinding;
 use crate::opaque::{CpuBackend, OpaqueStage3Kernel, Stage3Request};
@@ -17,26 +17,31 @@ use akita_algebra::ring::scalar_powers;
 use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
-use akita_params::{CommittedGroupParams, RelationAddressGeometry, SetupProjectionGeometry};
+use akita_params::{CommittedGroupParams, RelationAddressGeometry};
 use akita_serialization::AkitaSerialize;
+use akita_sumcheck::SumcheckKernel;
 use akita_types::{
     ensure_setup_envelope, setup_prefix_coverage_eval_len, shared_setup_fold_gadget,
     AkitaExpandedSetup, FpExtEncoding, PreparedRelationAddress, RingRelationInstance,
     SetupContributionGroupInputs, SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use product_table::{RectangularSetupProductTerm, SetupProductSource};
+use product_table::{SetupProductSource, SetupProductSumcheck};
 use std::sync::Arc;
 
 /// Linear setup-product state. Its setup allocation survives cache trimming.
 pub struct CpuStage3Session<F: Field, E: Field> {
     binding: OperationBinding,
     lease: crate::opaque::ScopeLease,
-    setup: RectangularSetupProductTerm<F, E>,
-    round: usize,
-    pending: Option<UnivariatePoly<E>>,
-    claim: E,
+    setup: Stage3Setup<F, E>,
 }
+
+enum Stage3Setup<F: Field, E: Field> {
+    Bound(SetupProductSumcheck<F, E>),
+    Prepared(Vec<super::setup_batch::CpuPreparedSetupQuery<E>>),
+}
+
+mod accumulation;
 
 impl<F, E> OpaqueStage3Kernel<F, E> for CpuBackend<F, E>
 where
@@ -50,6 +55,38 @@ where
         + 'static,
 {
     type Stage3SessionHandle = CpuStage3Session<F, E>;
+
+    fn prepare_setup_batch(
+        &self,
+        request: akita_prover::backend::SetupBatchRequest<'_, F, E, Self::ProofSessionHandle>,
+    ) -> Result<
+        (
+            akita_types::setup_claims::SetupBatchStatement<E>,
+            Self::Stage3SessionHandle,
+        ),
+        AkitaError,
+    > {
+        accumulation::prepare(self, request)
+    }
+
+    fn bind_setup_batch(
+        &self,
+        session: &mut Self::Stage3SessionHandle,
+        statement: &akita_types::setup_claims::SetupBatchStatement<E>,
+        coefficients: &[E],
+    ) -> Result<E, AkitaError> {
+        use akita_prover::backend::SetupBatchBackend;
+        self.validate_leased_binding(&session.binding, &session.lease)?;
+        let Stage3Setup::Prepared(prepared) = &mut session.setup else {
+            return Err(AkitaError::InvalidInput(
+                "setup batch was already bound".into(),
+            ));
+        };
+        let claim = statement.input_claim(coefficients)?;
+        let kernel = self.begin_setup_batch(statement, std::mem::take(prepared), coefficients)?;
+        session.setup = Stage3Setup::Bound(kernel);
+        Ok(claim)
+    }
 
     fn begin_stage3(
         &self,
@@ -121,10 +158,7 @@ where
             CpuStage3Session {
                 binding,
                 lease,
-                setup,
-                round: 0,
-                pending: None,
-                claim,
+                setup: Stage3Setup::Bound(setup),
             },
         ))
     }
@@ -136,18 +170,12 @@ where
         claim: E,
     ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.validate_leased_binding(&session.binding, &session.lease)?;
-        if round != session.round
-            || round >= session.setup.num_rounds()
-            || session.pending.is_some()
-            || claim != session.claim
-        {
-            return Err(AkitaError::InvalidInput(
-                "invalid Stage 3 round progression".into(),
-            ));
-        }
-        let polynomial = session.setup.compute_round_univariate();
-        session.pending = Some(polynomial.clone());
-        Ok(polynomial)
+        #[allow(irrefutable_let_patterns)]
+        let Stage3Setup::Bound(setup) = &mut session.setup
+        else {
+            return Err(AkitaError::InvalidInput("unbound setup batch".into()));
+        };
+        setup.round_polynomial(round, claim)
     }
 
     fn bind_stage3_challenge(
@@ -157,28 +185,22 @@ where
         challenge: E,
     ) -> Result<(), AkitaError> {
         self.validate_leased_binding(&session.binding, &session.lease)?;
-        if round != session.round || round >= session.setup.num_rounds() {
-            return Err(AkitaError::InvalidInput(
-                "invalid Stage 3 challenge progression".into(),
-            ));
-        }
-        let polynomial = session.pending.take().ok_or_else(|| {
-            AkitaError::InvalidInput("Stage 3 challenge has no pending round".into())
-        })?;
-        session.claim = polynomial.evaluate(challenge);
-        session.setup.ingest_challenge(round, challenge);
-        session.round += 1;
-        Ok(())
+        #[allow(irrefutable_let_patterns)]
+        let Stage3Setup::Bound(setup) = &mut session.setup
+        else {
+            return Err(AkitaError::InvalidInput("unbound setup batch".into()));
+        };
+        setup.bind_challenge(round, challenge)
     }
 
     fn finish_stage3(&self, session: Self::Stage3SessionHandle) -> Result<E, AkitaError> {
         self.validate_leased_binding(&session.binding, &session.lease)?;
-        if session.round != session.setup.num_rounds() || session.pending.is_some() {
-            return Err(AkitaError::InvalidInput(
-                "incomplete Stage 3 session".into(),
-            ));
-        }
-        session.setup.folded_table_value()
+        #[allow(irrefutable_let_patterns)]
+        let Stage3Setup::Bound(setup) = session.setup
+        else {
+            return Err(AkitaError::InvalidInput("unbound setup batch".into()));
+        };
+        setup.folded_table_value()
     }
 }
 
@@ -193,21 +215,24 @@ fn build_setup_product_term<F, E>(
     alpha: E,
     x_challenges: &[E],
     relation_address_geometry: RelationAddressGeometry,
-) -> Result<RectangularSetupProductTerm<F, E>, AkitaError>
+) -> Result<SetupProductSumcheck<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
 {
     let (geometry, mut setup_index_weight, alpha_pows) = {
         let _span = tracing::info_span!("stage3_setup_weights_prepare").entered();
-        prepare_setup_sumcheck_terms::<F, E>(
-            lp,
+        let plan = prepare_setup_contribution_plan::<F, E>(
             relation,
+            lp,
             tau1,
-            alpha,
             x_challenges,
             relation_address_geometry,
-        )?
+        )?;
+        let geometry = plan.projection_geometry();
+        let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
+        let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
+        (geometry, setup_index_weight, alpha_pows)
     };
 
     let active_weight_rows = geometry.required();
@@ -260,40 +285,12 @@ where
     })?;
     drop(_source_span);
 
-    RectangularSetupProductTerm::new(
+    SetupProductSumcheck::new(
         SetupProductSource::Expanded(expanded),
         active_weight_rows,
         setup_index_weight,
         alpha_pows.to_vec(),
     )
-}
-
-/// Derive the factored product-sumcheck terms `(required, setup_index_weight, alpha_pows)`
-/// from the level parameters and ring relation via the ring-switch row
-/// evaluation.
-fn prepare_setup_sumcheck_terms<F, E>(
-    lp: &CommittedGroupParams,
-    relation: &RingRelationInstance<F>,
-    tau1: &[E],
-    alpha: E,
-    x_challenges: &[E],
-    relation_address_geometry: RelationAddressGeometry,
-) -> Result<(SetupProjectionGeometry, Vec<E>, Vec<E>), AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + Ring + ExtField<F>,
-{
-    let plan = prepare_setup_contribution_plan::<F, E>(
-        relation,
-        lp,
-        tau1,
-        x_challenges,
-        relation_address_geometry,
-    )?;
-    let geometry = plan.projection_geometry();
-    let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
-    let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
-    Ok((geometry, setup_index_weight, alpha_pows.to_vec()))
 }
 
 /// Build the stage-3 setup-contribution plan from local prover inputs.

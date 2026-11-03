@@ -33,6 +33,13 @@ use challenges::derive_multi_group_stage1_challenges;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use relation_instance::{assemble_relation_instance, validate_fold_payloads};
 
+/// Setup behavior selected once after this fold's Stage 2 rounds.
+pub(crate) enum FoldSetup<'a, 'b, E: Field> {
+    Ordinary,
+    Deferred(&'a mut crate::SetupClaimAccumulator<'b, E>),
+    Offloaded(crate::setup_batch::PreparedOuterSetup<E>),
+}
+
 pub(crate) type SetupPrefixOpening<E> = (Vec<E>, E);
 
 pub(crate) struct PreparedFoldReplay<'a, F: Field, E: Field> {
@@ -86,6 +93,7 @@ pub(crate) fn verify_fold<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: PreparedFoldReplay<'_, F, E>,
+    setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -157,17 +165,70 @@ where
         &opening_semantics,
         prepared.level_layout.stage2_sumcheck(),
     )?;
-    let stage3 = match prepared.stage3 {
-        Some(next_params) => Some(verify_stage3::<F, E>(
-            setup,
-            &rs,
-            &stage2_rounds.challenges,
-            next_params,
-            grinding,
-            level,
-        )?),
-        None => None,
+    let defer = matches!(setup_policy, crate::SetupPolicy::Defer(_));
+    let fold_setup = if let Some(accumulator) = setup_policy.accumulator() {
+        let inherited = accumulator
+            .batch
+            .as_ref()
+            .filter(|(target, _)| *target == level)
+            .map(|(_, statement)| statement);
+        match (prepared.stage3, inherited) {
+            (Some(successor), Some(inherited)) => {
+                FoldSetup::Offloaded(crate::setup_batch::prepare_outer_setup::<F, E>(
+                    setup,
+                    &rs,
+                    &stage2_rounds.challenges,
+                    successor,
+                    grinding,
+                    level,
+                    inherited,
+                )?)
+            }
+            (Some(_), None) => FoldSetup::Ordinary,
+            (None, inherited) => {
+                if let Some(inherited) = inherited {
+                    let coefficients =
+                        akita_types::setup_claims::transcript::batch_coefficients::<F, E, _>(
+                            grinding,
+                            level,
+                            inherited.claims().len(),
+                        )?;
+                    if defer {
+                        accumulator
+                            .pending
+                            .extend(inherited.claims().iter().cloned());
+                    } else {
+                        crate::setup_batch::decide_setup_batch(
+                            setup.expanded(),
+                            inherited,
+                            &coefficients,
+                        )?;
+                    }
+                }
+                if defer {
+                    FoldSetup::Deferred(accumulator)
+                } else {
+                    FoldSetup::Ordinary
+                }
+            }
+        }
+    } else {
+        FoldSetup::Ordinary
     };
+    let stage3 = prepared
+        .stage3
+        .map(|next_params| {
+            verify_stage3::<F, E>(
+                setup,
+                &rs,
+                &stage2_rounds.challenges,
+                next_params,
+                grinding,
+                level,
+                &fold_setup,
+            )
+        })
+        .transpose()?;
     let stage2 = validate_stage2_replay(
         setup,
         stage1,
@@ -175,6 +236,7 @@ where
         stage3.as_ref().map(|replay| replay.claim),
         opening_semantics,
         stage2_rounds,
+        fold_setup,
     )?;
     drop(stage2_span);
     Ok(FoldVerifyOutput {

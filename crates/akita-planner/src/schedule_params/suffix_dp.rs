@@ -329,6 +329,7 @@ impl StateFrontiers {
 struct LevelCandidateEdge<'a> {
     params: &'a CommittedGroupParams,
     natural_setup_field_len: usize,
+    offloaded_setup_field_len: usize,
     require_child_fold: bool,
 }
 
@@ -801,6 +802,7 @@ fn price_level_candidate_with_children(
     let LevelCandidateEdge {
         params: candidate_params,
         natural_setup_field_len: natural_len,
+        offloaded_setup_field_len,
         require_child_fold,
     } = candidate;
     // Only a prefix-consuming state is read through the setup projection by
@@ -880,6 +882,7 @@ fn price_level_candidate_with_children(
     if let Some(offloaded_child) = children.offloaded {
         let offloaded_edge = ChildEdge {
             offloaded: true,
+            natural_setup_field_len: offloaded_setup_field_len,
             ..direct_edge
         };
         for (successor_class, choices) in &offloaded_child.setup_and_payload {

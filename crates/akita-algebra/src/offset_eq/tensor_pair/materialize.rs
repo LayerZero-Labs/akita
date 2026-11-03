@@ -548,6 +548,9 @@ fn visit_tensor_coordinates<F: Field>(
         .axes
         .get(axis_index)
         .ok_or_else(|| AkitaError::Internal("tensor coordinate recursion axis is absent".into()))?;
+    // Charge every visited coordinate, including zero-weight ones that never
+    // reach a leaf, before the loop so a long axis cannot bypass the bound.
+    charge_work(work, axis.len)?;
     for coordinate in 0..axis.len {
         let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
             AkitaError::InvalidInput("visited tensor axis coordinate weight is absent".into())

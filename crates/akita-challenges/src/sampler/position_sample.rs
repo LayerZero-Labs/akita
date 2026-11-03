@@ -14,6 +14,24 @@ pub(crate) const MAX_STACK_RING_DIM: usize = 2048;
 /// Largest stack array used by one concrete sampler tier.
 const MAX_STACK_TIER_RING_DIM: usize = 2048;
 
+// Compact native slots and word-sized guest slots share the same shuffle.
+#[cfg(target_arch = "riscv64")]
+type SmallSlot = usize;
+#[cfg(not(target_arch = "riscv64"))]
+type SmallSlot = u8;
+#[cfg(target_arch = "riscv64")]
+pub(super) type LargeSlot = usize;
+#[cfg(not(target_arch = "riscv64"))]
+pub(super) type LargeSlot = u16;
+
+/// Last draw count for which the D64 shortcut needs only masks 63 and 31.
+const MAX_D64_SHORT_DRAWS: usize = 48;
+
+/// Whether partial Fisher-Yates should retain only the touched swaps.
+pub(super) const fn uses_sparse_positions(universe: usize, weight: usize) -> bool {
+    universe > weight.saturating_mul(64)
+}
+
 /// Reused sparse representation of the swaps performed by partial
 /// Fisher-Yates. Missing entries retain their identity-permutation value.
 pub(crate) struct DistinctPositionScratch {
@@ -130,29 +148,28 @@ pub(crate) fn sample_distinct_positions_into(
     // A dense challenge already has output size Theta(universe), and the flat
     // permutation has the best concrete locality. Sparse production families
     // instead retain only the O(weight) swaps touched by partial Fisher-Yates.
-    if universe > out.len().saturating_mul(64) {
+    if uses_sparse_positions(universe, out.len()) {
         return sample_distinct_positions_into_sparse(cursor, universe, out, scratch);
     }
     match universe {
-        0..=8 => sample_distinct_positions_into_stack::<u8, 8>(cursor, universe, out),
-        9..=16 => sample_distinct_positions_into_stack::<u8, 16>(cursor, universe, out),
-        17..=32 => sample_distinct_positions_into_stack::<u8, 32>(cursor, universe, out),
-        33..=64 => sample_distinct_positions_into_stack::<u8, 64>(cursor, universe, out),
-        65..=128 => sample_distinct_positions_into_stack::<u8, 128>(cursor, universe, out),
-        129..=256 => sample_distinct_positions_into_stack::<u8, 256>(cursor, universe, out),
-        257..=512 => sample_distinct_positions_into_stack::<u16, 512>(cursor, universe, out),
-        513..=1024 => sample_distinct_positions_into_stack::<u16, 1024>(cursor, universe, out),
+        0..=8 => sample_distinct_positions_into_stack::<SmallSlot, 8>(cursor, universe, out),
+        9..=16 => sample_distinct_positions_into_stack::<SmallSlot, 16>(cursor, universe, out),
+        17..=32 => sample_distinct_positions_into_stack::<SmallSlot, 32>(cursor, universe, out),
+        33..=64 => sample_distinct_positions_into_stack::<SmallSlot, 64>(cursor, universe, out),
+        65..=128 => sample_distinct_positions_into_stack::<SmallSlot, 128>(cursor, universe, out),
+        129..=256 => sample_distinct_positions_into_stack::<SmallSlot, 256>(cursor, universe, out),
+        257..=512 => sample_distinct_positions_into_stack::<LargeSlot, 512>(cursor, universe, out),
+        513..=1024 => {
+            sample_distinct_positions_into_stack::<LargeSlot, 1024>(cursor, universe, out)
+        }
         1025..=MAX_STACK_TIER_RING_DIM => sample_distinct_positions_into_stack::<
-            u16,
+            LargeSlot,
             MAX_STACK_TIER_RING_DIM,
         >(cursor, universe, out),
-        _ => {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring dimension must be <= {MAX_STACK_RING_DIM}"
-            )))
-        }
-    }?;
-    Ok(())
+        _ => Err(AkitaError::InvalidInput(format!(
+            "ring dimension must be <= {MAX_STACK_RING_DIM}"
+        ))),
+    }
 }
 
 #[inline]
@@ -162,10 +179,14 @@ fn sample_distinct_positions_into_sparse(
     out: &mut [u32],
     scratch: &mut DistinctPositionScratch,
 ) -> Result<(), AkitaError> {
+    if out.is_empty() {
+        return Ok(());
+    }
     scratch.prepare(out.len())?;
     scratch.clear();
+    let mut mask = universe.next_power_of_two() - 1;
     for (i, dst) in out.iter_mut().enumerate() {
-        let j = i + cursor.next_usize_mod(universe - i);
+        let j = i + cursor.next_usize_rolling(universe - i, &mut mask);
         let left = scratch.get(i)?;
         let right = scratch.get(j)?;
         scratch.insert(i, right)?;
@@ -178,14 +199,14 @@ fn sample_distinct_positions_into_sparse(
 }
 
 #[inline]
-fn sample_distinct_positions_into_stack<T, const N: usize>(
+pub(super) fn sample_distinct_positions_into_stack<T, const N: usize>(
     cursor: &mut XofCursor,
     universe: usize,
     out: &mut [u32],
 ) -> Result<(), AkitaError>
 where
     T: Copy + Default + TryFrom<usize>,
-    u32: From<T>,
+    usize: From<T>,
 {
     if out.len() > universe || universe > N || N > MAX_STACK_TIER_RING_DIM {
         return Err(AkitaError::InvalidInput(
@@ -198,12 +219,37 @@ where
             AkitaError::Internal("stack permutation position does not fit its tier type".into())
         })?;
     }
-    for (i, dst) in out.iter_mut().enumerate() {
-        let j = i + cursor.next_usize_mod(universe - i);
-        perm.swap(i, j);
-        *dst = u32::from(perm[i]);
-    }
+    shuffle_positions(cursor, out, &mut perm[..universe]);
     Ok(())
+}
+
+/// Canonical partial Fisher-Yates loop. Callers validate the output length
+/// and initialize permutation slots to 0..universe; every selected value is
+/// therefore bounded by MAX_STACK_RING_DIM before narrowing to u32.
+/// The D64 shortcut applies only while the remaining range needs a 63 or 31 mask;
+/// all other dimensions and draw counts use the general rolling mask.
+#[inline(always)]
+pub(super) fn shuffle_positions<T>(cursor: &mut XofCursor, out: &mut [u32], perm: &mut [T])
+where
+    T: Copy,
+    usize: From<T>,
+{
+    let universe = perm.len();
+    let d64_short_masks = universe == 64 && out.len() <= MAX_D64_SHORT_DRAWS;
+    let mut mask = universe.next_power_of_two() - 1;
+    for (i, dst) in out.iter_mut().enumerate() {
+        let modulus = universe - i;
+        let offset = if d64_short_masks {
+            cursor.next_usize_masked(modulus, if i < 32 { 63 } else { 31 })
+        } else {
+            cursor.next_usize_rolling(modulus, &mut mask)
+        };
+        let j = i + offset;
+        perm.swap(i, j);
+        // Only initialized positions in 0..universe are swapped, and the
+        // validated universe is <= 2048, so this narrowing is exact.
+        *dst = usize::from(perm[i]) as u32;
+    }
 }
 
 #[cfg(test)]
@@ -256,6 +302,77 @@ mod tests {
                     sparse, dense,
                     "universe={universe}, weight={weight}, round={round}"
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod slot_width_tests {
+    use super::*;
+    #[test]
+    fn slot_types_preserve_draws_and_cursor_consumption() {
+        let prefix = crate::sampler::IndexedXofPrefix::new(&[37; 32]).unwrap();
+        for universe in [
+            1usize, 2, 3, 7, 8, 33, 64, 100, 129, 256, 257, 777, 1024, 2048,
+        ] {
+            for weight in [1, universe / 3, universe.min(41), universe] {
+                let weight = weight.max(1);
+                for coordinate in 0..4 {
+                    let mut narrow = XofCursor::from_indexed_prefix(&prefix, coordinate);
+                    let mut word = XofCursor::from_indexed_prefix(&prefix, coordinate);
+                    let mut reference = XofCursor::from_indexed_prefix(&prefix, coordinate);
+                    let (mut a, mut b, mut c) = (vec![0; weight], vec![0; weight], vec![0; weight]);
+                    sample_distinct_positions_into_stack::<u16, 2048>(
+                        &mut narrow,
+                        universe,
+                        &mut a,
+                    )
+                    .unwrap();
+                    sample_distinct_positions_into_stack::<usize, 2048>(
+                        &mut word, universe, &mut b,
+                    )
+                    .unwrap();
+                    sample_distinct_positions_into_sparse(
+                        &mut reference,
+                        universe,
+                        &mut c,
+                        &mut DistinctPositionScratch::new(),
+                    )
+                    .unwrap();
+                    assert_eq!(a, c, "universe={universe}, weight={weight}");
+                    assert_eq!(b, c, "universe={universe}, weight={weight}");
+                    let mut suffix = [[0u8; 64]; 3];
+                    narrow.fill_bytes(&mut suffix[0]);
+                    word.fill_bytes(&mut suffix[1]);
+                    reference.fill_bytes(&mut suffix[2]);
+                    assert_eq!(suffix[0], suffix[2]);
+                    assert_eq!(suffix[1], suffix[2]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn slot_width_preserves_draws_and_cursor_consumption() {
+        for universe in [8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
+            let prefix = crate::sampler::IndexedXofPrefix::new(&[37; 32]).unwrap();
+            for coordinate in 0..8 {
+                let mut a = XofCursor::from_indexed_prefix(&prefix, coordinate);
+                let mut b = XofCursor::from_indexed_prefix(&prefix, coordinate);
+                let weight = universe.min(41);
+                let mut old = vec![0; weight];
+                let mut new = vec![0; weight];
+                sample_distinct_positions_into_stack::<u16, 2048>(&mut a, universe, &mut old)
+                    .unwrap();
+                sample_distinct_positions_into_stack::<usize, 2048>(&mut b, universe, &mut new)
+                    .unwrap();
+                assert_eq!(old, new);
+                let mut suffix_a = [0; 200];
+                let mut suffix_b = [0; 200];
+                a.fill_bytes(&mut suffix_a);
+                b.fill_bytes(&mut suffix_b);
+                assert_eq!(suffix_a, suffix_b);
             }
         }
     }
