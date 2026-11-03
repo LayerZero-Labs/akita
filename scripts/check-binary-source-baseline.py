@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Linux-only byte compatibility gate against the pinned typed-Stage-3 dev.
 
-Compare three word fixtures and twelve prime/projection selections (90 files).
+Compare three word fixtures and sixteen prime/projection selections (114 files).
 
 Capture setup, commitments, proof and continuation from independently compiled
 base/head worktrees with separate fresh Cargo targets. Any failed command,
@@ -42,7 +42,8 @@ PRIME_CASES = (
     "false-false-1-1", "false-false-2-1", "false-false-5-1",
     "false-true-1-1", "false-true-2-1", "false-true-5-1",
     "true-true-1-1", "true-true-2-1", "true-true-5-1",
-    "false-true-2-2", "false-false-2-2", "false-false-1-2",
+    "true-false-1-1", "true-false-2-1", "true-false-5-1",
+    "false-true-0-2", "false-true-2-2", "false-false-2-2", "false-false-1-2",
 )
 PARTS = ("", ".setup", ".prefixes", ".commitment", ".ordinary", ".continuation")
 
