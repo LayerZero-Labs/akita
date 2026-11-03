@@ -1045,7 +1045,7 @@ For the mixed smoke shape, the ordinary group retains 2^18 coefficients,
 matching the existing mixed opening fixture;
 the two benchmark sizes use N ordinary coefficients.
 Binary carriers use a fixed integer mixer; the ordinary fixture alternates
-zero and one. The initial smoke measurements below were taken on 2026-11-02.
+zero and one.
 
 The driver selects the default-off `binary-source-measurements` feature, which
 enables `labinius-trinomial` and the offline plane planner. It accepts:
@@ -1067,6 +1067,47 @@ wall times, which must not be summed when spans overlap. The verifier must
 pass with the online A accessor forbidden, match the caller's transcript
 continuation, and consume the complete proof.
 
+The log-10 smoke run uses ordinary catalog admission. It plans its schedules
+with `ValidatedScheduleCatalog::try_new`, writes them as an ordinary catalog
+artifact, and loads that artifact for verification with ordinary prover setup.
+Explicit native-root admission (`ValidatedScheduleCatalog::try_new_native_root`)
+and explicit setup-prefix preparation run only at N=2^22 and N=2^23. The
+prover and verifier kernels are shared, so the smoke run checks the opening
+but not those two full-size harness paths. Its proof is 87,341 bytes in the
+current protocol and 82,314 bytes in the dev protocol; both are pinned.
+
+### Proof digest pins
+
+[`scripts/binary-source-full-size-digests.tsv`](../scripts/binary-source-full-size-digests.tsv)
+pins the proof size and Blake2b-256 digest of every full-size and smoke shape
+in both protocols. The driver fails when a proof differs from its row. Each pin
+was captured at a different point in the history below. A pin establishes byte
+equality only between the source it was captured from and later sources:
+
+- Packed source storage (`da4f701d2`) predates every full-size baseline. The
+  earlier expanded importer rejected both benchmark sizes before commitment,
+  so no pin establishes byte equality with the pre-packed representation.
+- The current-protocol `word-prime` pins (`325b72ca6` at N=2^22, `f6c1b1b45`
+  at N=2^23) come from the native-admission source `4fc40d2db`. They predate
+  the parity (`082dd6278`), buffer-lifetime (`b17e9a2e2`), fixture-buffering
+  (`2b8854e14`) and adjoint-scratch (`ae173d73c`) changes. The `word` and
+  `prime5` pins (`56aed7ed4`) come from the saved `4fc40d2db` baseline
+  executable.
+- The current-protocol `word-prime-ordinary` pins (`e74bfada5`) follow the
+  B-slice repair. They were captured with that repair applied before it was
+  committed as `b64fdbb4c`, on source that already included the parity,
+  buffer-lifetime and buffering changes but not the adjoint-scratch change.
+- The dev-protocol full-size pins (`1b80cd6a9`) were reconstructed after all
+  of those optimizations. They were built in a fresh worktree from historical
+  source `4fc40d2db`, plus the B-slice repair and two tracing spans.
+- The current-protocol smoke pin (`325b72ca6`) reproduces the first smoke run.
+  The dev-protocol smoke pin was added in `05df5f614`.
+
+The final runs below reproduce all sixteen full-size pins. Together these pins
+support the claim that the parity, buffer-lifetime, buffering and adjoint
+changes preserve proof bytes. They do not show that the packed representation
+preserves the bytes of the expanded one.
+
 ### Final current-protocol results
 
 All eight final current-protocol runs used code commit
@@ -1075,8 +1116,8 @@ only this measurement specification's edits. The logs are
 `$CARGO_TARGET_DIR/final-current-<log>-<shape>.txt`. Every row reports
 `proof_digest_pin matched=True` and `verification passed=true`, matching the
 caller's transcript continuation and keeping online A reads forbidden.
-The proof bytes and digests reproduce the pins captured before the later
-arithmetic optimizations; the mixed pins follow the required B-slice repair.
+Each proof reproduces its pin; the chronology above states what each pin
+covers.
 
 | N | Shape | Proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -1088,11 +1129,6 @@ arithmetic optimizations; the mixed pins follow the required B-slice repair.
 | 2^23 | word-prime | 89,661 | 26,024 | 12,891,324,416 | 3,691,986,944 |
 | 2^23 | word-prime-ordinary | 89,664 | 26,029 | 12,852,248,576 | 4,208,427,008 |
 | 2^23 | prime5 | 86,548 | 25,774 | 14,589,149,184 | 8,434,941,952 |
-
-The N=2^23 `word-prime` prover peak is 12,891,324,416 bytes, below one fifth
-of the 68,719,476,736-byte host. Peak RSS includes cold preparation in each
-isolated process. These values establish memory fit for this fixture; they do
-not certify another source count, shape or parameter choice.
 
 The complete proof partition below is bytes/atoms per category across all fold
 levels. The other category includes the remaining payload, framing and work
@@ -1207,8 +1243,7 @@ protocol-specific pins.
 | 2^23 | word-prime-ordinary | 84,621 | 25,787 | 12,827,443,200 | 4,208,427,008 |
 | 2^23 | prime5 | 81,554 | 25,581 | 14,592,933,888 | 8,434,696,192 |
 
-The N=2^23 dev-protocol `word-prime` prover peak is 13,666,058,240 bytes,
-also below one fifth of host memory. Canonical outgoing natural/physical
+Canonical outgoing natural/physical
 sizes, commitment domains, typed prefix domains, six recursive output lengths
 and eight total fold levels match each corresponding current-protocol row;
 these equalities were checked against every final log.
@@ -1273,142 +1308,62 @@ Final dev-protocol N=2^23, inclusive nanoseconds, with the load triples above:
 | Complete proving | 25,438,106,167 | 26,886,707,000 | 26,642,876,458 | 30,962,749,791 |
 | Complete verification | 3,525,101,458 | 4,093,525,875 | 4,112,921,833 | 5,993,753,084 |
 
-### Historical-to-final dev-protocol comparison
+### Canonical layout and native schedule reconciliation
 
-Every row below preserves its historical proof's exact bytes and digest.
-The timings compare the complete combined changes; they do not isolate parity,
-allocation lifetime, adjoint scratch, buffering, compiler or load effects.
-Use the baseline and final load tables in this section when assessing the times.
-Peak RSS is an independent process measurement, not the sum of buffer sizes.
+The current-protocol planner and completed full-size openings reconcile the
+following canonical repacking counts with `price_binary_root_planes`. Natural digits exclude
+virtual coefficient tails; physical cells
+include those tails but exclude final power-of-two padding. These counts
+agree with the design's section 12.1; its five-plane row additionally includes
+a word claim, unlike the `prime5` harness shape.
 
-| N | Shape | Baseline prove ns | Final prove ns | Baseline verify ns | Final verify ns | Baseline prover RSS bytes | Final prover RSS bytes |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 19,643,377,583 | 13,180,117,792 | 2,417,749,334 | 2,077,195,042 | 6,717,030,400 | 5,611,520,000 |
-| 2^22 | word-prime | 19,518,184,125 | 14,305,025,750 | 2,698,914,042 | 2,490,934,167 | 7,070,449,664 | 7,067,271,168 |
-| 2^22 | word-prime-ordinary | 17,057,029,209 | 14,260,011,083 | 2,869,937,041 | 2,416,851,959 | 7,744,585,728 | 7,479,492,608 |
-| 2^22 | prime5 | 23,907,995,375 | 19,831,039,583 | 5,818,740,292 | 5,496,839,916 | 12,682,412,032 | 12,482,592,768 |
-| 2^23 | word | 33,873,689,833 | 25,438,106,167 | 4,120,492,125 | 3,525,101,458 | 13,090,422,784 | 10,916,085,760 |
-| 2^23 | word-prime | 35,893,664,792 | 26,886,707,000 | 4,785,251,541 | 4,093,525,875 | 13,677,051,904 | 13,666,058,240 |
-| 2^23 | word-prime-ordinary | 34,586,278,334 | 26,642,876,458 | 4,827,243,125 | 4,112,921,833 | 13,799,866,368 | 12,827,443,200 |
-| 2^23 | prime5 | 38,174,043,667 | 30,962,749,791 | 6,817,642,875 | 5,993,753,084 | 16,754,196,480 | 14,592,933,888 |
-
-The fixture I/O spans provide the following before/after evidence for buffered
-transport, under those same baseline and final load triples. Fixture
-serialization and setup deserialization are outside the complete opening
-spans. These are phase measurements from combined-change runs, not an isolated
-I/O microbenchmark or a protocol speedup.
-
-| N | Shape | Unbuffered serialization ns | Buffered serialization ns | Historical setup deserialization ns | Final setup deserialization ns |
+| N | Shape | Natural digits | Physical cells | Minimum domain | Zero-padding cells |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 6,343,925,167 | 43,618,084 | 89,677,083 | 71,212,208 |
-| 2^22 | word-prime | 6,107,946,875 | 39,096,625 | 87,560,250 | 73,428,584 |
-| 2^22 | word-prime-ordinary | 6,260,954,041 | 36,684,959 | 89,923,458 | 74,661,083 |
-| 2^22 | prime5 | 6,150,190,041 | 46,458,083 | 92,268,083 | 78,432,291 |
-| 2^23 | word | 15,382,593,792 | 152,262,000 | 241,358,542 | 181,717,083 |
-| 2^23 | word-prime | 14,740,160,750 | 128,314,709 | 234,842,833 | 192,590,583 |
-| 2^23 | word-prime-ordinary | 15,237,461,834 | 105,148,417 | 227,985,250 | 187,963,167 |
-| 2^23 | prime5 | 14,805,404,416 | 208,287,000 | 233,246,875 | 194,434,917 |
+| 2^22 | word | 14,642,046 | 23,138,048 | 33,554,432 | 18,912,386 |
+| 2^22 | word-prime | 16,425,342 | 25,956,096 | 33,554,432 | 17,129,090 |
+| 2^22 | word-prime-ordinary | 21,393,790 | 30,924,544 | 33,554,432 | 12,160,642 |
+| 2^22 | prime5 | 23,514,624 | 37,158,912 | 67,108,864 | 43,594,240 |
+| 2^23 | word | 25,258,878 | 39,915,264 | 67,108,864 | 41,849,986 |
+| 2^23 | word-prime | 27,042,174 | 42,733,312 | 67,108,864 | 40,066,690 |
+| 2^23 | word-prime-ordinary | 36,172,158 | 51,863,296 | 67,108,864 | 30,936,706 |
+| 2^23 | prime5 | 34,131,456 | 53,936,128 | 67,108,864 | 32,977,408 |
 
-### Historical dev-protocol baseline
+The ordinary group contributes N source cells and 704,512 image digit cells.
+Its two compression segments contribute 65,536/4,096 cells at N=2^22 and
+32,768/4,096 at N=2^23 under the selected ordinary profiles. These are minimum
+binary witness domains; a selected ordinary carrier schedule may reserve a
+larger domain and must report it separately.
 
-The dev-protocol baseline was rebuilt from historical source
-`4fc40d2db14cdc670161f9c310a20bf9e994c148`, with the canonical B-slice
-materializer repair and only two added tracing spans: `fixture_serialization`
-and `fixture_setup_deserialization`. It retains the historical unbuffered I/O,
-dense parity construction and recursive adjoint allocations. The repair patch
-SHA-256 is
-`4f7f0ab7b3c43ee919375f443307144742cded0404ea1688ac3c988483899612`;
-the saved executable SHA-256 is
-`83318968292ba2c8400eb879a963cc919249716c51ae07cc73f3c892beccee97`.
-It was built with the supplied target directory and Cargo shim for
-`aarch64-apple-darwin`, with `dev-protocol` selected.
+At source commit `4fc40d2db14cdc670161f9c310a20bf9e994c148`, the benchmark
+harness admits an explicit native-root transition using the canonical physical
+witness length and typed A-prefix length. The ordinary suffix planner starts
+from those exact lengths. Catalog admission validates that geometry, and the
+binary verifier consumes the same authenticated successor input length. This
+replaces an ordinary-carrier capacity search, which found no carrier at
+N=2^22 (see the appendix). Smoke runs keep their original ordinary carrier
+schedules, so their pinned proof bytes are unchanged. Both measured
+`word-prime` schedules have six recursive folds and eight total fold levels.
+Their first successor uses degree 512 and the later ordinary folds use degree
+64. Full selected profiles are printed in each measurement log.
 
-All eight logs, `$CARGO_TARGET_DIR/baseline-dev-<log>-<shape>.txt`, report
-successful verification, matching caller transcript continuation and forbidden
-online A reads. Commit `1b80cd6a9` pins all eight historical dev-protocol
-proof digests before optimized dev-protocol measurements. This is a
-retrospective replay of pre-optimization source: the dev baseline was rebuilt
-and pinned after the optimization commits, unlike the initial current-protocol
-`word-prime` pins captured before those optimizations. The saved baseline
-and optimized executables are run with the driver's same `--phase prove` and
-`--phase verify` arguments and a common temporary `--fixture` directory.
-This avoids repeated Cargo-lock waits between measurements. Their source and
-executable digests and `uptime` loads are logged separately. The driver's
-`--dev-protocol` smoke is a separate build/run entry-point check.
+The mixed ordinary source materializer also accepts the canonical B slice
+geometry rather than requiring one block per slice. Its T digits remain in
+global block/A-row/subcolumn/digit/coefficient order. Public B weights select
+canonical block ranges and use local block indices inside each slice. Frozen
+profile validation still authenticates the physical B width; the complete T
+length comes from the canonical logical B width. A cheap regression checks
+four blocks with one or two slices, degree-128 A and degree-64 B, complete
+A/B/F/H identities, subcolumn ordering and malformed-width rejection.
 
-| N | Shape | Baseline proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 82,784 | 25,609 | 6,717,030,400 | 1,474,199,552 |
-| 2^22 | word-prime | 82,731 | 25,557 | 7,070,449,664 | 2,121,285,632 |
-| 2^22 | word-prime-ordinary | 82,743 | 25,569 | 7,744,585,728 | 2,402,058,240 |
-| 2^22 | prime5 | 79,851 | 25,393 | 12,682,412,032 | 6,235,619,328 |
-| 2^23 | word | 84,578 | 25,746 | 13,090,422,784 | 2,471,755,776 |
-| 2^23 | word-prime | 84,574 | 25,739 | 13,677,051,904 | 3,692,511,232 |
-| 2^23 | word-prime-ordinary | 84,621 | 25,787 | 13,799,866,368 | 4,208,295,936 |
-| 2^23 | prime5 | 81,554 | 25,581 | 16,754,196,480 | 8,435,105,792 |
-
-The baseline's canonical outgoing geometry and six-level recursive output
-chains match the corresponding current-protocol rows above. Dev-protocol
-proofs have a different terminal grammar; their byte counts are not evidence
-that current-protocol proofs can omit the same messages.
-The complete baseline partition is bytes/atoms across all fold levels:
-
-| N | Shape | Field switch | Projections | Stage 1 | Stage 2 | Stage 3 | Physical L2 | Other |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 2,993/173 | 84/7 | 11,043/858 | 7,217/587 | 824/74 | 4,293/318 | 56,330/23,592 |
-| 2^22 | word-prime | 2,993/173 | 84/7 | 11,043/858 | 7,217/587 | 824/74 | 4,293/318 | 56,277/23,540 |
-| 2^22 | word-prime-ordinary | 2,993/173 | 84/7 | 11,043/858 | 7,217/587 | 824/74 | 4,293/318 | 56,289/23,552 |
-| 2^22 | prime5 | 0/0 | 84/7 | 11,108/863 | 7,266/591 | 824/74 | 4,293/318 | 56,276/23,540 |
-| 2^23 | word | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,258/23,553 |
-| 2^23 | word-prime | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,254/23,546 |
-| 2^23 | word-prime-ordinary | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,301/23,594 |
-| 2^23 | prime5 | 0/0 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,269/23,563 |
-
-These load triples apply to all historical dev-protocol phase times below;
-no row was measured below one-minute load 4.
-
-| N | Shape | Load before | Load after |
-| --- | --- | --- | --- |
-| 2^22 | word | 16.64/11.36/10.71 | 26.12/14.75/12.00 |
-| 2^22 | word-prime | 26.12/14.75/12.00 | 29.11/18.34/13.58 |
-| 2^22 | word-prime-ordinary | 29.11/18.34/13.58 | 32.18/20.71/14.68 |
-| 2^22 | prime5 | 32.18/20.71/14.68 | 23.10/20.69/15.23 |
-| 2^23 | word | 23.10/20.69/15.23 | 25.71/22.03/16.30 |
-| 2^23 | word-prime | 25.71/22.03/16.30 | 19.51/20.99/16.54 |
-| 2^23 | word-prime-ordinary | 19.51/20.99/16.54 | 28.63/23.29/17.77 |
-| 2^23 | prime5 | 28.63/23.29/17.77 | 19.76/21.65/17.84 |
-
-Historical dev-protocol N=2^22, inclusive nanoseconds, with the load triples above:
-
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
-| --- | ---: | ---: | ---: | ---: |
-| Catalog planning | 30,920,451,042 | 32,485,773,875 | 9,311,988,791 | 31,613,850,625 |
-| Cold prover setup | 57,612,167 | 66,512,792 | 67,569,500 | 94,900,958 |
-| Independent fixture evaluation | 19,537,042 | 1,849,675,042 | 1,863,183,875 | 9,182,538,250 |
-| Binary commitment | 1,809,069,666 | 2,043,854,292 | 1,961,923,584 | 2,028,501,500 |
-| Ordinary commitment | absent | absent | 24,582,125 | absent |
-| Cold prefix preparation | 199,941,666 | 253,185,084 | 249,568,083 | 263,713,334 |
-| Cold verifier setup | 185,257,041 | 222,610,041 | 208,754,833 | 207,131,292 |
-| Fixture serialization | 6,343,925,167 | 6,107,946,875 | 6,260,954,041 | 6,150,190,041 |
-| Fixture setup deserialization | 89,677,083 | 87,560,250 | 89,923,458 | 92,268,083 |
-| Complete proving | 19,643,377,583 | 19,518,184,125 | 17,057,029,209 | 23,907,995,375 |
-| Complete verification | 2,417,749,334 | 2,698,914,042 | 2,869,937,041 | 5,818,740,292 |
-
-Historical dev-protocol N=2^23, inclusive nanoseconds, with the load triples above:
-
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
-| --- | ---: | ---: | ---: | ---: |
-| Catalog planning | 36,788,665,000 | 36,754,778,959 | 13,405,380,042 | 36,218,120,041 |
-| Cold prover setup | 139,934,000 | 128,158,708 | 182,121,166 | 126,810,875 |
-| Independent fixture evaluation | 41,927,667 | 3,702,988,500 | 3,689,426,792 | 17,796,588,791 |
-| Binary commitment | 2,348,539,625 | 2,297,066,167 | 2,290,839,541 | 2,334,813,333 |
-| Ordinary commitment | absent | absent | 25,619,250 | absent |
-| Cold prefix preparation | 948,339,083 | 736,382,500 | 858,827,250 | 890,161,041 |
-| Cold verifier setup | 885,988,958 | 762,290,792 | 753,013,958 | 816,168,958 |
-| Fixture serialization | 15,382,593,792 | 14,740,160,750 | 15,237,461,834 | 14,805,404,416 |
-| Fixture setup deserialization | 241,358,542 | 234,842,833 | 227,985,250 | 233,246,875 |
-| Complete proving | 33,873,689,833 | 35,893,664,792 | 34,586,278,334 | 38,174,043,667 |
-| Complete verification | 4,120,492,125 | 4,785,251,541 | 4,827,243,125 | 6,817,642,875 |
+The typed A-prefix layout corrects section 12.3's proposed domains. Its
+independent coefficient and rank axes require `m*1024*4`, rather than rounding
+the flat live count `m*648*3`. The minimum domains are **16,777,216 (2^24)**
+and **33,554,432 (2^25)**, twice the proposed 2^23 and 2^24. The regression
+`full_size_typed_prefix_requires_padded_rank_and_coefficient_axes` checks that
+the canonical product accepts these sizes and rejects the smaller domains
+without allocating the full prefix. `BinaryAPrefixLen` is the only owner of
+this sizing. Setup coefficients, the factored Stage 3 product,
+`price_binary_root_planes` and the harness's native transition all read it.
 
 ### Reconciliation with the design's cost budgets
 
@@ -1446,7 +1401,180 @@ loads. These also exceed both design timing ranges. The unchanged proof pins
 support the arithmetic and transport byte-preservation claims; they do not
 turn noisy timing differences into isolated optimization measurements.
 
-### Initial full-size current-protocol baselines
+### Verifier and kernel cost relative to the design
+
+The verifier has additional linear work beyond section 12.5's direct-weight
+estimate. It draws one field challenge for each zero-padding cell, scans the
+outgoing domain, materializes B/D authentication weights, and constructs prime
+response terms. In particular the minimum `word-prime` domains require
+17,129,090 and 40,066,690 padding challenges. The design's section 8.2 values
+856,064 and 1,712,128 count additions in a proposed shared-subset direct-weight
+kernel, not these padding challenges or the current complete verifier.
+The canonical A accessor remains absent from online verification.
+
+The direct-weight path also differs from sections 5.3 and 8.2: it invokes
+`shifted_remainder_evaluations` separately for each of the M=N/C binary row
+weights, rather than using shared subset sums. At degree 162, each invocation
+executes 497 field multiplication operators: 10 for exponentiation to 81,
+one for the modulus evaluation, 162 for Horner evaluation, and 324 for the
+shift recurrence. Scaling the 162 output coefficients adds another 324
+multiplication operators per row. The same row path executes 407 binary field
+addition/subtraction operators, excluding 81 unary sign negations. Thus the
+current row path has the following
+source-level operation counts, excluding equality-weight generation, field
+conversion, column kernels, carry kernels and subsequent oracle evaluation:
+
+| N | Row weights M | Current row multiplications | Current row binary additions/subtractions | Proposed subset additions |
+| --- | ---: | ---: | ---: | ---: |
+| 2^22 | 16,384 | 13,451,264 | 6,668,288 | 856,064 |
+| 2^23 | 32,768 | 26,902,528 | 13,336,576 | 1,712,128 |
+
+These count executed Rust arithmetic operators, including multiplication by
+zero or a sign; they are not measured machine instructions. The proposed
+subset column does not include its public coefficient-kernel work, so it is
+not an end-to-end operation total or a measured speedup.
+
+The design's rough 59,049-multiplication adjoint estimate also does not describe
+the current kernel. As detailed in the typed A section above, the implemented
+two-convolution adjoint uses 154,872 leaf field multiplications per rank row,
+or 464,616 for rank three. Surrounding contractions add further operations.
+
+### Memory
+
+The N=2^23 `word-prime` prover peak is 12,891,324,416 bytes in the current
+protocol and 13,666,058,240 bytes in the dev protocol. Both are below one fifth
+of the 68,719,476,736-byte host. Peak RSS includes cold preparation in each
+isolated process. These values establish memory fit for this fixture; they do
+not certify another source count, shape or parameter choice.
+
+The packed importer keeps binary sources within the importer's unchanged cap.
+It retains column-contiguous `u128` carriers using the published
+`kernel_carrier_index` permutation. Storage is exactly **67,108,864 bytes** at
+N=2^22 and **134,217,728 bytes** at N=2^23 per polynomial, within the unchanged
+134,217,728-byte budget. Immutable source, A matrix, images and image digits
+are shared through `Arc` when root preparation clones its private ownership.
+
+A commitment now uses `PreparedLimbCommitMatrix` and
+`commit_binary_clear_limb_prepared`; response folding uses the existing
+bit-sliced carry-save kernel. A checked sparse-challenge adapter preserves
+support order, deterministic signs and nonce selection. Prime planes use the
+existing shared eight-row subset-sum kernel through an explicit weighted-bit
+arithmetic boundary, without expanding signed source rings. Differential
+regressions compare image, response, residual, prime-plane and binary partial
+values with the previous arithmetic for multiple polynomials, narrow word
+widths and padding.
+
+## Appendix: full-size measurement history
+
+This appendix keeps the superseded and intermediate evidence behind the
+full-size results above. None of it is a current result, and it does not repeat
+the final tables. The proof digest pins section above states which source each
+pin was captured from.
+
+### Original source-storage limit
+
+At base commit `8f515ebbcb3015cf9988ad6de4004c96075e90cc`, neither benchmark
+size can reach commitment through the existing importer. Its source storage
+is `[i128;648]` per source ring element, bounded to 134,217,728 bytes. The
+required allocations are calculated below, excluding all other buffers:
+
+| N | Source ring elements | Source bytes | A-commitment kernel multiplications | Source-fold multiplications per nonce |
+| --- | ---: | ---: | ---: | ---: |
+| 2^22 | 1,048,576 | 10,871,635,968 | 1,320,903,770,112 | 440,301,256,704 |
+| 2^23 | 2,097,152 | 21,743,271,936 | 2,641,807,540,224 | 880,602,513,408 |
+
+The source bytes are `(N/4)*648*16`. The A-commitment and source-fold counts are
+respectively `(N/4)*3*648^2` and `(N/4)*648^2`, from the unconditional
+schoolbook loops in
+[`signed_trinomial_product`](../crates/akita-algebra/src/ring/trinomial/signed.rs)
+and their callers in the
+[source importer](../crates/akita-cpu-backend/src/opaque/binary_source.rs) and
+[response builder](../crates/akita-cpu-backend/src/binary_root.rs).
+That version also deep-cloned the source storage during root preparation. These are calculated
+allocation and operation counts, not measured RSS or timing results.
+They exclude subsequent residual construction and other opening arithmetic.
+The packed importer described under Memory (`da4f701d2`) replaced this
+representation before the first executable full-size baseline. No full-size
+proof digest is claimed for the original expanded representation, because its
+importer rejects both benchmark geometries before commitment.
+
+### Initial smoke runs and the superseded carrier search
+
+The initial current-protocol smoke runs were taken on 2026-11-02 with the
+harness source subsequently
+identified by commit `e6f7ddbd98f0b17231267c04a9c121839bcfb6a8`. The mixed
+driver started before that commit and logged base HEAD `8f515ebbcb3015cf9988ad6de4004c96075e90cc`
+with a dirty tree; the prime-only run logged HEAD `e6f7ddbd9`, with specification
+edits still uncommitted. Both openings verified, matched the
+caller's transcript continuation, and passed with the online A accessor
+forbidden. Every proof byte was accounted for exactly once. These N=2^10,
+C=2 results validate the harness; they are not full-size benchmark results.
+
+| Shape | Proof bytes | Atoms, including framing and work | Prover peak RSS bytes | Verifier peak RSS bytes |
+| --- | ---: | ---: | ---: | ---: |
+| word-prime-ordinary | 87,341 | 25,756 | 1,546,911,744 | 404,439,040 |
+| prime5 | 84,842 | 25,598 | 2,051,637,248 | 437,993,472 |
+
+Both selected six recursive folds and eight total fold levels, with a
+scheduled witness domain of 8,388,608 cells. Their scheduled live lengths
+were 5,452,288 and 4,276,544 respectively. The Blake2b-256 proof digests were:
+
+```text
+word-prime-ordinary 878fe23f6701a2936ca09fa887c91449f4feedeb528e0652d3ab9374b61d83df
+prime5              1c0c7581aef2a052798fc0505003047713a9e87c068ea4ec554ac0ecc504b79c
+```
+
+The mixed smoke with HEAD `13b668f6eb40787f01b5ad250bcca76766063866` and
+uncommitted specification edits reproduced that exact digest after
+the reporting and capacity-check corrections. Its byte/atom partition across
+all fold levels is below. Stage rows include their tagged sumcheck messages,
+tagged work nonces and late claims; the remaining payload, framing and work
+families are reported separately. The driver also prints each family,
+invocation and level, avoiding ambiguity between protocol stages and site
+stage numbers.
+
+| Category | Bytes | Atoms |
+| --- | ---: | ---: |
+| Binary field switch | 2,489 | 149 |
+| Integer projections | 84 | 7 |
+| Stage 1 tagged families | 11,302 | 907 |
+| Stage 2 tagged families | 6,776 | 551 |
+| Stage 3 tagged families | 692 | 62 |
+| Physical L2 tagged families | 4,212 | 312 |
+| Other payload, framing and work families | 61,786 | 23,768 |
+| Total | 87,341 | 25,756 |
+
+The following are inclusive tracing-span wall times in nanoseconds. `uptime`
+load averages immediately before/after the mixed run were
+**50.12/27.48/19.77 → 100.45/46.82/27.57**; before/after the prime-only run
+they were **72.09/52.27/31.41 → 16.04/35.55/29.48**. These noisy timings
+are not optimization comparisons. Peak RSS includes each process's cold
+preparation and planner work.
+
+| Phase | word-prime-ordinary ns | prime5 ns |
+| --- | ---: | ---: |
+| Catalog planning | 52,348,544,375 | 237,928,101,292 |
+| Cold prover setup | 63,737,583 | 25,723,792 |
+| Independent fixture evaluation | 696,458 | 1,895,917 |
+| Binary commitment | 691,570,375 | 549,641,416 |
+| Ordinary commitment | 8,499,167 | absent |
+| Cold prefix preparation | 85,656,708 | 23,382,750 |
+| Cold verifier setup | 38,130,041 | 23,553,750 |
+| Complete proving | 3,837,995,792 | 1,729,289,334 |
+| Complete verification | 699,767,625 | 546,214,958 |
+
+Native-root admission has superseded the following search. Before it, the
+N=2^22 `word-prime` command exited with an error during the bounded ordinary
+carrier search, before source import. At carrier log 30 the selected ordinary
+row had 24,725,376 live witness cells and a 4,194,304-cell prefix, below the
+binary requirements of 25,956,096 physical cells and a 16,777,216-cell prefix.
+Its planning span took 211,509,359,125 ns at starting `uptime` load averages
+**13.80/31.64/28.40**; process peak RSS was 848,642,048 bytes. This is a
+failed planning attempt, not a prover memory measurement or a proof digest.
+The later harness capacity check distinguishes physical live cells from the
+padded commitment domain; this row fails both the old and corrected checks.
+
+### Initial current-protocol baselines
 
 The full-size results below use the packed-source and native-admission source
 subsequently identified by `4fc40d2db14cdc670161f9c310a20bf9e994c148`.
@@ -1481,31 +1609,8 @@ preparation. The initial N=2^22 mixed baseline failed on the one-block-per-B-sli
 restriction discussed below; it produced no proof or verifier measurement.
 Its planning and error-path spans are not successful opening timings.
 
-The full-size current-protocol digests are pinned in
-[`scripts/binary-source-full-size-digests.tsv`](../scripts/binary-source-full-size-digests.tsv).
-In particular, the two `word-prime` baselines were pinned before later
-optimizations:
-
-```text
-2^22  3b6c6665e1c9d96b7d5fe6b77f383458cf06a49e7f04a71639c677669261842d
-2^23  6e1e621ffeb078d63b66c44439fb21a122efdc429336fcb15c3ff7924c9a6b0a
-```
-
-The following stage partition includes all fold levels. Tagged stage rows
-include sumcheck messages, work nonces and late claims. The other category
-contains payload, framing and remaining work families. Every byte and atom
-appears once; the logs also give level, family and invocation.
-
-| Category | N=2^22 word-prime bytes | Atoms | N=2^23 word-prime bytes | Atoms |
-| --- | ---: | ---: | ---: | ---: |
-| Binary field switch | 2,993 | 173 | 3,035 | 175 |
-| Integer projections | 84 | 7 | 84 | 7 |
-| Stage 1 tagged families | 11,043 | 858 | 14,422 | 1,147 |
-| Stage 2 tagged families | 7,217 | 587 | 7,168 | 583 |
-| Stage 3 tagged families | 824 | 74 | 857 | 77 |
-| Physical L2 tagged families | 4,293 | 318 | 2,754 | 204 |
-| Other payload, framing and work | 61,332 | 23,796 | 61,341 | 23,831 |
-| Total | 87,786 | 25,813 | 89,661 | 26,024 |
+Their proof bytes, atoms and stage partitions equal the final rows. Their
+digests are the `word-prime`, `word` and `prime5` pins described above.
 
 The measured inclusive phase times below are nanoseconds. None was taken below
 one-minute load 4. Each row records the complete `uptime` load triple before
@@ -1552,13 +1657,7 @@ digests, completing pins for all eight current-protocol full-size shapes.
 | 2^22 | 87,790 | 25,815 | 7,450,640,384 | 2,402,238,464 | 30,924,544 | 33,554,432 |
 | 2^23 | 89,664 | 26,029 | 13,254,672,384 | 4,207,935,488 | 51,863,296 | 67,108,864 |
 
-Both schedules have six recursive folds and eight total fold levels. Their
-Blake2b-256 proof digests are:
-
-```text
-2^22  1cb93d0152af8cfaac5dc2a0bc0c4a7082aff61114e5a66f9b68600c16444efd
-2^23  6e77cda652d91e04b64d67208294b2e30bd431b58661d380293ef346167041db
-```
+Both schedules have six recursive folds and eight total fold levels.
 
 These inclusive tracing times use nanoseconds. The `uptime` loads were
 **8.20/9.20/10.17 → 7.51/8.94/10.05** at N=2^22 and
@@ -1577,12 +1676,9 @@ These inclusive tracing times use nanoseconds. The `uptime` loads were
 | Complete proving | 14,815,040,000 | 27,541,188,625 |
 | Complete verification | 2,396,975,334 | 4,034,210,958 |
 
-The mixed stage partitions match the corresponding `word-prime` partitions
-above except for the other-payload category: it contains 61,336 bytes and
-23,798 atoms at N=2^22, and 61,344 bytes and 23,836 atoms at N=2^23. This
-accounts for every additional mixed proof byte and atom.
+Their stage partitions equal the final `word-prime-ordinary` rows.
 
-### Profile-guided changes after the baseline
+### Optimizations after the baseline
 
 A ten-second sample of the N=2^22 `word-prime` prover is retained at
 `$CARGO_TARGET_DIR/n22-root-baseline.sample.txt`. The sampled window contained
@@ -1670,214 +1766,129 @@ allocations from that root construction. Its leaf multiplication totals remain
 2,022,008,832 and 3,925,075,968. The online typed Stage-3 contraction only needs
 one adjoint per rank row and still makes no A accessor calls.
 
-Final measurements above reproduce all sixteen current/dev-protocol
-full-size digests and verify every opening. The benchmark remains an
-experimental fixture; none of these measurements supplies security admission.
+### Historical dev-protocol baseline
 
-### Historical smoke results and the failed carrier search
+The dev-protocol baseline was rebuilt from historical source
+`4fc40d2db14cdc670161f9c310a20bf9e994c148`, with the canonical B-slice
+materializer repair and only two added tracing spans: `fixture_serialization`
+and `fixture_setup_deserialization`. It retains the historical unbuffered I/O,
+dense parity construction and recursive adjoint allocations. The repair patch
+SHA-256 is
+`4f7f0ab7b3c43ee919375f443307144742cded0404ea1688ac3c988483899612`;
+the saved executable SHA-256 is
+`83318968292ba2c8400eb879a963cc919249716c51ae07cc73f3c892beccee97`.
+It was built with the supplied target directory and Cargo shim for
+`aarch64-apple-darwin`, with `dev-protocol` selected.
 
-The initial current-protocol smoke runs used the harness source subsequently
-identified by commit `e6f7ddbd98f0b17231267c04a9c121839bcfb6a8`. The mixed
-driver started before that commit and logged base HEAD `8f515ebbcb3015cf9988ad6de4004c96075e90cc`
-with a dirty tree; the prime-only run logged HEAD `e6f7ddbd9`, with specification
-edits still uncommitted. Both openings verified, matched the
-caller's transcript continuation, and passed with the online A accessor
-forbidden. Every proof byte was accounted for exactly once. These N=2^10,
-C=2 results validate the harness; they are not full-size benchmark results.
+All eight logs, `$CARGO_TARGET_DIR/baseline-dev-<log>-<shape>.txt`, report
+successful verification, matching caller transcript continuation and forbidden
+online A reads. Commit `1b80cd6a9` pins all eight historical dev-protocol
+proof digests before optimized dev-protocol measurements. This is a
+retrospective replay of pre-optimization source: the dev baseline was rebuilt
+and pinned after the optimization commits, unlike the initial current-protocol
+`word-prime` pins captured before those optimizations. The saved baseline
+and optimized executables are run with the driver's same `--phase prove` and
+`--phase verify` arguments and a common temporary `--fixture` directory.
+This avoids repeated Cargo-lock waits between measurements. Their source and
+executable digests and `uptime` loads are logged separately. The driver's
+`--dev-protocol` smoke is a separate build/run entry-point check.
 
-| Shape | Proof bytes | Atoms, including framing and work | Prover peak RSS bytes | Verifier peak RSS bytes |
-| --- | ---: | ---: | ---: | ---: |
-| word-prime-ordinary | 87,341 | 25,756 | 1,546,911,744 | 404,439,040 |
-| prime5 | 84,842 | 25,598 | 2,051,637,248 | 437,993,472 |
-
-Both selected six recursive folds and eight total fold levels, with a
-scheduled witness domain of 8,388,608 cells. Their scheduled live lengths
-were 5,452,288 and 4,276,544 respectively. The Blake2b-256 proof digests were:
-
-```text
-word-prime-ordinary 878fe23f6701a2936ca09fa887c91449f4feedeb528e0652d3ab9374b61d83df
-prime5              1c0c7581aef2a052798fc0505003047713a9e87c068ea4ec554ac0ecc504b79c
-```
-
-The mixed smoke with HEAD `13b668f6eb40787f01b5ad250bcca76766063866` and
-uncommitted specification edits reproduced that exact digest after
-the reporting and capacity-check corrections. Its byte/atom partition across
-all fold levels is below. Stage rows include their tagged sumcheck messages,
-tagged work nonces and late claims; the remaining payload, framing and work
-families are reported separately. The driver also prints each family,
-invocation and level, avoiding ambiguity between protocol stages and site
-stage numbers.
-
-| Category | Bytes | Atoms |
-| --- | ---: | ---: |
-| Binary field switch | 2,489 | 149 |
-| Integer projections | 84 | 7 |
-| Stage 1 tagged families | 11,302 | 907 |
-| Stage 2 tagged families | 6,776 | 551 |
-| Stage 3 tagged families | 692 | 62 |
-| Physical L2 tagged families | 4,212 | 312 |
-| Other payload, framing and work families | 61,786 | 23,768 |
-| Total | 87,341 | 25,756 |
-
-The following are inclusive tracing-span wall times in nanoseconds. `uptime`
-load averages immediately before/after the mixed run were
-**50.12/27.48/19.77 → 100.45/46.82/27.57**; before/after the prime-only run
-they were **72.09/52.27/31.41 → 16.04/35.55/29.48**. These noisy timings
-are not optimization comparisons. Peak RSS includes each process's cold
-preparation and planner work.
-
-| Phase | word-prime-ordinary ns | prime5 ns |
-| --- | ---: | ---: |
-| Catalog planning | 52,348,544,375 | 237,928,101,292 |
-| Cold prover setup | 63,737,583 | 25,723,792 |
-| Independent fixture evaluation | 696,458 | 1,895,917 |
-| Binary commitment | 691,570,375 | 549,641,416 |
-| Ordinary commitment | 8,499,167 | absent |
-| Cold prefix preparation | 85,656,708 | 23,382,750 |
-| Cold verifier setup | 38,130,041 | 23,553,750 |
-| Complete proving | 3,837,995,792 | 1,729,289,334 |
-| Complete verification | 699,767,625 | 546,214,958 |
-
-The N=2^22 `word-prime` command exited with an error during the bounded
-carrier search, before source import. At carrier log 30 the selected ordinary
-row had 24,725,376 live witness cells and a 4,194,304-cell prefix, below the
-binary requirements of 25,956,096 physical cells and a 16,777,216-cell prefix.
-Its planning span took 211,509,359,125 ns at starting `uptime` load averages
-**13.80/31.64/28.40**; process peak RSS was 848,642,048 bytes. This is a
-failed planning attempt, not a prover memory measurement or a proof digest.
-The later harness capacity check distinguishes physical live cells from the
-padded commitment domain; this row fails both the old and corrected checks.
-
-### Original source-storage limit and its repair
-
-At base commit `8f515ebbcb3015cf9988ad6de4004c96075e90cc`, neither benchmark
-size can reach commitment through the existing importer. Its source storage
-is `[i128;648]` per source ring element, bounded to 134,217,728 bytes. The
-required allocations are calculated below, excluding all other buffers:
-
-| N | Source ring elements | Source bytes | A-commitment kernel multiplications | Source-fold multiplications per nonce |
-| --- | ---: | ---: | ---: | ---: |
-| 2^22 | 1,048,576 | 10,871,635,968 | 1,320,903,770,112 | 440,301,256,704 |
-| 2^23 | 2,097,152 | 21,743,271,936 | 2,641,807,540,224 | 880,602,513,408 |
-
-The source bytes are `(N/4)*648*16`. The A-commitment and source-fold counts are
-respectively `(N/4)*3*648^2` and `(N/4)*648^2`, from the unconditional
-schoolbook loops in
-[`signed_trinomial_product`](../crates/akita-algebra/src/ring/trinomial/signed.rs)
-and their callers in the
-[source importer](../crates/akita-cpu-backend/src/opaque/binary_source.rs) and
-[response builder](../crates/akita-cpu-backend/src/binary_root.rs).
-That version also deep-cloned the source storage during root preparation. These are calculated
-allocation and operation counts, not measured RSS or timing results.
-They exclude subsequent residual construction and other opening arithmetic.
-The packed importer repairs the representation rather than increasing the cap.
-It retains column-contiguous `u128` carriers using the published
-`kernel_carrier_index` permutation. Storage is exactly **67,108,864 bytes** at
-N=2^22 and **134,217,728 bytes** at N=2^23 per polynomial, within the unchanged
-134,217,728-byte budget. Immutable source, A matrix, images and image digits
-are shared through `Arc` when root preparation clones its private ownership.
-
-A commitment now uses `PreparedLimbCommitMatrix` and
-`commit_binary_clear_limb_prepared`; response folding uses the existing
-bit-sliced carry-save kernel. A checked sparse-challenge adapter preserves
-support order, deterministic signs and nonce selection. Prime planes use the
-existing shared eight-row subset-sum kernel through an explicit weighted-bit
-arithmetic boundary, without expanding signed source rings. Differential
-regressions compare image, response, residual, prime-plane and binary partial
-values with the previous arithmetic for multiple polynomials, narrow word
-widths and padding.
-
-These repairs precede the first executable full-size baseline. No full-size
-proof digest is claimed for the original expanded representation, because its
-importer rejects both benchmark geometries before commitment.
-
-### Canonical layout and native schedule reconciliation
-
-The current-protocol planner and completed full-size openings reconcile the
-following canonical repacking counts with `price_binary_root_planes`. Natural digits exclude
-virtual coefficient tails; physical cells
-include those tails but exclude final power-of-two padding. These counts
-agree with the design's section 12.1; its five-plane row additionally includes
-a word claim, unlike the `prime5` harness shape.
-
-| N | Shape | Natural digits | Physical cells | Minimum domain | Zero-padding cells |
+| N | Shape | Baseline proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 14,642,046 | 23,138,048 | 33,554,432 | 18,912,386 |
-| 2^22 | word-prime | 16,425,342 | 25,956,096 | 33,554,432 | 17,129,090 |
-| 2^22 | word-prime-ordinary | 21,393,790 | 30,924,544 | 33,554,432 | 12,160,642 |
-| 2^22 | prime5 | 23,514,624 | 37,158,912 | 67,108,864 | 43,594,240 |
-| 2^23 | word | 25,258,878 | 39,915,264 | 67,108,864 | 41,849,986 |
-| 2^23 | word-prime | 27,042,174 | 42,733,312 | 67,108,864 | 40,066,690 |
-| 2^23 | word-prime-ordinary | 36,172,158 | 51,863,296 | 67,108,864 | 30,936,706 |
-| 2^23 | prime5 | 34,131,456 | 53,936,128 | 67,108,864 | 32,977,408 |
+| 2^22 | word | 82,784 | 25,609 | 6,717,030,400 | 1,474,199,552 |
+| 2^22 | word-prime | 82,731 | 25,557 | 7,070,449,664 | 2,121,285,632 |
+| 2^22 | word-prime-ordinary | 82,743 | 25,569 | 7,744,585,728 | 2,402,058,240 |
+| 2^22 | prime5 | 79,851 | 25,393 | 12,682,412,032 | 6,235,619,328 |
+| 2^23 | word | 84,578 | 25,746 | 13,090,422,784 | 2,471,755,776 |
+| 2^23 | word-prime | 84,574 | 25,739 | 13,677,051,904 | 3,692,511,232 |
+| 2^23 | word-prime-ordinary | 84,621 | 25,787 | 13,799,866,368 | 4,208,295,936 |
+| 2^23 | prime5 | 81,554 | 25,581 | 16,754,196,480 | 8,435,105,792 |
 
-The ordinary group contributes N source cells and 704,512 image digit cells.
-Its two compression segments contribute 65,536/4,096 cells at N=2^22 and
-32,768/4,096 at N=2^23 under the selected ordinary profiles. These are minimum
-binary witness domains; a selected ordinary carrier schedule may reserve a
-larger domain and must report it separately.
+The baseline's canonical outgoing geometry and six-level recursive output
+chains match the corresponding current-protocol rows above. Dev-protocol
+proofs have a different terminal grammar; their byte counts are not evidence
+that current-protocol proofs can omit the same messages.
+Its stage partition equals the final dev-protocol partition.
 
-At source commit `4fc40d2db14cdc670161f9c310a20bf9e994c148`, the benchmark
-harness admits an explicit native-root transition using the canonical physical
-witness length and typed A-prefix length. The ordinary suffix planner starts
-from those exact lengths. Catalog admission validates that geometry, and the
-binary verifier consumes the same authenticated successor input length. This
-replaces the unsuccessful ordinary-carrier capacity search for N=2^22 and
-N=2^23; smoke runs retain their original carrier schedules to preserve their
-pinned proof bytes. Both measured `word-prime` schedules have six recursive
-folds and eight total fold levels. Their first successor uses degree 512 and
-the later ordinary folds use degree 64. Full selected profiles are printed in
-each measurement log.
+These load triples apply to all historical dev-protocol phase times below;
+no row was measured below one-minute load 4.
 
-The mixed ordinary source materializer also accepts the canonical B slice
-geometry rather than requiring one block per slice. Its T digits remain in
-global block/A-row/subcolumn/digit/coefficient order. Public B weights select
-canonical block ranges and use local block indices inside each slice. Frozen
-profile validation still authenticates the physical B width; the complete T
-length comes from the canonical logical B width. A cheap regression checks
-four blocks with one or two slices, degree-128 A and degree-64 B, complete
-A/B/F/H identities, subcolumn ordering and malformed-width rejection.
+| N | Shape | Load before | Load after |
+| --- | --- | --- | --- |
+| 2^22 | word | 16.64/11.36/10.71 | 26.12/14.75/12.00 |
+| 2^22 | word-prime | 26.12/14.75/12.00 | 29.11/18.34/13.58 |
+| 2^22 | word-prime-ordinary | 29.11/18.34/13.58 | 32.18/20.71/14.68 |
+| 2^22 | prime5 | 32.18/20.71/14.68 | 23.10/20.69/15.23 |
+| 2^23 | word | 23.10/20.69/15.23 | 25.71/22.03/16.30 |
+| 2^23 | word-prime | 25.71/22.03/16.30 | 19.51/20.99/16.54 |
+| 2^23 | word-prime-ordinary | 19.51/20.99/16.54 | 28.63/23.29/17.77 |
+| 2^23 | prime5 | 28.63/23.29/17.77 | 19.76/21.65/17.84 |
 
-The typed A-prefix layout corrects section 12.3's proposed domains. Its
-independent coefficient and rank axes require `m*1024*4`, rather than rounding
-the flat live count `m*648*3`. The minimum domains are **16,777,216 (2^24)**
-and **33,554,432 (2^25)**, twice the proposed 2^23 and 2^24. The regression
-`full_size_typed_prefix_requires_padded_rank_and_coefficient_axes` checks that
-the canonical product accepts these sizes and rejects the smaller domains
-without allocating the full prefix.
+Historical dev-protocol N=2^22, inclusive nanoseconds, with the load triples above:
 
-The verifier has additional linear work beyond section 12.5's direct-weight
-estimate. It draws one field challenge for each zero-padding cell, scans the
-outgoing domain, materializes B/D authentication weights, and constructs prime
-response terms. In particular the minimum `word-prime` domains require
-17,129,090 and 40,066,690 padding challenges. The design's section 8.2 values
-856,064 and 1,712,128 count additions in a proposed shared-subset direct-weight
-kernel, not these padding challenges or the current complete verifier.
-The canonical A accessor remains absent from online verification.
-
-The direct-weight path also differs from sections 5.3 and 8.2: it invokes
-`shifted_remainder_evaluations` separately for each of the M=N/C binary row
-weights, rather than using shared subset sums. At degree 162, each invocation
-executes 497 field multiplication operators: 10 for exponentiation to 81,
-one for the modulus evaluation, 162 for Horner evaluation, and 324 for the
-shift recurrence. Scaling the 162 output coefficients adds another 324
-multiplication operators per row. The same row path executes 407 binary field
-addition/subtraction operators, excluding 81 unary sign negations. Thus the
-current row path has the following
-source-level operation counts, excluding equality-weight generation, field
-conversion, column kernels, carry kernels and subsequent oracle evaluation:
-
-| N | Row weights M | Current row multiplications | Current row binary additions/subtractions | Proposed subset additions |
+| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
 | --- | ---: | ---: | ---: | ---: |
-| 2^22 | 16,384 | 13,451,264 | 6,668,288 | 856,064 |
-| 2^23 | 32,768 | 26,902,528 | 13,336,576 | 1,712,128 |
+| Catalog planning | 30,920,451,042 | 32,485,773,875 | 9,311,988,791 | 31,613,850,625 |
+| Cold prover setup | 57,612,167 | 66,512,792 | 67,569,500 | 94,900,958 |
+| Independent fixture evaluation | 19,537,042 | 1,849,675,042 | 1,863,183,875 | 9,182,538,250 |
+| Binary commitment | 1,809,069,666 | 2,043,854,292 | 1,961,923,584 | 2,028,501,500 |
+| Ordinary commitment | absent | absent | 24,582,125 | absent |
+| Cold prefix preparation | 199,941,666 | 253,185,084 | 249,568,083 | 263,713,334 |
+| Cold verifier setup | 185,257,041 | 222,610,041 | 208,754,833 | 207,131,292 |
+| Fixture serialization | 6,343,925,167 | 6,107,946,875 | 6,260,954,041 | 6,150,190,041 |
+| Fixture setup deserialization | 89,677,083 | 87,560,250 | 89,923,458 | 92,268,083 |
+| Complete proving | 19,643,377,583 | 19,518,184,125 | 17,057,029,209 | 23,907,995,375 |
+| Complete verification | 2,417,749,334 | 2,698,914,042 | 2,869,937,041 | 5,818,740,292 |
 
-These count executed Rust arithmetic operators, including multiplication by
-zero or a sign; they are not measured machine instructions. The proposed
-subset column does not include its public coefficient-kernel work, so it is
-not an end-to-end operation total or a measured speedup.
+Historical dev-protocol N=2^23, inclusive nanoseconds, with the load triples above:
 
-The design's rough 59,049-multiplication adjoint estimate also does not describe
-the current kernel. As detailed in the typed A section above, the implemented
-two-convolution adjoint uses 154,872 leaf field multiplications per rank row,
-or 464,616 for rank three. Surrounding contractions add further operations.
+| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
+| --- | ---: | ---: | ---: | ---: |
+| Catalog planning | 36,788,665,000 | 36,754,778,959 | 13,405,380,042 | 36,218,120,041 |
+| Cold prover setup | 139,934,000 | 128,158,708 | 182,121,166 | 126,810,875 |
+| Independent fixture evaluation | 41,927,667 | 3,702,988,500 | 3,689,426,792 | 17,796,588,791 |
+| Binary commitment | 2,348,539,625 | 2,297,066,167 | 2,290,839,541 | 2,334,813,333 |
+| Ordinary commitment | absent | absent | 25,619,250 | absent |
+| Cold prefix preparation | 948,339,083 | 736,382,500 | 858,827,250 | 890,161,041 |
+| Cold verifier setup | 885,988,958 | 762,290,792 | 753,013,958 | 816,168,958 |
+| Fixture serialization | 15,382,593,792 | 14,740,160,750 | 15,237,461,834 | 14,805,404,416 |
+| Fixture setup deserialization | 241,358,542 | 234,842,833 | 227,985,250 | 233,246,875 |
+| Complete proving | 33,873,689,833 | 35,893,664,792 | 34,586,278,334 | 38,174,043,667 |
+| Complete verification | 4,120,492,125 | 4,785,251,541 | 4,827,243,125 | 6,817,642,875 |
+
+### Historical-to-final dev-protocol comparison
+
+Every row below preserves its historical proof's exact bytes and digest.
+The timings compare the complete combined changes; they do not isolate parity,
+allocation lifetime, adjoint scratch, buffering, compiler or load effects.
+Assess the times with the baseline load table in this appendix and the final
+dev-protocol load table above.
+Peak RSS is an independent process measurement, not the sum of buffer sizes.
+
+| N | Shape | Baseline prove ns | Final prove ns | Baseline verify ns | Final verify ns | Baseline prover RSS bytes | Final prover RSS bytes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2^22 | word | 19,643,377,583 | 13,180,117,792 | 2,417,749,334 | 2,077,195,042 | 6,717,030,400 | 5,611,520,000 |
+| 2^22 | word-prime | 19,518,184,125 | 14,305,025,750 | 2,698,914,042 | 2,490,934,167 | 7,070,449,664 | 7,067,271,168 |
+| 2^22 | word-prime-ordinary | 17,057,029,209 | 14,260,011,083 | 2,869,937,041 | 2,416,851,959 | 7,744,585,728 | 7,479,492,608 |
+| 2^22 | prime5 | 23,907,995,375 | 19,831,039,583 | 5,818,740,292 | 5,496,839,916 | 12,682,412,032 | 12,482,592,768 |
+| 2^23 | word | 33,873,689,833 | 25,438,106,167 | 4,120,492,125 | 3,525,101,458 | 13,090,422,784 | 10,916,085,760 |
+| 2^23 | word-prime | 35,893,664,792 | 26,886,707,000 | 4,785,251,541 | 4,093,525,875 | 13,677,051,904 | 13,666,058,240 |
+| 2^23 | word-prime-ordinary | 34,586,278,334 | 26,642,876,458 | 4,827,243,125 | 4,112,921,833 | 13,799,866,368 | 12,827,443,200 |
+| 2^23 | prime5 | 38,174,043,667 | 30,962,749,791 | 6,817,642,875 | 5,993,753,084 | 16,754,196,480 | 14,592,933,888 |
+
+The fixture I/O spans provide the following before/after evidence for buffered
+transport, under those same baseline and final load triples. Fixture
+serialization and setup deserialization are outside the complete opening
+spans. These are phase measurements from combined-change runs, not an isolated
+I/O microbenchmark or a protocol speedup.
+
+| N | Shape | Unbuffered serialization ns | Buffered serialization ns | Historical setup deserialization ns | Final setup deserialization ns |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 2^22 | word | 6,343,925,167 | 43,618,084 | 89,677,083 | 71,212,208 |
+| 2^22 | word-prime | 6,107,946,875 | 39,096,625 | 87,560,250 | 73,428,584 |
+| 2^22 | word-prime-ordinary | 6,260,954,041 | 36,684,959 | 89,923,458 | 74,661,083 |
+| 2^22 | prime5 | 6,150,190,041 | 46,458,083 | 92,268,083 | 78,432,291 |
+| 2^23 | word | 15,382,593,792 | 152,262,000 | 241,358,542 | 181,717,083 |
+| 2^23 | word-prime | 14,740,160,750 | 128,314,709 | 234,842,833 | 192,590,583 |
+| 2^23 | word-prime-ordinary | 15,237,461,834 | 105,148,417 | 227,985,250 | 187,963,167 |
+| 2^23 | prime5 | 14,805,404,416 | 208,287,000 | 233,246,875 | 194,434,917 |
