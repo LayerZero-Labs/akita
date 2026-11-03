@@ -42,7 +42,21 @@ if ((plan_only)); then
   exit
 fi
 "$CARGO_TARGET_DIR/release/examples/binary_source_full_size" \
-  --log-carriers "$log_carriers" --shape "$shape" --fixture "$fixture_dir" --phase prove
+  --log-carriers "$log_carriers" --shape "$shape" --fixture "$fixture_dir" --phase prove | tee "$fixture_dir/prover.log"
+python3 - "$log_carriers" "$shape" "$dev_protocol" "$fixture_dir/prover.log" <<'PY'
+import pathlib
+import re
+import sys
+
+log, shape, dev, output = sys.argv[1:]
+protocol = "dev" if dev == "1" else "current"
+rows = [line.split() for line in pathlib.Path("scripts/binary-source-full-size-digests.tsv").read_text().splitlines() if line and not line.startswith("#")]
+expected = [row[3:] for row in rows if row[:3] == [protocol, log, shape]]
+actual = re.findall(r"^proof bytes=(\d+) digest_algorithm=blake2b256 digest=([0-9a-f]{64})$", pathlib.Path(output).read_text(), re.MULTILINE)
+if len(actual) != 1 or (expected and expected != [list(actual[0])]):
+    raise SystemExit(f"proof digest mismatch: expected {expected}, observed {actual}")
+print(f"proof_digest_pin matched={bool(expected)} protocol={protocol} log_carriers={log} shape={shape}")
+PY
 "$CARGO_TARGET_DIR/release/examples/binary_source_full_size" \
   --log-carriers "$log_carriers" --shape "$shape" --fixture "$fixture_dir" --phase verify
 echo "measurement_load_after_run=$(uptime)"
