@@ -86,8 +86,7 @@ impl BinaryWordClaim {
             claim.validate(descriptor)?;
             if !owners.insert(*claim.polynomial()) {
                 return Err(AkitaError::InvalidInput(
-                    "one binary word claim per polynomial; reduce multiple points before opening"
-                        .into(),
+                    "duplicate binary word owner; reduce multiple points before opening".into(),
                 ));
             }
         }

@@ -133,16 +133,29 @@ pub(super) fn open(
         ));
     }
     if let (true, Some(first)) = (mutate, terminals.first()) {
-        let mut duplicate = terminals.clone();
-        duplicate.push(first.clone());
+        let mut excessive = terminals.clone();
+        excessive.push(first.clone());
         assert!(matches!(
             PolynomialGroupClaims::<F, _>::new_binary_planes(
                 commitment.clone(),
-                duplicate,
+                excessive,
                 primes.clone()
             ),
-            Err(AkitaError::InvalidInput(_))
+            Err(AkitaError::InvalidInput(message)) if message.starts_with("one binary word claim")
         ));
+        if owners == 2 {
+            // Two claims on owner 0 stay within the two-owner count, so only
+            // the distinct-owner check can reject them.
+            assert!(matches!(
+                PolynomialGroupClaims::<F, _>::new_binary_planes(
+                    commitment.clone(),
+                    [first.clone(), first.clone()],
+                    primes.clone()
+                ),
+                Err(AkitaError::InvalidInput(message))
+                    if message.starts_with("duplicate binary word owner")
+            ));
+        }
     }
     let first_prefix = resolved.schedule().recursive_folds[0]
         .params
