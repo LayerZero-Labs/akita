@@ -116,14 +116,19 @@ mod tests {
     use akita_params::{ChunkedWitnessCfg, CommittedGroupParams};
     use akita_schedules::ValidatedScheduleCatalog;
 
-    #[test]
-    fn native_admission_rejects_changed_transition_and_cannot_export_ordinary_artifacts() {
-        type Config = RecursiveCommitmentConfig<Dense>;
-        let ordinary = akita_config::test_support::workspace_schedule_catalog::<Config>(
+    type Config = RecursiveCommitmentConfig<Dense>;
+
+    fn base_eight_prefix_catalog() -> akita_config::TrustedScheduleCatalog<Config> {
+        akita_config::test_support::workspace_schedule_catalog::<Config>(
             ChunkedWitnessCfg::default_non_chunked(),
         )
-        .unwrap();
-        let row = ordinary
+        .unwrap()
+    }
+
+    fn base_eight_prefix_row(
+        ordinary: &akita_config::TrustedScheduleCatalog<Config>,
+    ) -> &ResolvedScheduleRow {
+        ordinary
             .catalog()
             .rows()
             .find(|row| {
@@ -132,7 +137,140 @@ mod tests {
                         && step.params.inner().digits.log_basis == 3
                 })
             })
-            .expect("checked-in recursive family has a base-eight prefix edge");
+            .expect("checked-in recursive family has a base-eight prefix edge")
+    }
+
+    fn leb128(mut value: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        loop {
+            let low = (value & 0x7f) as u8;
+            value >>= 7;
+            if value == 0 {
+                bytes.push(low);
+                return bytes;
+            }
+            bytes.push(low | 0x80);
+        }
+    }
+
+    fn replace_once(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+        let hits = (0..=bytes.len() - from.len())
+            .filter(|&start| bytes[start..].starts_with(from))
+            .collect::<Vec<_>>();
+        assert_eq!(hits.len(), 1, "patched encoding must be unambiguous");
+        [&bytes[..hits[0]], to, &bytes[hits[0] + from.len()..]].concat()
+    }
+
+    #[test]
+    fn native_only_transition_requires_explicit_admission() {
+        let ordinary = base_eight_prefix_catalog();
+        let row = base_eight_prefix_row(&ordinary);
+        let policy = ordinary.catalog().policy();
+        let schedule = row.schedule().clone();
+        let prefix = schedule.recursive_folds[0].params.setup_prefix().unwrap();
+        // Only native admission accepts a root output that the ordinary root
+        // does not plan, even when the first successor consumes it exactly.
+        let mut native = schedule.clone();
+        native.root.output_witness_len += 64;
+        native.recursive_folds[0].input_witness_len += 64;
+        let transition = NativeRootTransition::new(
+            native.root.output_witness_len,
+            3,
+            prefix.setup_natural_len.unwrap(),
+        )
+        .unwrap();
+
+        let rejection =
+            ResolvedScheduleRow::try_new(row.profiles().clone(), native.clone(), policy)
+                .unwrap_err()
+                .to_string();
+        let catalog_rejection = ValidatedScheduleCatalog::try_new(
+            "native_admission_fixture",
+            [(row.profiles().clone(), native.clone())],
+            policy,
+            Config::ring_challenge_config,
+        )
+        .unwrap_err();
+        assert_eq!(catalog_rejection.to_string(), rejection);
+        let admitted = ValidatedScheduleCatalog::try_new_native_root(
+            "native_admission_fixture",
+            [],
+            [(row.profiles().clone(), native.clone(), transition)],
+            policy,
+            Config::ring_challenge_config,
+        )
+        .unwrap();
+        let native_row = admitted.rows().next().unwrap();
+        assert_eq!(native_row.schedule(), &native);
+        assert!(admitted.to_artifact_bytes().is_err());
+        assert!(admitted
+            .to_verifier_view(&[native_row.selection()])
+            .is_err());
+
+        // Carry the native row in an otherwise canonical ordinary verifier
+        // view. Postcard writes struct fields in order with LEB128 lengths, so
+        // only the row identity, root tail, and first successor input change.
+        let seed = ValidatedScheduleCatalog::try_new(
+            "native_admission_fixture",
+            [(row.profiles().clone(), schedule.clone())],
+            policy,
+            Config::ring_challenge_config,
+        )
+        .unwrap();
+        let view = seed.to_verifier_view(&[row.selection()]).unwrap();
+        ValidatedScheduleCatalog::from_verifier_view(
+            &view,
+            "native_admission_fixture",
+            policy,
+            Config::ring_challenge_config,
+        )
+        .unwrap();
+        let folds = leb128(schedule.recursive_folds.len());
+        let root_tail = |output| {
+            [
+                leb128(schedule.root.input_witness_len),
+                leb128(output),
+                folds.clone(),
+            ]
+            .concat()
+        };
+        let successor_head = |input| {
+            [
+                leb128(input),
+                leb128(schedule.recursive_folds[0].output_witness_len),
+            ]
+            .concat()
+        };
+        let view = replace_once(
+            &view,
+            row.selection().row_digest.as_bytes(),
+            native_row.selection().row_digest.as_bytes(),
+        );
+        let view = replace_once(
+            &view,
+            &root_tail(schedule.root.output_witness_len),
+            &root_tail(native.root.output_witness_len),
+        );
+        let view = replace_once(
+            &view,
+            &successor_head(schedule.recursive_folds[0].input_witness_len),
+            &successor_head(native.recursive_folds[0].input_witness_len),
+        );
+        // The view decodes to the native row and fails the same ordinary check.
+        let view_rejection = ValidatedScheduleCatalog::from_verifier_view(
+            &view,
+            "native_admission_fixture",
+            policy,
+            Config::ring_challenge_config,
+        )
+        .unwrap_err();
+        assert_eq!(view_rejection.to_string(), rejection);
+    }
+
+    #[test]
+    fn native_admission_rejects_changed_transition_and_cannot_export_ordinary_artifacts() {
+        let ordinary = base_eight_prefix_catalog();
+        let row = base_eight_prefix_row(&ordinary);
         let schedule = row.schedule().clone();
         let policy = ordinary.catalog().policy();
         let prefix = schedule.recursive_folds[0].params.setup_prefix().unwrap();
