@@ -1245,3 +1245,18 @@ No before/after optimization result or 64 GiB memory-fit claim follows from
 the calculated table. Capturing a full-size digest before any storage/kernel
 change is therefore an unresolved prerequisite, rather than a completed
 measurement.
+
+Exact native-root scheduling also needs an admission contract beyond the
+fixture's ordinary-carrier search. The internal suffix planner can start from
+the physical witness length and typed-prefix length, but the
+[catalog transition validator](../crates/akita-schedules/src/resolve.rs)
+reconstructs the root output and first-successor ownership from an ordinary
+root. The [binary verifier](../crates/akita-verifier/src/fold/binary_root.rs)
+also recomputes that ordinary root length, whereas the
+[binary prover](../crates/akita-prover/src/protocol/prove/binary_root.rs)
+uses the selected schedule's output length. Admitting an exact native
+transition requires a shared checked geometry contract, explicit catalog
+admission, and verifier reconciliation; the existing grinding and transcript
+binding hooks do not supply it. This is an API and verification-contract
+prerequisite, not a kernel optimization. No such admission change is included
+in these measurements.
