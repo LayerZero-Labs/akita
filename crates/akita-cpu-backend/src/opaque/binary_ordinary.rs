@@ -18,7 +18,7 @@ where
     /// Includes every source digit, A image, both compression preimages, and
     /// (for an explicitly signed plan) the negative offset bits. The caller
     /// must authenticate all segments through the shared root relation.
-    pub fn ordinary_root_preimage(
+    pub(crate) fn ordinary_root_preimage(
         &self,
         handle: &CommitmentHandle<F, E>,
         plan: &OrdinaryNativeRootPlan,
@@ -122,6 +122,15 @@ where
                     .map(|digits| digits.into_parts().0)
                 }
             )?;
+            let expected_t = checked::product([
+                image_elements,
+                profile.outer.digits.num_digits,
+                a_degree,
+            ])
+            .ok_or(AkitaError::InvalidProof)?;
+            if digits.len() != expected_t {
+                return Err(AkitaError::InvalidProof);
+            }
             t.try_reserve_exact(digits.len())
                 .map_err(|_| AkitaError::InvalidProof)?;
             t.extend(digits);

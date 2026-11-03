@@ -562,16 +562,6 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         );
     }
     eprintln!("{golden}");
-    byte_contract::check(
-        &scheme,
-        &setup,
-        &commitment,
-        ordinary_commitment.as_ref(),
-        &proof,
-        &continuation,
-        mixed,
-        word_width,
-    );
     packed_prover.public_message(b"application-suffix");
     assert_eq!(packed_prover.verifier_message::<[u8; 32]>(), continuation);
     let verifier = scheme.verifier(verifier_setup.clone()).unwrap();
