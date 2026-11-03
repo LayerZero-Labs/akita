@@ -10,7 +10,7 @@ use jolt_field::Field;
 use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,
 };
-use crate::native_root_relation::NativeRootWeights;
+use crate::native_root_relation::{NativeRootWeights, PaddingWeights, RootWeightFamily};
 
 /// Compile the A identity's coefficient weights. Proving supplies A; online
 /// verification omits it and authenticates its contribution through Stage 3.
@@ -75,8 +75,8 @@ pub fn binary_direct_a_weights<E: Field>(
     };
     let image_terms = checked::product([owners, plan.rank(), columns, 648, image_digits])
         .ok_or(AkitaError::InvalidProof)?;
-    let term_count = checked::sum([response_terms, image_terms, padding_weights.len()])
-        .ok_or(AkitaError::InvalidProof)?;
+    let padding = PaddingWeights::new(plan.repacking(), padding_weights)?;
+    let term_count = checked::sum([response_terms, image_terms]).ok_or(AkitaError::InvalidProof)?;
     let mut terms = Vec::new();
     terms
         .try_reserve_exact(term_count)
@@ -120,22 +120,12 @@ pub fn binary_direct_a_weights<E: Field>(
         }
     }
     drop(span);
-    let _span = tracing::info_span!("binary_root_weights_padding").entered();
-    let mut padding = padding_weights.iter();
-    for address in 0..plan.repacking().domain_len() {
-        if plan.repacking().is_padding_address(address)? {
-            terms.push((
-                address,
-                *padding
-                    .next()
-                    .ok_or_else(|| AkitaError::InvalidInput("missing padding weight".into()))?,
-            ));
-        }
-    }
-    if padding.next().is_some() {
-        return Err(AkitaError::InvalidInput("excess padding weights".into()));
-    }
-    NativeRootWeights::new(plan.repacking().domain_len(), terms, E::zero())
+    NativeRootWeights::structured(
+        plan.repacking().domain_len(),
+        terms,
+        vec![RootWeightFamily::Padding(padding)],
+        E::zero(),
+    )
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ use crate::native_root_relation::NativeRootWeights;
 /// Ordinary ring degree used by the explicit experimental image and U setup.
 pub const BINARY_DIGIT_COMMITMENT_DEGREE: usize = 64;
 
-fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize, AkitaError> {
+pub(super) fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize, AkitaError> {
     if label.level != 0
         || label.row != 0
         || label.column != 0
@@ -36,7 +36,7 @@ fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize, AkitaError
     usize::try_from(label.rank).map_err(|_| AkitaError::InvalidProof)
 }
 
-fn setup_entry<F: Field>(
+pub(super) fn setup_entry<F: Field>(
     seed: &[u8; 32],
     label: SetupStreamLabel,
     row: u32,

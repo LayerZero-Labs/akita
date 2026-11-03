@@ -103,7 +103,14 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
         .into_iter()
         .map(|x| F::from_i64(i64::from(x)))
         .collect::<Vec<_>>();
-    let relation = NativeRootWeights::new(table.len(), weights.terms().to_vec(), expected).unwrap();
+    let terms = weights
+        .materialize()
+        .unwrap()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, weight)| !weight.is_zero())
+        .collect();
+    let relation = NativeRootWeights::new(table.len(), terms, expected).unwrap();
     relation.check_table(&table).unwrap();
     let mut changed = table.clone();
     let address = plan.repacking().coefficient_address(1, 0, 0, 647).unwrap();

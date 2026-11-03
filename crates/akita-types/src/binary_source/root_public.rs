@@ -108,18 +108,12 @@ impl BinaryRootPublic {
             .map(|ordinary| ordinary.negative_binary_addresses(plan.repacking()))
             .transpose()?
             .unwrap_or_default();
-        let mut padding_count = 0usize;
-        for address in 0..domain_len {
-            let padding = plan.repacking().is_padding_address(address)?;
-            if address >= logical_len && !padding {
-                return Err(AkitaError::InvalidSetup(
-                    "binary root natural digits exceed the outgoing witness".into(),
-                ));
-            }
-            if padding {
-                padding_count = checked::sum([padding_count, 1]).ok_or(AkitaError::InvalidProof)?;
-            }
+        if plan.repacking().natural_end()? > logical_len {
+            return Err(AkitaError::InvalidSetup(
+                "binary root natural digits exceed the outgoing witness".into(),
+            ));
         }
+        let padding_count = plan.repacking().padding_count()?;
         let batch_count = checked::product([2, manifest.b_rows()])
             .and_then(|authentication| {
                 checked::sum([
@@ -307,3 +301,7 @@ impl BinaryRootPublic {
         Ok((linear, negative_weights))
     }
 }
+
+#[cfg(test)]
+#[path = "reference_weights.rs"]
+pub(crate) mod reference;
