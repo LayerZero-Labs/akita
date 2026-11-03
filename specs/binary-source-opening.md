@@ -350,6 +350,7 @@ identities to its one witness opening. The
 [repacking plan](../crates/akita-types/src/binary_source/root_plan.rs) gives
 every native coefficient its ordinary witness address and authenticates zero
 padding. This coefficient repacking is not a ring homomorphism.
+[binary-source-zero-padding.md](binary-source-zero-padding.md) proposes deleting the per-cell padding rows.
 
 The mixed specialization samples only the binary column challenges at order 4.
 It fixes complete ordinary preimages at order 5 instead of folding an ordinary
