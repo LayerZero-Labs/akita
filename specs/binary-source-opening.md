@@ -1032,3 +1032,216 @@ projection set, one A prefix, and one Stage 3:
 | Prime only, projection mutation fixture | 1 | 83,072 | 77,948 |
 | Prime only | 2 | 83,014 | 78,019 |
 | Word and prime | 2 | 85,292 | 80,197 |
+
+## Full-size measurements
+
+The full-size measurement target is experimental and makes no security claim.
+The benchmark geometries are N=2^22 and N=2^23 carriers, C=256, rank three,
+and the proof field `2^128-275`. The smoke geometry uses N=2^10 and C=2 to
+exercise the same opening without the fixed C=256 image-table cost. The host
+inspected for this work is an Apple M4 Max with 16 physical cores and
+68,719,476,736 bytes of RAM (64 GiB).
+For the mixed smoke shape, the ordinary group retains 2^18 coefficients,
+matching the existing mixed opening fixture;
+the two benchmark sizes use N ordinary coefficients.
+Binary carriers use a fixed integer mixer; the ordinary fixture alternates
+zero and one. The initial smoke measurements below were taken on 2026-11-02.
+
+The driver selects the default-off `binary-source-measurements` feature, which
+enables `labinius-trinomial` and the offline plane planner. It accepts:
+
+```sh
+scripts/binary-source-full-size.sh --log-carriers 10 --shape word-prime-ordinary
+scripts/binary-source-full-size.sh --log-carriers 22 --shape word-prime
+scripts/binary-source-full-size.sh --log-carriers 23 --shape word-prime --dev-protocol
+scripts/binary-source-full-size.sh --log-carriers 22 --shape prime5 --plan-only
+```
+
+The other shapes are `word` and `word-prime-ordinary`; `prime5` has five prime
+planes and no word claim. `--plan-only` performs layout reconciliation without
+committing or proving and must not be reported as an opening measurement.
+The driver prints the commit and `uptime` load averages. Proving and verification
+run in separate processes, so their process peak RSS values are independent;
+each includes that process's cold preparation. Trace spans report inclusive
+wall times, which must not be summed when spans overlap. The verifier must
+pass with the online A accessor forbidden, match the caller's transcript
+continuation, and consume the complete proof.
+
+### Smoke results and the failed full-size attempt
+
+The initial current-protocol smoke runs used the harness source subsequently
+identified by commit `e6f7ddbd98f0b17231267c04a9c121839bcfb6a8`. The mixed
+driver started before that commit and logged base HEAD `8f515ebbcb3015cf9988ad6de4004c96075e90cc`
+with a dirty tree; the prime-only run logged HEAD `e6f7ddbd9`, with specification
+edits still uncommitted. Both openings verified, matched the
+caller's transcript continuation, and passed with the online A accessor
+forbidden. Every proof byte was accounted for exactly once. These N=2^10,
+C=2 results validate the harness; they are not full-size benchmark results.
+
+| Shape | Proof bytes | Atoms, including framing and work | Prover peak RSS bytes | Verifier peak RSS bytes |
+| --- | ---: | ---: | ---: | ---: |
+| word-prime-ordinary | 87,341 | 25,756 | 1,546,911,744 | 404,439,040 |
+| prime5 | 84,842 | 25,598 | 2,051,637,248 | 437,993,472 |
+
+Both selected six recursive folds and eight total fold levels, with a
+scheduled witness domain of 8,388,608 cells. Their scheduled live lengths
+were 5,452,288 and 4,276,544 respectively. The Blake2b-256 proof digests were:
+
+```text
+word-prime-ordinary 878fe23f6701a2936ca09fa887c91449f4feedeb528e0652d3ab9374b61d83df
+prime5              1c0c7581aef2a052798fc0505003047713a9e87c068ea4ec554ac0ecc504b79c
+```
+
+The mixed smoke with HEAD `13b668f6eb40787f01b5ad250bcca76766063866` and
+uncommitted specification edits reproduced that exact digest after
+the reporting and capacity-check corrections. Its byte/atom partition across
+all fold levels is below. Stage rows include their tagged sumcheck messages,
+tagged work nonces and late claims; the remaining payload, framing and work
+families are reported separately. The driver also prints each family,
+invocation and level, avoiding ambiguity between protocol stages and site
+stage numbers.
+
+| Category | Bytes | Atoms |
+| --- | ---: | ---: |
+| Binary field switch | 2,489 | 149 |
+| Integer projections | 84 | 7 |
+| Stage 1 tagged families | 11,302 | 907 |
+| Stage 2 tagged families | 6,776 | 551 |
+| Stage 3 tagged families | 692 | 62 |
+| Physical L2 tagged families | 4,212 | 312 |
+| Other payload, framing and work families | 61,786 | 23,768 |
+| Total | 87,341 | 25,756 |
+
+The following are inclusive tracing-span wall times in nanoseconds. `uptime`
+load averages immediately before/after the mixed run were
+**50.12/27.48/19.77 → 100.45/46.82/27.57**; before/after the prime-only run
+they were **72.09/52.27/31.41 → 16.04/35.55/29.48**. These noisy timings
+are not optimization comparisons. Peak RSS includes each process's cold
+preparation and planner work.
+
+| Phase | word-prime-ordinary ns | prime5 ns |
+| --- | ---: | ---: |
+| Catalog planning | 52,348,544,375 | 237,928,101,292 |
+| Cold prover setup | 63,737,583 | 25,723,792 |
+| Independent fixture evaluation | 696,458 | 1,895,917 |
+| Binary commitment | 691,570,375 | 549,641,416 |
+| Ordinary commitment | 8,499,167 | absent |
+| Cold prefix preparation | 85,656,708 | 23,382,750 |
+| Cold verifier setup | 38,130,041 | 23,553,750 |
+| Complete proving | 3,837,995,792 | 1,729,289,334 |
+| Complete verification | 699,767,625 | 546,214,958 |
+
+The N=2^22 `word-prime` command exited with an error during the bounded
+carrier search, before source import. At carrier log 30 the selected ordinary
+row had 24,725,376 live witness cells and a 4,194,304-cell prefix, below the
+binary requirements of 25,956,096 physical cells and a 16,777,216-cell prefix.
+Its planning span took 211,509,359,125 ns at starting `uptime` load averages
+**13.80/31.64/28.40**; process peak RSS was 848,642,048 bytes. This is a
+failed planning attempt, not a prover memory measurement or a proof digest.
+The later harness capacity check distinguishes physical live cells from the
+padded commitment domain; this row fails both the old and corrected checks.
+
+### Baseline feasibility and exact layout accounting
+
+At base commit `8f515ebbcb3015cf9988ad6de4004c96075e90cc`, neither benchmark
+size can reach commitment through the existing importer. Its source storage
+is `[i128;648]` per source ring element, bounded to 134,217,728 bytes. The
+required allocations are calculated below, excluding all other buffers:
+
+| N | Source ring elements | Source bytes | A-commitment kernel multiplications | Source-fold multiplications per nonce |
+| --- | ---: | ---: | ---: | ---: |
+| 2^22 | 1,048,576 | 10,871,635,968 | 1,320,903,770,112 | 440,301,256,704 |
+| 2^23 | 2,097,152 | 21,743,271,936 | 2,641,807,540,224 | 880,602,513,408 |
+
+The source bytes are `(N/4)*648*16`. The A-commitment and source-fold counts are
+respectively `(N/4)*3*648^2` and `(N/4)*648^2`, from the unconditional
+schoolbook loops in
+[`signed_trinomial_product`](../crates/akita-algebra/src/ring/trinomial/signed.rs)
+and their callers in the
+[source importer](../crates/akita-cpu-backend/src/opaque/binary_source.rs) and
+[response builder](../crates/akita-cpu-backend/src/binary_root.rs).
+Root preparation also deep-clones the source storage. These are calculated
+allocation and operation counts, not measured RSS or timing results.
+They exclude subsequent residual construction and other opening arithmetic.
+Increasing the allocation cap alone does not address those costs.
+
+The current-protocol `--plan-only` runs reconcile the following canonical
+repacking counts with `price_binary_root_planes`. Natural digits exclude
+virtual coefficient tails; physical cells
+include those tails but exclude final power-of-two padding. These counts
+agree with the design's section 12.1; its five-plane row additionally includes
+a word claim, unlike the `prime5` harness shape.
+
+| N | Shape | Natural digits | Physical cells | Minimum domain | Zero-padding cells |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 2^22 | word | 14,642,046 | 23,138,048 | 33,554,432 | 18,912,386 |
+| 2^22 | word-prime | 16,425,342 | 25,956,096 | 33,554,432 | 17,129,090 |
+| 2^22 | word-prime-ordinary | 21,393,790 | 30,924,544 | 33,554,432 | 12,160,642 |
+| 2^22 | prime5 | 23,514,624 | 37,158,912 | 67,108,864 | 43,594,240 |
+| 2^23 | word | 25,258,878 | 39,915,264 | 67,108,864 | 41,849,986 |
+| 2^23 | word-prime | 27,042,174 | 42,733,312 | 67,108,864 | 40,066,690 |
+| 2^23 | word-prime-ordinary | 36,172,158 | 51,863,296 | 67,108,864 | 30,936,706 |
+| 2^23 | prime5 | 34,131,456 | 53,936,128 | 67,108,864 | 32,977,408 |
+
+The ordinary group contributes N source cells and 704,512 image digit cells.
+Its two compression segments contribute 65,536/4,096 cells at N=2^22 and
+32,768/4,096 at N=2^23 under the selected ordinary profiles. These are minimum
+binary witness domains; a selected ordinary carrier schedule may reserve a
+larger domain and must report it separately.
+The harness searches existing ordinary carrier schedules and checks both the
+outgoing capacity and typed-prefix capacity after selection. This is an
+overprovisioned experimental fixture, not a binary-specific suffix optimizer.
+Failure to find a carrier in that bounded search is not evidence that no
+suitable schedule exists.
+
+The typed A-prefix layout corrects section 12.3's proposed domains. Its
+independent coefficient and rank axes require `m*1024*4`, rather than rounding
+the flat live count `m*648*3`. The minimum domains are **16,777,216 (2^24)**
+and **33,554,432 (2^25)**, twice the proposed 2^23 and 2^24. The regression
+`full_size_typed_prefix_requires_padded_rank_and_coefficient_axes` checks that
+the canonical product accepts these sizes and rejects the smaller domains
+without allocating the full prefix.
+
+The verifier has additional linear work beyond section 12.5's direct-weight
+estimate. It draws one field challenge for each zero-padding cell, scans the
+outgoing domain, materializes B/D authentication weights, and constructs prime
+response terms. In particular the minimum `word-prime` domains require
+17,129,090 and 40,066,690 padding challenges. The design's section 8.2 values
+856,064 and 1,712,128 count additions in a proposed shared-subset direct-weight
+kernel, not these padding challenges or the current complete verifier.
+The canonical A accessor remains absent from online verification.
+
+The direct-weight path also differs from sections 5.3 and 8.2: it invokes
+`shifted_remainder_evaluations` separately for each of the M=N/C binary row
+weights, rather than using shared subset sums. At degree 162, each invocation
+executes 497 field multiplication operators: 10 for exponentiation to 81,
+one for the modulus evaluation, 162 for Horner evaluation, and 324 for the
+shift recurrence. Scaling the 162 output coefficients adds another 324
+multiplication operators per row. The same row path executes 407 binary field
+addition/subtraction operators, excluding 81 unary sign negations. Thus the
+current row path has the following
+source-level operation counts, excluding equality-weight generation, field
+conversion, column kernels, carry kernels and subsequent oracle evaluation:
+
+| N | Row weights M | Current row multiplications | Current row binary additions/subtractions | Proposed subset additions |
+| --- | ---: | ---: | ---: | ---: |
+| 2^22 | 16,384 | 13,451,264 | 6,668,288 | 856,064 |
+| 2^23 | 32,768 | 26,902,528 | 13,336,576 | 1,712,128 |
+
+These count executed Rust arithmetic operators, including multiplication by
+zero or a sign; they are not measured machine instructions. The proposed
+subset column does not include its public coefficient-kernel work, so it is
+not an end-to-end operation total or a measured speedup.
+
+The design's rough 59,049-multiplication adjoint estimate also does not describe
+the current kernel. As detailed in the typed A section above, the implemented
+two-convolution adjoint uses 154,872 leaf field multiplications per rank row,
+or 464,616 for rank three. Surrounding contractions add further operations.
+
+Full-size proof bytes, stage atoms, digests, selected suffixes, wall times and
+RSS remain unmeasured: the bounded carrier search failed, and the source-import
+limit independently excludes both benchmark geometries.
+No before/after optimization result or 64 GiB memory-fit claim follows from
+the calculated table. Capturing a full-size digest before any storage/kernel
+change is therefore an unresolved prerequisite, rather than a completed
+measurement.
