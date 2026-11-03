@@ -306,7 +306,7 @@ fn ordinary_operation() -> AkitaError {
 struct BinaryRootPreparation {
     binding: OperationBinding,
     source: BinarySourceStorage,
-    claim: Option<akita_types::binary_source::BinaryTerminalClaim>,
+    claim: Vec<akita_types::binary_source::BinaryTerminalClaim>,
     prime_digits: Vec<i8>,
     plan: akita_types::binary_source::BinaryRootWitnessPlan,
     partials: Vec<i8>,
@@ -354,9 +354,7 @@ where
         destination_ring,
     )?;
     manifest.validate_carrier(&handle.committed.parameters)?;
-    if let Some(claim) = claim {
-        claim.validate(manifest.descriptor())?;
-    }
+    akita_types::binary_source::BinaryTerminalClaim::validate_group(manifest.descriptor(), claim)?;
     if handle.owner != backend.owner_id()
         || context.fold_level() != 0
         || context
@@ -381,10 +379,21 @@ where
         manifest.a_rank(),
         destination_ring,
     )?
-    .with_prime_planes(claim.is_some(), request.prime.planes().len())?;
-    let ordinary_segments = if let Some((profile, ordinary_handle)) = &request.ordinary {
-        if root_layout.num_groups() != 2
-            || schedule.root.params.group_params(&root_layout, 1)?.profile != *profile
+    .with_prime_planes(!claim.is_empty(), request.prime.planes().len())?;
+    if akita_error::checked::sum([request.ordinary.len(), 1]) != Some(root_layout.num_groups()) {
+        return Err(AkitaError::InvalidInput(
+            "native root request omits an admitted ordinary group".into(),
+        ));
+    }
+    let mut ordinary_segments = Vec::new();
+    for (index, (profile, ordinary_handle)) in request.ordinary.iter().enumerate() {
+        let group_index = akita_error::checked::sum([index, 1]).ok_or(AkitaError::InvalidProof)?;
+        if schedule
+            .root
+            .params
+            .group_params(&root_layout, group_index)?
+            .profile
+            != *profile
         {
             return Err(AkitaError::InvalidInput(
                 "ordinary preimage differs from its admitted ordered group".into(),
@@ -395,35 +404,41 @@ where
             expected_plan.repacking().segments().len(),
         )?;
         expected_plan = expected_plan.with_ordinary(&ordinary_plan)?;
-        let ordinary_context = context.for_group(1);
+        let ordinary_context = context.for_group(group_index);
         backend.validate_context(session, &ordinary_context)?;
-        let segments =
-            super::binary_ordinary::prepare_ordinary_source(backend, ordinary_handle, profile)?;
+        ordinary_segments.extend(super::binary_ordinary::prepare_ordinary_source(
+            backend,
+            ordinary_handle,
+            profile,
+        )?);
         binding
             .scope_lease()
             .admit_commitment(&ordinary_context, ordinary_handle.committed.commitment_id)?;
-        segments
-    } else {
-        if root_layout.num_groups() != 1 {
-            return Err(AkitaError::InvalidInput(
-                "native root request omits an admitted ordinary group".into(),
-            ));
-        }
-        Vec::new()
-    };
+    }
     expected_plan = expected_plan.with_domain_len(domain_len)?;
     if expected_plan.repacking() != plan.repacking() {
         return Err(AkitaError::InvalidInput(
             "native root request has a different coefficient map".into(),
         ));
     }
-    let partials = claim
-        .as_ref()
-        .map(|claim| {
-            crate::binary_root::binary_row_partials(manifest.descriptor(), claim, &source.sources)
-        })
-        .transpose()?
-        .unwrap_or_default();
+    let mut partials: Vec<i8> = Vec::new();
+    for claim in claim {
+        let owner_partials =
+            crate::binary_root::binary_row_partials(manifest.descriptor(), claim, &source.sources)?;
+        if partials.is_empty() {
+            partials = owner_partials;
+        } else {
+            // Validation guarantees disjoint polynomial-owned slices.
+            if partials.len() != owner_partials.len() {
+                return Err(AkitaError::InvalidProof);
+            }
+            for (digit, owner_digit) in partials.iter_mut().zip(owner_partials) {
+                *digit = digit
+                    .checked_add(owner_digit)
+                    .ok_or(AkitaError::InvalidProof)?;
+            }
+        }
+    }
     let prime_digits = crate::binary_root::prime_plane_digits::<F>(
         manifest.descriptor(),
         &request.prime,
@@ -504,20 +519,38 @@ where
         return Ok(None);
     };
     let (response_map, response_table) = response.successor_table(destination_ring_dimension)?;
-    let evaluation = preparation
-        .claim
-        .as_ref()
-        .map(|claim| {
-            crate::binary_root::BinaryEvaluationWitness::build(
-                source.manifest.descriptor(),
-                claim,
-                &preparation.partials,
-                &response.response,
-                challenges,
-                akita_params::binary_setup::BINARY_SETUP_P,
-            )
-        })
-        .transpose()?;
+    let mut evaluation: Option<crate::binary_root::BinaryEvaluationWitness> = None;
+    for claim in &preparation.claim {
+        let owner_evaluation = crate::binary_root::BinaryEvaluationWitness::build(
+            source.manifest.descriptor(),
+            claim,
+            &preparation.partials,
+            &response.response,
+            challenges,
+            akita_params::binary_setup::BINARY_SETUP_P,
+        )?;
+        if let Some(evaluation) = &mut evaluation {
+            // Each terminal owns disjoint parity and value carry coefficients.
+            for (digits, owner_digits) in [
+                (
+                    &mut evaluation.parity_digits,
+                    owner_evaluation.parity_digits,
+                ),
+                (&mut evaluation.value_digits, owner_evaluation.value_digits),
+            ] {
+                if digits.len() != owner_digits.len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                for (digit, owner_digit) in digits.iter_mut().zip(owner_digits) {
+                    *digit = digit
+                        .checked_add(owner_digit)
+                        .ok_or(AkitaError::InvalidProof)?;
+                }
+            }
+        } else {
+            evaluation = Some(owner_evaluation);
+        }
+    }
     let response_digits = natural_segment_digits(&response_map, &response_table, 0)?;
     let image_digits = natural_segment_digits(&response_map, &response_table, 1)?;
     let mut natural: Vec<&[i8]> = vec![&response_digits, &image_digits];

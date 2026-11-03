@@ -33,12 +33,12 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
 {
-    if !(1..=2).contains(&claims.num_groups())
+    if claims.num_groups() == 0
         || E::DEGREE != 1
         || akita_params::field_modulus::<F>()? != akita_params::binary_setup::BINARY_SETUP_P
     {
         return Err(AkitaError::InvalidSetup(
-            "binary root requires its admitted proof prime and at most one ordinary group".into(),
+            "binary root requires its admitted proof prime".into(),
         ));
     }
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
@@ -50,16 +50,21 @@ where
     else {
         return Err(AkitaError::InvalidProof);
     };
-    let ordinary = claims.groups().get(1);
-    let ordinary_profile = match ordinary {
-        Some(group)
-            if matches!(group.kind(), GroupClaimKind::Ordinary) && group.num_evaluations() == 1 =>
-        {
-            Some(root_params.group_params(opening_batch, 1)?.profile)
-        }
-        Some(_) => return Err(AkitaError::InvalidProof),
-        None => None,
-    };
+    let ordinary_groups = claims.groups().get(1..).ok_or(AkitaError::InvalidProof)?;
+    let ordinary_profiles = ordinary_groups
+        .iter()
+        .enumerate()
+        .map(|(index, ordinary)| {
+            if !matches!(ordinary.kind(), GroupClaimKind::Ordinary) {
+                return Err(AkitaError::InvalidProof);
+            }
+            let group_index =
+                akita_error::checked::sum([index, 1]).ok_or(AkitaError::InvalidProof)?;
+            Ok(root_params
+                .group_params(opening_batch, group_index)?
+                .profile)
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
     let next = next_fold.ok_or_else(|| {
         AkitaError::InvalidSetup("binary root requires an ordinary successor fold".into())
     })?;
@@ -81,8 +86,9 @@ where
         ));
     }
     let logical_len = root_params.output_witness_len::<F>(opening_batch, E::DEGREE)?;
-    let ordinary_statement = ordinary
-        .zip(ordinary_profile)
+    let ordinary_statement = ordinary_groups
+        .iter()
+        .zip(ordinary_profiles.iter())
         .map(|(ordinary, profile)| {
             let compression = profile.outer_compression_plan()?;
             let dimension = compression
@@ -97,17 +103,17 @@ where
                 ordinary.evaluations(),
             ))
         })
-        .transpose()?;
+        .collect::<Result<Vec<_>, _>>()?;
     binary_root_statement::<F, E, _>(
         grinding.state_mut(),
         manifest,
-        claim.as_ref(),
+        claim.iter(),
         prime,
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
     let terminal = claim
-        .as_ref()
+        .iter()
         .map(|claim| {
             crate::binary_field_switch::verify_field_switch(
                 manifest.descriptor(),
@@ -115,15 +121,15 @@ where
                 grinding.state_mut(),
             )
         })
-        .transpose()?;
+        .collect::<Result<Vec<_>, _>>()?;
     let public = BinaryRootPublic::new(
         manifest,
-        terminal.as_ref(),
+        terminal.iter(),
         prime,
         &setup.expanded().descriptor,
         logical_len,
         next.params.d_a(),
-        ordinary_profile,
+        ordinary_profiles.iter().copied(),
     )?;
     let domain_len = public.plan().repacking().domain_len();
     if !domain_len.is_power_of_two() {
@@ -178,20 +184,14 @@ where
         public.batch_count(),
     )?;
     let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
-    let ordinary_payload = ordinary.map(|group| lift(group.commitment().rows().coeffs()));
-    let ordinary_claim = ordinary
-        .zip(ordinary_payload.as_deref())
-        .map(|(group, payload)| {
-            Ok::<_, AkitaError>((
-                group.point(),
-                *group
-                    .evaluations()
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?,
-                payload,
-            ))
-        })
-        .transpose()?;
+    let ordinary_payload = ordinary_groups
+        .iter()
+        .map(|group| lift(group.commitment().rows().coeffs()))
+        .collect::<Vec<_>>();
+    let ordinary_claims = ordinary_groups
+        .iter()
+        .zip(&ordinary_payload)
+        .map(|(group, payload)| (group.point(), group.evaluations(), payload.as_slice()));
     let mu = batches
         .get(..7)
         .ok_or(AkitaError::InvalidProof)?
@@ -206,7 +206,7 @@ where
         &projected_values,
         &lift(group.commitment().rows().coeffs()),
         &lift(&d_payload),
-        ordinary_claim,
+        ordinary_claims,
         None,
     )?;
 

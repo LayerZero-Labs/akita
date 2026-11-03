@@ -8,6 +8,8 @@ mod compatibility;
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]
 mod field_switch;
+#[path = "binary_source_end_to_end/grouped_surface.rs"]
+mod grouped_surface;
 #[path = "binary_source_end_to_end/prime_plane.rs"]
 mod prime_plane;
 #[path = "binary_source_end_to_end/projection.rs"]

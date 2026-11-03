@@ -4,14 +4,14 @@ use super::{BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryTerminalC
 use akita_params::GroupCommitPhaseParams;
 
 /// Typed request consumed only by an explicitly selected binary root backend.
-/// The ordinary handle, when present, supplies a full commitment preimage to the
+/// Each ordinary handle supplies a full commitment preimage to the
 /// same outgoing witness. It does not introduce another opening or transcript.
 pub struct BinaryRootWitnessRequest<H> {
     pub manifest: BinaryCommittedGroupManifest,
-    pub claim: Option<BinaryTerminalClaim>,
+    pub claim: Vec<BinaryTerminalClaim>,
     pub prime: super::PrimePlaneManifest,
     pub plan: BinaryRootWitnessPlan,
-    pub ordinary: Option<(GroupCommitPhaseParams, H)>,
+    pub ordinary: Vec<(GroupCommitPhaseParams, H)>,
 }
 
 /// Request canonical padded carrier words for the field-switch prover.

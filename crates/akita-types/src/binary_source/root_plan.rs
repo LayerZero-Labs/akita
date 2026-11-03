@@ -125,9 +125,9 @@ impl BinaryRootWitnessPlan {
     /// Assemble all binary identities after outgoing commitment and batching.
     /// B/D and any ordinary-group identities join these same linear weights.
     #[allow(clippy::too_many_arguments)]
-    pub fn relation_weights<E: Field>(
+    pub fn relation_weights<'a, E: Field>(
         &self,
-        claim: Option<&BinaryTerminalClaim>,
+        claims: impl IntoIterator<Item = &'a BinaryTerminalClaim>,
         matrix: Option<&[Vec<[i128; 648]>]>,
         challenges: &Challenges,
         alpha: E,
@@ -136,30 +136,36 @@ impl BinaryRootWitnessPlan {
         padding_weights: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError> {
         let a = binary_direct_a_weights(self, matrix, challenges, rho, padding_weights)?;
-        let Some(claim) = claim else {
-            if !terminal_batches.as_ref().is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-            return Ok(a);
-        };
-        let terminal = claim.relation_weights(
-            &self.descriptor,
-            &self.repacking,
-            BinaryEvaluationSegments {
-                response: 0,
-                partials: 2,
-                parity_carry: 3,
-                value_carry: 4,
-            },
-            challenges,
-            alpha,
-            terminal_batches
-                .as_ref()
-                .try_into()
-                .map_err(|_| AkitaError::InvalidProof)?,
-            BINARY_SETUP_P,
-        )?;
-        NativeRootWeights::merge(self.repacking.domain_len(), [a, terminal], E::zero())
+        let mut components = vec![a];
+        let mut batches = terminal_batches.as_ref().chunks_exact(2);
+        for claim in claims {
+            let terminal = claim.relation_weights(
+                &self.descriptor,
+                &self.repacking,
+                BinaryEvaluationSegments {
+                    response: 0,
+                    partials: 2,
+                    parity_carry: 3,
+                    value_carry: 4,
+                },
+                challenges,
+                alpha,
+                batches
+                    .next()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .try_into()
+                    .map_err(|_| AkitaError::InvalidProof)?,
+                BINARY_SETUP_P,
+            )?;
+            components
+                .try_reserve(1)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            components.push(terminal);
+        }
+        if batches.next().is_some() || !batches.remainder().is_empty() {
+            return Err(AkitaError::InvalidProof);
+        }
+        NativeRootWeights::merge(self.repacking.domain_len(), components, E::zero())
     }
 }
 

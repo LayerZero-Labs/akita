@@ -28,25 +28,42 @@ pub struct OrdinaryNativeRootPlan {
 impl OrdinaryNativeRootPlan {
     pub fn new(profile: GroupCommitPhaseParams, first_segment: usize) -> Result<Self, AkitaError> {
         profile.validate_frozen_precommit(128)?;
-        if profile.group.num_polynomials() != 1
-            || profile.inner.digits.num_digits != 1
+        if profile.inner.digits.num_digits != 1
             || profile.inner.digits.log_basis < 3
             || profile.outer.digits.log_basis != 3
             || profile.inner.matrix.sis_modulus_profile().modulus() != BINARY_SETUP_P
         {
             return Err(AkitaError::InvalidSetup(
-                "mixed root requires one ordinary small coefficient source and base-eight image digits".into(),
+                "mixed root requires one inner gadget plane and base-eight image digits".into(),
+            ));
+        }
+        if profile.outer.matrix.ring_dimension() != 64 {
+            return Err(AkitaError::InvalidSetup(
+                "mixed root requires degree-64 ordinary B for the two-map compression chain".into(),
+            ));
+        }
+        let source_len = checked::pow2(profile.group.num_vars()).ok_or(AkitaError::InvalidProof)?;
+        if checked::product([
+            profile.blocks.live_ring_elements_per_claim,
+            profile.inner.matrix.ring_dimension(),
+        ]) != Some(source_len)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "mixed root ordinary source must cover its complete logical coefficient domain"
+                    .into(),
             ));
         }
         let a_degree = profile.inner.matrix.ring_dimension();
         let b_degree = profile.outer.matrix.ring_dimension();
         let subcolumns = checked::exact_div(a_degree, b_degree).ok_or(AkitaError::InvalidProof)?;
         let source_elements = checked::product([
+            profile.group.num_polynomials(),
             profile.blocks.live_blocks,
             profile.blocks.positions_per_block,
         ])
         .ok_or(AkitaError::InvalidProof)?;
         let image_elements = checked::product([
+            profile.group.num_polynomials(),
             profile.blocks.live_blocks,
             profile.inner.matrix.output_rank(),
             subcolumns,
@@ -97,7 +114,18 @@ impl OrdinaryNativeRootPlan {
                 digits: 1,
             },
         ];
+        let per_polynomial_coefficients = checked::product([
+            profile.blocks.live_blocks,
+            profile.blocks.positions_per_block,
+            a_degree,
+        ])
+        .ok_or(AkitaError::InvalidProof)?;
+        let source_padding = per_polynomial_coefficients
+            .checked_sub(source_len)
+            .and_then(|padding| checked::product([padding, profile.group.num_polynomials()]))
+            .ok_or(AkitaError::InvalidProof)?;
         let linear_batch_count = checked::product([
+            profile.group.num_polynomials(),
             profile.blocks.live_blocks,
             profile.inner.matrix.output_rank(),
         ])
@@ -106,7 +134,15 @@ impl OrdinaryNativeRootPlan {
                 .outer_slice_count
                 .logical_output_rows(profile.outer.matrix.output_rank())
                 .ok()
-                .and_then(|b_rows| checked::sum([a_rows, b_rows, 3]))
+                .and_then(|b_rows| {
+                    checked::sum([
+                        a_rows,
+                        b_rows,
+                        2,
+                        profile.group.num_polynomials(),
+                        source_padding,
+                    ])
+                })
         })
         .ok_or(AkitaError::InvalidProof)?;
         checked::sum([first_segment, segments.len()]).ok_or(AkitaError::InvalidProof)?;
@@ -170,8 +206,9 @@ impl OrdinaryNativeRootPlan {
 
     /// Direct public A/B/compression and source-evaluation identities.
     ///
-    /// Rows are A in block/row order, B in slice/row order, the two compression
-    /// maps, then the scalar evaluation. The public matrix is the canonical
+    /// Rows are A in polynomial/block/row order, B in slice/row order, the two
+    /// compression maps, one evaluation per polynomial, then source zero tails.
+    /// The public matrix is the canonical
     /// ordinary setup prefix, reused with each role's own dimensions.
     #[allow(clippy::too_many_arguments)]
     pub fn linear_weights<E: Field>(
@@ -179,13 +216,14 @@ impl OrdinaryNativeRootPlan {
         repacking: &RootCoefficientRepacking,
         setup: &AkitaSetupDescriptor,
         point: &[E],
-        evaluation: E,
+        evaluations: &[E],
         payload: &[E],
         alpha: E,
         batches: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError> {
         self.validate_repacking(repacking)?;
         if point.len() != self.profile.group.num_vars()
+            || evaluations.len() != self.profile.group.num_polynomials()
             || batches.len() != self.linear_batch_count
             || payload.len() != self.compression.terminal_coefficients()
             || E::from_u128(BINARY_SETUP_P) != E::zero()
@@ -244,6 +282,7 @@ impl OrdinaryNativeRootPlan {
         let term_capacity = [
             checked::product([source_coefficients, a.output_rank()]),
             checked::product([
+                self.profile.group.num_polynomials(),
                 self.profile.blocks.live_blocks,
                 a.output_rank(),
                 a.ring_dimension(),
@@ -254,6 +293,7 @@ impl OrdinaryNativeRootPlan {
             Some(first.padded_digit_count()),
             Some(second.real_digit_count()),
             Some(second.padded_digit_count()),
+            Some(source_coefficients),
             Some(source_coefficients),
         ]
         .into_iter()
@@ -272,7 +312,12 @@ impl OrdinaryNativeRootPlan {
         let h_segment = checked::sum([self.first_segment, 3]).ok_or(AkitaError::InvalidProof)?;
         let subcolumns = checked::exact_div(a.ring_dimension(), b.ring_dimension())
             .ok_or(AkitaError::InvalidProof)?;
-        for block in 0..self.profile.blocks.live_blocks {
+        let polynomial_blocks = checked::product([
+            self.profile.group.num_polynomials(),
+            self.profile.blocks.live_blocks,
+        ])
+        .ok_or(AkitaError::InvalidProof)?;
+        for block in 0..polynomial_blocks {
             for a_row in 0..a.output_rank() {
                 let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
                 row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
@@ -317,43 +362,58 @@ impl OrdinaryNativeRootPlan {
             for b_row in 0..b.output_rank() {
                 let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
                 row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-                for (local_block, block) in block_range.clone().enumerate() {
-                    for a_row in 0..a.output_rank() {
-                        for subcolumn in 0..subcolumns {
-                            let element = checked::mul_add(block, a.output_rank(), a_row)
-                                .and_then(|image| checked::mul_add(image, subcolumns, subcolumn))
+                for polynomial in 0..self.profile.group.num_polynomials() {
+                    for (local_block, block) in block_range.clone().enumerate() {
+                        let source_block =
+                            checked::mul_add(polynomial, self.profile.blocks.live_blocks, block)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            for digit in 0..self.profile.outer.digits.num_digits {
-                                let column = checked::mul_add(local_block, a.output_rank(), a_row)
-                                    .and_then(|image| {
-                                        checked::mul_add(image, subcolumns, subcolumn)
-                                    })
-                                    .and_then(|image| {
-                                        checked::mul_add(
-                                            image,
-                                            self.profile.outer.digits.num_digits,
-                                            digit,
-                                        )
-                                    })
-                                    .ok_or(AkitaError::InvalidProof)?;
-                                let kernel = ordinary_matrix_kernel(
-                                    matrix,
-                                    b_row,
-                                    b.input_width(),
-                                    column,
-                                    b.ring_dimension(),
-                                    alpha,
-                                )?;
-                                for (coefficient, weight) in kernel.into_iter().enumerate() {
-                                    terms.push((
-                                        repacking.coefficient_address(
-                                            t_segment,
-                                            element,
-                                            digit,
-                                            coefficient,
-                                        )?,
-                                        batch * weight,
-                                    ));
+                        let matrix_block = checked::mul_add(
+                            polynomial,
+                            geometry.max_blocks_per_slice(),
+                            local_block,
+                        )
+                        .ok_or(AkitaError::InvalidProof)?;
+                        for a_row in 0..a.output_rank() {
+                            for subcolumn in 0..subcolumns {
+                                let element =
+                                    checked::mul_add(source_block, a.output_rank(), a_row)
+                                        .and_then(|image| {
+                                            checked::mul_add(image, subcolumns, subcolumn)
+                                        })
+                                        .ok_or(AkitaError::InvalidProof)?;
+                                for digit in 0..self.profile.outer.digits.num_digits {
+                                    let column =
+                                        checked::mul_add(matrix_block, a.output_rank(), a_row)
+                                            .and_then(|image| {
+                                                checked::mul_add(image, subcolumns, subcolumn)
+                                            })
+                                            .and_then(|image| {
+                                                checked::mul_add(
+                                                    image,
+                                                    self.profile.outer.digits.num_digits,
+                                                    digit,
+                                                )
+                                            })
+                                            .ok_or(AkitaError::InvalidProof)?;
+                                    let kernel = ordinary_matrix_kernel(
+                                        matrix,
+                                        b_row,
+                                        b.input_width(),
+                                        column,
+                                        b.ring_dimension(),
+                                        alpha,
+                                    )?;
+                                    for (coefficient, weight) in kernel.into_iter().enumerate() {
+                                        terms.push((
+                                            repacking.coefficient_address(
+                                                t_segment,
+                                                element,
+                                                digit,
+                                                coefficient,
+                                            )?,
+                                            batch * weight,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -362,8 +422,12 @@ impl OrdinaryNativeRootPlan {
                 // B rows are stacked in slice/row/coefficient order.
                 let b_image_row = row
                     .checked_sub(
-                        checked::product([self.profile.blocks.live_blocks, a.output_rank()])
-                            .ok_or(AkitaError::InvalidProof)?,
+                        checked::product([
+                            self.profile.group.num_polynomials(),
+                            self.profile.blocks.live_blocks,
+                            a.output_rank(),
+                        ])
+                        .ok_or(AkitaError::InvalidProof)?,
                     )
                     .and_then(|index| index.checked_sub(1))
                     .ok_or(AkitaError::InvalidProof)?;
@@ -429,21 +493,55 @@ impl OrdinaryNativeRootPlan {
                         .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
             }
         }
-        let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
         let equality = akita_algebra::offset_eq::OffsetEqWindow::new(point)?;
         let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
-        for coefficient in 0..source_len {
-            terms.push((
-                repacking.coefficient_address(
-                    s_segment,
-                    coefficient / a.ring_dimension(),
-                    0,
-                    coefficient % a.ring_dimension(),
-                )?,
-                batch * equality.eval(coefficient),
-            ));
+        let per_polynomial = checked::product([
+            self.profile.blocks.live_blocks,
+            self.profile.blocks.positions_per_block,
+        ])
+        .ok_or(AkitaError::InvalidProof)?;
+        for (polynomial, &evaluation) in evaluations.iter().enumerate() {
+            let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
+            row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
+            for coefficient in 0..source_len {
+                let element =
+                    checked::mul_add(polynomial, per_polynomial, coefficient / a.ring_dimension())
+                        .ok_or(AkitaError::InvalidProof)?;
+                terms.push((
+                    repacking.coefficient_address(
+                        s_segment,
+                        element,
+                        0,
+                        coefficient % a.ring_dimension(),
+                    )?,
+                    batch * equality.eval(coefficient),
+                ));
+            }
+            claim += batch * evaluation;
         }
-        claim += batch * evaluation;
+        let per_polynomial_coefficients = checked::product([per_polynomial, a.ring_dimension()])
+            .ok_or(AkitaError::InvalidProof)?;
+        for polynomial in 0..self.profile.group.num_polynomials() {
+            for coefficient in source_len..per_polynomial_coefficients {
+                let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
+                row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
+                let element =
+                    checked::mul_add(polynomial, per_polynomial, coefficient / a.ring_dimension())
+                        .ok_or(AkitaError::InvalidProof)?;
+                terms.push((
+                    repacking.coefficient_address(
+                        s_segment,
+                        element,
+                        0,
+                        coefficient % a.ring_dimension(),
+                    )?,
+                    batch,
+                ));
+            }
+        }
+        if row != self.linear_batch_count {
+            return Err(AkitaError::InvalidProof);
+        }
         NativeRootWeights::new(repacking.domain_len(), terms, claim)
     }
 }
@@ -501,3 +599,7 @@ fn scatter_negative_recomposition<E: Field>(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "ordinary_root_tests.rs"]
+mod tests;

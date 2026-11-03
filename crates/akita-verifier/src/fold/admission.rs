@@ -30,9 +30,10 @@ pub(super) fn validate_group_payload<F: Field>(
                 ));
             }
             manifest.validate_carrier(descriptor)?;
-            if let Some(claim) = claim {
-                claim.validate(manifest.descriptor())?;
-            }
+            akita_types::binary_source::BinaryWordClaim::validate_group(
+                manifest.descriptor(),
+                claim,
+            )?;
             akita_types::binary_source::PrimePlaneManifest::new(
                 manifest.descriptor(),
                 prime.planes(),

@@ -12,17 +12,17 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 /// Bind the source contract and caller's logical word claim before the field
 /// switch produces its internal carrier terminal.
 #[allow(clippy::type_complexity)]
-pub fn binary_root_statement<F, E, S>(
+pub fn binary_root_statement<'a, F, E, S>(
     state: &mut S,
     manifest: &BinaryCommittedGroupManifest,
-    claim: Option<&BinaryWordClaim>,
+    claims: impl IntoIterator<Item = &'a BinaryWordClaim>,
     prime: &super::PrimePlaneManifest,
     binary_commitment: &[F],
-    ordinary: Option<(usize, &[F], &[E], &[E])>,
+    ordinary: impl IntoIterator<Item = (usize, &'a [F], &'a [E], &'a [E])>,
 ) -> Result<(), AkitaError>
 where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    F: Field + CanonicalEncoding + 'a,
+    E: ExtField<F> + 'a,
     S: ProofChannel + ?Sized,
 {
     if E::DEGREE != 1 {
@@ -31,12 +31,20 @@ where
         ));
     }
     manifest.validate()?;
-    if let Some(claim) = claim {
-        claim.validate(manifest.descriptor())?;
+    let mut claim = Vec::new();
+    for terminal in claims {
+        if claim.len() >= manifest.descriptor().polynomials().len() {
+            return Err(AkitaError::InvalidInput(
+                "too many binary source terminals".into(),
+            ));
+        }
+        claim.try_reserve(1).map_err(|_| AkitaError::InvalidProof)?;
+        claim.push(terminal.clone());
     }
+    BinaryWordClaim::validate_group(manifest.descriptor(), &claim)?;
     super::PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
     let mut messages = vec![(3, manifest.canonical_bytes())];
-    if let Some(claim) = claim {
+    for claim in claim {
         messages.push((4, claim.canonical_bytes()));
     }
     if !prime.planes().is_empty() {
@@ -72,11 +80,12 @@ where
         .id()?,
         &lift(binary_commitment)?,
     )?;
-    if let Some((dimension, payload, point, evaluations)) = ordinary {
+    for (index, (dimension, payload, point, evaluations)) in ordinary.into_iter().enumerate() {
+        let group = akita_error::checked::sum([index, 1]).ok_or(AkitaError::InvalidProof)?;
         akita_transcript::public_extensions::<F, E, _>(
             state,
             crate::FoldSite::RootCommitment {
-                group: 1,
+                group,
                 ring_dimension: dimension,
             }
             .id()?,
@@ -84,7 +93,7 @@ where
         )?;
         akita_transcript::public_extensions::<F, E, _>(
             state,
-            crate::FoldSite::RootPoint { group: 1 }.id()?,
+            crate::FoldSite::RootPoint { group }.id()?,
             point,
         )?;
         akita_transcript::public_extensions::<F, E, _>(
