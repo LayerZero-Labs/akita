@@ -508,5 +508,6 @@ mod tests {
         assert!(line.contains(
             " setup_budget_passes=2[64:candidates=5/descriptors=1,unbounded:candidates=3/descriptors=0]"
         ));
+        assert!(active().is_none());
     }
 }
