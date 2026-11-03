@@ -61,3 +61,6 @@ pub(in crate::protocol::prove) struct Stage3ProveOutput<E: Field> {
     pub(in crate::protocol::prove) setup_prefix_eval: E,
     pub(in crate::protocol::prove) setup_prefix_point: Vec<E>,
 }
+
+#[cfg(feature = "l2-terminal-quotient")]
+mod terminal_quotient;

@@ -319,13 +319,26 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
     Ok(Some(value))
 }
 
-fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+pub(super) fn eval_multi_axis_families<
+    F: Field,
+    const LEFT_MONOMIAL: bool,
+    const RIGHT_MONOMIAL: bool,
+>(
     left_challenges: &[F],
     right_challenges: &[F],
     families: &[&EqPairTensorFamily<F>],
     recurrence_geometry: &[(usize, usize, usize, usize)],
     work: &mut usize,
 ) -> Result<F, AkitaError> {
+    #[cfg(feature = "carry-graph")]
+    if let Some(value) = super::carry_graph::try_evaluate::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+        left_challenges,
+        right_challenges,
+        families,
+        work,
+    ) {
+        return Ok(value);
+    }
     let recurrence_axes = recurrence_geometry
         .iter()
         .map(|&(axis_index, _, _, _)| axis_index)
@@ -369,30 +382,15 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
             ));
         }
         for coordinate_bit in 0..axis_len.trailing_zeros() as usize {
-            let coordinate = checked::pow2(coordinate_bit).ok_or_else(|| {
-                AkitaError::InvalidInput("paired tensor coordinate bit overflow".into())
-            })?;
-            let left = left_stride.checked_mul(coordinate).ok_or_else(|| {
-                AkitaError::InvalidInput("paired tensor left stride overflow".into())
-            })?;
-            let right = right_stride.checked_mul(coordinate).ok_or_else(|| {
-                AkitaError::InvalidInput("paired tensor right stride overflow".into())
-            })?;
-            let start_bit = [left, right]
-                .into_iter()
-                .filter(|value| *value != 0)
-                .map(|value| value.trailing_zeros() as usize)
-                .min()
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("paired tensor unit axis is constant".into())
-                })?;
+            let (start_bit, (left, right)) =
+                introduction_geometry(left_stride, right_stride, coordinate_bit)?;
             let factors = axis.bit_factors(coordinate_bit).ok_or_else(|| {
                 AkitaError::InvalidInput("tensor recurrence axis bit factors are absent".into())
             })?;
             if let Some(at_bit) = introductions.get_mut(start_bit) {
                 at_bit.push(BitIntroduction {
-                    left: left >> start_bit,
-                    right: right >> start_bit,
+                    left,
+                    right,
                     factors,
                 });
             } else {
@@ -400,10 +398,6 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
                 // The coordinate-one branch is therefore out of domain on both
                 // sides and contributes zero. The forced coordinate-zero
                 // branch still carries its factored axis weight.
-                debug_assert!(
-                    (left == 0 || left >= 1usize << left_challenges.len())
-                        && (right == 0 || right >= 1usize << right_challenges.len())
-                );
                 forced_zero_weight *= factors[0];
             }
         }
@@ -449,19 +443,12 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
         );
         for ((left_carry, right_carry), state_weight) in states {
             for &(left_add, right_add, multiplicity) in &choices {
-                let left = left_carry.checked_add(left_add).ok_or_else(|| {
-                    AkitaError::InvalidInput("paired tensor left carry overflow".into())
-                })?;
-                let right = right_carry.checked_add(right_add).ok_or_else(|| {
-                    AkitaError::InvalidInput("paired tensor right carry overflow".into())
-                })?;
-                let Some(factor) = bit_factors[(left & 1) * 2 + (right & 1)] else {
+                let (destination, parity) =
+                    carry_step((left_carry, right_carry), (left_add, right_add))?;
+                let Some(factor) = bit_factors[parity] else {
                     continue;
                 };
-                next.push((
-                    (left >> 1, right >> 1),
-                    state_weight * multiplicity * factor,
-                ));
+                next.push((destination, state_weight * multiplicity * factor));
             }
         }
         states = merge_pair_states(next)?;
@@ -470,6 +457,45 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
         .into_iter()
         .find_map(|(key, weight)| (key == (0, 0)).then_some(weight))
         .unwrap_or_else(F::zero))
+}
+
+#[inline]
+pub(super) fn introduction_geometry(
+    left_stride: usize,
+    right_stride: usize,
+    coordinate_bit: usize,
+) -> Result<(usize, (usize, usize)), AkitaError> {
+    let coordinate = checked::pow2(coordinate_bit)
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor coordinate bit overflow".into()))?;
+    let left = left_stride
+        .checked_mul(coordinate)
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor left stride overflow".into()))?;
+    let right = right_stride
+        .checked_mul(coordinate)
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor right stride overflow".into()))?;
+    let start_bit = [left, right]
+        .into_iter()
+        .filter(|value| *value != 0)
+        .map(|value| value.trailing_zeros() as usize)
+        .min()
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor unit axis is constant".into()))?;
+    Ok((start_bit, (left >> start_bit, right >> start_bit)))
+}
+
+#[inline]
+pub(super) fn carry_step(
+    state: (usize, usize),
+    addition: (usize, usize),
+) -> Result<((usize, usize), usize), AkitaError> {
+    let left = state
+        .0
+        .checked_add(addition.0)
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor left carry overflow".into()))?;
+    let right = state
+        .1
+        .checked_add(addition.1)
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor right carry overflow".into()))?;
+    Ok(((left >> 1, right >> 1), (left & 1) * 2 + (right & 1)))
 }
 
 type PairState<F> = ((usize, usize), F);
@@ -613,7 +639,7 @@ fn bit_axis_choices<F: Field>(
         .collect())
 }
 
-fn basis_pair_factors<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+pub(super) fn basis_pair_factors<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left: Option<F>,
     right: Option<F>,
 ) -> [Option<F>; 4] {

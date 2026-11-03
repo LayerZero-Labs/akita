@@ -28,6 +28,10 @@ features = ["parallel", "transcript-keccak"]
 ignored = ["akita-setup"]
 
 [features]
+l2-terminal-quotient = ["akita-prover/l2-terminal-quotient", "akita-verifier/l2-terminal-quotient"]
+prevalidated-catalog = ["akita-config/prevalidated-catalog"]
+digest-nozero = ["prevalidated-catalog", "akita-config/digest-nozero"]
+carry-graph = ["akita-algebra/carry-graph"]
 default = ["parallel", "transcript-keccak"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

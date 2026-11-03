@@ -693,9 +693,14 @@ pub fn expanded_schedule_proof_bound(
     policy: &PlannerPolicy,
 ) -> Result<usize, AkitaError> {
     let components = expanded_schedule_proof_components(key, schedule, policy)?;
+    #[cfg(feature = "l2-terminal-quotient")]
+    let extra = schedule.terminal.terminal_quotient_bytes(policy.decomposition.field_bits())?;
+    #[cfg(not(feature = "l2-terminal-quotient"))]
+    let extra = 0;
     components
         .fixed_bytes
         .checked_add(components.terminal_max_bytes)
+        .and_then(|value| value.checked_add(extra))
         .and_then(|value| value.checked_add(components.nonce_max_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("native proof byte bound overflow".into()))
 }

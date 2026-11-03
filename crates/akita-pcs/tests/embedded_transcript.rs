@@ -38,23 +38,27 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_num_vars(NUM_VARS)
+    }
+
+    fn with_num_vars(num_vars: usize) -> Self {
         let scheme =
             load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
                 .expect("workspace schedule catalog");
         let layout = scheme
             .schedules()
             .resolve_key(&akita_params::ScheduleLookupKey::single(
-                akita_params::PolynomialGroupLayout::singleton(NUM_VARS),
+                akita_params::PolynomialGroupLayout::singleton(num_vars),
             ))
             .expect("layout")
             .schedule()
             .root
             .params
             .final_group();
-        let poly = make_onehot_poly::<Cfg>(NUM_VARS, 0x7171);
-        let point = random_point(NUM_VARS, 0x8181);
+        let poly = make_onehot_poly::<Cfg>(num_vars, 0x7171);
+        let point = random_point(num_vars, 0x8181);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
-        let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
+        let setup = scheme.setup_prover(num_vars, 1).expect("setup");
         let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let CommitOutput {
@@ -479,6 +483,100 @@ fn sent_witness_values_are_absorbed_once() {
                 index < ring_switch_challenge,
                 "level {level}'s next witness is sent after its ring-switch challenge"
             );
+        }
+    });
+}
+
+/// Emit the same fixture artifacts from the baseline and candidate builds.
+/// This opt-in test never chooses its expected bytes from the implementation.
+#[test]
+fn verifier_feature_artifacts() {
+    let Ok(directory) = std::env::var("AKITA_FIXTURE_OUTPUT") else {
+        return;
+    };
+    init_rayon_pool();
+    run_on_large_stack(move || {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        for num_vars in [12, 20] {
+            let fixture = Fixture::with_num_vars(num_vars);
+            let proof = fixture.prove_standalone();
+            assert_eq!(proof, fixture.prove_standalone(), "repeat proof identity");
+            fixture.verify_standalone(
+                &proof, SESSION, &fixture.point, fixture.opening, &fixture.commitment,
+            ).unwrap();
+            std::fs::write(directory.join(format!("{num_vars}.proof")), &proof).unwrap();
+            #[cfg(feature = "logging-transcript")]
+            akita_transcript::clear_thread_events();
+            let (embedded, challenge) = fixture.prove_embedded();
+            #[cfg(feature = "logging-transcript")]
+            std::fs::write(directory.join(format!("{num_vars}.transcript")),
+                format!("{:?}\n", akita_transcript::thread_events())).unwrap();
+            assert_eq!((embedded.clone(), challenge), fixture.prove_embedded());
+            let mut state = new_verifier_channel(SESSION, &embedded);
+            let pending = fixture.verify_embedded_prefix(
+                &mut state, &fixture.point, fixture.opening, &fixture.commitment,
+            ).unwrap();
+            assert_eq!(receive_caller_message(&mut state).unwrap(), CALLER_AFTER);
+            assert_eq!(state.verifier_message::<[u8; 32]>(), challenge);
+            pending.check_eof(state).unwrap();
+            std::fs::write(directory.join(format!("{num_vars}.embedded")), &embedded).unwrap();
+            std::fs::write(directory.join(format!("{num_vars}.challenge")), challenge).unwrap();
+            let key = akita_params::ScheduleLookupKey::single(
+                akita_params::PolynomialGroupLayout::singleton(num_vars),
+            );
+            let row = fixture.scheme.schedules().resolve_key(&key).unwrap();
+            let catalog = fixture.scheme.schedules().to_verifier_view(&[row.selection()]).unwrap();
+            std::fs::write(directory.join(format!("{num_vars}.catalog")), catalog).unwrap();
+            let terminal = &row.schedule().terminal;
+            let d = terminal.d_a();
+            let rows = terminal.inner.matrix.output_rank();
+            let field_bytes = akita_params::field_bytes(
+                <F as jolt_field::CanonicalEncoding>::MODULUS_BITS,
+            );
+            let certificate_bytes = rows * (2 * d - 1) * field_bytes;
+            std::fs::write(directory.join(format!("{num_vars}.geometry")),
+                format!("{d} {rows} {field_bytes} {certificate_bytes}\n")).unwrap();
+            let mut mutations = vec![proof[..proof.len() - 1].to_vec()];
+            let mut trailing = proof.clone();
+            trailing.push(0);
+            mutations.push(trailing);
+            if std::env::var("AKITA_EXPECT_CERTIFICATE").as_deref() == Ok("1") {
+                let start = proof.len().checked_sub(certificate_bytes).unwrap();
+                // Replace each canonical first coefficient by a different
+                // canonical scalar, avoiding a decoder-only rejection.
+                for offset in [start, start + rows * d * field_bytes] {
+                    let mut changed = proof.clone();
+                    let was_zero = changed[offset..offset + field_bytes].iter().all(|&b| b == 0);
+                    changed[offset..offset + field_bytes].fill(0);
+                    changed[offset] = u8::from(was_zero);
+                    mutations.push(changed);
+                }
+            }
+            let mutation_count = mutations.len();
+            if let Ok(other) = std::env::var("AKITA_CROSS_PROOF") {
+                let incompatible = std::fs::read(
+                    std::path::Path::new(&other).join(format!("{num_vars}.proof")),
+                ).unwrap();
+                let rejection = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fixture.verify_standalone(
+                        &incompatible, SESSION, &fixture.point, fixture.opening, &fixture.commitment,
+                    )
+                }));
+                assert!(rejection.is_ok());
+                assert!(rejection.unwrap().is_err());
+            }
+            for changed in mutations {
+                let rejection = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fixture.verify_standalone(
+                        &changed, SESSION, &fixture.point, fixture.opening, &fixture.commitment,
+                    )
+                }));
+                assert!(rejection.is_ok(), "malformed proof panicked");
+                assert!(rejection.unwrap().is_err(), "malformed proof accepted");
+            }
+            std::fs::write(directory.join(format!("{num_vars}.checks")),
+                format!("accept repeat embedded transcript PASS; rejected mutations={mutation_count}\n")).unwrap();
         }
     });
 }

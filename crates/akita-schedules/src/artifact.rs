@@ -1002,3 +1002,6 @@ mod tests {
             .contains("encoded trusted schedule row exceeds"));
     }
 }
+
+#[cfg(feature = "prevalidated-catalog")]
+pub use verifier_view::{PrevalidatedVerifierRecord, PrevalidatedVerifierView};

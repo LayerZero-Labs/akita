@@ -957,3 +957,16 @@ pub fn root_input_witness_len(lp: &CommittedGroupParams) -> usize {
 #[cfg(test)]
 #[path = "schedule/internal_tests.rs"]
 mod internal_tests;
+
+#[cfg(feature = "l2-terminal-quotient")]
+impl TerminalFoldParams {
+    /// Extra canonical bytes for the last commitment block and quotient.
+    pub fn terminal_quotient_bytes(&self, field_bits: u32) -> Result<usize, AkitaError> {
+        let coefficients = self.d_a().checked_mul(2).and_then(|v| v.checked_sub(1))
+            .and_then(|v| v.checked_mul(self.inner.matrix.output_rank()))
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal certificate length overflow".into()))?;
+        coefficients.checked_mul(crate::field_bytes(field_bits)).ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal certificate byte length overflow".into())
+        })
+    }
+}

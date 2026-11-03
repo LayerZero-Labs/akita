@@ -15,6 +15,7 @@ use akita_types::{prepare_opening_point, FpExtEncoding, RingVec};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 pub(super) fn verify_terminal_suffix<F, E>(
+    #[cfg(feature = "l2-terminal-quotient")] setup_matrix: &[F],
     terminal_ntt: &TerminalNttCache,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
@@ -153,7 +154,14 @@ where
         e_fields,
         t_fields: t_sent.clone(),
     };
+    #[cfg(feature = "l2-terminal-quotient")]
+    let a_products = crate::terminal::quotient::receive_and_check::<F, E>(
+        grinding, level, scheduled, setup_matrix, &terminal_response, &challenges,
+        &last_block_digests.t,
+    )?;
     let e_fields = crate::terminal::direct::verify_terminal_ring_relations(
+        #[cfg(feature = "l2-terminal-quotient")]
+        &a_products,
         terminal_ntt,
         &challenges,
         &prepared_point.ring_multiplier_point,

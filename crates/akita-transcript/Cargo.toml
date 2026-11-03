@@ -21,6 +21,7 @@ sha3 = "0.12.0"
 spongefish = { version = "=0.8.0", default-features = false }
 
 [features]
+l2-terminal-quotient = []
 default = ["transcript-keccak"]
 logging-transcript = []
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]

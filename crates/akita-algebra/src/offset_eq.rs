@@ -12,6 +12,8 @@ use jolt_field::solinas::parallel::*;
 
 mod prepared_digits;
 mod tensor_pair;
+#[cfg(feature = "carry-graph")]
+pub use tensor_pair::carry_graph;
 pub use prepared_digits::{PreparedDigits, MAX_PREPARED_STRIDE};
 pub use tensor_pair::{
     eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,

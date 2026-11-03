@@ -112,10 +112,13 @@ fn tags_are_the_padded_protocol_names() {
         assert!(tag[name.len()..].iter().all(|&byte| byte == 0));
     };
     assert_eq!(PROTOCOL_VERSION, 8);
+    #[cfg(not(feature = "l2-terminal-quotient"))]
     padded(
         &PROTOCOL_TAG,
         &format!("akita-pcs/transcript/v{PROTOCOL_VERSION}/{digest}"),
     );
+    #[cfg(feature = "l2-terminal-quotient")]
+    padded(&PROTOCOL_TAG, &format!("akita-pcs/v8-l2tq1/{digest}"));
     padded(&STANDALONE_SESSION_TAG, "akita-pcs/standalone-session/v8");
     padded(&COMMITMENT_DIGEST_TAG, "akita-pcs/commitment-digest/v8");
     assert_eq!(&CONTEXT_DOMAIN[..27], b"akita-pcs/native-context/v8");
