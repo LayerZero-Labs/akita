@@ -29,7 +29,9 @@ dependencies = [
  "akita-transcript",
  "jolt-field",
  "keccak 0.1.6",
+ "num-bigint 0.5.1",
  "serde",
+ "shake",
  "smallvec",
 ]
 
@@ -55,6 +57,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-labinius-prover",
  "akita-params",
  "akita-prover",
  "akita-serialization",
@@ -125,6 +128,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-labinius-prover"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-error",
+ "akita-labinius-verifier",
+ "akita-params",
+ "akita-sumcheck",
+ "akita-transcript",
+ "jolt-field",
+ "jolt-poly",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "akita-labinius-verifier"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-error",
+ "akita-params",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "jolt-field",
+ "rayon",
+]
+
+[[package]]
 name = "akita-params"
 version = "0.1.0"
 dependencies = [
@@ -138,6 +173,7 @@ dependencies = [
  "jolt-field",
  "serde",
  "sha3 0.12.0",
+ "shake",
 ]
 
 [[package]]

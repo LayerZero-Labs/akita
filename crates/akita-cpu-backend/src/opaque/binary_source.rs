@@ -3,8 +3,7 @@
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, PrivateSource, SourceHandle};
 use super::owned_kind::SourceGroupKind;
 use super::*;
-use akita_algebra::ring::trinomial::{image::Q24Image, signed::signed_trinomial_product};
-use akita_algebra::MinusTrinomial;
+use akita_algebra::ring::trinomial::image::Q24Image;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::checked;
 use akita_types::binary_source::{
@@ -14,7 +13,9 @@ use akita_types::binary_source::{
 use akita_types::{Commitment, CommittedGroup, RingVec};
 use std::sync::Arc;
 
+mod packed;
 mod projection;
+use packed::{image_hint, pack_logical_words, probe_packed};
 
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
@@ -25,10 +26,10 @@ pub(super) struct BinarySourceStorage {
     manifest: BinaryCommittedGroupManifest,
     carrier_profile: akita_params::GroupCommitPhaseParams,
     setup_seed: [u8; 32],
-    sources: Vec<[i128; SOURCE_RING_DEGREE]>,
-    matrix: Vec<Vec<[i128; SOURCE_RING_DEGREE]>>,
-    images: Vec<[Q24Image; SOURCE_RING_DEGREE]>,
-    image_digits: Vec<i8>,
+    sources: Arc<Vec<u128>>,
+    matrix: Arc<Vec<Vec<[i128; SOURCE_RING_DEGREE]>>>,
+    images: Arc<Vec<[Q24Image; SOURCE_RING_DEGREE]>>,
+    image_digits: Arc<Vec<i8>>,
 }
 
 impl<F, E> CpuBackend<F, E>
@@ -61,7 +62,7 @@ where
         let setup_seed = prepared.expanded.descriptor.setup_seed.seed;
         let sources = pack_logical_words(manifest.descriptor(), &words)?;
         let matrix = binary_root_matrix(&setup_seed, &manifest)?;
-        let images = image_hint(&manifest, &matrix, &sources)?;
+        let images = image_hint(manifest.descriptor(), manifest.a_rank(), &matrix, &sources)?;
         let image_digit_count = checked::product([images.len(), 8, SOURCE_RING_DEGREE])
             .ok_or(AkitaError::InvalidProof)?;
         let mut image_digits = Vec::new();
@@ -87,10 +88,10 @@ where
                 manifest,
                 carrier_profile,
                 setup_seed,
-                sources,
-                matrix,
-                images,
-                image_digits,
+                sources: Arc::new(sources),
+                matrix: Arc::new(matrix),
+                images: Arc::new(images),
+                image_digits: Arc::new(image_digits),
             }),
             metadata,
         })
@@ -146,101 +147,6 @@ where
         committed_group,
         private_handle,
     })
-}
-
-fn pack_logical_words(
-    descriptor: &akita_types::binary_source::BinarySourceDescriptor,
-    words: &[Vec<u128>],
-) -> Result<Vec<[i128; SOURCE_RING_DEGREE]>, AkitaError> {
-    let index = descriptor.index_map();
-    let owners = descriptor.polynomials().len();
-    if words.len() != owners || words.iter().any(|words| words.len() != index.logical_len()) {
-        return Err(AkitaError::InvalidInput(
-            "binary logical word table differs from its descriptor".into(),
-        ));
-    }
-    let rows = checked::product([4, index.columns()])
-        .and_then(|block| checked::exact_div(index.padded_carriers(), block))
-        .ok_or(AkitaError::InvalidProof)?;
-    let count =
-        checked::product([owners, index.columns(), rows]).ok_or(AkitaError::InvalidProof)?;
-    let bytes = checked::product([count, size_of::<[i128; SOURCE_RING_DEGREE]>()])
-        .ok_or(AkitaError::InvalidProof)?;
-    if bytes > MAX_BINARY_SOURCE_MATERIAL_BYTES {
-        return Err(AkitaError::InvalidInput(
-            "binary source allocation exceeds its budget".into(),
-        ));
-    }
-    let mut sources = Vec::new();
-    sources
-        .try_reserve_exact(count)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    sources.resize(count, [0; SOURCE_RING_DEGREE]);
-    for (owner, polynomial) in words.iter().enumerate() {
-        for (word, &value) in polynomial.iter().enumerate() {
-            if index.word_width() < 128 && value >> index.word_width() != 0 {
-                return Err(AkitaError::InvalidInput(
-                    "binary logical word exceeds its width".into(),
-                ));
-            }
-            for bit in 0..index.word_width() {
-                let position = index.logical_to_ring(word, bit)?;
-                let element = checked::mul_add(owner, index.columns(), position.column)
-                    .and_then(|column| checked::mul_add(column, rows, position.ring_row))
-                    .ok_or(AkitaError::InvalidProof)?;
-                let coefficient = sources
-                    .get_mut(element)
-                    .and_then(|element| element.get_mut(position.coefficient))
-                    .ok_or(AkitaError::InvalidProof)?;
-                *coefficient = i128::from(position.sign) * ((value >> bit) & 1) as i128;
-            }
-        }
-    }
-    Ok(sources)
-}
-
-fn image_hint(
-    manifest: &BinaryCommittedGroupManifest,
-    matrix: &[Vec<[i128; SOURCE_RING_DEGREE]>],
-    sources: &[[i128; SOURCE_RING_DEGREE]],
-) -> Result<Vec<[Q24Image; SOURCE_RING_DEGREE]>, AkitaError> {
-    let index = manifest.descriptor().index_map();
-    let rows = checked::product([4, index.columns()])
-        .and_then(|block| checked::exact_div(index.padded_carriers(), block))
-        .ok_or(AkitaError::InvalidProof)?;
-    let count = checked::product([
-        manifest.descriptor().polynomials().len(),
-        index.columns(),
-        manifest.a_rank(),
-    ])
-    .ok_or(AkitaError::InvalidProof)?;
-    let mut images = Vec::new();
-    images
-        .try_reserve_exact(count)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    for column in sources.chunks_exact(rows) {
-        for matrix_row in matrix {
-            let mut image = [0i128; SOURCE_RING_DEGREE];
-            for (source, multiplier) in column.iter().zip(matrix_row) {
-                let product = signed_trinomial_product::<SOURCE_RING_DEGREE, MinusTrinomial>(
-                    source, multiplier,
-                )?;
-                for (destination, value) in image.iter_mut().zip(product) {
-                    *destination = destination
-                        .checked_add(value)
-                        .ok_or(AkitaError::InvalidProof)?;
-                }
-            }
-            let mut encoded = [Q24Image::from_residue(0)?; SOURCE_RING_DEGREE];
-            for (destination, value) in encoded.iter_mut().zip(image) {
-                let residue = u32::try_from(value.rem_euclid(i128::from(BINARY_SOURCE_Q)))
-                    .map_err(|_| AkitaError::InvalidProof)?;
-                *destination = Q24Image::from_residue(residue)?;
-            }
-            images.push(encoded);
-        }
-    }
-    Ok(images)
 }
 
 impl<F: Field + CanonicalEncoding, E: Field> PrivateSource<F, E> for BinarySourceStorage {
@@ -420,11 +326,15 @@ where
     let partials = claim
         .as_ref()
         .map(|claim| {
-            crate::binary_root::binary_row_partials(manifest.descriptor(), claim, &source.sources)
+            crate::binary_root::evaluation::packed_row_partials(
+                manifest.descriptor(),
+                claim,
+                &source.sources,
+            )
         })
         .transpose()?
         .unwrap_or_default();
-    let prime_digits = crate::binary_root::prime_plane_digits::<F>(
+    let prime_digits = crate::binary_root::prime::packed_prime_plane_digits::<F>(
         manifest.descriptor(),
         &request.prime,
         &source.sources,
@@ -492,7 +402,7 @@ where
         ));
     }
     let source = &preparation.source;
-    let Some(response) = crate::binary_root::BinaryRootRelation::probe(
+    let Some(response) = probe_packed(
         source.manifest.descriptor(),
         &source.matrix,
         &source.sources,
@@ -598,7 +508,6 @@ where
     F: Field + CanonicalEncoding + 'static,
     E: Field + 'static,
 {
-    use akita_algebra::ring::trinomial::module_map::{scalar_to_binary, unpack_signed_components};
     let source = handle.committed.source.binary_source().ok_or_else(|| {
         AkitaError::InvalidInput("field switch requires a binary source handle".into())
     })?;
@@ -628,37 +537,21 @@ where
         .position(|id| id == &request.polynomial)
         .ok_or_else(|| AkitaError::InvalidInput("unknown binary polynomial".into()))?;
     let index = descriptor.index_map();
-    let scalar_rows = checked::exact_div(index.padded_carriers(), index.columns())
-        .ok_or(AkitaError::Internal("invalid carrier geometry".into()))?;
-    let ring_rows = checked::exact_div(scalar_rows, 4)
-        .ok_or(AkitaError::Internal("invalid source ring geometry".into()))?;
+    let owner_start =
+        checked::product([owner, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
     let mut carriers = Vec::new();
     carriers
         .try_reserve_exact(index.padded_carriers())
         .map_err(|_| AkitaError::InvalidInput("carrier allocation failed".into()))?;
     for carrier in 0..index.padded_carriers() {
-        let position = index.scalar_to_ring(carrier, 0)?;
-        let element = checked::mul_add(owner, index.columns(), position.column)
-            .and_then(|x| checked::mul_add(x, ring_rows, position.ring_row))
-            .ok_or(AkitaError::Internal("carrier address overflow".into()))?;
-        let components = unpack_signed_components(
-            source
+        let address = checked::sum([owner_start, index.kernel_carrier_index(carrier)?])
+            .ok_or(AkitaError::InvalidProof)?;
+        carriers.push(
+            *source
                 .sources
-                .get(element)
-                .ok_or(AkitaError::Internal("missing source ring".into()))?,
-        )?;
-        let [low, high, padding] = scalar_to_binary(
-            components
-                .get(position.coefficient)
-                .ok_or(AkitaError::Internal("missing source component".into()))?,
-        )?
-        .to_words();
-        if padding != 0 {
-            return Err(AkitaError::Internal(
-                "nonzero source carrier padding".into(),
-            ));
-        }
-        carriers.push(u128::from(low) | (u128::from(high) << 64));
+                .get(address)
+                .ok_or(AkitaError::InvalidProof)?,
+        );
     }
     binding
         .scope_lease()

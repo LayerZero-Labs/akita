@@ -6,7 +6,7 @@
 //! the proof field. A q-divisible residual is retained explicitly: it is never
 //! asserted to vanish over the proof field.
 
-mod prime;
+pub(crate) mod prime;
 pub use prime::prime_plane_digits;
 
 use akita_algebra::ring::trinomial::{
@@ -28,7 +28,7 @@ use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
 const D: usize = 648;
 type AuxiliaryRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
 
-mod evaluation;
+pub(crate) mod evaluation;
 mod setup_prefix;
 pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
 

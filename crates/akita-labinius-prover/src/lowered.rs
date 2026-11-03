@@ -22,5 +22,5 @@ mod witness;
 pub use a_carry::a_relation_carry;
 pub use a_remainders::matrix_remainders_limb;
 pub use parity::parity_quotient_and_carry;
-pub use prime::prime_left_opening;
+pub use prime::{prime_left_opening, weighted_source_bits};
 pub use witness::{encode_image, encode_witness};

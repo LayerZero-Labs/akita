@@ -81,6 +81,69 @@ pub fn binary_row_partials(
     Ok(partials)
 }
 
+/// Construct the binary row partials directly from packed source carriers.
+/// This uses one F162 product per carrier and no signed-ring expansion.
+pub(crate) fn packed_row_partials(
+    descriptor: &BinarySourceDescriptor,
+    claim: &BinaryTerminalClaim,
+    sources: &[u128],
+) -> Result<Vec<i8>, AkitaError> {
+    let (weights, _) = claim.equality_weights(descriptor)?;
+    let index = descriptor.index_map();
+    let columns = index.columns();
+    let rows =
+        checked::exact_div(index.padded_carriers(), columns).ok_or(AkitaError::InvalidProof)?;
+    let expected = checked::product([descriptor.polynomials().len(), index.padded_carriers()])
+        .ok_or(AkitaError::InvalidProof)?;
+    if sources.len() != expected || weights.len() != rows {
+        return Err(AkitaError::InvalidInput(
+            "packed binary row geometry mismatch".into(),
+        ));
+    }
+    let owner = descriptor
+        .polynomials()
+        .iter()
+        .position(|id| id == claim.polynomial())
+        .ok_or(AkitaError::InvalidProof)?;
+    let output_len = checked::product([descriptor.polynomials().len(), columns, 162])
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut partials = Vec::new();
+    partials
+        .try_reserve_exact(output_len)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    partials.resize(output_len, 0);
+    let owner_start =
+        checked::product([owner, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
+    let range =
+        checked::range(owner_start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
+    for (column, words) in sources
+        .get(range)
+        .ok_or(AkitaError::InvalidProof)?
+        .chunks_exact(rows)
+        .enumerate()
+    {
+        let mut value = BinaryField162::ZERO;
+        for (&word, &weight) in words.iter().zip(&weights) {
+            let embedded = BinaryField162::from_words([word as u64, (word >> 64) as u64, 0])
+                .ok_or(AkitaError::InvalidProof)?;
+            value += weight * embedded;
+        }
+        let start = checked::mul_add(owner, columns, column)
+            .and_then(|x| checked::product([x, 162]))
+            .ok_or(AkitaError::InvalidProof)?;
+        let range = checked::range(start, 162).ok_or(AkitaError::InvalidProof)?;
+        for (target, bit) in partials
+            .get_mut(range)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter_mut()
+            .zip(binary_scalar_lift(value))
+        {
+            *target = bit as i8;
+        }
+    }
+    Ok(partials)
+}
+
 impl BinaryEvaluationWitness {
     /// Construct K and K_val after the response, before Stage-2 batching.
     /// U is the already committed order-three view; every supplied digit may

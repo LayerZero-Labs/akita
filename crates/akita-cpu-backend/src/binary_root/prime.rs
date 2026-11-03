@@ -63,39 +63,103 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
                     *output += *row_weight * F::from_i128(coefficient);
                 }
             }
-            for (coefficient, value) in partial.into_iter().enumerate() {
-                let canonical = value.to_u128_checked().ok_or(AkitaError::InvalidProof)?;
-                let mut centered = if canonical > BINARY_SETUP_P / 2 {
-                    -i128::try_from(BINARY_SETUP_P - canonical)
-                        .map_err(|_| AkitaError::InvalidProof)?
-                } else {
-                    i128::try_from(canonical).map_err(|_| AkitaError::InvalidProof)?
-                };
-                for digit in 0..PRIME_PLANE_DIGITS {
-                    let remainder = centered.rem_euclid(8);
-                    let balanced = if remainder >= 4 {
-                        remainder - 8
-                    } else {
-                        remainder
-                    };
-                    // Division before subtraction avoids overflowing at either
-                    // endpoint of the centered i128 coefficient interval.
-                    centered = centered / 8 + (centered % 8 - balanced) / 8;
-                    let address = checked::mul_add(plane, columns, column)
-                        .and_then(|x| checked::mul_add(x, PRIME_PLANE_DIGITS, digit))
-                        .and_then(|x| checked::mul_add(x, 162, coefficient))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    *digits.get_mut(address).ok_or(AkitaError::InvalidProof)? = balanced as i8;
-                }
-                if centered != 0 {
-                    return Err(AkitaError::Internal(
-                        "centered prime coefficient exceeds 43 balanced digits".into(),
-                    ));
-                }
-            }
+            write_prime_column(&mut digits, plane, column, columns, &partial)?;
         }
     }
     Ok(digits)
+}
+
+/// Construct prime planes directly from column-contiguous packed carriers.
+/// Shared subset sums lift source bits into the proof prime without expanding
+/// source ring coefficients or multiplying each bit by a row weight.
+pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
+    descriptor: &BinarySourceDescriptor,
+    manifest: &PrimePlaneManifest,
+    sources: &[u128],
+) -> Result<Vec<i8>, AkitaError> {
+    if F::from_u128(BINARY_SETUP_P) != F::zero() || F::from_u128(BINARY_SETUP_P - 1) != -F::one() {
+        return Err(AkitaError::InvalidSetup(
+            "prime plane field differs from the proof prime".into(),
+        ));
+    }
+    let index = descriptor.index_map();
+    let columns = index.columns();
+    let expected = checked::product([descriptor.polynomials().len(), index.padded_carriers()])
+        .ok_or(AkitaError::InvalidProof)?;
+    if sources.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: sources.len(),
+        });
+    }
+    let width = checked::product([manifest.planes().len(), columns, PRIME_PLANE_DIGITS, 162])
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut digits = Vec::new();
+    digits
+        .try_reserve_exact(width)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    digits.resize(width, 0);
+    for (plane, claim) in manifest.planes().iter().enumerate() {
+        let (rows, _, _) = claim.weights::<F>(descriptor)?;
+        let start = checked::product([claim.polynomial, index.padded_carriers()])
+            .ok_or(AkitaError::InvalidProof)?;
+        let range =
+            checked::range(start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
+        let partials = akita_labinius_prover::lowered::weighted_source_bits::<
+            akita_algebra::binary::BinaryField128,
+            F,
+        >(
+            sources.get(range).ok_or(AkitaError::InvalidProof)?,
+            &rows,
+            1,
+            columns,
+            162,
+            0,
+        )?;
+        for (column, partial) in partials.chunks_exact(162).enumerate() {
+            write_prime_column(&mut digits, plane, column, columns, partial)?;
+        }
+    }
+    Ok(digits)
+}
+
+fn write_prime_column<F: Field + CanonicalEncoding>(
+    digits: &mut [i8],
+    plane: usize,
+    column: usize,
+    columns: usize,
+    partial: &[F],
+) -> Result<(), AkitaError> {
+    for (coefficient, value) in partial.iter().copied().enumerate() {
+        let canonical = value.to_u128_checked().ok_or(AkitaError::InvalidProof)?;
+        let mut centered = if canonical > BINARY_SETUP_P / 2 {
+            -i128::try_from(BINARY_SETUP_P - canonical).map_err(|_| AkitaError::InvalidProof)?
+        } else {
+            i128::try_from(canonical).map_err(|_| AkitaError::InvalidProof)?
+        };
+        for digit in 0..PRIME_PLANE_DIGITS {
+            let remainder = centered.rem_euclid(8);
+            let balanced = if remainder >= 4 {
+                remainder - 8
+            } else {
+                remainder
+            };
+            // Division before subtraction avoids overflowing at either
+            // endpoint of the centered i128 coefficient interval.
+            centered = centered / 8 + (centered % 8 - balanced) / 8;
+            let address = checked::mul_add(plane, columns, column)
+                .and_then(|x| checked::mul_add(x, PRIME_PLANE_DIGITS, digit))
+                .and_then(|x| checked::mul_add(x, 162, coefficient))
+                .ok_or(AkitaError::InvalidProof)?;
+            *digits.get_mut(address).ok_or(AkitaError::InvalidProof)? = balanced as i8;
+        }
+        if centered != 0 {
+            return Err(AkitaError::Internal(
+                "centered prime coefficient exceeds 43 balanced digits".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
