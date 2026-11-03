@@ -26,7 +26,7 @@ pub(super) fn assert_order(level: u32, offloaded: bool) {
     );
     let batch_family = GrindingSite::SetupBatch { level }.site_id(0).family;
     let queries = positions(&|site, kind| {
-        site.family == batch_family && kind == ProtocolMessageKind::GrindingPredicate as u32
+        site.family == batch_family && kind == ProtocolMessageKind::GrindingCheck as u32
     });
     assert_eq!(
         queries.len(),
