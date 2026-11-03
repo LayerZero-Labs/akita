@@ -30,6 +30,8 @@ mod diagnostics;
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
+#[cfg(feature = "labinius-trinomial")]
+pub mod ordinary_source;
 mod planner;
 mod policy;
 /// Extension seam: opt-in binary plane pricing; <https://github.com/LayerZero-Labs/akita/issues/285>.
