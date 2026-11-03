@@ -154,7 +154,7 @@ logical words, N padded carriers, C columns, and p polynomial owners.
 | Word widths | 1, 2, 4, 8, 16, 32, 64, 128; dense `128/ell` words per carrier | `InvalidInput` for any other width |
 | Logical length and log | Any `1 <= L <= N*(128/ell)`, including odd logs, L=1 and partial carriers; true point log `ceil(log2 L)` or full padded log `log2 N + log2(128/ell)` | `InvalidInput` for zero length, bad point arity or overflow; `InvalidSize` for length above capacity |
 | Carrier geometry | Power-of-two N and C, N at least 4C; no fixed geometry enumeration | `InvalidInput` for an inconsistent full-block shape; `InvalidSetup` when fixed carry depths cannot admit it |
-| Binary polynomials | 1 through 4096 descriptor owners, further limited by the exact projection inequalities and selected suffix capacity; zero or one word claim per owner | `InvalidInput` for duplicate word owners or failed projection bounds; `InvalidSize` for descriptor count outside the cap |
+| Binary polynomials | At least one descriptor owner, with `p*C*2^128 <= |S46|` (the extraction bound below; for example p=1 at C=256, p<=2 at C=128, p<=157 at C=2), further limited by the exact projection inequalities and selected suffix capacity; zero or one word claim per owner | `InvalidInput` for zero owners, an owner count above the extraction bound, duplicate word owners or failed projection bounds |
 | Prime planes | Zero through five across the entire group, distinguished by owner, point and tensor component; at least one word or prime reading overall | `InvalidInput` for six planes, conflicting duplicates, noncanonical residues or no readings |
 | Ordinary groups and polynomials | Zero or more ordinary groups after the one binary group; each has any positive polynomial count admitted by its frozen profile and the common suffix | `InvalidProof` for a nonordinary trailing group or wrong group kind/order; `InvalidSetup` for insufficient witness geometry; `InvalidSize` for the setup polynomial-count limit |
 | Ordinary source profile | Coefficients in `[-4,3]`, one inner gadget plane with inner basis at least 8, complete logical coefficient domain, degree-64 B with base-eight image digits, exactly two 128-bit compression maps, all native degrees at most 648 | `InvalidSetup` names the failing geometry; source coefficients outside the digit alphabet return `InvalidInput` |
@@ -1047,18 +1047,24 @@ covers only the declared D width under that table's model. No new estimator or
 full admission certificate has been run for the widened ordinary suffix or
 the experimental q24 root. No production certification is asserted.
 
-Several polynomial owners also widen the indexed challenge family. With `n_poly`
-owners and C columns its extraction-address input is `I = n_poly*C`, not just C.
-The current bounded-weight support set has
+Several polynomial owners also widen the indexed challenge family. With p
+owners and C columns, the extraction-address count is `I = p*C`, not just C.
+The bounded-weight support set has
 `|S46| = sum_(i=0..46) binom(162,i) =
-107268495235892251993000716928106195079952`, or 136.300278309 bits.
-At C=256, the elementary `I/|S46|` term is `2^-128.300278309` for one
-owner, `2^-127.300278309` for two, and `2^-125.978350214` for five.
-Consequently the inequality `I/|S46| <= 2^-128` already fails for two
-owners at that geometry. The experimental multi-polynomial tests do not
-constitute production admission or change the sampler. Prime planes on one
-owner do not introduce extra column challenges; the plane cap does not grant
-each owner an independent security budget.
+107268495235892251993000716928106195079952`, or 136.300278309 bits, so
+`floor(|S46|/2^128) = 315`. Admission requires the elementary term
+`I/|S46| <= 2^-128`, compared exactly as `p*C*2^128 <= |S46|` against the
+cardinality of `binary_root_profile()`. `BinarySourceDescriptor::admit_owner_count`
+is the one implementation: the descriptor constructor, strict descriptor
+decoding (before any polynomial identity is read) and
+`BinaryCommittedGroupManifest::commitment_profiles` all call it, and a
+rejected count is `InvalidInput` naming the extraction bound. The largest
+admitted owner counts are therefore 1, 2, 4, 9, 19, 39, 78, 157 and 315 at
+C = 256, 128, 64, 32, 16, 8, 4, 2 and 1. At C=256 one owner gives
+`2^-128.300278309`, and two owners (`2^-127.300278309`) are rejected. No
+separate wire cap remains: the bound limits every descriptor to at most 315
+owners. Prime planes on one owner do not introduce extra column challenges;
+the plane cap does not grant each owner an independent security budget.
 
 ## Measured proof sizes
 
@@ -1096,8 +1102,9 @@ with the extension feature both disabled and enabled.
 The compatibility fixture pins all six binary word-only proof lengths and
 full digests. Duplicate prime requests also produce identical proof bytes.
 
-Several-polynomial measurements use two source polynomials, still sharing one
-projection set, one A prefix, and one Stage 3:
+Several-polynomial measurements use two source polynomials at C=2, inside the
+owner extraction bound, still sharing one projection set, one A prefix, and
+one Stage 3:
 
 | Two-polynomial reading | Planes | Current protocol bytes | `dev-protocol` bytes |
 | --- | ---: | ---: | ---: |
@@ -1136,8 +1143,8 @@ plane. Their logical word lengths are preserved in the descriptor.
 | 128 | 5 | 8 | 86,003 | 81,002 |
 | 128 | 9 | 16 | 86,092 | 81,034 |
 
-The following two-owner fixtures use width 32, 23 logical words per polynomial
-and eight padded carriers. Both word terminals are present when selected; five
+The following two-owner fixtures use width 32, 23 logical words per polynomial,
+eight padded carriers and C=2, so `I = 4` lies inside the owner extraction bound. Both word terminals are present when selected; five
 prime planes are distributed across both owners.
 
 | Reading | Current bytes | Dev bytes |

@@ -202,7 +202,10 @@ bindings to the chosen admitted profiles.
 
 Alternative encodings of the same semantic value MUST be rejected. A parser
 MUST validate every field, all dimension relations, unique polynomial identities,
-exact polynomial count and exact input exhaustion. Constructed descriptors and
+exact polynomial count and exact input exhaustion. The polynomial count MUST
+satisfy the owner extraction bound `p*C*2^128 <= |S46|` of
+[the opening specification](binary-source-opening.md#supported-grouped-interface),
+checked before any polynomial identity is read. Constructed descriptors and
 parsed descriptors obey the same validation. Unknown tags and off-profile
 fixed parameters are errors, not extension negotiation. The transcript absorbs
 exactly these bytes, without a second representation.
