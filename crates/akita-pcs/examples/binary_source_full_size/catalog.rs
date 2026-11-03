@@ -11,6 +11,17 @@ use akita_types::binary_source::{
     PrimePlaneManifest,
 };
 
+fn typed_prefix_len(log: usize) -> Result<usize, AkitaError> {
+    let descriptor = claims::descriptor(log)?;
+    let index = descriptor.index_map();
+    let divisor = checked::product([4, index.columns()]).ok_or(AkitaError::InvalidProof)?;
+    let rows =
+        checked::exact_div(index.padded_carriers(), divisor).ok_or(AkitaError::InvalidProof)?;
+    // The benchmark's rank-three, degree-648 typed layout has independently
+    // padded rank and coefficient axes; the full-size regression pins these.
+    checked::product([4, 1024, rows]).ok_or(AkitaError::InvalidProof)
+}
+
 pub(super) fn plan(
     log: usize,
     shape: &str,
@@ -108,15 +119,7 @@ pub(super) fn build(
     let ordinary_profile = ordinary_row
         .as_ref()
         .map(|r| r.schedule.root.params.own_group().profile);
-    let columns = claims::descriptor(log)?.index_map().columns();
-    let row_divisor = checked::product([4, columns]).ok_or("column overflow")?;
-    let required_prefix = checked::product([
-        4,
-        1024,
-        checked::exact_div(checked::pow2(log).ok_or("carrier overflow")?, row_divisor)
-            .ok_or("row division")?,
-    ])
-    .ok_or("prefix overflow")?;
+    let required_prefix = typed_prefix_len(log)?;
     println!("typed_a_prefix required_domain={required_prefix}");
     let start = log.max(18);
     for carrier_vars in start..=30 {
@@ -268,15 +271,7 @@ pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::erro
         None
     };
     plan(log, shape, &carrier, ordinary, 64)?;
-    let descriptor = claims::descriptor(log)?;
-    let divisor =
-        checked::product([4, descriptor.index_map().columns()]).ok_or("column overflow")?;
-    let rows = checked::exact_div(descriptor.index_map().padded_carriers(), divisor)
-        .ok_or("ring row division")?;
-    println!(
-        "typed_a_prefix required_domain={}",
-        checked::product([4, 1024, rows]).ok_or("prefix overflow")?
-    );
+    println!("typed_a_prefix required_domain={}", typed_prefix_len(log)?);
     println!("plan_only=true proof_measured=false");
     Ok(())
 }
