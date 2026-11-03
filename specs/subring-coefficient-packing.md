@@ -34,7 +34,10 @@ Draft PR [#417](https://github.com/LayerZero-Labs/akita/pull/417) owns the
 concrete repair for item 1. It keeps one transcript-derived root seed per
 commitment group, but replaces the shared vector XOF with one fixed-width
 indexed query per claim-major block coordinate. The same change applies to
-`EvaluationTrace`, including operator-norm-rejected draws.
+`EvaluationTrace`, including operator-norm-rejected draws. The
+[sparse challenge stream](sparse-challenge-stream.md) design later replaced
+the indexed queries with one squeezed message per group, one fixed-width slot
+per coordinate, and a per-fold proof of work; slots still fork one at a time.
 
 ### Reader guide
 
@@ -832,12 +835,13 @@ packing candidate in this feature.
 ### Forking extraction
 
 The implemented transcript structure is specified normatively in
-[`specs/transcript-grinding.md`](transcript-grinding.md). For a fixed group root
-and the fixed shared fold-response nonce, coordinate `(claim, block)` is a
-separate indexed random-oracle query. Reprogramming it leaves every other fold
-coordinate and the live transcript state unchanged. This supplies the fork
-structure used by the accepting-tree extraction and indexed-address bound in
-the [grinding specification](transcript-grinding.md#fold-extraction-from-accepting-children).
+[`specs/transcript-grinding.md`](transcript-grinding.md). For a fixed
+transcript prefix and the fixed shared fold-response nonce, each group's
+challenges are fixed-width slots of one squeezed message, and pair
+`(claim, block)` owns one slot. Replacing that slot leaves every other
+challenge unchanged. This supplies the fork structure used by the
+accepting-tree extraction in the
+[grinding specification](transcript-grinding.md#fold-extraction-from-accepting-children).
 
 Consider two accepting transcripts with the same pre-challenge commitments and
 different challenge at one claim/block position. Let
@@ -868,14 +872,12 @@ unit division alone does not preserve coefficient norms.
 
 A binary CWSS extractor uses one central accepting vector and one
 coordinatewise accepting fork for every claim and block position. Its
-whole-fold error ledger includes every coordinate and group. The indexed
-random-oracle reduction instead charges every touched coordinate address and
-every untouched address completed by final verification, including fresh
-queries induced by shared fold-response nonce trials.
-Root collisions, root prequeries, sum-check errors, the `(2s - 1)/|E|`
-ring-switch error, and A/B/D/F/H MSIS terms also belong in the composition.
-The [indexed fold bound](transcript-grinding.md#indexed-address-fold-bound)
-gives the adaptive query accounting and its reduction-cost boundary.
+whole-fold error ledger includes every coordinate and group. The fold proof of
+work prices each fold message at the 128-bit per-call rate, including fresh
+messages induced by shared fold-response nonce trials. Sum-check errors, the
+`(2s - 1)/|E|` ring-switch error, and A/B/D/F/H MSIS terms also belong in the
+composition. The [fold message bound](transcript-grinding.md#fold-message-bound)
+gives the adaptive query accounting.
 
 ### Ring-switch polynomial check
 
@@ -901,8 +903,8 @@ The final theorem statement for `SubringCoefficientPacking` MUST include:
 - the subring polynomial root bound;
 - the existing A/B/D/F/H MSIS assumptions;
 - the existing range and sum-check soundness errors; and
-- random-oracle forking loss for the central vector and every indexed
-  coordinate fork.
+- random-oracle forking loss for the central vector and every coordinate
+  fork, priced by the fold proof of work.
 
 ## Historical EOR evidence at the commitment slicing baseline
 

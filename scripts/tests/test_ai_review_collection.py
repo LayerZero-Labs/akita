@@ -84,6 +84,28 @@ class CollectionTests(unittest.TestCase):
         self.assertIn("Their contents were not reviewed", body)
         self.assertIn("Recommended for approval", body)
 
+    def test_admin_can_collect_another_authors_pr(self):
+        base = self.commit("base", {"source.rs": "old\n"})
+        head = self.commit("change", {"source.rs": "new\n"})
+        self.github.permission = "admin"
+        self.github.pr["user"] = {"id": 99}
+        self.assertEqual(self.collect(base, head)["changed"], ["source.rs"])
+
+    def test_finding_history_budget_stops_before_fetch_and_allows_boundary(self):
+        base = self.commit("base", {"source.rs": "old\n"})
+        head = self.commit("change", {"source.rs": "new\n"})
+        self.github.permission = "admin"
+        self.github.pr["user"] = {"id": 99}
+        prior = {"head": base, "findings": [{}] * 40}
+        with patch.object(collector, "previous_state", return_value=prior):
+            self.assertEqual(self.collect(base, head)["prior"], prior)
+        prior["findings"].append({})
+        with patch.object(collector, "previous_state", return_value=prior), \
+                patch.object(collector, "git") as git:
+            with self.assertRaisesRegex(ReviewError, "Finding history is full: 41.*attempt is consumed"):
+                collector.collect(self.github, EVENT)
+            git.assert_not_called()
+
     def test_artifact_only_change_does_not_expand_empty_paths_to_the_full_diff(self):
         base = self.commit("base", {"artifacts/schedules/test.aks": "old\n"})
         head = self.commit("change", {"artifacts/schedules/test.aks": "new\n"})
@@ -111,7 +133,7 @@ class CollectionTests(unittest.TestCase):
         self.assertIn("+fixed", delta)
         self.assertNotIn("artifacts/schedules/test.aks", delta)
         self.assertNotIn("+new", delta)
-        with patch.object(collector, "previous_state", return_value={"head": previous}):
+        with patch.object(collector, "previous_state", return_value={"head": previous, "findings": []}):
             value = self.collect(base, head)
         self.assertEqual(value["delta"], delta)
         self.assertNotIn("artifacts/schedules/test.aks", value["trees"]["previous"]["files"])
@@ -158,7 +180,7 @@ class CollectionTests(unittest.TestCase):
         base = self.commit("base", {"source.rs": "old\n"})
         head = self.commit("change", {"source.rs": "new\n"})
         full = collector.git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", base, head).decode()
-        prior = {"head": base}
+        prior = {"head": base, "findings": []}
         with patch.object(collector, "previous_state", return_value=prior), \
                 patch.object(collector, "since_previous", return_value="delta"), \
                 patch.object(collector, "MAX_DIFF_CHARS", len(full) + 5):

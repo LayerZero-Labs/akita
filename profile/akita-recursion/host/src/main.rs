@@ -173,6 +173,7 @@ macro_rules! strict_decode_and_verify {
                 .verifier_statement()
                 .map_err(|err| format!("strict input statement failed: {err}"))?,
             BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
         )
         .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
         (decoded, schedules)
@@ -205,6 +206,7 @@ macro_rules! strict_fp128_preflight {
                 .verifier_statement()
                 .map_err(|err| format!("cached input statement failed: {err}"))?,
             BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
         )
         .map_err(|err| format!("prepared verifier cache self-check rejected proof: {err}"))?;
         let metadata = prepared_verifier_ntt_cache_metadata(&cache)
@@ -371,7 +373,7 @@ macro_rules! run_selected_guest {
         let verdict = verify($blob, 0, false, proof);
         let verifier_secs = now.elapsed().as_secs_f64();
         info!(verifier_secs, is_valid = verdict.is_ok(), "Jolt verifier finished");
-        verdict.map_err(|err| format!("Jolt verifier rejected the proof: {err}"))?;
+        verdict.map_err(|err| format!("Jolt verifier rejected the proof: {err:?}"))?;
         info!(case = %$case, "Akita-in-Jolt proof OK");
         Ok(())
     }};

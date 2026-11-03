@@ -196,6 +196,13 @@ where
     let setup_flat = setup_view.as_slice();
     let job_rings = super::super::segments::SETUP_SCAN_JOB_RINGS;
     let num_jobs = required.div_ceil(job_rings);
+    // A single base-ring functional is independent of the physical ring index,
+    // so every row of a job goes through the field's weighted row kernel. Mixed
+    // dimensions or distinct functionals retain the general per-class path.
+    let shared_functional = match functional_classes {
+        [class] if class.ratio == 1 => Some(class.functional),
+        _ => None,
+    };
     cfg_try_fold_reduce!(
         0..num_jobs,
         E::zero,
@@ -206,6 +213,16 @@ where
                 .ok_or(AkitaError::InvalidProof)?
                 .min(required);
             let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
+            let mut shared_rows = Vec::new();
+            let mut shared_weights = Vec::new();
+            if shared_functional.is_some() {
+                shared_rows.try_reserve_exact(setup.len()).map_err(|_| {
+                    AkitaError::InvalidSetup("reduced scan row allocation failed".into())
+                })?;
+                shared_weights.try_reserve_exact(setup.len()).map_err(|_| {
+                    AkitaError::InvalidSetup("reduced scan weight allocation failed".into())
+                })?;
+            }
             let mut segment_cursors = partitions
                 .iter()
                 .map(|partition| {
@@ -241,15 +258,25 @@ where
                 for (class, scalar) in functional_classes.iter().zip(&mut class_scalars) {
                     let scalar = std::mem::replace(scalar, A::zero()).finish();
                     if !scalar.is_zero() {
-                        let functional = class.chunk::<BASE_D>(base_idx)?;
-                        term.add_product(
-                            MulBaseUnreduced::dot_base(functional, ring.coefficients()),
-                            scalar,
-                        );
+                        if shared_functional.is_some() {
+                            shared_rows.push(ring.coefficients().as_slice());
+                            shared_weights.push(scalar);
+                        } else {
+                            let functional = class.chunk::<BASE_D>(base_idx)?;
+                            term.add_product(
+                                MulBaseUnreduced::dot_base(functional, ring.coefficients()),
+                                scalar,
+                            );
+                        }
                     }
                 }
             }
-            Ok(acc + term.finish())
+            let contribution = if let Some(functional) = shared_functional {
+                E::weighted_dot_base_rows(&shared_rows, &shared_weights, functional)
+            } else {
+                term.finish()
+            };
+            Ok(acc + contribution)
         },
         |lhs, rhs| Ok(lhs + rhs)
     )

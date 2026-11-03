@@ -20,6 +20,7 @@ fn multi_group_key<Cfg: CommitmentConfig>(
         })
         .collect();
     akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: akita_params::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds,
     }
@@ -98,7 +99,7 @@ where
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
-        assert_eq!(commitment.profile, *profile);
+        assert_eq!(*commitment.profile(), *profile);
         pre_commitments.push(commitment);
         pre_hints.push(hint);
         pre_polys_by_group.push(polys);
@@ -285,6 +286,7 @@ where
                 b"test/multi-group-unequal",
                 GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("multi-group verify");
@@ -314,7 +316,8 @@ where
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
-                    BasisMode::Lagrange
+                    BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 ))
                 .is_err(),
             "swapped group commitments must reject"
@@ -337,7 +340,8 @@ where
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
-                    BasisMode::Lagrange
+                    BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 ))
                 .is_err(),
             "tampered group opening must reject"

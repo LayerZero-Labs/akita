@@ -303,7 +303,7 @@ mod tests {
     }
 }
 
-/// Experimental K=16 one-hot preset; standard one-hot artifacts retain K=256.
+/// Explicit K=16 benchmark preset with a separate experimental catalog family.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OneHotK16;
 impl_proof_optimized_preset!(

@@ -76,14 +76,25 @@ a `TrustedScheduleCatalog<Cfg>` already validated and bound to the verifier's
 exact config. The catalog is a trusted verifier parameter. It is loaded before
 proof parsing and is not read from the proof.
 
+`batched_verify` builds a standalone transcript state and calls
+`batched_verify_embedded`, which a caller with its own transcript can call
+directly. On any error, the embedded entry poisons the borrowed state before
+it returns, so every later proof read and the end-of-proof check fail. On
+success it returns a `PendingEof`. Acceptance requires
+`PendingEof::check_eof`, which checks that the whole proof was consumed;
+`batched_verify` calls it right away, and an embedding caller calls it after
+its own last message. See
+[Running inside a caller's transcript](./transcript.md#running-inside-a-callers-transcript).
+
 At a high level:
 
-1. **Bind the instance** and absorb the opening batch shape into the transcript.
-2. **Resolve the exact trusted row** named by
+1. **Resolve the exact trusted row** named by
    `OpeningScheduleSelection`. Artifact identity and row digests are checked
    before the
    ordered `GroupCommitPhaseParams` values are compared with the resolved row.
    The verifier never runs planner search.
+2. **Bind the instance**: absorb the protocol tag and the instance descriptor,
+   which carries the opening batch shape and the grinding-plan digest.
 3. **Replay the structural folds** in `fold/`: the root fold followed by
    every recursive fold, using the schedule-selected `CommittedGroupParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`

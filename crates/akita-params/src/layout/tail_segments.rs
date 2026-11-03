@@ -4,12 +4,25 @@ use akita_error::AkitaError;
 use akita_serialization::{SerializationError, Valid};
 
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
-use crate::layout::field_bytes;
 use crate::tail_golomb_rice_low_bits::{
     rice_low_bits_for_cap, tail_z_planner_bits_per_coord, wire_rice_low_bits,
 };
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
-use crate::{CommittedGroupParams, TerminalFoldParams};
+use crate::TerminalFoldParams;
+
+/// Digest bytes each terminal group sends in place of the last live block of
+/// `e` and of `t`, which the verifier recomputes from the relation it
+/// completes.
+pub const TERMINAL_BLOCK_DIGEST_BYTES: usize = 2 * akita_transcript::FIELD_DIGEST_BYTES;
+
+/// Live terminal blocks whose `e` and `t` rings travel on the wire: every live
+/// block but the last.
+///
+/// Returns `None` when the terminal has no live block to recompute.
+#[must_use]
+pub const fn terminal_sent_blocks(live_blocks: usize) -> Option<usize> {
+    live_blocks.checked_sub(1)
+}
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -26,7 +39,10 @@ pub struct TailSegmentLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TailSegmentGroupLayout {
     pub z_coords: usize,
+    /// Field elements of `e` on the wire, covering
+    /// [`terminal_sent_blocks`] blocks.
     pub e_field_elems: usize,
+    /// Field elements of `t` on the wire, covering the same blocks as `e`.
     pub t_field_elems: usize,
     /// Verifier-enforced coefficient cap for a terminal Linf route.
     ///
@@ -168,13 +184,13 @@ impl TerminalResponseShape {
             .inner_width()
             .checked_mul(d)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
-        let e_field_elems =
-            params.blocks.live_blocks.checked_mul(d).ok_or_else(|| {
-                AkitaError::InvalidSetup("terminal e coordinates overflow".into())
-            })?;
-        let t_field_elems = params
-            .blocks
-            .live_blocks
+        let sent_blocks = terminal_sent_blocks(params.blocks.live_blocks).ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal response has no live block".into())
+        })?;
+        let e_field_elems = sent_blocks
+            .checked_mul(d)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
+        let t_field_elems = sent_blocks
             .checked_mul(params.inner.matrix.output_rank())
             .and_then(|value| value.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
@@ -230,137 +246,6 @@ pub(crate) fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
     let low_bits_cap = rice_low_bits_for_cap(cap);
     let bits_per_coord = tail_z_planner_bits_per_coord(low_bits_cap);
     z_coords.saturating_mul(bits_per_coord).div_ceil(8)
-}
-
-fn tail_segment_layout_from_groups(
-    lp: &CommittedGroupParams,
-    groups: impl IntoIterator<Item = (crate::GroupOpenPhaseParams, usize, usize, usize, u128)>,
-    _num_commitment_groups: usize,
-    _field_bits: u32,
-) -> Result<TailSegmentLayout, AkitaError> {
-    let d = lp.d_a();
-    if d == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "tail segment layout has zero ring dimension".to_string(),
-        ));
-    }
-    let groups = groups.into_iter().collect::<Vec<_>>();
-    if groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "tail segment layout requires at least one group".to_string(),
-        ));
-    }
-    let mut group_layouts = Vec::with_capacity(groups.len());
-    let mut total_plane_rings = 0usize;
-    for (params, num_w_vectors, num_t_vectors, num_z_segments, z_cap) in groups {
-        let depth_witness = params.num_digits_inner();
-        let depth_commit = params.num_digits_outer();
-        let depth_open = params.num_digits_open();
-        let depth_fold = params.num_digits_fold();
-        if depth_witness == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "tail segment layout has zero digit depth".to_string(),
-            ));
-        }
-        let total_w_blocks = params
-            .num_live_blocks()
-            .checked_mul(num_w_vectors)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail e block count overflow".to_string()))?;
-        let total_t_blocks = params
-            .num_live_blocks()
-            .checked_mul(num_t_vectors)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail t block count overflow".to_string()))?;
-        let e_field_elems = total_w_blocks
-            .checked_mul(d)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail e field count overflow".to_string()))?;
-        let t_field_elems = total_t_blocks
-            .checked_mul(params.a_rows_len())
-            .and_then(|n| n.checked_mul(d))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail t field count overflow".to_string()))?;
-        let z_coords = num_z_segments
-            .checked_mul(params.num_positions_per_block())
-            .and_then(|n| n.checked_mul(depth_witness))
-            .and_then(|n| n.checked_mul(d))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail z coord count overflow".to_string()))?;
-        let z_plane_rings = num_z_segments
-            .checked_mul(params.num_positions_per_block())
-            .and_then(|n| n.checked_mul(depth_witness))
-            .and_then(|n| n.checked_mul(depth_fold))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail z plane count overflow".to_string()))?;
-        let e_plane_rings = total_w_blocks
-            .checked_mul(depth_open)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail e plane count overflow".to_string()))?;
-        let t_plane_rings = total_t_blocks
-            .checked_mul(params.a_rows_len())
-            .and_then(|n| n.checked_mul(depth_commit))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
-        // Price this group's response against *this group's* challenge family.
-        let security_cap = crate::sis::certified_terminal_response_linf_cap(
-            params.inner_commit_matrix_params(),
-            &params.fold_challenge_config(),
-        )?;
-        if z_cap > security_cap {
-            return Err(AkitaError::InvalidSetup(format!(
-                "terminal honest response cap {z_cap} exceeds inner-matrix SIS capacity {security_cap}"
-            )));
-        }
-        let z_payload_bytes = z_payload_budget_from_cap(z_coords, z_cap);
-        group_layouts.push(TailSegmentGroupLayout {
-            z_coords,
-            e_field_elems,
-            t_field_elems,
-            z_linf_cap: Some(z_cap),
-            z_rice_low_bits: wire_rice_low_bits(z_cap),
-            z_payload_bytes,
-        });
-        total_plane_rings = total_plane_rings
-            .checked_add(z_plane_rings)
-            .and_then(|n| n.checked_add(e_plane_rings))
-            .and_then(|n| n.checked_add(t_plane_rings))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail logical plane overflow".to_string()))?;
-    }
-    let logical_num_elems = total_plane_rings
-        .checked_mul(d)
-        .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
-    Ok(TailSegmentLayout {
-        ring_dimension: d,
-        groups: group_layouts,
-        logical_num_elems,
-    })
-}
-
-impl TerminalResponseShape {
-    /// Derive the checked terminal witness shape for the scheduled groups.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] when dimensions are empty or any
-    /// derived segment size overflows.
-    pub fn from_groups(
-        lp: &CommittedGroupParams,
-        field_bits: u32,
-        groups: impl IntoIterator<Item = (crate::GroupOpenPhaseParams, usize, usize, usize, u128)>,
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
-            layout: tail_segment_layout_from_groups(lp, groups, 0, field_bits)?,
-        })
-    }
-}
-
-/// Serialized byte size for a terminal response at a fixed `z` budget.
-#[must_use]
-pub fn terminal_response_upper_bound_bytes(
-    field_bits: u32,
-    layout: &TailSegmentLayout,
-    z_payload_bytes: usize,
-) -> usize {
-    let raw_elems = layout
-        .e_field_elems()
-        .saturating_add(layout.t_field_elems());
-    raw_elems
-        .saturating_mul(field_bytes(field_bits))
-        .saturating_add(z_payload_bytes)
-        .saturating_add(8usize.saturating_mul(layout.groups.len()))
 }
 
 #[cfg(test)]

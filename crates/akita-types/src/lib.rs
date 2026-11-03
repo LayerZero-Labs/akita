@@ -102,9 +102,10 @@ pub use trace_weight::{
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
-    ProverGrinding, VerifierGrinding,
+    GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance, VerifierGrinding,
 };
+#[cfg(feature = "prover")]
+pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding};
 
 #[cfg(test)]
 mod schedule_tests;
@@ -120,3 +121,9 @@ mod sis_compression_tests;
 
 #[cfg(test)]
 mod params_tests;
+
+pub use setup_contribution::{
+    materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
+    PreparedCoefficientFunctional, ReducedRoleCoefficientState, SetupIndexWeightMle,
+};
+pub mod setup_claims;

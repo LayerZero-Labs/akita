@@ -15,8 +15,8 @@ fn proof_scope<B: jolt_field::Field, E>(
 fn session(
     backend: &CpuBackend<F, F>,
     proof: &crate::opaque::CpuProofSessionHandle,
-) -> CpuStage3Session<F, F> {
-    let setup = RectangularSetupProductTerm::new(
+) -> (F, CpuStage3Session<F, F>) {
+    let setup = SetupProductSumcheck::new(
         SetupProductSource::Table((1..=4).map(F::from_u64).collect()),
         2,
         vec![F::one(); 2],
@@ -35,14 +35,14 @@ fn session(
         )
         .unwrap();
     let lease = binding.scope_lease().clone();
-    CpuStage3Session {
-        binding,
-        lease,
-        claim: setup.input_claim(),
-        setup,
-        round: 0,
-        pending: None,
-    }
+    (
+        setup.input_claim(),
+        CpuStage3Session {
+            binding,
+            lease,
+            setup: Stage3Setup::Bound(setup),
+        },
+    )
 }
 
 #[test]
@@ -50,20 +50,18 @@ fn stage3_enforces_round_bind_and_completion_order() {
     let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let scope = proof_scope(&backend);
     assert!(backend
-        .finish_stage3(session(&backend, scope.session()))
+        .finish_stage3(session(&backend, scope.session()).1)
         .is_err());
-    let mut state = session(&backend, scope.session());
+    let (mut claim, mut state) = session(&backend, scope.session());
     assert!(backend
         .bind_stage3_challenge(&mut state, 0, F::one())
         .is_err());
-    let claim = state.claim;
     assert!(backend
         .stage3_round_polynomial(&mut state, 1, claim)
         .is_err());
     assert!(backend
         .stage3_round_polynomial(&mut state, 0, F::zero())
         .is_err());
-    let mut claim = claim;
     let challenges = [F::from_u64(3), F::from_u64(5)];
     for (round, challenge) in challenges.into_iter().enumerate() {
         let polynomial = backend
@@ -105,9 +103,8 @@ fn stage3_scopes_are_independent_and_owner_bound() {
     let foreign = CpuBackend::<F, F>::for_arithmetic_tests();
     let first = proof_scope(&backend);
     let second = proof_scope(&backend);
-    let mut a = session(&backend, first.session());
-    let mut b = session(&backend, second.session());
-    let claim = a.claim;
+    let (claim, mut a) = session(&backend, first.session());
+    let (_, mut b) = session(&backend, second.session());
     assert!(foreign.stage3_round_polynomial(&mut a, 0, claim).is_err());
     drop(first);
     assert!(backend.stage3_round_polynomial(&mut a, 0, claim).is_err());
@@ -134,7 +131,7 @@ fn stage3_retains_setup_across_cache_eviction() {
     let allocation = std::sync::Arc::downgrade(&setup.expanded);
     let backend = CpuBackend::<Base, Extension>::new(setup.expanded.clone()).unwrap();
     let scope = proof_scope(&backend);
-    let product = RectangularSetupProductTerm::new(
+    let product = SetupProductSumcheck::new(
         SetupProductSource::Expanded(setup.expanded.clone()),
         2,
         vec![Extension::one(); 2],
@@ -153,13 +150,11 @@ fn stage3_retains_setup_across_cache_eviction() {
         )
         .unwrap();
     let lease = binding.scope_lease().clone();
+    let mut claim = product.input_claim();
     let mut state = CpuStage3Session {
         binding,
         lease,
-        claim: product.input_claim(),
-        setup: product,
-        round: 0,
-        pending: None,
+        setup: Stage3Setup::Bound(product),
     };
     drop(setup);
     backend
@@ -177,10 +172,10 @@ fn stage3_retains_setup_across_cache_eviction() {
         Extension::lift_base(Base::from_u64(5)),
     ];
     for (round, challenge) in challenges.into_iter().enumerate() {
-        let claim = state.claim;
-        backend
+        let polynomial = backend
             .stage3_round_polynomial(&mut state, round, claim)
             .unwrap();
+        claim = polynomial.evaluate(challenge);
         let released = backend.trim_caches().unwrap();
         if round == 0 {
             assert!(released > 0);

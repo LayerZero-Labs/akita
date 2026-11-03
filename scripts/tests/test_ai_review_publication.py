@@ -9,6 +9,22 @@ from publish import publish, prepare_review, review_text, validate
 
 
 class PublicationTests(unittest.TestCase):
+    def test_admin_can_publish_on_another_authors_pr_but_demotion_stops_writes(self):
+        for permission in ("admin", "maintain", "write", "read"):
+            with self.subTest(permission=permission):
+                gh = FakeGitHub()
+                gh.permission = "admin"
+                gh.pr["user"] = {"id": 99}
+                value = snapshot(gh)
+                gh.permission = permission
+                if permission == "admin":
+                    self.assertEqual(publish(gh, EVENT, value, proposal(value)), "published")
+                    self.assertEqual(gh.writes[0][0], "pulls/7/reviews")
+                else:
+                    with self.assertRaisesRegex(ReviewError, "not authorized"):
+                        publish(gh, EVENT, value, proposal(value))
+                    self.assertEqual(gh.writes, [])
+
     def test_clean_and_nit_only_reviews_recommend_approval_once(self):
         for priority in (None, "nit", "P0", "P1", "P2", "P3"):
             with self.subTest(priority=priority):

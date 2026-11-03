@@ -94,12 +94,12 @@ mod tests {
         let record = ProtocolContextRecord::new([7; 32], 3, 2, 64, 32);
 
         clear_thread_events();
-        let mut prover = new_prover_channel(b"logging", b"instance").unwrap();
+        let mut prover = new_prover_channel(b"logging");
         prover_context(&mut prover, record);
         let prover_events = thread_events();
 
         clear_thread_events();
-        let mut verifier = new_verifier_channel(b"logging", b"instance", &[]).unwrap();
+        let mut verifier = new_verifier_channel(b"logging", &[]);
         verifier_context(&mut verifier, record);
         assert_eq!(thread_events(), prover_events);
         assert_eq!(prover_events, vec![TranscriptEvent::Context(record)]);

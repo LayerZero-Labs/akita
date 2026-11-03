@@ -36,9 +36,12 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
                 .expect("singleton group layout"),
         ))
         .expect("layout");
-    let grinding_plan =
-        akita_config::derive_transcript_grinding_plan::<OneHotCfg>(row.schedule(), &opening_layout)
-            .expect("grinding plan");
+    let grinding_plan = akita_config::derive_transcript_grinding_plan::<OneHotCfg>(
+        row.schedule(),
+        &opening_layout,
+        None,
+    )
+    .expect("grinding plan");
     assert!(
         grinding_plan.runs().iter().any(|run| run.grind_bits() > 0),
         "fixture must exercise nonzero grinding"
@@ -83,6 +86,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
                 LABEL,
                 verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
@@ -113,6 +117,7 @@ impl FoldLinfGrindFixture {
                         self.scheme.schedules(),
                     ),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
     }

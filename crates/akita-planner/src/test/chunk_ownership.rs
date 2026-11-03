@@ -216,6 +216,7 @@ impl IncomingWidthFixture {
             },
             &self.policy,
             &self.key.opening_layout().unwrap(),
+            0,
             candidate.folds.to_vec(),
             candidate.terminal.as_ref().clone(),
         )

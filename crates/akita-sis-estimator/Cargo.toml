@@ -9,7 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-akita-params = { version = "0.1.0", path = "../akita-params" }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 libm = "0.2"
 num-bigint = "0.5.1"
 num-traits = "0.2"
@@ -22,8 +22,10 @@ thiserror = "2.0"
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [features]
-default = []
+default = ["transcript-keccak"]
 parallel = ["dep:rayon"]
+transcript-blake2b = ["akita-params/transcript-blake2b"]
+transcript-keccak = ["akita-params/transcript-keccak"]
 
 [[bench]]
 name = "fixed_infinity"
