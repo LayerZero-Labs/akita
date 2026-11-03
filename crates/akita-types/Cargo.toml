@@ -51,6 +51,10 @@ logging-transcript = [
   "akita-params/logging-transcript",
   "akita-transcript/logging-transcript",
 ]
+# Diagnostic: cross-checks every factored compression relation weight
+# evaluation against the per-event evaluation and counts the evaluation tiers.
+# Native diagnostic builds only; no default feature enables it.
+compression-weights-crosscheck = []
 
 [dev-dependencies]
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [

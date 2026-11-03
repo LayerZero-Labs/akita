@@ -50,6 +50,11 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
 ]
 benchmark-support = []
+# Optional (default off): the setup scan's cached structured
+# E, T and Z contractions sum their two-factor products through
+# `Field::sum_of_products` / `Field::dot_product` (same field values; one
+# readout per sum on a field-inline guest). The scan-path kernels are unchanged.
+setup-sop-structured = []
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
