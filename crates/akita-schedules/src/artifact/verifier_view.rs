@@ -54,6 +54,9 @@ impl ValidatedScheduleCatalog {
         &self,
         selections: &[OpeningScheduleSelection],
     ) -> Result<Vec<u8>, AkitaError> {
+        for row in &self.rows_by_digest {
+            row.require_ordinary_artifact()?;
+        }
         if selections.is_empty() || selections.len() > MAX_TRUSTED_CATALOG_ROWS {
             return Err(AkitaError::InvalidSetup(
                 "verifier catalog selection is outside row limits".into(),

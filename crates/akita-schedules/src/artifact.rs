@@ -191,6 +191,22 @@ impl ValidatedScheduleCatalog {
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
             resolved.push(row);
         }
+        Self::from_resolved_rows(family_name, resolved, policy)
+    }
+
+    /// Extension seam: assemble explicitly audited rows without changing the
+    /// ordinary artifact decoder; <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub(crate) fn from_resolved_rows(
+        family_name: String,
+        mut resolved: Vec<ResolvedScheduleRow>,
+        policy: &PlannerPolicy,
+    ) -> Result<Self, AkitaError> {
+        validate_family_name(&family_name)?;
+        if resolved.is_empty() || resolved.len() > MAX_TRUSTED_CATALOG_ROWS {
+            return Err(AkitaError::InvalidSetup(
+                "trusted catalog row count is outside limits".into(),
+            ));
+        }
         resolved.sort_by_key(|row| row.selection().row_digest);
         let mut rows_by_key = resolved
             .iter()
@@ -322,6 +338,9 @@ impl ValidatedScheduleCatalog {
     /// Encode this validated catalog as the canonical versioned artifact.
     pub fn to_artifact_bytes(&self) -> Result<Vec<u8>, AkitaError> {
         self.validate_complete()?;
+        for row in &self.rows_by_digest {
+            row.require_ordinary_artifact()?;
+        }
         let artifact = ScheduleCatalogArtifactRefV1 {
             magic: ARTIFACT_MAGIC,
             version: ARTIFACT_VERSION,
@@ -791,7 +810,7 @@ fn catalog_digest(
     digest_descriptor_bytes(&bytes)
 }
 
-fn validate_schedule_challenge_hooks(
+pub(crate) fn validate_schedule_challenge_hooks(
     schedule: &FoldSchedule,
     ring_challenge_config: &impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
 ) -> Result<(), AkitaError> {
