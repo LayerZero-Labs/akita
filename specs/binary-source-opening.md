@@ -13,7 +13,7 @@
 ## Scope and selection
 
 A binary source is a commitment-group kind in the canonical grouped PCS. The
-caller commits, supplies an optional binary word claim over GF(2^128) and/or
+caller commits, supplies at most one binary word claim per polynomial over GF(2^128) and/or
 prime evaluation claims, and uses the
 ordinary grouped opening entry points inside the caller's transcript. A carrier-level
 field switch produces an internal binary terminal before the root checks
@@ -28,8 +28,10 @@ groups retain their existing encoding and protocol path.
 
 This is an experimental arithmetic and protocol fixture, with no security
 claim. It uses `P = 2^128 - 275`, base-field challenges (`E = F`), and the
-Lagrange basis. It admits one binary group first, with at most one ordinary
-group second. A binary group may contain several polynomials. It requires an ordinary successor fold that consumes the typed A setup-prefix
+Lagrange basis. One binary group first and any admitted ordinary groups after it share the
+opening.
+Each group may contain several polynomials. It requires an ordinary successor
+fold that consumes the typed A setup-prefix
 claim as an ordinary committed group. It does not add a production binary
 planner profile or certify a new schedule.
 
@@ -92,7 +94,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding>
 
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
-        word: Option<BinaryWordClaim>,
+        claims: impl IntoIterator<Item = BinaryWordClaim>,
         primes: Vec<PrimePlaneClaim>,
     ) -> Result<Self, AkitaError>;
 }
@@ -111,8 +113,12 @@ the manifest's carrier profile.
 multilinear extension (MLE) at `point`. Coordinates and value use the unique
 16-byte, low-degree-first polynomial-basis encoding of
 `H = GF(2^128) = F2[X]/(X^128 + X^7 + X^2 + X + 1)`. No wider word field is
-admitted. The constructor checks polynomial ownership and the descriptor's
-complete point dimension. The descriptor fixes the public coordinate split
+admitted. The constructor checks polynomial ownership and accepts either the true
+logical dimension `ceil(log2(logical_length))` or the descriptor's complete
+padded point dimension. A logical point fixes every missing high address
+coordinate to zero, including missing intra-carrier coordinates for very small
+sources. Its stored coordinates and transcript encoding remain exactly those
+supplied by the caller; a length-one source uses an empty point. The descriptor fixes the public coordinate split
 between intra-carrier word slots and carrier addresses; callers cannot change
 that split independently of the commitment contract.
 
@@ -137,6 +143,51 @@ nested session seed or separate root transcript is invoked. The caller can
 continue using its live transcript after verification and checks exhaustion
 at its chosen proof boundary.
 
+## Supported grouped interface
+
+Admission uses the canonical constructors and the selected ordinary schedule;
+this table is an interface envelope, not a new security certificate. Let L be
+logical words, N padded carriers, C columns, and p polynomial owners.
+
+| Surface | Supported envelope | Rejection outside the envelope |
+| --- | --- | --- |
+| Word widths | 1, 2, 4, 8, 16, 32, 64, 128; dense `128/ell` words per carrier | `InvalidInput` for any other width |
+| Logical length and log | Any `1 <= L <= N*(128/ell)`, including odd logs, L=1 and partial carriers; true point log `ceil(log2 L)` or full padded log `log2 N + log2(128/ell)` | `InvalidInput` for zero length, bad point arity or overflow; `InvalidSize` for length above capacity |
+| Carrier geometry | Power-of-two N and C, N at least 4C; no fixed geometry enumeration | `InvalidInput` for an inconsistent full-block shape; `InvalidSetup` when fixed carry depths cannot admit it |
+| Binary polynomials | 1 through 4096 descriptor owners, further limited by the exact projection inequalities and selected suffix capacity; zero or one word claim per owner | `InvalidInput` for duplicate word owners or failed projection bounds; `InvalidSize` for descriptor count outside the cap |
+| Prime planes | Zero through five across the entire group, distinguished by owner, point and tensor component; at least one word or prime reading overall | `InvalidInput` for six planes, conflicting duplicates, noncanonical residues or no readings |
+| Ordinary groups and polynomials | Zero or more ordinary groups after the one binary group; each has any positive polynomial count admitted by its frozen profile and the common suffix | `InvalidProof` for a nonordinary trailing group or wrong group kind/order; `InvalidSetup` for insufficient witness geometry; `InvalidSize` for the setup polynomial-count limit |
+| Ordinary source profile | Coefficients in `[-4,3]`, one inner gadget plane with inner basis at least 8, complete logical coefficient domain, degree-64 B with base-eight image digits, exactly two 128-bit compression maps, all native degrees at most 648 | `InvalidSetup` names the failing geometry; source coefficients outside the digit alphabet return `InvalidInput` |
+| Proof fields and basis | Explicit P=`2^128-275`, E=F, Lagrange basis, typed A-prefix successor | `InvalidInput` (prover) / `InvalidProof` (verifier) for unsupported basis; `InvalidInput` (prover) / `InvalidSetup` (verifier) for extension degree; `InvalidSetup` for incompatible proof prime or prefix geometry |
+
+The direct ordinary weights use a single source digit, and the two compression
+maps use the degree-64 B coefficient layout. Multi-digit sources or a different
+compression geometry need additional authenticated relations; they are not
+silently truncated. The shared ring-switch challenge is budgeted for maximum
+native degree 648. These are geometry-specific exclusions, not restrictions on
+the number of ordinary groups or polynomials. Each ordinary group contributes
+four segments; pricing and verification both append `OrdinaryNativeRootPlan`.
+
+This interface change retains the existing CPU source-material allocation cap:
+`2592*p*N <= 134217728` bytes for its expanded signed source. Exceeding it is
+`InvalidInput("binary source allocation exceeds its budget")`. For one owner,
+this implementation cap permits N through 2^15, independently of the larger
+geometries admitted by the arithmetic plans below. Source storage and full-size
+kernel work are separate from the interface. The selected suffix must also
+have room for all binary and ordinary segments and the typed setup prefix.
+
+The new `grouped_surface` end-to-end module covers every width with word-only
+and prime-only openings and value mutations. Small sources use true logical
+points; generic prime points include every committed-padding and virtual
+coordinate in the independent reference evaluation. Two owners each carry a
+word terminal, five prime planes distributed across owners, or both. Owner
+swaps reject. A mixed opening includes two ordinary groups with two and one
+polynomials. Caller stage messages precede the opening and a caller message
+follows it; only the caller consumes that final message and checks exhaustion.
+Test-only agreement tokens reject changed session, group, polynomial manifest,
+index map, dimensions and terminal-prime digest. They establish binding coverage,
+not the application's signed-bit/zero-support relation.
+
 ## Opening order
 
 The following table records the restricted protocol order. The order numbers
@@ -144,10 +195,10 @@ identify the state transitions of the binary source opening contract.
 
 | Order | Implemented action | Fixed before the next challenge |
 | --- | --- | --- |
-| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the optional word claim, every unique prime plane's polynomial, canonical P point, tensor-component tag and value, and any ordinary point/value. | The complete public statement. |
-| 2 | If a word claim is selected, send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
+| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, every selected word claim, every unique prime plane's polynomial, canonical P point, tensor-component tag and value, and any ordinary point/value. | The complete public statement. |
+| 2 | For each selected word claim, send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
 | 3 | Commit the selected U table and every EP plane in one ordinary D payload. U uses one digit; EP coefficients use 43 centered balanced digits. | The complete D payload precedes all column challenges. |
-| 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
+| 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the ordinary groups use complete preimages rather than a column-fold response. | The accepted bounded response Z. |
 | 5 | Commit the outgoing witness containing Z/T digits for every polynomial, selected U/EP views and selected K/K_val; a mixed opening also includes ordinary commitment preimages. | Every witness segment, including Z and T, precedes projection rows. |
 | 6 | Draw seven exactly uniform q-valued rows J, then send the seven signed integer values y in order. Check each encoding, bound and divisibility by q. | The outgoing commitment precedes J; all seven y precede output batching. |
 | 7 | Draw the shared ring-switch challenge, range-image point and independent relation-batching weights, whose first seven entries are the output scalars mu; form rho = sum_l mu_l J_l and compile the non-A public weights. | All tested tables, commitments and projection values. |
@@ -358,9 +409,12 @@ A mixed opening adds the ordinary source S, ordinary A-image T digits, and
 both ordinary commitment-compression bit tables to the same outgoing witness.
 Direct Stage 2 weights enforce A, B, both compression maps and the ordinary
 evaluation. The compression bits satisfy their existing `{-1, 0}` predicate;
-this predicate is separate from the binary U contract. The supported ordinary
-profile has one polynomial, one inner digit, base-eight outer digits and
-exactly two 128-bit compression maps. Every native ring degree must be at most
+this predicate is separate from the binary U contract. Each supported ordinary
+profile has one inner digit, base-eight outer digits and exactly two 128-bit
+compression maps. Polynomial-major source and image segments retain each
+polynomial's own evaluation. Independent rows authenticate the source padding
+in a partial final block. Each additional ordinary group contributes its own
+four preimage segments before the common domain is rounded. Every native ring degree must be at most
 648, as budgeted by the root grinding plan. Its source coefficients must fit one
 balanced base-eight digit. The current mixed fixture uses only zero and one.
 Unsupported geometries produce typed errors.
@@ -417,17 +471,19 @@ The existing relation methods now expose the same rho boundary:
 
 ```rust
 impl BinaryRootWitnessPlan {
-    pub fn relation_weights<E: Field>(
-        &self, claim: Option<&BinaryTerminalClaim>, matrix: Option<&[Vec<[i128; 648]>]>,
+    pub fn relation_weights<'a, E: Field>(
+        &self, claims: impl IntoIterator<Item = &'a BinaryTerminalClaim>,
+        matrix: Option<&[Vec<[i128; 648]>]>,
         challenges: &Challenges, alpha: E, rho: &[[E; 648]],
         terminal_batches: &[E], padding_weights: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError>;
 }
 impl BinaryRootPublic {
-    pub fn relation<E: Field>(
+    pub fn relation<'a, E: Field + 'a>(
         &self, challenges: &Challenges, alpha: E, batches: &[E],
         rho: &[[E; 648]], projected_values: &[i128; 7],
-        commitment: &[E], d_payload: &[E], ordinary_claim: Option<(&[E], E, &[E])>,
+        commitment: &[E], d_payload: &[E],
+        ordinary_claim: impl IntoIterator<Item = (&'a [E], &'a [E], &'a [E])>,
         matrix: Option<&[Vec<[i128; 648]>]>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError>;
 }
@@ -791,7 +847,9 @@ discharged by a binary terminal alone.
 
 The default-off feature also exposes
 `PolynomialGroupClaims::new_binary_planes(commitment, word, primes)`, where
-`word: Option<BinaryWordClaim>` and `primes: Vec<PrimePlaneClaim>`. The existing
+`word` accepts an iterator of `BinaryWordClaim` (including `Option` for a
+single claim or `Vec` for several owners), and `primes` is a
+`Vec<PrimePlaneClaim>`. The existing
 `new_binary` constructor retains its word-only behavior. A group must contain
 at least one word or prime claim. Every prime claim contains:
 
@@ -860,8 +918,12 @@ No new proof messages or challenges are inserted after the suffix.
 A prime-only opening skips order 2 and omits U, K and K_val completely from
 both D and the outgoing witness. It still authenticates A through the same seven exact projections; no KA
 segment remains for any polynomial.
-An opening with no prime claims preserves the projection word-only transcript
-atoms, witness addresses and bytes.
+An opening with no prime claims and one word claim preserves the projection
+word-only transcript atoms, witness addresses and bytes. Several word claims
+use one frontend each and two independently batched parity/value equations per
+owner. U and the carry segments already reserve disjoint slices for all
+polynomials; selecting another word claim fills its existing slices. Unselected
+owners retain zero slices. There is still one projection set and one Stage 3.
 
 ### Representation bounds and error accounting
 
@@ -900,12 +962,12 @@ pub fn batched_verify_readings_in_session(
     basis: BasisMode,
     session_id: [u8; 32],
     group_id: [u8; 32],
-) -> Result<BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError>;
+) -> Result<BinaryOpening<Vec<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError>;
 ```
 
 This method constructs the existing conditional-agreement result only after
 the complete grouped opening and suffix verify. It returns unique authenticated
-prime claims in manifest order and the optional word reading. The terminal
+prime claims in manifest order and the ordered word readings. The terminal
 prime digest binds the commitment payload, source descriptor and canonical prime claims using a
 domain-separated encoding. Session and group identifiers name context already
 authenticated by the caller for this exact committed source. The method adds no transcript messages, preserves
@@ -929,7 +991,7 @@ pub fn price_binary_root_planes(
     word: bool,
     prime: &PrimePlaneManifest,
     destination_ring_dimension: usize,
-    ordinary: Option<GroupCommitPhaseParams>,
+    ordinary: impl IntoIterator<Item = GroupCommitPhaseParams>,
 ) -> Result<BinaryPrimePlanePrice, AkitaError>;
 ```
 
@@ -990,8 +1052,8 @@ each owner an independent security budget.
 ## Measured proof sizes
 
 The eight-carrier, C=2 fixtures retain their existing source and suffix geometry.
-The following complete grouped proofs were measured from all 27 end-to-end
-tests in both protocol modes after merging projections, prime planes and typed
+The following complete grouped proofs are remeasured by the end-to-end
+suite in both protocol modes, including projections, prime planes and typed
 Stage 3. Each plane in these measurements has a distinct prime point. Every
 binary group uses one Stage 3 inside the caller's transcript.
 
@@ -1032,3 +1094,56 @@ projection set, one A prefix, and one Stage 3:
 | Prime only, projection mutation fixture | 1 | 83,072 | 77,948 |
 | Prime only | 2 | 83,014 | 78,019 |
 | Word and prime | 2 | 85,292 | 80,197 |
+
+### Caller interface measurements
+
+The full 31-test suite remeasures all preceding tables unchanged in both modes.
+The following new fixtures use caller stage messages and terminal claims; their
+reported opening size excludes the caller's 32-byte prefix and 32-byte suffix
+messages. Different transcript contexts explain differences from older fixtures.
+
+| Width | Word only, current | Word only, dev | Prime only, current | Prime only, dev |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 86,044 | 81,026 | 83,806 | 78,733 |
+| 2 | 86,034 | 80,999 | 83,809 | 78,803 |
+| 4 | 86,017 | 81,015 | 83,867 | 78,791 |
+| 8 | 86,018 | 80,976 | 83,807 | 78,815 |
+| 16 | 86,037 | 80,987 | 83,802 | 78,787 |
+| 32 | 86,030 | 80,971 | 83,834 | 78,777 |
+| 64 | 86,036 | 81,003 | 83,848 | 78,799 |
+| 128 | 86,039 | 80,946 | 83,796 | 78,796 |
+
+Small and partial sources carry both one true-logical word point and one prime
+plane. Their logical word lengths are preserved in the descriptor.
+
+| Width | Logical words | Padded carriers | Current bytes | Dev bytes |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1 | 8 | 86,043 | 81,005 |
+| 8 | 8 | 8 | 86,025 | 80,986 |
+| 32 | 13 | 8 | 86,038 | 80,988 |
+| 64 | 9 | 8 | 86,055 | 81,004 |
+| 128 | 5 | 8 | 86,003 | 81,002 |
+| 128 | 9 | 16 | 86,092 | 81,034 |
+
+The following two-owner fixtures use width 32, 23 logical words per polynomial
+and eight padded carriers. Both word terminals are present when selected; five
+prime planes are distributed across both owners.
+
+| Reading | Current bytes | Dev bytes |
+| --- | ---: | ---: |
+| Two word terminals | 87,460 | 82,406 |
+| Five prime planes | 83,069 | 78,018 |
+| Two words and five planes | 87,492 | 82,382 |
+
+The width-eight binary group beside two ordinary groups (two and one
+polynomials) measures **86,186 / 81,084 bytes** in current/dev modes.
+Its 13 physical segment widths are
+`[4096, 49152, 512, 2304, 1536, 524288, 352256, 65536, 4096, 262144, 176128, 65536, 4096]`,
+summing to **1,511,680** cells and a **2,097,152**-cell minimum domain.
+The planner and the canonical root plan agree on every segment.
+
+No design arithmetic bound is changed by this interface work. Each additional
+polynomial word terminal has its own field switch: at N=8, 2,195 frontend bytes
+and two independently batched terminal equations. The existing owner-sized
+witness layout already reserves its U and carry slices. The seven shared
+projection messages remain 84 bytes.

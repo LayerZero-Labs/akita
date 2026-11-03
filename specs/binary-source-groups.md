@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Akita contributors |
 | Created | 2026-10-27 |
-| Status | design |
+| Status | implemented contract and experimental grouped opening; security admission pending |
 | PR | Pending |
 | Supersedes | None; existing LaBinius entry points remain live |
 | Superseded-by | |
@@ -12,17 +12,17 @@
 
 ## Summary
 
-Binary sources need to share an authenticated source and a caller-owned
+Binary sources need to share an authenticated source and an opening inside the caller's
 transcript with ordinary field sources. This design makes a binary source a
 commitment-group kind in one ordinary Akita grouped opening. It replaces the
 standalone binary root reduction and nested PCS invocation when explicitly
 selected. It returns separate binary and prime readings; their agreement
 requires a proof supplied by the application.
 
-This is a **design**, with protocol implementation and certification pending.
-The source contract API supplies only the descriptor, addressing, cap validation
-and agreement interface. It does not select or execute a new prover/verifier
-path. The checkpoint soundness argument belongs in
+The descriptor, addressing, cap validation and agreement interface are
+implemented. The default-off grouped opening is described in
+`specs/binary-source-opening.md`; production security admission remains pending.
+Feature enablement alone never selects the extension. The checkpoint soundness argument belongs in
 `specs/binary-source-checkpoint.md`, which supplies the separate checkpoint
 proof. This specification states the protocol contract, not a completed security
 proof or production admission.
@@ -67,9 +67,8 @@ certifying a parameter set. Existing feature and crate names are retained.
 
 ### Non-goals
 
-The source contract API does not wire a root relation into proving or
-verification, add arithmetic kernels, certify q24 SIS, implement a challenge
-sampler or setup stream, or supply an application proof. Akita supplies no
+The source contract API does not supply an application proof or certify the
+complete opening. The grouped root implementation is specified separately. Akita supplies no
 booleanity, zero-support or prime-claim-fusion helpers. Unsupported
 non-power-of-two word widths are rejected rather than implicitly repacked. The
 existing LaBinius implementation continues to be described by its live
@@ -79,19 +78,19 @@ specifications until a later migration.
 
 ### Acceptance criteria
 
-- [ ] For every width 1, 2, 4, 8, 16, 32, 64 and 128, exhaustively round-trip
+- [x] For every width 1, 2, 4, 8, 16, 32, 64 and 128, exhaustively round-trip
   small source shapes through both directions of the index map.
-- [ ] Check both signs, partial last carriers and ring elements, padding words,
+- [x] Check both signs, partial last carriers and ring elements, padding words,
   full-block padding and every committed/virtual boundary in both directions.
-- [ ] Verify the explicit permutation against the existing column-contiguous
+- [x] Verify the explicit permutation against the existing column-contiguous
   source packing kernel and publish the claim-variable split.
-- [ ] Accept five admitted prime planes, reject six, and reuse identical points
+- [x] Accept five admitted prime planes, reject six, and reuse identical points
   without granting extra planes to another polynomial or tensor component.
-- [ ] Accept the canonical image window `[-7,126,704, 7,126,704]` and enforced
+- [x] Accept the canonical image window `[-7,126,704, 7,126,704]` and enforced
   digit interval `[-9,586,980, 7,190,235]`; reject off-by-one substitutions.
-- [ ] Round-trip canonical descriptor encodings; reject each unsupported field,
+- [x] Round-trip canonical descriptor encodings; reject each unsupported field,
   bad dimensions/counts, truncation and trailing bytes with typed errors.
-- [ ] Reject agreement tokens for another session, group, polynomial manifest,
+- [x] Reject agreement tokens for another session, group, polynomial manifest,
   index map, dimensions or terminal prime claims.
 - [ ] Pass documentation guardrails and required feature/check matrices.
 
@@ -304,6 +303,11 @@ variables select a word inside the carrier, and the remaining variables select
 the carrier. A word contributes `log2(ell)` bit-coordinate variables. Thus
 `log2(k)+log2(ell)=7`; intra-carrier coordinates feed field-switch weights.
 Small source shapes retain their true logical length and explicit zero mask.
+Word claims may use the true `ceil(log2(logical_length))` point dimension;
+missing high address coordinates are fixed to zero, while the supplied point
+remains unchanged in the transcript. The full padded dimension is also
+supported. The grouped implementation envelope and typed exclusions are in
+[the opening specification](binary-source-opening.md#supported-grouped-interface).
 For a full `2^n'` bit table before small-size padding, carrier log is `n'-7`.
 
 The existing packing in `akita-labinius-verifier/src/source.rs` uses the same
