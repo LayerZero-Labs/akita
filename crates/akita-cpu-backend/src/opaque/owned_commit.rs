@@ -14,6 +14,7 @@ where
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
+        + akita_serialization::Valid
         + jolt_field::Ring
         + Unreduced
         + WithCommitAccumulator
@@ -53,7 +54,7 @@ where
         )?;
         let (recomputed, retained) =
             executor.execute_full_via_outer_image(self, committed.parameters, &sources, None)?;
-        if recomputed.commitment != committed.public || retained != committed.retained {
+        if *recomputed.commitment() != committed.public || retained != committed.retained {
             return Err(AkitaError::InvalidInput(
                 "transferred commitment does not match backend setup".into(),
             ));
@@ -77,7 +78,13 @@ where
 
 impl<F, E> CpuBackend<F, E>
 where
-    F: Field + CanonicalEncoding + AkitaSerialize + Unreduced + WithCommitAccumulator + 'static,
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + akita_serialization::Valid
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
     F::Wide: From<F>,
     E: FpExtEncoding<F> + 'static,
 {

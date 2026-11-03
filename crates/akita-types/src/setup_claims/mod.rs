@@ -6,7 +6,7 @@ mod transport;
 use crate::{AkitaExpandedSetup, AkitaSetupSeed, FpExtEncoding};
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch::field_modulus_be_bytes;
-use akita_serialization::AkitaSerialize;
+use akita_serialization::{AkitaSerialize, Valid};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 pub use query::{SetupQuery, SetupWeightTerm};
 
@@ -329,7 +329,7 @@ impl<E: Field> SetupAccumulator<E> {
         slot: &akita_params::SetupPrefixSlotId,
     ) -> Result<crate::PolynomialGroupClaims<'static, E, crate::CommittedGroup<F>>, AkitaError>
     where
-        F: Field + CanonicalEncoding,
+        F: Field + CanonicalEncoding + Valid + AkitaSerialize,
         E: FpExtEncoding<F> + ExtField<F>,
     {
         self.polynomial.validate::<F, E>(setup.expanded())?;
@@ -354,7 +354,10 @@ impl<E: Field> SetupAccumulator<E> {
             crate::CommittedGroup::new(
                 prefix.id.commitment_profile,
                 crate::Commitment::new(payload.clone()),
-            ),
+            )
+            .map_err(|error| {
+                AkitaError::InvalidSetup(format!("accumulator prefix commitment: {error}"))
+            })?,
         )
     }
 }

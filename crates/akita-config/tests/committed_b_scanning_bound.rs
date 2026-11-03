@@ -200,8 +200,9 @@ fn committed_b_corrected_bound_survives_artifact_round_trip_and_reporting() {
 fn committed_b_artifact_decoder_reaudits_the_scanning_bound() {
     let bytes = round_trip_corrected_schedule::<fp128::OneHot>(14, 1);
     let artifact = String::from_utf8(bytes).unwrap();
-    // In this single-row fixture the first bound 7 is the root B matrix.
-    let underpriced = artifact.replacen("\"coeff_linf_bound\":7", "\"coeff_linf_bound\":3", 1);
+    // In this single-row fixture the first exact bound 7 is the root B matrix;
+    // the closing brace keeps the match off wider bounds such as 7812.
+    let underpriced = artifact.replacen("\"coeff_linf_bound\":7}", "\"coeff_linf_bound\":3}", 1);
     assert_ne!(artifact, underpriced);
     let error = TrustedScheduleCatalog::<fp128::OneHot>::from_artifact_bytes(
         underpriced.as_bytes(),

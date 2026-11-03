@@ -1,12 +1,12 @@
 //! Setup-batch grammar. Statements are bound before randomization, and every
 //! batch coefficient and reduction round is a grinding-priced query.
 use super::SetupBatchStatement;
-use crate::{GrindingReplay, ProverGrinding, VerifierGrinding};
+use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingSite};
 use akita_transcript::{
-    exchange_extension_group, new_prover_channel, new_verifier_channel, ProofChannel,
-    ProtocolSiteId,
+    bind_instance, exchange_extension_group, new_prover_channel, new_verifier_channel,
+    ChallengeCodec, ProofChannel, ProtocolSiteId, ProverChannel, VerifierChannel,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
@@ -29,10 +29,10 @@ pub fn batch_coefficients<F, E, G>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     G: GrindingReplay,
 {
-    grinding.grinded_ext_challenges::<F, E>(GrindingSite::SetupBatch { level }, count)
+    grinding.grinded_ext_challenges::<E>(GrindingSite::SetupBatch { level }, count)
 }
 
 pub fn setup_evaluation<F, E, S>(state: &mut S, mut value: E) -> Result<E, AkitaError>
@@ -47,8 +47,8 @@ where
 
 /// Public grinding plan of a standalone reduction over `statement`.
 ///
-/// Rejects field towers whose challenge sampling is uncertified, or whose
-/// queries cannot reach the 128-bit rate within the grinding limit.
+/// Rejects field towers whose queries cannot reach the 128-bit rate within
+/// the grinding limit.
 pub fn standalone_grinding_plan<F, E>(
     statement: &SetupBatchStatement<E>,
 ) -> Result<GrindingPlan, AkitaError>
@@ -56,15 +56,6 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    if !akita_transcript::field_sampling_is_certified(
-        F::NUM_BYTES,
-        F::MODULUS_BITS,
-        akita_params::TRANSCRIPT_GRINDING_QUERY_LIMIT,
-    ) {
-        return Err(AkitaError::InvalidSetup(
-            "setup batch field-challenge sampling is not certified".into(),
-        ));
-    }
     let challenge_order = ChallengeFieldOrder::from_field(
         F::MODULUS_BITS,
         E::DEGREE,
@@ -91,37 +82,35 @@ where
     Ok(bytes)
 }
 
-/// Start the prover side of a standalone reduction under `plan`.
-pub fn standalone_prover<'plan, F, E>(
+/// Prover channel of a standalone reduction under `plan`, with its instance bound.
+pub fn standalone_prover_channel<F, E>(
     session: &[u8],
     statement: &SetupBatchStatement<E>,
-    plan: &'plan GrindingPlan,
-) -> Result<ProverGrinding<'plan>, AkitaError>
+    plan: &GrindingPlan,
+) -> Result<ProverChannel, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    let state = new_prover_channel(session, &standalone_instance::<F, E>(statement, plan)?)?;
-    Ok(ProverGrinding::new(state, plan))
+    let mut state = new_prover_channel(session);
+    bind_instance(&mut state, &standalone_instance::<F, E>(statement, plan)?)?;
+    Ok(state)
 }
 
-/// Start the verifier side of a standalone reduction under `plan`.
-pub fn standalone_verifier<'proof, 'plan, F, E>(
+/// Verifier channel of a standalone reduction under `plan`, with its instance bound.
+pub fn standalone_verifier_channel<'proof, F, E>(
     session: &[u8],
     statement: &SetupBatchStatement<E>,
-    plan: &'plan GrindingPlan,
+    plan: &GrindingPlan,
     proof: &'proof [u8],
-) -> Result<VerifierGrinding<'proof, 'plan>, AkitaError>
+) -> Result<VerifierChannel<'proof>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    let state = new_verifier_channel(
-        session,
-        &standalone_instance::<F, E>(statement, plan)?,
-        proof,
-    )?;
-    Ok(VerifierGrinding::new(state, plan))
+    let mut state = new_verifier_channel(session, proof);
+    bind_instance(&mut state, &standalone_instance::<F, E>(statement, plan)?)?;
+    Ok(state)
 }
 
 /// Bind a complete inherited or combined collection in the outer proof stream.

@@ -24,6 +24,23 @@ impl<'a, 'b, E: Field> SetupPolicy<'a, 'b, E> {
             Self::Defer(accumulator) => Some(accumulator),
         }
     }
+
+    pub(crate) fn pending_len(&mut self) -> usize {
+        self.accumulator().map_or(0, |a| a.pending.len())
+    }
+
+    /// Consume the inherited batch on acceptance; on rejection, drop the
+    /// claims collected since `pending_len` and keep the inherited batch.
+    pub(crate) fn settle(&mut self, pending_len: usize, accepted: bool) {
+        if let Some(accumulator) = self.accumulator() {
+            if accepted {
+                // The validated target is one of the nonterminal folds replayed.
+                accumulator.batch = None;
+            } else {
+                accumulator.pending.truncate(pending_len);
+            }
+        }
+    }
 }
 
 /// Input and output setup obligations for one proof verification.
