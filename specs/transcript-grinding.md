@@ -95,7 +95,8 @@ Production fields use 4-, 8-, or 16-byte base candidates.
 
 `derive_transcript_grinding_plan_from_public_shape` is the canonical plan
 builder. Its inputs are the trusted fold schedule, validated opening layout,
-field tower, and protocol policy. The descriptor binds a digest of the complete
+field tower, protocol policy, and the target fold of a setup batch when the
+call carries one. The descriptor binds a digest of the complete
 plan and its policy revision before any proof message or dependent challenge.
 
 Each plan entry contains:

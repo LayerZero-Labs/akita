@@ -9,6 +9,7 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
     schedules: &'s TrustedScheduleCatalog<Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
     basis: BasisMode,
+    setup_batch_level: Option<u32>,
 ) -> Result<
     (
         &'s akita_config::ResolvedScheduleRow,
@@ -43,6 +44,7 @@ where
             selection,
             resolved.schedule(),
             basis,
+            setup_batch_level,
         )?;
     Ok((resolved, digests, claims, grinding_plan, descriptor_bytes))
 }
@@ -136,6 +138,11 @@ where
         schedule.root.output_witness_len,
         next_binding,
         prepared,
+        handoff
+            .request
+            .setup_batch
+            .filter(|(target, _)| *target as usize == 0)
+            .map(|(_, statement)| statement),
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(
                 backend,

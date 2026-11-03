@@ -102,6 +102,7 @@ fn site_report(site: GrindingSite) -> SiteReport {
         GrindingSite::L2VirtualBatch { .. } => plain("physical_l2", "virtual_batch"),
         GrindingSite::CompressionBinary { .. } => plain("stage2", "compression_binary"),
         GrindingSite::Stage2Batch { .. } => plain("stage2", "claim_batch"),
+        GrindingSite::SetupBatch { .. } => plain("setup_batch", "claim_batch"),
     }
 }
 
@@ -112,6 +113,7 @@ const fn sumcheck_component(protocol: SumcheckProtocol) -> &'static str {
         SumcheckProtocol::PhysicalL2 => "physical_l2",
         SumcheckProtocol::Stage2 => "stage2",
         SumcheckProtocol::Stage3 => "stage3",
+        SumcheckProtocol::SetupBatch => "setup_batch",
     }
 }
 
@@ -122,5 +124,6 @@ const fn sumcheck_protocol(protocol: SumcheckProtocol) -> &'static str {
         SumcheckProtocol::PhysicalL2 => "physical_l2",
         SumcheckProtocol::Stage2 => "stage2",
         SumcheckProtocol::Stage3 => "stage3",
+        SumcheckProtocol::SetupBatch => "setup_batch",
     }
 }

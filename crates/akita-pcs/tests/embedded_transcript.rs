@@ -10,6 +10,7 @@ use akita_transcript::{
     new_prover_channel, new_verifier_channel, ProverChannel, ProverTranscript, VerifierChannel,
 };
 use akita_types::{AkitaVerifierSetup, PendingEof};
+use akita_verifier::SetupPolicy;
 use common::*;
 use jolt_field::One;
 use jolt_transcript::BytesMsg;
@@ -138,6 +139,7 @@ impl Fixture {
                 session,
                 verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
                 BasisMode::Lagrange,
+                SetupPolicy::Check(None),
             )
     }
 
@@ -158,6 +160,7 @@ impl Fixture {
                 state,
                 verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
                 BasisMode::Lagrange,
+                SetupPolicy::Check(None),
             )
     }
 
@@ -225,6 +228,7 @@ fn standalone_is_embedded_on_a_fresh_session() {
                         fixture.scheme.schedules(),
                     ),
                     BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
                 )
             })
             .expect("embedded verify");

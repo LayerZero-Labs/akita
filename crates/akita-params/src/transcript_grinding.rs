@@ -25,6 +25,11 @@ pub const GRINDING_ENCODING_VERSION: u16 = 5;
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 5;
 /// Fold-challenge oracle revision: one decoded message per group.
 pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 2;
+/// Largest setup-claim collection one batch may carry.
+///
+/// A batch folded into an enclosing proof is priced at this bound, because
+/// the public plan is fixed before the collection's size is known.
+pub const MAX_SETUP_BATCH_CLAIMS: usize = 1 << 16;
 /// Exclusive upper bound on expanded transcript queries in a complete plan.
 ///
 /// This preserves the existing accepted set: a plan must contain fewer than
@@ -71,6 +76,7 @@ pub enum SumcheckProtocol {
     PhysicalL2,
     Stage2,
     Stage3,
+    SetupBatch,
 }
 
 impl SumcheckProtocol {
@@ -83,6 +89,7 @@ impl SumcheckProtocol {
             Self::PhysicalL2 => 2,
             Self::Stage2 => 3,
             Self::Stage3 => 4,
+            Self::SetupBatch => 5,
         }
     }
 
@@ -95,6 +102,7 @@ impl SumcheckProtocol {
             2 => Some(Self::PhysicalL2),
             3 => Some(Self::Stage2),
             4 => Some(Self::Stage3),
+            5 => Some(Self::SetupBatch),
             _ => None,
         }
     }
@@ -155,6 +163,10 @@ pub enum GrindingSite {
         level: u32,
     },
     Stage2Batch {
+        level: u32,
+    },
+    /// Independent coefficients batching one setup-claim collection.
+    SetupBatch {
         level: u32,
     },
 }
@@ -240,6 +252,10 @@ impl GrindingSite {
                 site.family = 115;
                 site.level = level;
             }
+            Self::SetupBatch { level } => {
+                site.family = 116;
+                site.level = level;
+            }
         }
         site
     }
@@ -274,7 +290,8 @@ impl GrindingSite {
             | Self::L2VirtualBatch { level }
             | Self::CompressionBinary { level }
             | Self::Stage2Batch { level }
-            | Self::FoldChallengeWork { level } => level,
+            | Self::FoldChallengeWork { level }
+            | Self::SetupBatch { level } => level,
         }
     }
 
@@ -298,7 +315,8 @@ impl GrindingSite {
             | Self::L2VirtualBatch { level }
             | Self::CompressionBinary { level }
             | Self::Stage2Batch { level }
-            | Self::FoldChallengeWork { level } => level == u32::MAX,
+            | Self::FoldChallengeWork { level }
+            | Self::SetupBatch { level } => level == u32::MAX,
             Self::FoldChallengeGroup { level, group } => level == u32::MAX || group == u32::MAX,
             Self::Stage1InterstageBatch { level, stage } => level == u32::MAX || stage == u32::MAX,
         };
@@ -384,6 +402,10 @@ impl GrindingSite {
             }
             Self::FoldChallengeWork { level } => {
                 out.push(15);
+                push_u32(out, level);
+            }
+            Self::SetupBatch { level } => {
+                out.push(16);
                 push_u32(out, level);
             }
         }

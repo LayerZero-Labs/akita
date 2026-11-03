@@ -1,7 +1,8 @@
 mod evaluate;
+mod factored;
 mod materialize;
 
-pub use evaluate::eval_boolean_pair_tensor_families;
+pub use factored::eval_boolean_pair_tensor_families;
 pub use materialize::materialize_eq_tensor_left;
 #[cfg(test)]
 pub(super) use materialize::{DenseLeftOverlap, ResidualTerms, MAX_RESIDUAL_TABLE_BYTES};

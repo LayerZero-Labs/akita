@@ -49,6 +49,7 @@ fn assert_selected_grinding_edge_parity(
         &root_layout,
         challenge_order,
         extension_degree,
+        None,
     )
     .expect("selected schedule has a public grinding plan");
 

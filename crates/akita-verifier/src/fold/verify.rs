@@ -9,11 +9,13 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 use akita_params::{validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile};
 use akita_transcript::VerifierChannel;
+use akita_types::setup_claims::transcript::bind_outer_statement;
 use akita_types::{
-    FpExtEncoding, GroupBatchStatement, OpeningClaims, PendingEof, PolynomialGroupClaims,
+    FpExtEncoding, GrindingReplay, GroupBatchStatement, OpeningClaims, PendingEof,
+    PolynomialGroupClaims,
 };
 
-use crate::AkitaVerifier;
+use crate::{AkitaVerifier, SetupPolicy};
 
 impl<Cfg> AkitaVerifier<Cfg>
 where
@@ -26,6 +28,12 @@ where
     ///
     /// This is [`Self::batched_verify_embedded`] on a fresh state for
     /// `session`, followed at once by the end-of-proof check.
+    ///
+    /// `SetupPolicy::Defer` exports direct setup evaluations in its accumulator.
+    /// Every policy fully verifies ordinary and accumulated Stage 3 reductions.
+    /// `SetupPolicy::Check` closes direct setup obligations and any inherited batch.
+    /// Rejection, including at the end-of-proof check, preserves inherited and
+    /// pending obligations. Advice may have been consulted.
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify")]
     pub fn batched_verify(
@@ -34,10 +42,15 @@ where
         session: &[u8],
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
+        mut setup_policy: SetupPolicy<'_, '_, Cfg::ExtField>,
     ) -> Result<(), AkitaError> {
         let mut state = akita_transcript::new_verifier_channel(session, proof);
-        let pending = self.batched_verify_embedded(&mut state, statement, basis)?;
-        pending.check_eof(state).map(|_accepted| ())
+        let pending_len = setup_policy.pending_len();
+        let result = self
+            .verify_on_state(&mut state, statement, basis, &mut setup_policy)
+            .and_then(|pending| pending.check_eof(state));
+        setup_policy.settle(pending_len, result.is_ok());
+        result.map(|_accepted| ())
     }
 
     /// Verify Akita's messages inside the caller's transcript.
@@ -53,6 +66,10 @@ where
     /// its own protocol and must pass the state to [`PendingEof::check_eof`]
     /// after its last message; only that call accepts the proof.
     ///
+    /// `setup_policy` is as for [`Self::batched_verify`], except that it is
+    /// settled when this returns, before the caller's end-of-proof check: a
+    /// caller whose check then fails must discard the accumulator.
+    ///
     /// # Errors
     ///
     /// Returns an error when the statement does not match the setup or the
@@ -64,8 +81,35 @@ where
         state: &mut VerifierChannel<'_>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
+        mut setup_policy: SetupPolicy<'_, '_, Cfg::ExtField>,
+    ) -> Result<PendingEof, AkitaError> {
+        let pending_len = setup_policy.pending_len();
+        let result = self.verify_on_state(state, statement, basis, &mut setup_policy);
+        setup_policy.settle(pending_len, result.is_ok());
+        result
+    }
+
+    /// Replay Akita's messages on `state`, poisoning it on any error.
+    fn verify_on_state(
+        &self,
+        state: &mut VerifierChannel<'_>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+        setup_policy: &mut SetupPolicy<'_, '_, Cfg::ExtField>,
     ) -> Result<PendingEof, AkitaError> {
         let result = (|| {
+            if let SetupPolicy::Check(Some(accumulator)) = setup_policy {
+                if !accumulator.pending.is_empty() || accumulator.advice.is_some() {
+                    return Err(AkitaError::InvalidInput(
+                        "checked setup accumulator cannot contain pending claims or advice".into(),
+                    ));
+                }
+            }
+            if let Some(accumulator) = setup_policy.accumulator() {
+                accumulator
+                    .polynomial
+                    .validate::<Cfg::Field, Cfg::ExtField>(self.setup.expanded())?;
+            }
             let setup = &self.setup;
             let schedules = &self.schedules;
             let selection = statement.selection();
@@ -104,6 +148,15 @@ where
                 ));
             }
             let schedule = resolved.schedule();
+            let batch_level = setup_policy
+                .accumulator()
+                .and_then(|a| a.batch.as_ref())
+                .map(|(level, _)| *level);
+            if batch_level.is_some_and(|level| level as usize >= schedule.num_fold_levels() - 1) {
+                return Err(AkitaError::InvalidInput(
+                    "setup batch target must be a nonterminal fold".into(),
+                ));
+            }
             let root_params = &schedule.root_fold().params;
             let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
                 final_descriptor.group,
@@ -137,9 +190,18 @@ where
                     selection,
                     schedule,
                     basis,
+                    batch_level,
                 )?;
             akita_transcript::bind_instance(state, &descriptor_bytes)?;
             let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
+            if let Some((level, batch)) = setup_policy.accumulator().and_then(|a| a.batch.as_ref())
+            {
+                bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
+                    grinding.state_mut(),
+                    *level,
+                    batch,
+                )?;
+            }
             let raw_groups = claims
                 .groups()
                 .iter()
@@ -161,6 +223,7 @@ where
                 root_params,
                 schedule.recursive_folds.first(),
                 &schedule.terminal,
+                setup_policy,
             )?;
             verify_suffix::<Cfg::Field, Cfg::ExtField>(
                 setup,
@@ -175,6 +238,7 @@ where
                     witness_len: schedule.root_fold().output_witness_len,
                     setup_prefix_opening: root.setup_prefix_opening,
                 },
+                setup_policy,
             )?;
             grinding.finish()
         })();

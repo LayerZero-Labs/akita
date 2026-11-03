@@ -79,6 +79,7 @@ fn stream_binds_session_statement_basis_and_eof() {
                             scheme.schedules(),
                         ),
                         basis,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
         };
@@ -286,6 +287,7 @@ fn stream_mutations_reject_without_panicking() {
                                 scheme.schedules(),
                             ),
                             BasisMode::Lagrange,
+                            akita_verifier::SetupPolicy::Check(None),
                         )
                     })
             }));

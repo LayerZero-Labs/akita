@@ -613,6 +613,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     }
     let frozen_group = synthetic_profile(key.final_group, &candidates[0].0);
     let grouped_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: key.final_group,
         precommitteds: vec![frozen_group],
     };
@@ -728,6 +729,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
 
     let product_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, frozen_group],
     };
@@ -768,6 +770,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     }
 
     let repeated_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group; 256],
     };
@@ -789,6 +792,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: grouped_key.final_group,
             precommitteds: vec![frozen_group; 3],
         },
@@ -822,6 +826,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         .find(|profile| *profile != frozen_group)
         .expect("a second root profile");
     let split_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, other_class, frozen_group],
     };
@@ -867,6 +872,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     // These profiles only feed enumeration, which reads ring dimensions; they
     // are not valid commit-phase profiles and must not be materialized.
     let distinct_classes = |count: usize| ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: (0..count)
             .map(|index| GroupCommitPhaseParams {
@@ -952,6 +958,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         &scalar.first().expect("scalar root candidate").0,
     );
     let grouped_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: scalar_key.final_group,
         precommitteds: vec![frozen],
     };

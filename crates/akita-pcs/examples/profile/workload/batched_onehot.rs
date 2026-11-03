@@ -113,10 +113,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let commitments = [commitment];
         let selection = scheme
             .schedules()
-            .resolve_profiles(&CommittedGroupBatchProfile {
-                final_group: *commitments[0].profile(),
-                precommitteds: Vec::new(),
-            })
+            .resolve_profiles(
+                &CommittedGroupBatchProfile {
+                    final_group: *commitments[0].profile(),
+                    precommitteds: Vec::new(),
+                },
+                0,
+            )
             .expect("select generated schedule row")
             .selection();
         let hints = vec![hint];
@@ -162,8 +165,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         .schedule()
         .clone();
     let effective_schedule = plan.unwrap_or(&schedule);
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
-        .expect("profile grinding plan");
+    let grinding_plan =
+        derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch, None)
+            .expect("profile grinding plan");
     print_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     if let Some(plan) = plan {
         report_proof_size_against_planner(
@@ -229,10 +233,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         verifier_claims(
             scheme
                 .schedules()
-                .resolve_profiles(&CommittedGroupBatchProfile {
-                    final_group: *commitments[0].profile(),
-                    precommitteds: Vec::new(),
-                })
+                .resolve_profiles(
+                    &CommittedGroupBatchProfile {
+                        final_group: *commitments[0].profile(),
+                        precommitteds: Vec::new(),
+                    },
+                    0,
+                )
                 .expect("select verifier schedule row")
                 .selection(),
             &pt[..],
@@ -243,7 +250,15 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let verifier = scheme
         .verifier(verifier_setup.clone())
         .expect("verifier for the profile setup");
-    let verify = |claims| verifier.batched_verify(&proof, b"profile", claims, BasisMode::Lagrange);
+    let verify = |claims| {
+        verifier.batched_verify(
+            &proof,
+            b"profile",
+            claims,
+            BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
+        )
+    };
     run_verifier_timings(label, pools, "batched profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

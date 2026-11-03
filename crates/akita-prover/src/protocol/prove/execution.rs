@@ -298,8 +298,21 @@ where
         + 'static,
     H: CommitmentHandleMetadata + 'static,
 {
-    let (resolved, digests, claims, grinding_plan, descriptor_bytes) =
-        root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
+    let setup_batch = opening.setup_batch;
+    let (resolved, digests, claims, grinding_plan, descriptor_bytes) = root::resolve_root::<Cfg, H>(
+        expanded,
+        schedules,
+        opening,
+        basis,
+        setup_batch.map(|(level, _)| level),
+    )?;
+    if setup_batch
+        .is_some_and(|(level, _)| level as usize >= resolved.schedule().num_fold_levels() - 1)
+    {
+        return Err(AkitaError::InvalidInput(
+            "setup batch target must be a nonterminal fold".into(),
+        ));
+    }
     if registry.active.replace(true) {
         return Err(AkitaError::InvalidInput(
             "backend registry already has an active proof".into(),
@@ -333,6 +346,7 @@ where
         schedule: resolved.schedule(),
         layout: claims.opening_layout(),
         identity,
+        setup_batch,
     };
     for (executor, selected) in registry.slots.iter().zip(&selected) {
         if *selected {
@@ -353,6 +367,13 @@ where
     };
     akita_transcript::bind_instance(channel, &descriptor_bytes)?;
     let mut grinding = ProverGrinding::new(channel, &grinding_plan);
+    if let Some((level, statement)) = setup_batch {
+        akita_types::setup_claims::transcript::bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
+            akita_types::GrindingReplay::state_mut(&mut grinding),
+            level,
+            statement,
+        )?;
+    }
     let (mut public, mut resident) = root_executor.root(
         &mut handoff,
         &mut grinding,
