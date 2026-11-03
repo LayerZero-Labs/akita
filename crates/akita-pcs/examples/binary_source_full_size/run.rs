@@ -24,6 +24,7 @@ use akita_types::{
 use config::{FullSize, F};
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing_subscriber::prelude::*;
@@ -239,8 +240,15 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         verifier_setup.expanded().clone(),
         verifier_setup.prefix_slots().clone(),
     )?;
-    unscoped.serialize_compressed(std::fs::File::create(directory.join("verifier.bin"))?)?;
-    commitments.serialize_compressed(std::fs::File::create(directory.join("commitments.bin"))?)?;
+    {
+        let _span = tracing::info_span!("fixture_serialization").entered();
+        let mut output = BufWriter::new(std::fs::File::create(directory.join("verifier.bin"))?);
+        unscoped.serialize_compressed(&mut output)?;
+        output.flush()?;
+        let mut output = BufWriter::new(std::fs::File::create(directory.join("commitments.bin"))?);
+        commitments.serialize_compressed(&mut output)?;
+        output.flush()?;
+    }
     let groups = groups(log, &claims, &descriptor, &commitments)?;
     let data = SelectedProverOpeningData::from_committed_claims::<FullSize>(
         OpeningClaims::from_groups(groups)?,
@@ -315,10 +323,13 @@ fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
         native_catalog::load(directory)?
     };
     let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
-    let mut setup = AkitaVerifierSetup::<F>::deserialize_compressed(
-        std::fs::File::open(directory.join("verifier.bin"))?,
-        &(),
-    )?;
+    let mut setup = {
+        let _span = tracing::info_span!("fixture_setup_deserialization").entered();
+        AkitaVerifierSetup::<F>::deserialize_compressed(
+            BufReader::new(std::fs::File::open(directory.join("verifier.bin"))?),
+            &(),
+        )?
+    };
     for (id, context) in fixture.contexts {
         setup = setup.with_prefix_context(
             SetupPrefixSlotId::deserialize_compressed(id.as_slice(), &())?,
@@ -327,7 +338,7 @@ fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
     }
     let verifier = scheme.verifier(setup)?;
     let commitments = Vec::<CommittedGroup<F>>::deserialize_compressed(
-        std::fs::File::open(directory.join("commitments.bin"))?,
+        BufReader::new(std::fs::File::open(directory.join("commitments.bin"))?),
         &(),
     )?;
     let descriptor = claims::descriptor(log)?;
