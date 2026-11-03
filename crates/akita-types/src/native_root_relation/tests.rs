@@ -6,6 +6,40 @@ use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Prime128OffsetA7F7;
 
+#[test]
+fn weight_merge_preserves_order_claim_and_evaluation_while_reusing_storage() {
+    let mut terms = Vec::with_capacity(8);
+    terms.extend([(1, F::from_u64(2)), (1, F::from_u64(3))]);
+    let allocation = terms.as_ptr();
+    let first = NativeRootWeights::new(4, terms, F::from_u64(5)).unwrap();
+    let second = NativeRootWeights::new(
+        4,
+        vec![(3, F::from_u64(7)), (0, F::from_u64(11))],
+        F::from_u64(13),
+    )
+    .unwrap();
+    let point = [F::from_u64(19), F::from_u64(23)];
+    let evaluation = first.evaluate(&point).unwrap() + second.evaluate(&point).unwrap();
+    let merged = NativeRootWeights::merge(4, [first, second], F::from_u64(17)).unwrap();
+    assert_eq!(merged.terms().as_ptr(), allocation);
+    assert_eq!(
+        merged.terms(),
+        &[
+            (1, F::from_u64(2)),
+            (1, F::from_u64(3)),
+            (3, F::from_u64(7)),
+            (0, F::from_u64(11)),
+        ]
+    );
+    assert_eq!(merged.claim(), F::from_u64(35));
+    assert_eq!(merged.evaluate(&point).unwrap(), evaluation);
+    assert!(NativeRootWeights::merge(8, [merged], F::zero()).is_err());
+    let empty = NativeRootWeights::<F>::merge(4, [], F::from_u64(29)).unwrap();
+    assert!(empty.terms().is_empty());
+    assert_eq!(empty.claim(), F::from_u64(29));
+    assert!(NativeRootWeights::<F>::merge(3, [], F::zero()).is_err());
+}
+
 fn descriptor() -> BinarySourceDescriptor {
     BinarySourceDescriptor::new(
         BinaryIndexMap::new(8, 19, 8, 2).unwrap(),

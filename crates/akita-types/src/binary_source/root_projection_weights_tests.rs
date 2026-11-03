@@ -88,9 +88,14 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     let padding = (0..plan.repacking().domain_len())
         .filter(|&i| plan.repacking().is_padding_address(i).unwrap())
         .count();
-    let weights =
-        binary_direct_a_weights(&plan, &matrix, &challenges, &rho, &vec![F::one(); padding])
-            .unwrap();
+    let weights = binary_direct_a_weights(
+        &plan,
+        Some(&matrix),
+        &challenges,
+        &rho,
+        &vec![F::one(); padding],
+    )
+    .unwrap();
     let table = plan
         .repacking()
         .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
@@ -106,7 +111,7 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     assert!(relation.check_table(&changed).is_err());
     assert!(binary_direct_a_weights(
         &plan,
-        &matrix,
+        Some(&matrix),
         &challenges,
         &rho[..2],
         &vec![F::one(); padding]

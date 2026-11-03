@@ -7,8 +7,8 @@ use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 use jolt_field::Field;
 
 use super::{
-    binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryProjectionRows,
-    BinaryRootWitnessPlan, BinaryTerminalClaim, OrdinaryNativeRootPlan,
+    binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
+    BinaryTerminalClaim, OrdinaryNativeRootPlan,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -16,11 +16,13 @@ use crate::AkitaSetupDescriptor;
 /// Materialize the q24 source matrix from its canonical typed setup identity.
 ///
 /// Matrix order is A row, source ring row, then natural coefficient. Both the
-/// source commitment and the verifier's direct A evaluation use this function.
+/// source commitment and setup preparation use this function; online verification does not.
 pub fn binary_root_matrix(
     seed: &[u8; 32],
     manifest: &BinaryCommittedGroupManifest,
 ) -> Result<Vec<Vec<[i128; 648]>>, AkitaError> {
+    #[cfg(feature = "test-support")]
+    super::matrix_access::check()?;
     manifest.validate()?;
     let columns = checked::product([4, manifest.descriptor().index_map().columns()])
         .and_then(|block| {
@@ -53,7 +55,7 @@ pub fn binary_root_matrix(
     Ok(matrix)
 }
 
-/// Admitted public inputs and direct weights for one binary terminal claim.
+/// Admitted public inputs and non-A weights for one binary group.
 ///
 /// This experimental root uses the fixed proof prime 2^128-275. Its outgoing
 /// coefficient map is authenticated by the ordinary successor commitment;
@@ -66,7 +68,6 @@ pub struct BinaryRootPublic {
     prime: super::PrimePlaneManifest,
     setup: AkitaSetupDescriptor,
     plan: BinaryRootWitnessPlan,
-    matrix: Vec<Vec<[i128; 648]>>,
     ordinary: Option<OrdinaryNativeRootPlan>,
     negative_binary_addresses: Vec<usize>,
     padding_count: usize,
@@ -134,14 +135,12 @@ impl BinaryRootPublic {
                 ])
             })
             .ok_or(AkitaError::InvalidProof)?;
-        let matrix = binary_root_matrix(&setup.setup_seed.seed, manifest)?;
         Ok(Self {
             manifest: manifest.clone(),
             claim: claim.cloned(),
             prime: prime.clone(),
             setup: setup.clone(),
             plan,
-            matrix,
             ordinary,
             negative_binary_addresses,
             padding_count,
@@ -159,24 +158,25 @@ impl BinaryRootPublic {
         self.batch_count
     }
 
-    /// Compile the single direct linear oracle after the outgoing commitment.
+    /// Compile the single linear oracle after the outgoing commitment.
     ///
     /// Batch coordinates are independent field challenges, including one for
     /// each padding coefficient. `commitment` is the public B payload; `d_payload`
     /// is the order-three commitment to the selected word and prime views.
-    /// The future setup adjoint replaces direct
-    /// setup evaluation without changing this authenticated coefficient map.
+    /// Proving supplies A; verification omits it and authenticates its contribution
+    /// through the typed prefix. `rho` batches the public projection rows with mu.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
         &self,
         challenges: &Challenges,
         alpha: E,
         batches: &[E],
-        projections: &BinaryProjectionRows,
+        rho: &[[E; 648]],
         projected_values: &[i128; 7],
         commitment: &[E],
         d_payload: &[E],
         ordinary_claim: Option<(&[E], E, &[E])>,
+        matrix: Option<&[Vec<[i128; 648]>]>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
         if batches.len() != self.batch_count {
             return Err(AkitaError::InvalidSize {
@@ -189,7 +189,6 @@ impl BinaryRootPublic {
             .ok_or(AkitaError::InvalidProof)?
             .try_into()
             .map_err(|_| AkitaError::InvalidProof)?;
-        let rho = projections.batch(&mu)?;
         let projection_claim = mu
             .iter()
             .zip(projected_values)
@@ -214,18 +213,17 @@ impl BinaryRootPublic {
             checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
         )
         .ok_or(AkitaError::InvalidProof)?;
-        let mut algebra = self.plan.relation_weights(
+        let algebra = self.plan.relation_weights(
             self.claim.as_ref(),
-            &self.matrix,
+            matrix,
             challenges,
             alpha,
-            &rho,
+            rho,
             batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
             batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;
-        let mut extra = Vec::new();
-        if let Some(segment) = self.plan.prime_segment() {
-            extra.push(super::prime_plane_relation_weights(
+        let prime_weights = if let Some(segment) = self.plan.prime_segment() {
+            Some(super::prime_plane_relation_weights(
                 self.manifest.descriptor(),
                 &self.prime,
                 self.plan.repacking(),
@@ -234,17 +232,10 @@ impl BinaryRootPublic {
                 challenges,
                 alpha,
                 batches.get(prime_rows).ok_or(AkitaError::InvalidProof)?,
-            )?);
-        }
-        if !extra.is_empty() {
-            let mut terms = algebra.terms().to_vec();
-            let mut target = algebra.claim();
-            for weights in extra {
-                terms.extend_from_slice(weights.terms());
-                target += weights.claim();
-            }
-            algebra = NativeRootWeights::new(self.plan.repacking().domain_len(), terms, target)?;
-        }
+            )?)
+        } else {
+            None
+        };
         let b_weights = binary_digit_authentication_weights(
             &self.plan,
             &[1],
@@ -281,27 +272,16 @@ impl BinaryRootPublic {
         };
         let components = [
             Some(algebra),
+            prime_weights,
             Some(b_weights),
             Some(d_weights),
             ordinary_weights,
         ];
-        let count = checked::sum(
-            components
-                .iter()
-                .flatten()
-                .map(|weights| weights.terms().len()),
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-        let mut terms = Vec::new();
-        terms
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let mut claim = projection_claim;
-        for weights in components.iter().flatten() {
-            terms.extend_from_slice(weights.terms());
-            claim += weights.claim();
-        }
-        let linear = NativeRootWeights::new(self.plan.repacking().domain_len(), terms, claim)?;
+        let linear = NativeRootWeights::merge(
+            self.plan.repacking().domain_len(),
+            components.into_iter().flatten(),
+            projection_claim,
+        )?;
         let mut negative_weights = Vec::new();
         negative_weights
             .try_reserve_exact(self.negative_binary_addresses.len())

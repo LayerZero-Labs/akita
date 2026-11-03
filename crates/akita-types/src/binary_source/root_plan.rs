@@ -128,7 +128,7 @@ impl BinaryRootWitnessPlan {
     pub fn relation_weights<E: Field>(
         &self,
         claim: Option<&BinaryTerminalClaim>,
-        matrix: &[Vec<[i128; 648]>],
+        matrix: Option<&[Vec<[i128; 648]>]>,
         challenges: &Challenges,
         alpha: E,
         rho: &[[E; 648]],
@@ -159,16 +159,7 @@ impl BinaryRootWitnessPlan {
                 .map_err(|_| AkitaError::InvalidProof)?,
             BINARY_SETUP_P,
         )?;
-        let mut terms = a.terms().to_vec();
-        terms
-            .try_reserve_exact(terminal.terms().len())
-            .map_err(|_| AkitaError::InvalidProof)?;
-        terms.extend_from_slice(terminal.terms());
-        NativeRootWeights::new(
-            self.repacking.domain_len(),
-            terms,
-            a.claim() + terminal.claim(),
-        )
+        NativeRootWeights::merge(self.repacking.domain_len(), [a, terminal], E::zero())
     }
 }
 

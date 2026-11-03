@@ -5,7 +5,7 @@
 | Author(s) | Akita contributors |
 | Created | 2026-10-28 |
 | Status | implemented experimental path; security admission pending |
-| PR | Base root: [#290](https://github.com/LayerZero-Labs/akita/pull/290); field switch and exact-divisibility projections on the current branch |
+| PR | Base root: [#290](https://github.com/LayerZero-Labs/akita/pull/290); field switch, exact-divisibility projections, prime planes and typed Stage 3 |
 | Supersedes | None |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
@@ -29,8 +29,8 @@ groups retain their existing encoding and protocol path.
 This is an experimental arithmetic and protocol fixture, with no security
 claim. It uses `P = 2^128 - 275`, base-field challenges (`E = F`), and the
 Lagrange basis. It admits one binary group first, with at most one ordinary
-group second. A binary group may contain several polynomials. It requires an ordinary successor fold whose predecessor setup
-contribution is evaluated directly. It does not add a production binary
+group second. A binary group may contain several polynomials. It requires an ordinary successor fold that consumes the typed A setup-prefix
+claim as an ordinary committed group. It does not add a production binary
 planner profile or certify a new schedule.
 
 ## Commitment and word-claim interfaces
@@ -150,10 +150,10 @@ identify the state transitions of the binary source opening contract.
 | 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
 | 5 | Commit the outgoing witness containing Z/T digits for every polynomial, selected U/EP views and selected K/K_val; a mixed opening also includes ordinary commitment preimages. | Every witness segment, including Z and T, precedes projection rows. |
 | 6 | Draw seven exactly uniform q-valued rows J, then send the seven signed integer values y in order. Check each encoding, bound and divisibility by q. | The outgoing commitment precedes J; all seven y precede output batching. |
-| 7 | Draw the shared ring-switch challenge, range-image point and independent relation-batching weights, whose first seven entries are the output scalars mu; form rho = sum_l mu_l J_l and evaluate direct setup and public weights. | All tested tables, commitments and projection values. |
+| 7 | Draw the shared ring-switch challenge, range-image point and independent relation-batching weights, whose first seven entries are the output scalars mu; form rho = sum_l mu_l J_l and compile the non-A public weights. | All tested tables, commitments and projection values. |
 | 8 | Run the ordinary Stage 1 range-image sumcheck with the base-eight digit alphabet. | The range-image terminal precedes Stage 2 batching. |
 | 9 | Run one fused Stage 2 for sum_l mu_l (<J_l, RA> - y_l) = 0, B/D authentication, selected parity/value and prime response/reading equations, padding, and range-image binding; include ordinary relations when selected. | One final opening of the same outgoing witness. |
-| 10 | Omit root Stage 3: direct setup evaluation at order 7 replaces its adjoint proof and prefix claims. | The authenticated root opening passed to the suffix. |
+| 10 | Bind the typed A prefix identity; send one A product claim for the whole group; run one degree-two Stage 3 sumcheck; send one prefix evaluation. | Each round message precedes its challenge; the A-prefix claim joins the next ordinary grouped fold. |
 | 11 | Continue ordinary grouped recursion and terminal verification. | Return the live caller transcript and, through the readings API, authenticated readings with the conditional-agreement contract; the caller checks exact proof exhaustion. |
 
 Order 1 is absent: application reductions happen before this opening. There
@@ -365,6 +365,211 @@ exactly two 128-bit compression maps. Every native ring degree must be at most
 balanced base-eight digit. The current mixed fixture uses only zero and one.
 Unsupported geometries produce typed errors.
 
+## Typed A setup product
+
+The setup preparer exposes these opt-in methods (the generic CPU field bounds
+are the same as ordinary prefix preparation):
+
+```rust
+pub fn prepare_binary_a_prefixes(
+    &self,
+    manifest: &BinaryCommittedGroupManifest,
+    first: &SetupPrefixSlotId,
+    remaining: &[SetupPrefixSlotId],
+) -> Result<SetupPrefixProverRegistry<F, CommitmentHandle<F, E>>, AkitaError>;
+
+pub fn prepare_binary_a_verifier_setup(
+    &self,
+    ordinary: &AkitaVerifierSetup<F>,
+    manifest: &BinaryCommittedGroupManifest,
+    first: &SetupPrefixSlotId,
+    supplied: &SetupPrefixVerifierSlot<F>,
+) -> Result<AkitaVerifierSetup<F>, AkitaError>;
+
+impl<E: Field> BinaryAProduct<E> {
+    pub fn new(
+        plan: &BinaryRootWitnessPlan,
+        rho: &[[E; 648]],
+        stage2_point: &[E],
+        prefix_len: usize,
+    ) -> Result<Self, AkitaError>;
+    pub fn factors(&self) -> Result<(Vec<E>, Vec<E>), AkitaError>;
+    pub fn evaluate(&self, point: &[E]) -> Result<E, AkitaError>;
+}
+```
+
+The coefficient compiler and stream contracts are:
+
+```rust
+pub fn binary_a_setup_coefficients<F: Field>(
+    seed: &[u8; 32], manifest: &BinaryCommittedGroupManifest, prefix_len: usize,
+) -> Result<Vec<F>, AkitaError>;
+pub fn binary_a_prefix_identity(
+    manifest: &BinaryCommittedGroupManifest, slot: &SetupPrefixSlotId,
+) -> Result<Vec<u8>, AkitaError>;
+pub fn binary_direct_a_weights<E: Field>(
+    plan: &BinaryRootWitnessPlan, matrix: Option<&[Vec<[i128; 648]>]>,
+    challenges: &Challenges, rho: &[[E; 648]], padding_weights: &[E],
+) -> Result<NativeRootWeights<E>, AkitaError>;
+```
+
+The existing relation methods now expose the same rho boundary:
+
+```rust
+impl BinaryRootWitnessPlan {
+    pub fn relation_weights<E: Field>(
+        &self, claim: Option<&BinaryTerminalClaim>, matrix: Option<&[Vec<[i128; 648]>]>,
+        challenges: &Challenges, alpha: E, rho: &[[E; 648]],
+        terminal_batches: &[E], padding_weights: &[E],
+    ) -> Result<NativeRootWeights<E>, AkitaError>;
+}
+impl BinaryRootPublic {
+    pub fn relation<E: Field>(
+        &self, challenges: &Challenges, alpha: E, batches: &[E],
+        rho: &[[E; 648]], projected_values: &[i128; 7],
+        commitment: &[E], d_payload: &[E], ordinary_claim: Option<(&[E], E, &[E])>,
+        matrix: Option<&[Vec<[i128; 648]>]>,
+    ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError>;
+}
+```
+
+Proving passes `Some(matrix)`; verification passes `None`. The canonical direct A compiler retains the image and padding weights in both cases.
+
+The behavior-preserving ordinary seams provide the following signatures:
+
+```rust
+pub struct FactoredStage3Request<'a, F: Field, E: Field, ProofSession> {
+    pub session: &'a ProofSession,
+    pub level: u32,
+    pub coefficients: Arc<[F]>,
+    pub index_factor: Vec<E>,
+    pub coefficient_factor: Vec<E>,
+}
+// OpaqueStage3Kernel method; unsupported backends return UnsupportedSchedule.
+fn begin_factored_stage3(
+    &self, request: FactoredStage3Request<'_, F, E, Self::ProofSessionHandle>,
+) -> Result<(E, Self::Stage3SessionHandle), AkitaError>;
+// CpuBackend method.
+pub fn prepare_setup_prefix_from_coefficients(
+    &self, id: &SetupPrefixSlotId, coefficients: Vec<F>,
+) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError>;
+// AkitaVerifierSetup methods.
+pub fn with_prefix_context(
+    self, id: SetupPrefixSlotId, context: Vec<u8>,
+) -> Result<Self, AkitaError>;
+pub fn prefix_context(&self, id: &SetupPrefixSlotId) -> Option<&[u8]>;
+// Explicit planner selection; ordinary search remains unchanged.
+pub fn find_schedule_with_root_setup_mode(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+    root_setup_mode: SetupContributionMode,
+    root_main_constraint: Option<&CommittedGroupParams>,
+) -> Result<PlannedFoldSchedule, AkitaError>;
+```
+
+Prefix contexts require an existing slot and 1..=262,144 bytes. This is a
+resource cap, not a soundness inequality. With `test-support`,
+`BinaryAReadGuard::forbid() -> BinaryAReadGuard` makes the canonical A accessor
+return an error until the guard is dropped; it adds no proof message.
+
+The scoped prover registry is passed to the canonical grouped backend route;
+the prepared verifier setup is passed to the existing verifier constructor.
+
+The q-valued A stream is separate from every ordinary P-valued setup stream.
+The existing deterministic sampler rejects u32 values at or above
+`4,290,276,109 = 301 q`, then reduces modulo q and centers in
+`[-7,126,704, 7,126,704]`. Exactly 4,691,187 of the 2^32 candidates are rejected.
+The centered coefficients embed in P without changing the source distribution.
+The typed prefix orders coefficients by source row j, padded rank row i, and
+padded coefficient s. The coefficient stride is 1,024 and rank three pads to
+four; all remaining prefix capacity is zero. Its domain must be a power of two
+at least `1,024 * next_power_of_two(rank) * m` (4,096 for this fixture).
+
+Setup preparation commits this table with the ordinary setup-prefix executor,
+checks the supplied commitment against the deterministic typed table once, and
+retains an installation identity containing the stream/layout label, complete
+binary manifest and scheduled slot. Online verification requires that identity.
+A different typed A table or the ordinary stream's table fails preparation;
+a different manifest cannot reuse the prepared verifier view. Scoped contexts
+are transient: serialization rejects before writing bytes, so a persisted
+ordinary setup must have its typed prefix prepared again after loading. The
+recursion glue blob has no field for a context, and its encoder rejects a
+scoped setup the same way. That glue does not yet carry binary statements.
+The first typed slot cannot be reused as an outgoing ordinary setup slot later
+in the same schedule. Ordinary prefix caches remain unchanged.
+
+Write `Psi = Y^648 - Y^324 + 1`. Projection rows cover the joined residual
+in polynomial-major order, so
+`rho[p][i][t] = sum_l mu_l J_l[p][i][t]`. The same A matrix is used by every
+polynomial. Let R be the power-of-two source-row count per polynomial. The
+response segment starts at address zero and orders cells by polynomial,
+source row, four response digits and a 1,024-coefficient stride. Split its
+Stage 2 point into coefficient coordinates `r_t`, two digit coordinates `r_d`,
+`log2(R)` row coordinates `r_j`, and the remaining owner/padding coordinates
+`r_p`. Define
+
+```text
+d = sum_(a=0..3) 8^a eq(r_d,a)
+bar_rho[i][t] = sum_p eq(r_p,p) rho[p][i][t]
+g_i(k) = <bar_rho[i], rem_Psi(Y^k)>
+h_i(s) = d * sum_(t=0..647) eq(r_t,t) g_i(s+t)
+W_A(r) = sum_(j,i,s) A[i][j][s] eq(r_j,j) h_i(s).
+```
+
+The owner contraction uses the entire remaining Stage 2 point, including
+coordinates selecting the response segment against later witness segments.
+Only live owners, rows, rank entries and coefficients contribute; all typed
+prefix padding is zero. This yields one rectangular public weight on the
+shared A prefix, regardless of polynomial count, word-claim presence or prime
+plane count. There is one product claim, one degree-two sumcheck and one
+A-prefix evaluation for the entire group, also when an ordinary group joins.
+No quotient segment or `-q rho` term remains.
+
+The signed reduction kernel is Hankel. The existing trinomial adjoint computes
+each h_i with two exact products of length `2D-1 = 1,295`, without roots of
+unity. Multiplying a full length-1,295 kernel by a length-648 reversed input
+would have length `3D-2 = 1,942`; it is not a single length-1,295 product.
+The implementation splits the products and retains their required windows.
+Its existing arithmetic count is 154,872 field multiplications per adjoint,
+versus 419,904 for the dense 648-by-648 product (464,616 versus 1,259,712 for
+rank three). These counts do not include all surrounding field operations.
+
+Order 10 uses the same Stage 3 session, sumcheck transport and verification
+as ordinary setup offloading:
+
+1. Absorb the canonical typed prefix identity as a public message.
+2. Send the claimed setup product in P.
+3. For each of `k = log2(prefix_len)` rounds, send the two ordinary quadratic
+   sumcheck coefficients, apply the existing scheduled grinding step, and draw
+   the round challenge in P.
+4. Send the A-prefix evaluation at the resulting point. Check the terminal
+   product against the factored public weight.
+5. Combine the setup product with the non-A Stage 2 linear weight and the same
+   witness evaluation.
+
+The resulting prefix point/value enters the next ordinary grouped recursion,
+using the authenticated prepared commitment. The ordinary suffix consumes it;
+the terminal accepts no unconsumed prefix claim. There is no second proof or
+nested transcript. Order 10 contributes `32k + 32` field-message bytes, plus
+any grinding nonces prescribed by the selected schedule. Its interactive
+algebraic error is at most `2k/P`. The fixture uses k = 18, giving
+`36/(2^128-275)`, approximately `1.058e-37` (2^-122.83). This is added to the
+existing root and suffix algebraic terms and the commitment-binding and hash
+errors, including authentication of the typed prefix commitment. No numerical
+binding-security claim is made for the experimental fixture. No new integer no-wrap inequality is needed. This
+experimental path still makes no production SIS or Fiat-Shamir admission claim.
+
+Online verification constructs rank-many adjoints, evaluates the padded
+coefficient factor, and evaluates the row equality product in logarithmic work
+without expanding the source-row domain. It never materializes or reads A.
+Independent long-division differential tests include two-polynomial groups and
+odd row cutoffs, even though the public source descriptor currently
+requires power-of-two padded source geometry. A test-only accessor guard makes
+any root A materialization fail during complete successful verification.
+
 ## Checked fixture bounds
 
 The fixture uses 128-bit words, eight padded carriers, `M = 4` scalar rows,
@@ -456,20 +661,9 @@ grinding and Fiat-Shamir terms. This ledger does not claim an overall
 
 The canonical fixture is
 [binary_source_end_to_end.rs](../crates/akita-pcs/tests/binary_source_end_to_end.rs).
-The measured complete proof sizes for its 128-bit-word fixtures are:
-
-| Protocol | Opening | Before merge | Merged |
-| --- | --- | ---: | ---: |
-| Current | Binary-only | 77,936 | 77,936 |
-| Current | Mixed binary/ordinary | 92,101 | 92,101 |
-| `dev-protocol` | Binary-only | 72,877 | 72,877 |
-| `dev-protocol` | Mixed binary/ordinary | 87,119 | 87,119 |
-
-The before column was remeasured at projection commit `b3c084284`. The merged
-column was measured after combining projections and prime planes. Full proof
-digests, not just lengths, match in both protocol modes when no plane is selected.
-The 8-bit-word fixture measures 77,937 bytes in the current protocol and 72,898
-bytes with `dev-protocol`.
+Complete proof sizes for both protocol modes are recorded in the measured
+proof-size tables below. The selected typed-root suffix differs from the
+previous direct-root schedule.
 
 The projection messages themselves add exactly 84 bytes. Removing the
 committed quotient shrinks the natural outgoing witness by `rank*n_poly*648*8`
@@ -555,6 +749,22 @@ The projection acceptance tests cover the root's additional obligations:
   checks signed encoding, negative zero, out-of-range values, nonmultiples of
   q, and twelve-byte length enforcement.
 
+Typed Stage 3 acceptance coverage is explicit:
+
+| Mutation or property | Test |
+| --- | --- |
+| Every quadratic round coefficient, setup product claim, and prefix evaluation | `stage3_binary_group_opens_once_inside_the_callers_transcript`; `stage3_binary_and_ordinary_groups_share_one_opening` |
+| A different typed A table; the ordinary stream's A-prefix commitment | `stage3_binary_group_opens_once_inside_the_callers_transcript`, through `reject_foreign_prefixes` |
+| Same-geometry manifest swap; missing typed installation identity | `stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof` |
+| No online A read, including an accessor negative control | Both successful `stage3_binary_*` openings |
+| Rank-one/rank-three differential, one/two polynomials, rows 1/2/3/5, independent signed reduction | `stage3_a_product_matches_independent_signed_remainder_and_response_digits` |
+| Zero equality coordinates, odd live-row cutoffs, larger padded prefixes | `stage3_a_product_terminal_matches_dense_factors_with_zero_coordinates_and_odd_cutoff` |
+| Malformed rho, point, and prefix geometry reject without panic | `stage3_a_product_rejects_malformed_rho_point_and_prefix_without_panic` |
+
+The full opening mutation helper catches verifier panics as test failures;
+all proof-field mutations require rejection. Setup-source substitution tests
+exercise the trusted installation boundary before online verification.
+
 The ordinary regression fixture is
 [ordinary_grouped_root_bytes.rs](../crates/akita-pcs/tests/ordinary_grouped_root_bytes.rs),
 which pins a 70,541-byte ordinary proof. Its feature-disabled and
@@ -569,13 +779,13 @@ commitment in both drivers. Each made
 fail with exit code 101. Both mutations were reverted; the restored end-to-end
 suite passes in both protocol modes.
 
-The field switch produces `BinaryTerminalClaim` for the existing root. The
-direct A-term function
-[`binary_direct_a_weights`](../crates/akita-types/src/binary_source/root_plan.rs)
-takes the explicit `rho[i][t]` projection weights over all polynomial/rank rows
-and is the replacement point for a typed Stage 3 adjoint. Optional EP planes
-authenticate prime claims as described below; no agreement proof is discharged
-by a binary terminal alone.
+The field switch produces the optional `BinaryTerminalClaim` for the existing
+root. The canonical A-term compiler
+[`binary_direct_a_weights`](../crates/akita-types/src/binary_source/root_projection_weights.rs)
+takes explicit projection weights over all polynomial/rank rows. Typed Stage 3
+authenticates its setup contribution without an online A read. Optional EP
+planes authenticate prime claims as described below; no agreement proof is
+discharged by a binary terminal alone.
 
 ## Prime evaluation planes
 
@@ -779,32 +989,46 @@ each owner an independent security budget.
 
 ## Measured proof sizes
 
-The eight-carrier, C=2 test fixture uses the existing ordinary suffix catalog.
-Each plane in these measurements has a distinct prime point. Sizes include the
-whole grouped opening inside the caller's transcript.
+The eight-carrier, C=2 fixtures retain their existing source and suffix geometry.
+The following complete grouped proofs were measured from all 27 end-to-end
+tests in both protocol modes after merging projections, prime planes and typed
+Stage 3. Each plane in these measurements has a distinct prime point. Every
+binary group uses one Stage 3 inside the caller's transcript.
 
 | Reading | Planes | Current protocol bytes | `dev-protocol` bytes |
 | --- | ---: | ---: | ---: |
-| Prime only | 1 | 75,782 | 70,698 |
-| Prime only | 2 | 75,761 | 70,707 |
-| Prime only | 5 | 75,760 | 70,682 |
-| Word and prime | 1 | 77,938 | 72,840 |
-| Word and prime | 2 | 77,937 | 72,831 |
-| Word and prime | 5 | 77,897 | 72,910 |
-| Word and prime, mixed ordinary | 1 | 92,129 | 87,019 |
-| Word and prime, mixed ordinary | 2 | 92,120 | 87,101 |
-| Word and prime, mixed ordinary | 5 | 92,110 | 87,072 |
+| Prime only | 1 | 83,880 | 78,758 |
+| Prime only | 2 | 83,863 | 78,851 |
+| Prime only | 5 | 83,896 | 78,803 |
+| Word and prime | 1 | 86,010 | 80,974 |
+| Word and prime | 2 | 86,043 | 80,997 |
+| Word and prime | 5 | 86,075 | 80,979 |
+| Prime only, mixed ordinary | 1 | 83,987 | 78,940 |
+| Prime only, mixed ordinary | 2 | 84,009 | 78,875 |
+| Prime only, mixed ordinary | 5 | 83,974 | 78,864 |
+| Word and prime, mixed ordinary | 1 | 86,160 | 81,091 |
+| Word and prime, mixed ordinary | 2 | 86,189 | 81,118 |
+| Word and prime, mixed ordinary | 5 | 86,200 | 81,125 |
 
-With no prime claims, the base and updated word-only proofs are byte-identical:
+The word-only fixtures use the same typed Stage 3 root without prime planes:
 
 | Fixture | Current protocol bytes | `dev-protocol` bytes |
 | --- | ---: | ---: |
-| Binary word, width 128 | 77,936 | 72,877 |
-| Binary word, width 8 | 77,937 | 72,898 |
-| Binary word and ordinary group | 92,101 | 87,119 |
+| Binary word, width 128 | 86,092 | 80,953 |
+| Binary word, width 8 | 86,035 | 81,004 |
+| Binary word and ordinary group | 86,159 | 81,068 |
 
-The compatibility fixture pins full proof digests captured from base commit
-`b3c084284`, re-executed in both protocol modes before the merge measurement.
-Duplicate requests also produce identical proof bytes. The new two-polynomial,
-one-plane prime-only mutation fixture measures 75,869 bytes in the current
-protocol and 70,855 bytes in the dev protocol.
+The separate ordinary regression remains 70,541 bytes in the current protocol,
+with the extension feature both disabled and enabled.
+The compatibility fixture pins all six binary word-only proof lengths and
+full digests. Duplicate prime requests also produce identical proof bytes.
+
+Several-polynomial measurements use two source polynomials, still sharing one
+projection set, one A prefix, and one Stage 3:
+
+| Two-polynomial reading | Planes | Current protocol bytes | `dev-protocol` bytes |
+| --- | ---: | ---: | ---: |
+| Word only | 0 | 85,265 | 80,173 |
+| Prime only, projection mutation fixture | 1 | 83,072 | 77,948 |
+| Prime only | 2 | 83,014 | 78,019 |
+| Word and prime | 2 | 85,292 | 80,197 |

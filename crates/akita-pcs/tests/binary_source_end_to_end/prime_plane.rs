@@ -92,6 +92,7 @@ fn prime_plane_mixed_ordinary_group() {
     run_on_large_stack(|| {
         for planes in [1, 2, 5] {
             fixture(true, true, planes, 1, false);
+            fixture(true, false, planes, 1, false);
         }
     });
 }
@@ -100,6 +101,7 @@ fn prime_plane_mixed_ordinary_group() {
 fn prime_plane_several_polynomials_do_not_share() {
     init_rayon_pool();
     run_on_large_stack(|| {
+        fixture(false, true, 0, 2, false);
         fixture(false, true, 2, 2, false);
         fixture(false, false, 2, 2, false);
     });
@@ -153,7 +155,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         .map(|owner| WORDS.iter().map(|x| x ^ owner as u128).collect::<Vec<_>>())
         .collect::<Vec<_>>();
     let source = backend
-        .import_binary_source(manifest, carrier, words.clone())
+        .import_binary_source(manifest.clone(), carrier, words.clone())
         .unwrap();
     let committed = backend
         .commit(
@@ -198,6 +200,43 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     } else {
         (None, None, Vec::new(), F::zero())
     };
+    let root_key = if mixed {
+        ScheduleLookupKey {
+            final_group: PolynomialGroupLayout::singleton(18),
+            precommitteds: vec![carrier],
+        }
+    } else {
+        ScheduleLookupKey::single(layout)
+    };
+    let resolved = scheme.schedules().resolve_key(&root_key).unwrap();
+    let first_prefix = resolved.schedule().recursive_folds[0]
+        .params
+        .setup_prefix()
+        .unwrap()
+        .slot_id()
+        .unwrap();
+    let later_prefixes = resolved
+        .schedule()
+        .recursive_folds
+        .iter()
+        .skip(1)
+        .filter_map(|fold| {
+            fold.params
+                .setup_prefix()
+                .and_then(|prefix| prefix.slot_id())
+        })
+        .collect::<Vec<_>>();
+    let prefixes = backend
+        .prepare_binary_a_prefixes(&manifest, &first_prefix, &later_prefixes)
+        .unwrap();
+    let verifier_setup = backend
+        .prepare_binary_a_verifier_setup(
+            &scheme.setup_verifier(&setup).unwrap(),
+            &manifest,
+            &first_prefix,
+            &prefixes.get(&first_prefix).unwrap().public,
+        )
+        .unwrap();
     let prove = |primes: Vec<PrimePlaneClaim>| {
         let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
             commitment.clone(),
@@ -235,31 +274,43 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             .transmitted_coefficients();
         let mut prover = new_prover_channel(b"prime-plane-e2e", b"caller").unwrap();
         prover.public_message(b"application-prefix");
-        scheme
-            .batched_prove_in_session(
-                &setup,
-                data,
-                backend.as_ref(),
-                &mut prover,
-                BasisMode::Lagrange,
-            )
-            .unwrap();
+        akita_transcript::clear_thread_events();
+        let mut registry = akita_prover::BackendRegistry::<BinaryTestSuffix>::new().unwrap();
+        let root = registry.register(backend.as_ref(), &prefixes).unwrap();
+        let mut route =
+            akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+        akita_prover::batched_prove_in_session::<BinaryTestSuffix, _>(
+            setup.expanded.descriptor(),
+            scheme.schedules(),
+            &registry,
+            data,
+            &mut prover,
+            BasisMode::Lagrange,
+            &mut route,
+        )
+        .unwrap();
+        akita_transcript::finish_proof_ranges(&prover);
+        let ranges = akita_transcript::thread_proof_ranges();
+        let _ = stage3::message_offsets(
+            &ranges,
+            first_prefix.n_prefix().unwrap().trailing_zeros() as usize,
+        );
         let bytes = prover.narg_string().to_vec();
         prover.public_message(b"application-suffix");
         (
             bytes,
             prover.verifier_message::<[u8; 32]>(),
             successor_coefficients,
+            ranges,
         )
     };
-    let (proof, continuation, successor_coefficients) = prove(primes.clone());
+    let (proof, continuation, successor_coefficients, ranges) = prove(primes.clone());
     eprintln!(
-        "prime_plane mixed={mixed} word={word} owners={owners} planes={planes}: {} bytes",
+        "prime_plane dev={} mixed={mixed} word={word} owners={owners} planes={planes}: {} bytes",
+        akita_params::DEV_PROTOCOL,
         proof.len()
     );
-    let verifier = scheme
-        .verifier(scheme.setup_verifier(&setup).unwrap())
-        .unwrap();
+    let verifier = scheme.verifier(verifier_setup).unwrap();
     let verify = |bytes: &[u8], commitment: &CommittedGroup<F>, primes: Vec<PrimePlaneClaim>| {
         let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
             commitment.clone(),
@@ -303,7 +354,9 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         assert_eq!(old_replay.verifier_message::<[u8; 32]>()?, continuation);
         old_replay.check_eof()
     };
+    let no_a_reads = akita_types::binary_source::BinaryAReadGuard::forbid();
     verify(&proof, &commitment, primes.clone()).unwrap();
+    drop(no_a_reads);
     if planes == 1 {
         let mut duplicated = primes.clone();
         duplicated.push(primes[0].clone());
@@ -325,6 +378,12 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         assert!(result.is_ok(), "{label} caused verifier panic");
         assert!(result.unwrap().is_err(), "{label} accepted");
     };
+    stage3::reject_each_message(
+        &proof,
+        &ranges,
+        first_prefix.n_prefix().unwrap().trailing_zeros() as usize,
+        |bytes| rejects("Stage 3 message", bytes, &commitment, primes.clone()),
+    );
     projection::mutate_values(&proof, successor_coefficients, word, owners, |bytes| {
         rejects("projection output", bytes, &commitment, primes.clone());
     });
@@ -392,7 +451,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             let mut prover = new_prover_channel(b"prime-plane-e2e", b"caller").unwrap();
             prover.public_message(b"application-prefix");
             attacker
-                .prove_prime_fault(&setup, scheme.schedules(), data, &mut prover)
+                .prove_prime_fault(&setup, scheme.schedules(), &prefixes, data, &mut prover)
                 .unwrap();
             let malformed = prover.narg_string().to_vec();
             eprintln!(
@@ -534,12 +593,14 @@ fn multiple_owner_catalog(
 ) -> TrustedScheduleCatalog<BinaryTestSuffix> {
     let chunking = ChunkedWitnessCfg::default_non_chunked();
     let policy = akita_config::policy_of::<BinaryTestSuffix>(chunking);
-    let schedule = akita_planner::find_schedule(
+    let schedule = akita_planner::find_schedule_with_root_setup_mode(
         &ScheduleLookupKey::single(layout),
         BinaryTestSuffix::committed_source_contract().unwrap(),
         &[],
         &policy,
         BinaryTestSuffix::ring_challenge_config,
+        akita_params::SetupContributionMode::Recursive,
+        None,
     )
     .unwrap()
     .schedule;

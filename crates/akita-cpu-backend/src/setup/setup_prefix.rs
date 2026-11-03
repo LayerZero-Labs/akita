@@ -23,6 +23,15 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
     expanded: &AkitaExpandedSetup<F>,
     id: &'a SetupPrefixSlotId,
 ) -> Result<ValidatedSetupPrefixCommitment<'a>, AkitaError> {
+    validate_setup_prefix_source(id, expanded.shared_matrix().num_field_elements())
+}
+
+/// Extension seam: validate a prefix against its supplied coefficient source.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+pub(crate) fn validate_setup_prefix_source(
+    id: &SetupPrefixSlotId,
+    source_len: usize,
+) -> Result<ValidatedSetupPrefixCommitment<'_>, AkitaError> {
     let commitment_profile = &id.commitment_profile;
     commitment_profile.validate(
         commitment_profile
@@ -54,7 +63,7 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
             "level params witness shape {witness_ring_slots} ring slots does not match full setup prefix {full_prefix_ring_slots}"
         )));
     }
-    if n_prefix > expanded.shared_matrix().num_field_elements() {
+    if n_prefix > source_len {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length exceeds shared matrix capacity".to_string(),
         ));
@@ -100,9 +109,6 @@ where
     SP: CommitmentStatePolicy<F>,
     SP::State: IntoPortableCommitmentState<F>,
 {
-    executor.validate_setup(expanded)?;
-    let id = validated.id;
-    let commitment_profile = &id.commitment_profile;
     let source_coefficients = expanded
         .shared_matrix()
         .as_field_slice()
@@ -111,10 +117,30 @@ where
             AkitaError::InvalidSetup("setup prefix length exceeds shared matrix capacity".into())
         })?
         .to_vec();
-    let source =
-        DensePoly::from_field_evals(commitment_profile.group.num_vars(), source_coefficients)?;
+    let source = DensePoly::from_field_evals(
+        validated.id.commitment_profile.group.num_vars(),
+        source_coefficients,
+    )?;
+    commit_setup_prefix_source(expanded, executor, validated, &source)
+}
+
+/// Extension seam: commit a validated prefix with the canonical commitment executor.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+pub(crate) fn commit_setup_prefix_source<F, SP>(
+    expanded: &AkitaExpandedSetup<F>,
+    executor: &CommitmentExecutor<'_, F, SP>,
+    validated: ValidatedSetupPrefixCommitment<'_>,
+    source: &DensePoly<F>,
+) -> Result<SetupPrefixSlot<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding + 'static,
+    SP: CommitmentStatePolicy<F>,
+    SP::State: IntoPortableCommitmentState<F>,
+{
+    executor.validate_setup(expanded)?;
+    let id = validated.id;
     let plan = validated.plan;
-    let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+    let sources: [&dyn CommitmentSource<F>; 1] = [source];
     executor.preflight_portable_export(&plan, &sources)?;
     let output = executor.execute_full(&plan, &sources)?;
     let (terminal_payload, prover_state) = output.into_parts();

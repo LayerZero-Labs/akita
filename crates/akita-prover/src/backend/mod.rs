@@ -48,7 +48,7 @@ pub use plans::{
     ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan, WitnessCommitmentParameters,
 };
 pub use scope::{ProofScope, ProofScopeConsumer, ProofScopeId};
-pub use stage3::{OpaqueStage3Kernel, Stage3Request};
+pub use stage3::{FactoredStage3Request, OpaqueStage3Kernel, Stage3Request};
 pub use traits::{
     OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel, OpaqueRelationWitnessKernel,
     OpaqueResourceReleaseKernel, OpaqueStage1Kernel, OpaqueStage2Kernel, OpaqueTerminalFoldKernel,

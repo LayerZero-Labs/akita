@@ -206,6 +206,50 @@ where
         self.issue_setup_prefix_handle(id, cached)
     }
 
+    /// Extension seam: retain a separately scoped public coefficient prefix.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// This method does not populate the ordinary slot-id cache. The caller
+    /// authenticates the supplied coefficients at its setup-preparation boundary.
+    pub fn prepare_setup_prefix_from_coefficients(
+        &self,
+        id: &SetupPrefixSlotId,
+        coefficients: Vec<F>,
+    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError> {
+        let prepared = self.prepared()?;
+        if coefficients.len() != id.n_prefix()? {
+            return Err(AkitaError::InvalidInput(
+                "setup prefix source must fill its committed domain".into(),
+            ));
+        }
+        let validated =
+            crate::setup::setup_prefix::validate_setup_prefix_source(id, coefficients.len())?;
+        let polynomial =
+            DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
+        let executor = CommitmentExecutor::cpu(
+            self,
+            prepared,
+            &prepared.expanded,
+            vec![PolynomialType::Dense(DenseType::Coefficients)],
+            PortableStatePolicy,
+        )?;
+        let artifact = crate::setup::setup_prefix::commit_setup_prefix_source(
+            &prepared.expanded,
+            &executor,
+            validated,
+            &polynomial,
+        )?;
+        self.issue_setup_prefix_handle(
+            id,
+            Arc::new(CachedSetupPrefix {
+                artifact,
+                source: Arc::new(OwnedPolynomials {
+                    polynomials: vec![polynomial],
+                }),
+            }),
+        )
+    }
+
     /// Validate portable artifacts and issue handles owned by this backend.
     ///
     /// Every retained image and public commitment is checked against recomputed
@@ -391,3 +435,6 @@ mod tests {
 
 #[cfg(test)]
 mod cache_tests;
+
+#[cfg(test)]
+mod scoped_tests;

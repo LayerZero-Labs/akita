@@ -29,6 +29,7 @@ const D: usize = 648;
 type AuxiliaryRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
 
 mod evaluation;
+mod setup_prefix;
 pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
 
 /// An integer identity `sum A*z - sum iota(c)*T = remainder + Psi*quotient`.

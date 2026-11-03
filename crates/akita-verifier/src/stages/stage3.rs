@@ -90,43 +90,60 @@ impl<E: Field> SetupSumcheckVerifier<E> {
                 "Stage 3 setup ring dimension must be nonzero".into(),
             ));
         }
-        bind_setup_prefix_slot(
+        let encoded_slot = setup_prefix_slot_encoding(
             setup,
             next_fold_level_params,
             geometry.natural_field_len(),
             ring_d,
-            grinding,
-            level,
         )?;
-        let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
-        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
-            grinding,
-            akita_params::SumcheckProtocol::Stage3,
-            level,
-            0,
-        );
-        let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-            &mut channel,
-            0,
-            claim,
-            akita_sumcheck::SumcheckShape::new(self.rounds, SETUP_SUMCHECK_DEGREE)?,
-        )?;
-        let setup_prefix_eval =
-            akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
-        let (rho_y, rho_setup_idx) = replay.challenges.split_at(self.ring_bits);
-        let setup_index_weight = self
-            .setup_index_weight
-            .evaluate(rho_setup_idx, self.alpha)?;
-        let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
-        if replay.output_claim != setup_prefix_eval * setup_index_weight * alpha_val {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(SetupSumcheckReplay {
-            claim,
-            setup_prefix_eval,
-            challenges: replay.challenges,
+        verify_stage3_session::<F, E>(self.rounds, &encoded_slot, grinding, level, |challenges| {
+            let rho_y = challenges
+                .get(..self.ring_bits)
+                .ok_or(AkitaError::InvalidProof)?;
+            let rho_setup_idx = challenges
+                .get(self.ring_bits..)
+                .ok_or(AkitaError::InvalidProof)?;
+            let setup_index_weight = self
+                .setup_index_weight
+                .evaluate(rho_setup_idx, self.alpha)?;
+            Ok(setup_index_weight * evaluate_power_sequence_mle(self.alpha, rho_y))
         })
     }
+}
+
+/// Extension seam: replay the ordinary Stage 3 transcript for an authenticated
+/// setup prefix and check its terminal product against the caller's two factors.
+/// <https://github.com/LayerZero-Labs/akita/issues/285>.
+pub(crate) fn verify_stage3_session<F, E>(
+    rounds: usize,
+    encoded_slot: &[u8],
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    level: u32,
+    weight: impl FnOnce(&[E]) -> Result<E, AkitaError>,
+) -> Result<SetupSumcheckReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + AkitaSerialize,
+{
+    let shape = akita_sumcheck::SumcheckShape::new(rounds, SETUP_SUMCHECK_DEGREE)?;
+    akita_types::stage3_public_slot(grinding, level, encoded_slot)?;
+    let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_params::SumcheckProtocol::Stage3,
+        level,
+        0,
+    );
+    let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(&mut channel, 0, claim, shape)?;
+    let setup_prefix_eval = akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
+    if replay.output_claim != setup_prefix_eval * weight(&replay.challenges)? {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(SetupSumcheckReplay {
+        claim,
+        setup_prefix_eval,
+        challenges: replay.challenges,
+    })
 }
 
 /// Replay Stage 3 for a fold whose successor defers the setup contribution.
@@ -159,20 +176,20 @@ where
     verifier.verify::<F>(setup, next_params, grinding, level)
 }
 
-/// Resolve the planned setup-prefix slot in the verifier setup, check that it
-/// covers the Stage 3 setup product, and absorb its public slot id.
+/// Extension seam: resolve an ordinary prefix without accepting scoped streams.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+///
+/// Check that the slot covers the Stage 3 setup product and encode its public id.
 ///
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
 /// common base ring dimension is a power of two.
-fn bind_setup_prefix_slot<F>(
+fn setup_prefix_slot_encoding<F>(
     setup: &AkitaVerifierSetup<F>,
     next_fold_level_params: &CommittedGroupParams,
     natural_field_len: usize,
     ring_d: usize,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
-    level: u32,
-) -> Result<(), AkitaError>
+) -> Result<Vec<u8>, AkitaError>
 where
     F: Field + CanonicalEncoding,
 {
@@ -182,6 +199,11 @@ where
     let selected_slot_id = selected_prefix.slot_id().ok_or_else(|| {
         AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
     })?;
+    if setup.prefix_context(&selected_slot_id).is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "ordinary Stage 3 cannot consume a scoped setup prefix".into(),
+        ));
+    }
     let slot = setup.prefix_slots().get(&selected_slot_id).ok_or_else(|| {
         AkitaError::InvalidSetup(
             "planned setup-prefix slot is missing from verifier setup".to_string(),
@@ -199,7 +221,7 @@ where
     slot.id
         .serialize_compressed(&mut encoded_slot)
         .map_err(|_| AkitaError::InvalidProof)?;
-    akita_types::stage3_public_slot(grinding, level, &encoded_slot)
+    Ok(encoded_slot)
 }
 
 #[cfg(test)]

@@ -77,7 +77,7 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
     let weights = plan
         .relation_weights(
             Some(&claim),
-            &matrix,
+            Some(&matrix),
             &challenges,
             F::from_u64(17),
             &[[F::one(); 648]; 2],
@@ -101,7 +101,7 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
     invalid_matrix[0][0][0] = i128::from(CANONICAL_IMAGE_WINDOW.1) + 1;
     assert!(binary_direct_a_weights(
         &plan,
-        &invalid_matrix,
+        Some(&invalid_matrix),
         &challenges,
         &[[F::one(); 648]; 2],
         &vec![F::one(); padding_count]

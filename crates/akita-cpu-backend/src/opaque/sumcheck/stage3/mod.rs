@@ -5,13 +5,15 @@
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
 //! `setup_index_weight(i) * alpha(y)` table.
 
+#[cfg(test)]
+mod factored_tests;
 mod product_table;
 #[cfg(test)]
 mod session_tests;
 mod utils;
 
 use crate::opaque::OperationBinding;
-use crate::opaque::{CpuBackend, OpaqueStage3Kernel, Stage3Request};
+use crate::opaque::{CpuBackend, FactoredStage3Request, OpaqueStage3Kernel, Stage3Request};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use jolt_poly::UnivariatePoly;
@@ -114,6 +116,59 @@ where
             request.alpha,
             setup_x_challenges,
             request.address_geometry,
+        )?;
+        let claim = setup.input_claim();
+        Ok((
+            claim,
+            CpuStage3Session {
+                binding,
+                lease,
+                setup,
+                round: 0,
+                pending: None,
+                claim,
+            },
+        ))
+    }
+
+    /// Extension seam: attach an admitted alternate setup table to the same
+    /// rectangular product and linear session used by ordinary Stage 3.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    fn begin_factored_stage3(
+        &self,
+        request: FactoredStage3Request<'_, F, E, Self::ProofSessionHandle>,
+    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        if !request.index_factor.len().is_power_of_two()
+            || !request.coefficient_factor.len().is_power_of_two()
+        {
+            return Err(AkitaError::InvalidInput(
+                "factored setup-product factors must have nonempty power-of-two lengths".into(),
+            ));
+        }
+        let expected_len = akita_error::checked::product([
+            request.index_factor.len(),
+            request.coefficient_factor.len(),
+        ])
+        .ok_or_else(|| AkitaError::InvalidInput("factored setup-product size overflow".into()))?;
+        if request.coefficients.len() != expected_len {
+            return Err(AkitaError::InvalidInput(
+                "factored setup-product table length differs from its factors".into(),
+            ));
+        }
+        let proof = request.session.validate_owner(self.owner())?;
+        let context = crate::opaque::ProofContext::new(
+            self.owner_id(),
+            self.owner().setup_digest(),
+            proof.scope_id(),
+            request.level,
+        );
+        let binding = self.binding(request.session, &context)?;
+        let lease = binding.scope_lease().clone();
+        let setup = RectangularSetupProductTerm::new(
+            SetupProductSource::Owned(request.coefficients),
+            request.index_factor.len(),
+            request.index_factor,
+            request.coefficient_factor,
         )?;
         let claim = setup.input_claim();
         Ok((

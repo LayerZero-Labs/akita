@@ -252,6 +252,42 @@ impl<E: Field> NativeRootWeights<E> {
             claim,
         })
     }
+
+    /// Join ordered linear oracles on one domain, adding an independent target.
+    /// Reuse the first oracle's storage rather than copying its padding terms.
+    pub(crate) fn merge(
+        table_len: usize,
+        components: impl IntoIterator<Item = Self>,
+        claim: E,
+    ) -> Result<Self, AkitaError> {
+        let components = components.into_iter().collect::<Vec<_>>();
+        if !table_len.is_power_of_two()
+            || components
+                .iter()
+                .any(|weights| weights.table_len != table_len)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "root weight domains differ during merge".into(),
+            ));
+        }
+        let additional = checked::sum(components.iter().skip(1).map(|weights| weights.terms.len()))
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut components = components.into_iter();
+        let Some(mut merged) = components.next() else {
+            return Self::new(table_len, Vec::new(), claim);
+        };
+        merged
+            .terms
+            .try_reserve_exact(additional)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        merged.claim = claim + merged.claim;
+        for weights in components {
+            merged.terms.extend(weights.terms);
+            merged.claim += weights.claim;
+        }
+        Ok(merged)
+    }
+
     pub fn table_len(&self) -> usize {
         self.table_len
     }

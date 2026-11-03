@@ -12,6 +12,9 @@ use std::sync::Arc;
 
 pub(super) enum SetupProductSource<F: Field> {
     Expanded(Arc<akita_types::AkitaExpandedSetup<F>>),
+    /// Extension seam: retain an alternate authenticated coefficient source.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    Owned(Arc<[F]>),
     #[cfg(test)]
     Table(Vec<F>),
 }
@@ -20,6 +23,7 @@ impl<F: Field> SetupProductSource<F> {
     fn coefficients(&self) -> &[F] {
         match self {
             Self::Expanded(setup) => setup.shared_matrix().as_field_slice(),
+            Self::Owned(table) => table,
             #[cfg(test)]
             Self::Table(table) => table,
         }

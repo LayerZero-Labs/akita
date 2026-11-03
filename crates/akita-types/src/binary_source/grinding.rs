@@ -12,7 +12,7 @@ use akita_params::{
 /// This is an experimental execution plan, not catalog or security admission.
 /// It is selected explicitly by a native root, never by feature enablement.
 /// The resulting single cursor covers response rejection, both root sumchecks,
-/// and all subsequent folds. Direct setup evaluation has no root Stage 3 query.
+/// the root Stage 3, and all subsequent folds.
 pub fn binary_root_grinding_plan(
     ordinary: &GrindingPlan,
     fold_coordinates: &[usize],
@@ -100,12 +100,15 @@ pub fn binary_root_grinding_plan(
             order,
         )?);
     }
-    runs.extend(
-        ordinary
-            .runs()
-            .iter()
-            .copied()
-            .filter(|run| run.site().level() != 0),
-    );
+    runs.extend(ordinary.runs().iter().copied().filter(|run| {
+        run.site().level() != 0
+            || matches!(
+                run.site(),
+                GrindingSite::SumcheckRound {
+                    protocol: SumcheckProtocol::Stage3,
+                    ..
+                }
+            )
+    }));
     GrindingPlan::new(runs, order)
 }

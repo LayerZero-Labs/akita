@@ -45,17 +45,19 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
+    pub(crate) root_setup_mode: Option<akita_params::SetupContributionMode>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
 }
 
 impl ScheduleSearchOptions<'_> {
-    const fn canonical() -> Self {
+    pub(crate) const fn canonical() -> Self {
         Self {
             relation_traversal_order: super::schedule_params::RelationTraversalOrder::Canonical,
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            root_setup_mode: None,
             #[cfg(test)]
             query_prefix_count: 0,
         }
@@ -843,6 +845,7 @@ pub(crate) fn find_schedule_in_relation_order(
         root_lookup_key: Some(key),
         root_main_constraint: options.root_main_constraint,
         adaptation_guide: options.adaptation_guide,
+        root_setup_mode: options.root_setup_mode,
         root_source_contract: Some(final_source_contract),
         precommitted_source_contracts,
         level_zero_is_root: true,

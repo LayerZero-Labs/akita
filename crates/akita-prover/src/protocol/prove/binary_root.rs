@@ -16,7 +16,7 @@ use jolt_field::{AdditiveGroup, Zero};
 #[allow(clippy::type_complexity)]
 pub(super) fn prove_root<Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
-    _prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
     layout: &OpeningClaimsLayout,
@@ -66,9 +66,9 @@ where
         .recursive_folds
         .first()
         .ok_or(AkitaError::InvalidProof)?;
-    if next.predecessor_setup_contribution_mode() == SetupContributionMode::Recursive {
+    if next.predecessor_setup_contribution_mode() != SetupContributionMode::Recursive {
         return Err(AkitaError::InvalidInput(
-            "binary root requires direct setup evaluation".into(),
+            "binary root requires a typed setup-prefix successor".into(),
         ));
     }
     let ordinary_group = claims.groups().get(1);
@@ -292,15 +292,24 @@ where
             ))
         })
         .transpose()?;
+    let mu = batches
+        .get(..7)
+        .ok_or(AkitaError::InvalidProof)?
+        .try_into()
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let rho = projections.batch(&mu)?;
+    let matrix =
+        akita_types::binary_source::binary_root_matrix(&expanded.setup_seed.seed, manifest)?;
     let (relation, negative_binary_weights) = public.relation(
         &challenges,
         alpha,
         &batches,
-        &projections,
+        &rho,
         &projected_values,
         &payload,
         &d_payload,
         ordinary_claim,
+        Some(&matrix),
     )?;
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
@@ -337,6 +346,45 @@ where
         0,
         stage2.witness_evaluation,
     )?;
+    let prefix = next
+        .params
+        .setup_prefix()
+        .and_then(|p| p.slot_id())
+        .ok_or_else(|| AkitaError::InvalidInput("binary root has no typed prefix slot".into()))?;
+    if prefix_slots.get(&prefix).is_none() {
+        return Err(AkitaError::InvalidInput(
+            "binary root typed prefix was not prepared".into(),
+        ));
+    }
+    let product = akita_types::binary_source::BinaryAProduct::new(
+        public.plan(),
+        &rho,
+        &stage2.challenges,
+        prefix.n_prefix()?,
+    )?;
+    let (index_factor, coefficient_factor) = product.factors()?;
+    let coefficients = akita_types::binary_source::binary_a_setup_coefficients(
+        &expanded.setup_seed.seed,
+        manifest,
+        prefix.n_prefix()?,
+    )?;
+    let (claim, session) =
+        backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
+            session: proof_session,
+            level: 0,
+            coefficients: coefficients.into(),
+            index_factor,
+            coefficient_factor,
+        })?;
+    let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
+        backend,
+        session,
+        claim,
+        prefix.n_prefix()?.trailing_zeros() as usize,
+        &akita_types::binary_source::binary_a_prefix_identity(manifest, &prefix)?,
+        grinding,
+        0,
+    )?;
     backend.advance_witness_level(&mut witness)?;
     Ok(ProveLevelOutput {
         next_state: SuffixProverState {
@@ -347,7 +395,7 @@ where
                 binding: committed.binding,
                 sumcheck_challenges: stage2.challenges,
                 opening: stage2.witness_evaluation,
-                setup_prefix_opening: None,
+                setup_prefix_opening: Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
             },
         },
     })
