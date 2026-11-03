@@ -16,6 +16,7 @@ use smallvec::SmallVec;
 pub use profile::{
     BinaryChallengeFamily, BinaryChallengeProfile, BinaryScalarRing, BinarySignRule,
 };
+pub use root_family::binary_root_profile;
 pub use sampler::BinaryChallengeSampler;
 
 use sign::coefficient_signs;

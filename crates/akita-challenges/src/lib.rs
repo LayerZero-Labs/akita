@@ -28,8 +28,9 @@ mod sampler;
 
 #[cfg(feature = "labinius-challenges")]
 pub use binary::{
-    BinaryChallenge, BinaryChallengeFamily, BinaryChallengeProfile, BinaryChallengeSampler,
-    BinaryChallengeTerm, BinaryScalarRing, BinarySignRule, INLINE_BINARY_WEIGHT,
+    binary_root_profile, BinaryChallenge, BinaryChallengeFamily, BinaryChallengeProfile,
+    BinaryChallengeSampler, BinaryChallengeTerm, BinaryScalarRing, BinarySignRule,
+    INLINE_BINARY_WEIGHT,
 };
 pub use challenge::{
     SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions, INLINE_SPARSE_WEIGHT,

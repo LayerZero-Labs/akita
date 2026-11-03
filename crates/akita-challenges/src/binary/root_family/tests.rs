@@ -46,9 +46,9 @@ fn entropy_and_prime_unit_condition_are_exact() {
         choose = choose * (163 - i) / i;
         support_count += &choose;
     }
-    assert_eq!(&support_count, profile().unwrap().cardinality());
+    assert_eq!(&support_count, binary_root_profile().unwrap().cardinality());
     assert_eq!(
-        profile().unwrap().cardinality().to_string(),
+        binary_root_profile().unwrap().cardinality().to_string(),
         "107268495235892251993000716928106195079952"
     );
     assert!((entropy_bits(162) - 136.3002783090589).abs() < 1e-11);
@@ -72,7 +72,7 @@ fn ordinary_group_root_selects_binary_family_and_indexed_columns() {
         )
         .unwrap();
     assert!(draw.payload.ends_with(IDENTITY));
-    let reference = BinaryChallengeSampler::new(profile().unwrap())
+    let reference = BinaryChallengeSampler::new(binary_root_profile().unwrap())
         .sample_from_seed(&draw.seed, 8)
         .unwrap();
     for (actual, expected) in challenges.as_slice().iter().zip(reference) {
@@ -143,7 +143,7 @@ fn ordinary_group_root_selects_binary_family_and_indexed_columns() {
 
 #[test]
 fn distinct_supports_have_distinct_binary_images_including_zero() {
-    let profile = profile().unwrap();
+    let profile = binary_root_profile().unwrap();
     let mut seen = std::collections::HashSet::new();
     let mut sign_input = Vec::new();
     let mut signs = Vec::new();
