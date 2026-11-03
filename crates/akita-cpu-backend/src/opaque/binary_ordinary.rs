@@ -122,12 +122,9 @@ where
                     .map(|digits| digits.into_parts().0)
                 }
             )?;
-            let expected_t = checked::product([
-                image_elements,
-                profile.outer.digits.num_digits,
-                a_degree,
-            ])
-            .ok_or(AkitaError::InvalidProof)?;
+            let expected_t =
+                checked::product([image_elements, profile.outer.digits.num_digits, a_degree])
+                    .ok_or(AkitaError::InvalidProof)?;
             if digits.len() != expected_t {
                 return Err(AkitaError::InvalidProof);
             }

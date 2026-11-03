@@ -136,7 +136,9 @@ mod tests {
             expected_policy.decomposition = decomposition;
             expected_policy.inner_basis_range = (3, 3);
             expected_policy.opening_basis_range = (3, 3);
-            expected_policy.ring_dimension_schedule.potential_a_dimensions = &[64, 256];
+            expected_policy
+                .ring_dimension_schedule
+                .potential_a_dimensions = &[64, 256];
             let expected = find_schedule(
                 &ScheduleLookupKey::single(group),
                 contract,

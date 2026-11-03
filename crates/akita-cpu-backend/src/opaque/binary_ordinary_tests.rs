@@ -238,7 +238,9 @@ fn signed_extrema_all_slots_and_all_commitment_rows_authenticate() {
                 assert_eq!(input.values[0][0], F::from_i128(-(1i128 << 63)));
                 assert_eq!(input.values[0][1], F::from_i128((1i128 << 63) - 1));
                 for (coefficient, expected) in [(0, F::zero()), (1, -F::one()), (3, -F::one())] {
-                    let address = repacking.coefficient_address(4, 0, 63, coefficient).unwrap();
+                    let address = repacking
+                        .coefficient_address(4, 0, 63, coefficient)
+                        .unwrap();
                     assert_eq!(table[address], expected);
                 }
             }
