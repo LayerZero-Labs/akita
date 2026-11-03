@@ -12,6 +12,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
+use crate::binary_source::ImageWeights;
 use crate::root_repacking::RootCoefficientRepacking;
 
 /// Low-block width of the split equality table: one 1024-coefficient lane.
@@ -44,6 +45,11 @@ impl<E: Field> RootEq<E> {
             low: EqPolynomial::evals(low_point)?,
             high: EqPolynomial::evals(high_point)?,
         })
+    }
+
+    /// Equality weights of the low address bits.
+    pub(crate) fn low(&self) -> &[E] {
+        &self.low
     }
 
     /// Offset of `address` inside its low block.
@@ -80,6 +86,95 @@ impl<E: Field> RootEq<E> {
                 .fold(E::zero(), |acc, (&weight, &eq)| acc + weight * eq);
             sum += self.high(address)? * partial;
             done += take;
+        }
+        Ok(sum)
+    }
+}
+
+/// Lane addresses of one single-plane repacking segment.
+///
+/// A lane is one digit of one element: `stride` consecutive addresses whose
+/// first `degree` hold natural coefficients and the rest are zero padding.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SegmentLanes {
+    start: usize,
+    stride: usize,
+    degree: usize,
+    digits: usize,
+    elements: usize,
+}
+
+impl SegmentLanes {
+    pub(crate) fn new(
+        repacking: &RootCoefficientRepacking,
+        segment: usize,
+    ) -> Result<Self, AkitaError> {
+        let shape = repacking
+            .segments()
+            .get(segment)
+            .ok_or(AkitaError::InvalidProof)?;
+        let start = repacking.segment_range(segment)?.start;
+        let stride = shape.geometry.padded_coefficient_count();
+        if shape.geometry.coordinate_plane_count() != 1
+            || stride > 1 << LOW_BITS
+            || !start.is_multiple_of(stride)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "structured root weights require aligned single-plane lanes".into(),
+            ));
+        }
+        Ok(Self {
+            start,
+            stride,
+            degree: shape.geometry.polynomial_modulus_dimension(),
+            digits: shape.digits,
+            elements: shape.elements,
+        })
+    }
+
+    pub(crate) fn degree(&self) -> usize {
+        self.degree
+    }
+    pub(crate) fn digits(&self) -> usize {
+        self.digits
+    }
+    pub(crate) fn elements(&self) -> usize {
+        self.elements
+    }
+
+    /// Address of natural coefficient zero in one lane.
+    pub(crate) fn base(&self, element: usize, digit: usize) -> Result<usize, AkitaError> {
+        if element >= self.elements || digit >= self.digits {
+            return Err(AkitaError::InvalidInput(
+                "root lane index is invalid".into(),
+            ));
+        }
+        checked::mul_add(element, self.digits, digit)
+            .and_then(|lane| checked::mul_add(lane, self.stride, self.start))
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// `sum_d 8^d * high(lane d)` for one element whose lanes start a block.
+    ///
+    /// This is the digit recomposition of every coefficient of the element,
+    /// contracted with the high equality factors. It requires each lane to
+    /// start a low block, so that all lanes share the same low factors.
+    pub(crate) fn block_digit_weight<E: Field>(
+        &self,
+        eq: &RootEq<E>,
+        element: usize,
+    ) -> Result<E, AkitaError> {
+        let mut sum = E::zero();
+        let mut power = E::one();
+        for digit in 0..self.digits {
+            let base = self.base(element, digit)?;
+            if eq.low_offset(base) != 0 || eq.low().len() < self.stride {
+                return Err(AkitaError::InvalidSetup(
+                    "root lane does not start an equality block".into(),
+                ));
+            }
+            sum += power * eq.high(base)?;
+            power *= E::from_u64(8);
         }
         Ok(sum)
     }
@@ -145,24 +240,31 @@ impl<E: Field> PaddingWeights<E> {
 #[derive(Clone, Debug)]
 pub(crate) enum RootWeightFamily<E: Field> {
     Padding(PaddingWeights<E>),
+    Image(ImageWeights<E>),
 }
 
 impl<E: Field> RootWeightFamily<E> {
     pub(crate) fn table_len(&self) -> usize {
         match self {
             Self::Padding(padding) => padding.repacking.domain_len(),
+            Self::Image(image) => image.table_len(),
         }
     }
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         match self {
             Self::Padding(padding) => {
+                let _span = tracing::info_span!("root_weights_evaluate_padding").entered();
                 let mut sum = E::zero();
                 padding.runs(|run, weights| {
                     sum += eq.run_dot(run.start, weights)?;
                     Ok(())
                 })?;
                 Ok(sum)
+            }
+            Self::Image(image) => {
+                let _span = tracing::info_span!("root_weights_evaluate_image").entered();
+                image.evaluate(eq)
             }
         }
     }
@@ -179,6 +281,7 @@ impl<E: Field> RootWeightFamily<E> {
                 }
                 Ok(())
             }),
+            Self::Image(image) => image.visit(visit),
         }
     }
 }

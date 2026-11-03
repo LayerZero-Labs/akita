@@ -17,6 +17,7 @@ use crate::native_root_relation::NativeRootWeights;
 mod projection_weights;
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 pub use projection_weights::binary_direct_a_weights;
+pub(crate) use projection_weights::ImageWeights;
 
 /// One public layout shared by A, parity, value, range and successor checks.
 ///
