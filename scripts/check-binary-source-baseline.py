@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Linux-only byte compatibility gate against the pinned projection-based dev.
+"""Linux-only byte compatibility gate against the pinned typed-Stage-3 dev.
 
 Compare three word fixtures and twelve prime/projection selections (90 files).
 
@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 
-BASE = "0105463d58dc58e52300ed230377e0f2baf48a3e"
+BASE = "8f515ebbcb3015cf9988ad6de4004c96075e90cc"
 FIXTURE = Path("crates/akita-pcs/tests/binary_source_end_to_end.rs")
 CASES = ("false-128", "false-8", "true-128")
 TESTS = (
@@ -57,7 +57,9 @@ PROOF_CAPTURE = r'''
         setup.expanded.serialize_compressed(file).unwrap();
     });
     capture_binary_baseline(mixed, word_width, ".prefixes", |file| {
-        setup.prefix_slots.serialize_compressed(file).unwrap();
+        // Compare both ordinary setup slots and the installed typed A registry.
+        setup.prefix_slots.serialize_compressed(&mut *file).unwrap();
+        verifier_setup.prefix_slots().serialize_compressed(file).unwrap();
     });
     capture_binary_baseline(mixed, word_width, ".commitment", |file| {
         commitment.serialize_compressed(file).unwrap();
@@ -135,7 +137,7 @@ def capture(root, run_dir, worktrees, label, revision, features, baseline=None):
     (run_dir / f"{label}-fixture.rs").write_text(text + CAPTURE_FUNCTION)
     prime_fixture = checkout / PRIME_FIXTURE
     prime_text = prime_fixture.read_text()
-    prime_anchor = '    eprintln!(\n        "prime_plane mixed='
+    prime_anchor = '    eprintln!(\n        "prime_plane dev='
     if prime_text.count(prime_anchor) != 1:
         raise RuntimeError(f"{label}: expected one prime observation site")
     # Reuse the same serialization statements for each selected upstream case.

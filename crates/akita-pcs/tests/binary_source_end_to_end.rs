@@ -510,6 +510,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     .unwrap();
     akita_transcript::finish_proof_ranges(&prover);
     let stage3_ranges = akita_transcript::thread_proof_ranges();
+    akita_transcript::clear_thread_events();
     let mut packed_prover = new_prover_channel(b"binary-source-end-to-end-v1", b"caller").unwrap();
     packed_prover.public_message(b"application-prefix");
     let mut packed_route =

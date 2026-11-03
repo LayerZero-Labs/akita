@@ -9,12 +9,12 @@ fi
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
 git diff --exit-code HEAD
-git merge-base --is-ancestor 0105463d58dc58e52300ed230377e0f2baf48a3e HEAD
+git merge-base --is-ancestor 8f515ebbcb3015cf9988ad6de4004c96075e90cc HEAD
 unset AKITA_BINARY_BASELINE_DIR AKITA_BINARY_CAPTURE_DIR AKITA_BINARY_BYTE_GOLDENS
 unset AKITA_CAPTURE_BINARY_BYTE_GOLDENS AKITA_BINARY_BYTE_GOLDEN_RECEIPTS
 mkdir -p "$repo/target/binary-root-bytes"
 run_dir="$(mktemp -d "$repo/target/binary-root-bytes/run.XXXXXX")"
-base_revision=0105463d58dc58e52300ed230377e0f2baf48a3e
+base_revision=8f515ebbcb3015cf9988ad6de4004c96075e90cc
 head_revision="$(git rev-parse HEAD)"
 echo "$head_revision" > "$run_dir/head.txt"
 echo "$base_revision" > "$run_dir/base.txt"
