@@ -211,7 +211,12 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
                 outer_commit_matrix,
             ),
         },
-        opening: GroupOpeningPlan::evaluation_trace(FoldChallengeDistribution::pm1_only(0), 1, 1, 1),
+        opening: GroupOpeningPlan::evaluation_trace(
+            FoldChallengeDistribution::pm1_only(0),
+            1,
+            1,
+            1,
+        ),
     }
 }
 
@@ -420,13 +425,16 @@ fn encoder_rejects_scoped_setup_instead_of_dropping_its_identity() {
         schedule_selection: OpeningScheduleSelection {
             row_digest: akita_params::ScheduleRowDigest::from_bytes([0; 32]),
         },
+        // A well-formed zero commitment of the profile's terminal width, so
+        // only the setup's prefix context can make encoding fail.
         commitment: CommittedGroup::new(
             profile,
             akita_types::Commitment::new(RingVec::from_coeffs(vec![
                 TestF::zero();
                 payload_coefficients
             ])),
-        ),
+        )
+        .expect("terminal-width ordinary commitment"),
         verifier_setup,
         proof: Vec::new(),
     };
