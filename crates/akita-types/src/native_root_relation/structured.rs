@@ -12,7 +12,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
-use crate::binary_source::ImageWeights;
+use crate::binary_source::{ImageWeights, PrimePlaneWeights};
 use crate::root_repacking::RootCoefficientRepacking;
 
 /// Low-block width of the split equality table: one 1024-coefficient lane.
@@ -132,6 +132,9 @@ impl SegmentLanes {
         })
     }
 
+    pub(crate) fn stride(&self) -> usize {
+        self.stride
+    }
     pub(crate) fn degree(&self) -> usize {
         self.degree
     }
@@ -241,6 +244,7 @@ impl<E: Field> PaddingWeights<E> {
 pub(crate) enum RootWeightFamily<E: Field> {
     Padding(PaddingWeights<E>),
     Image(ImageWeights<E>),
+    Prime(PrimePlaneWeights<E>),
 }
 
 impl<E: Field> RootWeightFamily<E> {
@@ -248,6 +252,7 @@ impl<E: Field> RootWeightFamily<E> {
         match self {
             Self::Padding(padding) => padding.repacking.domain_len(),
             Self::Image(image) => image.table_len(),
+            Self::Prime(prime) => prime.table_len(),
         }
     }
 
@@ -266,6 +271,10 @@ impl<E: Field> RootWeightFamily<E> {
                 let _span = tracing::info_span!("root_weights_evaluate_image").entered();
                 image.evaluate(eq)
             }
+            Self::Prime(prime) => {
+                let _span = tracing::info_span!("root_weights_evaluate_prime").entered();
+                prime.evaluate(eq)
+            }
         }
     }
 
@@ -282,6 +291,7 @@ impl<E: Field> RootWeightFamily<E> {
                 Ok(())
             }),
             Self::Image(image) => image.visit(visit),
+            Self::Prime(prime) => prime.visit(visit),
         }
     }
 }
