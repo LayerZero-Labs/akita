@@ -1,5 +1,6 @@
 use super::BinaryIndexMap;
-use akita_error::AkitaError;
+use akita_challenges::{binary_root_profile, MIN_FOLD_CHALLENGE_ENTROPY_BITS};
+use akita_error::{checked, AkitaError};
 use akita_serialization::SerializationError;
 use std::io::{Cursor, Read};
 
@@ -13,8 +14,6 @@ pub const ENFORCED_IMAGE_WINDOW: (i32, i32) = (-9_586_980, 7_190_235);
 pub const BINARY_RESPONSE_INTERVAL: (i32, i32) = (-2340, 1755);
 /// Maximum distinct points and maximum polynomial/tensor planes per group.
 pub const PRIME_POINT_CAP: usize = 5;
-/// Bounded wire manifest size; schedule admission may impose a smaller limit.
-pub const MAX_BINARY_POLYNOMIALS: usize = 4096;
 
 /// Commitment profile identities are canonical schedule/profile digests, not certificates.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,19 +33,39 @@ pub struct BinarySourceDescriptor {
     profiles: BinaryCommitmentProfiles,
 }
 impl BinarySourceDescriptor {
-    /// Polynomial identities are ordered, unique, and nonempty.
+    /// Sole owner-count admission rule. Each owner draws one indexed root
+    /// challenge per column, so extraction ranges over `I = owners * C`
+    /// addresses, and `I / |S46| <= 2^-128` must hold exactly:
+    /// `owners * C * 2^128 <= |S46|` against the root family's cardinality.
+    pub fn admit_owner_count(index: &BinaryIndexMap, polynomials: usize) -> Result<(), AkitaError> {
+        if polynomials == 0 {
+            return Err(AkitaError::InvalidInput(
+                "binary source requires at least one polynomial owner".into(),
+            ));
+        }
+        let addresses = checked::product([polynomials, index.columns()])
+            .and_then(|addresses| u64::try_from(addresses).ok());
+        if !addresses.is_some_and(|addresses| {
+            binary_root_profile()
+                .is_ok_and(|family| family.meets_budget(addresses, MIN_FOLD_CHALLENGE_ENTROPY_BITS))
+        }) {
+            return Err(AkitaError::InvalidInput(format!(
+                "{polynomials} binary polynomial owners at {} columns exceed the extraction bound",
+                index.columns()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Polynomial identities are ordered and unique; their count passes
+    /// [`Self::admit_owner_count`].
     pub fn new(
         index: BinaryIndexMap,
         polynomials: Vec<[u8; 32]>,
         profiles: BinaryCommitmentProfiles,
     ) -> Result<Self, AkitaError> {
-        if polynomials.is_empty() || polynomials.len() > MAX_BINARY_POLYNOMIALS {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_BINARY_POLYNOMIALS,
-                actual: polynomials.len(),
-            });
-        }
-        akita_error::checked::product([polynomials.len(), index.padded_carriers(), 256])
+        Self::admit_owner_count(&index, polynomials.len())?;
+        checked::product([polynomials.len(), index.padded_carriers(), 256])
             .ok_or_else(|| AkitaError::InvalidInput("binary group MLE size overflow".into()))?;
         for (i, id) in polynomials.iter().enumerate() {
             if polynomials.iter().take(i).any(|previous| previous == id) {
@@ -124,9 +143,8 @@ impl BinarySourceDescriptor {
             *value = usize::try_from(u64::from_le_bytes(buf)).map_err(|_| bad())?;
         }
         let [ell, logical, padded, columns, count] = dimensions;
-        if count == 0 || count > MAX_BINARY_POLYNOMIALS {
-            return Err(bad());
-        }
+        let index = BinaryIndexMap::new(ell, logical, padded, columns).map_err(|_| bad())?;
+        Self::admit_owner_count(&index, count).map_err(|_| bad())?;
         let mut q = [0; 4];
         reader.read_exact(&mut q)?;
         if u32::from_le_bytes(q) != BINARY_SOURCE_Q {
@@ -161,10 +179,9 @@ impl BinarySourceDescriptor {
             .len()
             .checked_sub(reader.position() as usize)
             .ok_or_else(bad)?;
-        if akita_error::checked::product([count, 32]) != Some(remaining) {
+        if checked::product([count, 32]) != Some(remaining) {
             return Err(bad());
         }
-        let index = BinaryIndexMap::new(ell, logical, padded, columns).map_err(|_| bad())?;
         let mut polynomials = Vec::with_capacity(count);
         for _ in 0..count {
             let mut id = [0; 32];

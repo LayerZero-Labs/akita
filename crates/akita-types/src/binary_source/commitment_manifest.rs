@@ -1,9 +1,6 @@
 //! Explicit experimental commitment geometry for binary source groups.
 
-use super::{
-    BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor, BINARY_SOURCE_Q,
-    MAX_BINARY_POLYNOMIALS,
-};
+use super::{BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor, BINARY_SOURCE_Q};
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::binary_setup::{
@@ -74,11 +71,7 @@ impl BinaryCommittedGroupManifest {
         polynomials: usize,
         setup_group: u64,
     ) -> Result<BinaryCommitmentProfiles, AkitaError> {
-        if polynomials == 0 || polynomials > MAX_BINARY_POLYNOMIALS {
-            return Err(AkitaError::InvalidInput(
-                "binary polynomial count out of range".into(),
-            ));
-        }
+        BinarySourceDescriptor::admit_owner_count(index, polynomials)?;
         let a_columns = checked::product([4, index.columns()])
             .and_then(|block| checked::exact_div(index.padded_carriers(), block))
             .ok_or_else(|| AkitaError::InvalidInput("binary A input width overflow".into()))?;

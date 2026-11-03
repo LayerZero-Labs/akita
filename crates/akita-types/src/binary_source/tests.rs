@@ -243,3 +243,51 @@ fn group_dimensions_cannot_overflow_across_polynomials() {
     )
     .is_err());
 }
+
+#[test]
+fn owner_count_admission_is_the_exact_extraction_bound() {
+    // |S46| = 107268495235892251993000716928106195079952 and
+    // floor(|S46| / 2^128) = 315, so owners * C may not exceed 315.
+    let family = akita_challenges::binary_root_profile().unwrap();
+    assert!(family.meets_budget(315, 128));
+    assert!(!family.meets_budget(316, 128));
+    let profiles = BinaryCommitmentProfiles {
+        a: [3; 32],
+        b: [4; 32],
+    };
+    let owners = |count: usize| {
+        (0..count)
+            .map(|i| {
+                let mut id = [0; 32];
+                id[..8].copy_from_slice(&(i as u64).to_le_bytes());
+                id
+            })
+            .collect::<Vec<_>>()
+    };
+    for (columns, largest) in [(256, 1), (128, 2), (64, 4), (2, 157), (1, 315)] {
+        let index = BinaryIndexMap::new(128, 1, 4 * columns, columns).unwrap();
+        let admitted =
+            BinarySourceDescriptor::new(index.clone(), owners(largest), profiles.clone()).unwrap();
+        assert_eq!(
+            BinarySourceDescriptor::from_bytes(&admitted.canonical_bytes()).unwrap(),
+            admitted
+        );
+        assert!(BinaryCommittedGroupManifest::commitment_profiles(&index, largest, 7).is_ok());
+        let error =
+            BinarySourceDescriptor::new(index.clone(), owners(largest + 1), profiles.clone())
+                .unwrap_err();
+        assert!(
+            matches!(&error, akita_error::AkitaError::InvalidInput(message) if message.contains("extraction bound")),
+            "C={columns}: {error:?}"
+        );
+        assert!(BinaryCommittedGroupManifest::commitment_profiles(&index, largest + 1, 7).is_err());
+        // Strict decoding applies the same rule before reading any identity.
+        let mut bytes = admitted.canonical_bytes();
+        bytes[56..64].copy_from_slice(&(largest as u64 + 1).to_le_bytes());
+        bytes.extend_from_slice(&[0xff; 32]);
+        assert!(BinarySourceDescriptor::from_bytes(&bytes).is_err());
+    }
+    let index = BinaryIndexMap::new(128, 1, 4, 1).unwrap();
+    assert!(BinarySourceDescriptor::new(index.clone(), Vec::new(), profiles).is_err());
+    assert!(BinaryCommittedGroupManifest::commitment_profiles(&index, 0, 7).is_err());
+}
