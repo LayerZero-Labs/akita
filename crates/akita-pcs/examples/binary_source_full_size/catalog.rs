@@ -11,7 +11,7 @@ use akita_types::binary_source::{
     PrimePlaneManifest,
 };
 
-fn typed_prefix_len(log: usize) -> Result<usize, AkitaError> {
+pub(super) fn typed_prefix_len(log: usize) -> Result<usize, AkitaError> {
     let descriptor = claims::descriptor(log)?;
     let index = descriptor.index_map();
     let divisor = checked::product([4, index.columns()]).ok_or(AkitaError::InvalidProof)?;

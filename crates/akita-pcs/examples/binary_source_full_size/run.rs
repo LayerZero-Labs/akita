@@ -6,6 +6,8 @@ mod claims;
 mod config;
 #[path = "metrics.rs"]
 mod metrics;
+#[path = "native_catalog.rs"]
+mod native_catalog;
 
 use akita_config::TrustedScheduleCatalog;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
@@ -79,12 +81,18 @@ pub(super) fn main() -> Result<()> {
 fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let (catalog, key) = {
         let _span = tracing::info_span!("catalog_planning").entered();
-        catalog::build(log, shape)?
+        if log == 10 {
+            catalog::build(log, shape)?
+        } else {
+            native_catalog::build(log, shape, directory)?
+        }
     };
-    std::fs::write(
-        directory.join("catalog.aks"),
-        catalog.catalog().to_artifact_bytes()?,
-    )?;
+    if log == 10 {
+        std::fs::write(
+            directory.join("catalog.aks"),
+            catalog.catalog().to_artifact_bytes()?,
+        )?;
+    }
     let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
     let selected = scheme.schedules().resolve_key(&key)?;
     let schedule = selected.schedule();
@@ -111,12 +119,30 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         schedule.recursive_folds.len(),
         schedule.num_fold_levels()
     );
-    let setup = {
+    let mut setup = {
         let _span = tracing::info_span!("cold_prover_setup").entered();
-        scheme.setup_prover(
-            carrier.group.num_vars().max(log),
-            1 + usize::from(shape == "word-prime-ordinary"),
-        )?
+        let max_vars = carrier.group.num_vars().max(log);
+        let max_polynomials = 1 + usize::from(shape == "word-prime-ordinary");
+        if log == 10 {
+            scheme.setup_prover(max_vars, max_polynomials)?
+        } else {
+            // This trusted fixture prepares the typed root prefix explicitly.
+            // Ordinary SetupRequirements intentionally only admits ordinary
+            // producer footprints. Reuse the canonical matrix envelope for
+            // every admitted row, including the optional ordinary producer.
+            let mut capacity = akita_params::SetupMatrixCapacity::minimum();
+            for row in scheme.schedules().catalog().rows() {
+                capacity.num_field_elements = capacity.num_field_elements.max(
+                    akita_params::setup_matrix_capacity_for_schedule(row.schedule())?
+                        .num_field_elements,
+                );
+            }
+            akita_cpu_backend::AkitaProverSetup::generate_with_capacity(
+                max_vars,
+                max_polynomials,
+                capacity,
+            )?
+        }
     };
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
     let descriptor = claims::descriptor(log)?;
@@ -176,7 +202,17 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         .collect::<Vec<_>>();
     let prefixes = {
         let _span = tracing::info_span!("cold_prefix_preparation").entered();
-        backend.prepare_binary_a_prefixes(&manifest, &first, &later)?
+        let prefixes = backend.prepare_binary_a_prefixes(&manifest, &first, &later)?;
+        if log != 10 {
+            let ordinary_ids = later
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            setup.prefix_slots = backend.export_setup_prefixes(&ordinary_ids)?;
+        }
+        prefixes
     };
     let verifier_setup = {
         let _span = tracing::info_span!("cold_verifier_setup").entered();
@@ -270,10 +306,14 @@ fn groups(
 
 fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
-    let catalog = TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
-        &std::fs::read(directory.join("catalog.aks"))?,
-        ChunkedWitnessCfg::default_non_chunked(),
-    )?;
+    let catalog = if log == 10 {
+        TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
+            &std::fs::read(directory.join("catalog.aks"))?,
+            ChunkedWitnessCfg::default_non_chunked(),
+        )?
+    } else {
+        native_catalog::load(directory)?
+    };
     let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
     let mut setup = AkitaVerifierSetup::<F>::deserialize_compressed(
         std::fs::File::open(directory.join("verifier.bin"))?,

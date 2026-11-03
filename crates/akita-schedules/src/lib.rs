@@ -3,6 +3,9 @@
 mod artifact;
 mod audit;
 mod candidate;
+/// Extension seam: opt-in native-root admission; <https://github.com/LayerZero-Labs/akita/issues/285>.
+#[cfg(feature = "labinius-trinomial")]
+pub mod native_root;
 mod policy_digest;
 mod resolve;
 mod runtime;

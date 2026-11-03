@@ -30,6 +30,9 @@ mod diagnostics;
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
+/// Extension seam: opt-in native-root suffix planning; <https://github.com/LayerZero-Labs/akita/issues/285>.
+#[cfg(feature = "labinius-trinomial")]
+pub mod native_root;
 mod planner;
 mod policy;
 /// Extension seam: opt-in binary plane pricing; <https://github.com/LayerZero-Labs/akita/issues/285>.

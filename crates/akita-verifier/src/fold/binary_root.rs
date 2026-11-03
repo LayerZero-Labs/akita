@@ -80,7 +80,10 @@ where
             "binary statement differs from its prepared typed A prefix".into(),
         ));
     }
-    let logical_len = root_params.output_witness_len::<F>(opening_batch, E::DEGREE)?;
+    // The trusted catalog validates this transition against its producer.
+    // Native roots have their own coefficient geometry; recomputing an
+    // ordinary root layout here would disagree with the selected prover row.
+    let logical_len = next.input_witness_len;
     let ordinary_statement = ordinary
         .zip(ordinary_profile)
         .map(|(ordinary, profile)| {

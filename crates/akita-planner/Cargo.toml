@@ -39,7 +39,11 @@ catalog-gen = ["dep:akita-config"]
 catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
-labinius-trinomial = ["dep:akita-types", "akita-types/labinius-trinomial"]
+labinius-trinomial = [
+  "dep:akita-types",
+  "akita-types/labinius-trinomial",
+  "akita-schedules/labinius-trinomial",
+]
 dev-protocol = ["akita-params/dev-protocol"]
 
 [dev-dependencies]
