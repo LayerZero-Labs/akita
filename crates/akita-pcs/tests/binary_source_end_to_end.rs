@@ -1,7 +1,10 @@
 //! One binary source in the canonical grouped opening and caller transcript.
 #![cfg(feature = "labinius-trinomial")]
 
+#[path = "binary_source_end_to_end/byte_contract.rs"]
+mod byte_contract;
 mod common;
+#[cfg(feature = "transcript-keccak")]
 #[path = "binary_source_end_to_end/compatibility.rs"]
 mod compatibility;
 #[path = "binary_source_end_to_end/fault_backend.rs"]
@@ -157,6 +160,15 @@ fn field_switch_narrow_source_mutations_authenticate() {
     run_on_large_stack(|| run_fixture(false, None, 8));
 }
 
+#[test]
+fn packed_bit_and_halfword_imports_preserve_commitment_and_proof_bytes() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        run_fixture(false, None, 1);
+        run_fixture(false, None, 16);
+    });
+}
+
 fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usize) {
     let catalog = test_catalog();
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
@@ -217,6 +229,38 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     let source = backend
         .import_binary_source(manifest.clone(), carrier, vec![logical_words.clone()])
         .unwrap();
+    assert!(backend
+        .import_packed_binary_source(
+            manifest.clone(),
+            carrier,
+            descriptor.index_map().logical_len() - 1,
+            vec![words.clone()],
+        )
+        .is_err());
+    let mut forged_profiles = descriptor.profiles().clone();
+    forged_profiles.a[0] ^= 1;
+    let forged = BinarySourceDescriptor::new(
+        descriptor.index_map().clone(),
+        descriptor.polynomials().to_vec(),
+        forged_profiles,
+    )
+    .unwrap();
+    assert!(BinaryCommittedGroupManifest::new(forged, 0, &carrier).is_err());
+    let packed = backend
+        .import_packed_binary_source(
+            manifest.clone(),
+            carrier,
+            descriptor.index_map().logical_len(),
+            vec![words.clone()],
+        )
+        .unwrap();
+    let packed = backend
+        .commit(
+            scheme.schedules(),
+            &packed,
+            GroupContext::explicit(&carrier),
+        )
+        .unwrap();
     let committed = backend
         .commit(
             scheme.schedules(),
@@ -224,6 +268,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             GroupContext::explicit(&carrier),
         )
         .unwrap();
+    assert_eq!(packed.committed_group, committed.committed_group);
     let binary_handle = committed.private_handle.clone();
     let original_commitment = if matches!(authentication_fault, Some(Fault::ForeignCommitment)) {
         let mut foreign_words = words.clone();
@@ -316,6 +361,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         handles.push(handle);
     }
     let claims = OpeningClaims::from_groups(groups).unwrap();
+    let mut packed_handles = handles.clone();
+    packed_handles[0] = packed.private_handle;
+    let packed_data = selected_prover_data::<BinaryTestSuffix>(
+        claims.clone(),
+        packed_handles,
+        scheme.schedules(),
+    );
     let data = selected_prover_data::<BinaryTestSuffix>(claims, handles, scheme.schedules());
     let successor_coefficients = scheme
         .schedules()
@@ -459,8 +511,30 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     .unwrap();
     akita_transcript::finish_proof_ranges(&prover);
     let stage3_ranges = akita_transcript::thread_proof_ranges();
+    akita_transcript::clear_thread_events();
+    let mut packed_prover = new_prover_channel(b"binary-source-end-to-end-v1");
+    packed_prover.public_message(&BytesMsg(b"application-prefix"));
+    let mut packed_route =
+        akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+    akita_prover::batched_prove_embedded::<BinaryTestSuffix, _>(
+        setup.expanded.descriptor(),
+        scheme.schedules(),
+        &registry,
+        packed_data,
+        &mut packed_prover,
+        BasisMode::Lagrange,
+        &mut packed_route,
+    )
+    .unwrap();
+    assert_eq!(packed_prover.narg_string(), prover.narg_string());
     let proof = prover.narg_string().to_vec();
-    compatibility::assert_base_bytes(&proof, mixed, word_width);
+    // The fixed digests were captured with Keccak only. Blake2b is compared
+    // with an independently executed dev baseline by the Linux gates.
+    #[cfg(feature = "transcript-keccak")]
+    if matches!(word_width, 8 | 128) {
+        compatibility::assert_base_bytes(&proof, mixed, word_width);
+    }
+    byte_contract::compare_baseline(&proof, &format!("binary-root-{mixed}-{word_width}.bin"));
     eprintln!(
         "{} ordinary grouped proof (word width {}): {} bytes",
         if mixed {
@@ -473,6 +547,25 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     );
     prover.public_message(&BytesMsg(b"application-suffix"));
     let continuation: [u8; 32] = prover.verifier_message();
+    // Compared against the immutable pinned dev commit by the Linux golden
+    // gate in scripts/check-binary-root-bytes.sh. The hook is applied verbatim
+    // to that archived source; candidate runs require its captured records.
+    let golden = format!(
+        "binary-golden:{mixed}:{word_width}:{}:{}:{}:{continuation:?}",
+        proof.len(),
+        common::protocol_epoch_digest::<F>(&proof),
+        common::protocol_epoch_digest::<F>(&commitment_bytes),
+    );
+    if let Some(path) = std::env::var_os("AKITA_BINARY_GOLDEN") {
+        let expected = std::fs::read_to_string(path).expect("read immutable-base binary goldens");
+        assert!(
+            expected.lines().any(|line| line == golden),
+            "binary proof/commitment/continuation drift: {golden}"
+        );
+    }
+    eprintln!("{golden}");
+    packed_prover.public_message(&BytesMsg(b"application-suffix"));
+    assert_eq!(packed_prover.verifier_message::<[u8; 32]>(), continuation);
     let verifier = scheme.verifier(verifier_setup.clone()).unwrap();
     let mismatch = catch_unwind(AssertUnwindSafe(|| {
         let mut groups = vec![PolynomialGroupClaims::new(
