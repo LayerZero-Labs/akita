@@ -89,6 +89,7 @@ impl BinaryTerminalClaim {
         }
         let scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
         let mut terms = Vec::new();
+        let span = tracing::info_span!("binary_root_weights_parity_rows").entered();
         for (row, weight) in row_weights.into_iter().enumerate() {
             let multiplier = binary_scalar_lift(weight).map(E::from_i128);
             let mut kernel = [E::zero(); 162];
@@ -109,6 +110,7 @@ impl BinaryTerminalClaim {
                 terms.push((address, batches[0] * sign * weight));
             }
         }
+        drop(span);
         for (column, weight) in column_weights.into_iter().enumerate() {
             let challenge_index =
                 checked::mul_add(owner, columns, column).ok_or(AkitaError::InvalidProof)?;

@@ -300,6 +300,7 @@ where
     let rho = projections.batch(&mu)?;
     let matrix =
         akita_types::binary_source::binary_root_matrix(&expanded.setup_seed.seed, manifest)?;
+    let span = tracing::info_span!("binary_root_relation_compile").entered();
     let (relation, negative_binary_weights) = public.relation(
         &challenges,
         alpha,
@@ -313,6 +314,7 @@ where
     )?;
     drop(matrix);
     drop(batches);
+    drop(span);
     let relation_claim = relation.claim();
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
@@ -323,11 +325,13 @@ where
         grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(GrindingSite::Stage2Batch {
             level: 0,
         })?;
+    let span = tracing::info_span!("binary_root_relation_materialize").entered();
     let mut weights = vec![Cfg::ExtField::zero(); domain.domain_len()];
     for &(address, weight) in relation.terms() {
         *weights.get_mut(address).ok_or(AkitaError::InvalidProof)? += weight;
     }
     drop(relation);
+    drop(span);
     let session = backend.begin_root_relation(
         &witness,
         weights,

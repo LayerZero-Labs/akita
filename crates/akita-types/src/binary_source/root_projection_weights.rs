@@ -81,6 +81,7 @@ pub fn binary_direct_a_weights<E: Field>(
     terms
         .try_reserve_exact(term_count)
         .map_err(|_| AkitaError::InvalidProof)?;
+    let span = tracing::info_span!("binary_root_weights_image").entered();
     for owner in 0..owners {
         for i in 0..plan.rank() {
             let row_index =
@@ -118,6 +119,8 @@ pub fn binary_direct_a_weights<E: Field>(
             }
         }
     }
+    drop(span);
+    let _span = tracing::info_span!("binary_root_weights_padding").entered();
     let mut padding = padding_weights.iter();
     for address in 0..plan.repacking().domain_len() {
         if plan.repacking().is_padding_address(address)? {
