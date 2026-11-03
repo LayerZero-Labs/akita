@@ -7,8 +7,9 @@
 //!   stage-3 setup-product sumcheck consumes, plus the role-tensor helpers the
 //!   verifier's setup evaluation shares with it.
 //!
-//! Verifier-only evaluation of the plan (direct scans, closed-form structured
-//! groups, and the setup-index weight MLE) lives in `akita-verifier`.
+//! Direct scans and structured relation contractions live in `akita-verifier`.
+//! The coefficient functionals and setup-index weight MLE are shared in this
+//! crate so external accumulation uses the same mathematical definitions.
 
 mod physical_b;
 mod prepare;

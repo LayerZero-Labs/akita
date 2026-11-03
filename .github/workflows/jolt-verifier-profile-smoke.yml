@@ -7,9 +7,9 @@
 # driver) binaries before someone runs the manual runbook in
 # profile/akita-recursion/README.md.
 #
-# The `inline-parity` job builds a small guest with every guest inline feature,
-# traces it under Jolt's emulator, and compares its transcript, challenge, and
-# CRT+NTT results with a native run on the portable kernels.
+# The `inline-parity` job builds a small guest with the NTT guest inline,
+# traces it under Jolt's emulator, and compares its CRT+NTT results with a
+# native run on the portable kernels.
 
 name: Akita verifier in Jolt (profile smoke)
 

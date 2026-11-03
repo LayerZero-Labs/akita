@@ -217,6 +217,7 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
@@ -339,6 +340,7 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
@@ -362,6 +364,7 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("tampering the terminal response must be rejected");
@@ -382,6 +385,7 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("schedule/proof binding mismatch must reject without panic");
@@ -485,6 +489,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("batched verify");
@@ -592,6 +597,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("batched onehot verify");

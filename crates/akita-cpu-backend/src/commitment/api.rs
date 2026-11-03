@@ -374,6 +374,7 @@ where
             *commit_params
         } else {
             let key = ScheduleLookupKey {
+                root_accumulated_setup_prefix_len: 0,
                 final_group: polynomial_group_layout,
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };
@@ -459,7 +460,8 @@ where
         .into_parts();
 
     Ok(CommitOutput {
-        committed_group: CommittedGroup::new(commit_params, Commitment::new(payload)),
+        committed_group: CommittedGroup::new(commit_params, Commitment::new(payload))
+            .map_err(|error| AkitaError::Internal(format!("committed group: {error}")))?,
         prover_state,
     })
 }

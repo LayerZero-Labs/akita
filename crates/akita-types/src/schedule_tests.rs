@@ -188,6 +188,7 @@ fn recursive_schedule(
     let root_handoff_len = predecessor_ring_dimension.max(successor_ring_dimension);
 
     FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: FoldParams {
             params: predecessor.clone(),
             input_witness_len: predecessor_ring_dimension,
@@ -1002,10 +1003,16 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
 }
 
 fn committed_group_for_extractor(num_vars: usize) -> CommittedGroup<F> {
+    let profile = precommitted_descriptor(num_vars);
+    let coefficients = profile
+        .outer_compression_plan()
+        .expect("precommitted compression plan")
+        .terminal_coefficients();
     CommittedGroup::new(
-        precommitted_descriptor(num_vars),
-        Commitment::new(RingVec::from_coeffs(vec![F::zero(); 64])),
+        profile,
+        Commitment::new(RingVec::from_coeffs(vec![F::zero(); coefficients])),
     )
+    .expect("valid precommitted group")
 }
 
 #[test]
@@ -1066,6 +1073,7 @@ fn precommitted_group_profiles_preserve_caller_order() {
 #[test]
 fn group_batch_key_separates_final_arity_from_max_opening_arity() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(14, 3),
         precommitteds: vec![precommitted_descriptor(20)],
     };
@@ -1093,6 +1101,7 @@ fn group_batch_key_separates_final_arity_from_max_opening_arity() {
 #[test]
 fn group_batch_key_allows_independent_precommitted_num_vars() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![precommitted_descriptor(12)],
     };
@@ -1105,6 +1114,7 @@ fn group_batch_key_allows_independent_precommitted_num_vars() {
 #[test]
 fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![precommitted_descriptor(20)],
     };
@@ -1117,6 +1127,7 @@ fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
 #[test]
 fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![{
             let mut descriptor = precommitted_descriptor(10);
@@ -1153,6 +1164,7 @@ fn group_batch_key_identity_binds_ordered_profiles() {
     let first = precommitted_descriptor(12);
     let second = precommitted_descriptor(14);
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![first, second],
     };

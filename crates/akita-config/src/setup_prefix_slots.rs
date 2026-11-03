@@ -61,7 +61,12 @@ pub fn required_setup_prefix_slot_ids_for_schedule(
                 suffix_opening_layout(producer.input_witness_len, incoming_len)?,
             )
         };
-        let natural_len = active_setup_field_len(params, &opening_layout)?;
+        let natural_len =
+            active_setup_field_len(params, &opening_layout)?.max(if producer_index == 0 {
+                schedule.root_accumulated_setup_prefix_len
+            } else {
+                0
+            });
         let n_prefix = padded_setup_prefix_len(natural_len);
         let commitment_id = slot_id.slot_id().expect("setup prefix group");
         setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;

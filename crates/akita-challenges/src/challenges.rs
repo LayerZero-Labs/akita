@@ -481,6 +481,35 @@ mod tests {
     }
 }
 
+/// Challenges decoded from a deterministic message through the fold-draw
+/// decoder, standing in for a squeezed transcript message.
+#[cfg(test)]
+mod sampled_values {
+    use crate::{SparseChallenge, SparseChallengeConfig};
+
+    pub(super) fn decode(
+        seed: u64,
+        ring_d: usize,
+        count: usize,
+        config: &SparseChallengeConfig,
+    ) -> Vec<SparseChallenge> {
+        let stream = crate::sampler::SparseChallengeShell::new(ring_d, config, None)
+            .unwrap()
+            .stream(count)
+            .unwrap();
+        let mut state = seed;
+        let message: Vec<u8> = (0..stream.message_len())
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect();
+        stream.decode(&message).unwrap().unwrap()
+    }
+}
+
 #[cfg(test)]
 mod sampled_family_tests {
     use super::*;
@@ -490,9 +519,7 @@ mod sampled_family_tests {
             count_pm1: 19,
             count_pm2: 0,
         };
-        let values =
-            crate::sampler::sample_indexed_challenges_from_seed(&[83; 32], 512, 2, &config, None)
-                .unwrap();
+        let values = super::sampled_values::decode(83, 512, 2, &config);
         let plain = Challenges::from_sparse(values.clone(), 1, 2).unwrap();
         let sampled = Challenges::from_sampled(values, 1, 2, 512, config).unwrap();
         assert_eq!(plain, sampled);
@@ -540,9 +567,7 @@ mod signed_evaluation_tests {
             count_pm1: 31,
             count_pm2: 10,
         };
-        let values =
-            crate::sampler::sample_indexed_challenges_from_seed(&[42; 32], 64, 16, &config, None)
-                .unwrap();
+        let values = super::sampled_values::decode(42, 64, 16, &config);
         let sampled = Challenges::from_sampled(values, 1, 16, 64, config).unwrap();
         for stride in [1, 4] {
             let batch = sampled
@@ -576,9 +601,7 @@ mod embedding_view_tests {
             count_pm1: 31,
             count_pm2: 10,
         };
-        let values =
-            crate::sampler::sample_indexed_challenges_from_seed(&[18; 32], 64, 1024, &config, None)
-                .unwrap();
+        let values = super::sampled_values::decode(18, 64, 1024, &config);
         let source = Challenges::from_sampled(values, 1, 1024, 64, config).unwrap();
         let once = source.embed_subring_positions(64, 4, 256).unwrap();
         assert!(once.materialized.get().is_none());

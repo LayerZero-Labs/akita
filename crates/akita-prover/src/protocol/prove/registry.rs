@@ -7,6 +7,7 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::CommitmentDigest;
 use akita_types::{
     AkitaSetupDescriptor, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding,
     SetupPrefixVerifierSlot,
@@ -105,6 +106,10 @@ pub(super) struct ProofRequest<'p, Cfg: CommitmentConfig> {
     pub(super) schedule: &'p FoldSchedule,
     pub(super) layout: &'p OpeningClaimsLayout,
     pub(super) identity: u64,
+    pub(super) setup_batch: Option<(
+        u32,
+        &'p akita_types::setup_claims::SetupBatchStatement<Cfg::ExtField>,
+    )>,
 }
 
 pub(super) type ExecutionContinuation<Cfg> = (
@@ -120,6 +125,7 @@ pub(super) trait Executor<Cfg: CommitmentConfig> {
         handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
         grinding: &mut ProverGrinding<'_>,
         claims: &OpeningClaims<'_, Cfg::ExtField, Commitment<Cfg::Field>>,
+        digests: &[CommitmentDigest],
         handles: &dyn Any,
         basis: BasisMode,
     ) -> Result<ExecutionContinuation<Cfg>, AkitaError>;

@@ -214,6 +214,33 @@ impl TerminalFoldParams {
         self.inner.matrix.ring_dimension()
     }
 
+    /// Fold-challenge family of the terminal response.
+    ///
+    /// A calibrated L2 route draws under its operator-norm rejection; an
+    /// L-infinity route draws the unfiltered family.
+    pub fn fold_challenge_family(
+        &self,
+    ) -> Result<akita_challenges::FoldChallengeFamily, AkitaError> {
+        let rejection = match self.response_l2_sq_cap() {
+            Some(_) => Some(
+                akita_challenges::selective_l2_operator_norm_rejection(
+                    self.d_a(),
+                    &self.fold_challenge_config,
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
+                })?,
+            ),
+            None => None,
+        };
+        akita_challenges::FoldChallengeFamily::new(
+            akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
+            self.d_a(),
+            self.fold_challenge_config,
+            rejection,
+        )
+    }
+
     #[inline]
     pub fn inner_width(&self) -> usize {
         self.inner.matrix.input_width()
@@ -378,6 +405,9 @@ impl FoldSuccessor<'_> {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldSchedule {
+    /// Largest inherited setup-prefix domain aggregated by the offloaded root; zero is empty.
+    #[serde(default)]
+    pub root_accumulated_setup_prefix_len: usize,
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,
     pub terminal: TerminalFoldParams,
@@ -403,6 +433,12 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        if self.root_accumulated_setup_prefix_len != 0 {
+            crate::validate_setup_prefix_domain(
+                self.root_accumulated_setup_prefix_len,
+                self.root_accumulated_setup_prefix_len,
+            )?;
+        }
         let root_commitment = &self.root.params;
         root_commitment.validate_group_topology()?;
         if root_commitment.setup_prefix().is_some() {

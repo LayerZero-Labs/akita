@@ -14,6 +14,7 @@ struct OpeningSearch<'a> {
 struct ChildPlan<'a> {
     chunk_shape: Option<akita_params::WitnessChunkShape>,
     params: &'a CommittedGroupParams,
+    fold_cost: akita_params::FoldChallengeCost,
     next_witness_len: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
 
@@ -49,10 +50,13 @@ fn plan_candidate_children(
     plan: ChildPlan<'_>,
 ) -> Result<PlannedChildren, AkitaError> {
     let state = search.state;
-    let Some(child_query_search) =
-        search
-            .query_search
-            .child(ctx, state, search.opening_layout, plan.params)?
+    let Some(child_query_search) = search.query_search.child(
+        ctx,
+        state,
+        search.opening_layout,
+        plan.params,
+        plan.fold_cost,
+    )?
     else {
         return Ok(PlannedChildren {
             direct: None,
@@ -150,6 +154,7 @@ fn price_planned_fold_candidate(
     let PlannedFoldCandidate {
         chunk_shape,
         params,
+        fold_cost,
         next_witness_len,
         opening_reduction_bytes: _,
         next_source_moment,
@@ -172,6 +177,11 @@ fn price_planned_fold_candidate(
         || active_setup_field_len(&params, search.opening_layout),
         Ok,
     )?;
+    let offloaded_setup_field_len = natural_len.max(
+        ctx.root_lookup_key
+            .filter(|_| ctx.level_zero_is_root && state.level == 0)
+            .map_or(0, |key| key.root_accumulated_setup_prefix_len),
+    );
     let direct_edge_is_admissible =
         state
             .topology
@@ -226,10 +236,11 @@ fn price_planned_fold_candidate(
         ChildPlan {
             chunk_shape,
             params: &params,
+            fold_cost,
             next_witness_len,
             next_source_moment,
 
-            natural_setup_field_len: natural_len,
+            natural_setup_field_len: offloaded_setup_field_len,
             direct_edge_is_admissible,
             prune_direct_edge,
         },
@@ -240,7 +251,9 @@ fn price_planned_fold_candidate(
         search.opening_layout,
         LevelCandidateEdge {
             params: &params,
+            fold_cost,
             natural_setup_field_len: natural_len,
+            offloaded_setup_field_len,
             require_child_fold: search.require_child_fold,
         },
         CandidateChildren {

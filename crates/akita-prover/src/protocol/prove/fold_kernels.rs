@@ -6,6 +6,7 @@
 //! once on a schedule-derived ring dimension supplied by the caller.
 
 use super::*;
+use akita_transcript::ChallengeCodec;
 
 /// Prepared public evaluation-trace claim and its per-opening coefficients (#314 Stage-2).
 pub(in crate::protocol) struct PreparedEvaluationTraceClaim<E: Field> {
@@ -82,7 +83,7 @@ pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E>(
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F>,
+    E: FpExtEncoding<F> + ExtField<F> + ChallengeCodec,
 {
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::Internal(format!(
