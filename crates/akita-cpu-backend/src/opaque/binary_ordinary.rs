@@ -36,7 +36,6 @@ where
         || profile.inner.digits.log_basis < 3
         || profile.outer.digits.log_basis != 3
         || profile.outer.matrix.ring_dimension() != 64
-        || profile.outer_slice_count.get() != profile.blocks.live_blocks
         || !profile
             .inner
             .matrix
@@ -121,11 +120,14 @@ where
             .map(|digits| digits.into_parts().0)
         }
     )?;
+    // T keeps global block/A-row/subcolumn/digit/coefficient order. B slices
+    // select canonical contiguous block ranges from that table; a slice need
+    // not contain exactly one block. The frozen profile validates the physical
+    // B width, while its geometry supplies the complete logical T extent.
+    let slice_geometry = profile.derive_slice_geometry()?;
     let expected_t = checked::product([
-        profile.blocks.live_blocks,
-        profile.inner.matrix.output_rank(),
-        profile.outer.digits.num_digits,
-        a_degree,
+        slice_geometry.logical_input_width(),
+        profile.outer.matrix.ring_dimension(),
     ])
     .ok_or(AkitaError::InvalidProof)?;
     if t.len() != expected_t {
@@ -156,3 +158,6 @@ where
     }
     Ok(vec![source, t, f, h])
 }
+
+#[cfg(test)]
+mod tests;
