@@ -1,7 +1,7 @@
 //! Coefficient-packing relation fixtures shared by the akita-types tests and
 //! the verifier's compact-factor tests.
 
-use akita_challenges::{Challenges, FoldChallengeFamily, SparseChallenge};
+use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
 
 use crate::{
@@ -47,7 +47,7 @@ where
     Base: Field + CanonicalEncoding + Ring,
     Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
 {
-    let config = FoldChallengeFamily::production_for_ring_dim(s).unwrap();
+    let config = FoldChallengeDistribution::production_for_ring_dim(s).unwrap();
     let mut params = CommittedGroupParams::params_only(profile, d_a, 2, 2, 2, 2, config)
         .with_decomp(positions_per_block, live_positions, 2, 2, 2)
         .unwrap();

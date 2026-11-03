@@ -4,7 +4,7 @@ use akita_error::{checked, AkitaError};
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
 use jolt_field::Field;
 
-use super::{BinaryProjectionBounds, BINARY_PROJECTION_COUNT, BINARY_SOURCE_Q};
+use super::{challenge_block, BinaryProjectionBounds, BINARY_PROJECTION_COUNT, BINARY_SOURCE_Q};
 
 /// Seven independent rows, each covering every polynomial/rank/coefficient residual entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,7 +17,7 @@ impl BinaryProjectionRows {
     /// Draw after the outgoing commitment and accepted response nonce are fixed.
     /// Every three-byte candidate is accepted iff it is strictly below q.
     pub fn draw(
-        channel: &mut (impl ProofChannel + ?Sized),
+        channel: &mut impl ProofChannel,
         bounds: &BinaryProjectionBounds,
     ) -> Result<Self, AkitaError> {
         akita_transcript::public_bytes(
@@ -29,7 +29,7 @@ impl BinaryProjectionRows {
             },
             b"binary exact divisibility rows",
         )?;
-        Self::from_blocks(bounds.residual_rows(), || channel.challenge_block())
+        Self::from_blocks(bounds.residual_rows(), || challenge_block(channel))
     }
 
     fn from_blocks(

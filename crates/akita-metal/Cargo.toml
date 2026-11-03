@@ -18,11 +18,11 @@ akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 bytemuck = { version = "1.16", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "bytemuck",
   "solinas",
 ] }
-jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3" }
+jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a" }
 thiserror = "2.0"
 
 [dev-dependencies]
@@ -38,7 +38,7 @@ rand = "0.8"
 rayon = "1.10"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 # akita-types and akita-cpu-backend need exactly one transcript backend;
 # forward the choice.
 transcript-blake2b = [

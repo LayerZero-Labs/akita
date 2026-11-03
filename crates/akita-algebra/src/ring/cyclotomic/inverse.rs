@@ -41,21 +41,9 @@ fn negacyclic_inverse<F: Field>(value: &[F]) -> Option<Vec<F>> {
     Some(negacyclic_mul(&lifted, &conjugate))
 }
 
-/// Schoolbook product in `Z_q[X]/(X^n + 1)` for operands of equal length `n`.
+/// Product in `Z_q[X]/(X^n + 1)` for operands of equal length `n`.
 fn negacyclic_mul<F: Field>(lhs: &[F], rhs: &[F]) -> Vec<F> {
     let mut out = vec![F::zero(); lhs.len()];
-    for (i, lhs_coeff) in lhs.iter().copied().enumerate() {
-        if lhs_coeff.is_zero() {
-            continue;
-        }
-        let (out_wrap, out_direct) = out.split_at_mut(i);
-        let (rhs_direct, rhs_wrap) = rhs.split_at(rhs.len().saturating_sub(i));
-        for (dst, rhs_coeff) in out_direct.iter_mut().zip(rhs_direct) {
-            *dst += lhs_coeff * *rhs_coeff;
-        }
-        for (dst, rhs_coeff) in out_wrap.iter_mut().zip(rhs_wrap) {
-            *dst -= lhs_coeff * *rhs_coeff;
-        }
-    }
+    negacyclic_mul_accumulate(lhs, rhs, &mut out);
     out
 }

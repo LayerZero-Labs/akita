@@ -1,4 +1,7 @@
 //! Opt-in binary source wire contracts; no protocol flow is selected here.
+use akita_error::AkitaError;
+use akita_transcript::ProofChannel;
+
 mod a_product;
 mod agreement;
 mod authentication;
@@ -42,6 +45,18 @@ pub use root_request::*;
 pub use root_transcript::*;
 pub use terminal::*;
 pub use word_claim::*;
+
+/// Squeeze one 32-byte challenge block for a binary-source rejection sampler.
+///
+/// The number of blocks a sampler draws depends on earlier squeezed values.
+/// Such variable-length draws are confined to the experimental binary source.
+pub fn challenge_block(channel: &mut impl ProofChannel) -> Result<[u8; 32], AkitaError> {
+    channel.challenge_message(32, |bytes| {
+        bytes
+            .try_into()
+            .map_err(|_| AkitaError::Internal("challenge block width".into()))
+    })
+}
 #[cfg(test)]
 mod tests;
 

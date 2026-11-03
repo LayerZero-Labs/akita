@@ -17,14 +17,18 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, optional = true }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
+# Prover-side channel adapters (fold-response previews and transcript grinding)
+# for akita-labinius-prover. Verifier-only builds leave it off, so they do not
+# enable spongefish's raw-state access.
+prover = ["akita-transcript/prover", "akita-challenges/prover"]
 labinius = [
   "akita-algebra/labinius-binary",
   "akita-algebra/labinius-trinomial",

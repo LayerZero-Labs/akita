@@ -1,6 +1,6 @@
 use super::{
-    polynomial_identity_loss_factor, ChallengeFieldOrder, GrindingPlanAccumulator, GrindingRun,
-    GrindingSite, SumcheckProtocol,
+    polynomial_identity_loss_factor, ChallengeFieldOrder, FoldChallengeCost,
+    GrindingPlanAccumulator, GrindingRun, GrindingSite, SumcheckProtocol,
 };
 use akita_error::{narrowing::usize_to_u32, AkitaError};
 
@@ -32,6 +32,16 @@ impl SumcheckRoundBatch {
             self.challenge_order,
         )
         .map(Some)
+    }
+
+    /// The representative run and how many rounds repeat it.
+    fn repeated(self) -> Result<Option<(GrindingRun, u32)>, AkitaError> {
+        let Some(run) = self.representative()? else {
+            return Ok(None);
+        };
+        let repetitions = u32::try_from(self.rounds)
+            .map_err(|_| AkitaError::InvalidSetup("grinding plan run count exceeds u32".into()))?;
+        Ok(Some((run, repetitions)))
     }
 
     fn run_at(
@@ -67,6 +77,32 @@ pub(crate) trait GrindingPlanSink {
         }
         Ok(())
     }
+
+    /// The fold proof of work at `level` and each group's challenge message.
+    fn fold_queries(
+        &mut self,
+        level: u32,
+        params: &crate::CommittedGroupParams,
+        layout: &crate::OpeningClaimsLayout,
+    ) -> Result<(), AkitaError> {
+        let (work, groups) = crate::fold_challenge_runs(level, params, layout)?;
+        for run in std::iter::once(work).chain(groups) {
+            self.push(run)?;
+        }
+        Ok(())
+    }
+
+    /// The terminal fold proof of work at `level` and its challenge message.
+    fn terminal_fold_queries(
+        &mut self,
+        level: u32,
+        terminal: &crate::TerminalFoldParams,
+    ) -> Result<(), AkitaError> {
+        let (work, group) =
+            crate::transcript_grinding_plan::terminal_fold_challenge_runs(level, terminal)?;
+        self.push(work)?;
+        self.push(group)
+    }
 }
 
 impl<F: FnMut(GrindingRun) -> Result<(), AkitaError>> GrindingPlanSink for F {
@@ -81,13 +117,54 @@ impl GrindingPlanSink for GrindingPlanAccumulator {
     }
 
     fn sumcheck_rounds(&mut self, batch: SumcheckRoundBatch) -> Result<(), AkitaError> {
-        let Some(run) = batch.representative()? else {
+        let Some((run, repetitions)) = batch.repeated()? else {
             return Ok(());
         };
-        let repetitions = u32::try_from(batch.rounds)
-            .map_err(|_| AkitaError::InvalidSetup("grinding plan run count exceeds u32".into()))?;
         // `push_repeated` validates the representative's reserved site fields.
         self.push_repeated(run, repetitions)
+    }
+}
+
+/// Planner edge pricing. The plan builders price every run against the
+/// edge's own challenge order, so this sink counts them without re-deriving
+/// their targets, and it adds the fold challenge costs the planner priced
+/// once for the edge's fold and for a terminal successor.
+pub(crate) struct PlannerEdgeSink {
+    pub(crate) accumulator: GrindingPlanAccumulator,
+    pub(crate) fold: FoldChallengeCost,
+    pub(crate) terminal_fold: Option<FoldChallengeCost>,
+}
+
+impl GrindingPlanSink for PlannerEdgeSink {
+    fn push(&mut self, run: GrindingRun) -> Result<(), AkitaError> {
+        self.accumulator.count_repeated(run, 1)
+    }
+
+    fn sumcheck_rounds(&mut self, batch: SumcheckRoundBatch) -> Result<(), AkitaError> {
+        let Some((run, repetitions)) = batch.repeated()? else {
+            return Ok(());
+        };
+        self.accumulator.count_repeated(run, repetitions)
+    }
+
+    fn fold_queries(
+        &mut self,
+        _level: u32,
+        _params: &crate::CommittedGroupParams,
+        _layout: &crate::OpeningClaimsLayout,
+    ) -> Result<(), AkitaError> {
+        self.accumulator.add(&self.fold.counts)
+    }
+
+    fn terminal_fold_queries(
+        &mut self,
+        _level: u32,
+        _terminal: &crate::TerminalFoldParams,
+    ) -> Result<(), AkitaError> {
+        let terminal_fold = self.terminal_fold.ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal planner edge is missing its fold cost".into())
+        })?;
+        self.accumulator.add(&terminal_fold.counts)
     }
 }
 

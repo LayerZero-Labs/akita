@@ -2,7 +2,7 @@
 
 mod verifier_view;
 
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{
     digest_descriptor_bytes, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
@@ -10,7 +10,7 @@ use akita_params::{
 };
 use akita_params::{ScheduleLookupKey, ScheduleLookupOrderKey};
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
-use serde::ser::SerializeSeq;
+use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::ser::Formatter;
 use serde_json::value::RawValue;
@@ -170,7 +170,7 @@ impl ValidatedScheduleCatalog {
         family_name: impl Into<String>,
         rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<Self, AkitaError> {
         let family_name = family_name.into();
         validate_family_name(&family_name)?;
@@ -197,7 +197,11 @@ impl ValidatedScheduleCatalog {
             .enumerate()
             .map(|(index, row)| {
                 (
-                    key_for_profiles(row.profiles()).canonical_order_key(),
+                    key_for_profiles(
+                        row.profiles(),
+                        row.schedule().root_accumulated_setup_prefix_len,
+                    )
+                    .canonical_order_key(),
                     index,
                 )
             })
@@ -247,7 +251,7 @@ impl ValidatedScheduleCatalog {
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<Self, AkitaError> {
         if bytes.is_empty() || bytes.len() > MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES {
             return Err(AkitaError::InvalidSetup(format!(
@@ -366,7 +370,7 @@ impl ValidatedScheduleCatalog {
         &self,
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<(), AkitaError> {
         if self.family_name != expected_family_name {
             return Err(AkitaError::InvalidSetup(format!(
@@ -424,12 +428,17 @@ impl ValidatedScheduleCatalog {
         self.resolve_key_matching(key, None)
     }
 
-    /// Resolve the canonical honest prover row for exact committed profiles.
+    /// Resolve the canonical honest prover row for exact committed profiles and
+    /// the inherited setup-prefix domain its root accumulates (zero for none).
     pub fn resolve_profiles(
         &self,
         profiles: &CommittedGroupBatchProfile,
+        root_accumulated_setup_prefix_len: usize,
     ) -> Result<&ResolvedScheduleRow, AkitaError> {
-        self.resolve_key_matching(&key_for_profiles(profiles), Some(profiles))
+        self.resolve_key_matching(
+            &key_for_profiles(profiles, root_accumulated_setup_prefix_len),
+            Some(profiles),
+        )
     }
 
     fn resolve_key_matching(
@@ -498,7 +507,25 @@ impl Serialize for ScheduleCatalogArtifactRowsRef<'_> {
 
 #[derive(Serialize)]
 struct ScheduleCatalogArtifactRowRefV1<'a> {
+    #[serde(serialize_with = "serialize_artifact_schedule")]
     schedule: &'a FoldSchedule,
+}
+
+// Omit the empty demand only in JSON artifacts; binary verifier views encode every field.
+fn serialize_artifact_schedule<S: Serializer>(
+    schedule: &FoldSchedule,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let accumulated = schedule.root_accumulated_setup_prefix_len;
+    let mut fields =
+        serializer.serialize_struct("FoldSchedule", 3 + usize::from(accumulated != 0))?;
+    if accumulated != 0 {
+        fields.serialize_field("root_accumulated_setup_prefix_len", &accumulated)?;
+    }
+    fields.serialize_field("root", &schedule.root)?;
+    fields.serialize_field("recursive_folds", &schedule.recursive_folds)?;
+    fields.serialize_field("terminal", &schedule.terminal)?;
+    fields.end()
 }
 
 fn encode_artifact(artifact: &impl Serialize) -> Result<Vec<u8>, AkitaError> {
@@ -767,8 +794,12 @@ fn validate_family_name(family_name: &str) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> ScheduleLookupKey {
+fn key_for_profiles(
+    profiles: &CommittedGroupBatchProfile,
+    root_accumulated_setup_prefix_len: usize,
+) -> ScheduleLookupKey {
     ScheduleLookupKey {
+        root_accumulated_setup_prefix_len,
         final_group: profiles.final_group.group,
         precommitteds: profiles.precommitteds.clone(),
     }
@@ -793,9 +824,9 @@ fn catalog_digest(
 
 fn validate_schedule_challenge_hooks(
     schedule: &FoldSchedule,
-    ring_challenge_config: &impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+    ring_challenge_config: &impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
 ) -> Result<(), AkitaError> {
-    let validate = |actual: FoldChallengeFamily,
+    let validate = |actual: FoldChallengeDistribution,
                     method: akita_params::OpeningMethod,
                     ring_dimension: usize,
                     uses_l2: bool,
@@ -803,14 +834,14 @@ fn validate_schedule_challenge_hooks(
         let expected = match method {
             akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
-            } => FoldChallengeFamily::production_for_ring_dim(challenge_subring_dimension)
+            } => FoldChallengeDistribution::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} uses unsupported challenge subring D={challenge_subring_dimension}"
                     ))
                 })?,
             akita_params::OpeningMethod::EvaluationTrace if uses_l2 => {
-                akita_challenges::selective_l2_challenge_config(ring_dimension).map(akita_challenges::FoldChallengeFamily::SignedSparse).ok_or_else(|| {
+                akita_challenges::selective_l2_challenge_config(ring_dimension).map(akita_challenges::FoldChallengeDistribution::SignedSparse).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} has no selective L2 challenge config for D={ring_dimension}"
                     ))
@@ -896,17 +927,17 @@ mod tests {
             akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
             akita_challenges::SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
         ] {
-            let family = FoldChallengeFamily::SignedSparse(sparse);
+            let family = FoldChallengeDistribution::SignedSparse(sparse);
             let old_json = serde_json::to_vec(&sparse).unwrap();
             assert_eq!(serde_json::to_vec(&family).unwrap(), old_json);
             assert_eq!(
-                serde_json::from_slice::<FoldChallengeFamily>(&old_json).unwrap(),
+                serde_json::from_slice::<FoldChallengeDistribution>(&old_json).unwrap(),
                 family,
             );
             let old_postcard = postcard::to_allocvec(&sparse).unwrap();
             assert_eq!(postcard::to_allocvec(&family).unwrap(), old_postcard);
             assert_eq!(
-                postcard::from_bytes::<FoldChallengeFamily>(&old_postcard).unwrap(),
+                postcard::from_bytes::<FoldChallengeDistribution>(&old_postcard).unwrap(),
                 family,
             );
         }

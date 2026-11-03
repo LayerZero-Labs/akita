@@ -62,13 +62,13 @@ jobs:
         with:
           components: clippy
       - name: Clippy (transparent default features)
-        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak -- -D warnings
       - name: Clippy (no default features)
-        run: cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features transcript-keccak -- -D warnings
       - name: Clippy (response model diagnostics)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
       - name: Clippy (dev protocol)
-        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b,dev-protocol -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak,dev-protocol -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -100,13 +100,13 @@ jobs:
       - name: Clippy trinomial arithmetic and benchmarks
         run: cargo clippy -p akita-algebra --lib --benches --no-default-features --features labinius-trinomial -- -D warnings
       - name: Test trinomial relation geometry
-        run: cargo test -p akita-types --lib --no-default-features --features labinius-trinomial,transcript-blake2b
+        run: cargo test -p akita-types --lib --no-default-features --features labinius-trinomial,transcript-keccak
       - name: Test trinomial quotient kernel
-        run: cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-blake2b -- kernels::trinomial_relation
+        run: cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-keccak -- kernels::trinomial_relation
       - name: Clippy trinomial bridge and benchmarks
-        run: cargo clippy -p akita-types -p akita-cpu-backend --lib --benches --no-default-features --features labinius-trinomial,transcript-blake2b -- -D warnings
+        run: cargo clippy -p akita-types -p akita-cpu-backend --lib --benches --no-default-features --features labinius-trinomial,transcript-keccak -- -D warnings
       - name: Test binary source end-to-end opening
-        run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-blake2b
+        run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-keccak
 
 
   labinius-binary:
@@ -165,7 +165,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Build documentation
-        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence,transcript-blake2b
+        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence,transcript-keccak
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -202,7 +202,7 @@ jobs:
           set +e
           # --lib --bins --tests matches the default test target set but skips
           # compiling examples (clippy's --all-targets already compile-checks them).
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-blake2b \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-keccak \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
@@ -244,6 +244,12 @@ jobs:
           scripts/check-external-schedule-artifacts.sh
           cargo test --release -p akita-config --test trusted_schedule_artifact
       - name: Regenerate schedule artifacts in temporary storage
+        # Planning measured about 18 minutes on CI with two workers, and runner
+        # variance alone has moved this step by about 1.3x. The bound stops a
+        # runaway search. Growth in search size (states, candidates,
+        # descriptors) fails the --planner-cost-baseline check instead; slower
+        # per-candidate pricing is caught only by this timeout.
+        timeout-minutes: 35
         env:
           AKITA_SCHEDULE_GEN_JOBS: 2
         run: |
@@ -253,7 +259,8 @@ jobs:
             --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
             --catalog-baseline artifacts/schedule-catalog.tsv \
             --require-catalog-baseline-match \
-            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv"
+            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv" \
+            --planner-cost-baseline artifacts/schedule-planner-cost.tsv
           diff -ru artifacts/schedules "$artifact_dir"
       - name: Direct modeled SIS cost for every schedule
         run: |
@@ -262,17 +269,17 @@ jobs:
             --example catalog_security -- --check
       - name: Dense multi-chunk PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact fp128_dense_mc
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_dense_mc
       - name: One-hot multi-chunk catalog wiring
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact fp128_onehot_mc_catalog_resolves
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_onehot_mc_catalog_resolves
       - name: Bounded dense source PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- heterogeneous::bounded_
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- heterogeneous::bounded_
           cargo test --release -p akita-config --test bounded_dense_source
       - name: Combined-family setup at exact capacities
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
 
   # The LaBinius PCS ships its own catalogs, generated by its own binary, in
   # both protocol directories.
@@ -305,7 +312,7 @@ jobs:
           artifact_root="$RUNNER_TEMP/akita-labinius-schedule-artifacts${{ matrix.suffix }}"
           mkdir -p "$artifact_root"
           cargo run --release -p akita-labinius-pcs --no-default-features \
-            --features "labinius,labinius-catalog-gen,transcript-blake2b${{ matrix.extra-feature }}" \
+            --features "labinius,labinius-catalog-gen,transcript-keccak${{ matrix.extra-feature }}" \
             --bin gen_labinius_schedule_artifacts -- --output-dir "$artifact_root"
           diff -ru "artifacts/schedules-labinius${{ matrix.suffix }}" "$artifact_root/schedules-labinius${{ matrix.suffix }}"
 
@@ -375,7 +382,7 @@ jobs:
           SHARD_INDEX: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-blake2b,dev-protocol \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-keccak,dev-protocol \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
 
   test-transcript-backends:
@@ -395,6 +402,7 @@ jobs:
           cargo test --release -p akita-pcs
           --test transcript_hardening
           --test transcript_hardening_proptest
+          --test embedded_transcript
           --no-default-features
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
@@ -403,7 +411,7 @@ jobs:
         run: |
           cargo test --release -p akita-transcript \
             --no-default-features \
-            --features logging-transcript,${{ matrix.backend }} \
+            --features prover,logging-transcript,${{ matrix.backend }} \
             proof_stream --lib
           cargo test --release -p akita-pcs \
             --no-default-features \
@@ -425,10 +433,42 @@ jobs:
       - name: Audit the grinding plan across akita-types shapes
         run: >-
           cargo test --release -p akita-types
-          --features logging-transcript
+          --no-default-features
+          --features prover,logging-transcript,${{ matrix.backend }}
+      - name: Keccak-256 digest known answers
+        run: >-
+          cargo test --release
+          -p akita-transcript -p akita-params -p akita-types
+          --no-default-features
+          --features akita-transcript/keccak256-digests,akita-transcript/prover,akita-transcript/${{ matrix.backend }},akita-params/${{ matrix.backend }},akita-types/${{ matrix.backend }}
+          --lib
 
   # Exercise the proof stream through the opaque CPU backend under both
   # transcript hashes, including a small-field Stage 1 route.
+  test-inline-backends:
+    name: Guest inline backends
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          target: riscv64gc-unknown-linux-gnu
+      # The guest backends select themselves only on riscv64. The NTT inline's
+      # portable fallback runs on any host, so its table layout is pinned here;
+      # the `inline-parity` job in jolt-verifier-profile-smoke.yml executes the
+      # inlines in a traced Jolt guest.
+      - name: Inline NTT against the portable transform
+        run: cargo test --release -p akita-algebra --features ntt-inline --lib
+      - name: Host builds with every inline feature
+        run: cargo check --release -p akita-pcs --features ntt-inline
+      # A riscv64 target compiles every guest-selected path; the inline
+      # instructions run only under Jolt's emulator, so this is a build check.
+      - name: RISC-V builds with every inline feature
+        run: >-
+          cargo check --release -p akita-pcs --target riscv64gc-unknown-linux-gnu
+          --features ntt-inline
+
   test-proof-stream-roundtrips:
     name: Proof channel roundtrips (${{ matrix.backend }})
     runs-on: ubuntu-latest
@@ -458,11 +498,11 @@ jobs:
           components: clippy
       - name: Test opt-in source bounds and certified table
         run: |
-          cargo test -p akita-params --lib --no-default-features --features labinius-sis,transcript-blake2b sis::labinius
+          cargo test -p akita-params --lib --no-default-features --features labinius-sis,transcript-keccak sis::labinius
           cargo test -p akita-sis-estimator --lib --test labinius_width_table --no-default-features --features labinius-sis
           cargo test -p akita-sis-estimator --example labinius_infinity_width_table --no-default-features --features labinius-sis
       - name: Check opt-in estimator targets
-        run: cargo clippy -p akita-params -p akita-sis-estimator --all-targets --no-default-features --features labinius-sis,transcript-blake2b -- -D warnings
+        run: cargo clippy -p akita-params -p akita-sis-estimator --all-targets --no-default-features --features labinius-sis,transcript-keccak -- -D warnings
 
   test-labinius-challenges:
     name: LaBinius challenge families (${{ matrix.backend }})

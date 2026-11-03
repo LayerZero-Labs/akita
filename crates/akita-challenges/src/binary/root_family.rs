@@ -4,8 +4,8 @@ use super::{BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing};
 use crate::SparseChallenge;
 use akita_error::AkitaError;
 
-pub(crate) const WEIGHT: usize = 46;
 pub(crate) const IDENTITY: &[u8] = b"\x01akita/binary-root/phi243/bounded46/shake256-v1";
+pub(crate) const WEIGHT: usize = 46;
 
 pub(crate) fn profile() -> Result<BinaryChallengeProfile, AkitaError> {
     BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, WEIGHT)

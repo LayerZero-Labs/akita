@@ -29,7 +29,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
         precommitteds: Vec::new(),
     };
     let selected = catalog
-        .resolve_profiles(&profiles)
+        .resolve_profiles(&profiles, 0)
         .expect("selected schedule");
     selected
         .validate_opening_layout(&batch)

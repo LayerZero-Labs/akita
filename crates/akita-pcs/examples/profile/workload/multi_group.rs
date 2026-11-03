@@ -173,6 +173,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         .final_group;
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
@@ -378,8 +379,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     };
 
     assert_observed_proof_size(label, &proof);
-    let grinding_plan = derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout)
-        .expect("profile grinding plan");
+    let grinding_plan =
+        derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout, None)
+            .expect("profile grinding plan");
     print_proof_summary(label, &proof, &schedule, &grinding_plan);
     report_proof_size_against_planner(
         label,
@@ -444,8 +446,15 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let verifier = proof_scheme
         .verifier(verifier_setup.clone())
         .expect("verifier for the profile setup");
-    let verify =
-        |statement| verifier.batched_verify(&proof, b"profile", statement, BasisMode::Lagrange);
+    let verify = |statement| {
+        verifier.batched_verify(
+            &proof,
+            b"profile",
+            statement,
+            BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
+        )
+    };
     run_verifier_timings(label, pools, "multi-group profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

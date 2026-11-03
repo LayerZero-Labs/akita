@@ -3,8 +3,8 @@
 use super::*;
 use akita_algebra::binary::field_switch::transparent_weight;
 use akita_challenges::ProverFoldDraw;
-use akita_transcript::{Encoding, NargDeserialize, ProofChannel, ProtocolContextRecord};
-use jolt_field::CanonicalEncoding;
+use akita_transcript::{ChallengeCodec, ProofChannel, ProtocolContextRecord};
+use spongefish::{Encoding, FromNarg};
 
 struct ZeroWeight<S> {
     inner: S,
@@ -15,30 +15,40 @@ impl<S: ProofChannel> ProofChannel for ZeroWeight<S> {
     fn context(&mut self, record: ProtocolContextRecord) {
         self.inner.context(record);
     }
-    fn public<T: Encoding<[u8]> + ?Sized>(&mut self, message: &T) {
-        self.inner.public(message);
+    fn public(&mut self, bytes: &[u8]) {
+        self.inner.public(bytes);
     }
-    fn exchange<T: Encoding<[u8]> + NargDeserialize>(
+    fn exchange<T: Encoding + FromNarg + Copy>(
         &mut self,
-        message: &mut T,
+        messages: &mut [T],
     ) -> Result<(), AkitaError> {
-        self.inner.exchange(message)
+        self.inner.exchange(messages)
     }
-    fn field_challenge<T: CanonicalEncoding>(&mut self) -> Result<T, AkitaError> {
-        self.inner.field_challenge()
+    fn challenges<E: ChallengeCodec>(&mut self, len: usize) -> Result<Vec<E>, AkitaError> {
+        self.inner.challenges(len)
     }
-    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
-        let mut block = self.inner.challenge_block()?;
-        if self.challenges < 7 {
-            block.fill(0);
+    fn challenge_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
+    ) -> Result<T, AkitaError> {
+        let index = self.challenges;
+        self.challenges += 1;
+        self.inner.challenge_message(len, |message| {
+            if index >= 7 {
+                return decode(message);
+            }
             // λ=(1,0,...,0) selects basis row1; e_i is in F2,
             // hence its coordinate1 is zero for every carrier.
-            if self.challenges == 0 {
-                block[0] = 1;
+            let mut zeroed = vec![0; message.len()];
+            if index == 0 {
+                zeroed[0] = 1;
             }
-        }
-        self.challenges += 1;
-        Ok(block)
+            decode(&zeroed)
+        })
+    }
+    fn guard<T>(&mut self, result: Result<T, AkitaError>) -> Result<T, AkitaError> {
+        self.inner.guard(result)
     }
 }
 
@@ -57,7 +67,7 @@ fn field_switch_zero_multiplier_authenticates_terminal() {
         let point = vec![BinaryField128::ZERO; 3];
         let claim = reference::claim(&descriptor, &source, &point);
         let mut prover = ZeroWeight {
-            inner: new_prover_channel(DOMAIN, b"caller").unwrap(),
+            inner: new_prover_channel(DOMAIN),
             challenges: 0,
         };
         let terminal = prove_field_switch(&descriptor, &claim, &source, &mut prover).unwrap();
@@ -65,11 +75,14 @@ fn field_switch_zero_multiplier_authenticates_terminal() {
         let proof = prover.inner.narg_string().to_vec();
         let verify = |bytes: &[u8]| {
             let mut verifier = ZeroWeight {
-                inner: new_verifier_channel(DOMAIN, b"caller", bytes).unwrap(),
+                inner: new_verifier_channel(DOMAIN, bytes),
                 challenges: 0,
             };
             let terminal = verify_field_switch(&descriptor, &claim, &mut verifier)?;
-            verifier.inner.check_eof()?;
+            verifier
+                .inner
+                .check_eof()
+                .map_err(|_| AkitaError::InvalidProof)?;
             Ok::<_, AkitaError>(terminal)
         };
         assert_eq!(verify(&proof).unwrap(), terminal);
@@ -101,7 +114,7 @@ fn field_switch_zero_multiplier_authenticates_terminal() {
             .profiles()
             .final_group;
         let manifest = BinaryCommittedGroupManifest::new(descriptor, 0, &carrier).unwrap();
-        let mut challenge_channel = new_prover_channel(DOMAIN, b"root-challenges").unwrap();
+        let mut challenge_channel = new_prover_channel(DOMAIN);
         let challenges = akita_types::binary_source::binary_root_challenges(
             &mut ProverFoldDraw::new(&mut challenge_channel, 0, 0),
             2,

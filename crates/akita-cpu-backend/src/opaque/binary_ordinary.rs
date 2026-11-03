@@ -89,7 +89,8 @@ where
     }
 
     let retained = handle.committed.ordinary_retained()?;
-    let [image] = retained.inner_rows() else {
+    let inner_rows = retained.inner_rows()?;
+    let [image] = inner_rows.as_ref() else {
         return Err(AkitaError::InvalidProof);
     };
     let image_elements = checked::product([

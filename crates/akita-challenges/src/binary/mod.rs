@@ -5,10 +5,12 @@
 //! profile identity, so they do not add challenge entropy.
 
 mod combinatorics;
+mod position_sample;
 mod profile;
 pub(crate) mod root_family;
 mod sampler;
 mod sign;
+mod xof;
 
 use akita_error::AkitaError;
 use smallvec::SmallVec;
@@ -17,6 +19,7 @@ pub use profile::{
     BinaryChallengeFamily, BinaryChallengeProfile, BinaryScalarRing, BinarySignRule,
 };
 pub use sampler::BinaryChallengeSampler;
+pub(crate) use sampler::BINARY_CHALLENGE_SEED_LEN;
 
 use sign::coefficient_signs;
 

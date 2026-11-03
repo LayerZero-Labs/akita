@@ -130,12 +130,12 @@ The root authenticates the produced whole-carrier terminal through its existing
 parity and value relations.
 
 The result enters `OpeningClaims::from_groups`, the existing selection APIs,
-`AkitaCommitmentScheme::batched_prove_in_session` and
-`AkitaVerifier::batched_verify_in_session`. There is one proof type, one
+`AkitaCommitmentScheme::batched_prove_embedded` and
+`AkitaVerifier::batched_verify_embedded`. There is one proof type, one
 caller transcript and one grinding-plan cursor. No standalone binary PCS,
 nested session seed or separate root transcript is invoked. The caller can
 continue using its live transcript after verification and checks exhaustion
-at its chosen proof boundary.
+at its chosen proof boundary with the returned `PendingEof`.
 
 ## Opening order
 
@@ -464,7 +464,7 @@ pub fn find_schedule_with_root_setup_mode(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     root_setup_mode: SetupContributionMode,
     root_main_constraint: Option<&CommittedGroupParams>,
 ) -> Result<PlannedFoldSchedule, AkitaError>;
@@ -893,14 +893,18 @@ certificate.
 ### Authenticated output
 
 ```rust
-pub fn batched_verify_readings_in_session(
+pub fn batched_verify_readings_embedded(
     &self,
-    session: &mut VerifierSession<'_>,
+    state: &mut VerifierChannel<'_>,
     statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
+    setup_policy: SetupPolicy<'_, '_, Cfg::ExtField>,
     session_id: [u8; 32],
     group_id: [u8; 32],
-) -> Result<BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError>;
+) -> Result<
+    (PendingEof, BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>),
+    AkitaError,
+>;
 ```
 
 This method constructs the existing conditional-agreement result only after
