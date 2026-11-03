@@ -61,6 +61,7 @@ pub fn binary_root_matrix(
 /// coefficient map is authenticated by the ordinary successor commitment;
 /// source image digits, U, all carries, and every virtual zero share that map.
 /// No security admission of the experimental source matrices is asserted.
+/// [`BinaryRootAdmission`] builds it.
 #[derive(Clone, Debug)]
 pub struct BinaryRootPublic {
     manifest: BinaryCommittedGroupManifest,
@@ -74,10 +75,24 @@ pub struct BinaryRootPublic {
     batch_count: usize,
 }
 
-impl BinaryRootPublic {
-    pub fn new<'a>(
+/// Public binary root admission, before any opening byte is read.
+///
+/// It applies every geometry restriction of the binary group and of each
+/// ordinary group, including the ordinary single-digit, compression-map and
+/// native-degree limits. It reads and absorbs nothing, so it precedes the
+/// field switches. Their terminals then complete it through
+/// [`Self::with_terminals`].
+#[derive(Clone, Debug)]
+pub struct BinaryRootAdmission {
+    public: BinaryRootPublic,
+    words: usize,
+}
+
+impl BinaryRootAdmission {
+    /// `words` is the number of selected word claims in the public statement.
+    pub fn new(
         manifest: &BinaryCommittedGroupManifest,
-        claims: impl IntoIterator<Item = &'a BinaryTerminalClaim>,
+        words: usize,
         prime: &super::PrimePlaneManifest,
         setup: &AkitaSetupDescriptor,
         logical_len: usize,
@@ -85,17 +100,11 @@ impl BinaryRootPublic {
         ordinary_profiles: impl IntoIterator<Item = GroupCommitPhaseParams>,
     ) -> Result<Self, AkitaError> {
         manifest.validate()?;
-        let mut claim = Vec::new();
-        for terminal in claims {
-            if claim.len() >= manifest.descriptor().polynomials().len() {
-                return Err(AkitaError::InvalidInput(
-                    "too many binary source terminals".into(),
-                ));
-            }
-            claim.try_reserve(1).map_err(|_| AkitaError::InvalidProof)?;
-            claim.push(terminal.clone());
+        if words > manifest.descriptor().polynomials().len() {
+            return Err(AkitaError::InvalidInput(
+                "too many binary source terminals".into(),
+            ));
         }
-        BinaryTerminalClaim::validate_group(manifest.descriptor(), &claim)?;
         super::PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
         let domain_len = witness_commitment_domain_len(logical_len, destination_ring_dimension)?;
         let mut plan = BinaryRootWitnessPlan::new(
@@ -103,7 +112,7 @@ impl BinaryRootPublic {
             manifest.a_rank(),
             destination_ring_dimension,
         )?
-        .with_prime_planes(!claim.is_empty(), prime.planes().len())?;
+        .with_prime_planes(words != 0, prime.planes().len())?;
         let mut ordinary = Vec::new();
         for profile in ordinary_profiles {
             let ordinary_plan =
@@ -138,7 +147,7 @@ impl BinaryRootPublic {
             .and_then(|authentication| {
                 checked::sum([
                     7,
-                    checked::product([2, claim.len()])?,
+                    checked::product([2, words])?,
                     checked::product([2, prime.planes().len()])?,
                     authentication,
                     padding_count,
@@ -148,18 +157,50 @@ impl BinaryRootPublic {
             })
             .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
-            manifest: manifest.clone(),
-            claim,
-            prime: prime.clone(),
-            setup: setup.clone(),
-            plan,
-            ordinary,
-            negative_binary_addresses,
-            padding_count,
-            batch_count,
+            public: BinaryRootPublic {
+                manifest: manifest.clone(),
+                claim: Vec::new(),
+                prime: prime.clone(),
+                setup: setup.clone(),
+                plan,
+                ordinary,
+                negative_binary_addresses,
+                padding_count,
+                batch_count,
+            },
+            words,
         })
     }
 
+    /// Attach the field-switch terminals, one per admitted word claim.
+    pub fn with_terminals<'a>(
+        self,
+        claims: impl IntoIterator<Item = &'a BinaryTerminalClaim>,
+    ) -> Result<BinaryRootPublic, AkitaError> {
+        let Self { mut public, words } = self;
+        for terminal in claims {
+            if public.claim.len() >= words {
+                return Err(AkitaError::InvalidInput(
+                    "too many binary source terminals".into(),
+                ));
+            }
+            public
+                .claim
+                .try_reserve(1)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            public.claim.push(terminal.clone());
+        }
+        if public.claim.len() != words {
+            return Err(AkitaError::InvalidInput(
+                "missing binary source terminals".into(),
+            ));
+        }
+        BinaryTerminalClaim::validate_group(public.manifest.descriptor(), &public.claim)?;
+        Ok(public)
+    }
+}
+
+impl BinaryRootPublic {
     pub fn plan(&self) -> &BinaryRootWitnessPlan {
         &self.plan
     }

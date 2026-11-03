@@ -4,10 +4,20 @@ use super::*;
 #[test]
 fn grouped_surface_multiple_ordinary_groups_and_polynomials() {
     init_rayon_pool();
-    run_on_large_stack(mixed_ordinary);
+    run_on_large_stack(|| mixed_ordinary(false));
 }
 
-fn mixed_catalog() -> (
+/// The catalog's singleton profile has native degree 1024, above the root's
+/// 648 budget. Both sides reject it as setup before any opening byte.
+#[test]
+fn grouped_surface_unsupported_ordinary_profile_rejects_before_opening_bytes() {
+    init_rayon_pool();
+    run_on_large_stack(|| mixed_ordinary(true));
+}
+
+fn mixed_catalog(
+    unsupported: bool,
+) -> (
     TrustedScheduleCatalog<BinaryTestSuffix>,
     [akita_params::GroupCommitPhaseParams; 2],
 ) {
@@ -19,7 +29,12 @@ fn mixed_catalog() -> (
         precommitteds: vec![carrier.profiles().final_group],
     };
     let baseline = base.catalog().resolve_key(&baseline_key).unwrap();
-    let mut ordinary_profile = baseline.profiles().final_group;
+    let final_row = base.catalog().resolve_key(&singleton(18)).unwrap();
+    let mut ordinary_profile = if unsupported {
+        final_row.profiles().final_group
+    } else {
+        baseline.profiles().final_group
+    };
     ordinary_profile.group = PolynomialGroupLayout::new(18, 2);
     let b = ordinary_profile.outer.matrix;
     ordinary_profile.outer.matrix = akita_params::OuterCommitMatrixParams::try_new(
@@ -36,7 +51,6 @@ fn mixed_catalog() -> (
     )
     .unwrap();
     ordinary_profile.validate_frozen_precommit(128).unwrap();
-    let final_row = base.catalog().resolve_key(&singleton(18)).unwrap();
     let key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(18),
         precommitteds: vec![carrier.profiles().final_group, ordinary_profile],
@@ -83,8 +97,8 @@ fn mixed_catalog() -> (
     (catalog, [ordinary_profile, final_profile])
 }
 
-fn mixed_ordinary() {
-    let (catalog, ordinary_profiles) = mixed_catalog();
+fn mixed_ordinary(unsupported: bool) {
+    let (catalog, ordinary_profiles) = mixed_catalog(unsupported);
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
     let carrier = scheme
         .schedules()
@@ -180,23 +194,6 @@ fn mixed_ordinary() {
         &PrimePlaneManifest::new(&descriptor, &[]).unwrap(),
         resolved.schedule().recursive_folds[0].params.d_a(),
         ordinary_profiles,
-    )
-    .unwrap();
-    assert_eq!(
-        price.segment_physical_cells,
-        vec![
-            4096, 49152, 512, 2304, 1536, 524288, 352256, 65536, 4096, 262144, 176128, 65536, 4096
-        ]
-    );
-    assert_eq!(price.outgoing_physical_cells, 1511680);
-    assert_eq!(price.outgoing_domain_len, 2097152);
-    assert!(
-        price.outgoing_domain_len
-            <= akita_params::witness_commitment_domain_len(
-                resolved.schedule().root.output_witness_len,
-                resolved.schedule().recursive_folds[0].params.d_a()
-            )
-            .unwrap()
     );
     let first_prefix = resolved.schedule().recursive_folds[0]
         .params
@@ -222,26 +219,8 @@ fn mixed_ordinary() {
             &prefixes.get(&first_prefix).unwrap().public,
         )
         .unwrap();
-    let mut prover = new_prover_channel(b"mixed-ordinary-surface", b"caller").unwrap();
-    let mut registry = akita_prover::BackendRegistry::<BinaryTestSuffix>::new().unwrap();
-    let root = registry.register(&backend, &prefixes).unwrap();
-    let mut route =
-        akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-    akita_prover::batched_prove_in_session::<BinaryTestSuffix, _>(
-        setup.expanded.descriptor(),
-        scheme.schedules(),
-        &registry,
-        data,
-        &mut prover,
-        BasisMode::Lagrange,
-        &mut route,
-    )
-    .unwrap();
-    let proof = prover.narg_string().to_vec();
-    eprintln!("grouped_surface ordinary dev={} groups=2 polynomials=2,1 proof={} physical={} domain={} segments={:?}",
-        akita_params::DEV_PROTOCOL, proof.len(), price.outgoing_physical_cells, price.outgoing_domain_len, price.segment_physical_cells);
     let verifier = scheme.verifier(verifier_setup).unwrap();
-    let verify = |evaluations: &[Vec<F>]| {
+    let verify = |proof: &[u8], evaluations: &[Vec<F>]| {
         let mut groups =
             vec![
                 PolynomialGroupClaims::new_binary(binary.committed_group.clone(), claim.clone())
@@ -262,17 +241,64 @@ fn mixed_ordinary() {
             OpeningClaims::from_groups(groups).unwrap(),
             scheme.schedules(),
         );
-        let mut replay =
-            new_verifier_channel(b"mixed-ordinary-surface", b"caller", &proof).unwrap();
+        let mut replay = new_verifier_channel(b"mixed-ordinary-surface", b"caller", proof).unwrap();
         verifier.batched_verify_in_session(&mut replay, statement, BasisMode::Lagrange)?;
         replay.check_eof()
     };
-    verify(&evaluations).unwrap();
+    let mut prover = new_prover_channel(b"mixed-ordinary-surface", b"caller").unwrap();
+    let mut registry = akita_prover::BackendRegistry::<BinaryTestSuffix>::new().unwrap();
+    let root = registry.register(&backend, &prefixes).unwrap();
+    let mut route =
+        akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+    let before = prover.narg_string().len();
+    let proved = akita_prover::batched_prove_in_session::<BinaryTestSuffix, _>(
+        setup.expanded.descriptor(),
+        scheme.schedules(),
+        &registry,
+        data,
+        &mut prover,
+        BasisMode::Lagrange,
+        &mut route,
+    );
+    if unsupported {
+        assert!(matches!(price, Err(AkitaError::InvalidSetup(_))));
+        // The prover sends no field-switch partials, and the verifier reads
+        // none: an empty proof rejects as setup, not as a malformed proof.
+        assert!(matches!(proved, Err(AkitaError::InvalidSetup(_))));
+        assert_eq!(prover.narg_string().len(), before);
+        assert!(matches!(
+            verify(&[], &evaluations),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        return;
+    }
+    proved.unwrap();
+    let price = price.unwrap();
+    assert_eq!(
+        price.segment_physical_cells,
+        vec![
+            4096, 49152, 512, 2304, 1536, 524288, 352256, 65536, 4096, 262144, 176128, 65536, 4096
+        ]
+    );
+    assert_eq!(price.outgoing_physical_cells, 1511680);
+    assert_eq!(price.outgoing_domain_len, 2097152);
+    assert!(
+        price.outgoing_domain_len
+            <= akita_params::witness_commitment_domain_len(
+                resolved.schedule().root.output_witness_len,
+                resolved.schedule().recursive_folds[0].params.d_a()
+            )
+            .unwrap()
+    );
+    let proof = prover.narg_string().to_vec();
+    eprintln!("grouped_surface ordinary dev={} groups=2 polynomials=2,1 proof={} physical={} domain={} segments={:?}",
+        akita_params::DEV_PROTOCOL, proof.len(), price.outgoing_physical_cells, price.outgoing_domain_len, price.segment_physical_cells);
+    verify(&proof, &evaluations).unwrap();
     for group in 0..evaluations.len() {
         for owner in 0..evaluations[group].len() {
             let mut altered = evaluations.clone();
             altered[group][owner] += F::one();
-            assert!(verify(&altered).is_err());
+            assert!(verify(&proof, &altered).is_err());
         }
     }
 }

@@ -12,7 +12,7 @@ use akita_params::{
 use akita_serialization::AkitaSerialize;
 use akita_types::binary_source::{
     binary_projection_values, binary_root_challenges, binary_root_statement, BinaryProjectionRows,
-    BinaryRootPublic,
+    BinaryRootAdmission,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{
@@ -86,6 +86,16 @@ where
         ));
     }
     let logical_len = root_params.output_witness_len::<F>(opening_batch, E::DEGREE)?;
+    // Public geometry is admitted before the first opening byte is read.
+    let admission = BinaryRootAdmission::new(
+        manifest,
+        claim.len(),
+        prime,
+        &setup.expanded().descriptor,
+        logical_len,
+        next.params.d_a(),
+        ordinary_profiles.iter().copied(),
+    )?;
     let ordinary_statement = ordinary_groups
         .iter()
         .zip(ordinary_profiles.iter())
@@ -122,15 +132,7 @@ where
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let public = BinaryRootPublic::new(
-        manifest,
-        terminal.iter(),
-        prime,
-        &setup.expanded().descriptor,
-        logical_len,
-        next.params.d_a(),
-        ordinary_profiles.iter().copied(),
-    )?;
+    let public = admission.with_terminals(terminal.iter())?;
     let domain_len = public.plan().repacking().domain_len();
     if !domain_len.is_power_of_two() {
         return Err(AkitaError::InvalidProof);

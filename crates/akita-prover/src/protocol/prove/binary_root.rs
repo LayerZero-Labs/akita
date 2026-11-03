@@ -6,7 +6,7 @@ use akita_params::{
 };
 use akita_types::binary_source::{
     binary_projection_values, binary_root_challenges, binary_root_statement,
-    BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
+    BinaryProjectionRequest, BinaryProjectionRows, BinaryRootAdmission,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
@@ -89,6 +89,16 @@ where
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let logical_len = schedule.root.output_witness_len;
+    // Public geometry is admitted before any field-switch work or proof byte.
+    let admission = BinaryRootAdmission::new(
+        manifest,
+        claim.len(),
+        prime,
+        expanded,
+        logical_len,
+        next.params.d_a(),
+        ordinary_profiles.iter().copied(),
+    )?;
     let ordinary_statement = ordinary_groups
         .iter()
         .zip(ordinary_profiles.iter())
@@ -140,15 +150,7 @@ where
             grinding.state_mut(),
         )?);
     }
-    let public = BinaryRootPublic::new(
-        manifest,
-        terminal.iter(),
-        prime,
-        expanded,
-        logical_len,
-        next.params.d_a(),
-        ordinary_profiles.iter().copied(),
-    )?;
+    let public = admission.with_terminals(terminal.iter())?;
 
     let request = akita_types::binary_source::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),
