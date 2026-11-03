@@ -92,7 +92,7 @@ specifications until a later migration.
   bad dimensions/counts, truncation and trailing bytes with typed errors.
 - [x] Reject agreement tokens for another session, group, polynomial manifest,
   index map, dimensions or terminal prime claims.
-- [ ] Pass documentation guardrails and required feature/check matrices.
+- [x] Pass documentation guardrails and required feature/check matrices.
 
 ### Testing strategy
 
