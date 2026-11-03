@@ -167,6 +167,12 @@ silently truncated. The shared ring-switch challenge is budgeted for maximum
 native degree 648. These are geometry-specific exclusions, not restrictions on
 the number of ordinary groups or polynomials. Each ordinary group contributes
 four segments; pricing and verification both append `OrdinaryNativeRootPlan`.
+`BinaryRootAdmission` applies these profile checks and the binary group's
+public geometry from the statement alone. Prover and verifier both build it
+before the first field switch, and it absorbs nothing. An unsupported ordinary
+profile is therefore `InvalidSetup` before the prover sends, or the verifier
+reads, any opening byte; the field-switch terminals join the admission
+afterwards.
 
 This interface change retains the existing CPU source-material allocation cap:
 `2592*p*N <= 134217728` bytes for its expanded signed source. Exceeding it is
@@ -185,8 +191,13 @@ swaps reject. A mixed opening includes two ordinary groups with two and one
 polynomials. Caller stage messages precede the opening and a caller message
 follows it; only the caller consumes that final message and checks exhaustion.
 Test-only agreement tokens reject changed session, group, polynomial manifest,
-index map, dimensions and terminal-prime digest. They establish binding coverage,
-not the application's signed-bit/zero-support relation.
+A or outer-B profile identity, index map, dimensions and terminal-prime digest.
+Separately valid openings that differ only in the commitment, or only in one
+prime plane's owner, point or tensor component, receive different terminal-prime
+digests; so does the same plane over a source with a different honest value.
+A duplicate word owner within the owner count rejects with its own error. These
+tests establish binding coverage, not the application's signed-bit/zero-support
+relation.
 
 ## Opening order
 
