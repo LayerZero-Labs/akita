@@ -62,6 +62,9 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
+# Optional (default off): sums of products at the structured
+# sites of the verifier's setup scan (same field values).
+setup-sop-structured = ["akita-verifier/setup-sop-structured"]
 # Keccak-256 instead of SHA3-256 digests; see `akita-transcript`.
 keccak256-digests = ["akita-transcript/keccak256-digests"]
 # 64-point NTT and pointwise-dot inlines for a RISC-V guest verifier.
@@ -109,6 +112,7 @@ logging-transcript = [
   "akita-cpu-backend/logging-transcript",
 ]
 response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
+compression-weights-crosscheck = ["akita-types/compression-weights-crosscheck"]
 # Dev protocol (`docs/branches.md`); see `akita-params`.
 dev-protocol = ["akita-params/dev-protocol"]
 [dependencies]

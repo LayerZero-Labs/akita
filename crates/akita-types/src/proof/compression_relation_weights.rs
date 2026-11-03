@@ -1,8 +1,11 @@
 //! Shared compact F/H relation weights for prover materialization and verifier evaluation.
 
+mod factored;
 mod reduced;
 
 pub use reduced::{build_reduced_compression_relation_weights, ReducedCompressionRelationWeights};
+
+use factored::push_recomposition;
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
@@ -40,12 +43,17 @@ struct EvaluatedCompressionMatrix<E: Field> {
 }
 
 /// Canonical additive relation table for every F/H compression layer.
+///
+/// Events are stored individually or, for the recomposition and column
+/// families, as `factored::Groups` of aligned progressions whose scalars
+/// share one table; both forms describe the same additive table.
 #[derive(Clone, Debug)]
 pub struct CompressionRelationWeights<E: Field> {
     events: Vec<CompressionRelationEvent<E>>,
     alpha_powers: Vec<E>,
     coefficient_block_len: usize,
     physical_field_len: usize,
+    groups: factored::Groups<E>,
 }
 
 /// Checked sparse support for the negative-binary compression digits.
@@ -195,7 +203,8 @@ impl<E: Field> CompressionRelationWeights<E> {
                 actual: weights.len(),
             });
         }
-        for event in &self.events {
+        let expanded = self.expanded_group_events()?;
+        for event in self.events.iter().chain(&expanded) {
             let alpha = self
                 .alpha_powers
                 .get(
@@ -234,6 +243,9 @@ impl<E: Field> CompressionRelationWeights<E> {
     pub fn into_sparse_entries(mut self) -> Result<Vec<(usize, E)>, AkitaError> {
         /// Coefficients per parallel task, rounded up to whole clusters.
         const TASK_COEFFICIENTS: usize = 1 << 14;
+        let expanded = self.expanded_group_events()?;
+        self.events.extend(expanded);
+        self.groups = factored::Groups::default();
         self.events
             .sort_unstable_by_key(|event| event.physical_start);
         // `push` bounds every event inside the physical domain, so these
@@ -304,8 +316,18 @@ impl<E: Field> CompressionRelationWeights<E> {
     }
 
     /// Evaluate the table's multilinear extension at one full witness point.
+    ///
+    /// Ungrouped events take the per-event path and groups are evaluated by
+    /// factor (see the `factored` module); the sum is the dense table's extension.
+    #[cfg(not(feature = "compression-weights-crosscheck"))]
     #[tracing::instrument(skip_all, name = "compression_relation_mle")]
     pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let events = self.evaluate_events_at_point(point)?;
+        Ok(events + self.evaluate_groups_at_point(point)?)
+    }
+
+    /// The multilinear extension of the ungrouped events at `point`.
+    fn evaluate_events_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         if checked::pow2(point.len()) != Some(self.physical_field_len) {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len.trailing_zeros() as usize,
@@ -421,8 +443,10 @@ impl<E: Field> CompressionRelationWeights<E> {
     }
 }
 
+/// Push one recomposition as individual events (the fallback of
+/// `factored::push_recomposition`).
 #[allow(clippy::too_many_arguments)]
-fn push_recomposition<F, E>(
+fn push_recomposition_canonical<F, E>(
     weights: &mut CompressionRelationWeights<E>,
     span_start: usize,
     digit_ring_dim: usize,
@@ -685,6 +709,7 @@ where
         alpha_powers: scalar_powers(alpha, maximum_dimension),
         coefficient_block_len,
         physical_field_len,
+        groups: factored::Groups::default(),
     };
     let field_bits = usize::try_from(F::MODULUS_BITS)
         .map_err(|_| AkitaError::InvalidSetup("compression field width overflow".into()))?;
@@ -749,20 +774,14 @@ where
         let evaluated = evaluated_matrices.get(matrix_index).ok_or_else(|| {
             AkitaError::Internal("evaluated compression matrix cache entry is missing".into())
         })?;
-        for column in 0..map.input_width() {
-            let start = column * map.ring_dimension();
-            weights.push(
-                span.range().start + start,
-                map.ring_dimension(),
-                0,
-                row_weight
-                    * evaluated.columns.get(column).copied().ok_or_else(|| {
-                        AkitaError::Internal(
-                            "compression column exceeds the evaluated column table".into(),
-                        )
-                    })?,
-            )?;
-        }
+        weights.push_column_group(
+            span.range().start,
+            map.ring_dimension(),
+            map.input_width(),
+            row_weight,
+            matrix_index,
+            &evaluated.columns,
+        )?;
         if let Some(successor) = successor_compression_span(witness_layout, group_index, map_index)?
         {
             push_recomposition::<F, E>(
@@ -799,6 +818,9 @@ where
     Ok(weights)
 }
 
+#[cfg(feature = "compression-weights-crosscheck")]
+pub mod crosscheck;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -819,6 +841,7 @@ mod tests {
                 alpha_powers: (1..=16).map(F::from_u64).collect(),
                 coefficient_block_len: 2,
                 physical_field_len: 16,
+                groups: factored::Groups::default(),
             };
             for (start, count, alpha_start, scalar) in
                 [(0, 4, 0, 3), (6, 2, 4, 5), (8, 8, 0, 7), (2, 4, 2, 11)]
@@ -848,6 +871,7 @@ mod tests {
             alpha_powers: (1..=4096).map(F::from_u64).collect(),
             coefficient_block_len: 8,
             physical_field_len,
+            groups: factored::Groups::default(),
         };
         for index in 0..600usize {
             let coefficient_count = 8 << (index % 5);

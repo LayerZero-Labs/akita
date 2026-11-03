@@ -62,13 +62,15 @@ impl From<[u8; 32]> for AkitaSetupSeed {
     }
 }
 
-/// Maximum setup matrix field elements accepted by self-describing setup
-/// deserialization.
+/// Maximum setup matrix field elements accepted by self-describing copying
+/// setup deserialization.
 ///
 /// This cap protects generic verifier-facing setup decoding from allocating
 /// directly from attacker-controlled seed metadata. It is not a protocol limit
 /// on the deterministic public stream. Context-backed decoders should instead
-/// enforce an expected shape and caller-supplied resource budget.
+/// enforce an expected shape and caller-supplied resource budget. In-place
+/// views ([`AkitaExpandedSetup::borrow_trusted`]) allocate nothing and are
+/// bounded by the caller-vouched bytes, so they do not apply it.
 pub const MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS: usize = 1 << 26;
 
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-field-stream";
@@ -636,7 +638,9 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()> + 'st
     /// View a trusted, uncompressed serialized setup in place (see
     /// [`FlatMatrix::borrow_trusted_with_expected_shape`]), returning it with
     /// the unread remainder of `bytes`. The descriptor is validated; the
-    /// matrix is taken as seed-derived without re-deriving it.
+    /// matrix is taken as seed-derived without re-deriving it. No size cap
+    /// applies: the view allocates nothing, and the declared matrix must lie
+    /// within `bytes`, whose extent the caller vouches for.
     ///
     /// # Errors
     ///
@@ -656,7 +660,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()> + 'st
         let (shared_matrix, rest) = FlatMatrix::borrow_trusted_with_expected_shape(
             matrix,
             descriptor.num_field_elements,
-            MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+            descriptor.num_field_elements,
         )?;
         Ok((
             Self::from_trusted_seed_derived_parts_unchecked(descriptor, shared_matrix),
@@ -1022,6 +1026,37 @@ mod tests {
                 "trailing {suffix:#04x} accepted"
             );
         }
+    }
+
+    #[test]
+    fn borrowed_setup_is_bounded_by_its_bytes_not_the_copying_decode_cap() {
+        let large = AkitaSetupDescriptor {
+            max_num_vars: 32,
+            max_num_batched_polys: 1,
+            num_field_elements: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1,
+            setup_seed: [7u8; 32].into(),
+        };
+        let mut header = Vec::new();
+        large.serialize_uncompressed(&mut header).unwrap();
+        large
+            .num_field_elements
+            .serialize_uncompressed(&mut header)
+            .unwrap();
+        // SAFETY: the bytes hold no field words, so nothing is viewed in place.
+        let bytes = unsafe { TrustedBytes::new(Box::leak(header.clone().into_boxed_slice())) };
+
+        let borrowed = AkitaVerifierSetup::<F>::borrow_trusted(bytes).unwrap_err();
+        assert!(
+            borrowed.to_string().contains("field run is truncated"),
+            "{borrowed}"
+        );
+        let copied =
+            AkitaExpandedSetup::<F>::deserialize_uncompressed(&header[..], &()).unwrap_err();
+        assert!(matches!(
+            copied,
+            SerializationError::LengthLimitExceeded { max, .. }
+                if max == MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
+        ));
     }
 
     #[test]

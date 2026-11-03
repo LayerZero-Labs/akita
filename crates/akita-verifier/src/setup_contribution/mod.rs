@@ -79,3 +79,6 @@ use segments::scan_partition;
 
 pub(crate) use direct_scan::materialize_reduced_direct_scan_weights;
 pub(crate) use structured_reduced::evaluate_reduced_structured_group;
+
+// Appended after the last original line: the `lb2_alt!` selector and, with the feature, `PairSum`.
+mod lb2;

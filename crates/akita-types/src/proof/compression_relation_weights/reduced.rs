@@ -436,6 +436,7 @@ where
         alpha_powers: scalar_powers(alpha, maximum_dimension),
         coefficient_block_len,
         physical_field_len,
+        groups: super::factored::Groups::default(),
     };
     let field_bits = usize::try_from(F::MODULUS_BITS)
         .map_err(|_| AkitaError::InvalidSetup("compression field width overflow".into()))?;
@@ -617,11 +618,16 @@ mod tests {
                     field_bits * (span.map().ring_dimension() / successor.map().ring_dimension());
             }
         }
-        assert_eq!(program.linear.events.len(), expected_linear_events);
+        let grouped = program.linear.expanded_group_events().unwrap();
+        assert_eq!(
+            program.linear.events.len() + grouped.len(),
+            expected_linear_events
+        );
         assert!(program
             .linear
             .events
             .iter()
+            .chain(&grouped)
             .all(|event| { event.physical_start + event.coefficient_count <= physical_field_len }));
 
         let mut wrong_mode = params.clone();
@@ -696,6 +702,7 @@ mod tests {
                 alpha_powers: Vec::new(),
                 coefficient_block_len: 1,
                 physical_field_len: 2048,
+                groups: super::factored::Groups::default(),
             },
             maps: vec![ReducedCompressionMapEvent {
                 span: span.clone(),

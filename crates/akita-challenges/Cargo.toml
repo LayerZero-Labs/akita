@@ -36,6 +36,10 @@ logging-transcript = ["akita-transcript/logging-transcript"]
 prover = ["akita-transcript/prover"]
 labinius-challenges = ["dep:keccak", "dep:num-bigint", "dep:shake"]
 
+# Recursion option (default off): the D64 selective-L2 operator-norm
+# table reads its base tables from generated static data (same entries).
+ont-static-base = []
+
 [[bench]]
 name = "binary_challenge"
 harness = false

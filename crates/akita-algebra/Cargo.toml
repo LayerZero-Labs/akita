@@ -59,6 +59,8 @@ default = []
 labinius-binary = []
 parallel = ["dep:rayon", "jolt-field/parallel"]
 labinius-trinomial = []
+tensor-no-carry = []
+tensor-eq-runs = []
 
 [lints]
 workspace = true
