@@ -326,3 +326,30 @@ fn stage3_a_product_rejects_malformed_rho_point_and_prefix_without_panic() {
         assert!(product.evaluate(&bad_point).is_err());
     }
 }
+
+#[test]
+fn full_size_typed_prefix_requires_padded_rank_and_coefficient_axes() {
+    for (carriers, prefix_len) in [(1 << 22, 16_777_216usize), (1 << 23, 33_554_432)] {
+        let descriptor = BinarySourceDescriptor::new(
+            BinaryIndexMap::new(128, carriers, carriers, 256).unwrap(),
+            vec![[1; 32]],
+            BinaryCommitmentProfiles {
+                a: [2; 32],
+                b: [3; 32],
+            },
+        )
+        .unwrap();
+        let plan = BinaryRootWitnessPlan::new(&descriptor, 3, 64)
+            .unwrap()
+            .with_prime_planes(true, 1)
+            .unwrap();
+        let point = vec![F::zero(); plan.repacking().domain_len().trailing_zeros() as usize];
+        let rho = [[F::zero(); 648]; 3];
+        // Rounding rank*m*648 as a flat array loses the padding on both
+        // independently addressed axes of the canonical typed A layout.
+        assert!(BinaryAProduct::new(&plan, &rho, &point, prefix_len / 2).is_err());
+        let product = BinaryAProduct::new(&plan, &rho, &point, prefix_len).unwrap();
+        let terminal = vec![F::zero(); prefix_len.trailing_zeros() as usize];
+        assert_eq!(product.evaluate(&terminal).unwrap(), F::zero());
+    }
+}
