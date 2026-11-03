@@ -10,7 +10,7 @@ use super::{
     binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor, BinaryTerminalClaim,
     BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
-use crate::native_root_relation::NativeRootWeights;
+use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
 use crate::root_repacking::RootCoefficientRepacking;
 
 /// Addresses of the response low digit, authenticated U view and both carries.
@@ -88,29 +88,19 @@ impl BinaryTerminalClaim {
             }
         }
         let scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(scalar_rows)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        rows.extend(row_weights.into_iter().map(|weight| weight.to_words()));
+        let parity_rows = ParityRowWeights {
+            response: SegmentLanes::new(repacking, segments.response)?,
+            table_len: repacking.domain_len(),
+            alpha,
+            batch: batches[0],
+            first_element: checked::product([owner, ring_rows]).ok_or(AkitaError::InvalidProof)?,
+            rows,
+        };
         let mut terms = Vec::new();
-        let span = tracing::info_span!("binary_root_weights_parity_rows").entered();
-        for (row, weight) in row_weights.into_iter().enumerate() {
-            let multiplier = binary_scalar_lift(weight).map(E::from_i128);
-            let mut kernel = [E::zero(); 162];
-            shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, alpha, &mut kernel)
-                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            let element =
-                checked::mul_add(owner, ring_rows, row / 4).ok_or(AkitaError::InvalidProof)?;
-            for (coefficient, weight) in kernel.into_iter().enumerate() {
-                let packed =
-                    checked::mul_add(4, coefficient, row % 4).ok_or(AkitaError::InvalidProof)?;
-                let address =
-                    repacking.coefficient_address(segments.response, element, 0, packed)?;
-                let sign = if coefficient % 2 == 0 {
-                    E::one()
-                } else {
-                    -E::one()
-                };
-                terms.push((address, batches[0] * sign * weight));
-            }
-        }
-        drop(span);
         for (column, weight) in column_weights.into_iter().enumerate() {
             let challenge_index =
                 checked::mul_add(owner, columns, column).ok_or(AkitaError::InvalidProof)?;
@@ -166,7 +156,130 @@ impl BinaryTerminalClaim {
             .fold(E::zero(), |acc, coefficient| {
                 acc * alpha + E::from_i128(coefficient)
             });
-        NativeRootWeights::new(repacking.domain_len(), terms, batches[1] * target)
+        NativeRootWeights::structured(
+            repacking.domain_len(),
+            terms,
+            vec![RootWeightFamily::ParityRows(parity_rows)],
+            batches[1] * target,
+        )
+    }
+}
+
+/// Bits per Four Russians chunk of a 162-bit scalar row.
+const PARITY_CHUNK_BITS: usize = 8;
+/// Chunks covering the 162 scalar bits; the last holds bits 160 and 161.
+const PARITY_CHUNKS: usize = 162usize.div_ceil(PARITY_CHUNK_BITS);
+
+/// The parity identity's row part: every scalar row of the claimed owner
+/// against its response element's low digit.
+///
+/// Row `r` weighs packed coefficient `4c + r mod 4` by
+/// `batch * (-1)^c * SRE(bits_r, alpha)[c]`. Response lanes start equality
+/// blocks, and by the Hankel symmetry of the shifted remainders the row reads
+/// `high * sum_{s in bits_r} P_k[s]`, where
+/// `P_k = SRE(((-1)^c low[4c+k])_c, alpha)` and `k = r mod 4`. The verifier
+/// answers these subset sums with Four Russians tables: 21 lookups per row
+/// after `4 * 21 * 256` table additions. The prover needs each row's full
+/// kernel, which one shifted-remainder pass gives in fewer operations than
+/// 21 table vectors of 162 entries, so it keeps that pass.
+#[derive(Clone, Debug)]
+pub(crate) struct ParityRowWeights<E: Field> {
+    response: SegmentLanes,
+    table_len: usize,
+    alpha: E,
+    batch: E,
+    first_element: usize,
+    /// Canonical 162-bit row weights as little-endian words.
+    rows: Vec<[u64; 3]>,
+}
+
+impl<E: Field> ParityRowWeights<E> {
+    pub(crate) fn table_len(&self) -> usize {
+        self.table_len
+    }
+
+    fn element(&self, row: usize) -> Result<usize, AkitaError> {
+        checked::sum([self.first_element, row / 4]).ok_or(AkitaError::InvalidProof)
+    }
+
+    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+        let low = eq.low();
+        let mut tables = Vec::new();
+        tables
+            .try_reserve_exact((4 * PARITY_CHUNKS) << PARITY_CHUNK_BITS)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for k in 0..4 {
+            let mut signed = [E::zero(); 162];
+            for (c, slot) in signed.iter_mut().enumerate() {
+                let value = *low.get(4 * c + k).ok_or(AkitaError::InvalidProof)?;
+                *slot = if c % 2 == 0 { value } else { -value };
+            }
+            let mut sums = [E::zero(); 162];
+            shifted_remainder_evaluations::<E, PlusTrinomial>(&signed, self.alpha, &mut sums)
+                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+            for chunk in 0..PARITY_CHUNKS {
+                let start = tables.len();
+                tables.push(E::zero());
+                for mask in 1usize..1 << PARITY_CHUNK_BITS {
+                    let bit = chunk * PARITY_CHUNK_BITS + mask.trailing_zeros() as usize;
+                    let rest = *tables
+                        .get(start + (mask & (mask - 1)))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    tables.push(match sums.get(bit) {
+                        Some(&value) => rest + value,
+                        None => rest,
+                    });
+                }
+            }
+        }
+        let mut sum = E::zero();
+        for (quad, rows) in self.rows.chunks(4).enumerate() {
+            let mut lanes = E::zero();
+            for (k, words) in rows.iter().enumerate() {
+                let table = (k * PARITY_CHUNKS) << PARITY_CHUNK_BITS;
+                for chunk in 0..PARITY_CHUNKS {
+                    let bit = chunk * PARITY_CHUNK_BITS;
+                    let word = *words.get(bit / 64).ok_or(AkitaError::InvalidProof)?;
+                    let mask = (word >> (bit % 64)) as usize & ((1 << PARITY_CHUNK_BITS) - 1);
+                    lanes += *tables
+                        .get(table + (chunk << PARITY_CHUNK_BITS) + mask)
+                        .ok_or(AkitaError::InvalidProof)?;
+                }
+            }
+            let base = self.response.base(self.element(4 * quad)?, 0)?;
+            if eq.low_offset(base) != 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "root lane does not start an equality block".into(),
+                ));
+            }
+            sum += eq.high(base)? * lanes;
+        }
+        Ok(self.batch * sum)
+    }
+
+    pub(crate) fn visit(
+        &self,
+        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        for (row, words) in self.rows.iter().enumerate() {
+            let multiplier: [E; 162] = std::array::from_fn(|index| {
+                let word = words.get(index / 64).copied().unwrap_or(0);
+                E::from_u64((word >> (index % 64)) & 1)
+            });
+            let mut kernel = [E::zero(); 162];
+            shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, self.alpha, &mut kernel)
+                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+            let base = self.response.base(self.element(row)?, 0)?;
+            for (coefficient, weight) in kernel.into_iter().enumerate() {
+                let signed = if coefficient % 2 == 0 {
+                    weight
+                } else {
+                    -weight
+                };
+                visit(base + 4 * coefficient + row % 4, self.batch * signed)?;
+            }
+        }
+        Ok(())
     }
 }
 
