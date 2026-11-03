@@ -7,7 +7,8 @@ use akita_params::sis::ajtai_key::{
 };
 use akita_params::GroupCommitPhaseParams;
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimePlaneManifest,
+    BinaryAPrefixLen, BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan,
+    PrimePlaneManifest,
 };
 
 /// Exact witness and D widths, without a production-admission assertion.
@@ -29,6 +30,8 @@ pub struct BinaryPrimePlanePrice {
     /// Ring elements needed by that ordinary domain at the chosen dimension.
     pub outgoing_ring_elements: usize,
     pub segment_physical_cells: Vec<usize>,
+    /// Typed A prefix the first successor's setup prefix must hold.
+    pub typed_prefix: BinaryAPrefixLen,
 }
 
 /// Price every selected plane through the verifier's canonical witness plan.
@@ -111,6 +114,7 @@ pub fn price_binary_root_planes(
         )
         .ok_or(AkitaError::InvalidProof)?,
         segment_physical_cells,
+        typed_prefix: BinaryAPrefixLen::new(manifest.descriptor().index_map(), manifest.a_rank())?,
     })
 }
 
@@ -210,6 +214,7 @@ mod tests {
                     assert_eq!(price.outgoing_physical_cells, expected);
                     assert_eq!(price.d_columns, planes * 27864 + if word { 648 } else { 0 });
                     assert_eq!(price.outgoing_domain_len, expected.next_power_of_two());
+                    assert_eq!(price.typed_prefix.domain_len, 1 << (bits + 2));
                     println!("prime_plane n={bits} word={word} planes={planes}: {price:?}");
                 }
             }

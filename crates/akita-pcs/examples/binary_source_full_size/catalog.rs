@@ -11,17 +11,6 @@ use akita_types::binary_source::{
     PrimePlaneManifest,
 };
 
-pub(super) fn typed_prefix_len(log: usize) -> Result<usize, AkitaError> {
-    let descriptor = claims::descriptor(log)?;
-    let index = descriptor.index_map();
-    let divisor = checked::product([4, index.columns()]).ok_or(AkitaError::InvalidProof)?;
-    let rows =
-        checked::exact_div(index.padded_carriers(), divisor).ok_or(AkitaError::InvalidProof)?;
-    // The benchmark's rank-three, degree-648 typed layout has independently
-    // padded rank and coefficient axes; the full-size regression pins these.
-    checked::product([4, 1024, rows]).ok_or(AkitaError::InvalidProof)
-}
-
 pub(super) fn plan(
     log: usize,
     shape: &str,
@@ -54,8 +43,8 @@ pub(super) fn plan(
     let price = akita_planner::prime_planes::price_binary_root_planes(
         &manifest, word, &prime, dimension, ordinary,
     )?;
-    let mut canonical =
-        BinaryRootWitnessPlan::new(&descriptor, 3, dimension)?.with_prime_planes(word, planes)?;
+    let mut canonical = BinaryRootWitnessPlan::new(&descriptor, manifest.a_rank(), dimension)?
+        .with_prime_planes(word, planes)?;
     if let Some(ordinary) = ordinary {
         let ordinary =
             OrdinaryNativeRootPlan::new(ordinary, canonical.repacking().segments().len())?;
@@ -119,8 +108,6 @@ pub(super) fn build(
     let ordinary_profile = ordinary_row
         .as_ref()
         .map(|r| r.schedule.root.params.own_group().profile);
-    let required_prefix = typed_prefix_len(log)?;
-    println!("typed_a_prefix required_domain={required_prefix}");
     let start = log.max(18);
     for carrier_vars in start..=30 {
         let singleton = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(carrier_vars));
@@ -179,13 +166,14 @@ pub(super) fn build(
             dimension,
         )?;
         println!(
-            "schedule_candidate carrier_vars={carrier_vars} root_output={} scheduled_domain={scheduled_domain} prefix_domain={}",
+            "schedule_candidate carrier_vars={carrier_vars} root_output={} scheduled_domain={scheduled_domain} prefix_domain={} typed_a_prefix_required_domain={}",
             schedule.root.output_witness_len,
-            prefix.n_prefix()?
+            prefix.n_prefix()?,
+            price.typed_prefix.domain_len
         );
         if schedule.root.output_witness_len < price.outgoing_physical_cells
             || scheduled_domain < price.outgoing_domain_len
-            || prefix.n_prefix()? < required_prefix
+            || prefix.n_prefix()? < price.typed_prefix.domain_len
         {
             continue;
         }
@@ -270,8 +258,11 @@ pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::erro
     } else {
         None
     };
-    plan(log, shape, &carrier, ordinary, 64)?;
-    println!("typed_a_prefix required_domain={}", typed_prefix_len(log)?);
+    let price = plan(log, shape, &carrier, ordinary, 64)?;
+    println!(
+        "typed_a_prefix natural_cells={} required_domain={}",
+        price.typed_prefix.natural_len, price.typed_prefix.domain_len
+    );
     println!("plan_only=true proof_measured=false");
     Ok(())
 }

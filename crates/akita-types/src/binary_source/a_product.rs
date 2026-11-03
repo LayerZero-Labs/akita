@@ -9,10 +9,61 @@ use akita_params::SetupPrefixSlotId;
 use akita_serialization::AkitaSerialize;
 use jolt_field::Field;
 
-use super::{binary_root_matrix, BinaryCommittedGroupManifest, BinaryRootWitnessPlan};
+use super::{
+    binary_root_matrix, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan,
+};
 
 const DEGREE: usize = 648;
 const STRIDE: usize = 1024;
+
+/// Size of the canonical typed A prefix: one row per source ring row, each
+/// holding the rank axis padded to a power of two times 1024 coefficients.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BinaryAPrefixLen {
+    /// Source ring rows, `padded_carriers / (4 * columns)`.
+    pub rows: usize,
+    /// Cells per source row: the padded rank times the coefficient stride.
+    pub row_stride: usize,
+    /// Natural cells of the padded rank/coefficient tensor.
+    pub natural_len: usize,
+    /// Smallest power-of-two prefix domain that holds the natural cells.
+    pub domain_len: usize,
+}
+
+impl BinaryAPrefixLen {
+    /// Size the typed A prefix of an index map and A rank.
+    pub fn new(index: &BinaryIndexMap, rank: usize) -> Result<Self, AkitaError> {
+        let rows = checked::product([4, index.columns()])
+            .and_then(|width| checked::exact_div(index.padded_carriers(), width))
+            .filter(|&rows| rows > 0)
+            .ok_or(AkitaError::InvalidProof)?;
+        let row_stride = checked::ceil_log2(rank)
+            .and_then(checked::pow2)
+            .and_then(|rank| checked::product([rank, STRIDE]))
+            .filter(|_| rank > 0)
+            .ok_or_else(|| AkitaError::InvalidInput("typed A rank overflow".into()))?;
+        let natural_len = checked::product([rows, row_stride]).ok_or(AkitaError::InvalidProof)?;
+        let domain_len = checked::ceil_log2(natural_len)
+            .and_then(checked::pow2)
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(Self {
+            rows,
+            row_stride,
+            natural_len,
+            domain_len,
+        })
+    }
+
+    /// Accept a selected prefix domain that holds the typed A tensor.
+    pub fn validate_prefix(&self, prefix_len: usize) -> Result<(), AkitaError> {
+        if !prefix_len.is_power_of_two() || prefix_len < self.domain_len {
+            return Err(AkitaError::InvalidInput(
+                "typed A exceeds the selected prefix domain".into(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Canonical typed prefix: source row, padded rank row, padded coefficient.
 /// All padding is zero, including any extra capacity of the selected prefix.
@@ -23,13 +74,9 @@ pub fn binary_a_setup_coefficients<F: Field>(
     prefix_len: usize,
 ) -> Result<Vec<F>, AkitaError> {
     manifest.validate()?;
-    let rows = checked::product([4, manifest.descriptor().index_map().columns()])
-        .and_then(|width| {
-            checked::exact_div(manifest.descriptor().index_map().padded_carriers(), width)
-        })
-        .ok_or(AkitaError::InvalidProof)?;
-    let row_stride = coefficient_len(manifest.a_rank())?;
-    validate_prefix(rows, row_stride, prefix_len)?;
+    let size = BinaryAPrefixLen::new(manifest.descriptor().index_map(), manifest.a_rank())?;
+    size.validate_prefix(prefix_len)?;
+    let row_stride = size.row_stride;
     let matrix = binary_root_matrix(seed, manifest)?;
     let mut coefficients = field_buffer(prefix_len)?;
     for (i, row) in matrix.iter().enumerate() {
@@ -94,8 +141,10 @@ impl<E: Field> BinaryAProduct<E> {
             .first()
             .ok_or(AkitaError::InvalidProof)?;
         let owners = plan.descriptor().polynomials().len();
-        let rows = checked::exact_div(response.elements, owners).ok_or(AkitaError::InvalidProof)?;
+        let size = BinaryAPrefixLen::new(plan.descriptor().index_map(), plan.rank())?;
+        let rows = size.rows;
         if rho.len() != checked::product([owners, plan.rank()]).ok_or(AkitaError::InvalidProof)?
+            || checked::product([owners, rows]) != Some(response.elements)
             || !rows.is_power_of_two()
             || response.digits != 4
             || response.geometry.physical_coefficient_width() != STRIDE
@@ -106,8 +155,8 @@ impl<E: Field> BinaryAProduct<E> {
                 "invalid typed A product geometry".into(),
             ));
         }
-        let row_stride = coefficient_len(plan.rank())?;
-        validate_prefix(rows, row_stride, prefix_len)?;
+        size.validate_prefix(prefix_len)?;
+        let row_stride = size.row_stride;
         let coefficient_point = stage2_point.get(..10).ok_or(AkitaError::InvalidProof)?;
         let digit_point = stage2_point.get(10..12).ok_or(AkitaError::InvalidProof)?;
         let row_end =
@@ -187,24 +236,6 @@ impl<E: Field> BinaryAProduct<E> {
             .fold(E::zero(), |acc, (&a, b)| acc + a * b);
         Ok(coefficient * truncated_equality_product(&self.row_point, row_point, self.rows)?)
     }
-}
-
-fn coefficient_len(rank: usize) -> Result<usize, AkitaError> {
-    checked::ceil_log2(rank)
-        .and_then(checked::pow2)
-        .and_then(|rank| checked::product([rank, STRIDE]))
-        .filter(|_| rank > 0)
-        .ok_or_else(|| AkitaError::InvalidInput("typed A rank overflow".into()))
-}
-
-fn validate_prefix(rows: usize, stride: usize, prefix_len: usize) -> Result<(), AkitaError> {
-    let required = checked::product([rows, stride]).ok_or(AkitaError::InvalidProof)?;
-    if rows == 0 || !prefix_len.is_power_of_two() || prefix_len < required || prefix_len < stride {
-        return Err(AkitaError::InvalidInput(
-            "typed A exceeds the selected prefix domain".into(),
-        ));
-    }
-    Ok(())
 }
 
 fn field_buffer<F: Field>(len: usize) -> Result<Vec<F>, AkitaError> {

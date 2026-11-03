@@ -110,7 +110,7 @@ pub(super) fn build(
         .first()
         .unwrap_or(&profiles.final_group);
     let price = catalog::plan(log, shape, carrier, ordinary_profile, 64)?;
-    let prefix_cells = catalog::typed_prefix_len(log)?;
+    let prefix_cells = price.typed_prefix.natural_len;
     let transition = NativeRootTransition::new(price.outgoing_physical_cells, 3, prefix_cells)?;
     let seed = ResolvedScheduleRow::try_new(profiles.clone(), seed.schedule, &policy)?;
     let schedule =
