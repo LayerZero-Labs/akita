@@ -12,7 +12,9 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
-use crate::binary_source::{ImageWeights, ParityRowWeights, PrimePlaneWeights};
+use crate::binary_source::{
+    DigitAuthenticationWeights, ImageWeights, ParityRowWeights, PrimePlaneWeights,
+};
 use crate::root_repacking::RootCoefficientRepacking;
 
 /// Low-block width of the split equality table: one 1024-coefficient lane.
@@ -246,6 +248,7 @@ pub(crate) enum RootWeightFamily<E: Field> {
     Image(ImageWeights<E>),
     Prime(PrimePlaneWeights<E>),
     ParityRows(ParityRowWeights<E>),
+    Authentication(DigitAuthenticationWeights<E>),
 }
 
 impl<E: Field> RootWeightFamily<E> {
@@ -255,6 +258,7 @@ impl<E: Field> RootWeightFamily<E> {
             Self::Image(image) => image.table_len(),
             Self::Prime(prime) => prime.table_len(),
             Self::ParityRows(rows) => rows.table_len(),
+            Self::Authentication(authentication) => authentication.table_len(),
         }
     }
 
@@ -281,6 +285,10 @@ impl<E: Field> RootWeightFamily<E> {
                 let _span = tracing::info_span!("root_weights_evaluate_parity_rows").entered();
                 rows.evaluate(eq)
             }
+            Self::Authentication(authentication) => {
+                let _span = tracing::info_span!("root_weights_evaluate_authentication").entered();
+                authentication.evaluate(eq)
+            }
         }
     }
 
@@ -299,6 +307,7 @@ impl<E: Field> RootWeightFamily<E> {
             Self::Image(image) => image.visit(visit),
             Self::Prime(prime) => prime.visit(visit),
             Self::ParityRows(rows) => rows.visit(visit),
+            Self::Authentication(authentication) => authentication.visit(visit),
         }
     }
 }
