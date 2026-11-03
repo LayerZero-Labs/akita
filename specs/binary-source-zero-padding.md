@@ -24,11 +24,15 @@ verifier draws 17,129,105 order-7 batching scalars, of which 17,129,090 are
 padding weights.
 
 This note asks which parts of the protocol need those cells to be zero. The
-answer is **none**. Every Stage 2 relation, the typed Stage 3 A product, the
-range check, the successor recursion and the authenticated readings either
-never read a padding address or accept any in-range digit there. The cheapest
-correct rule is therefore to **delete the padding rows entirely** (the
-*deletion rule*). It adds no error term, no verifier work and no proof field.
+answer is **none**. No Stage 2 relation, the typed Stage 3 A product or any
+source reading reads a padding address. The range check reads every address but
+needs only an in-range digit. The ordinary successor folds read physical
+padding, because it changes their responses, evaluations and norms. They
+authenticate and bound whatever table was committed, and they do not need
+padding to vanish. The cheapest correct rule is therefore to **delete the
+padding rows entirely** (the *deletion rule*). It adds no error term, no
+verifier work and no proof field. The range check, successor authentication and
+the physical-norm proof stay exactly as they are.
 
 The note also specifies and proves the replacement the brief proposed, kept in
 case reviewers want the zero-table invariant as a defensive property (the
@@ -126,40 +130,63 @@ address is a padding address. ∎
 | B and D authentication | No. The compact address list contains natural coefficients only (authentication.rs lines 148-158). Its chunks of 64 index that list (lines 186-193). | No effect. |
 | Mixed ordinary A/B/compression/evaluation rows and the `{-1,0}` rows | No. Ordinary segments use `RelationRowGeometry::native`, which has `S_k = D_k` and therefore no tails (ordinary_root.rs lines 77-98). Negative-bit addresses are natural (lines 139-165). | No effect. |
 | Stage 1 range check and the Stage 2 range-image term | Yes, every address. `tau0` has n coordinates (verifier binary_root.rs lines 177-178 and 217-220). | Passes if the digit is in `[-4,3]`. Zero is not required, and a digit outside the range is rejected as before. |
-| Ordinary successor folds and terminal | They consume the committed table through the one claim `x~(r) = witness_eval` (binary_root.rs lines 234 and 265-268). | The successor proves an evaluation of whatever table it committed. Binding needs bounded cells, which the range check provides on every address. |
+| Ordinary successor folds and terminal | Yes. They consume the committed table through the one claim `x~(r) = witness_eval` (binary_root.rs lines 234 and 265-268), and committed padding enters their responses, evaluations and norms. | The table's evaluation, responses and norms change, and they are authenticated and checked as before. The successor proves an evaluation of the table it committed. Its norm envelope already allows every ring coefficient to be nonzero (`crates/akita-params/src/sis/norm_bound.rs` lines 324-328). The physical L2 norm of each response is checked against the scheduled cap (`crates/akita-verifier/src/stages/physical_l2_norm.rs` lines 162-164 and 233-234). Extra padding can make a response fail these checks, but it cannot bypass them. |
 | Authenticated readings and the agreement contract | No. Readings come from claims whose relations are listed above. Agreement concerns source coefficients, which are `Nat` cells. | No effect. |
 
-Two details about the successor. First, the prover truncates its table to
-`logical_len` before import (`crates/akita-cpu-backend/src/opaque/binary_source.rs`
-lines 446-457). Successor preparation then supplies the zero suffix that
-completes rings and the Boolean domain
-(`crates/akita-params/src/layout/ring_dims.rs` lines 168-171). I did not
-determine whether the successor commitment covers those suffix cells or treats
-them as virtual. The argument does not depend on it: covered cells are read by
-no relation, and virtual cells are zero by construction. Second, I found no
-zero-suffix relation in the ordinary Stage 2 verifier. Its relation lanes are
-confined to the live prefix (`crates/akita-verifier/src/relation/evaluation.rs`
-lines 448-459). The ordinary protocol on `main` therefore already leaves its
-domain suffix unchecked except by range.
+**The domain suffix.** Let `Q = 2^n`, and let the successor commitment have
+`B` live blocks, `M` positions per block and ring dimension `D`. Set
+`C = min(Q, B·M·D)`. The suffix splits into two parts.
+
+- `[Lambda, C)` lies inside committed blocks. Its cells are committed, prover-chosen
+  digits. The honest prover truncates its table to `logical_len` before import
+  (`crates/akita-cpu-backend/src/opaque/binary_source.rs` lines 446-457), and
+  successor preparation fills the rest of those blocks with zeros
+  (`crates/akita-params/src/layout/ring_dims.rs` lines 168-171). A dishonest
+  prover may commit any in-range digits there.
+- `[C, Q)` consists of absent blocks and is virtual. The commitment computes
+  only its live block ranges
+  (`crates/akita-cpu-backend/src/arithmetic/commitment.rs` lines 365-380). The
+  verifier's opening weights keep every position but only the live blocks
+  (`crates/akita-params/src/layout/opening_point.rs` lines 210-214), so these
+  cells are zero in the evaluation the successor proves.
+
+Arbitrary nonzero values in `[C, Q)` are therefore not interchangeable valid
+successor witnesses. Theorem 1 below is stated narrowly for this reason.
+
+The ordinary Stage 2 verifier has no zero-suffix relation either. Its relation
+lanes are confined to the live prefix
+(`crates/akita-verifier/src/relation/evaluation.rs` lines 448-459), so the
+ordinary protocol on `main` already constrains its committed suffix only by the
+range, norm and evaluation checks.
 
 ### Conclusion
 
-No consumer needs zero padding. Nothing reads padding except the range check,
-which requires only `x(a) in [-4,3]`. The cheapest correct rule is to **remove
-the padding rows**. `K` drops by `|Pad|`, and the order-7 row-batching vector
-keeps every other slot.
+No consumer needs zero padding. No root equation or source reading reads
+padding. The range check reads it and requires only `x(a) in [-4,3]`. The
+ordinary successor folds read it and authenticate and bound it, but they do not
+require it to vanish. The cheapest correct rule is to **remove the padding
+rows**. `K` drops by `|Pad|`, and the order-7 row-batching vector keeps every
+other slot.
 
-**Theorem 1 (deletion rule).** Let `R(x)` be the conjunction of every root
-row other than the padding rows, the range predicate on every address, and the
-successor's claim about `x`. Suppose `x` and `x'` agree on `Nat`, and every
-cell of both lies in `[-4,3]`. Then `R(x)` holds if and only if `R(x')` holds,
-and the two tables define the same source readings.
+**Theorem 1 (deletion rule).** Suppose `x` and `x'` agree on `Nat`. Then:
 
-*Proof.* By the support lemma, `<W_j, x> = <W_j, x'>` for every remaining row
-`j`. The range predicate holds for both. The successor proves the multilinear
-evaluation of the table it committed, so for each table the root's final check
-compares the same public weight polynomial with that table's evaluation. All
-readings are linear functions of `Nat` cells. ∎
+1. `<W_j, x> = <W_j, x'>` for every root row `j` other than the padding rows.
+   So the decoded root equations hold for `x` if and only if they hold for `x'`.
+2. `x` and `x'` decode to the same source readings.
+
+*Proof.* Part 1 follows from the support lemma. For part 2, every reading is a
+linear function of `Nat` cells. ∎
+
+Theorem 1 does **not** say that `x` and `x'` are interchangeable witnesses. The
+range check, successor authentication and the physical-norm proof read the
+committed table, padding included, and all three remain required. For example,
+let `x = 0`, and let `x'` equal `x` except for a one at a committed padding
+address `a`. At the Boolean point `r = a`, the successor claim `x~(r) = 0` holds
+for `x` and fails for `x'`. The verifier consumes that evaluation at
+binary_root.rs line 234. Deletion leaves all three checks unchanged: a prover
+that commits nonzero in-range padding must still pass them for the table it
+committed. Theorem 1 shows only that the root's equations and readings place no
+constraint on `Pad`, so the per-cell rows add nothing that soundness needs.
 
 The checkpoint argument in [binary-source-checkpoint.md](binary-source-checkpoint.md)
 already lists the branch relation without padding: digit membership, view
@@ -235,8 +262,9 @@ the negative-bit weight table. Padding is a row of `W`, so its contribution to
 
 ### 3.2 Deletion rule
 
-By Theorem 1, the root relation without padding rows is the relation the
-checkpoint argument already uses. The only change to the error ledger is that
+By Theorem 1, the root equations without padding rows are the equations the
+checkpoint argument already uses. Range, successor and norm checks are
+unchanged. The only change to the error ledger is that
 the `Tau1Point` vector is shorter. In the one-shot model its loss stays 1/P.
 The deletion rule adds **no error term**.
 
@@ -307,34 +335,79 @@ union in the Fiat–Shamir ledger keeps the same number of terms. Under the
 deletion rule, no grinding run changes. This experimental path still makes no
 overall Fiat–Shamir or SIS claim.
 
-### 3.5 Extraction-model caveat: an existing discrepancy
+### 3.5 Pricing of the row-batching vector
 
 The ordinary grinding policy prices a vector of independent batching
 coefficients at `values/|E|`, through `independent_batch_loss_factor`
 (`crates/akita-params/src/transcript_grinding.rs` lines 736-748). Its
 documentation says the one-shot `1/|E|` bound "does not price this site"
-under the tree extractor. The ordinary protocol avoids the issue: its
-`Tau1Point` is a multilinear row point priced at its coordinate count
-(`transcript_grinding/plan.rs` lines 207-211).
+under a coordinate-wise tree extractor, which recovers openings below the
+challenge. The ordinary protocol avoids the issue: its `Tau1Point` is a
+multilinear row point priced at its coordinate count
+(`transcript_grinding/plan.rs` lines 207-211). The binary root instead draws
+`K` independent scalars and prices them at 1 (grinding.rs lines 50-51).
 
-The binary root instead draws K independent scalars and prices them at 1. This
-relies on the fixed-candidate argument. If reviewers require the tree-extractor
-pricing, the current per-cell rule is far below target:
+**Conclusion.** The root's loss-1 charge is correct under the checkpoint's
+candidate-comparison premise
+([binary-source-checkpoint.md](binary-source-checkpoint.md) lines 576-591).
+Two candidates under the same checkpoint input share the outgoing commitment
+and typed manifest. If they differ, the ordinary source comparison map returns
+an induced P-ring SIS collision. So the extracted source may be fixed before
+`J` and every later batching draw, and a nonzero residual vector survives
+`beta` with probability at most 1/P. Computational binding alone would not
+justify fixing the candidate; the comparison map is what does.
 
-| N | Shape | Current K | `K/P` | Deletion `K'` | Padding-point `K'` |
-| --- | --- | ---: | --- | ---: | ---: |
-| 2^22 | word | 18,912,399 | 2^-103.827 | 13 | 14 |
-| 2^22 | word-prime | 17,129,105 | 2^-103.970 | 15 | 16 |
-| 2^22 | prime5 | 43,594,261 | 2^-102.622 | 21 | 22 |
-| 2^23 | word | 41,849,999 | 2^-102.681 | 13 | 14 |
-| 2^23 | word-prime | 40,066,705 | 2^-102.744 | 15 | 16 |
-| 2^23 | prime5 | 32,977,429 | 2^-103.025 | 21 | 22 |
+The root's security admission must therefore adopt one of two premises:
 
-Here `K = 7 + 2 [word] + 2 planes + 2·2 (B/D rows) + |Pad|`. Mixed shapes add
-their unchanged ordinary and negative-bit rows. Both proposed rules bring this
-site to at most 22/P = 2^-123.54 under either model. **This discrepancy exists
-independently of this note.** It should be settled when the root's security
-admission is written.
+- the checkpoint's candidate-comparison premise, stated as an explicit
+  hypothesis together with the comparison map it relies on, under which
+  `Tau1Point` costs 1/P; or
+- the coordinate-wise tree model, under which `Tau1Point` costs `K/P` and must
+  be ground to the bits in the table below.
+
+This note does not choose between them. The checkpoint argument shows only the
+first premise's conclusion for the fixed candidate it describes. It does not
+show that the tree pricing is unnecessary in general. The root grinding plan is
+also expressly an experimental execution plan, "not catalog or security
+admission" (grinding.rs lines 10-15).
+
+The table gives `K` for each rule. The fallback adds one slot to the deletion
+count. The mixed rows also keep one independent coefficient per `{-1,0}` bit
+address and the ordinary linear rows. The current column applies the existing
+one-bit `Tau1Point` grind, so it shows `K/(2P)`; the unfiltered `K/P` exponent
+is one larger. The bit columns are the smallest `b` with
+`K·2^128 <= P·2^b` (loss 16 needs five bits, because `P < 2^128`).
+
+| N | Shape | Current K | Deletion K | Fallback K | Current `K/(2P)` | Tree-model bits: current / deletion / fallback |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| 2^22 | word | 18,912,399 | 13 | 14 | 2^-104.8272 | 25 / 4 / 4 |
+| 2^22 | word-prime | 17,129,105 | 15 | 16 | 2^-104.9701 | 25 / 4 / 5 |
+| 2^22 | word-prime-ordinary | 12,230,332 | 69,690 | 69,691 | 2^-105.4560 | 24 / 17 / 17 |
+| 2^22 | prime5 | 43,594,261 | 21 | 22 | 2^-103.6224 | 26 / 5 / 5 |
+| 2^23 | word | 41,849,999 | 13 | 14 | 2^-103.6813 | 26 / 4 / 4 |
+| 2^23 | word-prime | 40,066,705 | 15 | 16 | 2^-103.7441 | 26 / 4 / 5 |
+| 2^23 | word-prime-ordinary | 30,973,624 | 36,918 | 36,919 | 2^-104.1155 | 25 / 16 / 16 |
+| 2^23 | prime5 | 32,977,429 | 21 | 22 | 2^-104.0250 | 25 / 5 / 5 |
+
+`K = 7 + 2 [word] + 2 planes + 2·2 (B/D rows) + |Pad| + O`. Here `O` is the
+mixed shapes' `{-1,0}` bit addresses plus their ordinary linear rows
+(root_public.rs lines 123-137). The `{-1,0}` addresses are every coefficient of
+the two compression segments (ordinary_root.rs lines 138-165): 65,536 + 4,096 =
+69,632 at 2^22 and 32,768 + 4,096 = 36,864 at 2^23. The ordinary linear rows
+number `live_blocks · A rank + logical B rows + 3` (ordinary_root.rs lines
+100-111). They come to 43 at 2^22 and 39 at 2^23 for the selected ordinary
+profiles (see the verification record for how these two counts were obtained).
+
+Under the premise the root uses today, the batching loss is 1/P for every row of
+the table and every rule. Under the tree model, the current per-cell rule
+misses the 2^-128 per-site target by a factor of about 2^22.5 to 2^24.4. The
+figures of about 2^-103.6 to 2^-105.5 are not demonstrated attack
+probabilities. Under the tree
+model, deletion needs four or five grinding bits for the non-mixed shapes. The
+mixed shapes need 16 bits at 2^23 and 17 at 2^22, because their `{-1,0}` block
+remains. Unfiltered, deletion's mixed loss is 69,690/P = 2^-111.9113 at 2^22 and
+36,918/P = 2^-112.8280 at 2^23. **This choice of premise exists independently of
+this note.**
 
 ## 4. Verifier evaluation of the padding row
 
@@ -354,12 +427,18 @@ Segment order is fixed by the plan constructors:
 1. Z and T, with stride 1024 (root_plan.rs lines 61-76);
 2. U, K and K_val, with stride 256;
 3. EP, with stride 256 (prime_plan.rs lines 21-32);
-4. the native ordinary segments, with no tails (root_plan.rs lines 108-123).
+4. in mixed shapes, the native ordinary segments (root_plan.rs lines 108-123;
+   ordinary_root.rs lines 78-98). These have `S_k = D_k` and no tails.
 
 Each width `L_k S_k` is a multiple of its own stride (root_repacking.rs lines
-63-67). Strides are non-increasing powers of two along this order. Every base
-is a sum of earlier widths, so **every base is a multiple of its own stride**:
-`B_k = h_k S_k`. At 2^22 `word-prime`:
+63-67). Across the padded segments 1-3, the strides are non-increasing powers
+of two. Every base is a sum of earlier widths, so **every padded segment's base
+is a multiple of its own stride**: `B_k = h_k S_k`. This claim does not extend
+to the native segments. In mixed shapes the first native segment has stride 512
+and follows stride-256 segments. Its bases, 25,956,096 at 2^22 and 42,733,312 at
+2^23, are both 256 modulo 512. Native segments contribute no padding, so the
+factorization below never uses them, and the fallback is unaffected. At 2^22
+`word-prime`:
 
 | Segment | `B_k` | `S_k` | `B_k / S_k` | Lanes `L_k` | `D_k` |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -370,8 +449,9 @@ is a sum of earlier widths, so **every base is a multiple of its own stride**:
 | K_val | 23,136,512 | 256 | 90,377 | 6 | 162 |
 | EP | 23,138,048 | 256 | 90,383 | 11,008 | 162 |
 
-All eight measured shapes and all six small differential layouts in Section 7
-are aligned. Alignment holds by construction, but **no code checks it**:
+Every padded segment is aligned in all eight measured shapes and in all six
+small differential layouts. Alignment holds by construction, but **no code
+checks it**:
 `RootCoefficientRepacking::new` (root_repacking.rs lines 42-84) accepts any
 segment order. The padding-point rule must add a typed `InvalidSetup` check
 that `B_k mod S_k = 0` for every segment with `S_k > D_k`. Plane count does
@@ -536,9 +616,10 @@ evaluate `sum w(a) eq(r, a)`. Structured weights avoid that cost. Powers
 loss. The eq weight in Section 2 is the structured choice with degree n.
 
 **Recommendation: (a), the deletion rule.** It is the only option with zero
-error, zero verifier work and no new alignment invariant. It also removes the
-discrepancy in Section 3.5 for the padding rows. Keep the padding-point rule
-as the specified fallback.
+error, zero verifier work and no new alignment invariant. Under the tree model
+of Section 3.5, it also removes the padding share of the `Tau1Point` vector.
+The mixed shapes' `{-1,0}` block remains. Keep the padding-point rule as the
+specified fallback.
 
 ## 7. Implementation plan
 
@@ -557,12 +638,28 @@ family. This change deletes that family.
    `BinaryRootWitnessPlan::relation_weights`, and update their docs in the
    opening spec.
 3. Fix the `Tau1Point` comment in grinding.rs (lines 50-51). Its loss stays 1.
-4. Change the `Fault::Padding` case in
-   `crates/akita-pcs/tests/binary_source_end_to_end/fault_backend.rs`
-   (lines 64-68) from must-reject to must-accept with unchanged readings. That
-   inversion is the content of Theorem 1, and the reviewer must accept it
-   explicitly. Keep every natural-cell fault as must-reject.
-5. Keep `validate_digit_table` as a local prover check, with its doc reworded.
+4. Change every test that requires a padding cell to be rejected. Theorem 1
+   makes these cases valid for the root equations, and review has accepted that
+   inversion.
+   - `Fault::Padding` in
+     `crates/akita-pcs/tests/binary_source_end_to_end/fault_backend.rs`
+     (lines 64-68) moves from must-reject to must-accept, with unchanged
+     readings, provided the mutated cell stays within `[-4,3]`.
+   - The same file's relation-violation assertion (lines 253-261) currently
+     requires every fault except `ForeignCommitment` and `ForeignPartials` to
+     violate the public relation. It
+     must exempt `Fault::Padding`.
+   - `crates/akita-types/src/binary_source/root_plan_tests.rs` (lines 90-99)
+     sets the padding address 131071 to one and requires `check_table` to
+     reject. That address must leave the must-reject list. The natural
+     addresses in the same list stay.
+
+   Keep every natural-cell fault as must-reject.
+5. Keep `validate_digit_table` as a local prover check, with its doc reworded,
+   because honest construction still writes zero padding. Its rejection tests
+   in `root_repacking.rs` may stay. Rejection tests of
+   `NativeRootRelation::ring_switch` may also stay, because that separate API
+   still includes per-cell padding rows.
 6. Add a regression that materializes the complete compiled weight table, using
    the branch's reference materializer, and asserts that it is zero on every
    padding address.
@@ -595,24 +692,33 @@ script outside the repository:
 - **Layout counts.** The segment rules above reproduce every `Natural`,
   `Physical`, domain and padding count in the opening spec's layout table. The
   small N=8, C=2 word-plus-prime layout has 79,616 cells in a 131,072 domain.
-- **Alignment.** Every segment base is a multiple of its stride in all eight
-  measured shapes.
+- **Alignment.** Every padded segment's base is a multiple of its stride in
+  all eight measured shapes. The mixed shapes' first native segment, with
+  stride 512 and bases 25,956,096 and 42,733,312, is not aligned
+  (256 mod 512) and has no padding.
 - **Factored evaluator.** The evaluator in Section 4 equals the brute-force
   `sum_(a in Pad) eq(tau,a) eq(r,a)` on 24 cases. These cover six small
   layouts (word-only, word plus prime, prime-only with two planes, 16 and 32
   carriers, two owners, mixed native segments) with successor degree 64 and
   512, using random points and points with coordinates 0 and 1.
 - **Batch counts and grinding.** The `K` values, the error exponents and the
-  grinding bits follow from the formulas above.
+  grinding bits follow from the formulas above. All eight rows of the
+  Section 3.5 table were recomputed. The mixed rows decompose as
+  15 + `|Pad|` + 69,632 + 43 at 2^22 and 15 + `|Pad|` + 36,864 + 39 at 2^23.
+  The `{-1,0}` counts follow from the compression segment sizes in the opening
+  spec, which the layout reproduction confirms. The ordinary linear-row counts,
+  43 and 39, depend on the planner-selected ordinary profiles, which no
+  checked-in file records. They are the remainder of the independent review's
+  totals and were not recomputed from a profile.
 - **Stage 3 rounds.** `k` is confirmed from the measured Stage 3 bytes and
   atoms.
 
-These items are inferred rather than verified:
+These items were settled by the independent review and checked against the
+cited lines:
 
-- That no ordinary-suffix norm admission assumes zero cells in the root's
-  output. Its input length is the physical length, which counts tail cells as
-  full digits.
-- Whether the successor commitment covers the domain suffix (Section 1).
+- The successor norm argument does not assume zero padding (Section 1,
+  successor row).
+- The suffix `[Lambda, C)` is committed and `[C, Q)` is virtual (Section 1).
 
 No number in [binary-source-opening.md](binary-source-opening.md) was found to
 be wrong. The brief's figure of 17,129,090 counts padding weights only; the
