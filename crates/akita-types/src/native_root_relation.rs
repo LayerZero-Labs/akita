@@ -278,7 +278,7 @@ impl<E: Field> NativeRootWeights<E> {
     }
 
     /// Join ordered linear oracles on one domain, adding an independent target.
-    /// Reuse the first oracle's storage rather than copying its padding terms.
+    /// Reuse the first oracle's storage rather than copying its explicit terms.
     pub(crate) fn merge(
         table_len: usize,
         components: impl IntoIterator<Item = Self>,
