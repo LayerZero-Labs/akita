@@ -2,7 +2,7 @@
 
 use core::fmt::Debug;
 
-use jolt_field::{Field, Prime128Offset275, Prime31Offset19, Ring, Zero};
+use jolt_field::{Field, One, Prime128Offset275, Prime31Offset19, Ring, Zero};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::{exact_convolution, SetupAdjointWeight, TrinomialAdjoint};
@@ -306,4 +306,74 @@ fn malformed_shapes_and_unrepresentable_degrees_return_errors() {
     assert!(SetupAdjointWeight::new(&adjoint, &row, &row[..1], &row[..1], 2).is_err());
     assert!(SetupAdjointWeight::new(&adjoint, &row, &row[..2], &row[..2], 2).is_err());
     assert!(SetupAdjointWeight::new(&adjoint, &row[..3], &[], &row[..2], 1).is_err());
+}
+
+fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, columns: usize) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
+    let rho = (0..3)
+        .map(|_| core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)))
+        .collect::<Vec<[Prime128Offset275; D]>>();
+    let mut rows = (0..3)
+        .map(|_| {
+            (0..columns)
+                .map(|_| {
+                    core::array::from_fn(|_| {
+                        (rng.next_u64() as i128).rem_euclid(2 * bound + 1) - bound
+                    })
+                })
+                .collect::<Vec<[i128; D]>>()
+        })
+        .collect::<Vec<_>>();
+    // Exercise both extremes of the declared bound.
+    rows[0][0] = [bound; D];
+    rows[1][0] = [-bound; D];
+    let canonical: fn(&Prime128Offset275) -> Option<u128> =
+        |x| jolt_field::CanonicalEncoding::to_u128_checked(x);
+    let fast = adjoint
+        .apply_integer_rows(&rho, &rows, bound.unsigned_abs(), canonical)
+        .unwrap();
+    assert_eq!(fast.len(), columns);
+    for (j, h) in fast.iter().enumerate() {
+        let mut expected = vec![Prime128Offset275::zero(); D];
+        for (functional, row) in rho.iter().zip(&rows) {
+            let v = row[j].map(signed::<Prime128Offset275>);
+            for (slot, value) in expected
+                .iter_mut()
+                .zip(adjoint.apply(functional, &v).unwrap())
+            {
+                *slot += value;
+            }
+        }
+        assert_eq!(h.as_slice(), expected.as_slice(), "column {j}");
+    }
+}
+
+#[test]
+fn integer_rows_match_field_adjoint_sums_and_reject_unliftable_bounds() {
+    integer_rows::<MinusTrinomial, 8>(11, 7, 5);
+    integer_rows::<PlusTrinomial, 8>(12, 1 << 20, 3);
+    integer_rows::<MinusTrinomial, DEGREE>(13, 7_126_704, 2);
+    let adjoint = TrinomialAdjoint::<8, MinusTrinomial>::new().unwrap();
+    let rho = vec![[Prime128Offset275::one(); 8]];
+    let canonical: fn(&Prime128Offset275) -> Option<u128> =
+        |x| jolt_field::CanonicalEncoding::to_u128_checked(x);
+    assert!(adjoint
+        .apply_integer_rows(&rho, &[vec![[1; 8]]], 1 << 62, canonical)
+        .is_err());
+    assert!(adjoint
+        .apply_integer_rows(&rho, &[vec![[5; 8]]], 4, canonical)
+        .is_err());
+    assert!(adjoint
+        .apply_integer_rows(&rho, &[vec![[1; 8]], vec![[1; 8]]], 4, canonical)
+        .is_err());
+    assert!(TrinomialAdjoint::<10, MinusTrinomial>::new()
+        .unwrap()
+        .apply_integer_rows(
+            &[[Prime128Offset275::one(); 10]],
+            &[vec![[1; 10]]],
+            4,
+            canonical
+        )
+        .is_err());
 }

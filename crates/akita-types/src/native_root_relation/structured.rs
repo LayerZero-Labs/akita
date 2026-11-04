@@ -11,7 +11,7 @@ use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
 use crate::binary_source::{
-    DigitAuthenticationWeights, ImageWeights, ParityRowWeights, PrimePlaneWeights,
+    DigitAuthenticationWeights, DirectAWeights, ImageWeights, ParityRowWeights, PrimePlaneWeights,
 };
 use crate::root_repacking::RootCoefficientRepacking;
 
@@ -161,6 +161,7 @@ impl SegmentLanes {
 /// The structured public weight families of a binary root.
 #[derive(Clone, Debug)]
 pub(crate) enum RootWeightFamily<E: Field> {
+    DirectA(DirectAWeights<E>),
     Image(ImageWeights<E>),
     Prime(PrimePlaneWeights<E>),
     ParityRows(ParityRowWeights<E>),
@@ -170,6 +171,7 @@ pub(crate) enum RootWeightFamily<E: Field> {
 impl<E: Field> RootWeightFamily<E> {
     pub(crate) fn table_len(&self) -> usize {
         match self {
+            Self::DirectA(direct) => direct.table_len(),
             Self::Image(image) => image.table_len(),
             Self::Prime(prime) => prime.table_len(),
             Self::ParityRows(rows) => rows.table_len(),
@@ -179,6 +181,7 @@ impl<E: Field> RootWeightFamily<E> {
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         match self {
+            Self::DirectA(direct) => direct.evaluate(eq),
             Self::Image(image) => {
                 let _span = tracing::info_span!("root_weights_evaluate_image").entered();
                 image.evaluate(eq)
@@ -204,6 +207,7 @@ impl<E: Field> RootWeightFamily<E> {
         visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         match self {
+            Self::DirectA(direct) => direct.visit(visit),
             Self::Image(image) => image.visit(visit),
             Self::Prime(prime) => prime.visit(visit),
             Self::ParityRows(rows) => rows.visit(visit),

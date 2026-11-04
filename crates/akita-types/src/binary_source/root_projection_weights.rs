@@ -12,6 +12,17 @@ use crate::binary_source::{
 };
 use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
 
+/// The prover's A operand for [`binary_direct_a_weights`].
+///
+/// `matrix[row][column]` holds the centered q setup. `canonical` returns the
+/// canonical integer of a proof-field element; the exact integer adjoint
+/// needs it because the proof field has no smooth transform domain.
+#[derive(Clone, Copy)]
+pub struct BinaryAOperand<'a, E> {
+    pub matrix: &'a [Vec<[i128; 648]>],
+    pub canonical: fn(&E) -> Option<u128>,
+}
+
 /// Compile the A identity's coefficient weights. Proving supplies A; online
 /// verification omits it and authenticates its contribution through Stage 3.
 /// `rho[polynomial * rank + row][coefficient]` batches all seven public
@@ -21,7 +32,7 @@ use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, S
 /// address.
 pub fn binary_direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
-    matrix: Option<&[Vec<[i128; 648]>]>,
+    matrix: Option<BinaryAOperand<'_, E>>,
     challenges: &Challenges,
     rho: &[[E; 648]],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
@@ -36,10 +47,10 @@ pub fn binary_direct_a_weights<E: Field>(
             "A coefficient functional has the wrong rank".into(),
         ));
     }
-    if let Some(matrix) = matrix {
-        if matrix.len() != plan.rank()
-            || matrix.iter().any(|row| row.len() != rows)
-            || matrix.iter().flatten().flatten().any(|&c| {
+    if let Some(operand) = &matrix {
+        if operand.matrix.len() != plan.rank()
+            || operand.matrix.iter().any(|row| row.len() != rows)
+            || operand.matrix.iter().flatten().flatten().any(|&c| {
                 c < i128::from(CANONICAL_IMAGE_WINDOW.0) || c > i128::from(CANONICAL_IMAGE_WINDOW.1)
             })
         {
@@ -54,55 +65,115 @@ pub fn binary_direct_a_weights<E: Field>(
             Ok(pack_signed_components(&[scalar, [0; 162], [0; 162], [0; 162]])?.map(E::from_i128))
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
-    let response_digits = plan
-        .repacking()
-        .segments()
-        .first()
-        .ok_or(AkitaError::InvalidProof)?
-        .digits;
-    let response_terms = if matrix.is_some() {
-        checked::product([owners, plan.rank(), rows, 648, response_digits])
-            .ok_or(AkitaError::InvalidProof)?
-    } else {
-        0
-    };
-    let mut terms = Vec::new();
-    terms
-        .try_reserve_exact(response_terms)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    if let Some(matrix) = matrix {
-        for owner in 0..owners {
-            for i in 0..plan.rank() {
-                let row_index =
-                    checked::mul_add(owner, plan.rank(), i).ok_or(AkitaError::InvalidProof)?;
-                let weights = rho.get(row_index).ok_or(AkitaError::InvalidProof)?;
-                for (j, a) in matrix
-                    .get(i)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .iter()
-                    .enumerate()
-                {
-                    let element =
-                        checked::mul_add(owner, rows, j).ok_or(AkitaError::InvalidProof)?;
-                    for (t, w) in adjoint
-                        .apply(weights, &a.map(E::from_i128))?
-                        .into_iter()
-                        .enumerate()
-                    {
-                        terms.extend(plan.repacking().coefficient_weights(0, element, t, w)?);
-                    }
-                }
-            }
-        }
+    let mut families = Vec::new();
+    if let Some(operand) = matrix {
+        families.push(RootWeightFamily::DirectA(DirectAWeights::new(
+            plan, operand, rho,
+        )?));
     }
-    let image = ImageWeights::new(plan, rho, &embedded)?;
+    families.push(RootWeightFamily::Image(ImageWeights::new(
+        plan, rho, &embedded,
+    )?));
     NativeRootWeights::structured(
         plan.repacking().domain_len(),
-        terms,
-        vec![RootWeightFamily::Image(image)],
+        Vec::new(),
+        families,
         E::zero(),
     )
+}
+
+/// The response part `sum_ij <rho_i, rem(A_ij * z_j)>` of the A identity.
+///
+/// Response element `owner * rows + j` keeps `h = sum_i adj(rho_i, A_ij)`,
+/// so its digit `d` at coefficient `t` has weight `8^d * h[t]`. Only the
+/// prover builds this family; verification never reads A.
+#[derive(Clone, Debug)]
+pub(crate) struct DirectAWeights<E: Field> {
+    lanes: SegmentLanes,
+    table_len: usize,
+    columns: Vec<[E; 648]>,
+}
+
+#[cfg(test)]
+impl<'a, E: Field + jolt_field::CanonicalEncoding> BinaryAOperand<'a, E> {
+    /// Test operand over a field whose canonical integers fit 128 bits.
+    pub(crate) fn from_canonical(matrix: &'a [Vec<[i128; 648]>]) -> Self {
+        Self {
+            matrix,
+            canonical: |x| x.to_u128_checked(),
+        }
+    }
+}
+
+impl<E: Field> DirectAWeights<E> {
+    fn new(
+        plan: &BinaryRootWitnessPlan,
+        operand: BinaryAOperand<'_, E>,
+        rho: &[[E; 648]],
+    ) -> Result<Self, AkitaError> {
+        let lanes = SegmentLanes::new(plan.repacking(), 0)?;
+        let rank = plan.rank();
+        if rank == 0 {
+            return Err(AkitaError::InvalidSetup("binary A has no rows".into()));
+        }
+        let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
+        let mut columns = Vec::new();
+        columns
+            .try_reserve_exact(lanes.elements())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for owner_rho in rho.chunks_exact(rank) {
+            columns.extend(adjoint.apply_integer_rows(
+                owner_rho,
+                operand.matrix,
+                u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()),
+                operand.canonical,
+            )?);
+        }
+        if lanes.degree() != 648 || columns.len() != lanes.elements() {
+            return Err(AkitaError::InvalidSetup(
+                "binary response lanes differ from the A geometry".into(),
+            ));
+        }
+        Ok(Self {
+            lanes,
+            table_len: plan.repacking().domain_len(),
+            columns,
+        })
+    }
+
+    pub(crate) fn table_len(&self) -> usize {
+        self.table_len
+    }
+
+    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+        let low = eq.low().get(..648).ok_or(AkitaError::InvalidProof)?;
+        let mut sum = E::zero();
+        for (element, h) in self.columns.iter().enumerate() {
+            let dot = h
+                .iter()
+                .zip(low)
+                .fold(E::zero(), |dot, (&weight, &eq)| dot + weight * eq);
+            sum += self.lanes.block_digit_weight(eq, element)? * dot;
+        }
+        Ok(sum)
+    }
+
+    pub(crate) fn visit(
+        &self,
+        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        for (element, h) in self.columns.iter().enumerate() {
+            let mut power = E::one();
+            for digit in 0..self.lanes.digits() {
+                let base = self.lanes.base(element, digit)?;
+                for (t, &weight) in h.iter().enumerate() {
+                    visit(base + t, weight * power)?;
+                }
+                power *= E::from_u64(8);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Nonzero `(coefficient, value)` entries of one embedded challenge.

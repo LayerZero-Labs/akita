@@ -321,7 +321,12 @@ where
         &payload,
         &d_payload,
         ordinary_claim,
-        Some(&matrix),
+        Some(akita_types::binary_source::BinaryAOperand {
+            matrix: &matrix,
+            canonical: |x: &Cfg::ExtField| {
+                x.degree_one_base().and_then(|base| base.to_u128_checked())
+            },
+        }),
     )?;
     drop(matrix);
     drop(batches);

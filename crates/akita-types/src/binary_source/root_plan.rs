@@ -16,8 +16,8 @@ use crate::native_root_relation::NativeRootWeights;
 #[path = "root_projection_weights.rs"]
 mod projection_weights;
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
-pub use projection_weights::binary_direct_a_weights;
-pub(crate) use projection_weights::ImageWeights;
+pub use projection_weights::{binary_direct_a_weights, BinaryAOperand};
+pub(crate) use projection_weights::{DirectAWeights, ImageWeights};
 
 /// One public layout shared by A, parity, value, range and successor checks.
 ///
@@ -131,7 +131,7 @@ impl BinaryRootWitnessPlan {
     pub fn relation_weights<E: Field>(
         &self,
         claim: Option<&BinaryTerminalClaim>,
-        matrix: Option<&[Vec<[i128; 648]>]>,
+        matrix: Option<BinaryAOperand<'_, E>>,
         challenges: &Challenges,
         alpha: E,
         rho: &[[E; 648]],
