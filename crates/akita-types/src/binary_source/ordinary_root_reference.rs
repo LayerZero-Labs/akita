@@ -4,11 +4,12 @@
 //! term. It pushes one `(address, weight)` pair per public coefficient weight;
 //! the differential tests compare the structured families with it.
 
+use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BINARY_SETUP_P;
-use jolt_field::{Field, Prime128Offset275};
+use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
 
-use super::{KernelCache, OrdinaryNativeRootPlan};
+use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
 use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
@@ -284,6 +285,73 @@ impl OrdinaryNativeRootPlan {
         }
         claim += batch * evaluation;
         NativeRootWeights::new(repacking.domain_len(), terms, claim)
+    }
+}
+
+/// Residue kernels of one public matrix role, each computed on first use.
+///
+/// Entry `(row, column)` is the degree-`degree` ring at flat offset
+/// `(row * width + column) * degree` of the ordinary setup prefix.
+struct KernelCache<'a, E: Field> {
+    matrix: &'a [Prime128Offset275],
+    width: usize,
+    degree: usize,
+    point: ResidueKernelPoint<E>,
+    kernels: Vec<Option<Vec<E>>>,
+}
+
+impl<'a, E: Field> KernelCache<'a, E> {
+    fn new(
+        matrix: &'a [Prime128Offset275],
+        rows: usize,
+        width: usize,
+        degree: usize,
+        alpha: E,
+    ) -> Result<Self, AkitaError> {
+        let entries = checked::product([rows, width]).ok_or(AkitaError::InvalidProof)?;
+        let mut kernels = Vec::new();
+        kernels
+            .try_reserve_exact(entries)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        kernels.resize(entries, None);
+        Ok(Self {
+            matrix,
+            width,
+            degree,
+            point: ResidueKernelPoint::new(alpha, degree)?,
+            kernels,
+        })
+    }
+
+    fn get(&mut self, row: usize, column: usize) -> Result<&[E], AkitaError> {
+        if column >= self.width {
+            return Err(AkitaError::InvalidProof);
+        }
+        let entry = checked::mul_add(row, self.width, column).ok_or(AkitaError::InvalidProof)?;
+        let start = checked::product([entry, self.degree]).ok_or(AkitaError::InvalidProof)?;
+        let range = checked::range(start, self.degree).ok_or(AkitaError::InvalidProof)?;
+        let slot = self
+            .kernels
+            .get_mut(entry)
+            .ok_or(AkitaError::InvalidProof)?;
+        if slot.is_none() {
+            let coefficients = self
+                .matrix
+                .get(range)
+                .ok_or(AkitaError::InvalidProof)?
+                .iter()
+                .map(|coefficient| {
+                    coefficient
+                        .to_u128_checked()
+                        .map(E::from_u128)
+                        .ok_or(AkitaError::InvalidProof)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut weights = vec![E::zero(); self.degree];
+            self.point.field_kernel_into(&coefficients, &mut weights)?;
+            *slot = Some(weights);
+        }
+        slot.as_deref().ok_or(AkitaError::InvalidProof)
     }
 }
 

@@ -7,7 +7,9 @@ use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
 };
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_chunks, CanonicalEncoding, Field, Prime128Offset275};
 
 use super::paired_offset_eq_sum;
 use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, TranslatedLanes};
@@ -257,7 +259,7 @@ impl OrdinaryNativeRootPlan {
             Ok::<_, AkitaError>(())
         };
         // A rows read their kernels against the source in every block.
-        let mut a_kernels = KernelCache::new(
+        let a_kernels = role_kernels(
             matrix,
             a.output_rank(),
             a.input_width(),
@@ -280,7 +282,7 @@ impl OrdinaryNativeRootPlan {
                 .map(|position| {
                     Ok((
                         s_lanes.offset(position, 0)?,
-                        a_kernels.get(a_row, position)?.to_vec(),
+                        kernel(&a_kernels, a.input_width(), a_row, position)?,
                     ))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -318,7 +320,7 @@ impl OrdinaryNativeRootPlan {
         translated(image_copies, recomposition)?;
         // B rows read their kernels against the T digits of every slice; slices
         // of one width share one pattern.
-        let mut b_kernels = KernelCache::new(
+        let b_kernels = role_kernels(
             matrix,
             b.output_rank(),
             b.input_width(),
@@ -360,7 +362,7 @@ impl OrdinaryNativeRootPlan {
                             .ok_or(AkitaError::InvalidProof)?;
                         kernels.push((
                             t_lanes.offset(element, digit)?,
-                            b_kernels.get(b_row, column)?.to_vec(),
+                            kernel(&b_kernels, b.input_width(), b_row, column)?,
                         ));
                     }
                 }
@@ -391,13 +393,13 @@ impl OrdinaryNativeRootPlan {
             (first, &f_lanes, first_batch),
             (second, &h_lanes, second_batch),
         ] {
-            let mut map_kernels =
-                KernelCache::new(matrix, 1, map.input_width(), map.ring_dimension(), alpha)?;
+            let map_kernels =
+                role_kernels(matrix, 1, map.input_width(), map.ring_dimension(), alpha)?;
             let kernels = (0..map.input_width())
                 .map(|column| {
                     Ok((
                         lanes.offset(column, 0)?,
-                        map_kernels.get(0, column)?.to_vec(),
+                        kernel(&map_kernels, map.input_width(), 0, column)?,
                     ))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -439,57 +441,27 @@ impl OrdinaryNativeRootPlan {
     }
 }
 
-/// Residue kernels of one public matrix role, each computed on first use.
+/// Residue kernels of every entry of one public matrix role, row-major.
 ///
 /// Entry `(row, column)` is the degree-`degree` ring at flat offset
-/// `(row * width + column) * degree` of the ordinary setup prefix.
-struct KernelCache<'a, E: Field> {
-    matrix: &'a [Prime128Offset275],
+/// `(row * width + column) * degree` of the ordinary setup prefix. Entries are
+/// independent, so they are computed in parallel under `parallel`.
+fn role_kernels<E: Field>(
+    matrix: &[Prime128Offset275],
+    rows: usize,
     width: usize,
     degree: usize,
-    point: ResidueKernelPoint<E>,
-    kernels: Vec<Option<Vec<E>>>,
-}
-
-impl<'a, E: Field> KernelCache<'a, E> {
-    fn new(
-        matrix: &'a [Prime128Offset275],
-        rows: usize,
-        width: usize,
-        degree: usize,
-        alpha: E,
-    ) -> Result<Self, AkitaError> {
-        let entries = checked::product([rows, width]).ok_or(AkitaError::InvalidProof)?;
-        let mut kernels = Vec::new();
-        kernels
-            .try_reserve_exact(entries)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        kernels.resize(entries, None);
-        Ok(Self {
-            matrix,
-            width,
-            degree,
-            point: ResidueKernelPoint::new(alpha, degree)?,
-            kernels,
-        })
+    alpha: E,
+) -> Result<Vec<Vec<E>>, AkitaError> {
+    let len = checked::product([rows, width, degree]).ok_or(AkitaError::InvalidProof)?;
+    let coefficients = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
+    if degree == 0 {
+        return Err(AkitaError::InvalidProof);
     }
-
-    fn get(&mut self, row: usize, column: usize) -> Result<&[E], AkitaError> {
-        if column >= self.width {
-            return Err(AkitaError::InvalidProof);
-        }
-        let entry = checked::mul_add(row, self.width, column).ok_or(AkitaError::InvalidProof)?;
-        let start = checked::product([entry, self.degree]).ok_or(AkitaError::InvalidProof)?;
-        let range = checked::range(start, self.degree).ok_or(AkitaError::InvalidProof)?;
-        let slot = self
-            .kernels
-            .get_mut(entry)
-            .ok_or(AkitaError::InvalidProof)?;
-        if slot.is_none() {
-            let coefficients = self
-                .matrix
-                .get(range)
-                .ok_or(AkitaError::InvalidProof)?
+    let point = ResidueKernelPoint::new(alpha, degree)?;
+    cfg_chunks!(coefficients, degree)
+        .map(|entry| {
+            let coefficients = entry
                 .iter()
                 .map(|coefficient| {
                     coefficient
@@ -498,12 +470,27 @@ impl<'a, E: Field> KernelCache<'a, E> {
                         .ok_or(AkitaError::InvalidProof)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut weights = vec![E::zero(); self.degree];
-            self.point.field_kernel_into(&coefficients, &mut weights)?;
-            *slot = Some(weights);
-        }
-        slot.as_deref().ok_or(AkitaError::InvalidProof)
+            let mut weights = vec![E::zero(); degree];
+            point.field_kernel_into(&coefficients, &mut weights)?;
+            Ok(weights)
+        })
+        .collect()
+}
+
+/// A copy of kernel `(row, column)` of a role with `width` columns.
+fn kernel<E: Field>(
+    kernels: &[Vec<E>],
+    width: usize,
+    row: usize,
+    column: usize,
+) -> Result<Vec<E>, AkitaError> {
+    if column >= width {
+        return Err(AkitaError::InvalidProof);
     }
+    checked::mul_add(row, width, column)
+        .and_then(|entry| kernels.get(entry))
+        .cloned()
+        .ok_or(AkitaError::InvalidProof)
 }
 
 /// Addresses of one single-plane, unpadded segment with contiguous lanes.
