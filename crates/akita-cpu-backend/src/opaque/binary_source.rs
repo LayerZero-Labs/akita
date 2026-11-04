@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 mod packed;
 mod projection;
-use packed::{fold_packed, image_hint, probe_packed};
+use packed::{fold_packed, image_hint};
 
 #[path = "binary_import.rs"]
 mod import;

@@ -93,6 +93,7 @@ pub(super) fn image_hint(
 }
 
 /// Fold the packed carriers and construct the root relation's residual rows.
+#[cfg(test)]
 pub(super) fn probe_packed(
     descriptor: &BinarySourceDescriptor,
     matrix: &[Vec<[i128; SOURCE_RING_DEGREE]>],

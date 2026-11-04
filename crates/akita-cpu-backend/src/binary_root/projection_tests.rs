@@ -109,3 +109,44 @@ fn projection_replay_rejects_malformed_challenges_and_nondivisible_images() {
         assert_eq!(left.quotient, right.quotient);
     }
 }
+
+#[test]
+fn limb_remainders_equal_transform_remainders_and_reject_like_them() {
+    let mut input = fixture();
+    let relation = build(&input).unwrap();
+    let remainders = |input: &Fixture, challenges: &Challenges| {
+        BinaryRootRelation::remainders(
+            &input.descriptor,
+            &input.matrix,
+            &relation.response,
+            &input.images,
+            challenges,
+            FoldChallengeDistribution::BinaryRoot,
+        )
+    };
+    let actual = remainders(&input, &input.challenges).unwrap();
+    assert!(actual
+        .iter()
+        .eq(relation.rows.iter().map(|row| &row.remainder)));
+    for coefficient in [0, D / 2, D - 1] {
+        let original = input.images[0][coefficient];
+        input.images[0][coefficient] = Q24Image::from_centered(original.centered() + 1).unwrap();
+        assert!(remainders(&input, &input.challenges).is_err());
+        input.images[0][coefficient] = original;
+    }
+    let mut sparse = input.challenges.as_slice().to_vec();
+    sparse[0].coeffs[0] = 2;
+    let malformed = Challenges::from_sparse(sparse, 2, 2).unwrap();
+    assert!(remainders(&input, &malformed).is_err());
+    let mut response = relation.response.clone();
+    response[0][0] = i128::from(BINARY_RESPONSE_INTERVAL.1) + 1;
+    assert!(BinaryRootRelation::remainders(
+        &input.descriptor,
+        &input.matrix,
+        &response,
+        &input.images,
+        &input.challenges,
+        FoldChallengeDistribution::BinaryRoot,
+    )
+    .is_err());
+}

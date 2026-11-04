@@ -149,10 +149,22 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
         .unwrap();
         assert_eq!(actual.response, reference.response);
         assert_eq!(actual.embedded_challenges, reference.embedded_challenges);
-        for (actual, reference) in actual.rows.iter().zip(reference.rows) {
+        for (actual, reference) in actual.rows.iter().zip(&reference.rows) {
             assert_eq!(actual.remainder, reference.remainder);
             assert_eq!(actual.quotient, reference.quotient);
         }
+        let remainders = crate::binary_root::BinaryRootRelation::remainders(
+            &descriptor,
+            &matrix,
+            &actual.response,
+            &images,
+            &challenges,
+            FoldChallengeDistribution::BinaryRoot,
+        )
+        .unwrap();
+        assert!(remainders
+            .iter()
+            .eq(reference.rows.iter().map(|row| &row.remainder)));
         let point = (0..4)
             .map(|i| {
                 BinaryField162::from_words([13 + i, 0, 0])

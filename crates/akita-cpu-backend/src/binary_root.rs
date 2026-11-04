@@ -29,6 +29,7 @@ const D: usize = 648;
 type AuxiliaryRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
 
 pub(crate) mod evaluation;
+mod residual;
 mod setup_prefix;
 pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
 
@@ -146,43 +147,8 @@ impl BinaryRootRelation {
     ) -> Result<Self, AkitaError> {
         let (polynomials, columns, source_rows) = dimensions(descriptor, matrix)?;
         let rank = matrix.len();
-        let expected_response = checked::product([polynomials, source_rows])
-            .ok_or_else(|| invalid("binary response count overflow"))?;
-        let expected_images = checked::product([polynomials, columns, rank])
-            .ok_or_else(|| invalid("binary image count overflow"))?;
-        for (expected, actual) in [
-            (expected_response, response.len()),
-            (expected_images, images.len()),
-        ] {
-            if expected != actual {
-                return Err(AkitaError::InvalidSize { expected, actual });
-            }
-        }
-        let (low, high) = BINARY_RESPONSE_INTERVAL;
-        if response
-            .iter()
-            .flatten()
-            .any(|&x| x < i128::from(low) || x > i128::from(high))
-        {
-            return Err(invalid("binary response exceeds its four-digit interval"));
-        }
+        let product_bound = relation_bound(descriptor, matrix, &response, images, family)?;
         let embedded_challenges = embed_challenges(descriptor, challenges, family)?;
-        // Each unreduced product coefficient contains at most D products.
-        // Division by Psi combines at most two such coefficients in Q and at
-        // most three in the remainder. This conservative bound covers both.
-        let product_bound = (source_rows as u128)
-            .checked_mul(D as u128)
-            .and_then(|x| x.checked_mul(Q24_CENTERED_BOUND as u128))
-            .and_then(|x| x.checked_mul(low.unsigned_abs() as u128))
-            .and_then(|x| {
-                x.checked_add(
-                    (columns as u128)
-                        * (family.l1_norm() as u128)
-                        * (IMAGE_MIN.unsigned_abs() as u128),
-                )
-            })
-            .and_then(|x| x.checked_mul(3))
-            .ok_or_else(|| invalid("binary relation integer bound overflow"))?;
         let auxiliary_modulus = (-Prime128OffsetA7F7::one())
             .to_u128_checked()
             .and_then(|x| x.checked_add(1))
@@ -407,6 +373,54 @@ fn dimensions(
         ));
     }
     Ok((descriptor.polynomials().len(), columns, rows))
+}
+
+/// Validate a root relation's operand counts and response interval, and
+/// return the integer bound on every unreduced and remainder coefficient.
+///
+/// Each unreduced product coefficient contains at most D products. Division
+/// by Psi combines at most two such coefficients in Q and at most three in the
+/// remainder. This conservative bound covers both.
+fn relation_bound(
+    descriptor: &BinarySourceDescriptor,
+    matrix: &[Vec<[i128; D]>],
+    response: &[[i128; D]],
+    images: &[[Q24Image; D]],
+    family: FoldChallengeDistribution,
+) -> Result<u128, AkitaError> {
+    let (polynomials, columns, source_rows) = dimensions(descriptor, matrix)?;
+    let rank = matrix.len();
+    let expected_response = checked::product([polynomials, source_rows])
+        .ok_or_else(|| invalid("binary response count overflow"))?;
+    let expected_images = checked::product([polynomials, columns, rank])
+        .ok_or_else(|| invalid("binary image count overflow"))?;
+    for (expected, actual) in [
+        (expected_response, response.len()),
+        (expected_images, images.len()),
+    ] {
+        if expected != actual {
+            return Err(AkitaError::InvalidSize { expected, actual });
+        }
+    }
+    let (low, high) = BINARY_RESPONSE_INTERVAL;
+    if response
+        .iter()
+        .flatten()
+        .any(|&x| x < i128::from(low) || x > i128::from(high))
+    {
+        return Err(invalid("binary response exceeds its four-digit interval"));
+    }
+    (source_rows as u128)
+        .checked_mul(D as u128)
+        .and_then(|x| x.checked_mul(Q24_CENTERED_BOUND as u128))
+        .and_then(|x| x.checked_mul(low.unsigned_abs() as u128))
+        .and_then(|x| {
+            x.checked_add(
+                (columns as u128) * (family.l1_norm() as u128) * (IMAGE_MIN.unsigned_abs() as u128),
+            )
+        })
+        .and_then(|x| x.checked_mul(3))
+        .ok_or_else(|| invalid("binary relation integer bound overflow"))
 }
 
 fn embed_challenges(

@@ -37,22 +37,26 @@ where
     }
     // Rebuild from authenticated private source material and the accepted fold.
     // No retained public residual or projected value is trusted by this boundary.
-    let relation = probe_packed(
+    let family = akita_challenges::FoldChallengeDistribution::BinaryRoot;
+    let response = fold_packed(
         source.manifest.descriptor(),
-        &source.matrix,
         &source.sources,
-        &source.images,
         &request.challenges,
-        akita_challenges::FoldChallengeDistribution::BinaryRoot,
+        family,
     )?
     .ok_or_else(|| {
         AkitaError::InvalidInput("accepted binary response exceeds its interval".into())
     })?;
-    let residuals = relation
-        .rows
-        .into_iter()
-        .map(|row| row.remainder)
-        .collect::<Vec<_>>();
+    let span = tracing::info_span!("binary_root_residual_rows").entered();
+    let residuals = crate::binary_root::BinaryRootRelation::remainders(
+        source.manifest.descriptor(),
+        &source.matrix,
+        &response,
+        &source.images,
+        &request.challenges,
+        family,
+    )?;
+    drop(span);
     binding
         .scope_lease()
         .admit_commitment(context, handle.committed.commitment_id)?;
