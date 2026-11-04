@@ -427,7 +427,11 @@ impl serde::Serialize for FoldSchedule {
         use serde::ser::SerializeStruct;
 
         let omit_unset = serializer.is_human_readable();
-        let mut state = serializer.serialize_struct("FoldSchedule", 4)?;
+        let mut state = serializer.serialize_struct("FoldSchedule", 5)?;
+        state.serialize_field(
+            "root_accumulated_setup_prefix_len",
+            &self.root_accumulated_setup_prefix_len,
+        )?;
         state.serialize_field("root", &self.root)?;
         state.serialize_field("recursive_folds", &self.recursive_folds)?;
         state.serialize_field("terminal", &self.terminal)?;

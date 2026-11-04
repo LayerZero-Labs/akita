@@ -32,23 +32,19 @@ use akita_serialization::AkitaSerialize;
 use common::*;
 use jolt_algebra::{ExtField, Ring};
 
-/// Digests under the current protocol.
+/// Digests under the current protocol: Akita main's (v8) bytes for the
+/// same rows, which a clear dev build must reproduce.
 const CURRENT_PROTOCOL: &[&str] = &[
-    "fp128_onehot final=12:1 commitments=32e3bf3534003ccd6d3371a3a4304e650caefab86d311612ef61998bc356eb92 proof_len=42052 proof=9bb1c30fccb581f763d3b45ea67a419d8c6e7b4e2a3e390f8935f9ea4a8686c7",
-    "fp128_dense final=14:1 commitments=7c16802e31dbe69151fe27e4ee4d6666ce7e2e4428c6a348016b618f76c890f1 proof_len=73844 proof=c29d541d8fc2da811bc460dc5cdc594e8fe69427c4355299b2ee4dcd60b41496",
-    "fp128_onehot final=18:1 commitments=9b6cc92466df8bb492a8247e2b0f9aa070f8b098c795174875f7919e4c42cf24 proof_len=70585 proof=267d96d187caf49a4e6978f27e78269f227bd0a48ec68c6331fc63f7c63d1a7a",
-    "fp128_onehot final=16:1;precommitted=14:1 commitments=a31f2ae7274d259c6ce505af798b9c8d0ebe891864c9c8414370d1cbc6b231b0 proof_len=70598 proof=90ffca158387063524f8e18577925375ed4a883bc60cafe24448855f826988fc",
-    "fp64_dense final=14:1 commitments=4f6c809555b2a7ecd98b9de86721835257ae388a5de590817e2456f5b5ffeb23 proof_len=68381 proof=23976febd0956f6ac0a3bf3100560af31ee8de896118c202f09d7f5fe24ed693",
+    "fp128_onehot final=12:1 commitments=d693010878a84b6562b79d753c7fe74204fb92115741504eecb4d1c5d5080119 proof_len=42621 proof=b08099ce626db5fd4ab1b2866ca8b58eb217c7cdd91dd9292219d4b1be0ecae1",
+    "fp128_dense final=14:1 commitments=59e7a284290a49719d282e05945912f5a9e9f0668286b57c0b1cebedc697288e proof_len=68809 proof=27ca568f5387caa58988d8f52128c97f62e84811246cdc8c700cfce2f233215e",
+    "fp128_onehot final=18:1 commitments=ece414efb98d4ec2a733517dd9e5128dd761b24b784b3f4dc0e2a21bff93fbc0 proof_len=66263 proof=346d111831a6fa8117043d28688bbd46c22a1e785e472e0f7451009af4901b02",
+    "fp128_onehot final=16:1;precommitted=14:1 commitments=c13a992e649895d0ca9eb4a80f718402d0fa669d8665c8556cec8ae4dc40c0a3 proof_len=65545 proof=8419433696032026be18676d53eab4d15422dfc9aebbebee59cd8c3dc271a9bb",
+    "fp64_dense final=14:1 commitments=51616667401b02eec741de1070a4f5a6cbd9234a9c515e5ee930c169dfa95053 proof_len=63845 proof=6457f41c3a80ee48f0aaafc306e04e386d6d613e850f4c91a7b0ce837d1809d3",
 ];
 
-/// Digests under the dev protocol (`akita_params::DEV_PROTOCOL`).
-const DEV_PROTOCOL: &[&str] = &[
-    "fp128_onehot final=12:1 commitments=32e3bf3534003ccd6d3371a3a4304e650caefab86d311612ef61998bc356eb92 proof_len=37078 proof=be954264c86e60be72890d7cfb0931f4f2f366bcc4a0ff3fb54fc72c5f3fe45d",
-    "fp128_dense final=14:1 commitments=7c16802e31dbe69151fe27e4ee4d6666ce7e2e4428c6a348016b618f76c890f1 proof_len=68808 proof=73341efb53dd6a864e9045356c66a1970377b56a9356bd3cba73030a10b05166",
-    "fp128_onehot final=18:1 commitments=9b6cc92466df8bb492a8247e2b0f9aa070f8b098c795174875f7919e4c42cf24 proof_len=65554 proof=0cb16f1454037d55331bec0873f3b2c2f307c21a3a187e271229e53608ccc258",
-    "fp128_onehot final=16:1;precommitted=14:1 commitments=a31f2ae7274d259c6ce505af798b9c8d0ebe891864c9c8414370d1cbc6b231b0 proof_len=65502 proof=07ea0d92c43d9a41335ee8d701941b1261ce32a1afc01b0933ab27b93b30a77d",
-    "fp64_dense final=14:1 commitments=4f6c809555b2a7ecd98b9de86721835257ae388a5de590817e2456f5b5ffeb23 proof_len=63890 proof=948707a0293e0d38879a61c9126e51a6430c684ca51c3fd92fd7ec5c5c9ebdbe",
-];
+/// Digests under the dev protocol (`akita_params::DEV_PROTOCOL`). On v8 the
+/// dev wire format is the current one; only its artifact set differs.
+const DEV_PROTOCOL: &[&str] = CURRENT_PROTOCOL;
 
 const SESSION: &[u8] = b"golden_proof_digests";
 
