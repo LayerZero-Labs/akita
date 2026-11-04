@@ -2500,6 +2500,58 @@ A protocol change could buy the following; none is made here:
   A schedule with one fewer fold would save about that much, at the cost of
   larger proofs per level.
 
+#### Third pass on the Stage 3 weight base
+
+This pass was merged (`8f575025c`) with the second pass on the Stage 3 weight
+base (`a35eed1be`, described above), so it now runs on `0ff6a96f7`. The only
+code conflict was the prime-plane profile: the base stores challenge supports
+as signs, so `plane_profile` writes `-1` or `1` into its multiplier. Setup,
+commitment and proof bytes are unchanged.
+
+The base's structured Stage 2 and closed-form families changed the code
+around four of this pass's changes. Each still runs on the prover path and
+keeps its gain. The figures below are medians at 2^22 `word-prime`, from the
+runs below, as base → second pass → this head:
+
+- *Authentication profile fill.* The authentication family still emits
+  through `ProfileBuilder::add_lanes`: 140.2 → 153.4 → 60.7 ms, and 175.3 →
+  195.8 → 85.7 ms at `prime5`.
+- *Recomposed profile fill.* Direct A, the image and the prime planes still
+  add one element's profile per task through `ProfileBuilder::add_shared`.
+  The prime-plane emission takes 19.6 → 19.8 → 4.6 ms, and 91.3 → 90.4 →
+  10.8 ms at `prime5`. The direct A emission takes 14.2 → 14.1 → 5.6 ms and
+  the image emission 20.4 → 16.7 → 13.1 ms.
+- *D row partials.* `binary_root_row_partials` takes 17.4 → 17.8 → 5.1 ms.
+- *Direct A adjoint.* The relation compile still calls `apply_integer_rows`:
+  255.5 → 161.3 → 56.1 ms, and 167.5 → 140.3 → 41.8 ms at
+  `word-prime-ordinary`.
+
+Base `0ff6a96f7` and head `8f575025c` were proved in the interleaved rounds
+described in the second pass's subsection, with the same 60 runs and the
+same loads. All runs reproduced their pins and verified.
+
+| N | Shape | Complete proving (ms) | Root level (ms) | Verification (ms) | Prover peak RSS (bytes) | Loads |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 2^22 | `word` | 1,194.0 → 853.1 | 918.7 → 505.0 | 10.1 → 10.5 | 2,221,703,168 → 2,485,534,720 | 9.29–11.99 |
+| 2^22 | `word-prime` | 2,269.4 → 1,435.8 | 1,612.5 → 789.8 | 14.3 → 15.5 | 3,095,003,136 → 3,673,833,472 | 14.50–22.84 |
+| 2^22 | `word-prime-ordinary` | 1,769.0 → 1,076.3 | 1,251.5 → 621.1 | 17.9 → 19.2 | 3,297,558,528 → 4,013,850,624 | 15.46–19.54 |
+| 2^22 | `prime5` | 2,270.8 → 1,430.1 | 1,559.5 → 747.1 | 11.2 → 12.2 | 5,414,666,240 → 5,815,009,280 | 10.29–16.40 |
+| 2^23 | `word-prime` | 2,439.7 → 1,184.5 | 1,997.7 → 773.3 | 13.8 → 12.2 | 3,984,883,712 → 4,629,168,128 | 13.99–20.40 |
+
+Peak RSS rises by 7–22%, as in the third-pass results above. The second
+pass alone lowers it. At 2^22 `word` the Stage 3 rounds also run
+slower in this head, 36.9 → 56.0 ms, with the same CPU time (about 370 ms)
+and the same live-heap peak. Both effects follow the system allocator's
+large-block cache. With `MallocLargeCache=0`, three more interleaved pairs
+at 2^22 `word` (loads 10.11–10.93) gave Stage 3 rounds of 60.7 → 44.2 ms and
+peak RSS of 1,735,442,432 → 1,560,182,784 bytes.
+
+What remains in the root at `word-prime-ordinary` includes two closed-form
+families from the base. Both are emitted serially, one address at a time: the
+translated lanes at 27.9 ms and the source evaluation at 28.7 ms. A lane fill
+like the authentication family's would apply to both. This pass does not make
+that change.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
