@@ -4,16 +4,18 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-11-03 |
-| Status | proposed |
+| Status | implemented |
 | PR | |
 | Supersedes | None |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
-> **Proposed change to [binary-source-opening.md](binary-source-opening.md).**
-> Nothing here is implemented. The protocol change is made only after the
-> maintainer and an independent reviewer accept this note. Code citations are
-> at commit `8f69246`.
+> **Accepted and implemented: the deletion rule.** The opening spec,
+> [binary-source-opening.md](binary-source-opening.md), describes the current
+> protocol and its measurements; this note keeps the argument. The Summary and
+> Sections 1–6 describe the protocol before the change, and their code
+> citations are at commit `8f69246`. The padding-point rule was not
+> implemented.
 
 ## Summary
 
@@ -624,9 +626,10 @@ specified fallback.
 ## 7. Implementation plan
 
 Stack on `quang/binary-source-verifier-weights`. That branch streams the
-padding weights by run (`for_each_padding_run`, `padding_count` and
-`natural_end` in `root_repacking.rs`) and adds the `RootWeightFamily::Padding`
-family. This change deletes that family.
+padding weights by run from the repacking geometry and adds a padding weight
+family. This change deletes that family and its run iterator, and keeps
+`natural_end` in `root_repacking.rs`. Steps 1–7 of the deletion rule are
+implemented as written.
 
 **Deletion rule.**
 
