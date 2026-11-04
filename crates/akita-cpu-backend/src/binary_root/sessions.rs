@@ -111,8 +111,11 @@ where
     })
 }
 
-/// Every root lane spans at least 256 addresses and starts on a multiple of
-/// its stride, so the first eight Stage 2 rounds bind only in-lane bits.
+/// Every lane of a recomposed binary family (direct A, image, prime) spans at
+/// least 256 addresses and starts on a multiple of its stride, so the first
+/// eight Stage 2 rounds bind only in-lane bits for those families. Narrower
+/// lanes, such as mixed ordinary segments, carry their weights in per-block
+/// rows, which may span lane boundaries.
 const ROOT_PROFILE_BLOCK_BITS: usize = 8;
 
 impl<E: Field + Fold> StructuredRelationWeights<E> for RootWeightProfiles<E> {

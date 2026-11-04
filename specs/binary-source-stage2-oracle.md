@@ -198,7 +198,9 @@ ordinary caller.
   - The fault-injection test backend materializes, perturbs and rebuilds an
     explicit oracle.
   - `CompiledNativeRoot` (the ordinary native root) keeps the dense path.
-- The root digit copy and range check run in parallel.
+- The root witness reuses the packed digit storage: an aligned prefix is
+  cloned, the digits are repacked only when the domain needs padding, and the
+  range check reads the cached digit bounds.
 
 ## Cost model
 
@@ -208,7 +210,7 @@ number of own entries.
 | Step | Dense today | Structured |
 | --- | --- | --- |
 | Weight build | zero `N`; visit `sum_family digits * naturals` | zero `S + O`; visit `naturals / digits` for recomposed families, `naturals` for per-address families |
-| Witness setup | serial copy, check and E conversion of `N` | parallel copy and check; no conversion |
+| Witness setup | serial copy, check and E conversion of `N` | packed clone (repack only when padding); cached bounds; no conversion |
 | Rounds `0..T` | `N` pairs and folds of `N` dense weights | `N` pairs, folds of `S + O` pool entries, compact round 0 |
 | Rounds `T..n` | dense on `N / B` | dense on `N / B` |
 | Peak weight memory | `N` (q) plus `N` (E witness at round 0) | `S + O` plus `N / 2` (folded witness after round 0) |
