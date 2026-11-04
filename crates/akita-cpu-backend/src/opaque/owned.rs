@@ -108,6 +108,13 @@ pub(super) trait PrivateSource<F: Field + CanonicalEncoding, E: Field>: Send + S
     }
     fn commitment_sources(&self) -> Vec<&dyn CommitmentSource<F>>;
     fn dense_polynomials(&self) -> Result<Vec<crate::DensePoly<F>>, AkitaError>;
+    /// Extension seam: borrow the coefficient table of a one-polynomial
+    /// source that keeps it in memory.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    #[cfg(feature = "labinius-trinomial")]
+    fn retained_coefficients(&self) -> Option<&[F]> {
+        None
+    }
     #[cfg(feature = "response-model-diagnostics")]
     fn source_l2_sq(&self) -> Option<u128>;
     fn opening(
@@ -177,6 +184,16 @@ where
             .iter()
             .map(|p| p as &dyn CommitmentSource<F>)
             .collect()
+    }
+    #[cfg(feature = "labinius-trinomial")]
+    fn retained_coefficients(&self) -> Option<&[F]> {
+        match self.polynomials.as_slice() {
+            [polynomial] => match polynomial.source_coefficients().ok()? {
+                std::borrow::Cow::Borrowed(coefficients) => Some(coefficients),
+                std::borrow::Cow::Owned(_) => None,
+            },
+            _ => None,
+        }
     }
     fn dense_polynomials(&self) -> Result<Vec<crate::DensePoly<F>>, AkitaError> {
         self.polynomials

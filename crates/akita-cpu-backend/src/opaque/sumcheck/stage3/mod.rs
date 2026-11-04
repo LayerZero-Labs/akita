@@ -209,17 +209,30 @@ where
         ))
     }
 
-    /// Extension seam: run the factored one-coefficient product with the
-    /// typed prefix weight kept in its live blocks.
+    /// Extension seam: run the factored one-coefficient product on the
+    /// committed typed prefix, with its weight kept in its live blocks.
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
     #[cfg(feature = "labinius-trinomial")]
     fn begin_typed_stage3(
         &self,
-        request: akita_prover::backend::TypedStage3Request<'_, F, E, Self::ProofSessionHandle>,
+        request: akita_prover::backend::TypedStage3Request<
+            '_,
+            E,
+            Self::ProofSessionHandle,
+            <Self as akita_prover::backend::ProverHandleFamily<F, E>>::CommitmentHandle,
+        >,
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
         let (binding, lease) = self.stage3_binding(request.session, request.level)?;
+        let committed = &request.prefix.committed;
+        if request.prefix.owner != self.owner_id()
+            || committed.source.retained_coefficients().is_none()
+        {
+            return Err(AkitaError::InvalidInput(
+                "typed Stage 3 needs a prefix handle that retains its table".into(),
+            ));
+        }
         let setup = SetupProductSumcheck::structured(
-            SetupProductSource::Owned(request.coefficients),
+            SetupProductSource::Retained(Arc::new(CommittedSetupTable(Arc::clone(committed)))),
             Box::new(request.weights),
         )?;
         Ok((
@@ -294,6 +307,23 @@ where
         let binding = self.binding(session, &context)?;
         let lease = binding.scope_lease().clone();
         Ok((binding, lease))
+    }
+}
+
+/// The table of a committed setup prefix, read in place.
+#[cfg(feature = "labinius-trinomial")]
+struct CommittedSetupTable<F: Field + CanonicalEncoding, E: Field>(
+    Arc<crate::opaque::owned::CommittedSource<F, E>>,
+);
+
+#[cfg(feature = "labinius-trinomial")]
+impl<F: Field + CanonicalEncoding, E: Field> product_table::RetainedSetupTable<F>
+    for CommittedSetupTable<F, E>
+{
+    fn coefficients(&self) -> &[F] {
+        // Admission checks that the source retains its table; an empty table
+        // fails every later length check.
+        self.0.source.retained_coefficients().unwrap_or(&[])
     }
 }
 

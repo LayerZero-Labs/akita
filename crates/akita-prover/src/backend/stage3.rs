@@ -36,17 +36,19 @@ pub struct FactoredStage3Request<'a, F: Field, E: Field, ProofSession> {
     pub coefficient_factor: Vec<E>,
 }
 
-/// Extension seam: a one-coefficient setup table whose Stage 3 weight stays in
-/// the typed prefix's live blocks.
+/// Extension seam: Stage 3 on the committed typed setup prefix, with its
+/// weight kept in the prefix's live blocks.
 /// <https://github.com/LayerZero-Labs/akita/issues/285>.
 ///
-/// The table must be zero outside the live blocks. Rounds, challenges and the
-/// final claim equal those of [`FactoredStage3Request`] on the expanded weight.
+/// `prefix` is the prepared prefix's commitment handle; the backend reads the
+/// committed table from it. The table must be zero outside the live blocks.
+/// Rounds, challenges and the final claim equal those of
+/// [`FactoredStage3Request`] on the same table and the expanded weight.
 #[cfg(feature = "labinius-trinomial")]
-pub struct TypedStage3Request<'a, F: Field, E: Field, ProofSession> {
+pub struct TypedStage3Request<'a, E: Field, ProofSession, Prefix> {
     pub session: &'a ProofSession,
     pub level: u32,
-    pub coefficients: Arc<[F]>,
+    pub prefix: &'a Prefix,
     pub weights: akita_types::binary_source::TypedPrefixWeights<E>,
 }
 
@@ -103,8 +105,12 @@ pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
     #[cfg(feature = "labinius-trinomial")]
     fn begin_typed_stage3(
         &self,
-        _request: TypedStage3Request<'_, F, E, Self::ProofSessionHandle>,
-    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        _request: TypedStage3Request<'_, E, Self::ProofSessionHandle, Self::CommitmentHandle>,
+    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError>
+    where
+        F: jolt_field::CanonicalEncoding,
+        Self: super::ProverHandleFamily<F, E>,
+    {
         Err(AkitaError::UnsupportedSchedule(
             "backend does not support typed setup products".into(),
         ))

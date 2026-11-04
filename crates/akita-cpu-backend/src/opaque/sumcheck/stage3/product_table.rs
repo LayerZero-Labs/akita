@@ -16,8 +16,20 @@ pub(in crate::opaque::sumcheck) enum SetupProductSource<F: Field> {
     /// Extension seam: retain an alternate authenticated coefficient source.
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
     Owned(Arc<[F]>),
+    /// Extension seam: a table that a committed source retains.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    #[cfg(feature = "labinius-trinomial")]
+    Retained(Arc<dyn RetainedSetupTable<F>>),
     #[cfg(test)]
     Table(Vec<F>),
+}
+
+/// A setup table owned elsewhere, such as the source of a committed prefix.
+#[cfg(feature = "labinius-trinomial")]
+pub(in crate::opaque::sumcheck) trait RetainedSetupTable<F>:
+    Send + Sync
+{
+    fn coefficients(&self) -> &[F];
 }
 
 impl<F: Field> SetupProductSource<F> {
@@ -25,6 +37,8 @@ impl<F: Field> SetupProductSource<F> {
         match self {
             Self::Expanded(setup) => setup.shared_matrix().as_field_slice(),
             Self::Owned(table) => table,
+            #[cfg(feature = "labinius-trinomial")]
+            Self::Retained(table) => table.coefficients(),
             #[cfg(test)]
             Self::Table(table) => table,
         }

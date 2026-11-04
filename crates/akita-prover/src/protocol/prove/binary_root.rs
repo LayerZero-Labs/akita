@@ -373,11 +373,9 @@ where
         .setup_prefix()
         .and_then(|p| p.slot_id())
         .ok_or_else(|| AkitaError::InvalidInput("binary root has no typed prefix slot".into()))?;
-    if prefix_slots.get(&prefix).is_none() {
-        return Err(AkitaError::InvalidInput(
-            "binary root typed prefix was not prepared".into(),
-        ));
-    }
+    let prepared_prefix = prefix_slots.get(&prefix).ok_or_else(|| {
+        AkitaError::InvalidInput("binary root typed prefix was not prepared".into())
+    })?;
     let phase = tracing::info_span!("binary_root_stage3_layout").entered();
     let typed = akita_types::binary_source::BinaryTypedPrefix::new(
         manifest,
@@ -392,12 +390,6 @@ where
         prefix.n_prefix()?,
     )?;
     drop(phase);
-    // Converting the setup source into the shared slice copies it once.
-    let phase = tracing::info_span!("binary_root_stage3_source").entered();
-    let coefficients: std::sync::Arc<[_]> = typed
-        .setup_coefficients(&expanded.setup_seed.seed, manifest, prefix.n_prefix()?)?
-        .into();
-    drop(phase);
     // A, B and D share one weight over the typed prefix. It stays in live
     // 64-cell blocks: the six in-block rounds read only those blocks, and the
     // remaining rounds run on the one-cell block values.
@@ -411,10 +403,11 @@ where
     )?;
     drop(phase);
     let phase = tracing::info_span!("binary_root_stage3_begin").entered();
+    // The table is the one the prefix preparation committed.
     let (claim, session) = backend.begin_typed_stage3(crate::backend::TypedStage3Request {
         session: proof_session,
         level: 0,
-        coefficients,
+        prefix: &prepared_prefix.commitment_handle,
         weights,
     })?;
     drop(phase);

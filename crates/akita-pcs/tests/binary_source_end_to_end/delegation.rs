@@ -380,7 +380,12 @@ impl OpaqueStage3Kernel<F, E> for FaultBackend {
     }
     fn begin_typed_stage3(
         &self,
-        request: akita_prover::backend::TypedStage3Request<'_, F, E, Self::ProofSessionHandle>,
+        request: akita_prover::backend::TypedStage3Request<
+            '_,
+            E,
+            Self::ProofSessionHandle,
+            <Self as ProverHandleFamily<F, E>>::CommitmentHandle,
+        >,
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
         self.inner.begin_typed_stage3(request)
     }
