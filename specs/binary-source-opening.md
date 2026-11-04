@@ -1901,6 +1901,159 @@ used the structured executable `2e59907c9` and 33 runs at one-minute loads of
 The representation cost described above is now mostly the authentication
 family's weight build, which has no shared structure.
 
+#### Stage 3 without the dense weight
+
+After the structured Stage 2, Stage 3 sets the prover's live-heap peak for the
+shapes with prime planes. Its weight is still a dense table over the typed
+prefix: `BinaryTypedPrefix::prover_weights` fills `16 * 2^k'` bytes, where
+`2^k'` is the prefix domain. This subsection profiles that Stage 3 and plans
+how to remove the dense weight without changing a byte.
+
+**Profile.** The executable is `fab398c16` plus the Stage 3 phase spans of
+`57d148ab3` and a few temporary spans inside the typed-prefix builders. Each
+figure is the median of three runs at N=2^22 with the catalog cache. All 16
+runs, warm-ups included, reproduced their digest pins and verified.
+One-minute loads were 5.39–14.58.
+
+| Shape | `2^k'` | Complete proving (ms) | Stage 2 (ms) | Stage 3 (ms) | Prover peak RSS bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `word` | 2^24 | 1,301.3 | 150.4 | 278.8 | 2,990,473,216 |
+| `word-prime` | 2^25 | 1,704.4 | 192.7 | 445.8 | 5,188,812,800 |
+| `word-prime-ordinary` | 2^25 | 1,900.6 | 226.0 | 429.7 | 5,500,960,768 |
+| `prime5` | 2^26 | 2,600.7 | 348.8 | 757.3 | 8,804,007,936 |
+
+The Stage 3 span tree, in milliseconds, with the live heap in GB:
+
+| Shape | Layout | Source | Weights | Begin (coefficient pass) | Rounds | Heap at entry → peak |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `word` | 1.6 | 130.6 | 18.1 | 66.2 (8.4) | 62.7 | 0.96 → 1.77 |
+| `word-prime` | 1.6 | 166.5 | 27.3 | 131.6 (13.2) | 117.8 | 1.69 → 3.30 |
+| `word-prime-ordinary` | 1.6 | 156.9 | 27.5 | 128.4 (12.9) | 114.9 | 1.76 → 3.37 |
+| `prime5` | 1.6 | 234.0 | 53.6 | 256.1 (23.8) | 212.1 | 2.78 → 6.00 |
+
+- *Layout* builds `BinaryTypedPrefix` and `BinaryAProduct`.
+- *Source* derives the typed setup table with
+  `BinaryTypedPrefix::setup_coefficients` and copies it into an `Arc<[F]>`.
+  At `word-prime`, a temporary span puts the serial A derivation inside it at
+  124 ms per call and the B/D copies into the A padding at 17 ms. The copy
+  briefly holds the table twice: the source span's own peak is the entry heap
+  plus `32 * 2^k'` bytes.
+- *Weights* is `prover_weights`: one more `16 * 2^k'` bytes.
+- *Begin* is `begin_factored_stage3`. The parallel coefficient pass computes
+  the input claim. The rest of the span is `combine_index_weights`, which
+  copies the dense weight serially into a third table of `16 * 2^k'` bytes,
+  because a one-coefficient view scales the weight by one. That copy is the
+  Stage 3 peak: source, weight and combined weight, `48 * 2^k'` bytes above
+  the entry heap.
+- *Rounds* runs the `k'` degree-two rounds; the first fold halves the table.
+
+The typed table that *Source* derives was already derived and committed by
+the cold prefix preparation of the same process (`cold_prefix_preparation`,
+415 ms at `word-prime`). The prover derives it three times per process, so
+the serial A derivation costs about 370 ms of the `word-prime` process.
+
+**Where the weight comes from.** The prefix holds the A tensor and the B/D
+digit pieces. Every other cell is zero in the setup table and in the weight.
+
+- *A tensor.* A cell is `row * row_stride + rank * 1024 + c`, with
+  `row_stride = 2^ceil(log2(rank)) * 1024`. The weight is
+  `I[row] * C[rank * 1024 + c]`: the root-point equality of the row times one
+  coefficient factor. It is a tensor product. `C` is zero for `c >= 648` and
+  on the padded ranks, so it is sparse: at rank 3 only `3 * 704` of every
+  4,096 cells lie in a live 64-cell chunk.
+- *B/D pieces.* Copy column `j` of period `q` of a digit segment is
+  `beta_row * K(e_{q,j})`, where `K` is the residue kernel at `alpha` and
+  `e_{q,j}[t] = eq(r, address)`. The address is
+  `(f + qP + p) * stride + c` for lane `p` of the period and coefficient `c`,
+  so the equality factors as
+  `coeff_eq[c] * lane_eq[(f + p) mod P] * eq(r_hi, floor(f / P) + s_p + q)`,
+  with `s_p = ((f mod P) + p) >> log2(P)` either 0 or 1. Hence
+  `e_{q,j} = G_0(q) E_0[j] + G_1(q) E_1[j]`, where
+  `G_s(q) = eq(r_hi, floor(f / P) + s + q)` and `E_s[j]` does not depend on
+  `q`. The weight is periodic in `q` up to two scalars. A partial last period
+  uses its own `E_s`. `K` is linear, so every copy is a sum of two scaled rows
+  `K(E_s[j])`, and a segment needs at most `4 * columns` rows.
+
+Every A chunk starts on a multiple of 64. Every B/D copy is an aligned
+64-cell block, since every region keeps the six slot bits free and first.
+So the weight is, per live 64-cell block, `scale_0 * row_0 + scale_1 * row_1`
+over a pool of a few thousand rows.
+
+**How the rounds bind.** `SetupProductSumcheck` with one coefficient binds
+the least significant address bit first. Its round is
+`(sum s0 w0, sum (s0 dw + ds w0), sum ds dw)` over the cell pairs. Rounds 0–5
+bind the six bits inside a 64-cell block. A live block stays live and a zero
+block stays zero. Binding folds each pool row in place, and the block records
+do not change. After six rounds each block is one cell, and the remaining
+table has `2^(k'-6)` entries, 8 MB at `2^k' = 2^25`.
+
+**Plan**, largest gain first:
+
+1. *A structured seam, behaviour-preserving.* Add
+   `SetupProductSumcheck::structured`, which takes the setup table and a
+   `StructuredSetupWeights` oracle. It runs rounds 0–5 over the live blocks
+   only. Per block and pool row it accumulates `sum s0 r0`, `sum s1 r1` and
+   `sum ds dr` unreduced. It scales them by the block's scales and derives the
+   linear coefficient as `sum s1 w1 - constant - quadratic`. All of these
+   are exact field sums. After six binds it scatters the block values into
+   the dense index state and continues on the ordinary rounds.
+   `OpaqueStage3Kernel::begin_typed_stage3` exposes the seam behind
+   `labinius-trinomial`. Ordinary callers keep `begin_factored_stage3`
+   unchanged. A differential test runs both on compiled roots.
+2. *Switch the binary root to it.* This removes the weights span (18–54 ms),
+   the combine copy (58–232 ms) and two `16 * 2^k'` tables, 0.5–2.1 GB of
+   live heap. Rounds 0–5, about half of the rounds span, read only the live
+   blocks.
+3. *Reuse the prepared prefix table.* The prepared prefix handle keeps the
+   committed typed table. Reading it instead of re-deriving it removes most
+   of the source span (131–234 ms) and its transient second copy.
+4. *Other regressions after the B/D setup offload*: page faults in Stage 3
+   after a smaller Stage 2, the serial A derivation in the cold preparation,
+   and the B/D copies into the A padding.
+
+**Results.** Items 1–3 landed in `90e6de4d7`, `c1a6ab234` and `4f1719168`.
+Item 4 landed as `75000a98e`: the A derivation, its i128 lift and its prefix
+scatter now run in parallel. Each matrix entry already had its own setup
+stream. With the structured weight and the reused table, Stage 3 allocates no
+prefix-sized table before its rounds, so the page faults after Stage 2 are
+gone with them. Setup, commitment and proof bytes are unchanged.
+
+The table compares `fab398c16` plus spans (the profile executable above) with
+`75000a98e`. Each figure is the median of three interleaved runs after a
+warm-up, with the catalog cache. All 40 runs reproduced their digest pins and
+verified. One-minute loads were 5.77–11.70 at N=2^22 and 6.99–8.80 at
+N=2^23. Times are in milliseconds.
+
+| N | Shape | Complete proving | Stage 3 | Stage 3 heap peak (GB) | Prover peak RSS bytes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 2^22 | `word` | 1,375.8 → 1,052.7 | 294.3 → 39.9 | 1.77 → 1.18 | 2,985,230,336 → 2,221,113,344 |
+| 2^22 | `word-prime` | 1,806.3 → 1,279.3 | 490.4 → 47.7 | 3.30 → 1.95 | 5,177,180,160 → 3,106,586,624 |
+| 2^22 | `word-prime-ordinary` | 2,095.4 → 1,536.8 | 496.8 → 51.2 | 3.37 → 2.03 | 5,491,441,664 → 3,690,053,632 |
+| 2^22 | `prime5` | 2,818.5 → 2,108.9 | 863.4 → 73.6 | 6.00 → 3.24 | 8,806,416,384 → 5,414,109,184 |
+| 2^23 | `word-prime` | 2,627.6 → 1,950.5 | 580.6 → 61.1 | 3.50 → 2.26 | 5,435,490,304 → 3,981,492,224 |
+
+Outside complete proving, the A derivation also shortens the cold prefix
+preparation and the cold verifier setup. At N=2^22 `word-prime` they go from
+430.9 to 339.2 ms and from 453.0 to 328.5 ms. At `word` they nearly halve,
+from 204.7 to 112.0 ms and from 188.5 to 97.2 ms.
+
+**What remains.**
+
+- Stage 3 is now its rounds: 40–74 ms at N=2^22. They read the committed
+  table in place, which costs 6–9 ms over a freshly written copy. Rounds 6
+  and later run on the dense index state of `2^(k'-6)` entries.
+- Stage 3 no longer sets the live-heap peak of complete proving. The peak is
+  now Stage 2's `RelationRangeImageProver::fold_round`: 1.52, 2.28 and
+  3.81 GB at N=2^22 for `word`, `word-prime` and `prime5`. At `word-prime`
+  and `prime5` the cold verifier setup peaks slightly higher, at 2.34 and
+  3.93 GB.
+- The cold prefix preparation and verifier setup still take 250–350 ms at
+  N=2^22 for the prime shapes. They already use about twelve cores. They
+  have no inner spans, so the split between deriving and committing the
+  typed prefix is not yet measured. The B/D copies into the A padding
+  (17 ms) derive one setup entry per copy. Deriving each entry once would
+  save part of that, but only in the cold path.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs

@@ -10,7 +10,7 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
-use jolt_field::{AdditiveGroup, One};
+use jolt_field::AdditiveGroup;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -373,11 +373,10 @@ where
         .setup_prefix()
         .and_then(|p| p.slot_id())
         .ok_or_else(|| AkitaError::InvalidInput("binary root has no typed prefix slot".into()))?;
-    if prefix_slots.get(&prefix).is_none() {
-        return Err(AkitaError::InvalidInput(
-            "binary root typed prefix was not prepared".into(),
-        ));
-    }
+    let prepared_prefix = prefix_slots.get(&prefix).ok_or_else(|| {
+        AkitaError::InvalidInput("binary root typed prefix was not prepared".into())
+    })?;
+    let phase = tracing::info_span!("binary_root_stage3_layout").entered();
     let typed = akita_types::binary_source::BinaryTypedPrefix::new(
         manifest,
         claim.is_some(),
@@ -390,31 +389,31 @@ where
         &stage2.challenges,
         prefix.n_prefix()?,
     )?;
-    // The shared setup source is built first: converting it into the shared
-    // slice copies it once, and that copy must not overlap the dense weight.
-    let coefficients: std::sync::Arc<[_]> = typed
-        .setup_coefficients(&expanded.setup_seed.seed, manifest, prefix.n_prefix()?)?
-        .into();
-    // A, B and D share one dense weight over the typed prefix. It enters as
-    // the index factor: the rounds bind the same variables in the same order,
-    // and the input pass keeps one accumulator instead of one per cell.
-    let index_factor = typed.prover_weights(
+    drop(phase);
+    // A, B and D share one weight over the typed prefix. It stays in live
+    // 64-cell blocks: the six in-block rounds read only those blocks, and the
+    // remaining rounds run on the one-cell block values.
+    let phase = tracing::info_span!("binary_root_stage3_weights").entered();
+    let weights = typed.prover_weight_blocks(
         &product,
         &stage2.challenges,
         alpha,
         [&authentication[0], &authentication[1]],
         prefix.n_prefix()?,
     )?;
-    let (claim, session) =
-        backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
-            session: proof_session,
-            level: 0,
-            coefficients,
-            index_factor,
-            coefficient_factor: vec![Cfg::ExtField::one()],
-        })?;
+    drop(phase);
+    let phase = tracing::info_span!("binary_root_stage3_begin").entered();
+    // The table is the one the prefix preparation committed.
+    let (claim, session) = backend.begin_typed_stage3(crate::backend::TypedStage3Request {
+        session: proof_session,
+        level: 0,
+        prefix: &prepared_prefix.commitment_handle,
+        weights,
+    })?;
+    drop(phase);
     akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
     akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
+    let phase = tracing::info_span!("binary_root_stage3_rounds").entered();
     let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         session,
@@ -423,6 +422,7 @@ where
         grinding,
         0,
     )?;
+    drop(phase);
     backend.advance_witness_level(&mut witness)?;
     drop(span);
     Ok(ProveLevelOutput {

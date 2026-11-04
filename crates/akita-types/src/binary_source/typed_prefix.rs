@@ -42,7 +42,7 @@ use super::{
     binary_a_setup_coefficients, BinaryAPrefixLen, BinaryAProduct, BinaryCommittedGroupManifest,
     BinaryRootWitnessPlan,
 };
-use crate::native_root_relation::{RootEq, SegmentLanes};
+use crate::native_root_relation::SegmentLanes;
 
 const SLOTS: usize = BINARY_DIGIT_COMMITMENT_DEGREE;
 const SLOT_BITS: usize = SLOTS.trailing_zeros() as usize;
@@ -80,6 +80,7 @@ impl DigitSegment {
     }
 
     /// Root address of slot `t` of column `j` of period `q`, if a digit is there.
+    #[cfg(any(test, feature = "test-support"))]
     fn address(&self, q: usize, j: usize, t: usize) -> Option<usize> {
         let local = checked::mul_add(j, SLOTS, t)?.checked_sub(self.offset % SLOTS)?;
         let degree = self.lanes.degree();
@@ -130,6 +131,25 @@ impl Region {
         )
     }
 
+    /// Prefix address of local index `local`, if the region holds it.
+    fn deposit(&self, local: usize) -> Option<usize> {
+        let Some(free) = &self.free else {
+            return Some(local);
+        };
+        if local.checked_shr(free.len() as u32).unwrap_or(0) != 0 {
+            return None;
+        }
+        let fixed = self
+            .fixed
+            .iter()
+            .fold(0, |cell, &(bit, value)| cell | (usize::from(value) << bit));
+        Some(
+            free.iter()
+                .enumerate()
+                .fold(fixed, |cell, (i, &bit)| cell | (((local >> i) & 1) << bit)),
+        )
+    }
+
     /// Equality factor of the fixed and zero bits at `point`, and the point's
     /// coordinates at the free bits.
     fn view<E: Field>(&self, point: &[E]) -> Result<(E, Vec<E>), AkitaError> {
@@ -176,6 +196,8 @@ impl DigitPiece {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryTypedPrefix {
     a: BinaryAPrefixLen,
+    /// Live A ranks; the rank axis pads to a power of two.
+    a_rank: usize,
     rows: usize,
     segments: Vec<DigitSegment>,
     regions: Vec<Region>,
@@ -317,6 +339,7 @@ impl BinaryTypedPrefix {
             .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
             a,
+            a_rank: manifest.a_rank(),
             rows,
             segments,
             regions,
@@ -452,9 +475,11 @@ impl BinaryTypedPrefix {
         Ok(coefficients)
     }
 
-    /// Dense Stage 3 weights for the prover: the A product, then every B/D
-    /// column copy `batch_row * K(e)`, where `e` holds the root-point equality
-    /// of the copy's digits and `K` is the residue kernel at alpha.
+    /// Dense Stage 3 weights, the reference for [`Self::prover_weight_blocks`]:
+    /// the A product, then every B/D column copy `batch_row * K(e)`, where `e`
+    /// holds the root-point equality of the copy's digits and `K` is the
+    /// residue kernel at alpha.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn prover_weights<E: Field>(
         &self,
         a: &BinaryAProduct<E>,
@@ -481,7 +506,7 @@ impl BinaryTypedPrefix {
                     *cell = row * value;
                 }
             });
-        let eq = RootEq::new(root_point)?;
+        let eq = crate::native_root_relation::RootEq::new(root_point)?;
         let kernel = ResidueKernelPoint::new(alpha, SLOTS)?;
         let cells = weights
             .get_mut(..self.natural_len)
@@ -796,6 +821,10 @@ pub(crate) fn paired_offset_eq_sum<E: Field>(
     }
     Ok(states[4])
 }
+
+#[path = "typed_prefix_weights.rs"]
+mod weights;
+pub use weights::TypedPrefixWeights;
 
 #[cfg(test)]
 #[path = "typed_prefix_tests.rs"]

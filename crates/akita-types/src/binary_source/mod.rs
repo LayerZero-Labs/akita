@@ -71,4 +71,6 @@ mod root_weight_fixtures;
 #[cfg(feature = "test-support")]
 pub use matrix_access::BinaryAReadGuard;
 #[cfg(any(test, feature = "test-support"))]
-pub use root_weight_fixtures::{root_weight_fixtures, RootFixtureField, RootWeightFixture};
+pub use root_weight_fixtures::{
+    root_weight_fixtures, RootFixtureField, RootWeightFixture, Stage3Fixture,
+};

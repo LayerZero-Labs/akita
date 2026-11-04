@@ -4,6 +4,9 @@
 //! of the q matrix and coefficients of P setup matrices have independent domains.
 
 use akita_error::{checked, AkitaError};
+use jolt_field::cfg_chunks_mut;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 
@@ -267,9 +270,13 @@ pub fn derive_centered_q_matrix(
     matrix
         .try_reserve_exact(count)
         .map_err(|_| AkitaError::InvalidSetup("q setup matrix allocation failed".into()))?;
-    for row in 0..label.rank {
-        for column in 0..columns {
-            let column = u64::try_from(column)
+    matrix.resize(count, 0);
+    // Every entry has its own stream, so entries derive independently.
+    cfg_chunks_mut!(matrix, degree).enumerate().try_for_each(
+        |(entry, coefficients)| -> Result<(), AkitaError> {
+            let row = u32::try_from(entry / columns)
+                .map_err(|_| AkitaError::InvalidSetup("setup row exceeds u32".into()))?;
+            let column = u64::try_from(entry % columns)
                 .map_err(|_| AkitaError::InvalidSetup("setup column exceeds u64".into()))?;
             let mut stream = TypedSetupStream::new(
                 seed,
@@ -279,11 +286,12 @@ pub fn derive_centered_q_matrix(
                     ..label
                 },
             )?;
-            for _ in 0..degree {
-                matrix.push(stream.sample_q_centered()?);
+            for coefficient in coefficients {
+                *coefficient = stream.sample_q_centered()?;
             }
-        }
-    }
+            Ok(())
+        },
+    )?;
     Ok(matrix)
 }
 
