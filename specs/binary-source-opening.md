@@ -2288,6 +2288,14 @@ triples recorded with it.
 | Dev | 2^23 | word-prime-ordinary | 2,033,678,958 | 23,485,063,167 | 9,922,002,944 |
 | Dev | 2^23 | prime5 | 2,011,634,083 | 26,446,996,167 | 9,554,968,576 |
 
+The baseline built residual rows at two call sites: inside the response build
+and again in the projection replay. The collector sums spans by name, so the
+baseline residual-rows figure is the total over both call sites. The baseline
+tables therefore list it at the binary root level, beside the response build
+and the projections, and it exceeds the projections span. In the final
+executable only the projections build residual rows, so the final tables nest
+the row under projections.
+
 The baseline executable `f5e9ad551` is the branch base `798c0fb06` with only
 the spans and the CPU and heap metrics added, built with the catalog cache.
 Its interleaved medians, from the same sweep as the final prover span tables,
@@ -2312,7 +2320,7 @@ Baseline executable, N=2^22:
 | ››› successor table | 83.2 | 84.6 | 79.8 | 85.7 |
 | ››› repack | 139.5 | 157.1 | 164.4 | 192.8 |
 | ›› projections | 1,341.9 | 1,345.2 | 1,274.2 | 1,339.6 |
-| ››› residual rows | 2,563.4 | 2,521.0 | 2,448.1 | 2,538.1 |
+| ›› residual rows, aggregate of response build and projections | 2,563.4 | 2,521.0 | 2,448.1 | 2,538.1 |
 | ›› relation compile | 7,016.0 | 7,171.4 | 7,218.1 | 7,086.1 |
 | ›› Stage 1 | 16.8 | 15.4 | 20.3 | 20.8 |
 | ›› weight materialization | 459.6 | 634.2 | 665.4 | 1,381.3 |
@@ -2341,7 +2349,7 @@ Baseline executable, N=2^23:
 | ››› successor table | 149.2 | 138.7 | 139.4 | 138.2 |
 | ››› repack | 249.4 | 247.5 | 289.8 | 276.7 |
 | ›› projections | 2,618.7 | 2,527.5 | 2,528.0 | 2,541.4 |
-| ››› residual rows | 4,966.8 | 4,837.2 | 4,820.0 | 4,892.1 |
+| ›› residual rows, aggregate of response build and projections | 4,966.8 | 4,837.2 | 4,820.0 | 4,892.1 |
 | ›› relation compile | 14,299.7 | 13,992.5 | 14,358.0 | 14,005.4 |
 | ›› Stage 1 | 22.4 | 23.4 | 26.7 | 29.0 |
 | ›› weight materialization | 563.6 | 815.0 | 826.4 | 1,729.4 |
