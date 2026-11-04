@@ -12,6 +12,7 @@ use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
+use super::profiles::ProfileBuilder;
 use crate::binary_source::{
     DigitAuthenticationWeights, DirectAWeights, ImageWeights, ParityRowWeights, PrimePlaneWeights,
 };
@@ -134,6 +135,26 @@ impl SegmentLanes {
             .ok_or(AkitaError::InvalidProof)
     }
 
+    /// Stream `8^d * value` onto natural coefficient `offset` of every digit
+    /// lane `d` of `element`: the recomposed digits of one coefficient.
+    pub(crate) fn recompose<E: Field>(
+        &self,
+        element: usize,
+        offset: usize,
+        value: E,
+        visit: &mut impl FnMut(usize, E) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        if offset >= self.degree {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut scale = value;
+        for digit in 0..self.digits {
+            visit(self.base(element, digit)? + offset, scale)?;
+            scale *= E::from_u64(8);
+        }
+        Ok(())
+    }
+
     /// `sum_d 8^d * high(lane d)` for one element whose lanes start a block.
     ///
     /// This is the digit recomposition of every coefficient of the element,
@@ -225,20 +246,23 @@ impl<E: Field> RootWeightFamily<E> {
     /// Stream every `(address, weight)` term; addresses may repeat.
     pub(crate) fn visit(
         &self,
-        visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
+        let mut recompose = |lanes: &SegmentLanes, element, offset, value| {
+            lanes.recompose(element, offset, value, &mut visit)
+        };
         match self {
             Self::DirectA(direct) => {
                 let _span = tracing::info_span!("root_weights_visit_direct_a").entered();
-                direct.visit(visit)
+                direct.profiles(&mut recompose)
             }
             Self::Image(image) => {
                 let _span = tracing::info_span!("root_weights_visit_image").entered();
-                image.visit(visit)
+                image.profiles(&mut recompose)
             }
             Self::Prime(prime) => {
                 let _span = tracing::info_span!("root_weights_visit_prime").entered();
-                prime.visit(visit)
+                prime.profiles(&mut recompose)
             }
             Self::ParityRows(rows) => {
                 let _span = tracing::info_span!("root_weights_visit_parity_rows").entered();
@@ -247,6 +271,36 @@ impl<E: Field> RootWeightFamily<E> {
             Self::Authentication(authentication) => {
                 let _span = tracing::info_span!("root_weights_visit_authentication").entered();
                 authentication.visit(visit)
+            }
+        }
+    }
+
+    /// Add this family to block profiles. Recomposed families add one
+    /// profile entry per element coefficient; the others add every term.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        let mut recomposed = |lanes: &SegmentLanes, element, offset, value| {
+            profiles.add_recomposed(lanes, element, offset, value)
+        };
+        match self {
+            Self::DirectA(direct) => {
+                let _span = tracing::info_span!("root_weights_emit_direct_a").entered();
+                direct.profiles(&mut recomposed)
+            }
+            Self::Image(image) => {
+                let _span = tracing::info_span!("root_weights_emit_image").entered();
+                image.profiles(&mut recomposed)
+            }
+            Self::Prime(prime) => {
+                let _span = tracing::info_span!("root_weights_emit_prime").entered();
+                prime.profiles(&mut recomposed)
+            }
+            Self::ParityRows(rows) => {
+                let _span = tracing::info_span!("root_weights_emit_parity_rows").entered();
+                rows.visit(|address, value| profiles.add(address, value))
+            }
+            Self::Authentication(authentication) => {
+                let _span = tracing::info_span!("root_weights_emit_authentication").entered();
+                authentication.visit(|address, value| profiles.add(address, value))
             }
         }
     }
