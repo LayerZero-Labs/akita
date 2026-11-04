@@ -271,13 +271,19 @@ impl BinaryTypedPrefix {
                 }
             }
         }
-        // Live blocks are disjoint and inside the domain.
-        let mut seen = vec![false; prefix_len >> SLOT_BITS];
-        for &block in &builder.blocks {
-            let seen = seen.get_mut(block).ok_or(AkitaError::InvalidProof)?;
-            if std::mem::replace(seen, true) {
-                return Err(AkitaError::InvalidProof);
-            }
+        // Live blocks are disjoint and inside the domain. Sorting a copy keeps
+        // the check proportional to the live blocks, not to `prefix_len`.
+        let block_count = prefix_len >> SLOT_BITS;
+        let mut sorted = Vec::new();
+        sorted
+            .try_reserve_exact(builder.blocks.len())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        sorted.extend_from_slice(&builder.blocks);
+        sorted.sort_unstable();
+        if sorted.last().is_some_and(|&block| block >= block_count)
+            || sorted.windows(2).any(|pair| pair[0] == pair[1])
+        {
+            return Err(AkitaError::InvalidProof);
         }
         Ok(TypedPrefixWeights {
             domain_len: prefix_len,
