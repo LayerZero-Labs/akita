@@ -70,7 +70,6 @@ pub struct BinaryRootPublic {
     plan: BinaryRootWitnessPlan,
     ordinary: Option<OrdinaryNativeRootPlan>,
     negative_binary_addresses: Vec<usize>,
-    padding_count: usize,
     batch_count: usize,
 }
 
@@ -108,12 +107,13 @@ impl BinaryRootPublic {
             .map(|ordinary| ordinary.negative_binary_addresses(plan.repacking()))
             .transpose()?
             .unwrap_or_default();
+        // Every root row reads an address below the natural end, so this one
+        // comparison keeps all of them inside the committed witness.
         if plan.repacking().natural_end()? > logical_len {
             return Err(AkitaError::InvalidSetup(
                 "binary root natural digits exceed the outgoing witness".into(),
             ));
         }
-        let padding_count = plan.repacking().padding_count()?;
         let batch_count = checked::product([2, manifest.b_rows()])
             .and_then(|authentication| {
                 checked::sum([
@@ -121,7 +121,6 @@ impl BinaryRootPublic {
                     if claim.is_some() { 2 } else { 0 },
                     checked::product([2, prime.planes().len()])?,
                     authentication,
-                    padding_count,
                     ordinary
                         .as_ref()
                         .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
@@ -137,7 +136,6 @@ impl BinaryRootPublic {
             plan,
             ordinary,
             negative_binary_addresses,
-            padding_count,
             batch_count,
         })
     }
@@ -146,16 +144,17 @@ impl BinaryRootPublic {
         &self.plan
     }
 
-    /// Seven projection outputs, optional word parity/value, B/D, padding,
-    /// ordinary rows, negative bits, then two batches for every prime plane.
+    /// Seven projection outputs, optional word parity/value, B/D, ordinary
+    /// rows, negative bits, then two batches for every prime plane. No row
+    /// reads a padding address, and none constrains one.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
 
     /// Compile the single linear oracle after the outgoing commitment.
     ///
-    /// Batch coordinates are independent field challenges, including one for
-    /// each padding coefficient. `commitment` is the public B payload; `d_payload`
+    /// Batch coordinates are independent field challenges, one per row.
+    /// `commitment` is the public B payload; `d_payload`
     /// is the order-three commitment to the selected word and prime views.
     /// Proving supplies A; verification omits it and authenticates its contribution
     /// through the typed prefix. `rho` batches the public projection rows with mu.
@@ -192,9 +191,8 @@ impl BinaryRootPublic {
         let b =
             checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
         let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let padding = checked::range(d.end, self.padding_count).ok_or(AkitaError::InvalidProof)?;
         let ordinary_rows = checked::range(
-            padding.end,
+            d.end,
             self.ordinary
                 .as_ref()
                 .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
@@ -215,7 +213,6 @@ impl BinaryRootPublic {
             alpha,
             rho,
             batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
-            batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;
         drop(span);
         let span = tracing::info_span!("binary_root_weights_prime").entered();

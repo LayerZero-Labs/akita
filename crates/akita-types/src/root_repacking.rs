@@ -4,9 +4,9 @@
 //! root relation must read the digit table that the successor commits. Its
 //! linear coefficient weights below address that same table; there is no
 //! separately supplied source buffer whose equality could be assumed.
-//! The caller still proves the root equations, digit ranges, and zero padding
-//! in the shared stages. Constructing or locally validating a table is not a
-//! proof of those statements.
+//! The caller still proves the root equations and digit ranges in the shared
+//! stages. Constructing or locally validating a table is not a proof of those
+//! statements.
 
 use core::ops::Range;
 
@@ -155,10 +155,13 @@ impl RootCoefficientRepacking {
             .ok_or_else(|| AkitaError::InvalidSetup("root coefficient address overflow".into()))
     }
 
-    /// Whether a table address must carry zero rather than a natural digit.
+    /// Whether a table address holds no natural coefficient.
     ///
-    /// Shared-stage compilers can use this predicate to generate the mandatory
-    /// zero-tail relation, including the final ordinary-ring padding.
+    /// Honest construction writes zero at these addresses. The binary root
+    /// compiles no row on them; [`NativeRootRelation::ring_switch`] adds one
+    /// zero row per address, including the final ordinary-ring padding.
+    ///
+    /// [`NativeRootRelation::ring_switch`]: crate::native_root_relation::NativeRootRelation::ring_switch
     pub fn is_padding_address(&self, address: usize) -> Result<bool, AkitaError> {
         if address >= self.domain_len {
             return Err(AkitaError::InvalidInput(
@@ -179,61 +182,9 @@ impl RootCoefficientRepacking {
         Err(AkitaError::InvalidProof)
     }
 
-    /// Visit every maximal zero-padding run in increasing address order.
-    ///
-    /// These are exactly the addresses accepted by [`Self::is_padding_address`]:
-    /// each plane tail of every segment, then the final domain padding. They
-    /// are computed from the segment geometry, without an address scan.
-    pub fn for_each_padding_run(
-        &self,
-        mut visit: impl FnMut(Range<usize>) -> Result<(), AkitaError>,
-    ) -> Result<(), AkitaError> {
-        for (shape, range) in self.segments.iter().zip(&self.ranges) {
-            let padded = shape.geometry.padded_coefficient_count();
-            let degree = shape.geometry.polynomial_modulus_dimension();
-            if padded == degree {
-                continue;
-            }
-            let blocks = checked::exact_div(range.len(), padded).ok_or(AkitaError::InvalidProof)?;
-            for block in 0..blocks {
-                let start = checked::mul_add(block, padded, range.start)
-                    .and_then(|start| checked::sum([start, degree]))
-                    .ok_or(AkitaError::InvalidProof)?;
-                let end = checked::mul_add(block, padded, range.start)
-                    .and_then(|start| checked::sum([start, padded]))
-                    .ok_or(AkitaError::InvalidProof)?;
-                visit(start..end)?;
-            }
-        }
-        if self.live_len < self.domain_len {
-            visit(self.live_len..self.domain_len)?;
-        }
-        Ok(())
-    }
-
-    /// Number of zero-padding addresses in the complete domain.
-    pub fn padding_count(&self) -> Result<usize, AkitaError> {
-        let natural = self
-            .segments
-            .iter()
-            .try_fold(0usize, |sum, shape| {
-                checked::product([
-                    shape.elements,
-                    shape.digits,
-                    shape.geometry.coordinate_plane_count(),
-                    shape.geometry.polynomial_modulus_dimension(),
-                ])
-                .and_then(|count| checked::sum([sum, count]))
-            })
-            .ok_or(AkitaError::InvalidProof)?;
-        self.domain_len
-            .checked_sub(natural)
-            .ok_or(AkitaError::InvalidProof)
-    }
-
     /// One past the largest natural coefficient address.
     ///
-    /// Every address at or beyond this bound is zero padding.
+    /// Every address at or beyond this bound is a padding address.
     pub fn natural_end(&self) -> Result<usize, AkitaError> {
         let (shape, range) = self
             .segments
@@ -303,10 +254,13 @@ impl RootCoefficientRepacking {
         Ok(table)
     }
 
-    /// Validate a complete field-encoded digit table at a data boundary.
+    /// Check a complete field-encoded digit table as the honest prover builds it.
     ///
-    /// This checks values locally. A verifier must also enforce these same
-    /// constraints on the authenticated witness through the shared stages.
+    /// Every digit lies in `[-4, 3]` and every padding address holds zero. This
+    /// is a local construction check. The verifier enforces only the digit
+    /// range on the authenticated witness. The binary root's equations do not
+    /// read padding, so a nonzero in-range padding digit is not a proof
+    /// failure there.
     pub fn validate_digit_table<F: Field>(&self, table: &[F]) -> Result<(), AkitaError> {
         if table.len() != self.domain_len {
             return Err(AkitaError::InvalidSize {
@@ -506,21 +460,8 @@ mod tests {
     }
 
     #[test]
-    fn padding_runs_count_and_natural_end_match_the_address_predicate() {
+    fn natural_end_matches_the_address_predicate() {
         let plan = plan();
-        let mut runs = Vec::new();
-        plan.for_each_padding_run(|run| {
-            runs.push(run);
-            Ok(())
-        })
-        .unwrap();
-        assert!(runs.windows(2).all(|pair| pair[0].end <= pair[1].start));
-        let streamed = runs.iter().flat_map(Clone::clone).collect::<Vec<_>>();
-        let scanned = (0..plan.domain_len())
-            .filter(|&address| plan.is_padding_address(address).unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(streamed, scanned);
-        assert_eq!(plan.padding_count().unwrap(), scanned.len());
         let natural_end = (0..plan.domain_len())
             .rev()
             .find(|&address| !plan.is_padding_address(address).unwrap())

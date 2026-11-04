@@ -71,9 +71,6 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
     )
     .unwrap();
     let matrix = vec![vec![[0i128; 648]]; 2];
-    let padding_count = (0..plan.repacking().domain_len())
-        .filter(|&address| plan.repacking().is_padding_address(address).unwrap())
-        .count();
     let weights = plan
         .relation_weights(
             Some(&claim),
@@ -82,7 +79,6 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
             F::from_u64(17),
             &[[F::one(); 648]; 2],
             [F::from_u64(19), F::from_u64(23)],
-            &vec![F::one(); padding_count],
         )
         .unwrap();
     let table = vec![F::zero(); plan.repacking().domain_len()];
@@ -104,7 +100,6 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
         Some(&invalid_matrix),
         &challenges,
         &[[F::one(); 648]; 2],
-        &vec![F::one(); padding_count]
     )
     .is_err());
 }

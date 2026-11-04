@@ -1,9 +1,9 @@
 //! Test-only reference: the flat term-list construction of the root weights.
 //!
 //! These are the compilers that preceded the structured families, kept term
-//! for term. Each pushes one `(address, weight)` pair per public coefficient
-//! weight and finds padding by testing every address. The differential tests
-//! compare the structured evaluation and the prover's dense table with them.
+//! for term, without padding rows. Each pushes one `(address, weight)` pair
+//! per public coefficient weight. The differential tests compare the
+//! structured evaluation and the prover's dense table with them.
 
 use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::module_map::pack_signed_components;
@@ -31,7 +31,6 @@ pub(crate) fn direct_a_weights<E: Field>(
     matrix: Option<&[Vec<[i128; 648]>]>,
     challenges: &Challenges,
     rho: &[[E; 648]],
-    padding_weights: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
     let descriptor = plan.descriptor();
     let columns = descriptor.index_map().columns();
@@ -83,8 +82,7 @@ pub(crate) fn direct_a_weights<E: Field>(
     };
     let image_terms = checked::product([owners, plan.rank(), columns, 648, image_digits])
         .ok_or(AkitaError::InvalidProof)?;
-    let term_count = checked::sum([response_terms, image_terms, padding_weights.len()])
-        .ok_or(AkitaError::InvalidProof)?;
+    let term_count = checked::sum([response_terms, image_terms]).ok_or(AkitaError::InvalidProof)?;
     let mut terms = Vec::new();
     terms
         .try_reserve_exact(term_count)
@@ -125,20 +123,6 @@ pub(crate) fn direct_a_weights<E: Field>(
                 }
             }
         }
-    }
-    let mut padding = padding_weights.iter();
-    for address in 0..plan.repacking().domain_len() {
-        if plan.repacking().is_padding_address(address)? {
-            terms.push((
-                address,
-                *padding
-                    .next()
-                    .ok_or_else(|| AkitaError::InvalidInput("missing padding weight".into()))?,
-            ));
-        }
-    }
-    if padding.next().is_some() {
-        return Err(AkitaError::InvalidInput("excess padding weights".into()));
     }
     NativeRootWeights::new(plan.repacking().domain_len(), terms, E::zero())
 }
@@ -496,9 +480,8 @@ pub(crate) fn plan_weights<E: Field>(
     alpha: E,
     rho: &[[E; 648]],
     terminal_batches: impl AsRef<[E]>,
-    padding_weights: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
-    let a = direct_a_weights(plan, matrix, challenges, rho, padding_weights)?;
+    let a = direct_a_weights(plan, matrix, challenges, rho)?;
     let Some(claim) = claim else {
         if !terminal_batches.as_ref().is_empty() {
             return Err(AkitaError::InvalidProof);
@@ -559,9 +542,8 @@ pub(crate) fn root_relation<E: Field>(
     let b =
         checked::range(terminal.end, public.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
     let d = checked::range(b.end, public.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-    let padding = checked::range(d.end, public.padding_count).ok_or(AkitaError::InvalidProof)?;
     let ordinary_rows = checked::range(
-        padding.end,
+        d.end,
         public
             .ordinary
             .as_ref()
@@ -583,7 +565,6 @@ pub(crate) fn root_relation<E: Field>(
         alpha,
         rho,
         batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
-        batches.get(padding).ok_or(AkitaError::InvalidProof)?,
     )?;
     let prime_weights = if let Some(segment) = public.plan.prime_segment() {
         Some(prime_plane_weights(

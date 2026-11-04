@@ -23,7 +23,9 @@ pub(crate) use projection_weights::ImageWeights;
 ///
 /// Its five segments are response, image, U, K and K_val.
 /// All later coefficient maps address this plan; enlarging its domain preserves
-/// every live address and adds mandatory authenticated zero padding.
+/// every live address and adds padding cells that no root row reads. Honest
+/// construction writes zero there; the range check, the successor's
+/// authentication and its norm checks bound whatever the prover commits.
 #[derive(Clone, Debug)]
 pub struct BinaryRootWitnessPlan {
     descriptor: BinarySourceDescriptor,
@@ -134,9 +136,8 @@ impl BinaryRootWitnessPlan {
         alpha: E,
         rho: &[[E; 648]],
         terminal_batches: impl AsRef<[E]>,
-        padding_weights: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError> {
-        let a = binary_direct_a_weights(self, matrix, challenges, rho, padding_weights)?;
+        let a = binary_direct_a_weights(self, matrix, challenges, rho)?;
         let Some(claim) = claim else {
             if !terminal_batches.as_ref().is_empty() {
                 return Err(AkitaError::InvalidProof);

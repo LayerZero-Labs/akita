@@ -85,17 +85,7 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
             }
         }
     }
-    let padding = (0..plan.repacking().domain_len())
-        .filter(|&i| plan.repacking().is_padding_address(i).unwrap())
-        .count();
-    let weights = binary_direct_a_weights(
-        &plan,
-        Some(&matrix),
-        &challenges,
-        &rho,
-        &vec![F::one(); padding],
-    )
-    .unwrap();
+    let weights = binary_direct_a_weights(&plan, Some(&matrix), &challenges, &rho).unwrap();
     let table = plan
         .repacking()
         .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
@@ -116,12 +106,5 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     let address = plan.repacking().coefficient_address(1, 0, 0, 647).unwrap();
     changed[address] += F::one();
     assert!(relation.check_table(&changed).is_err());
-    assert!(binary_direct_a_weights(
-        &plan,
-        Some(&matrix),
-        &challenges,
-        &rho[..2],
-        &vec![F::one(); padding]
-    )
-    .is_err());
+    assert!(binary_direct_a_weights(&plan, Some(&matrix), &challenges, &rho[..2]).is_err());
 }
