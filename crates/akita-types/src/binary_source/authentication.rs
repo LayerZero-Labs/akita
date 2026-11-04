@@ -6,6 +6,7 @@ use akita_params::binary_setup::{
     SetupStreamLabel, SetupStreamModulus, SetupStreamRing, SetupStreamRole, TypedSetupStream,
     BINARY_SETUP_P,
 };
+#[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_into_iter, Field};
 
