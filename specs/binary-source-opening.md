@@ -417,8 +417,9 @@ impl<E: Field> BinaryAProduct<E> {
 ```
 
 The typed prefix adds the B and D authentication setup to the same table.
-Its layout and argument are in
-[binary-source-setup-offload.md](binary-source-setup-offload.md):
+[Typed prefix layout](#typed-prefix-layout) defines its layout and identity;
+[binary-source-setup-offload.md](binary-source-setup-offload.md) argues that
+the offload is sound:
 
 ```rust
 impl BinaryTypedPrefix {
@@ -529,8 +530,9 @@ The A tensor orders coefficients by source row j, padded rank row i, and
 padded coefficient s. The coefficient stride is 1,024 and rank three pads to
 four, so the tensor holds `1,024 * next_power_of_two(rank) * m` cells. The B/D
 pieces fill aligned subcubes of the tensor's zero padding first and then
-follow the tensor; all remaining prefix capacity is zero. The domain must be
-a power of two at least `BinaryTypedPrefix::domain_len`.
+follow the tensor; all remaining prefix capacity is zero
+([Typed prefix layout](#typed-prefix-layout)). The domain must be a power of
+two at least `BinaryTypedPrefix::domain_len`.
 
 Setup preparation commits this table with the ordinary setup-prefix executor,
 checks the supplied commitment against the deterministic typed table once, and
@@ -623,6 +625,130 @@ Independent long-division differential tests include two-polynomial groups and
 odd row cutoffs, even though the public source descriptor currently
 requires power-of-two padded source geometry. A test-only accessor guard makes
 any root A materialization fail during complete successful verification.
+
+### Typed prefix layout
+
+This subsection defines the typed prefix table `S` beyond the A tensor, its
+Stage 3 weight and its identity. `BinaryTypedPrefix::new` computes it from the
+manifest, whether the word is opened, the prime plane count and the
+successor's ring dimension, through the root plan of those inputs. All
+arithmetic is exact. `K` is the residue kernel at `alpha` on length-64
+vectors, `r` is the root's Stage 2 point and `beta_B`, `beta_D` are the B and
+D authentication row batches.
+
+**Digit segments.** Role B has one segment, root segment 1 (the image). Role D
+has the segments of `plan.opening_segments()` in plan order: U when the word is
+opened, then one EP segment per prime plane. `SegmentLanes` gives each
+segment's `start`, `stride`, degree `n`, `digits` and `elements`. The segment
+has `L = elements * digits` lanes. Lane `l` holds `n` digits, at root
+addresses `start + l * stride + c` for `c < n`. These digits are the role's
+compact digits `offset + l * n + c`, where `offset` is the sum of `L * n` over
+the role's earlier segments. Role column `c` is the role's compact digits
+`[64c, 64c + 64)`. A role with `T` compact digits has `ceil(T / 64)` columns.
+Construction fails with `InvalidSetup` if a segment has `L = 0` or `n = 0`,
+if its stride is not a power of two, or if its start is not a multiple of its
+stride.
+
+**Period copies.** A segment's period is `P = 64 / gcd(n, 64)` lanes, so its
+`P * n` digits fill whole columns. Period `q` covers lanes
+`[qP, min(qP + P, L))`, and the segment has `ceil(L / P)` periods. Each period
+stores its own copy of
+
+```text
+J = ceil((offset mod 64 + min(P, L) * n) / 64)
+```
+
+columns. Copy column `j < J` of period `q` is role column
+`floor(offset / 64) + q * P * n / 64 + j`. Write `u = 64j + t - (offset mod 64)`
+for slot `t < 64` of that copy column. The slot carries a digit when
+`0 <= u < P * n` and lane `l = qP + floor(u / n)` is below `L`. That digit is
+at root address `start + l * stride + (u mod n)`. Every other slot carries no
+digit.
+
+There are `rows = manifest.b_rows()` authentication rows. For row `row`, the
+64 prefix cells of a copy column hold the coefficients of
+`setup_entry(seed, label, row, column)`. The label is `manifest.b_label()` for
+B, and the same label with role `WitnessCommitment` for D. A copy column whose
+role column is at or beyond the role's column count holds zeros. A column
+that two periods or two segments share is stored once in each copy.
+
+The Stage 3 weight on the same 64 cells is `beta_role[row] * K(e)`. Here
+`e[t] = eq(r, a)` when slot `t` carries the digit at root address `a`, and
+`e[t] = 0` otherwise.
+
+**Pieces.** `binary_runs(x)` lists the set bits of `x` from highest to
+lowest. The run of bit `i` is `(start, i)`, where `start` is the sum of the
+higher set bits. Pieces are enumerated in this order: segment (B, then D in
+plan order), row, a run `(q0, b)` of `binary_runs(ceil(L / P))`, and a run
+`(first, e)` of `binary_runs(J)`. Each piece holds periods `[q0, q0 + 2^b)` by
+copy columns `[first, first + 2^e)` of one row, which is `2^(b + e + 6)`
+cells. Cell `(q, j, t)` of a piece has local index
+
+```text
+base + ((q - q0) * 2^e + (j - first)) * 64 + t.
+```
+
+The pieces are then sorted stably by decreasing size.
+
+**Regions.** A region maps a local index to a prefix address. A hole region
+has fixed bits with values, free bits in increasing order and a bound `top`.
+The address of local index `x` has every fixed bit at its value, bit `i` of
+`x` at the `i`-th free bit, and every bit at or above `top` equal to zero.
+Holes exist only when the A natural length `m * row_stride` is a power of
+two, where `row_stride = 1024 * R` and `R = next_power_of_two(rank)`. Then
+`top = log2(m * row_stride)`. An A tensor cell is
+`j * row_stride + i * 1024 + s`. The holes come from two families, in this
+order:
+
+1. padded ranks `[rank, R)` with coefficients `[0, 1024)`;
+2. live ranks `[0, rank)` with coefficients `[648, 1024)`.
+
+In each family, the rank range and the coefficient range are each cut into
+aligned runs. Starting at the range's start `x`, take the largest `w` such
+that `2^w` divides `x` and `[x, x + 2^w)` ends within the range. Record the
+run `(x, w)`, then continue from `x + 2^w`. Rank runs are the outer loop and
+coefficient runs the inner loop. Each pair of a rank run `(x_r, w_r)` and a
+coefficient run `(x_c, w_c)` with `w_c >= 6` forms one hole:
+
+- free bits `0 .. w_c`, then `10 .. 10 + w_r`, then `10 + log2(R) .. top`;
+- fixed bits `w_c .. 10`, set from `x_c`, and bits `10 + i` for
+  `w_r <= i < log2(R)`, set from bit `i` of `x_r`.
+
+The holes are sorted stably by decreasing free-bit count. The last region is
+the tail. It has no fixed bit and `top = 64`, and it maps every local index to
+itself.
+
+**Placement.** Pieces are placed in their sorted order. A piece goes to the
+first hole, in region order, whose unused capacity
+`2^(free-bit count) - cursor` is at least the piece's size. Its base is that
+hole's cursor, and the cursor advances by the size. Otherwise the piece goes
+to the tail. The tail cursor starts at the A natural length rounded up to a
+multiple of the first tail piece's size. The piece's base is the tail cursor,
+which then advances by the size. Sizes are non-increasing powers of two, so
+every base is a multiple of its piece's size. `natural_len` is the final tail
+cursor, or the A natural length when no piece reaches the tail. `domain_len`
+is the smallest power of two at least `natural_len`. Every cell outside the A
+tensor and the pieces is zero, in both `S` and the Stage 3 weight.
+
+**Identity.** `BinaryTypedPrefix::identity` is the ASCII string
+`akita/binary-source/typed-prefix/a-then-digit-pieces/v3`, then
+`manifest.canonical_bytes()`, then a sequence of little-endian `u64` words,
+then the slot's compressed serialization. The words have this width on every
+target. They are, in order:
+
+1. the A row count `m`, the A row stride and `rows`;
+2. the segment count, then per segment `role` (0 for B, 1 for D), `start`,
+   `stride`, `n`, `digits`, `elements` and `offset`;
+3. the region count, then per region in region order `top`, the fixed-bit
+   count and each fixed bit's index and value (0 or 1). A hole follows with
+   its free-bit count and free bits. The tail follows with the word
+   `2^64 - 1`;
+4. the piece count, then per piece in `(region, base)` order its segment
+   index, `row`, `q0`, `b`, `first`, `e`, region index and `base`;
+5. `natural_len`.
+
+The test `typed_prefix_identity_bytes_are_pinned` pins these bytes for one
+geometry.
 
 ## Checked fixture bounds
 
@@ -1501,8 +1627,9 @@ and **33,554,432 (2^25)** cells, twice the proposed 2^23 and 2^24. The regressio
 the canonical product accepts these sizes and rejects the smaller domains
 without allocating the full prefix. `BinaryAPrefixLen` is the only owner of
 the A tensor's sizing. `BinaryTypedPrefix` places the B/D setup around it and
-owns the prefix length: 2^24 or 2^25 at N=2^22 and 2^25 or 2^26 at N=2^23,
-depending on the shape (setup offload note, §4). Setup coefficients, the
+owns the prefix length: 2^24, 2^25 or 2^26 at N=2^22 and 2^25 or 2^26 at
+N=2^23, depending on the shape ([Typed prefix layout](#typed-prefix-layout)
+and the setup offload note, §4). Setup coefficients, the
 Stage 3 weights, `price_binary_root_planes` and the harness's native
 transition all read it.
 
@@ -1660,12 +1787,15 @@ extended row.
 The N=2^23 `word-prime` prover peak is 10,190,553,088 bytes in the current
 protocol and 10,190,028,800 bytes in the dev protocol. The largest measured
 peak, N=2^23 dev `prime5`, is 10,594,435,072 bytes. All are below one sixth
-of the 68,719,476,736-byte host. The B/D setup offload adds one dense Stage 3
-weight table of `16 * 2^k'` bytes and the B/D cells of the prefix; where the
-prefix domain does not grow, the prover peak rose by 0.14 GB (N=2^22 `word`)
-to 0.69 GB (N=2^23 `word-prime-ordinary`, from 9,517,465,600 to 10,211,393,536
-bytes) against the tables before the offload (appendix). The largest
-verifier peak after the verifier speedups is 178,913,280 bytes (N=2^23
+of the 68,719,476,736-byte host. Against the tables before the B/D setup
+offload (appendix), the prover peak rose in every shape. Where the prefix
+domain does not grow, it rose by 0.14 GB (N=2^22 `word`) to 0.69 GB (N=2^23
+`word-prime-ordinary`, from 9,517,465,600 to 10,211,393,536 bytes). The
+offload adds a dense `16 * 2^k'`-byte Stage 3 weight in every shape. Removing
+Stage 3's redundant full-length index table left the process peak unchanged,
+so that weight does not set the peak. The setup offload note, §8, separates
+prefix growth, dense weights and backend state. The largest verifier peak
+after the verifier speedups is 178,913,280 bytes (N=2^23
 `word-prime-ordinary`, parallel), down from 1,047,445,504 bytes before them.
 Peak RSS includes cold preparation in each
 isolated process. These values establish memory fit for this fixture; they do

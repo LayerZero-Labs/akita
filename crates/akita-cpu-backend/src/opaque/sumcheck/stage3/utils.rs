@@ -50,8 +50,10 @@ pub(super) fn accumulate_right_round<E: Field>(
     )
 }
 
+/// Left-round polynomial of `value(i) * left_factor[i] * right_weight`;
+/// `value` reads the dense table, or a table not yet materialized.
 pub(super) fn accumulate_left_round<E: Field>(
-    table: &[E],
+    value: impl Fn(usize) -> E + Sync + Send,
     left_factor: &[E],
     right_weight: E,
 ) -> (E, E, E) {
@@ -60,8 +62,8 @@ pub(super) fn accumulate_left_round<E: Field>(
         0..half,
         || (E::zero(), E::zero(), E::zero()),
         |(mut constant, mut linear, mut quadratic), pair_idx| {
-            let s0 = table[2 * pair_idx];
-            let s1 = table[2 * pair_idx + 1];
+            let s0 = value(2 * pair_idx);
+            let s1 = value(2 * pair_idx + 1);
             let f0 = left_factor[2 * pair_idx] * right_weight;
             let f1 = left_factor[2 * pair_idx + 1] * right_weight;
             let ds = s1 - s0;
@@ -126,9 +128,13 @@ pub(super) fn fold_left_round<E: Field>(
     *table = folded_table;
 }
 
-pub(super) fn fold_dense_left_round<E: Field>(table: &mut Vec<E>, challenge: E) {
-    let half = table.len() / 2;
-    *table = cfg_into_iter!(0..half)
-        .map(|idx| fold_pair(table[2 * idx], table[2 * idx + 1], challenge))
-        .collect();
+/// Bind the lowest variable of the `len`-entry table `value` to `challenge`.
+pub(super) fn fold_dense_left_round<E: Field>(
+    len: usize,
+    value: impl Fn(usize) -> E + Sync + Send,
+    challenge: E,
+) -> Vec<E> {
+    cfg_into_iter!(0..len / 2)
+        .map(|idx| fold_pair(value(2 * idx), value(2 * idx + 1), challenge))
+        .collect()
 }
