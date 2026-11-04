@@ -112,6 +112,22 @@ fn projection_replay_rejects_malformed_challenges_and_nondivisible_images() {
 
 #[test]
 fn limb_remainders_equal_transform_remainders_and_reject_like_them() {
+    // The full-window fixture carries a non-canonical q24 image coefficient.
+    for input in [fixture(), full_window_fixture()] {
+        let relation = build(&input).unwrap();
+        let actual = BinaryRootRelation::remainders(
+            &input.descriptor,
+            &input.matrix,
+            &relation.response,
+            &input.images,
+            &input.challenges,
+            FoldChallengeDistribution::BinaryRoot,
+        )
+        .unwrap();
+        assert!(actual
+            .iter()
+            .eq(relation.rows.iter().map(|row| &row.remainder)));
+    }
     let mut input = fixture();
     let relation = build(&input).unwrap();
     let remainders = |input: &Fixture, challenges: &Challenges| {
@@ -124,10 +140,6 @@ fn limb_remainders_equal_transform_remainders_and_reject_like_them() {
             FoldChallengeDistribution::BinaryRoot,
         )
     };
-    let actual = remainders(&input, &input.challenges).unwrap();
-    assert!(actual
-        .iter()
-        .eq(relation.rows.iter().map(|row| &row.remainder)));
     for coefficient in [0, D / 2, D - 1] {
         let original = input.images[0][coefficient];
         input.images[0][coefficient] = Q24Image::from_centered(original.centered() + 1).unwrap();

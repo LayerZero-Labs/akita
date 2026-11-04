@@ -258,8 +258,9 @@ fn q24_root_rejects_wrong_family_counts_bounds_and_matrix_representatives() {
     assert!(build(&input).is_err());
 }
 
-#[test]
-fn q24_root_accepts_the_full_enforced_image_window() {
+/// One image coefficient lies below the centered q24 window, at the
+/// non-canonical representative -7,126,705 of the enforced image window.
+fn full_window_fixture() -> Fixture {
     let descriptor = BinarySourceDescriptor::new(
         BinaryIndexMap::new(128, 4, 4, 1).unwrap(),
         vec![[1; 32]],
@@ -289,15 +290,18 @@ fn q24_root_accepts_the_full_enforced_image_window() {
         )
         .unwrap()
         .unwrap();
-    let relation = BinaryRootRelation::build(
-        &descriptor,
-        &matrix,
-        &[source],
-        &[image],
-        &challenges,
-        FoldChallengeDistribution::BinaryRoot,
-    )
-    .unwrap();
+    Fixture {
+        descriptor,
+        matrix,
+        sources: vec![source],
+        images: vec![image],
+        challenges,
+    }
+}
+
+#[test]
+fn q24_root_accepts_the_full_enforced_image_window() {
+    let relation = build(&full_window_fixture()).unwrap();
     assert!(relation.rows[0].remainder.iter().any(|&x| x != 0));
 }
 

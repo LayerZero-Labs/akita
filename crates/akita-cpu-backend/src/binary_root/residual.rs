@@ -1,9 +1,12 @@
 //! Exact residual remainders by Chinese remaindering over limb primes.
 //!
-//! Every operand of `sum A*z - sum iota(c)*T` is a centered integer below the
-//! smallest admitted limb prime, so each limb domain multiplies them in
-//! `Z_p[X]/(X^648 - X^324 + 1)` without reduction. The remainder modulo Psi is
-//! linear, so its residue modulo each prime is the limb result. Three primes
+//! Each limb domain multiplies the operands of `sum A*z - sum iota(c)*T` in
+//! `Z_p[X]/(X^648 - X^324 + 1)`. Matrix, response and challenge coefficients
+//! are centered below every admitted limb prime. Image coefficients span the
+//! wider enforced window, so each limb recentres them modulo its own prime;
+//! this keeps every residue and so the integer residual unchanged. The
+//! remainder modulo Psi is linear, so its residue modulo each prime is the
+//! limb result. Three primes
 //! whose product exceeds twice the relation bound recover the unique centered
 //! integer. The first prime is q24, so q24-divisibility is the vanishing of
 //! the first residue. The result equals the remainder of
@@ -118,7 +121,9 @@ impl BinaryRootRelation {
                         let image = images
                             .get(index * rank + row)
                             .ok_or(AkitaError::InvalidProof)?;
-                        domain.forward_centered(image, &mut left).map_err(limb)?;
+                        domain
+                            .forward_centered(&recentre(image, domain.prime()), &mut left)
+                            .map_err(limb)?;
                         sum.add_product(&left, &right).map_err(limb)?;
                     }
                 }
@@ -164,6 +169,19 @@ impl BinaryRootRelation {
             })
             .collect()
     }
+}
+
+/// The residues of `values` modulo `prime`, centered below it.
+fn recentre(values: &Coefficients, prime: u32) -> Coefficients {
+    let prime = i64::from(prime);
+    values.map(|value| {
+        let residue = i64::from(value).rem_euclid(prime);
+        (if residue > prime / 2 {
+            residue - prime
+        } else {
+            residue
+        }) as i32
+    })
 }
 
 /// Centered residues of each accumulator, in row order; clears the sums.
