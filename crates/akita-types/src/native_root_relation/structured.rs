@@ -13,8 +13,8 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_chunks, Field};
 
 use crate::binary_source::{
-    DigitAuthenticationWeights, ImageWeights, ParityRowWeights, PrimePlaneWeights,
-    SourceEvaluationWeights,
+    DigitAuthenticationWeights, ImageWeights, ParityRowWeights, PartialColumnWeights,
+    PrimePlaneWeights, SourceEvaluationWeights,
 };
 use crate::root_repacking::RootCoefficientRepacking;
 
@@ -177,6 +177,7 @@ pub(crate) enum RootWeightFamily<E: Field> {
     Image(ImageWeights<E>),
     Prime(PrimePlaneWeights<E>),
     ParityRows(ParityRowWeights<E>),
+    PartialColumns(PartialColumnWeights<E>),
     Authentication(DigitAuthenticationWeights<E>),
     Translated(TranslatedLanes<E>),
     SourceEvaluation(SourceEvaluationWeights<E>),
@@ -188,6 +189,7 @@ impl<E: Field> RootWeightFamily<E> {
             Self::Image(image) => image.table_len(),
             Self::Prime(prime) => prime.table_len(),
             Self::ParityRows(rows) => rows.table_len(),
+            Self::PartialColumns(columns) => columns.table_len(),
             Self::Authentication(authentication) => authentication.table_len(),
             Self::Translated(lanes) => lanes.table_len(),
             Self::SourceEvaluation(source) => source.table_len(),
@@ -207,6 +209,10 @@ impl<E: Field> RootWeightFamily<E> {
             Self::ParityRows(rows) => {
                 let _span = tracing::info_span!("root_weights_evaluate_parity_rows").entered();
                 rows.evaluate(eq)
+            }
+            Self::PartialColumns(columns) => {
+                let _span = tracing::info_span!("root_weights_evaluate_partial_columns").entered();
+                columns.evaluate(eq)
             }
             Self::Authentication(authentication) => {
                 let _span = tracing::info_span!("root_weights_evaluate_authentication").entered();
@@ -232,6 +238,7 @@ impl<E: Field> RootWeightFamily<E> {
             Self::Image(image) => image.visit(visit),
             Self::Prime(prime) => prime.visit(visit),
             Self::ParityRows(rows) => rows.visit(visit),
+            Self::PartialColumns(columns) => columns.visit(visit),
             Self::Authentication(authentication) => authentication.visit(visit),
             Self::Translated(lanes) => lanes.visit(visit),
             Self::SourceEvaluation(source) => source.visit(visit),
