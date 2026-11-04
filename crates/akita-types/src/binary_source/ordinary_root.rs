@@ -1,12 +1,16 @@
 //! Ordinary commitment preimages authenticated in a mixed native root.
 
+use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BINARY_SETUP_P;
-use akita_params::{CompressionChainPlan, GroupCommitPhaseParams, RelationRowGeometry};
+use akita_params::{
+    CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
+};
 use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
 
-use crate::native_root_relation::NativeRootWeights;
+use super::paired_offset_eq_sum;
+use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, TranslatedLanes};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
 
@@ -173,6 +177,14 @@ impl OrdinaryNativeRootPlan {
     /// Rows are A in block/row order, B in slice/row order, the two compression
     /// maps, then the scalar evaluation. The public matrix is the canonical
     /// ordinary setup prefix, reused with each role's own dimensions.
+    ///
+    /// Each identity repeats one public pattern: an A row reads the same
+    /// kernels in every block, a B row the same kernels in every slice of one
+    /// width, and a recomposition the same coefficients at every bit. The
+    /// weights keep each pattern once as [`TranslatedLanes`], and the scalar
+    /// evaluation as an offset equality. The verifier evaluates them at the
+    /// Stage 2 point without one term per table address; the prover
+    /// materializes the same field elements.
     #[allow(clippy::too_many_arguments)]
     pub fn linear_weights<E: Field>(
         &self,
@@ -194,16 +206,7 @@ impl OrdinaryNativeRootPlan {
         }
         let a = self.profile.inner.matrix;
         let b = self.profile.outer.matrix;
-        let first = *self
-            .compression
-            .maps()
-            .first()
-            .ok_or(AkitaError::InvalidProof)?;
-        let second = *self
-            .compression
-            .maps()
-            .get(1)
-            .ok_or(AkitaError::InvalidProof)?;
+        let [first, second] = self.maps()?;
         let required = [
             checked::product([a.output_rank(), a.input_width(), a.ring_dimension()]),
             checked::product([b.output_rank(), b.input_width(), b.ring_dimension()]),
@@ -224,56 +227,36 @@ impl OrdinaryNativeRootPlan {
         }
         let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed);
         let matrix = matrix.as_field_slice();
-        let source_coefficients = checked::product([
-            self.segments
-                .first()
-                .ok_or(AkitaError::InvalidProof)?
-                .elements,
-            a.ring_dimension(),
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        let t_coefficients = checked::product([
-            self.segments
-                .get(1)
-                .ok_or(AkitaError::InvalidProof)?
-                .elements,
-            self.profile.outer.digits.num_digits,
-            b.ring_dimension(),
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        let term_capacity = [
-            checked::product([source_coefficients, a.output_rank()]),
-            checked::product([
-                self.profile.blocks.live_blocks,
-                a.output_rank(),
-                a.ring_dimension(),
-                self.profile.outer.digits.num_digits,
-            ]),
-            checked::product([t_coefficients, b.output_rank()]),
-            Some(first.real_digit_count()),
-            Some(first.padded_digit_count()),
-            Some(second.real_digit_count()),
-            Some(second.padded_digit_count()),
-            Some(source_coefficients),
-        ]
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .and_then(checked::sum)
-        .ok_or(AkitaError::InvalidProof)?;
-        let mut terms = Vec::new();
-        terms
-            .try_reserve_exact(term_capacity)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let mut row = 0usize;
-        let mut claim = E::zero();
-        let s_segment = self.first_segment;
-        let t_segment = checked::sum([self.first_segment, 1]).ok_or(AkitaError::InvalidProof)?;
-        let f_segment = checked::sum([self.first_segment, 2]).ok_or(AkitaError::InvalidProof)?;
-        let h_segment = checked::sum([self.first_segment, 3]).ok_or(AkitaError::InvalidProof)?;
+        let table_len = repacking.domain_len();
+        let lanes = |offset| {
+            checked::sum([self.first_segment, offset])
+                .ok_or(AkitaError::InvalidProof)
+                .and_then(|segment| ContiguousLanes::new(repacking, segment))
+        };
+        let [s_lanes, t_lanes, f_lanes, h_lanes] = [lanes(0)?, lanes(1)?, lanes(2)?, lanes(3)?];
         let subcolumns = checked::exact_div(a.ring_dimension(), b.ring_dimension())
             .ok_or(AkitaError::InvalidProof)?;
-        // Kernels depend on the matrix entry only, so blocks and slices that
-        // reuse an entry share one kernel.
+        let digits = self.profile.outer.digits.num_digits;
+        let a_rows = checked::product([self.profile.blocks.live_blocks, a.output_rank()])
+            .ok_or(AkitaError::InvalidProof)?;
+        let (a_batches, rest) = batches
+            .split_at_checked(a_rows)
+            .ok_or(AkitaError::InvalidProof)?;
+        let b_rows = rest.len().checked_sub(3).ok_or(AkitaError::InvalidProof)?;
+        let (b_batches, map_batches) = rest
+            .split_at_checked(b_rows)
+            .ok_or(AkitaError::InvalidProof)?;
+        let &[first_batch, second_batch, evaluation_batch] = map_batches else {
+            return Err(AkitaError::InvalidProof);
+        };
+        let mut families = Vec::new();
+        let mut translated = |copies, lanes| {
+            families.push(RootWeightFamily::Translated(TranslatedLanes::new(
+                table_len, copies, lanes,
+            )?));
+            Ok::<_, AkitaError>(())
+        };
+        // A rows read their kernels against the source in every block.
         let mut a_kernels = KernelCache::new(
             matrix,
             a.output_rank(),
@@ -281,6 +264,60 @@ impl OrdinaryNativeRootPlan {
             a.ring_dimension(),
             alpha,
         )?;
+        let positions = self.profile.blocks.positions_per_block;
+        for a_row in 0..a.output_rank() {
+            let copies = (0..self.profile.blocks.live_blocks)
+                .map(|block| {
+                    let batch = checked::mul_add(block, a.output_rank(), a_row)
+                        .and_then(|row| a_batches.get(row))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let element =
+                        checked::product([block, positions]).ok_or(AkitaError::InvalidProof)?;
+                    Ok((s_lanes.base(element, 0)?, *batch))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let kernels = (0..positions)
+                .map(|position| {
+                    Ok((
+                        s_lanes.offset(position, 0)?,
+                        a_kernels.get(a_row, position)?.to_vec(),
+                    ))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            translated(copies, kernels)?;
+        }
+        // Every A image subtracts its recomposed T digits, scaled by its row.
+        let image_copies = a_batches
+            .iter()
+            .enumerate()
+            .map(|(image, &batch)| {
+                let element =
+                    checked::product([image, subcolumns]).ok_or(AkitaError::InvalidProof)?;
+                Ok((t_lanes.base(element, 0)?, batch))
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let mut recomposition = Vec::new();
+        let mut power = -E::one();
+        for subcolumn in 0..subcolumns {
+            let powers = (0..b.ring_dimension())
+                .map(|_| {
+                    let value = power;
+                    power *= alpha;
+                    value
+                })
+                .collect::<Vec<_>>();
+            let mut digit_scale = E::one();
+            for digit in 0..digits {
+                recomposition.push((
+                    t_lanes.offset(subcolumn, digit)?,
+                    powers.iter().map(|&value| value * digit_scale).collect(),
+                ));
+                digit_scale *= E::from_u64(8);
+            }
+        }
+        translated(image_copies, recomposition)?;
+        // B rows read their kernels against the T digits of every slice; slices
+        // of one width share one pattern.
         let mut b_kernels = KernelCache::new(
             matrix,
             b.output_rank(),
@@ -288,160 +325,117 @@ impl OrdinaryNativeRootPlan {
             b.ring_dimension(),
             alpha,
         )?;
-        for block in 0..self.profile.blocks.live_blocks {
-            for a_row in 0..a.output_rank() {
-                let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
-                row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-                for position in 0..self.profile.blocks.positions_per_block {
-                    let kernel = a_kernels.get(a_row, position)?;
-                    let element =
-                        checked::mul_add(block, self.profile.blocks.positions_per_block, position)
+        let block_elements =
+            checked::product([a.output_rank(), subcolumns]).ok_or(AkitaError::InvalidProof)?;
+        let geometry = self.profile.derive_slice_geometry()?;
+        let mut widths = geometry
+            .block_ranges()
+            .iter()
+            .map(ExactSizeIterator::len)
+            .collect::<Vec<_>>();
+        widths.sort_unstable();
+        widths.dedup();
+        for width in widths {
+            for b_row in 0..b.output_rank() {
+                let copies = geometry
+                    .block_ranges()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, range)| range.len() == width)
+                    .map(|(slice, range)| {
+                        let batch = checked::mul_add(slice, b.output_rank(), b_row)
+                            .and_then(|row| b_batches.get(row))
                             .ok_or(AkitaError::InvalidProof)?;
-                    for (coefficient, &weight) in kernel.iter().enumerate() {
-                        terms.push((
-                            repacking.coefficient_address(s_segment, element, 0, coefficient)?,
-                            batch * weight,
+                        let element = checked::product([range.start, block_elements])
+                            .ok_or(AkitaError::InvalidProof)?;
+                        Ok((t_lanes.base(element, 0)?, *batch))
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()?;
+                let columns =
+                    checked::product([width, block_elements]).ok_or(AkitaError::InvalidProof)?;
+                let mut kernels = Vec::new();
+                for element in 0..columns {
+                    for digit in 0..digits {
+                        let column = checked::mul_add(element, digits, digit)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        kernels.push((
+                            t_lanes.offset(element, digit)?,
+                            b_kernels.get(b_row, column)?.to_vec(),
                         ));
                     }
                 }
-                let mut power = batch;
-                for coefficient in 0..a.ring_dimension() {
-                    let image_row = checked::mul_add(block, a.output_rank(), a_row)
-                        .and_then(|image| {
-                            checked::mul_add(image, subcolumns, coefficient / b.ring_dimension())
-                        })
-                        .ok_or(AkitaError::InvalidProof)?;
-                    terms.extend(repacking.coefficient_weights(
-                        t_segment,
-                        image_row,
-                        coefficient % b.ring_dimension(),
-                        -power,
-                    )?);
-                    power *= alpha;
-                }
+                translated(copies, kernels)?;
             }
         }
-        let geometry = self.profile.derive_slice_geometry()?;
-        for block_range in geometry.block_ranges() {
-            for b_row in 0..b.output_rank() {
-                let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
-                row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-                for (local_block, block) in block_range.clone().enumerate() {
-                    for a_row in 0..a.output_rank() {
-                        for subcolumn in 0..subcolumns {
-                            let element = checked::mul_add(block, a.output_rank(), a_row)
-                                .and_then(|image| checked::mul_add(image, subcolumns, subcolumn))
-                                .ok_or(AkitaError::InvalidProof)?;
-                            for digit in 0..self.profile.outer.digits.num_digits {
-                                let column = checked::mul_add(local_block, a.output_rank(), a_row)
-                                    .and_then(|image| {
-                                        checked::mul_add(image, subcolumns, subcolumn)
-                                    })
-                                    .and_then(|image| {
-                                        checked::mul_add(
-                                            image,
-                                            self.profile.outer.digits.num_digits,
-                                            digit,
-                                        )
-                                    })
-                                    .ok_or(AkitaError::InvalidProof)?;
-                                let kernel = b_kernels.get(b_row, column)?;
-                                for (coefficient, &weight) in kernel.iter().enumerate() {
-                                    terms.push((
-                                        repacking.coefficient_address(
-                                            t_segment,
-                                            element,
-                                            digit,
-                                            coefficient,
-                                        )?,
-                                        batch * weight,
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-                // B rows are stacked in slice/row/coefficient order.
-                let b_image_row = row
-                    .checked_sub(
-                        checked::product([self.profile.blocks.live_blocks, a.output_rank()])
-                            .ok_or(AkitaError::InvalidProof)?,
-                    )
-                    .and_then(|index| index.checked_sub(1))
-                    .ok_or(AkitaError::InvalidProof)?;
-                let mut power = -batch;
-                for coefficient in 0..b.ring_dimension() {
-                    let image_coefficient =
-                        checked::mul_add(b_image_row, b.ring_dimension(), coefficient)
-                            .ok_or(AkitaError::InvalidProof)?;
-                    scatter_negative_recomposition(
-                        &mut terms,
-                        repacking,
-                        f_segment,
-                        first.ring_dimension(),
-                        first.input_coefficients(),
-                        image_coefficient,
-                        power,
-                    )?;
-                    power *= alpha;
-                }
+        // Every B image coefficient subtracts its recomposed first-map bits.
+        let mut image = Vec::new();
+        image
+            .try_reserve_exact(
+                checked::product([b_batches.len(), b.ring_dimension()])
+                    .ok_or(AkitaError::InvalidProof)?,
+            )
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for &batch in b_batches {
+            let mut power = -batch;
+            for _ in 0..b.ring_dimension() {
+                image.push(power);
+                power *= alpha;
             }
         }
-        for (map, source_segment, next_segment) in [
-            (first, f_segment, Some(h_segment)),
-            (second, h_segment, None),
+        translated(
+            f_lanes.bit_copies(first.input_coefficients(), image.len())?,
+            vec![(0, image)],
+        )?;
+        // Each compression map reads its kernels against its input digits.
+        for (map, lanes, batch) in [
+            (first, &f_lanes, first_batch),
+            (second, &h_lanes, second_batch),
         ] {
-            let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
-            row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
             let mut map_kernels =
                 KernelCache::new(matrix, 1, map.input_width(), map.ring_dimension(), alpha)?;
-            for column in 0..map.input_width() {
-                let kernel = map_kernels.get(0, column)?;
-                for (coefficient, &weight) in kernel.iter().enumerate() {
-                    terms.push((
-                        repacking.coefficient_address(source_segment, column, 0, coefficient)?,
-                        batch * weight,
-                    ));
-                }
-            }
-            if let Some(next_segment) = next_segment {
-                let mut power = -batch;
-                for coefficient in 0..map.output_coefficients() {
-                    scatter_negative_recomposition(
-                        &mut terms,
-                        repacking,
-                        next_segment,
-                        second.ring_dimension(),
-                        second.input_coefficients(),
-                        coefficient,
-                        power,
-                    )?;
-                    power *= alpha;
-                }
-            } else {
-                claim += batch
-                    * payload
-                        .iter()
-                        .rev()
-                        .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
-            }
+            let kernels = (0..map.input_width())
+                .map(|column| {
+                    Ok((
+                        lanes.offset(column, 0)?,
+                        map_kernels.get(0, column)?.to_vec(),
+                    ))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            translated(vec![(lanes.base(0, 0)?, batch)], kernels)?;
         }
-        let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
-        let equality = akita_algebra::offset_eq::OffsetEqWindow::new(point)?;
+        let mut output = Vec::new();
+        let mut power = -first_batch;
+        for _ in 0..first.output_coefficients() {
+            output.push(power);
+            power *= alpha;
+        }
+        translated(
+            h_lanes.bit_copies(second.input_coefficients(), output.len())?,
+            vec![(0, output)],
+        )?;
         let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
-        for coefficient in 0..source_len {
-            terms.push((
-                repacking.coefficient_address(
-                    s_segment,
-                    coefficient / a.ring_dimension(),
-                    0,
-                    coefficient % a.ring_dimension(),
-                )?,
-                batch * equality.eval(coefficient),
-            ));
+        families.push(RootWeightFamily::SourceEvaluation(
+            SourceEvaluationWeights::new(
+                table_len,
+                s_lanes.contiguous(0, source_len)?,
+                point,
+                evaluation_batch,
+            )?,
+        ));
+        let claim = second_batch
+            * payload
+                .iter()
+                .rev()
+                .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient)
+            + evaluation_batch * evaluation;
+        NativeRootWeights::structured(table_len, Vec::new(), families, claim)
+    }
+
+    fn maps(&self) -> Result<[CompressionMapPlan; 2], AkitaError> {
+        match self.compression.maps() {
+            &[first, second] => Ok([first, second]),
+            _ => Err(AkitaError::InvalidProof),
         }
-        claim += batch * evaluation;
-        NativeRootWeights::new(repacking.domain_len(), terms, claim)
     }
 }
 
@@ -512,28 +506,158 @@ impl<'a, E: Field> KernelCache<'a, E> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn scatter_negative_recomposition<E: Field>(
-    terms: &mut Vec<(usize, E)>,
-    repacking: &RootCoefficientRepacking,
-    segment: usize,
+/// Addresses of one single-plane, unpadded segment with contiguous lanes.
+///
+/// Natural coefficient `c` of lane `(element, digit)` sits at `base + c`, and
+/// consecutive lanes abut, so a run of coefficients that crosses elements is
+/// one address interval.
+struct ContiguousLanes {
+    start: usize,
     degree: usize,
-    image_coefficients: usize,
-    coefficient: usize,
-    scale: E,
-) -> Result<(), AkitaError> {
-    if coefficient >= image_coefficients {
-        return Err(AkitaError::InvalidProof);
-    }
-    let mut power = scale;
-    for bit in 0..128 {
-        let compact = checked::mul_add(bit, image_coefficients, coefficient)
-            .ok_or(AkitaError::InvalidProof)?;
-        terms.push((
-            repacking.coefficient_address(segment, compact / degree, 0, compact % degree)?,
-            power,
-        ));
-        power += power;
-    }
-    Ok(())
+    digits: usize,
+    elements: usize,
 }
+
+impl ContiguousLanes {
+    fn new(repacking: &RootCoefficientRepacking, segment: usize) -> Result<Self, AkitaError> {
+        let shape = repacking
+            .segments()
+            .get(segment)
+            .ok_or(AkitaError::InvalidProof)?;
+        let degree = shape.geometry.polynomial_modulus_dimension();
+        if shape.geometry.coordinate_plane_count() != 1
+            || shape.geometry.physical_coefficient_width() != degree
+            || degree == 0
+            || shape.geometry.physical_coefficient_index(0, degree - 1)? != degree - 1
+        {
+            return Err(AkitaError::InvalidSetup(
+                "mixed root ordinary segment is not a contiguous native table".into(),
+            ));
+        }
+        let lanes = Self {
+            start: repacking.segment_range(segment)?.start,
+            degree,
+            digits: shape.digits,
+            elements: shape.elements,
+        };
+        if repacking.segment_range(segment)?.end
+            != checked::sum([lanes.start, lanes.len()?]).ok_or(AkitaError::InvalidProof)?
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(lanes)
+    }
+
+    fn len(&self) -> Result<usize, AkitaError> {
+        checked::product([self.elements, self.digits, self.degree]).ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Offset of lane `(element, digit)` from the segment start.
+    fn offset(&self, element: usize, digit: usize) -> Result<usize, AkitaError> {
+        if element >= self.elements || digit >= self.digits {
+            return Err(AkitaError::InvalidProof);
+        }
+        checked::mul_add(element, self.digits, digit)
+            .and_then(|lane| checked::product([lane, self.degree]))
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Address of coefficient zero of lane `(element, digit)`.
+    fn base(&self, element: usize, digit: usize) -> Result<usize, AkitaError> {
+        checked::sum([self.start, self.offset(element, digit)?]).ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Start of `len` consecutive coefficients from flat coefficient `first`
+    /// of a single-digit segment.
+    fn contiguous(&self, first: usize, len: usize) -> Result<usize, AkitaError> {
+        if self.digits != 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        checked::sum([first, len])
+            .filter(|&end| end <= self.len().unwrap_or(0))
+            .and_then(|_| checked::sum([self.start, first]))
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// One copy per bit of a 128-bit negative-binary recomposition.
+    ///
+    /// Bit `i` of input coefficient `c` sits at flat coefficient
+    /// `i * coefficients + c`, with scale `2^i`.
+    fn bit_copies<E: Field>(
+        &self,
+        coefficients: usize,
+        used: usize,
+    ) -> Result<Vec<(usize, E)>, AkitaError> {
+        if used > coefficients {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut scale = E::one();
+        (0..128)
+            .map(|bit| {
+                let first =
+                    checked::product([bit, coefficients]).ok_or(AkitaError::InvalidProof)?;
+                let copy = (self.contiguous(first, used)?, scale);
+                scale += scale;
+                Ok(copy)
+            })
+            .collect()
+    }
+}
+
+/// The scalar source evaluation: `scale * eq(point, x)` at `start + x` for
+/// every source coefficient `x`.
+///
+/// Its extension at `r` is `scale * sum_x eq(r, start + x) * eq(point, x)`,
+/// one carry-tracking pass over the address bits.
+#[derive(Clone, Debug)]
+pub(crate) struct SourceEvaluationWeights<E: Field> {
+    table_len: usize,
+    start: usize,
+    point: Vec<E>,
+    scale: E,
+}
+
+impl<E: Field> SourceEvaluationWeights<E> {
+    fn new(table_len: usize, start: usize, point: &[E], scale: E) -> Result<Self, AkitaError> {
+        let end = checked::pow2(point.len())
+            .and_then(|len| checked::sum([start, len]))
+            .ok_or(AkitaError::InvalidProof)?;
+        if end > table_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(Self {
+            table_len,
+            start,
+            point: point.to_vec(),
+            scale,
+        })
+    }
+
+    pub(crate) fn table_len(&self) -> usize {
+        self.table_len
+    }
+
+    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+        let count = checked::pow2(self.point.len()).ok_or(AkitaError::InvalidProof)?;
+        Ok(self.scale * paired_offset_eq_sum(eq.point(), self.start, &self.point, 0, count)?)
+    }
+
+    pub(crate) fn visit(
+        &self,
+        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let equality = OffsetEqWindow::new(&self.point)?;
+        let count = checked::pow2(self.point.len()).ok_or(AkitaError::InvalidProof)?;
+        for coefficient in 0..count {
+            visit(
+                self.start + coefficient,
+                self.scale * equality.eval(coefficient),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "ordinary_root_reference.rs"]
+mod reference;

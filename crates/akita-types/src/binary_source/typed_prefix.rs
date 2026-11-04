@@ -745,7 +745,7 @@ fn a_padding_regions(a: &BinaryAPrefixLen, rank: usize) -> Result<Vec<Region>, A
 /// An index that does not fit its point's arity has equality zero. One
 /// low-to-high pass over the bits keeps both carries and whether the low bits
 /// of `q` are below those of `count`: eight states, independent of `count`.
-fn paired_offset_eq_sum<E: Field>(
+pub(crate) fn paired_offset_eq_sum<E: Field>(
     a: &[E],
     u: usize,
     b: &[E],
