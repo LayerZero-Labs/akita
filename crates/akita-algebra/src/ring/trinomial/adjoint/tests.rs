@@ -374,7 +374,7 @@ fn integer_rows_match_field_adjoint_sums_and_reject_unliftable_bounds() {
     assert!(TrinomialAdjoint::<UNREPRESENTABLE, MinusTrinomial>::new()
         .unwrap()
         .apply_integer_rows(
-            &vec![[Prime128Offset275::one(); UNREPRESENTABLE]],
+            &[[Prime128Offset275::one(); UNREPRESENTABLE]],
             &[vec![[1; UNREPRESENTABLE]]],
             4,
             canonical
