@@ -41,7 +41,7 @@ pub use backend::{
 };
 pub use opening::{ProverOpeningData, SelectedProverOpeningData};
 pub use protocol::{
-    batched_prove, batched_prove_in_session, ProveLevelOutput, RingRelationInstance,
+    batched_prove, batched_prove_embedded, ProveLevelOutput, RingRelationInstance,
     RingRelationProver, RingSwitchOutput, SuffixProverState,
 };
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
@@ -49,3 +49,5 @@ pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 #[cfg(feature = "labinius-trinomial")]
 #[doc(hidden)]
 pub mod binary_field_switch;
+mod setup_batch;
+pub use setup_batch::prove_setup_batch;

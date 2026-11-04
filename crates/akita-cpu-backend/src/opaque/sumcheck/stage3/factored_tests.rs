@@ -13,7 +13,7 @@ fn stage3_alternate_table_uses_ordinary_rounds_and_terminal_value() {
     let coefficients: Arc<[F]> = (1..=8).map(F::from_u64).collect::<Vec<_>>().into();
     let index_factor = vec![F::from_u64(7), F::from_u64(11)];
     let coefficient_factor = vec![F::from_u64(3), F::from_u64(5), F::zero(), F::one()];
-    let mut reference = RectangularSetupProductTerm::new(
+    let mut reference = SetupProductSumcheck::new(
         SetupProductSource::Table(coefficients.to_vec()),
         2,
         index_factor.clone(),
@@ -34,12 +34,15 @@ fn stage3_alternate_table_uses_ordinary_rounds_and_terminal_value() {
         let polynomial = backend
             .stage3_round_polynomial(&mut session, round, claim)
             .unwrap();
-        assert_eq!(polynomial, reference.compute_round_univariate());
+        assert_eq!(
+            polynomial,
+            reference.round_polynomial(round, claim).unwrap()
+        );
         let challenge = F::from_u64(13 + round as u64);
         backend
             .bind_stage3_challenge(&mut session, round, challenge)
             .unwrap();
-        reference.ingest_challenge(round, challenge);
+        reference.bind_challenge(round, challenge).unwrap();
         claim = polynomial.evaluate(challenge);
     }
     assert_eq!(

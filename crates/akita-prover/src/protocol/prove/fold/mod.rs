@@ -1,6 +1,7 @@
 use super::*;
 use crate::backend::OperationCtx;
 use crate::backend::{EvaluationTraceDescription, Stage2OpeningDescription};
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
 
@@ -76,6 +77,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -337,7 +339,7 @@ fn prepare_physical_l2_batch<F, E>(
 ) -> Result<Option<PhysicalL2ProverReplay<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F> + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize + ChallengeCodec,
 {
     let Some(mut replay) = physical_l2 else {
         return Ok(None);
@@ -345,7 +347,7 @@ where
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     let eta = grinding
-        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2VirtualBatch { level })?;
+        .grinded_ext_challenge::<E>(akita_params::GrindingSite::L2VirtualBatch { level })?;
     (replay.claim, replay.batching) =
         batch_l2_virtual_evaluations(eta, &replay.virtual_evaluations);
     Ok(Some(replay))
@@ -358,14 +360,14 @@ fn prepare_stage2_compression<F, E, H>(
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F> + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize + ChallengeCodec,
 {
     if !rs.compressed {
         return Ok(E::zero());
     }
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::CompressionBinary { level })
+    grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::CompressionBinary { level })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -504,6 +506,7 @@ pub(in crate::protocol::prove) fn prove_fold<F, E, B>(
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
     prepared_fold: PreparedFold<F, E, B::WitnessHandle>,
+    setup_batch: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
     handoff: impl FnOnce(
         &RingRelationInstance<F>,
         &crate::backend::ValidatedRecursiveWitnessCommitPlan,
@@ -516,6 +519,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -647,7 +651,7 @@ where
     let physical_l2 = prepare_physical_l2_batch::<F, E>(grinding, level, physical_l2)?;
     let compression = prepare_stage2_compression::<F, E, _>(grinding, level, &mut rs)?;
     let batching_coeff =
-        grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch {
+        grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::Stage2Batch {
             level: fold_level,
         })?;
     let (linear_terms, scalar_opening_claim) = prepare_relation_sumcheck::<F, E, _>(
@@ -702,27 +706,26 @@ where
             relation_plan: &relation_range_image_plan,
             groups: &relation_groups,
         },
+        setup_batch
+            .filter(|_| next_params.setup_contribution_mode() == SetupContributionMode::Direct),
     )?;
-    akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
-    let stage3_sumcheck_proof = match next_params.recursive() {
-        Some(next_fold_params) => prove_stage3::<F, E, _>(
-            consumer,
-            session,
-            level,
-            next_params.setup_contribution_mode(),
-            expanded,
-            prefix_slots,
-            lp,
-            &next_fold_params.params,
-            &instance,
-            &tau1,
-            alpha,
-            &sumcheck_challenges,
-            relation_address_geometry,
-            grinding,
-        )?,
-        None => None,
-    };
+    let stage3_sumcheck_proof = prove_stage3::<F, E, _>(
+        consumer,
+        session,
+        level,
+        next_params.setup_contribution_mode(),
+        expanded,
+        prefix_slots,
+        lp,
+        next_params.recursive().map(|next| &next.params),
+        &instance,
+        &tau1,
+        alpha,
+        &sumcheck_challenges,
+        relation_address_geometry,
+        grinding,
+        setup_batch,
+    )?;
     let setup_prefix_opening =
         stage3_sumcheck_proof.map(|stage3| (stage3.setup_prefix_point, stage3.setup_prefix_eval));
 

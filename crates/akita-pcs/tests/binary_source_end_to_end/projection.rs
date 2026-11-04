@@ -1,6 +1,6 @@
 //! Projection wire mutations and the two transcript fixation boundaries.
 use super::*;
-use akita_transcript::ProofChannel;
+use akita_transcript::{ext_challenge, ProofChannel, ProtocolSiteId};
 use akita_types::binary_source::{
     binary_projection_values, decode_binary_projection, BinaryProjectionBounds,
     BinaryProjectionRows, BINARY_SOURCE_Q,
@@ -85,24 +85,33 @@ pub(super) fn mutate_values(
     }
 }
 
+const MU_SITE: ProtocolSiteId = ProtocolSiteId {
+    family: 0x4d55_5445,
+    invocation: 0,
+    level: 0,
+    stage: 0,
+    round: 0,
+    group: 0,
+    limb: 0,
+    detail: 0,
+};
+
 #[test]
 fn projection_challenges_bind_commitment_and_every_output() {
     let bounds = BinaryProjectionBounds::new(1, 2, 3, 1, u128::MAX - 274).unwrap();
     let run = |commitment: u8, values: [i128; 7]| {
-        let mut prover = new_prover_channel(b"binary-projection-fixation", b"caller").unwrap();
+        let mut prover = new_prover_channel(b"binary-projection-fixation");
         // Stand in for the outgoing commitment atom; test the production sampler
         // and value exchanger, on both channel roles, at this exact boundary.
-        prover.prover_message(&[commitment; 16]);
+        prover.exchange(&mut [commitment; 16]).unwrap();
         let rows = BinaryProjectionRows::draw(&mut prover, &bounds).unwrap();
         binary_projection_values(&mut prover, &bounds, &values).unwrap();
-        let mu: [F; 7] = std::array::from_fn(|_| prover.field_challenge().unwrap());
+        let mu: [F; 7] = std::array::from_fn(|_| ext_challenge(&mut prover, MU_SITE).unwrap());
         let proof = prover.narg_string();
-        let mut verifier =
-            new_verifier_channel(b"binary-projection-fixation", b"caller", proof).unwrap();
-        assert_eq!(
-            verifier.prover_message::<[u8; 16]>().unwrap(),
-            [commitment; 16]
-        );
+        let mut verifier = new_verifier_channel(b"binary-projection-fixation", proof);
+        let mut atom = [0; 16];
+        verifier.exchange(&mut atom).unwrap();
+        assert_eq!(atom, [commitment; 16]);
         assert_eq!(
             BinaryProjectionRows::draw(&mut verifier, &bounds).unwrap(),
             rows
@@ -111,7 +120,8 @@ fn projection_challenges_bind_commitment_and_every_output() {
             binary_projection_values(&mut verifier, &bounds, &[0; 7]).unwrap(),
             values
         );
-        let replayed: [F; 7] = std::array::from_fn(|_| verifier.field_challenge().unwrap());
+        let replayed: [F; 7] =
+            std::array::from_fn(|_| ext_challenge(&mut verifier, MU_SITE).unwrap());
         assert_eq!(mu, replayed);
         verifier.check_eof().unwrap();
         (rows, mu)

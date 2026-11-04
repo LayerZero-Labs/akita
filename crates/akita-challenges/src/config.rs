@@ -85,17 +85,6 @@ impl OperatorNormRejection {
         }
         Ok(())
     }
-
-    /// Canonical transcript-domain bytes for this rejection policy.
-    pub fn domain_separator_bytes(self) -> [u8; 17] {
-        let mut out = [0u8; 17];
-        out[0] = 2;
-        out[1..5].copy_from_slice(&self.threshold.to_le_bytes());
-        out[5..9].copy_from_slice(&self.fractional_bits.to_le_bytes());
-        out[9..13].copy_from_slice(&self.root_coordinate_error_units.to_le_bytes());
-        out[13..17].copy_from_slice(&self.rounding_margin_units.to_le_bytes());
-        out
-    }
 }
 
 /// Exact challenge config paired with
@@ -238,6 +227,13 @@ impl SparseChallengeConfig {
     /// `log2` of the number of distinct challenges this family can emit for ring
     /// degree `D` — the (raw) min-entropy of a single sampled challenge.
     pub fn log2_support_bits<const D: usize>(&self) -> f64 {
+        // Memoized: catalog validation asks this for every row, and the
+        // floating-point log2 sums are the dominant cost of a software-float
+        // verifier (a RISC-V zkVM guest). A catalog uses a handful of
+        // families; the bound keeps arbitrary callers from growing the table.
+        const MAX_CACHED_FAMILIES: usize = 64;
+        type SupportCacheEntry = ((usize, usize, usize), f64);
+        static CACHE: std::sync::Mutex<Vec<SupportCacheEntry>> = std::sync::Mutex::new(Vec::new());
         fn log2_binom(n: usize, k: usize) -> f64 {
             if k > n {
                 return f64::NEG_INFINITY;
@@ -246,11 +242,23 @@ impl SparseChallengeConfig {
                 .map(|i| ((n - k + i) as f64 / i as f64).log2())
                 .sum()
         }
-        let w = self.weight();
-        if w > D {
-            return f64::NEG_INFINITY;
+        let key = (D, self.count_pm1, self.count_pm2);
+        let mut cache = CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, bits)) = cache.iter().find(|(k, _)| *k == key) {
+            return *bits;
         }
-        log2_binom(D, w) + log2_binom(w, self.count_pm1) + w as f64
+        let w = self.weight();
+        let bits = if w > D {
+            f64::NEG_INFINITY
+        } else {
+            log2_binom(D, w) + log2_binom(w, self.count_pm1) + w as f64
+        };
+        if cache.len() < MAX_CACHED_FAMILIES {
+            cache.push((key, bits));
+        }
+        bits
     }
 
     /// Reject challenge families whose single-draw support is below
@@ -291,16 +299,6 @@ impl SparseChallengeConfig {
     pub fn validate_for_ring_dim(&self, ring_d: usize) -> Result<(), &'static str> {
         self.validate_dyn(ring_d)?;
         self.validate_min_entropy_for_ring_dim(ring_d, MIN_FOLD_CHALLENGE_ENTROPY_BITS)
-    }
-
-    /// Canonical byte encoding used for transcript domain separation.
-    #[inline]
-    pub fn domain_separator_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + 16);
-        out.push(0);
-        out.extend_from_slice(&(self.count_pm1 as u64).to_le_bytes());
-        out.extend_from_slice(&(self.count_pm2 as u64).to_le_bytes());
-        out
     }
 
     /// Validate basic invariants for a given ring degree `D`.

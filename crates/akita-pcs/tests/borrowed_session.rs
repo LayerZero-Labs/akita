@@ -2,8 +2,12 @@
 mod common;
 
 use akita_cpu_backend::{CpuBackend, GroupContext};
-use akita_transcript::{new_prover_channel, new_verifier_channel};
+use akita_transcript::{
+    new_prover_channel, new_verifier_channel, ProverTranscript, VerifierChannel,
+};
+use akita_verifier::SetupPolicy;
 use common::*;
+use jolt_transcript::BytesMsg;
 
 #[test]
 fn borrowed_multi_group_opening_preserves_the_callers_session() {
@@ -46,7 +50,7 @@ fn borrowed_multi_group_opening_preserves_the_callers_session() {
             commitments.iter().map(|group| *group.profile()).collect(),
         )
         .unwrap();
-        let row = scheme.schedules().resolve_profiles(&profiles).unwrap();
+        let row = scheme.schedules().resolve_profiles(&profiles, 0).unwrap();
         let opening_layout = profiles.opening_layout().unwrap();
         let values = std::array::from_fn::<_, 2, _>(|index| {
             opening_from_poly_for_layout(
@@ -115,13 +119,14 @@ fn borrowed_multi_group_opening_preserves_the_callers_session() {
                 b"borrowed-test",
                 statement(),
                 BasisMode::Lagrange,
+                SetupPolicy::Check(None),
             )
             .unwrap();
 
-        let mut prover = new_prover_channel(b"borrowed-test", b"outer").unwrap();
-        prover.public_message(b"prefix");
+        let mut prover = new_prover_channel(b"borrowed-test");
+        prover.public_message(&BytesMsg(b"prefix"));
         scheme
-            .batched_prove_in_session(
+            .batched_prove_embedded(
                 &setup,
                 prover_data(),
                 &backend,
@@ -130,55 +135,50 @@ fn borrowed_multi_group_opening_preserves_the_callers_session() {
             )
             .unwrap();
         let opening_end = prover.narg_string().len();
-        prover.public_message(b"suffix");
+        prover.public_message(&BytesMsg(b"suffix"));
         let challenge: [u8; 32] = prover.verifier_message();
-        prover.prover_message(&challenge);
+        ProverTranscript::send(&mut prover, &BytesMsg(challenge.to_vec()));
         let proof = prover.narg_string().to_vec();
-        let mut state = new_verifier_channel(b"borrowed-test", b"outer", &proof).unwrap();
-        state.public_message(b"prefix");
-        verifier
-            .batched_verify_in_session(&mut state, statement(), BasisMode::Lagrange)
-            .unwrap();
+        let verify_prefix = |state: &mut VerifierChannel<'_>, prefix: &[u8]| {
+            state.public_message(&BytesMsg(prefix));
+            verifier.batched_verify_embedded(
+                state,
+                statement(),
+                BasisMode::Lagrange,
+                SetupPolicy::Check(None),
+            )
+        };
+        let mut state = new_verifier_channel(b"borrowed-test", &proof);
+        let pending = verify_prefix(&mut state, b"prefix").unwrap();
         // The opening returns before the outer protocol's final proof message.
-        state.public_message(b"suffix");
-        assert_eq!(state.verifier_message::<[u8; 32]>().unwrap(), challenge);
-        assert_eq!(state.prover_message::<[u8; 32]>().unwrap(), challenge);
-        state.check_eof().unwrap();
+        state.public_message(&BytesMsg(b"suffix"));
+        assert_eq!(state.verifier_message::<[u8; 32]>(), challenge);
+        assert_eq!(
+            state.prover_message::<BytesMsg>().unwrap().0,
+            challenge.to_vec()
+        );
+        pending.check_eof(state).unwrap();
 
-        for (session, instance, prefix) in [
-            (
-                b"wrong-session".as_slice(),
-                b"outer".as_slice(),
-                b"prefix".as_slice(),
-            ),
-            (b"borrowed-test", b"wrong-instance", b"prefix"),
-            (b"borrowed-test", b"outer", b"wrong-prefix"),
+        for (session, prefix) in [
+            (b"wrong-session".as_slice(), b"prefix".as_slice()),
+            (b"borrowed-test", b"wrong-prefix"),
         ] {
-            let mut state = new_verifier_channel(session, instance, &proof).unwrap();
-            state.public_message(prefix);
-            assert!(verifier
-                .batched_verify_in_session(&mut state, statement(), BasisMode::Lagrange)
-                .is_err());
+            let mut state = new_verifier_channel(session, &proof);
+            assert!(verify_prefix(&mut state, prefix).is_err());
             assert!(state.check_eof().is_err());
         }
         let mut corrupted = proof[..opening_end].to_vec();
         corrupted[opening_end / 2] ^= 1;
         for bad in [&proof[..opening_end - 1], corrupted.as_slice()] {
-            let mut state = new_verifier_channel(b"borrowed-test", b"outer", bad).unwrap();
-            state.public_message(b"prefix");
-            assert!(verifier
-                .batched_verify_in_session(&mut state, statement(), BasisMode::Lagrange)
-                .is_err());
-            assert!(state.verifier_message::<[u8; 32]>().is_err());
+            let mut state = new_verifier_channel(b"borrowed-test", bad);
+            assert!(verify_prefix(&mut state, b"prefix").is_err());
+            assert!(state.prover_message::<BytesMsg>().is_err());
         }
         // EOF belongs to the outer session, even when the opening has succeeded.
         let mut trailing = proof[..opening_end].to_vec();
         trailing.push(0);
-        let mut state = new_verifier_channel(b"borrowed-test", b"outer", &trailing).unwrap();
-        state.public_message(b"prefix");
-        verifier
-            .batched_verify_in_session(&mut state, statement(), BasisMode::Lagrange)
-            .unwrap();
-        assert!(state.check_eof().is_err());
+        let mut state = new_verifier_channel(b"borrowed-test", &trailing);
+        let pending = verify_prefix(&mut state, b"prefix").unwrap();
+        assert!(pending.check_eof(state).is_err());
     });
 }

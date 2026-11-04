@@ -247,8 +247,9 @@ fn fp128_sample_geometry_opening() {
     sample_geometry_opening::<Family128>("fp128", RootOpeningMode::Binary);
 }
 
-/// Complete binary proof bytes with typed q-uniform setup stay fixed per family
-/// and protocol selection.
+/// Complete binary proof bytes with typed q-uniform setup stay fixed per family.
+/// The dev protocol currently equals the current protocol, so both protocol
+/// selections share these bytes.
 #[cfg(all(feature = "transcript-blake2b", not(feature = "transcript-keccak")))]
 #[test]
 fn binary_proof_bytes_are_pinned_for_both_families() {
@@ -272,17 +273,10 @@ fn binary_proof_bytes_are_pinned_for_both_families() {
             .map(|byte| format!("{byte:02x}"))
             .collect()
     }
-    let expected = if akita_params::DEV_PROTOCOL {
-        (
-            "5f0fc5eb434fdcbd585f3a7ff2fb3b7dbc78d3e24138a1c7afd6e440505bde7d",
-            "05e60a7ac4719735f529c4250795167504ce80a84e90fd77c1802eb96a8a5a66",
-        )
-    } else {
-        (
-            "d5f963d7d7bb93ea60b585c073ed13d583bf83a603207f8070b67844a9364a79",
-            "426986f517b2f66ee02d8037a3632f0b6f6d4101f62e67e92135203afae4011e",
-        )
-    };
+    let expected = (
+        "bd7eaacb397dd2f471c0aaf02c24e4e6df18c0c99b93febc89121426e3bc49bb",
+        "75f0bd290a132573fa7afd072a1901d6e6bd4ae121839d3f6ae08600f8d2a32f",
+    );
     assert_eq!(
         (digest::<Family64>(), digest::<Family128>()),
         (expected.0.to_owned(), expected.1.to_owned())

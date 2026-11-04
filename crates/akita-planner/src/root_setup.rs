@@ -15,7 +15,10 @@ pub fn find_schedule_with_root_setup_mode(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &crate::PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>,
     root_setup_mode: SetupContributionMode,
     root_main_constraint: Option<&akita_params::CommittedGroupParams>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {

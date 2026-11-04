@@ -13,7 +13,7 @@ impl CommittedGroupParams {
         n_a: usize,
         n_b: usize,
         n_d: usize,
-        fold_challenge_config: FoldChallengeFamily,
+        fold_challenge_config: FoldChallengeDistribution,
     ) -> Self {
         Self {
             open_matrix: OpenCommitMatrixParams::new_unchecked(

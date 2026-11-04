@@ -29,6 +29,14 @@ schedule fits the setup field capacity. Private polynomial representations and
 honest-prover witness models are not verifier inputs. A proof cannot supply
 schedule bytes.
 
+"Trusted" here is a statement about soundness, not about parsing. The catalog,
+the verifier setup, and an optional terminal NTT cache are preprocessing. The
+verifier assumes each was derived as claimed, and the deployment either
+recomputes it or authenticates bytes that a party it trusts derived;
+[`security-posture.md`](security-posture.md#verifier-preprocessing) states
+the model. This contract still applies to their bytes: malformed
+preprocessing is rejected with an error, never a panic.
+
 The accepted proof topology is structural: a root fold, zero or more recursive
 folds, and one terminal cleartext witness. The proof carries no shape header.
 The verifier derives every message count and length from the schedule, so a
@@ -44,15 +52,17 @@ the verifier derives the canonical `GrindingPlan` and successor-aware fold
 geometry from the validated public schedule and opening layout. That one
 geometry determines each sumcheck round count, recursive opening layout, and
 proof-stream byte bound. Nonzero grinding and fold-response nonces are
-canonical inline `u32` messages. Replay rejects a wrong site or query kind,
+inline prover messages: canonical unsigned LEB128 in the proof string, one
+little-endian `u64` word absorbed, at most 57 proof-of-work bits. Replay
+rejects a wrong site or query kind, a noncanonical or overflowing encoding,
 truncation, trailing bytes, incomplete plan consumption, and an out-of-range
 nonce.
 
-Sparse fold coordinates are verifier-reachable indexed SHAKE256 queries. Their
-group root has a fixed 32-byte boundary, coordinate indices are checked before
-conversion, and buffered fixed-width reads use bounded copies rather than
-panicking slice conversions. A refill boundary changes neither the byte stream
-nor the challenge law.
+Each fold group's sparse challenges come from one squeezed message whose
+length the verifier computes from the bound family and challenge count before
+squeezing. Message length, pool size, binomial tables and decoding use checked
+arithmetic and fallible allocation. A message whose operator-norm pool runs
+out returns `AkitaError::InvalidProof` and poisons the verifier state.
 
 ## Rules
 

@@ -22,6 +22,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_verifier::SetupPolicy;
 use jolt_field::{CanonicalEncoding, Field, One, Prime128Offset275, Ring, Zero};
 
 /// Declares a config that takes everything except its field and its SIS
@@ -43,7 +44,7 @@ macro_rules! dense_config {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::FoldChallengeFamily, AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError> {
                 fp128::Dense::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> SisModulusProfileId {
@@ -197,7 +198,13 @@ fn offset275_roundtrip() {
         let group = PolynomialGroupClaims::new(point.clone(), vec![claimed], &commitment).unwrap();
         let claims = OpeningClaims::from_groups(vec![group]).unwrap();
         let statement = GroupBatchStatement::new(selection, claims).unwrap();
-        verifier.batched_verify(&proof, SESSION, statement, BasisMode::Lagrange)
+        verifier.batched_verify(
+            &proof,
+            SESSION,
+            statement,
+            BasisMode::Lagrange,
+            SetupPolicy::Check(None),
+        )
     };
     verify(opening).unwrap();
     assert!(verify(opening + F::one()).is_err());
@@ -251,9 +258,9 @@ fn commitment_binds_the_profile_to_the_exact_field_modulus() {
     });
 }
 
-/// Rebuilds the inner matrix, the outer matrix, and both matrices of an
-/// in-memory commitment under `other`, and requires `check` and serialization
-/// to reject each result. The rebuilt matrices keep their geometry and their
+/// Rebuilds the inner matrix, the outer matrix, and both matrices of a
+/// commitment profile under `other`, and requires `CommittedGroup::new` to
+/// reject each result. The rebuilt matrices keep their geometry and their
 /// SIS bounds, because the two profiles share rows.
 fn assert_check_rejects_profile<F>(commitment: &CommittedGroup<F>, other: SisModulusProfileId)
 where
@@ -283,26 +290,20 @@ where
     .unwrap();
 
     for (swap_inner, swap_outer) in [(true, true), (true, false), (false, true)] {
-        let mut mismatched = commitment.clone();
+        let mut profile = *commitment.profile();
         if swap_inner {
-            mismatched.profile.inner.matrix = other_inner;
+            profile.inner.matrix = other_inner;
         }
         if swap_outer {
-            mismatched.profile.outer.matrix = other_outer;
+            profile.outer.matrix = other_outer;
         }
-        for error in [
-            mismatched.check().unwrap_err(),
-            mismatched
-                .serialize_uncompressed(&mut Vec::new())
-                .unwrap_err(),
-        ] {
-            assert!(
-                error
-                    .to_string()
-                    .contains("SIS modulus profile does not match the field"),
-                "{error}"
-            );
-        }
+        let error = CommittedGroup::new(profile, commitment.commitment().clone()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("SIS modulus profile does not match the field"),
+            "{error}"
+        );
     }
 }
 

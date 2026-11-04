@@ -9,7 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 # Extension seam: explicitly selected native roots; https://github.com/LayerZero-Labs/akita/issues/285.
 labinius-trinomial = []
 transcript-blake2b = [

@@ -2,6 +2,7 @@
 
 use super::*;
 use akita_prover::binary_field_switch::prove_field_switch;
+use akita_transcript::{ProofChannel, VerifierChannel};
 use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryTerminalClaim};
 use akita_verifier::binary_field_switch::verify_field_switch;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -28,9 +29,9 @@ fn frontend_proof(
     claim: &BinaryWordClaim,
     carriers: &[u128],
 ) -> (Vec<u8>, BinaryTerminalClaim) {
-    let mut prover = new_prover_channel(DOMAIN, b"caller").unwrap();
-    prover.public_message(&descriptor.canonical_bytes());
-    prover.public_message(&claim.canonical_bytes());
+    let mut prover = new_prover_channel(DOMAIN);
+    prover.public_message(&BytesMsg(descriptor.canonical_bytes()));
+    prover.public_message(&BytesMsg(claim.canonical_bytes()));
     let terminal = prove_field_switch(descriptor, claim, carriers, &mut prover).unwrap();
     (prover.narg_string().to_vec(), terminal)
 }
@@ -40,11 +41,11 @@ fn check(
     claim: &BinaryWordClaim,
     proof: &[u8],
 ) -> Result<BinaryTerminalClaim, AkitaError> {
-    let mut verifier = new_verifier_channel(DOMAIN, b"caller", proof).unwrap();
-    verifier.public_message(&descriptor.canonical_bytes());
-    verifier.public_message(&claim.canonical_bytes());
+    let mut verifier = new_verifier_channel(DOMAIN, proof);
+    verifier.public_message(&BytesMsg(descriptor.canonical_bytes()));
+    verifier.public_message(&BytesMsg(claim.canonical_bytes()));
     let terminal = verify_field_switch(descriptor, claim, &mut verifier)?;
-    verifier.check_eof()?;
+    verifier.check_eof().map_err(|_| AkitaError::InvalidProof)?;
     Ok(terminal)
 }
 
@@ -74,24 +75,28 @@ fn field_switch_differential_logical_words_and_carrier_terminals() {
                 // Replay the wire independently. This observes λ only after
                 // absorbing every partial; removing their transcript binding
                 // makes the expected sumcheck point differ from the frontend.
-                let mut wire = new_verifier_channel(DOMAIN, b"caller", &proof).unwrap();
-                wire.public_message(&descriptor.canonical_bytes());
-                wire.public_message(&claim.canonical_bytes());
+                let mut wire = new_verifier_channel(DOMAIN, &proof);
+                wire.public_message(&BytesMsg(descriptor.canonical_bytes()));
+                wire.public_message(&BytesMsg(claim.canonical_bytes()));
                 for _ in 0..128 {
-                    wire.prover_message::<[u8; 16]>().unwrap();
+                    wire.exchange(&mut [0u8; 16]).unwrap();
                 }
+                let draw = |wire: &mut VerifierChannel<'_>| {
+                    wire.challenge_message(21, |block| {
+                        let mut bytes: [u8; 21] = block.try_into().unwrap();
+                        bytes[20] &= 3;
+                        Ok(BinaryField162::from_bytes(&bytes).unwrap())
+                    })
+                    .unwrap()
+                };
                 for _ in 0..7 {
-                    wire.verifier_message::<[u8; 32]>().unwrap();
+                    draw(&mut wire);
                 }
                 let mut z = Vec::new();
                 for _ in 0..split.carrier_address {
-                    wire.prover_message::<[u8; 21]>().unwrap();
-                    wire.prover_message::<[u8; 21]>().unwrap();
-                    let block = wire.verifier_message::<[u8; 32]>().unwrap();
-                    let mut bytes = [0u8; 21];
-                    bytes.copy_from_slice(&block[..21]);
-                    bytes[20] &= 3;
-                    z.push(BinaryField162::from_bytes(&bytes).unwrap());
+                    wire.exchange(&mut [0u8; 21]).unwrap();
+                    wire.exchange(&mut [0u8; 21]).unwrap();
+                    z.push(draw(&mut wire));
                 }
                 let c = columns.trailing_zeros() as usize;
                 assert_eq!(
@@ -106,10 +111,9 @@ fn field_switch_differential_logical_words_and_carrier_terminals() {
                     *terminal.value(),
                     reference::carrier_value(&source, &z).to_bytes()
                 );
-                assert_eq!(
-                    wire.prover_message::<[u8; 21]>().unwrap(),
-                    *terminal.value()
-                );
+                let mut value = [0u8; 21];
+                wire.exchange(&mut value).unwrap();
+                assert_eq!(value, *terminal.value());
                 wire.check_eof().unwrap();
             }
         }
@@ -186,7 +190,7 @@ fn field_switch_rejects_false_source_word() {
         let mut source = vec![0x1234_5678_9abc_def0_9876_5432_10ff_aa55u128; 8];
         let claim = honest_claim(&descriptor, &source);
         source[3] ^= 1;
-        let mut prover = new_prover_channel(DOMAIN, b"caller").unwrap();
+        let mut prover = new_prover_channel(DOMAIN);
         assert!(matches!(
             prove_field_switch(&descriptor, &claim, &source, &mut prover),
             Err(AkitaError::InvalidInput(_))
@@ -216,11 +220,11 @@ fn rejects_false_word_value(width: usize) {
     )
     .unwrap();
     let outcome = catch_unwind(AssertUnwindSafe(|| {
-        let mut verifier = new_verifier_channel(DOMAIN, b"caller", &proof).unwrap();
-        verifier.public_message(&descriptor.canonical_bytes());
-        verifier.public_message(&claim.canonical_bytes());
+        let mut verifier = new_verifier_channel(DOMAIN, &proof);
+        verifier.public_message(&BytesMsg(descriptor.canonical_bytes()));
+        verifier.public_message(&BytesMsg(claim.canonical_bytes()));
         let terminal = verify_field_switch(&descriptor, &altered, &mut verifier)?;
-        verifier.check_eof()?;
+        verifier.check_eof().map_err(|_| AkitaError::InvalidProof)?;
         Ok::<_, AkitaError>(terminal)
     }));
     assert!(outcome.is_ok(), "false word value caused a verifier panic");

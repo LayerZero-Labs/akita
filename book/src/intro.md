@@ -7,9 +7,10 @@ the proof without receiving the whole table. Akita uses transparent setup, so
 it needs no trusted ceremony. Its production parameters price every Module-SIS
 instance at NIST security category 3, the level of ML-DSA-65: 169 bits of
 quantum Core-SVP cost. Its Fiat-Shamir soundness target is 128 bits.
+[Security status](#security-status) states what each target covers.
 
 Akita's small proofs are one of its strongest advantages. Current production
-benchmarks produce opening proofs of roughly 75 to 90 KB. This contrasts with
+benchmarks produce opening proofs of roughly 70 to 85 KB. This contrasts with
 hash-based post-quantum polynomial commitment schemes, which produce proofs of
 hundreds of kilobytes at the same polynomial sizes Akita supports.
 
@@ -33,15 +34,16 @@ quantum computer could break the assumptions behind them.
 
 The commitment is often the part of the proof system that carries this
 assumption. The surrounding protocol checks polynomial identities using
-algebra and random challenges. Replacing the PCS with a post-quantum PCS can
-therefore protect the complete proof without replacing every other protocol in
-the system.
+algebra and random challenges. A PCS designed for quantum resistance removes
+that particular curve assumption. Security of the complete proof also depends
+on the surrounding protocol, including its transcript challenges.
 
 Hash-based commitments provide one post-quantum path. They are well developed,
 but they tend to produce larger proofs and require more prover memory. Akita
-takes the lattice path. It uses structured lattice problems to obtain
-post-quantum security, compact proofs, and a commitment operation that can
-preserve sparse inputs.
+takes the lattice path. It uses structured lattice problems to target quantum
+resistance while providing compact proofs and a commitment operation that can
+preserve sparse inputs. The [security status](#security-status) states the
+model-specific targets and their limits.
 
 ## What a polynomial commitment proves
 
@@ -119,11 +121,11 @@ intermediate claim will be and which security limits the verifier will enforce.
 
 The benchmark suite currently tests 13 cases. Each case fixes the arithmetic
 field and the shape of the polynomial data. It also fixes how many polynomials
-are opened and how the prover handles the public setup calculation. Twelve
-cases use seven fold levels. A fold level means one reduction step. The seventh
-level is the terminal fold, where the verifier checks the remaining response
-directly. One benchmark case divides the work into eight chunks during its
-first two steps and uses eight fold levels in total.
+are opened and how the prover handles the public setup calculation. Three
+cases use seven fold levels and the other ten use eight. A fold level means one
+reduction step. The last level is the terminal fold, where the verifier checks
+the remaining response directly. Four cases divide the work into two, four, or
+eight chunks during their first two steps.
 
 For a concrete example, consider the benchmark that opens one dense polynomial
 over Akita's 128-bit field. Dense means that every position in the polynomial's
@@ -134,33 +136,39 @@ schedule reduces the data that remains to be checked as follows:
 | Fold level | Field values entering the level |
 | --- | ---: |
 | L0 | 268,435,456 |
-| L1 | 55,332,544 |
-| L2 | 3,892,032 |
-| L3 | 1,064,256 |
-| L4 | 488,384 |
-| L5 | 255,488 |
-| L6, terminal | 128,768 |
+| L1 | 61,859,776 |
+| L2 | 4,434,752 |
+| L3 | 1,203,840 |
+| L4 | 289,152 |
+| L5 | 128,896 |
+| L6, terminal | 93,696 |
 
 The first six levels send a new commitment and a few small field values. They
 also send short algebraic proofs, called sumchecks, that connect the next claim
-to the previous one. Those messages occupy 19,912 bytes in this benchmark case.
-L6 performs the terminal check, adds a 4-byte number used when choosing the
-folding challenge, and sends the remaining response directly. The complete
-fold payload is therefore 19,916 bytes.
+to the previous one. L6 performs the terminal check and sends the remaining
+response directly. Everything outside that terminal response, including the
+short numbers used when choosing folding challenges, occupies 28,671 bytes in
+this benchmark case.
 
-That complete proof is 73,018 bytes. Its 53,102-byte terminal response contains
-three parts:
+That complete proof is 75,522 bytes. Its 46,851-byte terminal response contains
+four parts:
 
 | Terminal part | What it contains | Size |
 | --- | --- | ---: |
-| $z$ | The folded witness response, 16,384 coefficients stored with a compact integer encoding called Golomb coding | 20,334 bytes |
-| $e$ | The 512 opening values needed by the final check | 8,192 bytes |
-| $t$ | The 1,536 inner commitment values needed by the final check | 24,576 bytes |
+| $z$ | The folded witness response, 16,384 coefficients stored with a compact integer encoding called Golomb coding, and its 4-byte length | 21,187 bytes |
+| $e$ | 320 of the 384 opening values needed by the final check | 5,120 bytes |
+| $t$ | 1,280 of the 1,536 inner commitment values needed by the final check | 20,480 bytes |
+| Digests | A 32-byte hash of the last 64 $e$ values and one of the last 256 $t$ values | 64 bytes |
+
+The verifier recomputes the omitted values from the final check's two
+relations and accepts them only if they match the digests. The
+[terminal check](./how/verifying/terminal.md#recompute-the-last-block)
+explains why this is sound.
 
 Another fold is useful only when the bytes it removes from this remaining
 response exceed the bytes needed to prove the extra fold. The planner stops at
 the least expensive valid point. Across the latest complete profile run, all
-13 production cases passed with proofs from 66,600 to 79,527 bytes. The
+13 production cases passed with proofs from 70,743 to 84,738 bytes. The
 [benchmark report guide](./usage/benchmark-reports.md) explains how to inspect
 the current totals and the byte cost of every fold.
 
@@ -179,6 +187,58 @@ The [How it works](./how/how-it-works.md) section follows the complete protocol
 from configuration through setup, commitment, folding, and verification. The
 [security model](./how/security.md) gives the exact Module-SIS assumptions and
 parameter checks.
+
+## Security status
+
+Akita prices Module-SIS instances at a 169-bit quantum attack cost and targets
+a 128-bit Fiat-Shamir rate in the classical random-oracle model. These are
+statements about two concrete models, not an end-to-end security bound,
+classical or quantum.
+
+- **Module-SIS binding.** Module-SIS instances are priced at a 169-bit target
+  with the ADPS16 quantum cost model. Two generated tables cover the
+  commitment matrices: a coefficient-$L_\infty$ table, from a scalarized
+  infinity-norm LGSA estimate, and a Euclidean table for selective-$L_2$
+  folds, which prices the collision's $L_2$ length. Six fixed cells cover the
+  compression matrices of compressed commitments. Each estimate prices one
+  known attack family on a scalarized instance. It does not price attacks
+  that exploit ring or module structure, CRT splitting, subfield projection,
+  or role-specific matrix structure, and it does not show that every quantum
+  attack costs at least $2^{169}$. These estimates price the instances. They
+  do not account for the loss of the reduction from a successful prover to a
+  Module-SIS solution.
+- **Fiat-Shamir.** Transcript checks are analyzed in the classical
+  random-oracle model. Each commitment group of a fold draws its sparse
+  challenges from one fixed-length squeezed message, with nothing absorbed
+  between groups; the instance descriptor binds each group's opening method,
+  dimensions, challenge family and counts. One proof of work per fold, the
+  least $g$ with $W \cdot 2^{128} \le |C| \cdot 2^g$ for the fold's $W$
+  pairs and its smallest challenge set $C$, gives each fold message a 128-bit
+  per-call rate under the grinding specification's fold bound. That bound
+  assumes the accepting-tree extraction described in the binding chapter and
+  that one accepted challenge of a message can be resampled with its exact
+  distribution, which the specification shows for both decoder families. Every accepted challenge set has at least $2^{128}$ elements,
+  but support size alone does not give the rate. Each typed field challenge
+  is priced so that its local algebraic loss meets a 128-bit per-query rate,
+  with proof-of-work where needed. Extending that rate to the complete
+  extraction tree also requires, at every field site, a proof that its
+  full-tree debit is at most the local loss, or a target raised to price the
+  debit. Akita has no such field-address ledger. A complete claim also needs
+  an adversarial query budget, bounds on the field challenges and fold
+  messages first queried by final verification, a certificate that the
+  extraction tree has polynomial
+  size, and Module-SIS success probabilities evaluated at the extractor's
+  expected running time. None of these is declared today. The total over an
+  attacker's query budget grows with the budget and is not reported per
+  schedule row. The
+  [binding chapter](./foundations/pcs-and-binding.md#from-the-fold-bound-to-a-security-claim)
+  and the [grinding specification](../../specs/transcript-grinding.md)
+  give the accounting.
+- **Quantum adversaries against the transcript hash.** Akita has no
+  quantum-random-oracle analysis. Generic quantum search finds an event of
+  probability $2^{-128}$ per query with about $2^{64}$ quantum oracle queries,
+  so the classical 128-bit Fiat-Shamir target does not by itself give 128-bit
+  soundness against an adversary that queries the hash on a quantum computer.
 
 ## Built as a complete system
 
@@ -199,7 +259,7 @@ PCS provers, which usually materialize an encoded word and a hash tree during
 commitment, then retain both to answer later openings. The memory for those
 objects grows linearly with the polynomial size.
 
-The 75 to 90 KB figures cover the Akita commitment proof. The host proof system
+The 70 to 85 KB figures cover the Akita commitment proof. The host proof system
 contributes its own proof data.
 
 Jolt is the first demanding host for these boundaries. It exercises Akita

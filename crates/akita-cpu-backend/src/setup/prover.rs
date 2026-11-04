@@ -239,12 +239,16 @@ mod tests {
             SisModulusProfileId::Q128OffsetA7F7,
             PREFIX_D,
             3,
-            &akita_challenges::FoldChallengeFamily::production_for_ring_dim(PREFIX_D)
+            &akita_challenges::FoldChallengeDistribution::production_for_ring_dim(PREFIX_D)
                 .expect("D=64 has a production challenge configuration"),
             1,
             1,
         )
         .expect("audited prefix A bound");
+        let inner_digits = akita_params::sis::compute_num_digits_field_width(
+            SisModulusProfileId::Q128OffsetA7F7.field_bits(),
+            1,
+        );
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -254,7 +258,7 @@ mod tests {
                 ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
                 coeff_linf_bound: inner_bound,
             },
-            1,
+            inner_digits,
         )
         .expect("audited prefix A matrix");
         let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
@@ -309,7 +313,7 @@ mod tests {
                 blocks: akita_params::BlockGeometry::new(1, 1, 1),
                 outer_slice_count: akita_params::CommitmentSliceCount::ONE,
                 inner: akita_params::RoleParams::new(
-                    akita_params::GadgetDigits::new(1, 1),
+                    akita_params::GadgetDigits::new(1, inner_digits),
                     inner_commit_matrix,
                 ),
                 outer: akita_params::RoleParams::new(
@@ -318,7 +322,7 @@ mod tests {
                 ),
             },
             opening: akita_params::GroupOpeningPlan::evaluation_trace(
-                akita_challenges::FoldChallengeFamily::pm1_only(0),
+                akita_challenges::FoldChallengeDistribution::pm1_only(0),
                 1,
                 1,
                 1,

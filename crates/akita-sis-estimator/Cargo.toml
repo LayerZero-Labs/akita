@@ -10,7 +10,7 @@ readme = "../../README.md"
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false, optional = true }
-akita-params = { version = "0.1.0", path = "../akita-params" }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 libm = "0.2"
 num-bigint = "0.5.1"
 num-traits = "0.2"
@@ -23,9 +23,15 @@ thiserror = "2.0"
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [features]
-default = []
+default = ["transcript-keccak"]
 parallel = ["dep:rayon"]
+transcript-blake2b = ["akita-params/transcript-blake2b"]
+transcript-keccak = ["akita-params/transcript-keccak"]
+# Offline LaBinius width tables. They never touch a transcript, but
+# `akita-params` links one, so the tables build on the workspace default
+# backend. No crate forwards this feature.
 labinius-sis = [
+  "transcript-keccak",
   "akita-params/labinius-sis",
   "dep:akita-challenges",
   "akita-challenges/labinius-challenges",

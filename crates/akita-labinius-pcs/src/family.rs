@@ -12,6 +12,7 @@ use akita_config::{
 };
 use akita_params::SisModulusProfileId;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_transcript::ChallengeCodec;
 use akita_types::FpExtEncoding;
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Prime128Offset275,
@@ -41,6 +42,7 @@ pub trait FieldFamily: 'static {
         + 'static;
     /// Field of Fiat-Shamir challenges, evaluation points and claimed values.
     type Challenge: ExtField<Self::Base>
+        + ChallengeCodec
         + FpExtEncoding<Self::Base>
         + MulBaseUnreduced<Self::Base>
         + Ring
@@ -122,7 +124,7 @@ macro_rules! digit_family {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeDistribution, akita_error::AkitaError> {
                 <$preset>::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> SisModulusProfileId {
@@ -161,7 +163,7 @@ macro_rules! digit_family {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeDistribution, akita_error::AkitaError> {
                 <$element_preset>::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> SisModulusProfileId {

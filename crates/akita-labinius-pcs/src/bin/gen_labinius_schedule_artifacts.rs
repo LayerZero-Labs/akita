@@ -15,7 +15,7 @@ use akita_params::{
 };
 use akita_planner::emit::{
     bounded_parallel_filter_map, offline_planning_worker_count, GroupedGenerationRequest,
-    PrecommittedProducer,
+    PlannerCost, PrecommittedProducer, PreplannedSchedule,
 };
 use akita_planner::{
     publish_artifact_outputs, render_schedule_artifact_outputs_with_validation, EmitSpec,
@@ -88,7 +88,11 @@ fn preplan<C: CommitmentConfig>(spec: &mut EmitSpec) -> Result<ValidatedSchedule
         .map_err(|error| error.to_string())?;
     spec.preplanned = planned
         .into_iter()
-        .map(|(key, schedule)| (ScheduleLookupKey::single(key), schedule))
+        .map(|(key, schedule)| PreplannedSchedule {
+            key: ScheduleLookupKey::single(key),
+            schedule,
+            planner_cost: PlannerCost::default(),
+        })
         .collect();
     let catalog = ValidatedScheduleCatalog::try_new(
         spec.family_name,
@@ -183,7 +187,11 @@ fn family_specs<P: FieldFamily>(output_dir: &Path) -> Result<[EmitSpec; 2], Stri
         |request| {
             let schedule =
                 grouped::<P::Digits>(&scalar_rows, request).map_err(|error| error.to_string())?;
-            Ok(Some((request.key(), schedule)))
+            Ok(Some(PreplannedSchedule {
+                key: request.key(),
+                schedule,
+                planner_cost: PlannerCost::default(),
+            }))
         },
     )?;
     digits.preplanned.extend(adapted);
@@ -205,7 +213,10 @@ fn generate(artifact_root: &Path) -> Result<(), String> {
     let mut row_count = 0;
     let outputs = render_schedule_artifact_outputs_with_validation(
         &specs,
-        MaterializationDiagnostics { row_progress: true },
+        MaterializationDiagnostics {
+            row_progress: true,
+            planner_cost: false,
+        },
         |spec, entries| {
             let requested = spec.keys.len() + spec.grouped_requests.len();
             if entries.len() != requested {

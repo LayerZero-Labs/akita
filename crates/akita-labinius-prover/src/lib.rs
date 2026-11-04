@@ -79,7 +79,6 @@ where
 /// honest cap it was sized from. Exhausting the domain is an error.
 pub(crate) fn search_fold_response<const D: usize, M, S>(
     setup: &BinaryClearSetup<D, M>,
-    label: &[u8],
     channel: &mut S,
     mut fold: impl FnMut(&[BinaryChallenge]) -> Result<Vec<[i64; 162]>, AkitaError>,
 ) -> Result<(Vec<BinaryChallenge>, Vec<[i64; 162]>), AkitaError>
@@ -89,8 +88,7 @@ where
 {
     let mut sampler = BinaryChallengeSampler::new(setup.profile().clone());
     for mut nonce in 0..FOLD_RESPONSE_ATTEMPTS {
-        let candidate =
-            channel.preview_fold_challenges(&mut sampler, label, setup.columns(), nonce)?;
+        let candidate = channel.preview_fold_challenges(&mut sampler, setup.columns(), nonce)?;
         let response = fold(&candidate)?;
         if response
             .iter()
@@ -99,8 +97,7 @@ where
         {
             continue;
         }
-        let challenges =
-            channel.fold_challenges(&mut sampler, label, setup.columns(), &mut nonce)?;
+        let challenges = channel.fold_challenges(&mut sampler, setup.columns(), &mut nonce)?;
         if challenges != candidate {
             return Err(AkitaError::Internal(
                 "fold-response preview differs from the committed challenges".into(),
@@ -144,20 +141,15 @@ where
     for value in &mut expansion {
         exchange_binary(channel, value)?;
     }
-    let (_, mut response) = search_fold_response(
-        setup,
-        b"akita/labinius/clear-fold/v1",
-        channel,
-        |challenges| {
-            fold_integer::<H>(
-                source,
-                setup.scalar_rows(),
-                setup.columns(),
-                challenges,
-                setup.profile(),
-            )
-        },
-    )?;
+    let (_, mut response) = search_fold_response(setup, channel, |challenges| {
+        fold_integer::<H>(
+            source,
+            setup.scalar_rows(),
+            setup.columns(),
+            challenges,
+            setup.profile(),
+        )
+    })?;
     exchange_response(channel, setup, &mut response)
 }
 
@@ -173,7 +165,7 @@ where
     H: SwitchField,
     M: TrinomialModulus,
 {
-    let mut channel = new_prover()?;
+    let mut channel = new_prover();
     prove_binary_clear::<H, D, M, _>(setup, source, commitment, point, claim, &mut channel)?;
     Ok(finish_prover(channel))
 }

@@ -31,6 +31,7 @@ pub(super) fn emit_grinding_plan_report(label: &str, plan: &GrindingPlan) {
             GrindingQueryKind::ProofOfWork => "proof_of_work",
             GrindingQueryKind::FoldResponse => "fold_response",
             GrindingQueryKind::FoldChallengeGroup => "fold_challenge_group",
+            GrindingQueryKind::FoldChallengeWork => "fold_challenge_work",
         };
         let run_nonce_bits = u64::from(run.nonce_bits()) * run.multiplicity();
         tracing::info!(
@@ -88,6 +89,7 @@ fn site_report(site: GrindingSite) -> SiteReport {
             group: Some(group),
             ..plain("fold_challenge", "challenge_group")
         },
+        GrindingSite::FoldChallengeWork { .. } => plain("fold_challenge", "proof_of_work"),
         GrindingSite::RingSwitchAlpha { .. } => plain("ring_switch", "alpha"),
         GrindingSite::Tau0Point { .. } => plain("ring_switch", "tau0_point"),
         GrindingSite::Tau1Point { .. } => plain("ring_switch", "tau1_point"),
@@ -100,6 +102,7 @@ fn site_report(site: GrindingSite) -> SiteReport {
         GrindingSite::L2VirtualBatch { .. } => plain("physical_l2", "virtual_batch"),
         GrindingSite::CompressionBinary { .. } => plain("stage2", "compression_binary"),
         GrindingSite::Stage2Batch { .. } => plain("stage2", "claim_batch"),
+        GrindingSite::SetupBatch { .. } => plain("setup_batch", "claim_batch"),
     }
 }
 
@@ -110,6 +113,7 @@ const fn sumcheck_component(protocol: SumcheckProtocol) -> &'static str {
         SumcheckProtocol::PhysicalL2 => "physical_l2",
         SumcheckProtocol::Stage2 => "stage2",
         SumcheckProtocol::Stage3 => "stage3",
+        SumcheckProtocol::SetupBatch => "setup_batch",
     }
 }
 
@@ -120,5 +124,6 @@ const fn sumcheck_protocol(protocol: SumcheckProtocol) -> &'static str {
         SumcheckProtocol::PhysicalL2 => "physical_l2",
         SumcheckProtocol::Stage2 => "stage2",
         SumcheckProtocol::Stage3 => "stage3",
+        SumcheckProtocol::SetupBatch => "setup_batch",
     }
 }

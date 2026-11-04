@@ -45,10 +45,13 @@ fn selection_for<Cfg: CommitmentConfig>(
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> OpeningScheduleSelection {
     schedules
-        .resolve_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitment.profile(),
-            precommitteds: Vec::new(),
-        })
+        .resolve_profiles(
+            &CommittedGroupBatchProfile {
+                final_group: *commitment.profile(),
+                precommitteds: Vec::new(),
+            },
+            0,
+        )
         .expect("select schedule")
         .selection()
 }
@@ -216,6 +219,7 @@ where
         .expect("selected schedule");
     let bound = akita_schedules::expanded_schedule_proof_bound(
         &ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: resolved.profiles().final_group.group,
             precommitteds: resolved.profiles().precommitteds.clone(),
         },
@@ -234,6 +238,7 @@ where
                 session,
                 verify_input::<Cfg>(selection, &point, claimed, &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
     };

@@ -8,7 +8,7 @@
 use akita_algebra::ring::{
     shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial, ResidueKernelPoint,
 };
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationPolynomialKind, TrinomialSign};
 use jolt_field::Field;
@@ -23,15 +23,15 @@ pub(crate) use structured::{PaddingWeights, RootEq, RootWeightFamily, SegmentLan
 /// Source interpretation of one group. Feature enablement never selects it.
 #[derive(Clone, Debug)]
 pub enum NativeRootGroupKind {
-    Ordinary(FoldChallengeFamily),
+    Ordinary(FoldChallengeDistribution),
     Binary(BinarySourceDescriptor),
 }
 
 impl NativeRootGroupKind {
-    pub fn challenge_family(&self) -> FoldChallengeFamily {
+    pub fn challenge_family(&self) -> FoldChallengeDistribution {
         match self {
             Self::Ordinary(family) => *family,
-            Self::Binary(_) => FoldChallengeFamily::BinaryRoot,
+            Self::Binary(_) => FoldChallengeDistribution::BinaryRoot,
         }
     }
 

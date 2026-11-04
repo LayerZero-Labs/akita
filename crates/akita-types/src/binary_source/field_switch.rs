@@ -11,7 +11,7 @@ use super::{BinarySourceDescriptor, BinaryTerminalClaim, BinaryWordClaim};
 
 /// Exchange exactly 128 canonical H carrier partials before the row selector.
 pub fn field_switch_partials(
-    channel: &mut (impl ProofChannel + ?Sized),
+    channel: &mut impl ProofChannel,
     values: &[u128],
 ) -> Result<SwitchPartials<H>, AkitaError> {
     if values.len() != 128 {
@@ -27,22 +27,20 @@ pub fn field_switch_partials(
 }
 
 /// Draw exactly 162 uniform bits, without reduction modulo an odd prime.
-pub fn field_switch_challenge(channel: &mut (impl ProofChannel + ?Sized)) -> Result<B, AkitaError> {
-    let block = channel.challenge_block()?;
-    let mut bytes = [0; 21];
-    bytes.copy_from_slice(block.get(..21).ok_or(AkitaError::Internal(
-        "field-switch challenge block width".into(),
-    ))?);
-    *bytes.last_mut().ok_or(AkitaError::Internal(
-        "field-switch challenge encoding width".into(),
-    ))? &= 3;
-    B::from_bytes(&bytes).ok_or(AkitaError::InvalidProof)
+pub fn field_switch_challenge(channel: &mut impl ProofChannel) -> Result<B, AkitaError> {
+    channel.challenge_message(21, |bytes| {
+        let mut bytes: [u8; 21] = bytes
+            .try_into()
+            .map_err(|_| AkitaError::Internal("field-switch challenge width".into()))?;
+        bytes[20] &= 3;
+        B::from_bytes(&bytes).ok_or(AkitaError::InvalidProof)
+    })
 }
 
 /// Exchange the two free coefficients of a characteristic-two quadratic.
 /// Its linear coefficient is determined by `g(0)+g(1)=claim`.
 pub fn field_switch_round(
-    channel: &mut (impl ProofChannel + ?Sized),
+    channel: &mut impl ProofChannel,
     claim: &mut B,
     c0: B,
     c2: B,
@@ -64,7 +62,7 @@ pub fn field_switch_round(
 /// The low `log2(C)` carrier variables select columns; the rest select rows.
 #[allow(clippy::too_many_arguments)]
 pub fn field_switch_terminal(
-    channel: &mut (impl ProofChannel + ?Sized),
+    channel: &mut impl ProofChannel,
     descriptor: &BinarySourceDescriptor,
     word_claim: &BinaryWordClaim,
     host_point: &[H],

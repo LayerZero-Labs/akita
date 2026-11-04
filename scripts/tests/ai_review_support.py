@@ -69,6 +69,9 @@ class FakeGitHub:
         self.permissions_checked.append(user.get("id"))
         return user.get("id") == 42 and self.permission in ("admin", "maintain", "write")
 
+    def admin(self, user):
+        return user.get("id") == 42 and self.permission == "admin"
+
     def pages(self, path):
         if path == "issues/7/events":
             return self.events

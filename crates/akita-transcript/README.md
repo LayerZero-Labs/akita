@@ -6,8 +6,8 @@ Spongefish proof-stream support for Akita.
 
 Akita's transcript hardening has three active pieces:
 
-1. `AkitaInstanceDescriptor` bytes are bound into the spongefish preamble through `DomainSeparator.instance(...)`.
-2. Spongefish `ProverState` and `VerifierState` are the only production transcript implementations. The default backend is Blake2b; `--no-default-features --features transcript-keccak` selects Keccak instead. Exactly one backend must be selected.
+1. `bind_instance` absorbs the protocol tag and the `AkitaInstanceDescriptor` bytes as Akita's first public message, on its own session or inside a caller's transcript.
+2. Spongefish `ProverState` and `VerifierState` are the only production transcript implementations. The default backend is Keccak; `--no-default-features --features transcript-blake2b` selects BLAKE2b instead. Exactly one backend must be selected.
 3. Proof receipt, public-message absorption, challenge extraction, and EOF checking operate on the same state and argument string.
 
 The versioned instance descriptor binds a fixed positional grammar. Public

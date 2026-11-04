@@ -59,6 +59,9 @@ enum GrindingSuccessorKey {
         d_a: usize,
         opening_vars: usize,
         live_blocks: u64,
+        /// `log2` size of the terminal challenge set that prices the
+        /// terminal fold proof of work.
+        challenge_set_bits: u32,
     },
 }
 
@@ -66,7 +69,7 @@ impl ParentObservableKey {
     pub(super) fn new(
         policy: &PlannerPolicy,
         recursive: Option<&akita_params::CommittedGroupParams>,
-        terminal: Option<&akita_params::TerminalFoldParams>,
+        terminal: Option<&CandidateTerminalResponse>,
     ) -> Result<Self, AkitaError> {
         if recursive.is_some() == terminal.is_some() {
             return Err(AkitaError::InvalidSetup(
@@ -74,7 +77,11 @@ impl ParentObservableKey {
             ));
         }
         let Some(first) = recursive else {
-            let terminal = terminal.ok_or_else(|| {
+            let CandidateTerminalResponse {
+                params: terminal,
+                fold_cost,
+                ..
+            } = terminal.ok_or_else(|| {
                 AkitaError::InvalidSetup("parent key is missing its terminal successor".into())
             })?;
             return Ok(Self {
@@ -91,6 +98,7 @@ impl ParentObservableKey {
                             "terminal live-block count exceeds grinding query width".into(),
                         )
                     })?,
+                    challenge_set_bits: fold_cost.challenge_set_bits(),
                 },
             });
         };
@@ -330,6 +338,42 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
     })
 }
 
+/// Upper bound on a schedule's total setup field elements for one search.
+///
+/// Every rejection records its setup size, so a caller whose search found
+/// nothing can learn the smallest size it excluded.
+pub(crate) struct SetupFieldBudget {
+    limit: usize,
+    min_rejected: std::cell::Cell<Option<usize>>,
+}
+
+impl SetupFieldBudget {
+    pub(crate) const fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            min_rejected: std::cell::Cell::new(None),
+        }
+    }
+
+    /// Whether `setup_field_elements` fits, recording it when it does not.
+    pub(crate) fn admits(&self, setup_field_elements: usize) -> bool {
+        if setup_field_elements <= self.limit {
+            return true;
+        }
+        self.min_rejected.set(Some(
+            self.min_rejected
+                .get()
+                .map_or(setup_field_elements, |min| min.min(setup_field_elements)),
+        ));
+        false
+    }
+
+    /// Smallest setup size this budget rejected, if any.
+    pub(crate) fn min_rejected(&self) -> Option<usize> {
+        self.min_rejected.get()
+    }
+}
+
 /// DP-invariant inputs for the suffix search.
 ///
 /// Values that remain constant across the whole recursion are carried in one
@@ -340,9 +384,9 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) challenge_order: akita_params::ChallengeFieldOrder,
     pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     pub(crate) ring_challenge_config:
-        &'a dyn Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
+        &'a dyn Fn(usize) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>,
     pub(crate) key: PolynomialGroupLayout,
-    pub(crate) setup_field_budget: Option<usize>,
+    pub(crate) setup_field_budget: Option<&'a SetupFieldBudget>,
     pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,
     /// Optional exact main-group root selected by an earlier scalar plan.
     ///
