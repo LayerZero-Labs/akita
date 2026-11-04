@@ -44,6 +44,9 @@ pub(super) struct FactoredProductTerm<E: Field> {
 
 enum SetupProductTable<E> {
     Coefficient(Vec<E>),
+    /// Index state of a one-coefficient view before its first index fold:
+    /// every entry is read from the setup source, which is not copied.
+    Source,
     Index(Vec<E>),
 }
 
@@ -57,7 +60,8 @@ enum SetupProductTable<E> {
 /// coefficient vector and one contracted setup-index vector in the extension
 /// field.
 pub(super) struct RectangularSetupProductTerm<F: Field, E: Field> {
-    setup: SetupProductSource<F>,
+    /// Released once the index table is materialized; no later round reads it.
+    setup: Option<SetupProductSource<F>>,
     required_rows: usize,
     row_capacity: usize,
     coefficient_len: usize,
@@ -152,7 +156,7 @@ where
         let total_rounds = coefficient_rounds + index_factor.len().trailing_zeros() as usize;
 
         let mut term = Self {
-            setup: source,
+            setup: Some(source),
             required_rows,
             row_capacity: index_factor.len(),
             coefficient_len,
@@ -165,11 +169,17 @@ where
             input_claim,
         };
         // A one-coefficient setup view has no coefficient-round challenge to
-        // trigger the normal phase transition. Materialize its index state at
-        // construction so the first index round (or a zero-round final value)
-        // consumes the same canonical table as every other geometry.
+        // trigger the normal phase transition. Its index table is the source
+        // itself: the first index round reads it in place and the first
+        // challenge folds it into a half-length table, so the term never holds
+        // a full-length copy beside the source. A zero-round view materializes
+        // its single final value now.
         if coefficient_rounds == 0 {
-            term.table = SetupProductTable::Index(term.materialize_index_table());
+            if total_rounds == 0 {
+                term.enter_index_phase();
+            } else {
+                term.table = SetupProductTable::Source;
+            }
         }
         Ok(term)
     }
@@ -185,11 +195,21 @@ where
     pub(super) fn compute_round_univariate(&self) -> UnivariatePoly<E> {
         let (constant, linear, quadratic) = match &self.table {
             SetupProductTable::Coefficient(table) => {
-                accumulate_left_round(table, &self.coefficient_factor, E::one())
+                accumulate_left_round(|index| table[index], &self.coefficient_factor, E::one())
             }
-            SetupProductTable::Index(table) => {
-                accumulate_left_round(table, &self.index_factor, self.coefficient_factor[0])
+            SetupProductTable::Source => {
+                let coefficient_eq = self.coefficient_eq();
+                accumulate_left_round(
+                    |setup_index| self.index_entry(&coefficient_eq, setup_index),
+                    &self.index_factor,
+                    self.coefficient_factor[0],
+                )
             }
+            SetupProductTable::Index(table) => accumulate_left_round(
+                |index| table[index],
+                &self.index_factor,
+                self.coefficient_factor[0],
+            ),
         };
         UnivariatePoly::new(vec![constant, linear, quadratic])
     }
@@ -198,23 +218,52 @@ where
         match &mut self.table {
             SetupProductTable::Coefficient(table) => {
                 self.coefficient_challenges.push(challenge);
-                fold_dense_left_round(table, challenge);
+                *table = fold_dense_left_round(table.len(), |index| table[index], challenge);
                 fold_factor_in_place(&mut self.coefficient_factor, challenge);
                 if round + 1 == self.coefficient_rounds {
-                    self.table = SetupProductTable::Index(self.materialize_index_table());
+                    self.enter_index_phase();
                 }
             }
+            SetupProductTable::Source => {
+                let coefficient_eq = self.coefficient_eq();
+                let folded = fold_dense_left_round(
+                    self.row_capacity,
+                    |setup_index| self.index_entry(&coefficient_eq, setup_index),
+                    challenge,
+                );
+                self.table = SetupProductTable::Index(folded);
+                self.setup = None;
+                fold_factor_in_place(&mut self.index_factor, challenge);
+            }
             SetupProductTable::Index(table) => {
-                fold_dense_left_round(table, challenge);
+                *table = fold_dense_left_round(table.len(), |index| table[index], challenge);
                 fold_factor_in_place(&mut self.index_factor, challenge);
             }
         }
     }
 
-    fn materialize_index_table(&self) -> Vec<E> {
+    fn coefficient_eq(&self) -> Vec<E> {
         let coefficient_eq = EqPolynomial::evals(&self.coefficient_challenges)
             .expect("validated power-of-two setup coefficient domain");
         debug_assert_eq!(coefficient_eq.len(), self.coefficient_len);
+        coefficient_eq
+    }
+
+    /// Index-table entry of setup row `setup_index`: its coefficients
+    /// contracted with the bound coefficient challenges.
+    fn index_entry(&self, coefficient_eq: &[E], setup_index: usize) -> E {
+        let start = setup_index * self.coefficient_len;
+        let source = self
+            .setup
+            .as_ref()
+            .expect("the setup source is retained until the index table exists")
+            .coefficients();
+        eval_flat_ring_at_pows_fast(&source[start..start + self.coefficient_len], coefficient_eq)
+    }
+
+    /// Materialize the index table and release the setup source.
+    fn enter_index_phase(&mut self) {
+        let coefficient_eq = self.coefficient_eq();
         let _span = tracing::info_span!(
             "stage3_setup_index_pass",
             kernel = "rectangular_base_field",
@@ -226,15 +275,11 @@ where
             setup_table_state_elements = (self.row_capacity + self.coefficient_len) as u64,
         )
         .entered();
-        cfg_into_iter!(0..self.row_capacity)
-            .map(|setup_index| {
-                let start = setup_index * self.coefficient_len;
-                eval_flat_ring_at_pows_fast(
-                    &self.setup.coefficients()[start..start + self.coefficient_len],
-                    &coefficient_eq,
-                )
-            })
-            .collect::<Vec<_>>()
+        let table = cfg_into_iter!(0..self.row_capacity)
+            .map(|setup_index| self.index_entry(&coefficient_eq, setup_index))
+            .collect::<Vec<_>>();
+        self.table = SetupProductTable::Index(table);
+        self.setup = None;
     }
 
     pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
@@ -313,7 +358,11 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
         let (constant, linear, quadratic) = if round < self.right_rounds {
             accumulate_right_round(&self.table, &self.left_factor, &self.right_factor)
         } else {
-            accumulate_left_round(&self.table, &self.left_factor, self.right_factor[0])
+            accumulate_left_round(
+                |index| self.table[index],
+                &self.left_factor,
+                self.right_factor[0],
+            )
         };
         UnivariatePoly::new(vec![constant, linear, quadratic])
     }
@@ -419,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn rectangular_setup_product_materializes_index_state_without_coefficient_rounds() {
+    fn rectangular_setup_product_reads_the_source_index_state_without_coefficient_rounds() {
         assert_round_parity(3, 4, 1);
         assert_round_parity(1, 1, 1);
     }

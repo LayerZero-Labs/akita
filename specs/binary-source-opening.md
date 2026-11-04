@@ -1594,11 +1594,14 @@ rather than once per carrier column. The prover expands each column by at most
 The N=2^23 `word-prime` prover peak is 10,190,553,088 bytes in the current
 protocol and 10,190,028,800 bytes in the dev protocol. The largest measured
 peak, N=2^23 dev `prime5`, is 10,594,435,072 bytes. All are below one sixth
-of the 68,719,476,736-byte host. The B/D setup offload adds one dense Stage 3
-weight table of `16 * 2^k'` bytes and the B/D cells of the prefix; where the
-prefix domain does not grow, the prover peak rose by 0.14 GB (N=2^22 `word`)
-to 0.69 GB (N=2^23 `word-prime-ordinary`, from 9,517,465,600 to 10,211,393,536
-bytes) against the tables before the offload (appendix). Peak RSS includes cold preparation in each
+of the 68,719,476,736-byte host. Against the tables before the B/D setup
+offload (appendix), the prover peak rose in every shape. Where the prefix
+domain does not grow, it rose by 0.14 GB (N=2^22 `word`) to 0.69 GB (N=2^23
+`word-prime-ordinary`, from 9,517,465,600 to 10,211,393,536 bytes). The
+offload adds a dense `16 * 2^k'`-byte Stage 3 weight in every shape. Removing
+Stage 3's redundant full-length index table left the process peak unchanged,
+so that weight does not set the peak. The setup offload note, §8, separates
+prefix growth, dense weights and backend state. Peak RSS includes cold preparation in each
 isolated process. These values establish memory fit for this fixture; they do
 not certify another source count, shape or parameter choice.
 

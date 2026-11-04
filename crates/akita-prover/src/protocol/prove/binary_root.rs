@@ -377,6 +377,11 @@ where
         &stage2.challenges,
         prefix.n_prefix()?,
     )?;
+    // The shared setup source is built first: converting it into the shared
+    // slice copies it once, and that copy must not overlap the dense weight.
+    let coefficients: std::sync::Arc<[_]> = typed
+        .setup_coefficients(&expanded.setup_seed.seed, manifest, prefix.n_prefix()?)?
+        .into();
     // A, B and D share one dense weight over the typed prefix. It enters as
     // the index factor: the rounds bind the same variables in the same order,
     // and the input pass keeps one accumulator instead of one per cell.
@@ -387,13 +392,11 @@ where
         [&authentication[0], &authentication[1]],
         prefix.n_prefix()?,
     )?;
-    let coefficients =
-        typed.setup_coefficients(&expanded.setup_seed.seed, manifest, prefix.n_prefix()?)?;
     let (claim, session) =
         backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
             session: proof_session,
             level: 0,
-            coefficients: coefficients.into(),
+            coefficients,
             index_factor,
             coefficient_factor: vec![Cfg::ExtField::one()],
         })?;

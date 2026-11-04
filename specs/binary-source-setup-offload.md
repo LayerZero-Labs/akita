@@ -45,15 +45,17 @@ from 2^24 to 2^25 cells at 2^22 `word-prime` and `word-prime-ordinary`, and
 to 2^26 for `prime5` at both sizes. At 2^22 `word` and at 2^23 `word`,
 `word-prime` and `word-prime-ordinary`, the prefix domain is unchanged. Each
 added Stage 3 round adds `2/P = 2^-127` of interactive error, 32 bytes of
-round message and the round's scheduled grinding nonce. The prover builds one
-dense weight table over the prefix, as it already did for A.
+round message and the round's scheduled grinding nonce. The prover now builds
+a dense Stage 3 weight over the whole prefix. Before the change, the A weight
+entered Stage 3 as two small factors.
 
 **Conclusion:** the offload is sound and beats the alternatives in Section 9.
 It is implemented with the packed layout of Section 4. Measured, the
 binary-only shapes verify in 14.9 to 17.5 ms at 2^22 and 2^23, against 33.7 to
 84.1 ms with the byte-preserving speedups alone and 249 to 785 ms before them
-(Section 8). The proof and the prover's memory grow only where the prefix
-domain grows. An earlier appended
+(Section 8). The proof grows only where the prefix domain grows. The
+prover's peak memory grows in every shape, by 0.14 to 2.39 GB, and Section 8
+separates what is known about its sources. An earlier appended
 layout was implemented and measured first; Section 9.4 records why it was
 replaced. The mixed shape's ordinary-root rows are not offloaded. Their setup
 derivation is under 1 ms, and their verifier cost is flat-term construction
@@ -409,10 +411,12 @@ spec and the digest table.
 also does the following:
 
 - It builds one dense weight table of `2^k'` field elements
-  (`prover_weights`). The A part is expanded from `BinaryAProduct::factors`,
-  as before. Each 64-cell chunk of a piece is `beta_row * K(e^q_c)`, computed
-  in parallel per chunk. The table needs `16 * 2^k'` bytes; it is unchanged
-  where `k' = k`.
+  (`prover_weights`), `16 * 2^k'` bytes. The A part is expanded from
+  `BinaryAProduct::factors`. Each 64-cell chunk of a piece is
+  `beta_row * K(e^q_c)`, computed in parallel per chunk. Before the change,
+  Stage 3 received those factors directly: `2^k / 4096` row entries and 4,096
+  coefficient entries. So this table is new state in every shape, also where
+  `k' = k`.
 - It derives the B/D setup copies into the prefix (`setup_coefficients`)
   during cold preparation, with the same `setup_entry` reads the verifier made
   online before the change.
@@ -442,12 +446,48 @@ bytes at 2^25 and 7,666 to 9,363 bytes at 2^26. The verifier's B/D work is
 gone in every shape.
 
 `begin_factored_stage3` receives the dense table as its index factor with a
-one-element coefficient factor, so no prover kernel changes. The rectangular
-product then binds the same variables in the same order as with the table as
-its coefficient factor, and the proof bytes are identical. The choice matters
-for memory: the kernel's first pass keeps one unreduced accumulator per
-coefficient-factor entry in each parallel task, which at 2^22 `word` raised
-the prover's peak RSS from 5.18 GB to 7.33 GB.
+one-element coefficient factor. The rectangular product then binds the same
+variables in the same order as with the table as its coefficient factor, and
+the proof bytes are identical. The choice matters for memory: the kernel's
+first pass keeps one unreduced accumulator per coefficient-factor entry in
+each parallel task, which at 2^22 `word` raised the prover's peak RSS from
+5.18 GB to 7.33 GB.
+
+**Where the prover memory goes.** Three sources add memory, and they do not
+peak together.
+
+- *Prefix growth.* Where `k' > k`, the setup prefix, its commitment and the
+  successor folds that open it all double or quadruple. This is the only
+  source that also changes the proof.
+- *Dense weights.* The table above is `16 * 2^k'` bytes in every shape:
+  256 MiB at `k' = 24`, 512 MiB at 25 and 1 GiB at 26.
+- *Backend state.* With a one-element coefficient factor there is no
+  coefficient round, so the rectangular kernel used to build its index table
+  at construction. That table is a full-length copy of the setup source, so
+  Stage 3 held the source, the dense weight and the copy (three
+  `16 * 2^k'`-byte tables), and the first fold added half a table. The
+  prover's `Vec`-to-`Arc` conversion of the source also overlapped the dense
+  weight. The kernel now reads the index table from the source until the first
+  challenge folds it to half length, then releases the source. The prover
+  converts the source before it builds the weight. This changes no proof byte,
+  and it lowers Stage 3's peak from three and a half tables to two and a half.
+
+The process peak did not move with that change. These are isolated proving
+processes, both with matching digest pins, measured back to back on the shared
+host before and after it:
+
+| N | Shape | `k'` | Prover peak RSS before → after (bytes) |
+| --- | --- | ---: | --- |
+| 2^22 | word | 24 | 5,206,458,368 → 5,189,353,472 |
+| 2^22 | prime5 | 26 | 10,007,166,976 → 10,012,590,080 |
+
+Removing a 256 MiB (`word`) or 1 GiB (`prime5`) Stage 3 table changed the peak
+by less than 20 MB, so the process peak lies outside Stage 3 at these shapes.
+The growth in the table above is therefore not explained by the Stage 3
+dense state. Where `k' > k` it is consistent with prefix growth. At 2^22
+`word` (+0.14 GB) and the 2^23 shapes with `k' = k` (+0.26 to +0.69 GB), the
+prefix domain is unchanged; which phase sets the peak there has not been
+located.
 
 ## 9. Alternatives
 
