@@ -39,6 +39,7 @@ where
         + MulBaseUnreduced<F>
         + ChallengeCodec,
 {
+    let _span = tracing::info_span!("binary_root_verify").entered();
     if !(1..=2).contains(&claims.num_groups())
         || E::DEGREE != 1
         || akita_params::field_modulus::<F>()? != akita_params::binary_setup::BINARY_SETUP_P
@@ -125,6 +126,7 @@ where
             )
         })
         .transpose()?;
+    let span = tracing::info_span!("binary_root_public_new").entered();
     let public = BinaryRootPublic::new(
         manifest,
         terminal.as_ref(),
@@ -134,6 +136,7 @@ where
         next.params.d_a(),
         ordinary_profile,
     )?;
+    drop(span);
     let domain_len = public.plan().repacking().domain_len();
     if !domain_len.is_power_of_two() {
         return Err(AkitaError::InvalidProof);
@@ -181,7 +184,10 @@ where
     let alpha = grinding.grinded_ext_challenge::<E>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let tau0 =
         grinding.grinded_ext_challenges::<E>(GrindingSite::Tau0Point { level: 0 }, num_vars)?;
-    let batches = binary_root_batch_challenges::<E, _>(grinding, public.batch_count())?;
+    let batches = {
+        let _span = tracing::info_span!("binary_root_tau1_draw").entered();
+        binary_root_batch_challenges::<E, _>(grinding, public.batch_count())?
+    };
     let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
     let ordinary_payload = ordinary.map(|group| lift(group.commitment().rows().coeffs()));
     let ordinary_claim = ordinary
@@ -203,6 +209,7 @@ where
         .try_into()
         .map_err(|_| AkitaError::InvalidProof)?;
     let rho = projections.batch(&mu)?;
+    let span = tracing::info_span!("binary_root_relation_compile").entered();
     let (relation, negative_bits) = public.relation(
         &challenges,
         alpha,
@@ -215,7 +222,9 @@ where
         None,
     )?;
     drop(batches);
+    drop(span);
 
+    let span = tracing::info_span!("binary_root_stage1_stage2_replay").entered();
     let equality_point =
         DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau0, num_vars, 0)?;
     let stage1 = Stage1Verifier::new(equality_point, DigitRangePlan::new(8)?)
@@ -234,6 +243,7 @@ where
         akita_sumcheck::SumcheckShape::new(num_vars, 3)?,
     )?;
     let witness_eval = akita_types::stage2_w_eval::<F, E, _>(grinding, 0, E::zero())?;
+    drop(span);
     let negative_bit_weight = akita_types::native_root_relation::NativeRootWeights::new(
         domain_len,
         negative_bits,
@@ -264,7 +274,11 @@ where
             |point| product.evaluate(point),
         )?
     };
-    let expected = (relation.evaluate(&replay.challenges)? + stage3.claim) * witness_eval
+    let relation_evaluation = {
+        let _span = tracing::info_span!("binary_root_relation_evaluate").entered();
+        relation.evaluate(&replay.challenges)?
+    };
+    let expected = (relation_evaluation + stage3.claim) * witness_eval
         + (negative_bit_weight + gamma * EqPolynomial::mle(&stage1.point, &replay.challenges)?)
             * witness_eval
             * (witness_eval + E::one());

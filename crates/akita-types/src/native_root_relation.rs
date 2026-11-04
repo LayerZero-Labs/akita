@@ -16,7 +16,9 @@ use jolt_field::Field;
 use crate::binary_source::{BinarySourceDescriptor, BINARY_SOURCE_Q};
 use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
+mod structured;
 pub use binary_commitment::binary_commitment_group;
+pub(crate) use structured::{PaddingWeights, RootEq, RootWeightFamily, SegmentLanes};
 
 /// Source interpretation of one group. Feature enablement never selects it.
 #[derive(Clone, Debug)]
@@ -232,16 +234,37 @@ impl<E: Field> NativeRootRelation<E> {
 }
 
 /// Scalar relation after ring switching, in the successor's coefficient order.
+///
+/// The weight of a table address is the sum of its explicit terms and of every
+/// structured family. Families keep the public inputs of one identity and
+/// evaluate their multilinear extension directly; `materialize` streams the
+/// same field elements into a dense table for the prover.
 #[derive(Clone, Debug)]
 pub struct NativeRootWeights<E: Field> {
     table_len: usize,
     terms: Vec<(usize, E)>,
+    families: Vec<RootWeightFamily<E>>,
     claim: E,
 }
 
 impl<E: Field> NativeRootWeights<E> {
     pub fn new(table_len: usize, terms: Vec<(usize, E)>, claim: E) -> Result<Self, AkitaError> {
-        if !table_len.is_power_of_two() || terms.iter().any(|(index, _)| *index >= table_len) {
+        Self::structured(table_len, terms, Vec::new(), claim)
+    }
+
+    /// Explicit terms together with structured families on the same domain.
+    pub(crate) fn structured(
+        table_len: usize,
+        terms: Vec<(usize, E)>,
+        families: Vec<RootWeightFamily<E>>,
+        claim: E,
+    ) -> Result<Self, AkitaError> {
+        if !table_len.is_power_of_two()
+            || terms.iter().any(|(index, _)| *index >= table_len)
+            || families
+                .iter()
+                .any(|family| family.table_len() != table_len)
+        {
             return Err(AkitaError::InvalidSetup(
                 "invalid root weight addresses".into(),
             ));
@@ -249,12 +272,13 @@ impl<E: Field> NativeRootWeights<E> {
         Ok(Self {
             table_len,
             terms,
+            families,
             claim,
         })
     }
 
     /// Join ordered linear oracles on one domain, adding an independent target.
-    /// Reuse the first oracle's storage rather than copying its padding terms.
+    /// Reuse the first oracle's storage rather than copying its explicit terms.
     pub(crate) fn merge(
         table_len: usize,
         components: impl IntoIterator<Item = Self>,
@@ -272,6 +296,8 @@ impl<E: Field> NativeRootWeights<E> {
         }
         let additional = checked::sum(components.iter().skip(1).map(|weights| weights.terms.len()))
             .ok_or(AkitaError::InvalidProof)?;
+        let families = checked::sum(components.iter().map(|weights| weights.families.len()))
+            .ok_or(AkitaError::InvalidProof)?;
         let mut components = components.into_iter();
         let Some(mut merged) = components.next() else {
             return Self::new(table_len, Vec::new(), claim);
@@ -280,9 +306,14 @@ impl<E: Field> NativeRootWeights<E> {
             .terms
             .try_reserve_exact(additional)
             .map_err(|_| AkitaError::InvalidProof)?;
+        merged
+            .families
+            .try_reserve_exact(families - merged.families.len())
+            .map_err(|_| AkitaError::InvalidProof)?;
         merged.claim = claim + merged.claim;
         for weights in components {
             merged.terms.extend(weights.terms);
+            merged.families.extend(weights.families);
             merged.claim += weights.claim;
         }
         Ok(merged)
@@ -291,6 +322,8 @@ impl<E: Field> NativeRootWeights<E> {
     pub fn table_len(&self) -> usize {
         self.table_len
     }
+    /// Explicit address terms only. Structured families are not listed here;
+    /// use [`Self::materialize`] for the complete weight table.
     pub fn terms(&self) -> &[(usize, E)] {
         &self.terms
     }
@@ -307,9 +340,39 @@ impl<E: Field> NativeRootWeights<E> {
             });
         }
         let equality = akita_algebra::offset_eq::OffsetEqWindow::new(point)?;
-        Ok(self.terms.iter().fold(E::zero(), |acc, &(index, weight)| {
+        let mut value = self.terms.iter().fold(E::zero(), |acc, &(index, weight)| {
             acc + weight * equality.eval(index)
-        }))
+        });
+        if !self.families.is_empty() {
+            let equality = RootEq::new(point)?;
+            for family in &self.families {
+                value += family.evaluate(&equality)?;
+            }
+        }
+        Ok(value)
+    }
+
+    /// Dense public weights for the prover's Stage 2 table.
+    ///
+    /// Each entry is the field sum of every explicit and structured term at
+    /// that address, exactly the oracle that [`Self::evaluate`] extends.
+    pub fn materialize(&self) -> Result<Vec<E>, AkitaError> {
+        let mut table = Vec::new();
+        table
+            .try_reserve_exact(self.table_len)
+            .map_err(|_| AkitaError::InvalidSetup("root weight table allocation failed".into()))?;
+        table.resize(self.table_len, E::zero());
+        let mut add = |address: usize, weight: E| {
+            *table.get_mut(address).ok_or(AkitaError::InvalidProof)? += weight;
+            Ok(())
+        };
+        for &(address, weight) in &self.terms {
+            add(address, weight)?;
+        }
+        for family in &self.families {
+            family.visit(&mut add)?;
+        }
+        Ok(table)
     }
 
     /// Check the scalar identity against a fixed table, for construction and
@@ -321,14 +384,17 @@ impl<E: Field> NativeRootWeights<E> {
                 actual: table.len(),
             });
         }
-        let value = self
-            .terms
-            .iter()
-            .try_fold(E::zero(), |acc, &(index, weight)| {
-                Ok::<_, AkitaError>(
-                    acc + weight * table.get(index).copied().ok_or(AkitaError::InvalidProof)?,
-                )
-            })?;
+        let mut value = E::zero();
+        let mut add = |index: usize, weight: E| {
+            value += weight * table.get(index).copied().ok_or(AkitaError::InvalidProof)?;
+            Ok(())
+        };
+        for &(index, weight) in &self.terms {
+            add(index, weight)?;
+        }
+        for family in &self.families {
+            family.visit(&mut add)?;
+        }
         if value != self.claim {
             return Err(AkitaError::InvalidProof);
         }

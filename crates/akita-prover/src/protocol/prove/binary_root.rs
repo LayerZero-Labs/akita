@@ -10,7 +10,7 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
-use jolt_field::{AdditiveGroup, Zero};
+use jolt_field::AdditiveGroup;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -298,6 +298,7 @@ where
     let rho = projections.batch(&mu)?;
     let matrix =
         akita_types::binary_source::binary_root_matrix(&expanded.setup_seed.seed, manifest)?;
+    let span = tracing::info_span!("binary_root_relation_compile").entered();
     let (relation, negative_binary_weights) = public.relation(
         &challenges,
         alpha,
@@ -311,6 +312,7 @@ where
     )?;
     drop(matrix);
     drop(batches);
+    drop(span);
     let relation_claim = relation.claim();
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
@@ -319,11 +321,13 @@ where
     )?;
     let gamma =
         grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
-    let mut weights = vec![Cfg::ExtField::zero(); domain.domain_len()];
-    for &(address, weight) in relation.terms() {
-        *weights.get_mut(address).ok_or(AkitaError::InvalidProof)? += weight;
+    let span = tracing::info_span!("binary_root_relation_materialize").entered();
+    if relation.table_len() != domain.domain_len() {
+        return Err(AkitaError::InvalidProof);
     }
+    let weights = relation.materialize()?;
     drop(relation);
+    drop(span);
     let session = backend.begin_root_relation(
         &witness,
         weights,

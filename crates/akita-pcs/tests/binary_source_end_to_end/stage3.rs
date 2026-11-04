@@ -187,59 +187,88 @@ pub(super) fn reject_foreign_prefixes(
 }
 
 /// Time the root's A arithmetic and actual Stage 3 transcript replay.
-/// A fresh thread-local subscriber prevents unrelated fixture spans from being
-/// included and requires exactly one completed root A span per verification.
+///
+/// Capture is active only on the calling thread for the duration of `verify`,
+/// which keeps unrelated fixture spans out and requires exactly one completed
+/// root A span per verification. The subscriber itself is the binary's global
+/// default, installed once, for the reason documented at
+/// `common::proof_size::install_capture_layer`: with a scoped subscriber,
+/// another thread that reaches the root A callsite first without one can cache
+/// it as never interested, and this capture then records nothing.
 pub(super) fn measure_root_a<T>(verify: impl FnOnce() -> T) -> (T, std::time::Duration) {
-    use std::sync::{Arc, Mutex};
+    use std::cell::RefCell;
+    use std::sync::Once;
     use std::time::{Duration, Instant};
-    use tracing::{span::Id, Subscriber};
+    use tracing::subscriber::Interest;
+    use tracing::{span::Id, Metadata, Subscriber};
     use tracing_subscriber::layer::{Context, SubscriberExt};
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::Layer;
 
-    struct Started(Instant);
-    struct Capture {
-        elapsed: Arc<Mutex<Option<Duration>>>,
+    const ROOT_A: &str = "binary_root_a_stage3";
+    thread_local! {
+        /// The completed root A duration, while this thread's capture is active.
+        static CAPTURE: RefCell<Option<Option<Duration>>> = const { RefCell::new(None) };
     }
+    fn captures(metadata: &Metadata<'_>) -> bool {
+        metadata.is_span() && metadata.name() == ROOT_A
+    }
+
+    struct Started(Instant);
+    struct Capture;
     impl<S> Layer<S> for Capture
     where
         S: Subscriber + for<'lookup> LookupSpan<'lookup>,
     {
+        fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
+            if captures(metadata) {
+                Interest::always()
+            } else {
+                Interest::never()
+            }
+        }
+
+        fn enabled(&self, metadata: &Metadata<'_>, _context: Context<'_, S>) -> bool {
+            captures(metadata)
+        }
+
         fn on_enter(&self, id: &Id, context: Context<'_, S>) {
             let span = context.span(id).expect("entered span is registered");
-            if span.metadata().name() == "binary_root_a_stage3" {
-                let mut extensions = span.extensions_mut();
-                if extensions.get_mut::<Started>().is_none() {
-                    extensions.insert(Started(Instant::now()));
-                }
+            let mut extensions = span.extensions_mut();
+            if extensions.get_mut::<Started>().is_none() {
+                extensions.insert(Started(Instant::now()));
             }
         }
 
         fn on_close(&self, id: Id, context: Context<'_, S>) {
             let span = context.span(&id).expect("closing span is registered");
-            if span.metadata().name() == "binary_root_a_stage3" {
-                let elapsed = span
-                    .extensions()
-                    .get::<Started>()
-                    .expect("root A span was entered")
-                    .0
-                    .elapsed();
-                assert!(
-                    self.elapsed.lock().unwrap().replace(elapsed).is_none(),
-                    "verification emitted more than one root A span"
-                );
-            }
+            let elapsed = span
+                .extensions()
+                .get::<Started>()
+                .expect("root A span was entered")
+                .0
+                .elapsed();
+            CAPTURE.with(|capture| {
+                if let Some(slot) = capture.borrow_mut().as_mut() {
+                    assert!(
+                        slot.replace(elapsed).is_none(),
+                        "verification emitted more than one root A span"
+                    );
+                }
+            });
         }
     }
-    let elapsed = Arc::new(Mutex::new(None));
-    let subscriber = tracing_subscriber::registry().with(Capture {
-        elapsed: elapsed.clone(),
+
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Capture))
+            .expect("the root A capture is the test binary's only global subscriber");
     });
-    let output = tracing::subscriber::with_default(subscriber, verify);
-    let elapsed = elapsed
-        .lock()
-        .unwrap()
-        .take()
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(None));
+    let output = verify();
+    let elapsed = CAPTURE
+        .with(|capture| capture.borrow_mut().take())
+        .expect("the capture stays active for the whole verification")
         .expect("verification emitted exactly one root A span");
     (output, elapsed)
 }

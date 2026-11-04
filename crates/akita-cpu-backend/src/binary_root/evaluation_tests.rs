@@ -147,14 +147,13 @@ fn terminal_carries_authenticate_response_partials_and_value() {
         .unwrap();
     weights.check_table(&table).unwrap();
     plan.validate_digit_table(&table).unwrap();
+    let dense = weights.materialize().unwrap();
     for segment in [0, 2, 3, 4] {
         let range = plan.segment_range(segment).unwrap();
-        let address = weights
-            .terms()
-            .iter()
-            .find(|(address, weight)| range.contains(address) && !weight.is_zero())
-            .unwrap()
-            .0;
+        let address = range
+            .clone()
+            .find(|&address| !dense[address].is_zero())
+            .unwrap();
         let mut altered = table.clone();
         altered[address] += F::one();
         assert!(weights.check_table(&altered).is_err());

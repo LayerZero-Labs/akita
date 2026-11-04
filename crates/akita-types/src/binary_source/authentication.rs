@@ -9,12 +9,12 @@ use akita_params::binary_setup::{
 use jolt_field::Field;
 
 use super::BinaryRootWitnessPlan;
-use crate::native_root_relation::NativeRootWeights;
+use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
 
 /// Ordinary ring degree used by the explicit experimental image and U setup.
 pub const BINARY_DIGIT_COMMITMENT_DEGREE: usize = 64;
 
-fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize, AkitaError> {
+pub(super) fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize, AkitaError> {
     if label.level != 0
         || label.row != 0
         || label.column != 0
@@ -36,7 +36,7 @@ fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize, AkitaError
     usize::try_from(label.rank).map_err(|_| AkitaError::InvalidProof)
 }
 
-fn setup_entry<F: Field>(
+pub(super) fn setup_entry<F: Field>(
     seed: &[u8; 32],
     label: SetupStreamLabel,
     row: u32,
@@ -128,73 +128,165 @@ pub fn binary_digit_authentication_weights<E: Field>(
     if payload.len() != expected || row_batches.len() != rows {
         return Err(AkitaError::InvalidProof);
     }
-    let mut addresses = Vec::new();
+    let mut lanes = Vec::new();
+    lanes
+        .try_reserve_exact(segments.len())
+        .map_err(|_| AkitaError::InvalidProof)?;
     for &segment in segments {
-        let shape = plan
-            .repacking()
-            .segments()
-            .get(segment)
-            .ok_or(AkitaError::InvalidProof)?;
-        let width = checked::product([
-            shape.geometry.polynomial_modulus_dimension(),
-            shape.geometry.coordinate_plane_count(),
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        let count = checked::product([shape.elements, shape.digits, width])
-            .ok_or(AkitaError::InvalidProof)?;
-        addresses
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for element in 0..shape.elements {
-            for digit in 0..shape.digits {
-                for coefficient in 0..width {
-                    addresses.push(plan.repacking().coefficient_address(
-                        segment,
-                        element,
-                        digit,
-                        coefficient,
-                    )?);
-                }
-            }
-        }
+        lanes.push(SegmentLanes::new(plan.repacking(), segment)?);
     }
-    let count = addresses.len();
+    let count = lanes
+        .iter()
+        .try_fold(0usize, |sum, lanes| {
+            checked::product([lanes.elements(), lanes.digits(), lanes.degree()])
+                .and_then(|count| checked::sum([sum, count]))
+        })
+        .ok_or(AkitaError::InvalidProof)?;
     let columns =
         checked::div_ceil(count, BINARY_DIGIT_COMMITMENT_DEGREE).ok_or(AkitaError::InvalidProof)?;
-    let term_count = checked::product([rows, count]).ok_or(AkitaError::InvalidProof)?;
-    let mut terms = Vec::new();
-    terms
-        .try_reserve_exact(term_count)
-        .map_err(|_| AkitaError::InvalidProof)?;
     let mut claim = E::zero();
-    let kernel = ResidueKernelPoint::new(alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
-    for (row, (target, &batch)) in payload
+    for (target, &batch) in payload
         .chunks_exact(BINARY_DIGIT_COMMITMENT_DEGREE)
         .zip(row_batches)
-        .enumerate()
     {
         claim += batch
             * target
                 .iter()
                 .rev()
                 .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
-        let row = u32::try_from(row).map_err(|_| AkitaError::InvalidProof)?;
-        for column in 0..columns {
-            let matrix = setup_entry(seed, label, row, column)?;
-            let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-            kernel.field_kernel_into(matrix.coefficients(), &mut weights)?;
-            for (coefficient, &weight) in weights.iter().enumerate() {
-                let compact = checked::mul_add(column, BINARY_DIGIT_COMMITMENT_DEGREE, coefficient)
-                    .ok_or(AkitaError::InvalidProof)?;
-                if compact >= count {
-                    break;
+    }
+    let family = DigitAuthenticationWeights {
+        lanes,
+        columns,
+        table_len: plan.repacking().domain_len(),
+        seed: *seed,
+        label,
+        alpha,
+        row_batches: row_batches.to_vec(),
+    };
+    NativeRootWeights::structured(
+        plan.repacking().domain_len(),
+        Vec::new(),
+        vec![RootWeightFamily::Authentication(family)],
+        claim,
+    )
+}
+
+/// One B or D commitment row identity on the compact digits it authenticates.
+///
+/// Compact digits run through the natural coefficients of every lane of the
+/// listed segments; each run of 64 is one setup column. The verifier gathers
+/// a column's equality values `e`, evaluates the residue kernel `K(e)` once,
+/// and reads `sum_s M_rs K(e)_s` for every row: the kernel is a Hankel form,
+/// so this equals `sum_c K(M_r)_c e_c`. The prover streams `K(M_r)` onto the
+/// same addresses. Both sides derive every setup entry from the seed; no
+/// address list is stored.
+#[derive(Clone, Debug)]
+pub(crate) struct DigitAuthenticationWeights<E: Field> {
+    lanes: Vec<SegmentLanes>,
+    columns: usize,
+    table_len: usize,
+    seed: [u8; 32],
+    label: SetupStreamLabel,
+    alpha: E,
+    row_batches: Vec<E>,
+}
+
+impl<E: Field> DigitAuthenticationWeights<E> {
+    pub(crate) fn table_len(&self) -> usize {
+        self.table_len
+    }
+
+    /// Visit each setup column with the addresses of its compact digits, in
+    /// order. Only the final column may hold fewer than 64.
+    fn for_each_column(
+        &self,
+        mut visit: impl FnMut(u64, &[usize]) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let mut addresses = [0usize; BINARY_DIGIT_COMMITMENT_DEGREE];
+        let mut filled = 0;
+        let mut column = 0u64;
+        for lanes in &self.lanes {
+            for element in 0..lanes.elements() {
+                for digit in 0..lanes.digits() {
+                    let base = lanes.base(element, digit)?;
+                    for coefficient in 0..lanes.degree() {
+                        *addresses.get_mut(filled).ok_or(AkitaError::InvalidProof)? =
+                            checked::sum([base, coefficient]).ok_or(AkitaError::InvalidProof)?;
+                        filled += 1;
+                        if filled == BINARY_DIGIT_COMMITMENT_DEGREE {
+                            visit(column, &addresses)?;
+                            filled = 0;
+                            column += 1;
+                        }
+                    }
                 }
-                let address = *addresses.get(compact).ok_or(AkitaError::InvalidProof)?;
-                terms.push((address, batch * weight));
             }
         }
+        if filled > 0 {
+            visit(
+                column,
+                addresses.get(..filled).ok_or(AkitaError::InvalidProof)?,
+            )?;
+            column += 1;
+        }
+        if usize::try_from(column) != Ok(self.columns) {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
     }
-    NativeRootWeights::new(plan.repacking().domain_len(), terms, claim)
+
+    fn rows(&self) -> impl Iterator<Item = (u32, E)> + '_ {
+        (0u32..).zip(self.row_batches.iter().copied())
+    }
+
+    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+        let kernel = ResidueKernelPoint::new(self.alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
+        let low = eq.low();
+        let mut sum = E::zero();
+        self.for_each_column(|column, addresses| {
+            let mut equality = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+            for (slot, &address) in equality.iter_mut().zip(addresses) {
+                *slot = eq.high(address)?
+                    * *low
+                        .get(eq.low_offset(address))
+                        .ok_or(AkitaError::InvalidProof)?;
+            }
+            let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+            kernel.field_kernel_into(&equality, &mut reduced)?;
+            let column = usize::try_from(column).map_err(|_| AkitaError::InvalidProof)?;
+            for (row, batch) in self.rows() {
+                let matrix = setup_entry::<E>(&self.seed, self.label, row, column)?;
+                sum += batch
+                    * matrix
+                        .coefficients()
+                        .iter()
+                        .zip(&reduced)
+                        .fold(E::zero(), |acc, (&m, &k)| acc + m * k);
+            }
+            Ok(())
+        })?;
+        Ok(sum)
+    }
+
+    pub(crate) fn visit(
+        &self,
+        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let kernel = ResidueKernelPoint::new(self.alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
+        self.for_each_column(|column, addresses| {
+            let column = usize::try_from(column).map_err(|_| AkitaError::InvalidProof)?;
+            for (row, batch) in self.rows() {
+                let matrix = setup_entry::<E>(&self.seed, self.label, row, column)?;
+                let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+                kernel.field_kernel_into(matrix.coefficients(), &mut weights)?;
+                for (&address, &weight) in addresses.iter().zip(&weights) {
+                    visit(address, batch * weight)?;
+                }
+            }
+            Ok(())
+        })
+    }
 }
 
 #[cfg(test)]

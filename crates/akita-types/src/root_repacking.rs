@@ -179,6 +179,74 @@ impl RootCoefficientRepacking {
         Err(AkitaError::InvalidProof)
     }
 
+    /// Visit every maximal zero-padding run in increasing address order.
+    ///
+    /// These are exactly the addresses accepted by [`Self::is_padding_address`]:
+    /// each plane tail of every segment, then the final domain padding. They
+    /// are computed from the segment geometry, without an address scan.
+    pub fn for_each_padding_run(
+        &self,
+        mut visit: impl FnMut(Range<usize>) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        for (shape, range) in self.segments.iter().zip(&self.ranges) {
+            let padded = shape.geometry.padded_coefficient_count();
+            let degree = shape.geometry.polynomial_modulus_dimension();
+            if padded == degree {
+                continue;
+            }
+            let blocks = checked::exact_div(range.len(), padded).ok_or(AkitaError::InvalidProof)?;
+            for block in 0..blocks {
+                let start = checked::mul_add(block, padded, range.start)
+                    .and_then(|start| checked::sum([start, degree]))
+                    .ok_or(AkitaError::InvalidProof)?;
+                let end = checked::mul_add(block, padded, range.start)
+                    .and_then(|start| checked::sum([start, padded]))
+                    .ok_or(AkitaError::InvalidProof)?;
+                visit(start..end)?;
+            }
+        }
+        if self.live_len < self.domain_len {
+            visit(self.live_len..self.domain_len)?;
+        }
+        Ok(())
+    }
+
+    /// Number of zero-padding addresses in the complete domain.
+    pub fn padding_count(&self) -> Result<usize, AkitaError> {
+        let natural = self
+            .segments
+            .iter()
+            .try_fold(0usize, |sum, shape| {
+                checked::product([
+                    shape.elements,
+                    shape.digits,
+                    shape.geometry.coordinate_plane_count(),
+                    shape.geometry.polynomial_modulus_dimension(),
+                ])
+                .and_then(|count| checked::sum([sum, count]))
+            })
+            .ok_or(AkitaError::InvalidProof)?;
+        self.domain_len
+            .checked_sub(natural)
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// One past the largest natural coefficient address.
+    ///
+    /// Every address at or beyond this bound is zero padding.
+    pub fn natural_end(&self) -> Result<usize, AkitaError> {
+        let (shape, range) = self
+            .segments
+            .last()
+            .zip(self.ranges.last())
+            .ok_or(AkitaError::InvalidProof)?;
+        range
+            .end
+            .checked_sub(shape.geometry.padded_coefficient_count())
+            .and_then(|start| checked::sum([start, shape.geometry.polynomial_modulus_dimension()]))
+            .ok_or(AkitaError::InvalidProof)
+    }
+
     /// Construct a prover table from natural, already balanced base-eight digits.
     ///
     /// Inputs follow segment/element/digit/natural-coordinate order. Every
@@ -435,6 +503,31 @@ mod tests {
             .map(|(address, weight)| table[address] * weight)
             .sum::<F>();
         assert_eq!(relation, F::from_u64(11 * 3 * 64));
+    }
+
+    #[test]
+    fn padding_runs_count_and_natural_end_match_the_address_predicate() {
+        let plan = plan();
+        let mut runs = Vec::new();
+        plan.for_each_padding_run(|run| {
+            runs.push(run);
+            Ok(())
+        })
+        .unwrap();
+        assert!(runs.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        let streamed = runs.iter().flat_map(Clone::clone).collect::<Vec<_>>();
+        let scanned = (0..plan.domain_len())
+            .filter(|&address| plan.is_padding_address(address).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(streamed, scanned);
+        assert_eq!(plan.padding_count().unwrap(), scanned.len());
+        let natural_end = (0..plan.domain_len())
+            .rev()
+            .find(|&address| !plan.is_padding_address(address).unwrap())
+            .unwrap()
+            + 1;
+        assert_eq!(plan.natural_end().unwrap(), natural_end);
+        assert_eq!(natural_end, 8224);
     }
 
     #[test]
