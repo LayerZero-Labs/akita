@@ -3,8 +3,9 @@ mod reduced;
 use super::*;
 use akita_algebra::cfg_try_fold_reduce;
 use akita_algebra::ring::scalar_powers;
-use akita_algebra::row_batch::WeightedRowBatch;
-use kernels::{add_segment_weights, CanonicalProductSum, DelayedProductSum, ProductSum};
+use kernels::{
+    add_segment_weights, CanonicalProductSum, ColumnSums, DelayedProductSum, ProductSum,
+};
 use reduced::evaluate_groups_reduced;
 
 enum DirectScanKernel<'a, E: Field> {
@@ -283,8 +284,8 @@ impl<'a, E: Field> ScanGroup<'a, E> {
 /// `Σ_b w(b)·⟨ring_b, pows⟩` over the plan's base rings, where `w(b)` adds
 /// every group's D/B/A weight at base ring `b`.
 ///
-/// Each job assembles its rings' weights segment by segment, then evaluates
-/// the nonzero-weight rings through the shared-powers row kernel.
+/// Each job assembles its rings' weights segment by segment, then contracts
+/// the nonzero-weight rings column first through [`ColumnSums`].
 pub(super) fn evaluate_weighted_scan<F, E, const BASE_D: usize>(
     plan: &SetupContributionPlan<E>,
     setup_view: &RingMatrixView<'_, F, BASE_D>,
@@ -319,7 +320,11 @@ where
 {
     let setup_flat = setup_view.as_slice();
     let required = plan.projection_geometry().required();
-    if plan.d_weights().len() != plan.d_rows() || pows.len() != BASE_D {
+    let pows: &[E; BASE_D] = pows.try_into().map_err(|_| AkitaError::InvalidSize {
+        expected: BASE_D,
+        actual: pows.len(),
+    })?;
+    if plan.d_weights().len() != plan.d_rows() {
         return Err(AkitaError::InvalidSetup(
             "cached setup scan geometry is malformed".into(),
         ));
@@ -333,6 +338,9 @@ where
             let lo = job.checked_mul(job_rings).ok_or(AkitaError::InvalidProof)?;
             let hi = lo.saturating_add(job_rings).min(required);
             let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
+            let Some(first_ring) = setup.first() else {
+                return Ok(acc);
+            };
             let mut slots = Vec::new();
             slots
                 .try_reserve_exact(setup.len())
@@ -358,16 +366,15 @@ where
                     )?;
                 }
             }
-            // Rows with a zero weight contribute nothing; the rest go
-            // through the shared-powers kernel in bounded batches.
-            let mut batch = WeightedRowBatch::new(pows);
+            // Rings with a zero weight contribute nothing.
+            let mut columns = ColumnSums::new(first_ring.coefficients());
             for (ring, slot) in setup.iter().zip(slots) {
                 let weight = slot.finish();
                 if !weight.is_zero() {
-                    batch.push(ring.coefficients(), weight);
+                    columns.push(ring.coefficients(), weight);
                 }
             }
-            Ok(acc + batch.finish())
+            Ok(acc + columns.finish(pows))
         },
         |lhs, rhs| Ok(lhs + rhs)
     )
