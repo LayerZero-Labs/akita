@@ -144,85 +144,49 @@ matrix, which keeps the B/D weights.
 
 ## 4. Layout of the typed prefix
 
+The opening spec's
+[Typed prefix layout](binary-source-opening.md#typed-prefix-layout) defines
+the layout normatively: the digit segments, the period copies, the pieces,
+the regions, the placement order and the identity. This section records the
+properties of that layout that the argument uses, and its sizes at the
+measured shapes.
 [`BinaryTypedPrefix`](../crates/akita-types/src/binary_source/typed_prefix.rs)
-fixes the layout from the manifest, whether the word is opened, the plane
-count and the successor ring dimension. These are the same inputs that build
-`BinaryRootWitnessPlan`. The test `typed_prefix_offloads_the_digit_authentication_rows`
-checks `BinaryTypedPrefix::new == from_plan` on every reference shape.
+computes it from the same inputs that build `BinaryRootWitnessPlan`. The test
+`typed_prefix_offloads_the_digit_authentication_rows` checks
+`BinaryTypedPrefix::new == from_plan` on every reference shape.
 
-**Periods.** Within a segment of degree `n`, lane `l` holds digits
-`l*n .. (l+1)*n` of the segment's compact run. The pattern of columns relative
-to lanes repeats every `P = 64 / gcd(n, 64)` lanes. One period covers
-`P*n/64` whole columns. In the measured shapes, `P = 8` for the image
+**Periods and copies.** The pattern of columns relative to lanes repeats every
+`P = 64 / gcd(n, 64)` lanes. In the measured shapes, `P = 8` for the image
 (`n = 648`) and `P = 32` for U and EP (`n = 162`), so one period covers 81
-columns in every case.
+columns in every case. A period's copy carries only the weight of its own
+period's digits (`DigitSegment::address` returns `None` outside the period),
+so the sum over copies counts every digit exactly once. In all eight measured
+shapes the offsets are multiples of 64 and the lane counts are multiples of
+`P`. So `J = 81`, and the copies are the role columns exactly. The reference
+shapes exercise offsets 4, 8 and 16 modulo 64, `J = 82` and partial last
+periods.
 
-**Copies.** Each period `q` stores its own copy of the `J` columns its digits
-touch:
+**Pieces.** The image segment has 768 = 512 + 256 periods, U has 8, and one
+EP plane has 344 = 256 + 64 + 16 + 8; `J = 81 = 64 + 16 + 1`. A segment
+therefore contributes `2 * popcount(periods) * popcount(J)` pieces: 12 for the
+image, 6 for U and 24 per EP plane.
 
-```text
-J = ceil((offset mod 64 + min(P, L) * n) / 64).
-```
+**Regions.** The holes lie in the zero padding of the A tensor: the padded
+rank slots, and coefficients `[704, 768)` and `[768, 1024)` of the live
+ranks. `[648, 704)` stays unused because only runs of at least 64 cells
+qualify. At rank 3 of 4 the holes have `2^22, 2^21, 2^20, 2^19, 2^18` cells at
+2^22 (twice that at 2^23). Holes require the A natural length to be a power
+of two, which `BinaryAProduct` already requires of its row count.
 
-Here `offset` is the segment's first compact index in its role, and `L` is
-its lane count. A column shared by two periods, or by the last period of one
-segment and the first of the next, is stored once per copy. Each copy carries
-only the weight of its own period's digits (`DigitSegment::address` returns
-`None` outside the period). The sum over copies therefore counts every digit
-exactly once. In all eight measured shapes the offsets are multiples of 64 and
-the lane counts are multiples of `P`. So `J = 81`, and the copies are the role
-columns exactly. The reference shapes exercise offsets 4, 8 and 16 modulo 64,
-`J = 82` and partial last periods.
-
-**Pieces.** Per segment and row, the copies form a `periods x J x 64` block.
-It is cut by the binary expansion of the period count into runs of `2^b`
-periods starting at `q0`, and by the binary expansion of `J` into runs of
-`2^e` columns starting at `first` (81 = 64 + 16 + 1). Each `(row, b, e)` cut
-is one `DigitPiece` of `2^(b+e+6)` cells. Cell `(q, j, s)` of a piece has the
-local index
-
-```text
-base + ((q - q0) * 2^e + (j - first)) * 64 + s.
-```
-
-The image segment has 768 = 512 + 256 periods, U has 8, and one EP plane has
-344 = 256 + 64 + 16 + 8. A segment therefore contributes
-`2 * popcount(periods) * popcount(J)` pieces: 12 for the image, 6 for U and
-24 per EP plane.
-
-**Regions.** A piece lives in one `Region`, an address subcube. Its fixed bits
-are constant. Every bit at or above `top = log2(A natural_len)` is zero. Its
-free bits, in increasing order, carry the local index. The hole regions are
-the A padding (`a_padding_regions`):
-
-- the padded rank slots: coefficient bits all free, the rank bits fixed to the
-  padded ranks' aligned runs, the row bits free;
-- coefficients `[704, 768)` and `[768, 1024)` of the live ranks, in aligned
-  runs of ranks: the low 6 or 8 coefficient bits free, the rest fixed.
-
-`aligned_runs` cuts `[648, 1024)` into aligned power-of-two runs. Only runs of
-at least 64 cells qualify, so `[648, 704)` stays unused. At rank 3 of 4 the
-regions have `2^22, 2^21, 2^20, 2^19, 2^18` cells at 2^22 (twice that at
-2^23). Hole regions require the A natural length to be a power of two, which
-`BinaryAProduct` already requires of its row count. The last region is the
-tail: the identity map, used after the A tensor.
-
-**Allocation.** Pieces are sorted by size, largest first (a stable sort, so
-equal sizes keep role, segment, row, period and column order). Each goes to
-the first hole region with room, at that region's cursor. Otherwise it goes to
-the tail cursor, which starts at the A natural length aligned up to the
-piece's size. Because sizes are non-increasing powers of two, every cursor
-stays aligned to the next piece's size. So every piece has a power-of-two size
-and a base aligned to it, and its cells are exactly the points of a subcube in
-the region's local coordinates. `natural_len` is the tail cursor, or the A
-natural length if nothing reached the tail, and the prefix domain is the next
-power of two (`domain_len`).
-
-The layout requires every digit segment's start to be a multiple of its
-stride, because the terminal weight splits lane addresses as
-`(start/stride + lane) * stride + coefficient`. `from_plan` rejects any other
-layout with `InvalidSetup`. This alignment holds by construction in the root
-plan ([binary-source-zero-padding.md](binary-source-zero-padding.md), §4.1).
+**Placement.** Pieces are placed largest first, so every piece has a
+power-of-two size and a base aligned to it. Its cells are therefore exactly
+the points of a subcube in its region's local coordinates, and its cell
+equality factors into the region's fixed bits, the slot, column and period
+bits (Section 7). The layout requires every digit segment's start to be a
+multiple of its stride, because the terminal weight splits lane addresses as
+`(start/stride + lane) * stride + coefficient`. This alignment holds by
+construction in the root plan
+([binary-source-zero-padding.md](binary-source-zero-padding.md), §4.1).
 
 **Sizes.** The digit cells are `2 * 64 * columns`: 7,962,624 for the image
 (62,208 columns), 82,944 for U (648) and 3,566,592 per EP plane (27,864). The
@@ -264,7 +228,9 @@ The root's transcript order is unchanged
    the scheduled slot equals `identity(manifest, slot)`. The identity string is
    `akita/binary-source/typed-prefix/a-then-digit-pieces/v3`, followed by the
    manifest bytes, the A geometry, every segment, region and piece field,
-   `natural_len` and the slot. `S` and its commitment are fixed at setup,
+   `natural_len` and the slot. Every layout field is a little-endian `u64`, so
+   the identity does not depend on the target's pointer width (opening spec,
+   [Typed prefix layout](binary-source-opening.md#typed-prefix-layout)). `S` and its commitment are fixed at setup,
    before the proof begins.
 2. Statement, field switch, the D payload, the response grinding, the root
    fold challenges and the successor payload. The successor commits `x`.
