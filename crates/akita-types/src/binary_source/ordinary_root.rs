@@ -180,7 +180,7 @@ impl OrdinaryNativeRootPlan {
     /// Each identity repeats one public pattern: an A row reads the same
     /// kernels in every block, a B row the same kernels in every slice of one
     /// width, and a recomposition the same coefficients at every bit. The
-    /// weights keep each pattern once as [`TranslatedLanes`], and the scalar
+    /// weights keep each pattern once as `TranslatedLanes`, and the scalar
     /// evaluation as an offset equality. The verifier evaluates them at the
     /// Stage 2 point without one term per table address; the prover
     /// materializes the same field elements.
