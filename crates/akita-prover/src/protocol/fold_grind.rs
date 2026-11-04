@@ -65,7 +65,6 @@ pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize>(
     grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     params: &TerminalFoldParams,
-    sparse: &akita_challenges::FoldChallengeFamily,
     witness: &H,
     shape: &TerminalResponseShape,
 ) -> Result<TerminalFoldGrindOutput, AkitaError>
@@ -95,32 +94,19 @@ where
     let linf_cap = expected_group.z_linf_cap;
     params.validate_terminal_linf_cap(linf_cap)?;
     let response_l2_sq_cap = params.response_l2_sq_cap();
-    let operator_rejection = if response_l2_sq_cap.is_some() {
-        Some(
-            sparse
-                .operator_norm_rejection(params.d_a())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
-                })?,
-        )
-    } else {
-        None
-    };
+    let family = params.fold_challenge_family()?;
     let point_indices = [0usize];
     let site = akita_params::GrindingSite::FoldResponse { level };
-    let (nonce, (fold_handle, challenges, encoding, diagnostics)) =
+    let (nonce, (work, fold_handle, challenges, encoding, diagnostics)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut preview_state = grinding.preview_fold_response(site, nonce)?;
+            let work = preview_state.take_work()?;
             let mut preview = PreviewFoldDraw::new(&mut preview_state);
-            let challenges = preview.draw_folding_challenges_with_rejection(
-                akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
-                params.d_a(),
-                0,
-                params.blocks.live_blocks,
-                1,
-                sparse,
-                operator_rejection,
-            )?;
+            let Some(challenges) =
+                preview.draw_fold_challenges(&family, params.blocks.live_blocks, 1)?
+            else {
+                return Ok(None);
+            };
             let selected = challenges.select_claims(&point_indices)?;
             let plan = ValidatedTerminalFoldProbePlan::new::<D>(
                 &selected,
@@ -141,6 +127,7 @@ where
                     fold_handle,
                     diagnostics,
                 } => Ok(Some((
+                    work,
                     fold_handle,
                     challenges,
                     crate::backend::ValidatedTerminalZEncodingPlan::from_probe(&plan),
@@ -148,27 +135,20 @@ where
                 ))),
             }
         })?;
-    grinding.commit_fold_response(site, nonce)?;
+    grinding.commit_fold_response(site, work)?;
     let mut live = ProverFoldDraw::new(grinding.state_mut(), level, 0);
-    let live_challenges = live.draw_folding_challenges_with_rejection(
-        akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
-        params.d_a(),
-        0,
-        params.blocks.live_blocks,
-        1,
-        sparse,
-        operator_rejection,
-    )?;
-    if live_challenges != challenges {
+    let live_challenges = live.draw_fold_challenges(&family, params.blocks.live_blocks, 1)?;
+    if live_challenges.as_ref() != Some(&challenges) {
         return Err(AkitaError::Internal(
             "terminal grind preview did not match live transcript replay".into(),
         ));
     }
     grinding.record_fold_challenges(level, 0, params.blocks.live_blocks)?;
     #[cfg(not(feature = "response-model-diagnostics"))]
-    let _ = diagnostics;
+    let _ = (nonce, diagnostics);
     #[cfg(feature = "response-model-diagnostics")]
     if response_model_diagnostics_enabled() {
+        let sparse = &params.fold_challenge_config;
         let source_l2_sq = diagnostics.source_l2_sq();
         let conditional_mean_l2_sq =
             source_l2_sq.and_then(|energy| energy.checked_mul(sparse.challenge_l2_sq_max()));
@@ -248,20 +228,23 @@ where
         ));
     }
     let site = akita_params::GrindingSite::FoldResponse { level };
-    let (nonce, mut candidate_outputs) =
+    let (nonce, (work, mut candidate_outputs)) =
         first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
-            {
+            let work = {
                 let mut preview_state = grinding.preview_fold_response(site, nonce)?;
+                let work = preview_state.take_work()?;
                 let mut preview = PreviewFoldDraw::new(&mut preview_state);
                 for prepared_group in groups {
                     let group = &prepared_group.input;
-                    let challenges = draw_group_fold_challenges::<F, E, _>(
+                    let Some(challenges) = draw_group_fold_challenges::<F, E, _>(
                         &mut preview,
                         &group.params,
-                        group.group_index,
                         group.num_polynomials,
-                    )?;
+                    )?
+                    else {
+                        return Ok(None);
+                    };
                     let ranges = (root_lp.witness_chunk.num_chunks > 1)
                         .then(|| {
                             root_lp.witness_block_ranges(
@@ -312,11 +295,12 @@ where
                     };
                     candidate_outputs.push(output);
                 }
-            }
-            Ok(Some(candidate_outputs))
+                work
+            };
+            Ok(Some((work, candidate_outputs)))
         })?;
 
-    grinding.commit_fold_response(site, nonce)?;
+    grinding.commit_fold_response(site, work)?;
     {
         let _span = tracing::info_span!("fold_grind_live_replay").entered();
         for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
@@ -328,11 +312,10 @@ where
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
-                    group.group_index,
                     group.num_polynomials,
                 )?
             };
-            if challenges != output.challenges {
+            if challenges.as_ref() != Some(&output.challenges) {
                 return Err(AkitaError::Internal(
                     "fold grind preview did not match live transcript replay".to_string(),
                 ));
@@ -482,7 +465,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::FoldChallengeFamily;
+    use akita_challenges::FoldChallengeDistribution;
     use akita_params::SisModulusProfileId;
 
     type F = jolt_field::Prime128Offset275;
@@ -493,9 +476,13 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
+        fn draw_message<T>(
+            &mut self,
+            len: usize,
+            decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+        ) -> Result<Option<T>, AkitaError> {
             self.draws += 1;
-            Ok([11; akita_transcript::FOLD_CHALLENGE_SEED_LEN])
+            decode(&vec![11; len])
         }
     }
 
@@ -508,7 +495,7 @@ mod tests {
             1,
             1,
             1,
-            FoldChallengeFamily::production_for_ring_dim(128).unwrap(),
+            FoldChallengeDistribution::production_for_ring_dim(128).unwrap(),
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
@@ -516,11 +503,12 @@ mod tests {
             challenge_subring_dimension: 64,
         };
         params.own_group_mut().opening.fold_challenge_config =
-            FoldChallengeFamily::production_for_ring_dim(64).unwrap();
+            FoldChallengeDistribution::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
-        let challenges =
-            draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 3, 2).unwrap();
+        let challenges = draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 2)
+            .unwrap()
+            .unwrap();
         assert_eq!(draw.draws, 1);
         let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
@@ -553,7 +541,7 @@ mod tests {
             1,
             1,
             1,
-            FoldChallengeFamily::production_for_ring_dim(128).unwrap(),
+            FoldChallengeDistribution::production_for_ring_dim(128).unwrap(),
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
@@ -562,14 +550,13 @@ mod tests {
         };
 
         for config in [
-            FoldChallengeFamily::pm1_only(0),
-            FoldChallengeFamily::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(0),
+            FoldChallengeDistribution::pm1_only(1),
         ] {
             params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();
             assert!(
-                draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 0, 1)
-                    .is_err()
+                draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 1).is_err()
             );
             assert_eq!(draw.draws, 0);
         }

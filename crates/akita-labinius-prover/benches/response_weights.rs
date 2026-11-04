@@ -17,8 +17,12 @@ use std::{hint::black_box, time::Duration};
 
 struct Draw;
 impl FoldDraw for Draw {
-    fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-        Ok([0x53; 32])
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![0x53; len])
     }
 }
 
@@ -38,7 +42,7 @@ fn pair<F: Field + CanonicalEncoding, E: ExtField<F>>(criterion: &mut Criterion,
     let layout =
         LoweredRootLayout::new::<F, E, _, _>(setup, admitted.shape()).expect("layout admits");
     let fold = BinaryChallengeSampler::new(setup.profile().clone())
-        .sample_challenges(&mut Draw, b"weights", setup.columns())
+        .sample_challenges(&mut Draw, setup.columns())
         .expect("fold samples");
     // The commitment rows alone: the matrix pass dominates, and neither the
     // parity row nor the prime row scans the matrix.

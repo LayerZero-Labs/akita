@@ -679,7 +679,13 @@ where
 
 impl<'a, F> CommitmentExecutor<'a, F, PortableStatePolicy>
 where
-    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
+    F: Field
+        + CanonicalEncoding
+        + Unreduced
+        + WithCommitAccumulator
+        + akita_serialization::Valid
+        + akita_serialization::AkitaSerialize
+        + 'static,
 {
     /// Complete a CPU root through the public outer-image compression route,
     /// retaining the A-stage rows required by later proving stages.
@@ -725,7 +731,7 @@ mod tests {
         PolynomialTypeSelection, PortableStatePolicy, StateOwnerCapability,
     };
     use crate::{AkitaProverSetup, DensePoly};
-    use akita_challenges::FoldChallengeFamily;
+    use akita_challenges::FoldChallengeDistribution;
     use akita_params::{
         CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
     };
@@ -743,7 +749,7 @@ mod tests {
             1,
             1,
             1,
-            FoldChallengeFamily::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -881,7 +887,7 @@ mod tests {
             1,
             1,
             1,
-            FoldChallengeFamily::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -1014,7 +1020,7 @@ mod tests {
             1,
             1,
             1,
-            FoldChallengeFamily::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -1309,7 +1315,7 @@ mod tests {
             1,
             1,
             1,
-            FoldChallengeFamily::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -1364,7 +1370,7 @@ mod tests {
             1,
             1,
             1,
-            FoldChallengeFamily::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -1445,7 +1451,7 @@ mod tests {
         let hint = output.prover_state();
 
         assert_eq!(output.terminal_payload(), &expected_payload);
-        assert_eq!(hint.inner_rows(), expected_rows);
+        assert_eq!(hint.inner_rows().unwrap().as_ref(), expected_rows);
         assert_eq!(
             hint.outer_compression_witness(plan.compression().unwrap())
                 .unwrap()

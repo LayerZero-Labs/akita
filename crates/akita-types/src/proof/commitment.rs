@@ -21,7 +21,8 @@ use akita_params::{CommitmentSliceCount, PolynomialGroupLayout};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::Field;
+use akita_transcript::CommitmentDigest;
+use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
 /// D-free public commitment payload stored as flat field coefficients.
@@ -50,25 +51,36 @@ impl<F: Field> Commitment<F> {
 /// The profile is the exact commitment identity selected when the group was
 /// committed. Callers pass this object through claims so proving and
 /// verification never reconstruct group metadata from a bare layout.
+///
+/// The group carries the [`CommitmentDigest`] of its canonical serialization,
+/// kind header included. Every constructor, the deserializer included,
+/// computes the digest from the kind, profile and rows it holds; no path
+/// accepts a digest from outside.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroup<F: Field> {
-    /// Exact public algebraic profile and commitment geometry.
-    pub profile: GroupCommitPhaseParams,
-    /// Terminal compressed `p_F` payload.
-    pub commitment: Commitment<F>,
+    profile: GroupCommitPhaseParams,
+    commitment: Commitment<F>,
     kind: CommittedGroupKind,
+    digest: CommitmentDigest,
+}
+
+impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
+    /// Build a self-describing ordinary group commitment and compute its digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the profile is not a valid frozen profile, a
+    /// coefficient is not canonical, or the rows do not have the length the
+    /// profile fixes.
+    pub fn new(
+        profile: GroupCommitPhaseParams,
+        commitment: Commitment<F>,
+    ) -> Result<Self, SerializationError> {
+        Self::with_kind(profile, commitment, CommittedGroupKind::Ordinary)
+    }
 }
 
 impl<F: Field> CommittedGroup<F> {
-    /// Build a self-describing group commitment.
-    pub fn new(profile: GroupCommitPhaseParams, commitment: Commitment<F>) -> Self {
-        Self {
-            profile,
-            commitment,
-            kind: CommittedGroupKind::Ordinary,
-        }
-    }
-
     /// Extension seam: identify the source relation bound by this commitment.
     ///
     /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
@@ -89,6 +101,11 @@ impl<F: Field> CommittedGroup<F> {
     /// Borrow the terminal payload coefficients.
     pub fn rows(&self) -> &RingVec<F> {
         self.commitment.rows()
+    }
+
+    /// The digest that binds this group into a transcript.
+    pub fn digest(&self) -> &CommitmentDigest {
+        &self.digest
     }
 }
 
@@ -130,16 +147,17 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Com
 #[cfg(test)]
 mod committed_group_tests {
     use super::*;
-    use jolt_field::{Fp32, Zero};
+    use jolt_field::{Fp32, Ring};
 
     type F = Fp32<4294967197>;
 
     fn group() -> CommittedGroup<F> {
-        group_with_ring_dimension(128)
+        let (profile, commitment) = group_parts(128);
+        CommittedGroup::new(profile, commitment).expect("valid committed group")
     }
 
     /// One nv11 group whose A and B matrices share `ring_dimension`.
-    fn group_with_ring_dimension(ring_dimension: usize) -> CommittedGroup<F> {
+    fn group_parts(ring_dimension: usize) -> (GroupCommitPhaseParams, Commitment<F>) {
         let ring_dimension_u32 = u32::try_from(ring_dimension).unwrap();
         let positions = (1 << 11) / ring_dimension;
         let a_bound = *akita_params::sis::inner_coeff_linf_bounds(
@@ -194,10 +212,83 @@ mod committed_group_tests {
         )
         .expect("compression plan")
         .terminal_coefficients();
-        CommittedGroup::new(
-            profile,
-            Commitment::new(RingVec::from_coeffs(vec![F::zero(); payload_coefficients])),
+        let coefficients = (0..payload_coefficients)
+            .map(|index| F::from_u64(index as u64 * 7 + 1))
+            .collect();
+        (profile, Commitment::new(RingVec::from_coeffs(coefficients)))
+    }
+
+    fn canonical_bytes(group: &CommittedGroup<F>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        group
+            .serialize_with_mode(&mut bytes, Compress::No)
+            .expect("serialize committed group");
+        bytes
+    }
+
+    fn decode(bytes: &[u8]) -> Result<CommittedGroup<F>, SerializationError> {
+        CommittedGroup::<F>::deserialize_with_mode(bytes, Compress::No, Validate::Yes, &())
+    }
+
+    #[test]
+    fn deserialized_and_constructed_digests_agree() {
+        let group = group();
+        let bytes = canonical_bytes(&group);
+        assert_eq!(
+            *group.digest(),
+            CommitmentDigest::of_canonical_bytes(&bytes)
+        );
+        assert_eq!(decode(&bytes).unwrap().digest(), group.digest());
+    }
+
+    /// The decoder hashes the group it decoded, so a changed row gives the
+    /// digest of the changed group, never the digest of the original.
+    #[test]
+    fn digest_is_recomputed_on_deserialization() {
+        let group = group();
+        let mut bytes = canonical_bytes(&group);
+        let last = bytes.len() - 4;
+        bytes[last..].copy_from_slice(&5u32.to_le_bytes());
+        let decoded = decode(&bytes).unwrap();
+        assert_ne!(decoded.digest(), group.digest());
+        let mut coefficients = group.rows().coeffs().to_vec();
+        *coefficients.last_mut().unwrap() = F::from_u64(5);
+        let rebuilt = CommittedGroup::new(
+            *group.profile(),
+            Commitment::new(RingVec::from_coeffs(coefficients)),
         )
+        .unwrap();
+        assert_eq!(decoded.digest(), rebuilt.digest());
+        assert_eq!(
+            *decoded.digest(),
+            CommitmentDigest::of_canonical_bytes(&bytes)
+        );
+    }
+
+    /// Each commitment has one encoding, so it has one digest: the decoder
+    /// rejects a noncanonical coefficient and a short row.
+    #[test]
+    fn noncanonical_commitment_bytes_are_rejected() {
+        let group = group();
+        let mut bytes = canonical_bytes(&group);
+        let last = bytes.len() - 4;
+        bytes[last..].copy_from_slice(&4_294_967_197u32.to_le_bytes());
+        assert!(decode(&bytes).is_err());
+
+        let mut short = canonical_bytes(&group);
+        short.truncate(short.len() - 4);
+        assert!(decode(&short).is_err());
+    }
+
+    #[test]
+    fn commitment_digest_has_a_known_answer() {
+        let rendered = format!("{:?}", group().digest().as_bytes());
+        // The digest hash is Jolt's DigestHasher, independent of the sponge.
+        let expected = match jolt_transcript::DIGEST_HASH {
+            jolt_transcript::DigestHash::Sha3_256 => "[11, 226, 212, 108, 183, 163, 86, 169, 104, 101, 105, 212, 16, 51, 26, 22, 20, 48, 14, 190, 25, 186, 44, 179, 12, 147, 179, 135, 94, 75, 83, 223]",
+            jolt_transcript::DigestHash::Keccak256 => "[118, 86, 184, 130, 50, 160, 9, 172, 201, 151, 114, 21, 129, 73, 135, 29, 231, 213, 3, 116, 148, 17, 71, 208, 82, 51, 104, 28, 170, 46, 175, 83]",
+        };
+        assert_eq!(rendered, expected);
     }
 
     #[test]
@@ -264,11 +355,9 @@ mod committed_group_tests {
     #[test]
     fn committed_group_validation_rejects_an_outer_image_the_ladder_cannot_recompose() {
         // The q32 ladder starts at D=128, so a D=64 outer image cannot be compressed.
-        let group = group_with_ring_dimension(64);
-        assert!(group.check().is_err());
-        assert!(group
-            .serialize_with_mode(&mut Vec::new(), Compress::Yes)
-            .is_err());
+        let (profile, commitment) = group_parts(64);
+        assert!(wire::check_group(&profile, &commitment, &CommittedGroupKind::Ordinary).is_err());
+        assert!(CommittedGroup::new(profile, commitment).is_err());
     }
 
     #[test]

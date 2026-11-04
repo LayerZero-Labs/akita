@@ -88,6 +88,7 @@ pub(super) fn build(
         ScheduleLookupKey {
             final_group: profile.group,
             precommitteds: vec![profile],
+            root_accumulated_setup_prefix_len: 0,
         }
     } else {
         singleton

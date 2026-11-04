@@ -246,7 +246,7 @@ class StateEncodingTests(unittest.TestCase):
         self.assertEqual(gh.labels, {"documentation", "ai-reviewed"})
 
     def test_full_quota_of_findings_fits_the_comment_limit(self):
-        # Three attempts per PR with at most 20 new findings each: 60 findings is the most a PR can hold.
+        # Three attempts of at most 20 new findings; further admin attempts stop above 40 retained findings.
         rng = random.Random(7)
         vocabulary = [f"{rng.choice('abcdefghijklmnop')}{w}" for w in
                       ("batch index kernel stream region claim round buffer witness commit fold shard "

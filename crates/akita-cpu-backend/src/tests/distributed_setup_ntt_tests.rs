@@ -17,6 +17,7 @@ fn w8r2_profiling_key(
         .profiles()
         .final_group;
     ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     }

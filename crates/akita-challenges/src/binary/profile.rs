@@ -1,16 +1,16 @@
 use std::sync::LazyLock;
 
 use akita_error::AkitaError;
-use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
 use num_bigint::BigUint;
 
 use super::combinatorics::BinomialCdfRow;
+use super::BINARY_CHALLENGE_SEED_LEN;
 
 static CYCLOTOMIC_243_COUNTS: LazyLock<BinomialCdfRow> =
     LazyLock::new(|| BinomialCdfRow::new(BinaryScalarRing::Cyclotomic243.degree()));
 static CYCLOTOMIC_729_COUNTS: LazyLock<BinomialCdfRow> =
     LazyLock::new(|| BinomialCdfRow::new(BinaryScalarRing::Cyclotomic729.degree()));
-const FOLD_ROOT_ENTROPY_BITS: u32 = (FOLD_CHALLENGE_SEED_LEN * 8) as u32;
+const FOLD_ROOT_ENTROPY_BITS: u32 = (BINARY_CHALLENGE_SEED_LEN * 8) as u32;
 
 fn required_budget(fold_width: u64, lambda_fold: u32) -> Option<BigUint> {
     if fold_width == 0 || lambda_fold > FOLD_ROOT_ENTROPY_BITS {

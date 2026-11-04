@@ -1,21 +1,27 @@
-use spongefish::{Encoding, NargDeserialize, VerificationError};
+use akita_error::AkitaError;
+use spongefish::{FromNarg, NargReader, VerificationError};
 
-/// Canonical unsigned LEB128 nonce used by grinding messages.
+use super::invalid_proof;
+use crate::{ProverChannel, VerifierChannel};
+
+/// Fold-response nonce: canonical unsigned LEB128 on the wire, absorbed as
+/// one `u64` little-endian word.
 ///
-/// The encoding is self-delimiting and rejects overflow and redundant terminal
-/// zero groups. Schedule-dependent range checks remain at the grinding-plan
-/// replay boundary.
+/// The wire encoding is self-delimiting and rejects overflow and redundant
+/// terminal zero groups. Schedule-dependent range checks remain at the
+/// grinding-plan replay boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NonceAtom(u32);
 
-struct NonceEncoding {
+/// Canonical LEB128 wire bytes of one nonce.
+pub struct NonceWire {
     bytes: [u8; nonce_max_bytes(u32::BITS as u8)],
     len: usize,
 }
 
-impl AsRef<[u8]> for NonceEncoding {
+impl AsRef<[u8]> for NonceWire {
     fn as_ref(&self) -> &[u8] {
-        &self.bytes[..self.len]
+        self.bytes.get(..self.len).unwrap_or_default()
     }
 }
 
@@ -31,47 +37,74 @@ impl NonceAtom {
     pub const fn into_inner(self) -> u32 {
         self.0
     }
-}
 
-impl Encoding<[u8]> for NonceAtom {
-    fn encode(&self) -> impl AsRef<[u8]> {
+    /// The absorbed form: the nonce as one `u64` little-endian word.
+    #[must_use]
+    pub fn word(self) -> [u8; 8] {
+        u64::from(self.0).to_le_bytes()
+    }
+
+    /// The wire form: canonical unsigned LEB128.
+    #[must_use]
+    pub fn wire(self) -> NonceWire {
         let mut value = self.0;
-        let mut encoded = NonceEncoding {
+        let mut encoded = NonceWire {
             bytes: [0; nonce_max_bytes(u32::BITS as u8)],
             len: 0,
         };
-        loop {
+        for slot in &mut encoded.bytes {
             let mut byte = (value & 0x7f) as u8;
             value >>= 7;
             if value != 0 {
                 byte |= 0x80;
             }
-            encoded.bytes[encoded.len] = byte;
+            *slot = byte;
             encoded.len += 1;
             if value == 0 {
-                return encoded;
+                break;
             }
         }
+        encoded
     }
 }
 
-impl NargDeserialize for NonceAtom {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> Result<Self, VerificationError> {
-        let mut remaining = *buf;
+/// Send one fold-response nonce: its LEB128 wire bytes, absorbed as its word.
+pub fn send_nonce(state: &mut ProverChannel, value: u32) {
+    state.prover_message_with(
+        &NonceAtom::new(value),
+        |nonce| nonce.word(),
+        |nonce, out| out.extend_from_slice(nonce.wire().as_ref()),
+    );
+}
+
+/// Receive one fold-response nonce sent by [`send_nonce`], rejecting a
+/// noncanonical encoding.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] and poisons the transcript when the
+/// next bytes are not a canonical `u32` LEB128 nonce.
+pub fn receive_nonce(state: &mut VerifierChannel<'_>) -> Result<u32, AkitaError> {
+    state
+        .prover_message_with(NonceAtom::from_narg, |nonce| nonce.word())
+        .map(NonceAtom::into_inner)
+        .map_err(invalid_proof)
+}
+
+impl FromNarg for NonceAtom {
+    fn from_narg(reader: &mut NargReader<'_>) -> Result<Self, VerificationError> {
         let mut value = 0u32;
         for index in 0..nonce_max_bytes(u32::BITS as u8) {
-            let (&byte, tail) = remaining.split_first().ok_or(VerificationError)?;
+            let [byte] = reader.take_array::<1>()?;
             let payload = byte & 0x7f;
             if index == 4 && payload > 0x0f {
                 return Err(VerificationError);
             }
             value |= u32::from(payload) << (index * 7);
-            remaining = tail;
             if byte & 0x80 == 0 {
                 if index != 0 && payload == 0 {
                     return Err(VerificationError);
                 }
-                *buf = remaining;
                 return Ok(Self(value));
             }
         }
@@ -116,32 +149,33 @@ mod tests {
             (16_384, 3),
             (u32::MAX, 5),
         ] {
-            let encoded = NonceAtom::new(value).encode().as_ref().to_vec();
+            let encoded = NonceAtom::new(value).wire().as_ref().to_vec();
             assert_eq!(encoded.len(), expected_len);
             assert_eq!(encoded.len(), nonce_encoded_len(value));
             let suffix = [0xa5, 0x5a];
             let mut argument = encoded.clone();
             argument.extend_from_slice(&suffix);
-            let mut cursor = argument.as_slice();
-            let decoded = NonceAtom::deserialize_from_narg(&mut cursor).unwrap();
+            let mut reader = NargReader::new(&argument);
+            let decoded = reader.read::<NonceAtom>().unwrap();
             assert_eq!(decoded.into_inner(), value);
-            assert_eq!(decoded.encode().as_ref(), encoded);
-            assert_eq!(cursor, suffix);
+            assert_eq!(decoded.wire().as_ref(), encoded);
+            assert_eq!(decoded.word(), u64::from(value).to_le_bytes());
+            assert_eq!(reader.take_array::<2>().unwrap(), suffix);
+            assert!(reader.is_empty());
         }
     }
 
     #[test]
-    fn rejects_noncanonical_or_overflowing_encodings_transactionally() {
+    fn rejects_noncanonical_or_overflowing_encodings_and_poisons() {
         for malformed in [
             &[0x80, 0x00][..],
             &[0xff, 0xff, 0xff, 0xff, 0x10][..],
             &[0xff, 0xff, 0xff, 0xff, 0x80][..],
             &[0x80][..],
         ] {
-            let mut cursor = malformed;
-            let original = cursor;
-            assert!(NonceAtom::deserialize_from_narg(&mut cursor).is_err());
-            assert_eq!(cursor, original);
+            let mut reader = NargReader::new(malformed);
+            assert!(reader.read::<NonceAtom>().is_err());
+            assert!(reader.is_poisoned());
         }
     }
 }

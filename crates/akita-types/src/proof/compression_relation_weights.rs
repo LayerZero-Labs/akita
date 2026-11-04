@@ -1,15 +1,19 @@
 //! Shared compact F/H relation weights for prover materialization and verifier evaluation.
 
+mod factored;
 mod reduced;
 
 pub use reduced::{build_reduced_compression_relation_weights, ReducedCompressionRelationWeights};
+
+use factored::push_recomposition;
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
     eval_boolean_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
 };
 use akita_algebra::poly::multilinear_eval;
-use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::scalar_powers;
+use akita_algebra::row_batch::dot_base_rows_batched;
 use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -39,12 +43,17 @@ struct EvaluatedCompressionMatrix<E: Field> {
 }
 
 /// Canonical additive relation table for every F/H compression layer.
+///
+/// Events are stored individually or, for the recomposition and column
+/// families, as `factored::Groups` of aligned progressions whose scalars
+/// share one table; both forms describe the same additive table.
 #[derive(Clone, Debug)]
 pub struct CompressionRelationWeights<E: Field> {
     events: Vec<CompressionRelationEvent<E>>,
     alpha_powers: Vec<E>,
     coefficient_block_len: usize,
     physical_field_len: usize,
+    groups: factored::Groups<E>,
 }
 
 /// Checked sparse support for the negative-binary compression digits.
@@ -136,6 +145,10 @@ impl NegativeBinarySupport {
 }
 
 impl<E: Field> CompressionRelationWeights<E> {
+    // Inlined: construction pushes one event per compression column block,
+    // and the call overhead measured about 1.06M of a Jolt recursion guest's
+    // ~66M rows.
+    #[inline(always)]
     fn push(
         &mut self,
         physical_start: usize,
@@ -190,7 +203,8 @@ impl<E: Field> CompressionRelationWeights<E> {
                 actual: weights.len(),
             });
         }
-        for event in &self.events {
+        let expanded = self.expanded_group_events()?;
+        for event in self.events.iter().chain(&expanded) {
             let alpha = self
                 .alpha_powers
                 .get(
@@ -229,6 +243,9 @@ impl<E: Field> CompressionRelationWeights<E> {
     pub fn into_sparse_entries(mut self) -> Result<Vec<(usize, E)>, AkitaError> {
         /// Coefficients per parallel task, rounded up to whole clusters.
         const TASK_COEFFICIENTS: usize = 1 << 14;
+        let expanded = self.expanded_group_events()?;
+        self.events.extend(expanded);
+        self.groups = factored::Groups::default();
         self.events
             .sort_unstable_by_key(|event| event.physical_start);
         // `push` bounds every event inside the physical domain, so these
@@ -299,8 +316,18 @@ impl<E: Field> CompressionRelationWeights<E> {
     }
 
     /// Evaluate the table's multilinear extension at one full witness point.
+    ///
+    /// Ungrouped events take the per-event path and groups are evaluated by
+    /// factor (see the `factored` module); the sum is the dense table's extension.
+    #[cfg(not(feature = "compression-weights-crosscheck"))]
     #[tracing::instrument(skip_all, name = "compression_relation_mle")]
     pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let events = self.evaluate_events_at_point(point)?;
+        Ok(events + self.evaluate_groups_at_point(point)?)
+    }
+
+    /// The multilinear extension of the ungrouped events at `point`.
+    fn evaluate_events_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         if checked::pow2(point.len()) != Some(self.physical_field_len) {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len.trailing_zeros() as usize,
@@ -311,105 +338,115 @@ impl<E: Field> CompressionRelationWeights<E> {
         let mut low_factor_cache = Vec::new();
         let mut high_equality_cache = Vec::<(usize, OffsetEqWindow<E>)>::new();
         let mut evaluation = E::zero();
-        for event in &self.events {
-            if !event.physical_start.is_multiple_of(event.coefficient_count) {
-                if fallback_equality.is_none() {
-                    fallback_equality = Some(OffsetEqWindow::new(point)?);
-                }
-                let equality = fallback_equality.as_ref().ok_or_else(|| {
-                    AkitaError::Internal(
-                        "compression fallback equality window was not initialized".into(),
-                    )
-                })?;
-                let alpha_end = event
-                    .alpha_exponent_start
-                    .checked_add(event.coefficient_count)
-                    .ok_or_else(|| {
+        // Each term is `scalar · low factor · eq_low · eq_high`; the four-way
+        // product sum lets a field-inline guest form every product in its
+        // register file.
+        let mut terms = [[E::zero(); 4]; 32];
+        for batch in self.events.chunks(terms.len()) {
+            for (event, term) in batch.iter().zip(&mut terms) {
+                // `push` admits only power-of-two counts, so a mask tests
+                // alignment (a Jolt guest expands `remu` into many rows).
+                if event.physical_start & (event.coefficient_count - 1) != 0 {
+                    if fallback_equality.is_none() {
+                        fallback_equality = Some(OffsetEqWindow::new(point)?);
+                    }
+                    let equality = fallback_equality.as_ref().ok_or_else(|| {
                         AkitaError::Internal(
-                            "unaligned compression event alpha extent overflow".into(),
+                            "compression fallback equality window was not initialized".into(),
                         )
                     })?;
-                let powers = self
-                    .alpha_powers
-                    .get(event.alpha_exponent_start..alpha_end)
-                    .ok_or_else(|| {
-                        AkitaError::Internal(
-                            "unaligned compression event exceeds the alpha power table".into(),
-                        )
-                    })?;
-                let interval =
-                    powers
-                        .iter()
-                        .copied()
-                        .enumerate()
-                        .fold(E::zero(), |sum, (offset, power)| {
+                    let alpha_end = event
+                        .alpha_exponent_start
+                        .checked_add(event.coefficient_count)
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "unaligned compression event alpha extent overflow".into(),
+                            )
+                        })?;
+                    let powers = self
+                        .alpha_powers
+                        .get(event.alpha_exponent_start..alpha_end)
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "unaligned compression event exceeds the alpha power table".into(),
+                            )
+                        })?;
+                    let interval = powers.iter().copied().enumerate().fold(
+                        E::zero(),
+                        |sum, (offset, power)| {
                             sum + power * equality.eval(event.physical_start + offset)
-                        });
-                evaluation += event.scalar * interval;
-                continue;
-            }
-            let low_bits = event.coefficient_count.trailing_zeros() as usize;
-            let cache_key = (event.alpha_exponent_start, event.coefficient_count);
-            let low_factor = if let Some((_, value)) =
-                low_factor_cache.iter().find(|(key, _)| *key == cache_key)
-            {
-                *value
-            } else {
-                let alpha_end = event
-                    .alpha_exponent_start
-                    .checked_add(event.coefficient_count)
-                    .ok_or_else(|| {
+                        },
+                    );
+                    *term = [event.scalar, E::one(), interval, E::one()];
+                    continue;
+                }
+                let low_bits = event.coefficient_count.trailing_zeros() as usize;
+                let cache_key = (event.alpha_exponent_start, event.coefficient_count);
+                let low_factor = if let Some((_, value)) =
+                    low_factor_cache.iter().find(|(key, _)| *key == cache_key)
+                {
+                    *value
+                } else {
+                    let alpha_end = event
+                        .alpha_exponent_start
+                        .checked_add(event.coefficient_count)
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "aligned compression event alpha extent overflow".into(),
+                            )
+                        })?;
+                    let powers = self
+                        .alpha_powers
+                        .get(event.alpha_exponent_start..alpha_end)
+                        .ok_or_else(|| {
+                            AkitaError::Internal(
+                                "aligned compression event exceeds the alpha power table".into(),
+                            )
+                        })?;
+                    let low_point = point.get(..low_bits).ok_or_else(|| {
                         AkitaError::Internal(
-                            "aligned compression event alpha extent overflow".into(),
+                            "compression low point exceeds the checked point dimension".into(),
                         )
                     })?;
-                let powers = self
-                    .alpha_powers
-                    .get(event.alpha_exponent_start..alpha_end)
-                    .ok_or_else(|| {
-                        AkitaError::Internal(
-                            "aligned compression event exceeds the alpha power table".into(),
-                        )
-                    })?;
-                let low_point = point.get(..low_bits).ok_or_else(|| {
+                    let value = multilinear_eval(powers, low_point)?;
+                    low_factor_cache.push((cache_key, value));
+                    value
+                };
+                let high_index = event.physical_start >> low_bits;
+                let high_point = point.get(low_bits..).ok_or_else(|| {
                     AkitaError::Internal(
-                        "compression low point exceeds the checked point dimension".into(),
+                        "compression high point exceeds the checked point dimension".into(),
                     )
                 })?;
-                let value = multilinear_eval(powers, low_point)?;
-                low_factor_cache.push((cache_key, value));
-                value
-            };
-            let high_index = event.physical_start >> low_bits;
-            let high_point = point.get(low_bits..).ok_or_else(|| {
-                AkitaError::Internal(
-                    "compression high point exceeds the checked point dimension".into(),
-                )
-            })?;
-            let high_cache_index = if let Some(index) = high_equality_cache
-                .iter()
-                .position(|(cached_low_bits, _)| *cached_low_bits == low_bits)
-            {
-                index
-            } else {
-                let balanced_low_bits = high_point.len().div_ceil(2);
-                high_equality_cache.push((
-                    low_bits,
-                    OffsetEqWindow::with_low_bits(high_point, balanced_low_bits)?,
-                ));
-                high_equality_cache.len() - 1
-            };
-            let high_equality = high_equality_cache.get(high_cache_index).ok_or_else(|| {
-                AkitaError::Internal("compression high equality cache entry is missing".into())
-            })?;
-            evaluation += event.scalar * low_factor * high_equality.1.eval(high_index);
+                let high_cache_index = if let Some(index) = high_equality_cache
+                    .iter()
+                    .position(|(cached_low_bits, _)| *cached_low_bits == low_bits)
+                {
+                    index
+                } else {
+                    let balanced_low_bits = high_point.len().div_ceil(2);
+                    high_equality_cache.push((
+                        low_bits,
+                        OffsetEqWindow::with_low_bits(high_point, balanced_low_bits)?,
+                    ));
+                    high_equality_cache.len() - 1
+                };
+                let high_equality = high_equality_cache.get(high_cache_index).ok_or_else(|| {
+                    AkitaError::Internal("compression high equality cache entry is missing".into())
+                })?;
+                let (eq_low, eq_high) = high_equality.1.eval_factors(high_index);
+                *term = [event.scalar, low_factor, eq_low, eq_high];
+            }
+            evaluation += E::sum_of_products(&terms[..batch.len()]);
         }
         Ok(evaluation)
     }
 }
 
+/// Push one recomposition as individual events (the fallback of
+/// `factored::push_recomposition`).
 #[allow(clippy::too_many_arguments)]
-fn push_recomposition<F, E>(
+fn push_recomposition_canonical<F, E>(
     weights: &mut CompressionRelationWeights<E>,
     span_start: usize,
     digit_ring_dim: usize,
@@ -672,6 +709,7 @@ where
         alpha_powers: scalar_powers(alpha, maximum_dimension),
         coefficient_block_len,
         physical_field_len,
+        groups: factored::Groups::default(),
     };
     let field_bits = usize::try_from(F::MODULUS_BITS)
         .map_err(|_| AkitaError::InvalidSetup("compression field width overflow".into()))?;
@@ -711,20 +749,20 @@ where
                     .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
             let matrix_row = matrix.row_flat(0)?;
             let powers = scalar_powers(alpha, map.ring_dimension());
-            let columns = (0..map.input_width())
-                .map(|column| {
+            // All columns share the powers: batched calls let a field-inline
+            // guest load each power once per block of columns.
+            let columns = dot_base_rows_batched(
+                &powers,
+                (0..map.input_width()).map(|column| {
                     let start = column * map.ring_dimension();
                     let end = start + map.ring_dimension();
-                    Ok(eval_flat_ring_at_pows_fast(
-                        matrix_row.get(start..end).ok_or_else(|| {
-                            AkitaError::Internal(
-                                "compression column exceeds the checked setup matrix row".into(),
-                            )
-                        })?,
-                        &powers,
-                    ))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
+                    matrix_row.get(start..end).ok_or_else(|| {
+                        AkitaError::Internal(
+                            "compression column exceeds the checked setup matrix row".into(),
+                        )
+                    })
+                }),
+            )?;
             evaluated_matrices.push(EvaluatedCompressionMatrix {
                 input_width: map.input_width(),
                 ring_dimension: map.ring_dimension(),
@@ -736,20 +774,14 @@ where
         let evaluated = evaluated_matrices.get(matrix_index).ok_or_else(|| {
             AkitaError::Internal("evaluated compression matrix cache entry is missing".into())
         })?;
-        for column in 0..map.input_width() {
-            let start = column * map.ring_dimension();
-            weights.push(
-                span.range().start + start,
-                map.ring_dimension(),
-                0,
-                row_weight
-                    * evaluated.columns.get(column).copied().ok_or_else(|| {
-                        AkitaError::Internal(
-                            "compression column exceeds the evaluated column table".into(),
-                        )
-                    })?,
-            )?;
-        }
+        weights.push_column_group(
+            span.range().start,
+            map.ring_dimension(),
+            map.input_width(),
+            row_weight,
+            matrix_index,
+            &evaluated.columns,
+        )?;
         if let Some(successor) = successor_compression_span(witness_layout, group_index, map_index)?
         {
             push_recomposition::<F, E>(
@@ -786,6 +818,9 @@ where
     Ok(weights)
 }
 
+#[cfg(feature = "compression-weights-crosscheck")]
+pub mod crosscheck;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,25 +829,36 @@ mod tests {
 
     #[test]
     fn sparse_evaluator_matches_dense_materialization() {
-        let mut weights = CompressionRelationWeights {
-            events: Vec::new(),
-            alpha_powers: (1..=16).map(F::from_u64).collect(),
-            coefficient_block_len: 2,
-            physical_field_len: 16,
-        };
-        weights.push(0, 4, 0, F::from_u64(3)).unwrap();
-        weights.push(6, 2, 4, F::from_u64(5)).unwrap();
-        weights.push(8, 8, 0, F::from_u64(7)).unwrap();
         let point = [
             F::from_u64(11),
             F::from_u64(13),
             F::from_u64(17),
             F::from_u64(19),
         ];
-        assert_eq!(
-            weights.evaluate_at_point(&point).unwrap(),
-            multilinear_eval(&weights.materialize_dense().unwrap(), &point).unwrap()
-        );
+        for event_count in [0, 1, 3, 31, 32, 33, 64, 65] {
+            let mut weights = CompressionRelationWeights {
+                events: Vec::new(),
+                alpha_powers: (1..=16).map(F::from_u64).collect(),
+                coefficient_block_len: 2,
+                physical_field_len: 16,
+                groups: factored::Groups::default(),
+            };
+            for (start, count, alpha_start, scalar) in
+                [(0, 4, 0, 3), (6, 2, 4, 5), (8, 8, 0, 7), (2, 4, 2, 11)]
+                    .into_iter()
+                    .cycle()
+                    .take(event_count)
+            {
+                weights
+                    .push(start, count, alpha_start, F::from_u64(scalar))
+                    .unwrap();
+            }
+            assert_eq!(
+                weights.evaluate_at_point(&point).unwrap(),
+                multilinear_eval(&weights.materialize_dense().unwrap(), &point).unwrap(),
+                "event_count={event_count}",
+            );
+        }
     }
 
     /// Unsorted, overlapping, cancelling, and task-spanning events give the
@@ -825,6 +871,7 @@ mod tests {
             alpha_powers: (1..=4096).map(F::from_u64).collect(),
             coefficient_block_len: 8,
             physical_field_len,
+            groups: factored::Groups::default(),
         };
         for index in 0..600usize {
             let coefficient_count = 8 << (index % 5);

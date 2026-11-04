@@ -17,7 +17,7 @@ use crate::opaque::{
     RoutedNttRequirement,
 };
 use crate::{AkitaProverSetup, DensePoly};
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{
     CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
@@ -201,7 +201,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         1,
         1,
         1,
-        FoldChallengeFamily::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
@@ -437,7 +437,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     );
     assert_eq!(actual_inner.rows(), expected_inner.rows());
     let portable = actual.prover_state().portable_hint().unwrap();
-    assert_eq!(portable.inner_rows(), actual_inner.rows());
+    assert_eq!(portable.inner_rows().unwrap().as_ref(), actual_inner.rows());
     let compression_plan = plan.compression().unwrap();
     let expected_compression = expected
         .prover_state()
@@ -535,7 +535,7 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
         1,
         1,
         1,
-        FoldChallengeFamily::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();

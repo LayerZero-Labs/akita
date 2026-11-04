@@ -121,7 +121,7 @@ pub fn price_binary_root_planes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::FoldChallengeFamily;
+    use akita_challenges::FoldChallengeDistribution;
     use akita_params::{CommittedGroupParams, PolynomialGroupLayout};
     use akita_types::binary_source::{BinaryIndexMap, BinarySourceDescriptor, PrimePlaneClaim};
 
@@ -137,7 +137,7 @@ mod tests {
             3,
             2,
             2,
-            FoldChallengeFamily::pm1_only(3),
+            FoldChallengeDistribution::pm1_only(3),
         )
         .with_decomp(2, 2, 2, 2, 2)
         .unwrap();

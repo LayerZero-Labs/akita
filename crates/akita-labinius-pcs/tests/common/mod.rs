@@ -338,11 +338,10 @@ impl<S: ClearChannel> ClearChannel for Tap<'_, S> {
     fn fold_challenges(
         &mut self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: &mut u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        self.0.fold_challenges(sampler, label, count, nonce)
+        self.0.fold_challenges(sampler, count, nonce)
     }
 }
 

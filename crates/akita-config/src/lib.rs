@@ -5,13 +5,14 @@
 //! Runtime resolution is strict: missing catalog rows reject instead of invoking
 //! planner search.
 
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 #[cfg(test)]
 use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
-use akita_serialization::Valid;
+use akita_serialization::{AkitaSerialize, Valid};
+use akita_transcript::ChallengeCodec;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -35,7 +36,7 @@ macro_rules! impl_catalog_family {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeDistribution, akita_error::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> akita_params::SisModulusProfileId {
@@ -305,6 +306,7 @@ fn row_fits_setup_capacity(
     max_num_batched_polys: usize,
 ) -> Result<bool, AkitaError> {
     akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     }
@@ -382,10 +384,12 @@ pub fn unit_onehot_source_chunk_size<Cfg: CommitmentConfig>() -> Result<usize, A
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalEncoding + Field;
+    ///
+    /// Fiat-Shamir draws over it use Jolt's challenge codec for the field.
+    type Field: CanonicalEncoding + Field + ChallengeCodec + Valid + AkitaSerialize;
 
     /// Field used by public openings and all proof scalars.
-    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid;
+    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid + ChallengeCodec;
 
     /// Extension degree `K = [ExtField : Field]`.
     ///
@@ -415,7 +419,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// # Errors
     ///
     /// `InvalidSetup` if `d` is not supported.
-    fn ring_challenge_config(d: usize) -> Result<FoldChallengeFamily, AkitaError>;
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError>;
 
     /// Exact SIS modulus profile used by security-floor lookups.
     fn sis_modulus_profile() -> SisModulusProfileId;
@@ -488,9 +492,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fp32, FpExt4};
+    use jolt_field::{FpExt4, Prime32Offset99};
 
-    type Base = Fp32<251>;
+    type Base = Prime32Offset99;
     type BaseExt = FpExt4<Base>;
 
     #[derive(Clone)]
@@ -523,13 +527,13 @@ mod tests {
             }
         }
 
-        fn ring_challenge_config(d: usize) -> Result<FoldChallengeFamily, AkitaError> {
+        fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError> {
             if d != 64 {
                 return Err(AkitaError::InvalidSetup(format!(
                     "unsupported D={d} for SingleExtensionConfig (expected 64)"
                 )));
             }
-            Ok(FoldChallengeFamily::pm1_only(1))
+            Ok(FoldChallengeDistribution::pm1_only(1))
         }
 
         fn sis_modulus_profile() -> SisModulusProfileId {
@@ -561,7 +565,7 @@ mod tests {
             SingleExtensionConfig::decomposition()
         }
 
-        fn ring_challenge_config(d: usize) -> Result<FoldChallengeFamily, AkitaError> {
+        fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError> {
             SingleExtensionConfig::ring_challenge_config(d)
         }
 
