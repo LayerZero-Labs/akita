@@ -259,8 +259,10 @@ impl BinaryRootRelation {
 
     /// Repack only the bounded response and image digits into an ordinary ring.
     /// The returned map is also the map used by the public root row compiler.
+    /// It reads no residual row, so a probe may build it before the rows.
     pub fn successor_table(
-        &self,
+        response: &[[i128; D]],
+        images: &[[Q24Image; D]],
         destination_ring_dimension: usize,
     ) -> Result<(RootCoefficientRepacking, Vec<i8>), AkitaError> {
         let geometry =
@@ -269,24 +271,24 @@ impl BinaryRootRelation {
             vec![
                 RootRepackingSegment {
                     geometry,
-                    elements: self.response.len(),
+                    elements: response.len(),
                     digits: 4,
                 },
                 RootRepackingSegment {
                     geometry,
-                    elements: self.images.len(),
+                    elements: images.len(),
                     digits: 8,
                 },
             ],
             destination_ring_dimension,
         )?;
-        let response_len = checked::product([self.response.len(), 4, D])
+        let response_len = checked::product([response.len(), 4, D])
             .ok_or_else(|| invalid("binary response digit count overflow"))?;
-        let image_len = checked::product([self.images.len(), 8, D])
+        let image_len = checked::product([images.len(), 8, D])
             .ok_or_else(|| invalid("binary image digit count overflow"))?;
         let mut response_digits = Vec::with_capacity(response_len);
         let mut image_digits = Vec::with_capacity(image_len);
-        for element in &self.response {
+        for element in response {
             for digit in 0..4 {
                 for &coefficient in element {
                     let word = coefficient
@@ -297,7 +299,7 @@ impl BinaryRootRelation {
                 }
             }
         }
-        for element in &self.images {
+        for element in images {
             for digit in 0..8 {
                 image_digits.extend(
                     element

@@ -103,6 +103,7 @@ pub(super) fn image_hint(
         .collect()
 }
 
+/// Fold the packed carriers and construct the root relation's residual rows.
 pub(super) fn probe_packed(
     descriptor: &BinarySourceDescriptor,
     matrix: &[Vec<[i128; SOURCE_RING_DEGREE]>],
@@ -111,6 +112,24 @@ pub(super) fn probe_packed(
     challenges: &Challenges,
     family: FoldChallengeFamily,
 ) -> Result<Option<crate::binary_root::BinaryRootRelation>, AkitaError> {
+    let Some(response) = fold_packed(descriptor, sources, challenges, family)? else {
+        return Ok(None);
+    };
+    let _span = tracing::info_span!("binary_root_residual_rows").entered();
+    crate::binary_root::BinaryRootRelation::from_response(
+        descriptor, matrix, response, images, challenges, family,
+    )
+    .map(Some)
+}
+
+/// Fold the packed carriers into the bounded response, or `None` when a
+/// clipped coefficient rejects this nonce.
+pub(super) fn fold_packed(
+    descriptor: &BinarySourceDescriptor,
+    sources: &[u128],
+    challenges: &Challenges,
+    family: FoldChallengeFamily,
+) -> Result<Option<Vec<[i128; SOURCE_RING_DEGREE]>>, AkitaError> {
     let index = descriptor.index_map();
     let polynomials = descriptor.polynomials().len();
     let scalar_rows = checked::exact_div(index.padded_carriers(), index.columns())
@@ -134,7 +153,7 @@ pub(super) fn probe_packed(
         .iter()
         .map(|challenge| BinaryChallenge::try_from_sparse(challenge, &profile))
         .collect::<Result<Vec<_>, _>>()?;
-    let span = tracing::info_span!("binary_root_fold_integer").entered();
+    let _span = tracing::info_span!("binary_root_fold_integer").entered();
     let mut response = Vec::new();
     response
         .try_reserve_exact(
@@ -169,12 +188,7 @@ pub(super) fn probe_packed(
             response.push(packed);
         }
     }
-    drop(span);
-    let _span = tracing::info_span!("binary_root_residual_rows").entered();
-    crate::binary_root::BinaryRootRelation::from_response(
-        descriptor, matrix, response, images, challenges, family,
-    )
-    .map(Some)
+    Ok(Some(response))
 }
 
 #[cfg(test)]

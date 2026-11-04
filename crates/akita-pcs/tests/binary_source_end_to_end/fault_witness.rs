@@ -52,8 +52,11 @@ pub(super) fn reconstruct(
         challenges,
         FoldChallengeFamily::BinaryRoot,
     )?;
-    let (response_plan, response_digits) =
-        response.successor_table(plan.repacking().destination_ring_dimension())?;
+    let (response_plan, response_digits) = BinaryRootRelation::successor_table(
+        &response.response,
+        &response.images,
+        plan.repacking().destination_ring_dimension(),
+    )?;
     let mut native: Vec<Vec<i8>> = (0..2)
         .map(|segment| extract(&response_plan, &response_digits, segment))
         .collect();

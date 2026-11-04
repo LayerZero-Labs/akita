@@ -159,7 +159,8 @@ fn q24_root_matches_integer_fold_division_and_coefficient_repacking() {
             );
         }
     }
-    let (plan, table) = relation.successor_table(256).unwrap();
+    let (plan, table) =
+        BinaryRootRelation::successor_table(&relation.response, &relation.images, 256).unwrap();
     let table = table
         .into_iter()
         .map(|x| Prime128Offset275::from_i64(i64::from(x)))
@@ -295,7 +296,8 @@ fn q24_root_rows_authenticate_the_repacked_response_image_and_padding() {
     type E = Prime128Offset275;
     let input = fixture();
     let fixed = build(&input).unwrap();
-    let (plan, digits) = fixed.successor_table(256).unwrap();
+    let (plan, digits) =
+        BinaryRootRelation::successor_table(&fixed.response, &fixed.images, 256).unwrap();
     let table = digits
         .into_iter()
         .map(|x| E::from_i64(i64::from(x)))

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 mod packed;
 mod projection;
-use packed::{image_hint, pack_logical_words, probe_packed};
+use packed::{fold_packed, image_hint, pack_logical_words, probe_packed};
 
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
@@ -419,11 +419,9 @@ where
     }
     let source = &preparation.source;
     let span = tracing::info_span!("binary_root_probe_response").entered();
-    let Some(response) = probe_packed(
+    let Some(response) = fold_packed(
         source.manifest.descriptor(),
-        &source.matrix,
         &source.sources,
-        &source.images,
         challenges,
         akita_challenges::FoldChallengeFamily::BinaryRoot,
     )?
@@ -432,7 +430,11 @@ where
     };
     drop(span);
     let span = tracing::info_span!("binary_root_successor_table").entered();
-    let (response_map, response_table) = response.successor_table(destination_ring_dimension)?;
+    let (response_map, response_table) = crate::binary_root::BinaryRootRelation::successor_table(
+        &response,
+        &source.images,
+        destination_ring_dimension,
+    )?;
     drop(span);
     let span = tracing::info_span!("binary_root_evaluation_witness").entered();
     let evaluation = preparation
@@ -443,7 +445,7 @@ where
                 source.manifest.descriptor(),
                 claim,
                 &preparation.partials,
-                &response.response,
+                &response,
                 challenges,
                 akita_params::binary_setup::BINARY_SETUP_P,
             )
