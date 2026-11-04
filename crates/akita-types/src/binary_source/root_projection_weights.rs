@@ -10,7 +10,9 @@ use jolt_field::Field;
 use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,
 };
-use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
+use crate::native_root_relation::{
+    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH,
+};
 
 /// The prover's A operand for [`binary_direct_a_weights`].
 ///
@@ -246,23 +248,20 @@ impl<E: Field> ImageWeights<E> {
         self.table_len
     }
 
-    /// The challenge supports of one A row: its owner's columns in order,
-    /// each with the image element it multiplies.
-    fn row_columns(
+    /// The image element that A row `row_index` meets at `column` of its
+    /// owner, with that column's challenge support.
+    fn row_column(
         &self,
         row_index: usize,
-    ) -> Result<impl Iterator<Item = (usize, &ChallengeSupport<E>)>, AkitaError> {
+        column: usize,
+    ) -> Result<(usize, &ChallengeSupport<E>), AkitaError> {
         let owner = row_index / self.rank;
         let row = row_index % self.rank;
-        let first = checked::product([owner, self.columns]).ok_or(AkitaError::InvalidProof)?;
-        let supports = checked::range(first, self.columns)
-            .and_then(|range| self.challenges.get(range))
-            .ok_or(AkitaError::InvalidProof)?;
-        let rank = self.rank;
-        Ok(supports
-            .iter()
-            .enumerate()
-            .map(move |(column, support)| ((first + column) * rank + row, support)))
+        let index =
+            checked::mul_add(owner, self.columns, column).ok_or(AkitaError::InvalidProof)?;
+        let support = self.challenges.get(index).ok_or(AkitaError::InvalidProof)?;
+        let element = checked::mul_add(index, self.rank, row).ok_or(AkitaError::InvalidProof)?;
+        Ok((element, support))
     }
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
@@ -271,7 +270,8 @@ impl<E: Field> ImageWeights<E> {
         let mut sum = E::zero();
         for (row_index, rho) in self.rho.iter().enumerate() {
             let adjoint_low = adjoint.apply(rho, low)?;
-            for (element, support) in self.row_columns(row_index)? {
+            for column in 0..self.columns {
+                let (element, support) = self.row_column(row_index, column)?;
                 let mut dot = E::zero();
                 for &(k, value) in support {
                     dot += value * *adjoint_low.get(k).ok_or(AkitaError::InvalidProof)?;
@@ -282,25 +282,36 @@ impl<E: Field> ImageWeights<E> {
         Ok(-sum)
     }
 
+    /// Expand each (A row, column) pair by its support, in batches through
+    /// [`weigh_units`], and stream the digit weights.
     pub(crate) fn visit(
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
-        let mut h = Vec::new();
-        h.try_reserve_exact(648)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        h.resize(648, E::zero());
-        for (row_index, rho) in self.rho.iter().enumerate() {
-            let extended = adjoint.extend_row(rho)?;
-            for (element, support) in self.row_columns(row_index)? {
-                h.fill(E::zero());
-                for &(k, value) in support {
-                    let shifted = extended.get(k..k + 648).ok_or(AkitaError::InvalidProof)?;
-                    for (slot, &g) in h.iter_mut().zip(shifted) {
-                        *slot += value * g;
-                    }
+        let extended = self
+            .rho
+            .iter()
+            .map(|rho| adjoint.extend_row(rho))
+            .collect::<Result<Vec<_>, _>>()?;
+        let weigh = |unit: usize| -> Result<(usize, [E; 648]), AkitaError> {
+            let row_index = unit / self.columns;
+            let (element, support) = self.row_column(row_index, unit % self.columns)?;
+            let extended = extended.get(row_index).ok_or(AkitaError::InvalidProof)?;
+            let mut h = [E::zero(); 648];
+            for &(k, value) in support {
+                let shifted = extended.get(k..k + 648).ok_or(AkitaError::InvalidProof)?;
+                for (slot, &g) in h.iter_mut().zip(shifted) {
+                    *slot += value * g;
                 }
+            }
+            Ok((element, h))
+        };
+        let units =
+            checked::product([self.rho.len(), self.columns]).ok_or(AkitaError::InvalidProof)?;
+        for start in (0..units).step_by(WEIGH_BATCH) {
+            let end = units.min(start + WEIGH_BATCH);
+            for (element, h) in weigh_units(start..end, weigh)? {
                 let mut power = -E::one();
                 for digit in 0..self.lanes.digits() {
                     let base = self.lanes.base(element, digit)?;
