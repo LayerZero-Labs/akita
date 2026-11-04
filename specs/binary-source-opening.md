@@ -1799,10 +1799,31 @@ single-threaded benchmark.
 The binary root's Stage 2 now reads its public weight as block profiles
 instead of a dense table. This removes the weight materialization span, and
 round 0 runs on the packed digits. The design and full measurements are in
-[`binary-source-stage2-oracle.md`](binary-source-stage2-oracle.md). The
-baseline is `f92e959ee` and the structured executable is `2e59907c9`. Each
-figure is the median of three interleaved runs with the catalog cache; all 33
-runs reproduced their pins. One-minute loads were 7.37–12.69.
+[`binary-source-stage2-oracle.md`](binary-source-stage2-oracle.md).
+
+On the current base, `dev` at `ff2297aae` with the B/D setup offload, the
+baseline executable is `ff2297aae` and the structured executable is
+`537beafa2`. Each figure is the median of three interleaved runs with the
+catalog cache; all 35 runs, warm-ups included, reproduced their pins and
+verified. One-minute loads were 4.91–15.77.
+
+| N | Shape | Weight materialization + Stage 2 (ms) | Complete proving (ms) | Prover peak RSS bytes |
+| --- | --- | --- | --- | --- |
+| 2^22 | `word` | 421.6 → 178.5 | 1,583.4 → 1,494.0 | 4,445,175,808 → 2,996,060,160 |
+| 2^22 | `word-prime` | 588.5 → 250.9 | 2,391.3 → 2,105.5 | 5,238,603,776 → 5,181,784,064 |
+| 2^22 | `word-prime-ordinary` | 583.3 → 271.3 | 2,560.5 → 2,226.9 | 5,584,814,080 → 5,495,062,528 |
+| 2^22 | `prime5` | 1,167.8 → 395.0 | 3,471.4 → 2,818.0 | 9,370,451,968 → 8,814,641,152 |
+| 2^23 | `word-prime` | 1,027.1 → 345.7 | 3,513.2 → 2,900.1 | 8,610,463,744 → 5,448,220,672 |
+
+Stage 2's own live-heap peak falls by 26–48%. For the 2^22 shapes with prime
+planes, Stage 3 now sets the process peak: its dense weight over the typed
+A/B/D prefix is unchanged by this work, so peak RSS barely moves there. At
+2^22 `word` and 2^23 `word-prime`, Stage 3 stays below the old Stage 2 peak
+and peak RSS falls by a third.
+
+The earlier measurement, on base `f92e959ee` before the B/D setup offload,
+used the structured executable `2e59907c9` and 33 runs at one-minute loads of
+7.37–12.69:
 
 | N | Shape | Weight materialization + Stage 2 (ms) | Complete proving (ms) | Prover peak RSS bytes |
 | --- | --- | --- | --- | --- |
