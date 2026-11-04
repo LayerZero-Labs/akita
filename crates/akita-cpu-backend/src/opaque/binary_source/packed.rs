@@ -117,7 +117,7 @@ pub(super) fn fold_packed(
     descriptor: &BinarySourceDescriptor,
     sources: &[u128],
     challenges: &Challenges,
-    family: FoldChallengeFamily,
+    family: FoldChallengeDistribution,
 ) -> Result<Option<Vec<[i128; SOURCE_RING_DEGREE]>>, AkitaError> {
     let index = descriptor.index_map();
     let polynomials = descriptor.polynomials().len();
