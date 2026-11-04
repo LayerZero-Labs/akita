@@ -60,8 +60,28 @@ impl<E: Field> DenseRelationWeights<E> {
     }
 }
 
+/// Complete relation weights kept in a caller's structured form.
+///
+/// Stage 2 reads the pair `(q(left), q(left + 1))` in each coefficient round
+/// and binds the lowest live variable after it. At the lane transition the
+/// oracle hands over its folded dense table. Every value must equal the
+/// corresponding entry of the dense table folded by the same challenges.
+pub(crate) trait StructuredRelationWeights<E: Field>: Send + Sync {
+    /// Length of the current, partially bound table.
+    fn len(&self) -> usize;
+    /// Weights at the even address `left` and its neighbour.
+    fn pair(&self, left: usize) -> (E, E);
+    /// Bind the lowest live variable to `challenge`.
+    fn bind(&mut self, challenge: E);
+    /// Take the current table in dense form, leaving the oracle empty.
+    fn take_dense(&mut self) -> Vec<E>;
+}
+
 /// Canonical primary relation-weight state owned and folded by Stage 2.
 pub(crate) enum RelationWeightOracle<E: Field> {
     QuotientFactored(RelationWeightFactorization<E>),
     ReducedDense(DenseRelationWeights<E>),
+    // The binary root wires this seam in a following change.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Structured(Box<dyn StructuredRelationWeights<E>>),
 }
