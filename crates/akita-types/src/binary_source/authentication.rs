@@ -217,10 +217,9 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         for lanes in &self.lanes {
             for element in 0..lanes.elements() {
                 for digit in 0..lanes.digits() {
-                    let base = lanes.base(element, digit)?;
                     for coefficient in 0..lanes.degree() {
                         *addresses.get_mut(filled).ok_or(AkitaError::InvalidProof)? =
-                            checked::sum([base, coefficient]).ok_or(AkitaError::InvalidProof)?;
+                            lanes.address(element, digit, coefficient)?;
                         filled += 1;
                         if filled == BINARY_DIGIT_COMMITMENT_DEGREE {
                             visit(column, &addresses)?;
@@ -250,15 +249,11 @@ impl<E: Field> DigitAuthenticationWeights<E> {
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         let kernel = ResidueKernelPoint::new(self.alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
-        let low = eq.low();
         let mut sum = E::zero();
         self.for_each_column(|column, addresses| {
             let mut equality = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
             for (slot, &address) in equality.iter_mut().zip(addresses) {
-                *slot = eq.high(address)?
-                    * *low
-                        .get(eq.low_offset(address))
-                        .ok_or(AkitaError::InvalidProof)?;
+                *slot = eq.at(address)?;
             }
             let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
             kernel.field_kernel_into(&equality, &mut reduced)?;

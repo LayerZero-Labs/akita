@@ -66,6 +66,15 @@ impl<E: Field> RootEq<E> {
             .copied()
             .ok_or(AkitaError::InvalidProof)
     }
+
+    /// `eq(r, address)`.
+    pub(crate) fn at(&self, address: usize) -> Result<E, AkitaError> {
+        let low = self
+            .low
+            .get(self.low_offset(address))
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(*low * self.high(address)?)
+    }
 }
 
 /// Lane addresses of one single-plane repacking segment.
@@ -132,6 +141,21 @@ impl SegmentLanes {
         checked::mul_add(element, self.digits, digit)
             .and_then(|lane| checked::mul_add(lane, self.stride, self.start))
             .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Address of one natural coefficient of one lane.
+    pub(crate) fn address(
+        &self,
+        element: usize,
+        digit: usize,
+        coefficient: usize,
+    ) -> Result<usize, AkitaError> {
+        if coefficient >= self.degree {
+            return Err(AkitaError::InvalidInput(
+                "root lane coefficient is invalid".into(),
+            ));
+        }
+        checked::sum([self.base(element, digit)?, coefficient]).ok_or(AkitaError::InvalidProof)
     }
 
     /// `sum_d 8^d * high(lane d)` for one element whose lanes start a block.
