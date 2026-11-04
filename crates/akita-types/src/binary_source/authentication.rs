@@ -9,7 +9,9 @@ use akita_params::binary_setup::{
 use jolt_field::Field;
 
 use super::BinaryRootWitnessPlan;
-use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
+use crate::native_root_relation::{
+    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH,
+};
 
 /// Ordinary ring degree used by the explicit experimental image and U setup.
 pub const BINARY_DIGIT_COMMITMENT_DEGREE: usize = 64;
@@ -64,9 +66,14 @@ pub(super) fn setup_entry<F: Field>(
 /// setup columns; the final chunk is zero-filled. The returned payload is row
 /// major. Image digits use `ImageCommitment`; U uses `WitnessCommitment`.
 /// This experimental geometry carries no SIS security claim.
+///
+/// `digits` starts at setup column `first_column`. The commitment is linear,
+/// so a table's payload is the field sum of the payloads of disjoint
+/// column-aligned pieces; a prover may compute those pieces in parallel.
 pub fn binary_public_digit_commitment<F: Field>(
     seed: &[u8; 32],
     label: SetupStreamLabel,
+    first_column: usize,
     digits: &[i8],
 ) -> Result<Vec<F>, AkitaError> {
     let rows = validate_label::<F>(label)?;
@@ -88,6 +95,7 @@ pub fn binary_public_digit_commitment<F: Field>(
             for (output, &digit) in coefficients.iter_mut().zip(chunk) {
                 *output = F::from_i64(i64::from(digit));
             }
+            let column = checked::sum([first_column, column]).ok_or(AkitaError::InvalidProof)?;
             setup_entry(seed, label, row, column)?
                 .mul_accumulate_into(&CyclotomicRing::from_coefficients(coefficients), &mut image);
         }
@@ -269,20 +277,44 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         Ok(sum)
     }
 
+    /// `sum_r batch_r * K(M_rc)`, the weights of setup column `c` in order.
+    fn column_weights(
+        &self,
+        kernel: &ResidueKernelPoint<E>,
+        column: usize,
+    ) -> Result<[E; BINARY_DIGIT_COMMITMENT_DEGREE], AkitaError> {
+        let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+        let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+        for (row, batch) in self.rows() {
+            let matrix = setup_entry::<E>(&self.seed, self.label, row, column)?;
+            kernel.field_kernel_into(matrix.coefficients(), &mut reduced)?;
+            for (weight, &value) in weights.iter_mut().zip(&reduced) {
+                *weight += batch * value;
+            }
+        }
+        Ok(weights)
+    }
+
+    /// Stream every column's weights onto its digit addresses. Columns are
+    /// weighed in batches through [`weigh_units`].
     pub(crate) fn visit(
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         let kernel = ResidueKernelPoint::new(self.alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
+        let mut batch = Vec::new();
         self.for_each_column(|column, addresses| {
             let column = usize::try_from(column).map_err(|_| AkitaError::InvalidProof)?;
-            for (row, batch) in self.rows() {
-                let matrix = setup_entry::<E>(&self.seed, self.label, row, column)?;
-                let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-                kernel.field_kernel_into(matrix.coefficients(), &mut weights)?;
-                for (&address, &weight) in addresses.iter().zip(&weights) {
-                    visit(address, batch * weight)?;
-                }
+            let offset = column % WEIGH_BATCH;
+            if offset == 0 {
+                let end = checked::sum([column, WEIGH_BATCH])
+                    .ok_or(AkitaError::InvalidProof)?
+                    .min(self.columns);
+                batch = weigh_units(column..end, |column| self.column_weights(&kernel, column))?;
+            }
+            let weights = batch.get(offset).ok_or(AkitaError::InvalidProof)?;
+            for (&address, &weight) in addresses.iter().zip(weights) {
+                visit(address, weight)?;
             }
             Ok(())
         })

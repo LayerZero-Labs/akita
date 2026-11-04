@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::binary_source::{
-    binary_direct_a_weights, BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor,
-    CANONICAL_IMAGE_WINDOW,
+    binary_direct_a_weights, BinaryAOperand, BinaryCommitmentProfiles, BinaryIndexMap,
+    BinarySourceDescriptor, CANONICAL_IMAGE_WINDOW,
 };
 use akita_challenges::{Challenges, SparseChallenge};
 use jolt_field::{Prime128Offset275 as F, Ring};
@@ -67,10 +67,15 @@ fn stage3_release_a_arithmetic_measurements() {
         // Use the canonical compiler, including the fixed T work, rather than
         // a second direct A implementation.
         let start = Instant::now();
-        let direct = binary_direct_a_weights(&plan, Some(&matrix), &challenges, &rho)
-            .unwrap()
-            .evaluate(&point)
-            .unwrap();
+        let direct = binary_direct_a_weights(
+            &plan,
+            Some(BinaryAOperand::from_canonical(&matrix)),
+            &challenges,
+            &rho,
+        )
+        .unwrap()
+        .evaluate(&point)
+        .unwrap();
         black_box(direct);
         let direct_elapsed = start.elapsed();
 

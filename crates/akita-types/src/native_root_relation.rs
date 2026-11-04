@@ -18,7 +18,7 @@ use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
 mod structured;
 pub use binary_commitment::binary_commitment_group;
-pub(crate) use structured::{RootEq, RootWeightFamily, SegmentLanes};
+pub(crate) use structured::{weigh_units, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH};
 
 /// Source interpretation of one group. Feature enablement never selects it.
 #[derive(Clone, Debug)]
@@ -366,9 +366,11 @@ impl<E: Field> NativeRootWeights<E> {
             *table.get_mut(address).ok_or(AkitaError::InvalidProof)? += weight;
             Ok(())
         };
+        let span = tracing::info_span!("root_weights_visit_terms").entered();
         for &(address, weight) in &self.terms {
             add(address, weight)?;
         }
+        drop(span);
         for family in &self.families {
             family.visit(&mut add)?;
         }

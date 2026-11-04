@@ -94,7 +94,8 @@ fn terminal_carries_authenticate_response_partials_and_value() {
     }
     assert_eq!(carry.bounds.parity_carry_bound, 76_695_844);
     assert_eq!(carry.bounds.value_carry_bound, 149_796);
-    let (base, base_digits) = response.successor_table(256).unwrap();
+    let (base, base_digits) =
+        BinaryRootRelation::successor_table(&response.response, &response.images, 256).unwrap();
     let scalar = binary_scalar_geometry().unwrap();
     let mut segments = base.segments().to_vec();
     for (elements, digits) in [(4, 1), (2, 9), (2, 6)] {
