@@ -4,22 +4,58 @@ use std::time::{Duration, Instant};
 use tracing::{span, Subscriber};
 use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
 
+/// Per-name totals: calls, wall, process CPU, the largest live-heap peak and
+/// the live heap at that span's entry, and the individual call walls.
+#[derive(Default)]
+struct Totals {
+    calls: u64,
+    wall: Duration,
+    cpu: Duration,
+    heap_peak: usize,
+    heap_entry: usize,
+    walls: Vec<Duration>,
+}
+
+/// Span start state; `heap` is `Some` only for spans on the measurement thread.
+struct Start {
+    wall: Instant,
+    cpu: Duration,
+    heap: Option<heap::Scope>,
+}
+
 #[derive(Clone, Default)]
-pub(super) struct Timings(Arc<Mutex<BTreeMap<&'static str, (u64, Duration)>>>);
+pub(super) struct Timings(Arc<Mutex<BTreeMap<&'static str, Totals>>>);
 
 impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Timings {
     fn on_new_span(&self, _: &span::Attributes<'_>, id: &span::Id, ctx: Context<'_, S>) {
         if let Some(span) = ctx.span(id) {
-            span.extensions_mut().insert(Instant::now());
+            let heap =
+                (std::thread::current().name() == Some("binary-full-size")).then(heap::Scope::open);
+            span.extensions_mut().insert(Start {
+                wall: Instant::now(),
+                cpu: process_cpu(),
+                heap,
+            });
         }
     }
     fn on_close(&self, id: span::Id, ctx: Context<'_, S>) {
         if let Some(span) = ctx.span(&id) {
-            if let Some(start) = span.extensions().get::<Instant>() {
+            if let Some(start) = span.extensions().get::<Start>() {
+                let wall = start.wall.elapsed();
+                let cpu = process_cpu().saturating_sub(start.cpu);
+                let heap = start.heap.as_ref().map(heap::Scope::close);
                 if let Ok(mut totals) = self.0.lock() {
                     let entry = totals.entry(span.metadata().name()).or_default();
-                    entry.0 += 1;
-                    entry.1 += start.elapsed();
+                    entry.calls += 1;
+                    entry.wall += wall;
+                    entry.cpu += cpu;
+                    entry.walls.push(wall);
+                    if let Some((entry_bytes, peak)) = heap {
+                        if peak >= entry.heap_peak {
+                            entry.heap_peak = peak;
+                            entry.heap_entry = entry_bytes;
+                        }
+                    }
                 }
             }
         }
@@ -29,12 +65,114 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Timings {
 impl Timings {
     pub(super) fn print(&self, phase: &str) {
         if let Ok(totals) = self.0.lock() {
-            for (name, (calls, elapsed)) in totals.iter() {
+            for (name, totals) in totals.iter() {
+                let walls = if totals.walls.len() <= 16 {
+                    totals
+                        .walls
+                        .iter()
+                        .map(|wall| wall.as_nanos().to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                } else {
+                    "many".into()
+                };
                 println!(
-                    "span phase={phase} name={name} calls={calls} inclusive_wall_ns={}",
-                    elapsed.as_nanos()
+                    "span phase={phase} name={name} calls={} inclusive_wall_ns={} process_cpu_ns={} heap_entry_bytes={} heap_peak_bytes={} call_wall_ns={walls}",
+                    totals.calls,
+                    totals.wall.as_nanos(),
+                    totals.cpu.as_nanos(),
+                    totals.heap_entry,
+                    totals.heap_peak,
                 );
             }
+        }
+    }
+}
+
+/// User plus system CPU time of the whole process, including worker threads.
+fn process_cpu() -> Duration {
+    // SAFETY: getrusage initializes usage on success; failure reports zero.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+        return Duration::ZERO;
+    }
+    let time = |t: libc::timeval| {
+        Duration::new(
+            u64::try_from(t.tv_sec).unwrap_or(0),
+            u32::try_from(t.tv_usec).unwrap_or(0) * 1000,
+        )
+    };
+    time(usage.ru_utime) + time(usage.ru_stime)
+}
+
+/// Live-heap accounting through a counting global allocator.
+///
+/// Spans opened on the measurement thread nest, so each saves the running
+/// peak, restarts it at the current live size, and restores the maximum on
+/// close. Worker-thread spans are not tracked.
+mod heap {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Counting;
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    #[global_allocator]
+    static ALLOCATOR: Counting = Counting;
+
+    fn grow(bytes: usize) {
+        let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        PEAK.fetch_max(live, Ordering::Relaxed);
+    }
+
+    // SAFETY: every call forwards to the system allocator unchanged.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let pointer = unsafe { System.alloc(layout) };
+            if !pointer.is_null() {
+                grow(layout.size());
+            }
+            pointer
+        }
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            let pointer = unsafe { System.alloc_zeroed(layout) };
+            if !pointer.is_null() {
+                grow(layout.size());
+            }
+            pointer
+        }
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(pointer, layout) };
+            LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+        }
+        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            let moved = unsafe { System.realloc(pointer, layout, size) };
+            if !moved.is_null() {
+                LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+                grow(size);
+            }
+            moved
+        }
+    }
+
+    pub(super) struct Scope {
+        entry: usize,
+        saved_peak: usize,
+    }
+
+    impl Scope {
+        pub(super) fn open() -> Self {
+            let entry = LIVE.load(Ordering::Relaxed);
+            Self {
+                entry,
+                saved_peak: PEAK.swap(entry, Ordering::Relaxed),
+            }
+        }
+        /// Returns the entry live size and this span's live-heap peak.
+        pub(super) fn close(&self) -> (usize, usize) {
+            let peak = PEAK.fetch_max(self.saved_peak, Ordering::Relaxed);
+            (self.entry, peak)
         }
     }
 }
@@ -58,6 +196,11 @@ pub(super) fn peak_rss() -> Result<u64, Box<dyn std::error::Error>> {
     Err("peak RSS requires a Unix host".into())
 }
 
+/// Lowercase hexadecimal of a digest.
+pub(super) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub(super) fn proof(
     proof: &[u8],
     log_carriers: usize,
@@ -69,10 +212,7 @@ pub(super) fn proof(
     println!(
         "proof bytes={} digest_algorithm=blake2b256 digest={}",
         proof.len(),
-        digest
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
+        hex(&digest)
     );
     let mut totals = BTreeMap::<(u32, u32, u32, u32), (u64, usize)>::new();
     let mut accounted = 0usize;

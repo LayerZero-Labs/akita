@@ -26,15 +26,7 @@ impl<F: Field, E: Field> RelationCompiler<NativeRootRelationRequest<'_, E>> for 
             request.row_weights,
             request.padding_weights,
         )?;
-        let mut evaluations = Vec::new();
-        evaluations
-            .try_reserve_exact(weights.table_len())
-            .map_err(|_| AkitaError::InvalidSetup("root weight table allocation failed".into()))?;
-        evaluations.resize(weights.table_len(), E::zero());
-        for &(index, weight) in weights.terms() {
-            let entry = evaluations.get_mut(index).ok_or(AkitaError::InvalidProof)?;
-            *entry += weight;
-        }
+        let evaluations = weights.materialize()?;
         Ok(CompiledNativeRoot {
             weights,
             evaluations,

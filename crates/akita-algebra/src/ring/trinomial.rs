@@ -32,7 +32,7 @@ mod sealed {
 ///
 /// The sealed implementations ensure a ring cannot be instantiated with an
 /// arbitrary middle coefficient.
-pub trait TrinomialModulus: sealed::Sealed + Copy + fmt::Debug + Eq {
+pub trait TrinomialModulus: sealed::Sealed + Copy + fmt::Debug + Eq + Send + Sync {
     /// Middle coefficient in `X^D + middle * X^(D/2) + 1`.
     const MIDDLE_COEFFICIENT: i8;
 

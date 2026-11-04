@@ -61,7 +61,8 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
         (2, SetupStreamRole::WitnessCommitment),
     ] {
         let label = label(role);
-        let payload = binary_public_digit_commitment::<F>(&seed, label, &natural[segment]).unwrap();
+        let payload =
+            binary_public_digit_commitment::<F>(&seed, label, 0, &natural[segment]).unwrap();
         assert_eq!(payload.len(), 128);
         let weights = binary_digit_authentication_weights(
             &plan,
@@ -127,10 +128,11 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
     let mut digits = vec![0i8; 324];
     digits[323] = 3;
     let setup = label(SetupStreamRole::WitnessCommitment);
-    let payload = binary_public_digit_commitment::<F>(&[8; 32], setup, &digits).unwrap();
+    let payload = binary_public_digit_commitment::<F>(&[8; 32], setup, 0, &digits).unwrap();
     let image_role = binary_public_digit_commitment::<F>(
         &[8; 32],
         label(SetupStreamRole::ImageCommitment),
+        0,
         &digits,
     )
     .unwrap();
@@ -182,11 +184,32 @@ fn setup_roles_and_partial_final_chunk_are_bound() {
             ..setup
         },
     ] {
-        assert!(binary_public_digit_commitment::<F>(&[8; 32], invalid, &digits).is_err());
+        assert!(binary_public_digit_commitment::<F>(&[8; 32], invalid, 0, &digits).is_err());
     }
-    assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, &[]).is_err());
-    assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, &[4]).is_err());
-    assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, &[-5]).is_err());
-    let zeros = binary_public_digit_commitment::<F>(&[8; 32], setup, &[0; 324]).unwrap();
+    assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, 0, &[]).is_err());
+    assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, 0, &[4]).is_err());
+    assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, 0, &[-5]).is_err());
+    let zeros = binary_public_digit_commitment::<F>(&[8; 32], setup, 0, &[0; 324]).unwrap();
     assert!(zeros.iter().all(F::is_zero));
+}
+
+#[test]
+fn column_aligned_pieces_sum_to_the_digit_commitment() {
+    let setup = label(SetupStreamRole::WitnessCommitment);
+    let digits: Vec<i8> = (0..324).map(|i| (i % 8) as i8 - 4).collect();
+    let whole = binary_public_digit_commitment::<F>(&[8; 32], setup, 0, &digits).unwrap();
+    let (head, tail) = digits.split_at(2 * BINARY_DIGIT_COMMITMENT_DEGREE);
+    let head = binary_public_digit_commitment::<F>(&[8; 32], setup, 0, head).unwrap();
+    let tail = binary_public_digit_commitment::<F>(&[8; 32], setup, 2, tail).unwrap();
+    let sum: Vec<F> = head.iter().zip(&tail).map(|(&a, &b)| a + b).collect();
+    assert_eq!(sum, whole);
+    let misplaced = binary_public_digit_commitment::<F>(&[8; 32], setup, 1, digits.split_at(128).1);
+    assert_ne!(
+        head.iter()
+            .zip(&misplaced.unwrap())
+            .map(|(&a, &b)| a + b)
+            .collect::<Vec<_>>(),
+        whole
+    );
+    assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, usize::MAX, &digits).is_err());
 }

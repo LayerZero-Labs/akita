@@ -66,7 +66,8 @@ fn ordinary_product(left: &[i128; 8], right: &[i128; 8]) -> Vec<E> {
 fn mixed_root() -> (NativeRootRelation<E>, Vec<i8>) {
     let input = compact_fixture();
     let fixed = build(&input).unwrap();
-    let (binary_plan, binary_digits) = fixed.successor_table(256).unwrap();
+    let (binary_plan, binary_digits) =
+        BinaryRootRelation::successor_table(&fixed.response, &fixed.images, 256).unwrap();
     let mut segments = binary_plan.segments().to_vec();
     segments.push(RootRepackingSegment {
         geometry: RelationRowGeometry::native(8).unwrap(),

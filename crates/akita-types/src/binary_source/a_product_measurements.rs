@@ -5,11 +5,11 @@
 
 use super::*;
 use crate::binary_source::{
-    binary_direct_a_weights, BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor,
-    CANONICAL_IMAGE_WINDOW,
+    binary_direct_a_weights, BinaryAOperand, BinaryCommitmentProfiles, BinaryIndexMap,
+    BinarySourceDescriptor, CANONICAL_IMAGE_WINDOW,
 };
 use akita_challenges::{Challenges, SparseChallenge};
-use jolt_field::{Prime128Offset275 as F, Ring, Zero};
+use jolt_field::{Prime128Offset275 as F, Ring};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
@@ -64,17 +64,18 @@ fn stage3_release_a_arithmetic_measurements() {
             1,
         )
         .unwrap();
-        let padding = (0..plan.repacking().domain_len())
-            .filter(|&address| plan.repacking().is_padding_address(address).unwrap())
-            .map(|_| F::zero())
-            .collect::<Vec<_>>();
-        // Use the canonical compiler, including the fixed T and zero-padding
-        // work, rather than a second direct A implementation.
+        // Use the canonical compiler, including the fixed T work, rather than
+        // a second direct A implementation.
         let start = Instant::now();
-        let direct = binary_direct_a_weights(&plan, Some(&matrix), &challenges, &rho, &padding)
-            .unwrap()
-            .evaluate(&point)
-            .unwrap();
+        let direct = binary_direct_a_weights(
+            &plan,
+            Some(BinaryAOperand::from_canonical(&matrix)),
+            &challenges,
+            &rho,
+        )
+        .unwrap()
+        .evaluate(&point)
+        .unwrap();
         black_box(direct);
         let direct_elapsed = start.elapsed();
 
@@ -89,14 +90,13 @@ fn stage3_release_a_arithmetic_measurements() {
         }
         let factored_elapsed = start.elapsed() / 8;
         let start = Instant::now();
-        let non_a = binary_direct_a_weights(&plan, None, &challenges, &rho, &padding)
+        let non_a = binary_direct_a_weights(&plan, None, &challenges, &rho)
             .unwrap()
             .evaluate(&point)
             .unwrap();
         black_box(non_a);
         let non_a_elapsed = start.elapsed();
-        // Both totals include the projected relation's T and zero-padding compiler
-        // work. The new total adds factored A preparation and terminal weight
+        // Both totals include the projected relation's T compiler work. The new total adds factored A preparation and terminal weight
         // evaluation, but excludes Stage 3 transcript/sumcheck replay overhead.
         let factored_total = non_a_elapsed + factored_elapsed;
         eprintln!(

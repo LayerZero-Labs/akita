@@ -70,7 +70,6 @@ pub struct BinaryRootPublic {
     plan: BinaryRootWitnessPlan,
     ordinary: Option<OrdinaryNativeRootPlan>,
     negative_binary_addresses: Vec<usize>,
-    padding_count: usize,
     batch_count: usize,
 }
 
@@ -108,17 +107,12 @@ impl BinaryRootPublic {
             .map(|ordinary| ordinary.negative_binary_addresses(plan.repacking()))
             .transpose()?
             .unwrap_or_default();
-        let mut padding_count = 0usize;
-        for address in 0..domain_len {
-            let padding = plan.repacking().is_padding_address(address)?;
-            if address >= logical_len && !padding {
-                return Err(AkitaError::InvalidSetup(
-                    "binary root natural digits exceed the outgoing witness".into(),
-                ));
-            }
-            if padding {
-                padding_count = checked::sum([padding_count, 1]).ok_or(AkitaError::InvalidProof)?;
-            }
+        // Every root row reads an address below the natural end, so this one
+        // comparison keeps all of them inside the committed witness.
+        if plan.repacking().natural_end()? > logical_len {
+            return Err(AkitaError::InvalidSetup(
+                "binary root natural digits exceed the outgoing witness".into(),
+            ));
         }
         let batch_count = checked::product([2, manifest.b_rows()])
             .and_then(|authentication| {
@@ -127,7 +121,6 @@ impl BinaryRootPublic {
                     if claim.is_some() { 2 } else { 0 },
                     checked::product([2, prime.planes().len()])?,
                     authentication,
-                    padding_count,
                     ordinary
                         .as_ref()
                         .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
@@ -143,7 +136,6 @@ impl BinaryRootPublic {
             plan,
             ordinary,
             negative_binary_addresses,
-            padding_count,
             batch_count,
         })
     }
@@ -152,16 +144,17 @@ impl BinaryRootPublic {
         &self.plan
     }
 
-    /// Seven projection outputs, optional word parity/value, B/D, padding,
-    /// ordinary rows, negative bits, then two batches for every prime plane.
+    /// Seven projection outputs, optional word parity/value, B/D, ordinary
+    /// rows, negative bits, then two batches for every prime plane. No row
+    /// reads a padding address, and none constrains one.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
 
     /// Compile the single linear oracle after the outgoing commitment.
     ///
-    /// Batch coordinates are independent field challenges, including one for
-    /// each padding coefficient. `commitment` is the public B payload; `d_payload`
+    /// Batch coordinates are independent field challenges, one per row.
+    /// `commitment` is the public B payload; `d_payload`
     /// is the order-three commitment to the selected word and prime views.
     /// Proving supplies A; verification omits it and authenticates its contribution
     /// through the typed prefix. `rho` batches the public projection rows with mu.
@@ -176,7 +169,7 @@ impl BinaryRootPublic {
         commitment: &[E],
         d_payload: &[E],
         ordinary_claim: Option<(&[E], E, &[E])>,
-        matrix: Option<&[Vec<[i128; 648]>]>,
+        matrix: Option<super::BinaryAOperand<'_, E>>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
         if batches.len() != self.batch_count {
             return Err(AkitaError::InvalidSize {
@@ -198,9 +191,8 @@ impl BinaryRootPublic {
         let b =
             checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
         let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let padding = checked::range(d.end, self.padding_count).ok_or(AkitaError::InvalidProof)?;
         let ordinary_rows = checked::range(
-            padding.end,
+            d.end,
             self.ordinary
                 .as_ref()
                 .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
@@ -213,6 +205,7 @@ impl BinaryRootPublic {
             checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
         )
         .ok_or(AkitaError::InvalidProof)?;
+        let span = tracing::info_span!("binary_root_weights_algebra").entered();
         let algebra = self.plan.relation_weights(
             self.claim.as_ref(),
             matrix,
@@ -220,8 +213,9 @@ impl BinaryRootPublic {
             alpha,
             rho,
             batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
-            batches.get(padding).ok_or(AkitaError::InvalidProof)?,
         )?;
+        drop(span);
+        let span = tracing::info_span!("binary_root_weights_prime").entered();
         let prime_weights = if let Some(segment) = self.plan.prime_segment() {
             Some(super::prime_plane_relation_weights(
                 self.manifest.descriptor(),
@@ -236,6 +230,8 @@ impl BinaryRootPublic {
         } else {
             None
         };
+        drop(span);
+        let span = tracing::info_span!("binary_root_weights_b").entered();
         let b_weights = binary_digit_authentication_weights(
             &self.plan,
             &[1],
@@ -245,6 +241,8 @@ impl BinaryRootPublic {
             alpha,
             batches.get(b).ok_or(AkitaError::InvalidProof)?,
         )?;
+        drop(span);
+        let span = tracing::info_span!("binary_root_weights_d").entered();
         let d_weights = binary_digit_authentication_weights(
             &self.plan,
             &self.plan.opening_segments(),
@@ -257,6 +255,8 @@ impl BinaryRootPublic {
             alpha,
             batches.get(d).ok_or(AkitaError::InvalidProof)?,
         )?;
+        drop(span);
+        let span = tracing::info_span!("binary_root_weights_ordinary").entered();
         let ordinary_weights = match (&self.ordinary, ordinary_claim) {
             (Some(ordinary), Some((point, evaluation, payload))) => Some(ordinary.linear_weights(
                 self.plan.repacking(),
@@ -270,6 +270,8 @@ impl BinaryRootPublic {
             (None, None) => None,
             _ => return Err(AkitaError::InvalidProof),
         };
+        drop(span);
+        let _span = tracing::info_span!("binary_root_weights_merge").entered();
         let components = [
             Some(algebra),
             prime_weights,
@@ -296,3 +298,7 @@ impl BinaryRootPublic {
         Ok((linear, negative_weights))
     }
 }
+
+#[cfg(test)]
+#[path = "reference_weights.rs"]
+pub(crate) mod reference;

@@ -4,9 +4,9 @@
 //! root relation must read the digit table that the successor commits. Its
 //! linear coefficient weights below address that same table; there is no
 //! separately supplied source buffer whose equality could be assumed.
-//! The caller still proves the root equations, digit ranges, and zero padding
-//! in the shared stages. Constructing or locally validating a table is not a
-//! proof of those statements.
+//! The caller still proves the root equations and digit ranges in the shared
+//! stages. Constructing or locally validating a table is not a proof of those
+//! statements.
 
 use core::ops::Range;
 
@@ -85,9 +85,11 @@ impl RootCoefficientRepacking {
 
     /// Enlarge the authenticated table to a scheduled ordinary witness domain.
     ///
-    /// Every added address is zero padding and is covered by the same public
-    /// padding weights as the minimal domain. Live coefficient addresses never
-    /// move. The domain must remain a power of two and contain the complete
+    /// Every added address is padding, like the tail of the minimal domain, and
+    /// an honest prover fills it with zeros. A binary root places no constraint
+    /// on padding values (`specs/binary-source-zero-padding.md`); only the
+    /// generic `NativeRootRelation::ring_switch` compiler gives padding public
+    /// weights. Live coefficient addresses never move. The domain must remain a power of two and contain the complete
     /// natural table and at least one ordinary destination ring element.
     pub fn with_domain_len(mut self, domain_len: usize) -> Result<Self, AkitaError> {
         if !domain_len.is_power_of_two() || domain_len < self.domain_len {
@@ -155,10 +157,13 @@ impl RootCoefficientRepacking {
             .ok_or_else(|| AkitaError::InvalidSetup("root coefficient address overflow".into()))
     }
 
-    /// Whether a table address must carry zero rather than a natural digit.
+    /// Whether a table address holds no natural coefficient.
     ///
-    /// Shared-stage compilers can use this predicate to generate the mandatory
-    /// zero-tail relation, including the final ordinary-ring padding.
+    /// Honest construction writes zero at these addresses. The binary root
+    /// compiles no row on them; [`NativeRootRelation::ring_switch`] adds one
+    /// zero row per address, including the final ordinary-ring padding.
+    ///
+    /// [`NativeRootRelation::ring_switch`]: crate::native_root_relation::NativeRootRelation::ring_switch
     pub fn is_padding_address(&self, address: usize) -> Result<bool, AkitaError> {
         if address >= self.domain_len {
             return Err(AkitaError::InvalidInput(
@@ -177,6 +182,22 @@ impl RootCoefficientRepacking {
             }
         }
         Err(AkitaError::InvalidProof)
+    }
+
+    /// One past the largest natural coefficient address.
+    ///
+    /// Every address at or beyond this bound is a padding address.
+    pub fn natural_end(&self) -> Result<usize, AkitaError> {
+        let (shape, range) = self
+            .segments
+            .last()
+            .zip(self.ranges.last())
+            .ok_or(AkitaError::InvalidProof)?;
+        range
+            .end
+            .checked_sub(shape.geometry.padded_coefficient_count())
+            .and_then(|start| checked::sum([start, shape.geometry.polynomial_modulus_dimension()]))
+            .ok_or(AkitaError::InvalidProof)
     }
 
     /// Construct a prover table from natural, already balanced base-eight digits.
@@ -215,30 +236,57 @@ impl RootCoefficientRepacking {
             AkitaError::InvalidSetup("root repacking table allocation is too large".into())
         })?;
         table.resize(self.domain_len, 0);
+        // Every lane is lane zero translated by its first address, so
+        // [`Self::coefficient_address`] runs once per coefficient of lane zero
+        // and once per later lane, not once per digit.
         for (segment, (shape, digits)) in self.segments.iter().zip(natural_digits).enumerate() {
             let natural_width = checked::product([
                 shape.geometry.polynomial_modulus_dimension(),
                 shape.geometry.coordinate_plane_count(),
             ])
             .ok_or_else(|| AkitaError::InvalidSetup("root natural width overflow".into()))?;
-            for (index, &value) in digits.iter().enumerate() {
-                let lane = index / natural_width;
-                let address = self.coefficient_address(
-                    segment,
-                    lane / shape.digits,
-                    lane % shape.digits,
-                    index % natural_width,
-                )?;
-                *table.get_mut(address).ok_or(AkitaError::InvalidProof)? = value;
+            if shape.elements == 0 || shape.digits == 0 {
+                continue;
+            }
+            let lane_zero = (0..natural_width)
+                .map(|coefficient| self.coefficient_address(segment, 0, 0, coefficient))
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let first = self.coefficient_address(segment, 0, 0, 0)?;
+            let end = self
+                .ranges
+                .get(segment)
+                .ok_or(AkitaError::InvalidProof)?
+                .end;
+            let last = lane_zero
+                .iter()
+                .copied()
+                .max()
+                .ok_or(AkitaError::InvalidProof)?;
+            for (lane, lane_digits) in digits.chunks_exact(natural_width).enumerate() {
+                let shift = self
+                    .coefficient_address(segment, lane / shape.digits, lane % shape.digits, 0)?
+                    .checked_sub(first)
+                    .ok_or(AkitaError::InvalidProof)?;
+                if checked::sum([last, shift]).is_none_or(|address| address >= end) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                for (&address, &value) in lane_zero.iter().zip(lane_digits) {
+                    *table
+                        .get_mut(address + shift)
+                        .ok_or(AkitaError::InvalidProof)? = value;
+                }
             }
         }
         Ok(table)
     }
 
-    /// Validate a complete field-encoded digit table at a data boundary.
+    /// Check a complete field-encoded digit table as the honest prover builds it.
     ///
-    /// This checks values locally. A verifier must also enforce these same
-    /// constraints on the authenticated witness through the shared stages.
+    /// Every digit lies in `[-4, 3]` and every padding address holds zero. This
+    /// is a local construction check. The verifier enforces only the digit
+    /// range on the authenticated witness. The binary root's equations do not
+    /// read padding, so a nonzero in-range padding digit is not a proof
+    /// failure there.
     pub fn validate_digit_table<F: Field>(&self, table: &[F]) -> Result<(), AkitaError> {
         if table.len() != self.domain_len {
             return Err(AkitaError::InvalidSize {
@@ -435,6 +483,18 @@ mod tests {
             .map(|(address, weight)| table[address] * weight)
             .sum::<F>();
         assert_eq!(relation, F::from_u64(11 * 3 * 64));
+    }
+
+    #[test]
+    fn natural_end_matches_the_address_predicate() {
+        let plan = plan();
+        let natural_end = (0..plan.domain_len())
+            .rev()
+            .find(|&address| !plan.is_padding_address(address).unwrap())
+            .unwrap()
+            + 1;
+        assert_eq!(plan.natural_end().unwrap(), natural_end);
+        assert_eq!(natural_end, 8224);
     }
 
     #[test]
