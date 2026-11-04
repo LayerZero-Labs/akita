@@ -23,7 +23,7 @@ use akita_params::{
 use akita_pcs::zk::{AkitaResponseProver, CompressionShape};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_schedules::ValidatedScheduleCatalog;
-use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
+use akita_transcript::{ProverChannel, TranscriptSponge, VerifierChannel};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::test_support::{SyntheticSigma, F};
 use jolt_zk::whiteout::{ImageCompression, ResponseProver, ResponseStatement, ResponseWitness};
@@ -39,27 +39,29 @@ struct Measured<'a> {
 }
 
 impl ResponseProver<F, D> for Measured<'_> {
+    type Sponge = TranscriptSponge;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         self.inner
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverChannel,
     ) -> Result<(), ZkError> {
-        let before = transcript.narg().len();
+        let before = transcript.narg_string().len();
         let started = Instant::now();
         self.inner.prove_response(statement, witness, transcript)?;
-        *self.prove.lock().unwrap() = Some((started.elapsed(), transcript.narg().len() - before));
+        *self.prove.lock().unwrap() = Some((started.elapsed(), transcript.narg_string().len() - before));
         Ok(())
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
         let started = Instant::now();
         self.inner.verify_response(statement, transcript)?;

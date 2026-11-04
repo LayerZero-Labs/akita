@@ -1,12 +1,18 @@
 //! The response proof's two new sumchecks (Whiteout §4.3): the degree-2
 //! product sumcheck `Σ_i U_i W_i` and the degree-3 fused range-and-relation
 //! sumcheck `Σ_x A(x)E(x) + B(x)E(x)(E(x) + 1)`, and the clear round
-//! contexts they run on. Tables bind their lowest index bit first, as
+//! channels they run on. Tables bind their lowest index bit first, as
 //! `fold_evals_in_place` does, so challenge `k` is coordinate `k` of the
 //! little-endian point.
 
 use akita_error::AkitaError;
-use akita_sumcheck::SumcheckKernel;
+use akita_sumcheck::{
+    SumcheckKernel, SumcheckProverChannel, SumcheckRole, SumcheckVerifierChannel,
+};
+use akita_transcript::{
+    ext_challenge, ChallengeCodec, ProtocolSiteId, ProverChannel, VerifierChannel,
+    SITE_FAMILY_RESPONSE,
+};
 
 use zeroize::{Zeroize, Zeroizing};
 
@@ -17,8 +23,6 @@ use jolt_algebra::{
     cfg_fold_reduce, cfg_into_iter, lift_ct, Field, Fold, JoltField, One, Ring, Zero,
 };
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{ProverRoundContext, SumcheckSite, VerifierRoundContext};
-use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
 
 /// A table of values derived from `e`, zeroed over its whole capacity when
 /// dropped. Folding builds the next table and drops the previous one, so no
@@ -130,11 +134,25 @@ fn round_polynomial<F: Field, const N: usize>(
 pub(crate) struct ProductKernel<F: Copy + Send> {
     pub(crate) u: SecretTable<F>,
     pub(crate) w: SecretTable<F>,
+    /// `t_×`, the claimed sum.
+    pub(crate) target: F,
 }
 
 impl<F: Field + Fold + Send> SumcheckKernel<F> for ProductKernel<F> {
     fn num_rounds(&self) -> usize {
         self.u.len().trailing_zeros() as usize
+    }
+
+    fn degree_bound(&self) -> usize {
+        2
+    }
+
+    fn input_claim(&self) -> F {
+        self.target
+    }
+
+    fn finish(&mut self) -> Result<(), AkitaError> {
+        Ok(())
     }
 
     fn round_polynomial(
@@ -176,6 +194,7 @@ pub(crate) struct FusedKernel {
     /// The length of `A`, and of `E`, bound in the challenges so far.
     len: usize,
     b: SplitB<F>,
+    claim: F,
 }
 
 enum FusedTables {
@@ -423,11 +442,12 @@ fn chunk_sums(
 
 impl FusedKernel {
     /// The kernel of the row weights `a`, `B` and `e`'s committed digits,
-    /// one per weight.
+    /// one per weight, claiming the sum `claim`.
     pub(crate) fn new(
         a: BatchWeights,
         b: SplitB<F>,
         digits: Zeroizing<Vec<i8>>,
+        claim: F,
     ) -> Result<Self, AkitaError> {
         if digits.len() != a.len() || !a.len().is_power_of_two() {
             return Err(AkitaError::Internal(
@@ -442,6 +462,7 @@ impl FusedKernel {
                 bound: Vec::with_capacity(STREAMED_ROUNDS),
             },
             b,
+            claim,
         })
     }
 
@@ -548,6 +569,18 @@ impl SumcheckKernel<F> for FusedKernel {
         self.len.trailing_zeros() as usize
     }
 
+    fn degree_bound(&self) -> usize {
+        3
+    }
+
+    fn input_claim(&self) -> F {
+        self.claim
+    }
+
+    fn finish(&mut self) -> Result<(), AkitaError> {
+        Ok(())
+    }
+
     fn round_polynomial(
         &mut self,
         _round: usize,
@@ -633,44 +666,62 @@ impl SumcheckKernel<F> for FusedKernel {
     }
 }
 
-/// Clear rounds on the caller's transcript: no sites and no grinding.
-pub(crate) struct ClearProverRounds<'a, H: Sponge>(pub(crate) &'a mut ProverTranscript<H>);
-
-impl<F: Field, H: Sponge> ProverRoundContext<F> for ClearProverRounds<'_, H> {
-    type Channel = ProverTranscript<H>;
-    type Error = AkitaError;
-
-    fn channel_mut(&mut self) -> &mut ProverTranscript<H> {
-        self.0
-    }
-
-    fn site(&self, _site: SumcheckSite) -> Option<SiteId> {
-        None
-    }
-
-    fn challenge(&mut self, _site: SumcheckSite) -> Result<F, AkitaError> {
-        Ok(self.0.challenge())
+/// The site of a response-proof message: `step` of the proof, and `round`
+/// and `role` within a sumcheck. Sites name records for transcript
+/// diagnostics; they never reach the sponge.
+pub(crate) fn response_site(step: u32, round: u32, role: u32) -> ProtocolSiteId {
+    ProtocolSiteId {
+        family: SITE_FAMILY_RESPONSE,
+        stage: step,
+        round,
+        detail: role,
+        ..ProtocolSiteId::default()
     }
 }
 
-/// The verifier's [`ClearProverRounds`].
-pub(crate) struct ClearVerifierRounds<'a, 'proof, H: Sponge>(
-    pub(crate) &'a mut VerifierTranscript<'proof, H>,
-);
+/// Clear sumcheck rounds of response-proof `step` on the caller's prover
+/// channel, without grinding.
+pub(crate) struct ProverRounds<'a> {
+    pub(crate) state: &'a mut ProverChannel,
+    pub(crate) step: u32,
+}
 
-impl<'proof, F: Field, H: Sponge> VerifierRoundContext<F> for ClearVerifierRounds<'_, 'proof, H> {
-    type Channel = VerifierTranscript<'proof, H>;
-    type Error = AkitaError;
-
-    fn channel_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
-        self.0
+impl<E: ChallengeCodec> SumcheckProverChannel<E> for ProverRounds<'_> {
+    fn state_mut(&mut self) -> &mut ProverChannel {
+        self.state
     }
 
-    fn site(&self, _site: SumcheckSite) -> Option<SiteId> {
-        None
+    fn sumcheck_site(&self, _invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+        response_site(self.step, round, role as u32)
     }
 
-    fn challenge(&mut self, _site: SumcheckSite) -> Result<F, AkitaError> {
-        Ok(self.0.challenge())
+    fn round_challenge(&mut self, _invocation: u32, round: u32) -> Result<E, AkitaError> {
+        ext_challenge(
+            self.state,
+            response_site(self.step, round, SumcheckRole::Challenge as u32),
+        )
+    }
+}
+
+/// The verifier's [`ProverRounds`].
+pub(crate) struct VerifierRounds<'a, 'proof> {
+    pub(crate) state: &'a mut VerifierChannel<'proof>,
+    pub(crate) step: u32,
+}
+
+impl<'proof, E: ChallengeCodec> SumcheckVerifierChannel<'proof, E> for VerifierRounds<'_, 'proof> {
+    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
+        self.state
+    }
+
+    fn sumcheck_site(&self, _invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+        response_site(self.step, round, role as u32)
+    }
+
+    fn round_challenge(&mut self, _invocation: u32, round: u32) -> Result<E, AkitaError> {
+        ext_challenge(
+            self.state,
+            response_site(self.step, round, SumcheckRole::Challenge as u32),
+        )
     }
 }

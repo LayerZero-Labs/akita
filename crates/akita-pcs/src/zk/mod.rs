@@ -39,16 +39,18 @@ use akita_params::{
 };
 use akita_prover::backend::ResidualExportKernel;
 use akita_prover::{prove_digit_range, SelectedProverOpeningData};
-use akita_sumcheck::FusedRounds;
+use akita_sumcheck::{prove_sumcheck, verify_sumcheck_rounds, SumcheckShape};
+use akita_transcript::{
+    ext_challenge, ext_challenges, receive_field_group, send_field_group, ProverChannel,
+    TranscriptSponge, VerifierChannel,
+};
 use akita_types::{
     AkitaExpandedSetup, AkitaVerifierSetup, Commitment, CommittedGroup, DigitRangeEqualityPoint,
     GroupBatchStatement, NegativeBinarySupport, OpeningClaims, PolynomialGroupClaims,
     ProverGrinding, RingVec, VerifierGrinding,
 };
-use akita_verifier::{AkitaVerifier, Stage1Verifier};
+use akita_verifier::{AkitaVerifier, SetupPolicy, Stage1Verifier};
 use jolt_algebra::{One, Prime128OffsetA7F7};
-use jolt_sumcheck::{prove_single, verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{
     CompressedImage, ImageCompression, ResponseLayout, ResponseProver, ResponseStatement,
@@ -67,7 +69,7 @@ use compression::BackendCompression;
 use compression::Chains;
 pub use residual::{ResidualMatrices, ResidualShape};
 use rounds::{
-    ClearProverRounds, ClearVerifierRounds, FusedKernel, ProductKernel, SecretTable, SplitB,
+    response_site, FusedKernel, ProductKernel, ProverRounds, SecretTable, SplitB, VerifierRounds,
 };
 use rows::{
     batch_rows, batch_target, batch_weight_at, ceil_log2, row_variables, zk_error, PaddingTerm,
@@ -88,6 +90,28 @@ const _: fn() = || {
 
 /// Grinding-plan level of the standalone digit-range reduction.
 const RANGE_LEVEL: u32 = 0;
+
+/// The response proof's steps, in transcript order: the `step` of each
+/// message's [`response_site`].
+mod step {
+    pub(super) const COMMITMENT: u32 = 0;
+    pub(super) const ALPHA: u32 = 1;
+    pub(super) const PRODUCT_TARGET: u32 = 2;
+    pub(super) const PRODUCT_SUMCHECK: u32 = 3;
+    pub(super) const PRODUCT_CLAIMS: u32 = 4;
+    pub(super) const ETA: u32 = 5;
+    pub(super) const PADDING_POINT: u32 = 6;
+    pub(super) const RANGE_POINT: u32 = 7;
+    pub(super) const GAMMA: u32 = 8;
+    pub(super) const ZETA: u32 = 9;
+    pub(super) const FUSED_SUMCHECK: u32 = 10;
+    pub(super) const OPENING_VALUE: u32 = 11;
+}
+
+/// The site of `step`'s one message.
+fn site(step: u32) -> akita_transcript::ProtocolSiteId {
+    response_site(step, 0, 0)
+}
 
 /// The digit-range plan of `e`'s alphabet. The response schedule commits
 /// exactly that alphabet: its signed bound is the radix's bit width.
@@ -228,11 +252,11 @@ where
 
     /// Proves the statement on `digits`, without checking that it holds:
     /// [`ResponseProver::prove_response`] checks first.
-    fn prove<H: Sponge, const D: usize>(
+    fn prove<const D: usize>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         digits: ProverDigits<'_>,
-        transcript: &mut ProverTranscript<H>,
+        state: &mut ProverChannel,
     ) -> Result<(), ZkError> {
         let side = self.prover.as_ref().ok_or_else(|| {
             zk_error(AkitaError::InvalidInput(
@@ -270,47 +294,59 @@ where
                 GroupContext::scheduler_without_precommitted_groups(),
             )
             .map_err(zk_error)?;
-        transcript.send_all(output.committed_group.rows().coeffs());
+        send_field_group(
+            state,
+            site(step::COMMITMENT),
+            output.committed_group.rows().coeffs(),
+        )
+        .map_err(zk_error)?;
 
         // 2. The product reduction at α.
-        let alpha: F = transcript.challenge();
+        let alpha: F = ext_challenge(state, site(step::ALPHA)).map_err(zk_error)?;
         let rows = statement.rows(digits.rows, alpha)?;
         let product_vars = ceil_log2(rows.product_x.len().max(1));
-        let mut product = ProductKernel {
-            u: SecretTable::padded(rows.product_x, 1 << product_vars),
-            w: SecretTable::padded(rows.product_y, 1 << product_vars),
-        };
         // t_× is the product lift's right side at α (Whiteout (4)); for a
         // true statement it equals Σ_i U_i W_i.
         let target = rows.product_target;
-        transcript.send(&target);
-        let product_point = prove_single::<F, F, AkitaError, _>(
-            &mut FusedRounds(&mut product),
-            &compressed(target, product_vars, 2),
-            &mut ClearProverRounds(transcript),
+        let mut product = ProductKernel {
+            u: SecretTable::padded(rows.product_x, 1 << product_vars),
+            w: SecretTable::padded(rows.product_y, 1 << product_vars),
+            target,
+        };
+        send_field_group(state, site(step::PRODUCT_TARGET), &[target]).map_err(zk_error)?;
+        let (product_point, _) = prove_sumcheck::<F, F, _, _>(
+            &mut product,
+            &mut ProverRounds {
+                state,
+                step: step::PRODUCT_SUMCHECK,
+            },
+            SumcheckShape::new(product_vars, 2).map_err(zk_error)?,
+            0,
         )
-        .map_err(zk_error)?
-        .challenges;
+        .map_err(zk_error)?;
         let claims = ProductClaims {
             target,
             x: first(&product.u)?,
             y: first(&product.w)?,
         };
-        transcript.send(&claims.x);
-        transcript.send(&claims.y);
+        send_field_group(state, site(step::PRODUCT_CLAIMS), &[claims.x, claims.y])
+            .map_err(zk_error)?;
 
         // 3. The row batch at η, and the padding term at τ_pad.
         let chains = self.chains(statement)?;
-        let eta: Vec<F> = challenges(
-            transcript,
+        let eta: Vec<F> = ext_challenges(
+            state,
+            site(step::ETA),
             row_variables(statement, &chains).map_err(zk_error)?,
-        );
+        )
+        .map_err(zk_error)?;
         let weights = RowWeights::new(statement, &eta, &product_point, &chains)?;
-        let padding = padding_term(transcript, shape);
+        let padding = padding_term(state, shape)?;
         let batch = batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains)?;
 
         // 4. The digit range of e.
-        let tau: Vec<F> = challenges(transcript, shape.num_vars);
+        let tau: Vec<F> =
+            ext_challenges(state, site(step::RANGE_POINT), shape.num_vars).map_err(zk_error)?;
         let grinding_plan =
             derive_digit_range_grinding_plan::<Cfg>(plan, shape.num_vars, RANGE_LEVEL)
                 .map_err(zk_error)?;
@@ -325,8 +361,8 @@ where
         )
         .and_then(DigitRangeProver::into_session)
         .map_err(zk_error)?;
-        let mut grinding = ProverGrinding::new(transcript, &grinding_plan);
-        let range = prove_digit_range::<F, F, _, _>(
+        let mut grinding = ProverGrinding::new(state, &grinding_plan);
+        let range = prove_digit_range::<F, F, _>(
             &mut session,
             plan,
             equality_point.into_coordinates(),
@@ -339,27 +375,31 @@ where
 
         // 5. The fused range-and-relation sumcheck, with the binary
         // constraint on the compression digits.
-        let gamma: F = transcript.challenge();
-        let zeta: F = transcript.challenge();
+        let gamma: F = ext_challenge(state, site(step::GAMMA)).map_err(zk_error)?;
+        let zeta: F = ext_challenge(state, site(step::ZETA)).map_err(zk_error)?;
         let support = chains.support(shape.padded_len()).map_err(zk_error)?;
+        let claim = batch.b + gamma * range.range_image;
         let mut fused = FusedKernel::new(
             batch.a,
             SplitB::new(&range.point, gamma, zeta, support.intervals()),
             committed,
+            claim,
         )
         .map_err(zk_error)?;
-        let claim = batch.b + gamma * range.range_image;
-        let point = prove_single::<F, F, AkitaError, _>(
-            &mut FusedRounds(&mut fused),
-            &compressed(claim, shape.num_vars, 3),
-            &mut ClearProverRounds(transcript),
+        let (point, _) = prove_sumcheck::<F, F, _, _>(
+            &mut fused,
+            &mut ProverRounds {
+                state,
+                step: step::FUSED_SUMCHECK,
+            },
+            SumcheckShape::new(shape.num_vars, 3).map_err(zk_error)?,
+            0,
         )
-        .map_err(zk_error)?
-        .challenges;
+        .map_err(zk_error)?;
         let v = fused
             .e_first()
             .ok_or_else(|| zk_error(AkitaError::Internal("a bound table is empty".into())))?;
-        transcript.send(&v);
+        send_field_group(state, site(step::OPENING_VALUE), &[v]).map_err(zk_error)?;
         drop(fused);
 
         // 6. Open E(r) = v.
@@ -372,21 +412,21 @@ where
         )
         .map_err(zk_error)?;
         self.scheme
-            .prove_on_transcript(
+            .batched_prove_embedded(
                 &side.setup,
                 opening,
                 &side.backend,
-                transcript,
+                state,
                 BasisMode::Lagrange,
             )
             .map_err(zk_error)
     }
 
     #[tracing::instrument(skip_all, name = "AkitaResponseProver::verify")]
-    fn verify<H: Sponge, const D: usize>(
+    fn verify<const D: usize>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        state: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
         let shape = ResponseShape::new(statement.layout()?.len()).map_err(zk_error)?;
         let row = self
@@ -413,29 +453,37 @@ where
                 ))
             })?
             .ring_dimension();
-        let coefficients: Vec<F> = transcript.receive_n(compression.terminal_coefficients())?;
+        let coefficients: Vec<F> = receive_field_group(
+            state,
+            site(step::COMMITMENT),
+            compression.terminal_coefficients(),
+        )
+        .map_err(zk_error)?;
         let committed = CommittedGroup::new(
             row.profiles().final_group,
             Commitment::new(
                 RingVec::from_coeffs_with_ring_dim(coefficients, ring_dim).map_err(zk_error)?,
             ),
-        );
+        )
+        .map_err(|_| zk_error(AkitaError::InvalidProof))?;
 
         // 2. The product reduction at α.
         let product_span = tracing::info_span!("response_product_sumcheck").entered();
-        let alpha: F = transcript.challenge();
+        let alpha: F = ext_challenge(state, site(step::ALPHA)).map_err(zk_error)?;
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
-        let target: F = transcript.receive()?;
-        let product = verify_single::<F, F, AkitaError, _>(
-            &compressed(target, product_vars, 2),
-            &mut ClearVerifierRounds(transcript),
+        let [target] = receive_array(state, step::PRODUCT_TARGET)?;
+        let product = verify_sumcheck_rounds::<F, F, _>(
+            &mut VerifierRounds {
+                state,
+                step: step::PRODUCT_SUMCHECK,
+            },
+            0,
+            target,
+            SumcheckShape::new(product_vars, 2).map_err(zk_error)?,
         )
         .map_err(zk_error)?;
-        let claims = ProductClaims {
-            target,
-            x: transcript.receive()?,
-            y: transcript.receive()?,
-        };
+        let [x, y] = receive_array(state, step::PRODUCT_CLAIMS)?;
+        let claims = ProductClaims { target, x, y };
         if claims.x * claims.y != product.output_claim {
             return Err(WhiteoutError::ResponseRejected("product sumcheck").into());
         }
@@ -444,44 +492,52 @@ where
         // 3. The row batch at η, and the padding term at τ_pad.
         let rows_span = tracing::info_span!("response_row_batch").entered();
         let chains = self.chains(statement)?;
-        let eta: Vec<F> = challenges(
-            transcript,
+        let eta: Vec<F> = ext_challenges(
+            state,
+            site(step::ETA),
             row_variables(statement, &chains).map_err(zk_error)?,
-        );
+        )
+        .map_err(zk_error)?;
         let weights = RowWeights::new(statement, &eta, &product.challenges, &chains)?;
-        let padding = padding_term(transcript, shape);
+        let padding = padding_term(state, shape)?;
         let b = batch_target(statement, alpha, &weights, claims, &chains)?;
         drop(rows_span);
 
         // 4. The digit range of e.
         let range_span = tracing::info_span!("response_digit_range").entered();
-        let tau: Vec<F> = challenges(transcript, shape.num_vars);
+        let tau: Vec<F> =
+            ext_challenges(state, site(step::RANGE_POINT), shape.num_vars).map_err(zk_error)?;
         let plan = range_plan::<Cfg, D>(statement).map_err(zk_error)?;
         let grinding_plan =
             derive_digit_range_grinding_plan::<Cfg>(plan, shape.num_vars, RANGE_LEVEL)
                 .map_err(zk_error)?;
-        let mut grinding = VerifierGrinding::new(transcript, &grinding_plan);
+        let mut grinding = VerifierGrinding::new(state, &grinding_plan);
         let range = Stage1Verifier::new(
             DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau, shape.num_vars, 0)
                 .map_err(zk_error)?,
             plan,
         )
-        .verify_clear::<F, _>(&mut grinding, None, RANGE_LEVEL)
+        .verify_clear::<F>(&mut grinding, None, RANGE_LEVEL)
         .map_err(zk_error)?;
-        grinding.finish().map_err(zk_error)?;
+        grinding.finish_through(RANGE_LEVEL).map_err(zk_error)?;
         drop(range_span);
 
         // 5. The fused range-and-relation sumcheck, with the binary
         // constraint on the compression digits.
         let fused_span = tracing::info_span!("response_fused_sumcheck").entered();
-        let gamma: F = transcript.challenge();
-        let zeta: F = transcript.challenge();
-        let fused = verify_single::<F, F, AkitaError, _>(
-            &compressed(b + gamma * range.range_image_evaluation, shape.num_vars, 3),
-            &mut ClearVerifierRounds(transcript),
+        let gamma: F = ext_challenge(state, site(step::GAMMA)).map_err(zk_error)?;
+        let zeta: F = ext_challenge(state, site(step::ZETA)).map_err(zk_error)?;
+        let fused = verify_sumcheck_rounds::<F, F, _>(
+            &mut VerifierRounds {
+                state,
+                step: step::FUSED_SUMCHECK,
+            },
+            0,
+            b + gamma * range.range_image_evaluation,
+            SumcheckShape::new(shape.num_vars, 3).map_err(zk_error)?,
         )
         .map_err(zk_error)?;
-        let v: F = transcript.receive()?;
+        let [v] = receive_array(state, step::OPENING_VALUE)?;
         drop(fused_span);
         let weight_span = tracing::info_span!("response_weight_at").entered();
         let a = batch_weight_at(
@@ -514,9 +570,17 @@ where
             OpeningClaims::from_groups(vec![group]).map_err(zk_error)?,
         )
         .map_err(zk_error)?;
-        self.verifier
-            .batched_verify(transcript, opening, BasisMode::Lagrange)
-            .map_err(zk_error)
+        // The caller owns the transcript and its end-of-proof check.
+        let _pending = self
+            .verifier
+            .batched_verify_embedded(
+                state,
+                opening,
+                BasisMode::Lagrange,
+                SetupPolicy::Check(None),
+            )
+            .map_err(zk_error)?;
+        Ok(())
     }
 }
 
@@ -524,34 +588,30 @@ impl<Cfg, const D: usize> ResponseProver<F, D> for AkitaResponseProver<Cfg>
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
 {
+    type Sponge = TranscriptSponge;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         self
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverChannel,
     ) -> Result<(), ZkError> {
         statement.check_witness(witness)?;
-        transcript.site(RESPONSE_SITE);
         self.prove(statement, ProverDigits::honest(&witness.digits), transcript)
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
-        transcript.site(RESPONSE_SITE);
         self.verify(statement, transcript)
     }
 }
-
-/// The diagnostic site the response proof opens with, so an event log can
-/// tell its messages from the Σ-protocol's (sites never reach the sponge).
-pub const RESPONSE_SITE: SiteId = SiteId::label("whiteout/response");
 
 /// [`AkitaResponseProver`] that proves without checking the statement, so a
 /// test reaches the verifier with a false one (the consistent-cheat tests,
@@ -573,25 +633,26 @@ impl<Cfg, const D: usize> ResponseProver<F, D> for UncheckedResponseProver<'_, C
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F> + 'static,
 {
+    type Sponge = TranscriptSponge;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         self.1
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverChannel,
     ) -> Result<(), ZkError> {
-        transcript.site(RESPONSE_SITE);
         self.0
             .prove(statement, ProverDigits::honest(&witness.digits), transcript)
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
         <AkitaResponseProver<Cfg> as ResponseProver<F, D>>::verify_response(
             self.0, statement, transcript,
@@ -612,15 +673,15 @@ fn range_weight_at(
         + zeta * binary.evaluate_restricted_equality_at_point(range_point, point)?)
 }
 
-/// A compressed single-instance sumcheck of `degree` over `rounds` variables.
-fn compressed(input_claim: F, rounds: usize, degree: usize) -> SingleInstance<F> {
-    SingleInstance {
-        input_claim,
-        rounds,
-        degree,
-        format: SingleFormat::Compressed,
-        invocation: 0,
-    }
+/// Receives `step`'s message of `N` field elements.
+fn receive_array<const N: usize>(
+    state: &mut VerifierChannel<'_>,
+    step: u32,
+) -> Result<[F; N], ZkError> {
+    receive_field_group(state, site(step), N)
+        .map_err(zk_error)?
+        .try_into()
+        .map_err(|_| zk_error(AkitaError::InvalidProof))
 }
 
 /// The value a table bound in every variable holds.
@@ -631,15 +692,15 @@ fn first(table: &[F]) -> Result<F, ZkError> {
         .ok_or_else(|| zk_error(AkitaError::Internal("a bound table is empty".into())))
 }
 
-fn challenges<C: Channel>(channel: &mut C, count: usize) -> Vec<F> {
-    (0..count).map(|_| channel.challenge()).collect()
-}
-
 /// The padding term's `τ_pad`, drawn after `η`.
-fn padding_term<C: Channel>(channel: &mut C, shape: ResponseShape) -> PaddingTerm<F> {
-    PaddingTerm {
-        point: challenges(channel, shape.num_vars),
-    }
+fn padding_term<S: akita_transcript::ProofChannel>(
+    state: &mut S,
+    shape: ResponseShape,
+) -> Result<PaddingTerm<F>, ZkError> {
+    Ok(PaddingTerm {
+        point: ext_challenges(state, site(step::PADDING_POINT), shape.num_vars)
+            .map_err(zk_error)?,
+    })
 }
 
 /// Akita's image compression without a prover backend: its lengths and

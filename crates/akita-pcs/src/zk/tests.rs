@@ -238,15 +238,17 @@ fn nonzero_padding(_: &ResponseLayoutPositions, e: &[i8]) -> CheatDigits {
 }
 
 impl<const D: usize> ResponseProver<F, D> for Cheating<'_> {
+    type Sponge = TranscriptSponge;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         self.compression
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverChannel,
     ) -> Result<(), ZkError> {
         let digits = (self.edit)(&ResponseLayoutPositions::new(statement), &witness.digits);
         assert_eq!(
@@ -267,10 +269,10 @@ impl<const D: usize> ResponseProver<F, D> for Cheating<'_> {
         )
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
         self.akita.verify_response(statement, transcript)
     }
@@ -385,31 +387,40 @@ struct WeightOracle<'a> {
 }
 
 impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
+    type Sponge = TranscriptSponge;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         self.akita
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverChannel,
     ) -> Result<(), ZkError> {
         let shape = ResponseShape::new(statement.layout().unwrap().len()).unwrap();
         let chains = self.akita.chains(statement).unwrap();
-        let alpha: F = transcript.challenge();
+        let alpha: F = ext_challenge(transcript, site(step::ALPHA)).unwrap();
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
-        let product_point = challenges(transcript, product_vars);
-        let eta = challenges(transcript, row_variables(statement, &chains).unwrap());
-        let padding = padding_term(transcript, shape);
-        let r = challenges(transcript, shape.num_vars);
-        let range_point = challenges(transcript, shape.num_vars);
-        let gamma: F = transcript.challenge();
-        let zeta: F = transcript.challenge();
+        let product_point =
+            ext_challenges(transcript, site(step::PRODUCT_SUMCHECK), product_vars).unwrap();
+        let eta = ext_challenges(
+            transcript,
+            site(step::ETA),
+            row_variables(statement, &chains).unwrap(),
+        )
+        .unwrap();
+        let padding = padding_term(transcript, shape).unwrap();
+        let r = ext_challenges(transcript, site(step::FUSED_SUMCHECK), shape.num_vars).unwrap();
+        let range_point =
+            ext_challenges(transcript, site(step::RANGE_POINT), shape.num_vars).unwrap();
+        let gamma: F = ext_challenge(transcript, site(step::GAMMA)).unwrap();
+        let zeta: F = ext_challenge(transcript, site(step::ZETA)).unwrap();
         let claims = ProductClaims {
-            target: transcript.challenge(),
-            x: transcript.challenge(),
-            y: transcript.challenge(),
+            target: ext_challenge(transcript, site(step::PRODUCT_TARGET)).unwrap(),
+            x: ext_challenge(transcript, site(step::PRODUCT_CLAIMS)).unwrap(),
+            y: ext_challenge(transcript, site(step::PRODUCT_CLAIMS)).unwrap(),
         };
 
         // jolt-zk's rows and the padding term; the chains' rows have their
@@ -481,10 +492,10 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
         Ok(())
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         _statement: &ResponseStatement<'_, F, D>,
-        _transcript: &mut VerifierTranscript<'_, H>,
+        _transcript: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
         Ok(())
     }
@@ -743,15 +754,17 @@ struct ImageLens<'a> {
 }
 
 impl<const D: usize> ResponseProver<F, D> for ImageLens<'_> {
+    type Sponge = TranscriptSponge;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         self.akita
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         _: &ResponseWitness,
-        _: &mut ProverTranscript<H>,
+        _: &mut ProverChannel,
     ) -> Result<(), ZkError> {
         *self.lens.lock().unwrap() = statement
             .compressed_targets()?
@@ -761,10 +774,10 @@ impl<const D: usize> ResponseProver<F, D> for ImageLens<'_> {
         Ok(())
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         _: &ResponseStatement<'_, F, D>,
-        _: &mut VerifierTranscript<'_, H>,
+        _: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
         Ok(())
     }

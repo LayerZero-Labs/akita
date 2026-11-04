@@ -116,6 +116,8 @@ pub const SITE_FAMILY_ROOT_STATEMENT: u32 = 11;
 pub const SITE_FAMILY_TERMINAL: u32 = 12;
 /// Stable family identifier for the protocol tag and descriptor.
 pub const SITE_FAMILY_INSTANCE: u32 = 13;
+/// Stable family identifier for Whiteout's response proof (`specs/whiteout-akita.md` §5).
+pub const SITE_FAMILY_RESPONSE: u32 = 14;
 
 /// Proof-stream operation kind recorded by diagnostic context metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
