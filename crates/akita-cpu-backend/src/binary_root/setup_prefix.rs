@@ -1,13 +1,11 @@
-//! Explicit preprocessing for the binary root's typed A setup prefix.
+//! Explicit preprocessing for the binary root's typed setup prefix: A, then B/D.
 
 use crate::{CommitmentHandle, CpuBackend};
 use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_prover::SetupPrefixProverRegistry;
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::binary_source::{
-    binary_a_prefix_identity, binary_a_setup_coefficients, BinaryCommittedGroupManifest,
-};
+use akita_types::binary_source::{BinaryCommittedGroupManifest, BinaryTypedPrefix};
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
 };
@@ -35,7 +33,7 @@ where
         + AkitaSerialize
         + 'static,
 {
-    /// Prepare a scoped registry whose first successor prefix commits typed A.
+    /// Prepare a scoped registry whose first successor prefix commits the typed prefix.
     ///
     /// The same slot identifier can continue to name the ordinary stream in
     /// other registries. This operation never inserts typed material into the
@@ -44,16 +42,17 @@ where
     pub fn prepare_binary_a_prefixes(
         &self,
         manifest: &BinaryCommittedGroupManifest,
+        typed: &BinaryTypedPrefix,
         first: &SetupPrefixSlotId,
         remaining: &[SetupPrefixSlotId],
     ) -> Result<SetupPrefixProverRegistry<F, CommitmentHandle<F, E>>, AkitaError> {
         if remaining.contains(first) {
             return Err(AkitaError::InvalidInput(
-                "typed A prefix slot is reused by a later ordinary level".into(),
+                "typed prefix slot is reused by a later ordinary level".into(),
             ));
         }
         let prepared = self.prepared()?;
-        let coefficients = binary_a_setup_coefficients(
+        let coefficients = typed.setup_coefficients(
             &prepared.expanded.descriptor().setup_seed.seed,
             manifest,
             first.n_prefix()?,
@@ -69,18 +68,20 @@ where
         Ok(registry)
     }
 
-    /// Authenticate supplied typed A material once and install a verifier view.
+    /// Authenticate a supplied typed prefix commitment once and install a verifier view.
     ///
-    /// The expected prefix is independently regenerated from the manifest and
-    /// setup seed. A different A or a prefix from the ordinary stream rejects
-    /// here. Online verification only consumes the resulting public commitment;
-    /// its expanded setup continues to contain the ordinary stream exclusively.
-    /// The installed transient context binds the prefix to this exact manifest.
+    /// The expected prefix is independently regenerated from the manifest,
+    /// typed layout and setup seed. A different A, B or D, or a prefix from the
+    /// ordinary stream, rejects here. Online verification only consumes the
+    /// resulting public commitment; its expanded setup continues to contain
+    /// the ordinary stream exclusively. The installed transient context binds
+    /// the prefix to this exact manifest and layout.
     /// Reprepare this view after loading a persisted ordinary setup.
     pub fn prepare_binary_a_verifier_setup(
         &self,
         ordinary: &AkitaVerifierSetup<F>,
         manifest: &BinaryCommittedGroupManifest,
+        typed: &BinaryTypedPrefix,
         first: &SetupPrefixSlotId,
         supplied: &SetupPrefixVerifierSlot<F>,
     ) -> Result<AkitaVerifierSetup<F>, AkitaError> {
@@ -88,17 +89,17 @@ where
         if ordinary.expanded().descriptor().setup_seed != prepared.expanded.descriptor().setup_seed
         {
             return Err(AkitaError::InvalidInput(
-                "typed A prefix and verifier setup have different seeds".into(),
+                "typed prefix and verifier setup have different seeds".into(),
             ));
         }
-        let expected = self.prepare_binary_a_prefixes(manifest, first, &[])?;
+        let expected = self.prepare_binary_a_prefixes(manifest, typed, first, &[])?;
         let expected = &expected
             .get(first)
-            .ok_or_else(|| AkitaError::Internal("prepared typed A prefix is missing".into()))?
+            .ok_or_else(|| AkitaError::Internal("prepared typed prefix is missing".into()))?
             .public;
         supplied
             .check()
-            .map_err(|_| AkitaError::InvalidInput("invalid typed A prefix commitment".into()))?;
+            .map_err(|_| AkitaError::InvalidInput("invalid typed prefix commitment".into()))?;
         if supplied.id != expected.id
             || supplied.commitment.rows.len() != expected.commitment.rows.len()
             || supplied
@@ -112,7 +113,7 @@ where
                 })
         {
             return Err(AkitaError::InvalidInput(
-                "typed A prefix differs from its deterministic setup stream".into(),
+                "typed prefix differs from its deterministic setup stream".into(),
             ));
         }
         let mut registry =
@@ -131,6 +132,6 @@ where
                 }
             }
         }
-        verifier.with_prefix_context(first.clone(), binary_a_prefix_identity(manifest, first)?)
+        verifier.with_prefix_context(first.clone(), typed.identity(manifest, first)?)
     }
 }

@@ -196,8 +196,8 @@ impl BinaryRootPublic {
     /// Batch coordinates are independent field challenges, one per row.
     /// `commitment` is the public B payload; `d_payload`
     /// is the order-three commitment to the selected word and prime views.
-    /// Proving supplies A; verification omits it and authenticates its contribution
-    /// through the typed prefix. `rho` batches the public projection rows with mu.
+    /// Proving supplies A; verification omits A and the B/D weights and
+    /// authenticates their contribution through the typed prefix. `rho` batches the public projection rows with mu.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
         &self,
@@ -278,6 +278,17 @@ impl BinaryRootPublic {
             batches.get(d).ok_or(AkitaError::InvalidProof)?,
         )?;
         drop(span);
+        // The typed prefix carries the B/D weights into Stage 3; verification
+        // keeps only their claims.
+        let (b_weights, d_weights) = if matrix.is_some() {
+            (b_weights, d_weights)
+        } else {
+            let domain_len = self.plan.repacking().domain_len();
+            (
+                NativeRootWeights::new(domain_len, Vec::new(), b_weights.claim())?,
+                NativeRootWeights::new(domain_len, Vec::new(), d_weights.claim())?,
+            )
+        };
         let span = tracing::info_span!("binary_root_weights_ordinary").entered();
         let ordinary_weights = match (&self.ordinary, ordinary_claim) {
             (Some(ordinary), Some((point, evaluation, payload))) => Some(ordinary.linear_weights(

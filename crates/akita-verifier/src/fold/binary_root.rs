@@ -74,11 +74,16 @@ where
         .setup_prefix()
         .and_then(|p| p.slot_id())
         .ok_or(AkitaError::InvalidProof)?;
-    let typed_identity =
-        akita_types::binary_source::binary_a_prefix_identity(manifest, &typed_prefix)?;
+    let typed = akita_types::binary_source::BinaryTypedPrefix::new(
+        manifest,
+        claim.is_some(),
+        prime.planes().len(),
+        next.params.d_a(),
+    )?;
+    let typed_identity = typed.identity(manifest, &typed_prefix)?;
     if setup.prefix_context(&typed_prefix) != Some(typed_identity.as_slice()) {
         return Err(AkitaError::InvalidInput(
-            "binary statement differs from its prepared typed A prefix".into(),
+            "binary statement differs from its prepared typed prefix".into(),
         ));
     }
     // The trusted catalog validates this transition against its producer.
@@ -219,6 +224,7 @@ where
         ordinary_claim,
         None,
     )?;
+    let authentication = public.authentication_batches(&batches)?.map(<[E]>::to_vec);
     drop(batches);
     drop(span);
 
@@ -269,7 +275,15 @@ where
             &typed_identity,
             grinding,
             0,
-            |point| product.evaluate(point),
+            |point| {
+                Ok(product.evaluate(point)?
+                    + typed.digit_weight(
+                        point,
+                        &replay.challenges,
+                        alpha,
+                        [&authentication[0], &authentication[1]],
+                    )?)
+            },
         )?
     };
     let relation_evaluation = {

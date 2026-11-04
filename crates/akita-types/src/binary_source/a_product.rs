@@ -5,8 +5,6 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_error::{checked, AkitaError};
-use akita_params::SetupPrefixSlotId;
-use akita_serialization::AkitaSerialize;
 use jolt_field::Field;
 
 use super::{
@@ -97,20 +95,6 @@ pub fn binary_a_setup_coefficients<F: Field>(
         }
     }
     Ok(coefficients)
-}
-
-/// Bind the stream label, complete manifest, layout version and scheduled slot.
-/// The prepared prefix commitment is bound again by ordinary grouped recursion.
-pub fn binary_a_prefix_identity(
-    manifest: &BinaryCommittedGroupManifest,
-    slot: &SetupPrefixSlotId,
-) -> Result<Vec<u8>, AkitaError> {
-    manifest.validate()?;
-    let mut bytes = b"akita/binary-source/typed-a-prefix/j-rank-coefficient/v1".to_vec();
-    bytes.extend(manifest.canonical_bytes());
-    slot.serialize_compressed(&mut bytes)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    Ok(bytes)
 }
 
 /// Factored setup weights at the root Stage 2 point, with no A coefficients.

@@ -31,19 +31,27 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
             BinaryCommittedGroupManifest::new(descriptor, setup_group, &carrier).unwrap()
         };
         let installed_manifest = make_manifest(0);
+        let typed = BinaryTypedPrefix::new(
+            &installed_manifest,
+            true,
+            0,
+            row.schedule().recursive_folds[0].params.d_a(),
+        )
+        .unwrap();
         let swapped_manifest = make_manifest(1);
         assert_eq!(
             installed_manifest.descriptor().index_map(),
             swapped_manifest.descriptor().index_map()
         );
         let prefixes = backend
-            .prepare_binary_a_prefixes(&installed_manifest, &first, &[])
+            .prepare_binary_a_prefixes(&installed_manifest, &typed, &first, &[])
             .unwrap();
         let ordinary = scheme.setup_verifier(&setup).unwrap();
         let prepared = backend
             .prepare_binary_a_verifier_setup(
                 &ordinary,
                 &installed_manifest,
+                &typed,
                 &first,
                 &prefixes.get(&first).unwrap().public,
             )
@@ -83,7 +91,7 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
                 matches!(
                     result.unwrap(),
                     Err(AkitaError::InvalidInput(message))
-                        if message == "binary statement differs from its prepared typed A prefix"
+                        if message == "binary statement differs from its prepared typed prefix"
                 ),
                 "{name} did not reject at prefix-context admission"
             );
@@ -147,6 +155,7 @@ pub(super) fn reject_foreign_prefixes(
     backend: &CpuBackend<F, F>,
     ordinary_verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     manifest: &BinaryCommittedGroupManifest,
+    typed: &BinaryTypedPrefix,
     first_prefix: &akita_params::SetupPrefixSlotId,
 ) {
     let ordinary = backend.prepare_setup_prefix(first_prefix).unwrap();
@@ -154,20 +163,22 @@ pub(super) fn reject_foreign_prefixes(
         .prepare_binary_a_verifier_setup(
             ordinary_verifier_setup,
             manifest,
+            typed,
             first_prefix,
             &ordinary.public
         )
         .is_err());
-    let mut foreign = akita_types::binary_source::binary_a_setup_coefficients::<F>(
-        &ordinary_verifier_setup
-            .expanded()
-            .descriptor()
-            .setup_seed
-            .seed,
-        manifest,
-        first_prefix.n_prefix().unwrap(),
-    )
-    .unwrap();
+    let mut foreign = typed
+        .setup_coefficients::<F>(
+            &ordinary_verifier_setup
+                .expanded()
+                .descriptor()
+                .setup_seed
+                .seed,
+            manifest,
+            first_prefix.n_prefix().unwrap(),
+        )
+        .unwrap();
     foreign[0] += F::one();
     let foreign = backend
         .prepare_setup_prefix_from_coefficients(first_prefix, foreign)
@@ -176,6 +187,7 @@ pub(super) fn reject_foreign_prefixes(
         .prepare_binary_a_verifier_setup(
             ordinary_verifier_setup,
             manifest,
+            typed,
             first_prefix,
             &foreign.public
         )

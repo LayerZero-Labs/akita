@@ -10,7 +10,7 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
-use jolt_field::AdditiveGroup;
+use jolt_field::{AdditiveGroup, One};
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -313,6 +313,7 @@ where
         Some(&matrix),
     )?;
     drop(matrix);
+    let authentication = public.authentication_batches(&batches)?.map(<[_]>::to_vec);
     drop(batches);
     drop(span);
     let relation_claim = relation.claim();
@@ -364,32 +365,44 @@ where
             "binary root typed prefix was not prepared".into(),
         ));
     }
+    let typed = akita_types::binary_source::BinaryTypedPrefix::new(
+        manifest,
+        claim.is_some(),
+        prime.planes().len(),
+        next.params.d_a(),
+    )?;
     let product = akita_types::binary_source::BinaryAProduct::new(
         public.plan(),
         &rho,
         &stage2.challenges,
         prefix.n_prefix()?,
     )?;
-    let (index_factor, coefficient_factor) = product.factors()?;
-    let coefficients = akita_types::binary_source::binary_a_setup_coefficients(
-        &expanded.setup_seed.seed,
-        manifest,
+    // A, B and D share one dense weight over the typed prefix. It enters as
+    // the index factor: the rounds bind the same variables in the same order,
+    // and the input pass keeps one accumulator instead of one per cell.
+    let index_factor = typed.prover_weights(
+        &product,
+        &stage2.challenges,
+        alpha,
+        [&authentication[0], &authentication[1]],
         prefix.n_prefix()?,
     )?;
+    let coefficients =
+        typed.setup_coefficients(&expanded.setup_seed.seed, manifest, prefix.n_prefix()?)?;
     let (claim, session) =
         backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
             session: proof_session,
             level: 0,
             coefficients: coefficients.into(),
             index_factor,
-            coefficient_factor,
+            coefficient_factor: vec![Cfg::ExtField::one()],
         })?;
     let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         session,
         claim,
         prefix.n_prefix()?.trailing_zeros() as usize,
-        &akita_types::binary_source::binary_a_prefix_identity(manifest, &prefix)?,
+        &typed.identity(manifest, &prefix)?,
         grinding,
         0,
     )?;
