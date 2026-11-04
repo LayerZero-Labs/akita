@@ -302,6 +302,17 @@ impl GroupCommitPhaseParams {
     /// block geometry must cover every ring in that domain without a partial
     /// block or an omitted tail.
     pub fn validate_setup_prefix_geometry(&self, natural_len: usize) -> Result<(), AkitaError> {
+        let field_bits = self.inner.matrix.sis_modulus_profile().field_bits();
+        self.inner.digits.validate(field_bits)?;
+        let full_width =
+            crate::sis::compute_num_digits_field_width(field_bits, self.inner.digits.log_basis);
+        if self.inner.digits.num_digits != full_width {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup-prefix inner digit depth {} does not cover the full field width ({full_width} digits)",
+                self.inner.digits.num_digits
+            )));
+        }
+
         if self.group.num_polynomials() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "setup-prefix commitment profile must be singleton".into(),
@@ -393,6 +404,9 @@ impl GroupCommitPhaseParams {
 /// groups in `precommitteds` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ScheduleLookupKey {
+    /// Largest inherited setup-prefix domain aggregated by the offloaded root; zero is empty.
+    #[serde(default)]
+    pub root_accumulated_setup_prefix_len: usize,
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
@@ -400,7 +414,7 @@ pub struct ScheduleLookupKey {
 }
 
 /// Allocation-cached ordering key for deterministic schedule lookup and emission.
-pub type ScheduleLookupOrderKey = (usize, usize, usize, Vec<Vec<u8>>);
+pub type ScheduleLookupOrderKey = (usize, usize, usize, Vec<Vec<u8>>, usize);
 
 /// A non-empty ordered prefix of groups committed before a final group.
 ///
@@ -438,6 +452,7 @@ impl ScheduleLookupKey {
     /// Scalar root-opening context with no precommitted groups.
     pub fn single(final_group: PolynomialGroupLayout) -> Self {
         Self {
+            root_accumulated_setup_prefix_len: 0,
             final_group,
             precommitteds: Vec::new(),
         }
@@ -452,6 +467,9 @@ impl ScheduleLookupKey {
         for descriptor in &self.precommitteds {
             descriptor.append_descriptor_bytes(&mut bytes);
         }
+        if self.root_accumulated_setup_prefix_len != 0 {
+            push_usize(&mut bytes, self.root_accumulated_setup_prefix_len);
+        }
         bytes
     }
 
@@ -465,6 +483,7 @@ impl ScheduleLookupKey {
                 .iter()
                 .map(GroupCommitPhaseParams::canonical_descriptor_bytes)
                 .collect(),
+            self.root_accumulated_setup_prefix_len,
         )
     }
 
@@ -517,6 +536,12 @@ impl ScheduleLookupKey {
 
     /// Validate per-group metadata.
     pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
+        if self.root_accumulated_setup_prefix_len != 0 {
+            crate::validate_setup_prefix_domain(
+                self.root_accumulated_setup_prefix_len,
+                self.root_accumulated_setup_prefix_len,
+            )?;
+        }
         self.final_group.validate()?;
         if self.final_group.num_vars() == 0 {
             return Err(AkitaError::InvalidSetup(

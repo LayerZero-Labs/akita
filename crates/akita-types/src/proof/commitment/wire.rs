@@ -13,6 +13,7 @@ use akita_params::{CommitmentSliceCount, GroupCommitPhaseParams, PolynomialGroup
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use akita_transcript::CommitmentDigest;
 use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
@@ -267,46 +268,50 @@ fn deserialize_profile<F: Field + CanonicalEncoding, R: Read>(
     Ok(descriptor)
 }
 
-impl<F: Field + CanonicalEncoding + Valid> Valid for CommittedGroup<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        let field_bits = F::MODULUS_BITS;
-        self.profile
-            .validate_frozen_precommit(field_bits)
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        check_exact_field_modulus::<F>(&self.profile)?;
-        self.commitment.check()?;
-        let expected_coeffs = match &self.kind {
-            CommittedGroupKind::Ordinary => self
-                .profile
-                .outer_compression_plan()
-                .map_err(|error| SerializationError::InvalidData(error.to_string()))?
-                .terminal_coefficients(),
-            #[cfg(feature = "labinius-trinomial")]
-            CommittedGroupKind::Binary(manifest) => {
-                manifest
-                    .validate_carrier(&self.profile)
-                    .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-                crate::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
-            }
-        };
-        if self.commitment.rows().coeff_len() != expected_coeffs {
-            return Err(SerializationError::InvalidData(
-                "committed-group rows do not match the frozen descriptor".to_string(),
-            ));
+pub(super) fn check_group<F: Field + CanonicalEncoding + Valid>(
+    profile: &GroupCommitPhaseParams,
+    commitment: &Commitment<F>,
+    kind: &CommittedGroupKind,
+) -> Result<(), SerializationError> {
+    profile
+        .validate_frozen_precommit(F::MODULUS_BITS)
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+    check_exact_field_modulus::<F>(profile)?;
+    commitment.check()?;
+    let expected_coeffs = match kind {
+        CommittedGroupKind::Ordinary => profile
+            .outer_compression_plan()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+            .terminal_coefficients(),
+        #[cfg(feature = "labinius-trinomial")]
+        CommittedGroupKind::Binary(manifest) => {
+            manifest
+                .validate_carrier(profile)
+                .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+            crate::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
         }
-        Ok(())
+    };
+    if commitment.rows().coeff_len() != expected_coeffs {
+        return Err(SerializationError::InvalidData(
+            "committed-group rows do not match the frozen descriptor".to_string(),
+        ));
     }
+    Ok(())
 }
 
-impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for CommittedGroup<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.check()?;
+/// Write the kind header, the profile and then the rows: the canonical group
+/// encoding. Ordinary groups have no kind header.
+fn write_group<F: Field + AkitaSerialize, W: Write>(
+    profile: &GroupCommitPhaseParams,
+    commitment: &Commitment<F>,
+    kind: &CommittedGroupKind,
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError> {
+    match kind {
+        CommittedGroupKind::Ordinary => {}
         #[cfg(feature = "labinius-trinomial")]
-        if let CommittedGroupKind::Binary(manifest) = &self.kind {
+        CommittedGroupKind::Binary(manifest) => {
             let bytes = manifest.canonical_bytes();
             let len = u32::try_from(bytes.len()).map_err(|_| {
                 SerializationError::InvalidData("binary commitment manifest exceeds u32".into())
@@ -315,8 +320,51 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for C
             len.serialize_with_mode(&mut writer, Compress::No)?;
             writer.write_all(&bytes)?;
         }
-        serialize_profile(&self.profile, &mut writer)?;
-        self.commitment.serialize_with_mode(&mut writer, compress)
+    }
+    serialize_profile(profile, &mut writer)?;
+    commitment.serialize_with_mode(&mut writer, compress)
+}
+
+impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
+    /// Check a group of any kind and compute its digest over the canonical
+    /// uncompressed encoding.
+    pub(super) fn with_kind(
+        profile: GroupCommitPhaseParams,
+        commitment: Commitment<F>,
+        kind: CommittedGroupKind,
+    ) -> Result<Self, SerializationError> {
+        check_group(&profile, &commitment, &kind)?;
+        let mut bytes = Vec::new();
+        write_group(&profile, &commitment, &kind, &mut bytes, Compress::No)?;
+        Ok(Self {
+            profile,
+            commitment,
+            kind,
+            digest: CommitmentDigest::of_canonical_bytes(&bytes),
+        })
+    }
+}
+
+impl<F: Field + CanonicalEncoding + Valid> Valid for CommittedGroup<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        check_group(&self.profile, &self.commitment, &self.kind)
+    }
+}
+
+impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for CommittedGroup<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.check()?;
+        write_group(
+            &self.profile,
+            &self.commitment,
+            &self.kind,
+            writer,
+            compress,
+        )
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -376,15 +424,9 @@ where
         }
         let commitment =
             Commitment::deserialize_with_mode(&mut reader, compress, validate, &num_coeffs)?;
-        let group = Self {
-            profile: descriptor,
-            commitment,
-            kind,
-        };
-        if matches!(validate, Validate::Yes) {
-            group.check()?;
-        }
-        Ok(group)
+        // The group is checked and its digest computed from the decoded
+        // value, whatever `validate` asks for.
+        Self::with_kind(descriptor, commitment, kind)
     }
 }
 

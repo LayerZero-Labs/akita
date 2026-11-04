@@ -8,7 +8,8 @@ fn response_geometry_params(opening_method: akita_params::OpeningMethod) -> Comm
         2,
         2,
         2,
-        akita_challenges::FoldChallengeFamily::production_for_ring_dim(64).expect("D64 challenge"),
+        akita_challenges::FoldChallengeDistribution::production_for_ring_dim(64)
+            .expect("D64 challenge"),
     )
     .with_decomp(4, 8, 2, 2, 2)
     .expect("response geometry params");

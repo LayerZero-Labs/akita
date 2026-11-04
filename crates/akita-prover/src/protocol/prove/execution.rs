@@ -3,11 +3,12 @@ use super::registry::*;
 pub use super::registry::{BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy};
 use super::{root, suffix, FoldPublicState, SuffixProverState};
 use crate::backend::*;
-use crate::{ProverOpeningData, SelectedProverOpeningData};
+use crate::SelectedProverOpeningData;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::BasisMode;
 use akita_serialization::AkitaSerialize;
+use akita_transcript::{CommitmentDigest, ProverChannel};
 use akita_types::{AkitaSetupDescriptor, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding};
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
@@ -44,6 +45,7 @@ where
         handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
         grinding: &mut ProverGrinding<'_>,
         claims: &OpeningClaims<'_, Cfg::ExtField, Commitment<Cfg::Field>>,
+        digests: &[CommitmentDigest],
         handles: &dyn Any,
         basis: BasisMode,
     ) -> Result<ExecutionContinuation<Cfg>, AkitaError> {
@@ -64,6 +66,7 @@ where
             self.prefixes,
             self.backend,
             claims,
+            digests,
             request.layout,
             handles,
             request.schedule,
@@ -230,7 +233,7 @@ where
     }
 }
 
-/// Prove with one transcript and route-selected registry entries for every fold.
+/// Prove in a standalone transcript and return the proof bytes.
 pub fn batched_prove<'a, Cfg, H>(
     expanded: &AkitaSetupDescriptor,
     schedules: &TrustedScheduleCatalog<Cfg>,
@@ -254,39 +257,30 @@ where
         + 'static,
     H: CommitmentHandleMetadata + 'static,
 {
-    let (resolved, claims, grinding_plan, descriptor_bytes) =
-        root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
-    let channel = akita_transcript::new_prover_channel(transcript_session, &descriptor_bytes)?;
-    let mut grinding = ProverGrinding::new(channel, &grinding_plan);
-    prove_resolved::<Cfg, H>(
+    let mut channel = akita_transcript::new_prover_channel(transcript_session);
+    batched_prove_embedded(
         expanded,
         schedules,
         registry,
-        &claims,
-        resolved.schedule(),
+        opening,
+        &mut channel,
         basis,
         policy,
-        &mut grinding,
     )?;
-    grinding.finish()
+    Ok(channel.narg_string().to_vec())
 }
 
-/// Append a multi-group opening to a caller-owned Spongefish session.
+/// Prove inside the caller's transcript, with route-selected registry
+/// entries for every fold.
 ///
-/// Applications must create the session with Akita's `new_prover_channel` or
-/// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
-/// spongefish states cannot be adopted.
-///
-/// Absorbs the native protocol version and complete setup/catalog/profile
-/// descriptor before any opening challenge. Completion checks this opening's
-/// grinding plan and leaves the caller's session available for its next message.
-#[allow(clippy::too_many_arguments)]
-pub fn batched_prove_in_session<'a, Cfg, H>(
+/// The proof bytes are appended to `channel`'s proof string. The caller must
+/// have bound every commitment it opens, through its digest, before this call.
+pub fn batched_prove_embedded<'a, Cfg, H>(
     expanded: &AkitaSetupDescriptor,
     schedules: &TrustedScheduleCatalog<Cfg>,
     registry: &BackendRegistry<'_, Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
-    session: &mut akita_transcript::ProverSession,
+    channel: &mut ProverChannel,
     basis: BasisMode,
     policy: &mut dyn FoldExecutionPolicy,
 ) -> Result<(), AkitaError>
@@ -304,64 +298,32 @@ where
         + 'static,
     H: CommitmentHandleMetadata + 'static,
 {
-    let (resolved, claims, grinding_plan, descriptor_bytes) =
-        root::resolve_root::<Cfg, H>(expanded, schedules, opening, basis)?;
-    akita_transcript::absorb_subprotocol_context(
-        session,
-        b"akita-pcs",
-        akita_transcript::PROTOCOL_VERSION,
-        &descriptor_bytes,
-    )?;
-    let mut grinding = ProverGrinding::new_borrowed(session, &grinding_plan);
-    prove_resolved::<Cfg, H>(
+    let setup_batch = opening.setup_batch;
+    let (resolved, digests, claims, grinding_plan, descriptor_bytes) = root::resolve_root::<Cfg, H>(
         expanded,
         schedules,
-        registry,
-        &claims,
-        resolved.schedule(),
+        opening,
         basis,
-        policy,
-        &mut grinding,
+        setup_batch.map(|(level, _)| level),
     )?;
-    grinding.finish_opening()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prove_resolved<Cfg, H>(
-    expanded: &AkitaSetupDescriptor,
-    schedules: &TrustedScheduleCatalog<Cfg>,
-    registry: &BackendRegistry<'_, Cfg>,
-    claims: &ProverOpeningData<'_, Cfg::ExtField, H, Cfg::Field>,
-    schedule: &akita_params::FoldSchedule,
-    basis: BasisMode,
-    policy: &mut dyn FoldExecutionPolicy,
-    grinding: &mut ProverGrinding<'_>,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
-    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + ExtField<Cfg::Field>
-        + Unreduced
-        + Fold
-        + Ring
-        + MulBaseUnreduced<Cfg::Field>
-        + AkitaSerialize
-        + 'static,
-    H: CommitmentHandleMetadata + 'static,
-{
+    if setup_batch
+        .is_some_and(|(level, _)| level as usize >= resolved.schedule().num_fold_levels() - 1)
+    {
+        return Err(AkitaError::InvalidInput(
+            "setup batch target must be a nonterminal fold".into(),
+        ));
+    }
     if registry.active.replace(true) {
         return Err(AkitaError::InvalidInput(
             "backend registry already has an active proof".into(),
         ));
     }
     let _guard = RegistryProofGuard(registry);
-    let mut owners = Vec::with_capacity(schedule.num_fold_levels());
+    let mut owners = Vec::with_capacity(resolved.schedule().num_fold_levels());
     let mut selected = vec![false; registry.slots.len()];
-    for level in 0..schedule.num_fold_levels() {
+    for level in 0..resolved.schedule().num_fold_levels() {
         let requirements =
-            FoldExecutionRequirements::new(schedule, claims.opening_layout(), level)?;
+            FoldExecutionRequirements::new(resolved.schedule(), claims.opening_layout(), level)?;
         let current = owners.last().copied();
         let owner = policy.choose_backend(current, &requirements)?;
         registry.slot(owner)?;
@@ -381,9 +343,10 @@ where
     let request = ProofRequest {
         setup: expanded,
         schedules,
-        schedule,
+        schedule: resolved.schedule(),
         layout: claims.opening_layout(),
         identity,
+        setup_batch,
     };
     for (executor, selected) in registry.slots.iter().zip(&selected) {
         if *selected {
@@ -402,10 +365,20 @@ where
             .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
         adopted: None,
     };
+    akita_transcript::bind_instance(channel, &descriptor_bytes)?;
+    let mut grinding = ProverGrinding::new(channel, &grinding_plan);
+    if let Some((level, statement)) = setup_batch {
+        akita_types::setup_claims::transcript::bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
+            akita_types::GrindingReplay::state_mut(&mut grinding),
+            level,
+            statement,
+        )?;
+    }
     let (mut public, mut resident) = root_executor.root(
         &mut handoff,
-        grinding,
+        &mut grinding,
         claims.opening_claims(),
+        &digests,
         &claims.groups,
         basis,
     )?;
@@ -415,21 +388,25 @@ where
         handoff.next = *owners
             .get(index + 2)
             .ok_or_else(|| AkitaError::Internal("resolved route has no successor fold".into()))?;
-        (public, resident) =
-            registry
-                .slot(owner)?
-                .recursive(&mut handoff, grinding, public, resident, index)?;
+        (public, resident) = registry.slot(owner)?.recursive(
+            &mut handoff,
+            &mut grinding,
+            public,
+            resident,
+            index,
+        )?;
     }
     let owner = resident.owner;
     let levels = public.level + 1;
     registry
         .slot(owner)?
-        .terminal(owner, &request, grinding, public, resident)?;
+        .terminal(owner, &request, &mut grinding, public, resident)?;
     if levels != request.schedule.num_fold_levels() {
         return Err(AkitaError::Internal(
             "proved fold count differs from schedule".into(),
         ));
     }
+    grinding.finish()?;
     for (slot, selected) in registry.slots.iter().zip(selected) {
         if selected {
             slot.finish()?;

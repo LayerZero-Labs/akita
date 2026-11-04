@@ -43,7 +43,7 @@ const fn proof_optimized_inner_basis_range(
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
 /// This is an offline sizing-policy input, not runtime group geometry. Akita's
-/// built-in external schedule artifacts use K=256; downstream configurations
+/// built-in external schedule artifacts use K=16; downstream configurations
 /// may generate artifacts from another policy-owned chunk size.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
     akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
@@ -51,17 +51,16 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
-/// [`akita_challenges::FoldChallengeFamily::production_for_ring_dim`].
+/// [`akita_challenges::FoldChallengeDistribution::production_for_ring_dim`].
 /// Offline planning and artifact admission call this hook with each
 /// schedule-selected A dimension. The flat public matrix has no generation
 /// dimension.
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
-) -> Result<akita_challenges::FoldChallengeFamily, AkitaError> {
-    let cfg =
-        akita_challenges::FoldChallengeFamily::production_for_ring_dim(d).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}"))
-        })?;
+) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError> {
+    let cfg = akita_challenges::FoldChallengeDistribution::production_for_ring_dim(d).ok_or_else(
+        || AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}")),
+    )?;
     cfg.validate_for_ring_dim(d)
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(cfg)
@@ -171,7 +170,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
+            ) -> Result<akita_challenges::FoldChallengeDistribution, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 

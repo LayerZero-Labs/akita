@@ -9,7 +9,9 @@ mod common;
 use akita_cpu_backend::{CpuBackend, GroupContext};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{new_prover_channel, new_verifier_channel};
+use akita_verifier::SetupPolicy;
 use common::*;
+use jolt_transcript::BytesMsg;
 
 #[test]
 fn ordinary_grouped_root_proof_bytes_are_pinned() {
@@ -51,7 +53,7 @@ fn ordinary_grouped_root_proof_bytes_are_pinned() {
             commitments.iter().map(|group| *group.profile()).collect(),
         )
         .unwrap();
-        let row = scheme.schedules().resolve_profiles(&profiles).unwrap();
+        let row = scheme.schedules().resolve_profiles(&profiles, 0).unwrap();
         assert!(
             !row.schedule().recursive_folds.is_empty(),
             "the pinned grouped root must produce a successor witness"
@@ -98,10 +100,10 @@ fn ordinary_grouped_root_proof_bytes_are_pinned() {
         )
         .unwrap();
         let statement = selected_statement::<OneHotCfg>(verifier_claims, scheme.schedules());
-        let mut prover = new_prover_channel(b"ordinary-grouped-root-v1", b"caller").unwrap();
-        prover.public_message(b"before-root");
+        let mut prover = new_prover_channel(b"ordinary-grouped-root-v1");
+        prover.public_message(&BytesMsg(b"before-root"));
         scheme
-            .batched_prove_in_session(
+            .batched_prove_embedded(
                 &setup,
                 prover_data,
                 &backend,
@@ -110,20 +112,24 @@ fn ordinary_grouped_root_proof_bytes_are_pinned() {
             )
             .unwrap();
         let proof = prover.narg_string().to_vec();
-        prover.public_message(b"after-root");
+        prover.public_message(&BytesMsg(b"after-root"));
         let continuation: [u8; 32] = prover.verifier_message();
         let verifier = scheme
             .verifier(scheme.setup_verifier(&setup).unwrap())
             .unwrap();
-        let mut state =
-            new_verifier_channel(b"ordinary-grouped-root-v1", b"caller", &proof).unwrap();
-        state.public_message(b"before-root");
-        verifier
-            .batched_verify_in_session(&mut state, statement, BasisMode::Lagrange)
+        let mut state = new_verifier_channel(b"ordinary-grouped-root-v1", &proof);
+        state.public_message(&BytesMsg(b"before-root"));
+        let pending = verifier
+            .batched_verify_embedded(
+                &mut state,
+                statement,
+                BasisMode::Lagrange,
+                SetupPolicy::Check(None),
+            )
             .unwrap();
-        state.public_message(b"after-root");
-        assert_eq!(state.verifier_message::<[u8; 32]>().unwrap(), continuation);
-        state.check_eof().unwrap();
+        state.public_message(&BytesMsg(b"after-root"));
+        assert_eq!(state.verifier_message::<[u8; 32]>(), continuation);
+        pending.check_eof(state).unwrap();
 
         let mut commitment_bytes = Vec::new();
         for commitment in &commitments {
@@ -164,13 +170,13 @@ fn ordinary_grouped_root_proof_bytes_are_pinned() {
         assert_eq!(
             observed,
             (
-                70_541,
-                "8956d163098c1c2198c971b9850ae2ce".to_owned(),
-                "4362adef133f80d1bc62cf427b6725cc".to_owned(),
-                "5a93d1bf3a49f1f2f46756199b674f50".to_owned(),
+                65_567,
+                "c139f0beed7e307714022bec155e1cbb".to_owned(),
+                "fadebe8b9a9dc81b93d4d83128e2f79e".to_owned(),
+                "9693e0b594ab9b09a05f3838cf14d145".to_owned(),
                 [
-                    255, 9, 227, 159, 50, 52, 229, 201, 73, 146, 121, 17, 78, 55, 245, 228, 118,
-                    255, 4, 131, 136, 111, 227, 163, 35, 212, 173, 128, 2, 50, 252, 85,
+                    192, 106, 48, 167, 66, 6, 174, 179, 30, 174, 229, 39, 167, 177, 151, 238, 76,
+                    105, 112, 252, 68, 205, 91, 237, 57, 195, 211, 199, 104, 88, 87, 78,
                 ],
             ),
         );

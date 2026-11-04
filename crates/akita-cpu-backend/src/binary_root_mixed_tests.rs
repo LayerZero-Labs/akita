@@ -27,15 +27,18 @@ fn compact_fixture() -> Fixture {
     let image = remainder
         .map(|value| Q24Image::from_residue(value.rem_euclid(i128::from(Q24)) as u32).unwrap());
     let challenges = SeedDraw
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            0,
+        .draw_fold_challenges(
+            &FoldChallengeFamily::new(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                162,
+                FoldChallengeDistribution::BinaryRoot,
+                None,
+            )
+            .unwrap(),
             1,
             1,
-            &FoldChallengeFamily::BinaryRoot,
-            None,
         )
+        .unwrap()
         .unwrap();
     Fixture {
         descriptor,
@@ -63,7 +66,8 @@ fn ordinary_product(left: &[i128; 8], right: &[i128; 8]) -> Vec<E> {
 fn mixed_root() -> (NativeRootRelation<E>, Vec<i8>) {
     let input = compact_fixture();
     let fixed = build(&input).unwrap();
-    let (binary_plan, binary_digits) = fixed.successor_table(256).unwrap();
+    let (binary_plan, binary_digits) =
+        BinaryRootRelation::successor_table(&fixed.response, &fixed.images, 256).unwrap();
     let mut segments = binary_plan.segments().to_vec();
     segments.push(RootRepackingSegment {
         geometry: RelationRowGeometry::native(8).unwrap(),
@@ -89,7 +93,7 @@ fn mixed_root() -> (NativeRootRelation<E>, Vec<i8>) {
     }
     let multiplier = [2, -1, 1, 0, 0, 0, 0, 1];
     let ordinary_group = NativeRootGroup {
-        kind: NativeRootGroupKind::Ordinary(FoldChallengeFamily::pm1_only(4)),
+        kind: NativeRootGroupKind::Ordinary(FoldChallengeDistribution::pm1_only(4)),
         rows: vec![NativeRootRow {
             polynomial: RelationPolynomial::negacyclic(8).unwrap(),
             terms: vec![NativeRootTerm {

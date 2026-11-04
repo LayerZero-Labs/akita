@@ -1,16 +1,18 @@
 //! The sole dependency boundary to Akita's current transcript transport.
-use akita_challenges::{
-    BinaryChallenge, BinaryChallengeSampler, PreviewFoldDraw, ProverFoldDraw, VerifierFoldDraw,
-};
+#[cfg(feature = "prover")]
+use akita_challenges::PreviewFoldDraw;
+use akita_challenges::{BinaryChallenge, BinaryChallengeSampler, ProverFoldDraw, VerifierFoldDraw};
 use akita_error::AkitaError;
 use akita_params::FOLD_RESPONSE_ATTEMPTS;
 use akita_sumcheck::SumcheckRole;
 use akita_transcript::{
-    commit_grinding_nonce, ext_challenge, grinding_predicate_accepts, nonce_max_bytes,
-    receive_grinding_nonce, search_grinding_nonce, FoldPreview, NonceAtom, ProofChannel,
-    ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN,
+    ext_challenge, nonce_max_bytes, receive_byte_group, receive_nonce, send_byte_group, send_nonce,
+    verifier_context, ChallengeCodec, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
+    ProtocolSiteId, ProverChannel, VerifierChannel, VerifierTranscript, GRINDING_CHECK_BYTES,
 };
-use core::{marker::PhantomData, num::NonZeroU8};
+#[cfg(feature = "prover")]
+use akita_transcript::{prover_context, FoldPreview, ProverTranscript};
+use core::marker::PhantomData;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 use crate::grinding::{RootGrindingCursor, RootGrindingPlan, RootGrindingSite};
@@ -22,20 +24,20 @@ pub trait ClearChannel {
     /// Emit the fixed-length buffer, or overwrite it with received bytes.
     fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError>;
     fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError>;
-    /// Run a native opening on this same prover session. Custom observational
+    /// Run a native opening on this same prover channel. Custom observational
     /// channels may reject native openings instead of exposing transport state.
     fn with_prover_session<R>(
         &mut self,
-        _prove: impl FnOnce(&mut akita_transcript::ProverSession) -> Result<R, AkitaError>,
+        _prove: impl FnOnce(&mut ProverChannel) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         Err(AkitaError::InvalidProof)
     }
 
-    /// Replay a native opening on this same verifier session. The closure only
-    /// borrows the owner and cannot finish or replace the surrounding session.
+    /// Replay a native opening on this same verifier channel. The closure only
+    /// borrows the owner and cannot finish or replace the surrounding channel.
     fn with_verifier_session<R>(
         &mut self,
-        _verify: impl FnOnce(&mut akita_transcript::VerifierSession<'_>) -> Result<R, AkitaError>,
+        _verify: impl FnOnce(&mut VerifierChannel<'_>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         Err(AkitaError::InvalidProof)
     }
@@ -51,7 +53,6 @@ pub trait ClearChannel {
     fn fold_challenges(
         &mut self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: &mut u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError>;
@@ -59,40 +60,56 @@ pub trait ClearChannel {
 
 /// A prover channel that can evaluate a candidate fold-response nonce without
 /// writing it to the proof.
+#[cfg(feature = "prover")]
 pub trait FoldSearchChannel: ClearChannel {
     /// The challenges [`ClearChannel::fold_challenges`] returns for `nonce`
     /// from the current transcript state, which is left unchanged.
     fn preview_fold_challenges(
         &self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError>;
 }
 
-impl ClearChannel for akita_transcript::ProverSession {
+/// Diagnostic site of the clear protocol's fixed-length proof messages.
+fn clear_message_site(len: usize) -> ProtocolSiteId {
+    ProtocolSiteId {
+        // "LCMS": the clear protocol's own proof messages.
+        family: 0x4c43_4d53,
+        detail: u32::try_from(len).unwrap_or(u32::MAX),
+        ..ProtocolSiteId::default()
+    }
+}
+
+fn challenge_block<S: ProofChannel>(state: &mut S) -> Result<[u8; 32], AkitaError> {
+    state.challenge_message(32, |bytes| {
+        bytes
+            .try_into()
+            .map_err(|_| AkitaError::Internal("challenge block width".into()))
+    })
+}
+
+impl ClearChannel for ProverChannel {
     fn with_prover_session<R>(
         &mut self,
-        prove: impl FnOnce(&mut akita_transcript::ProverSession) -> Result<R, AkitaError>,
+        prove: impl FnOnce(&mut ProverChannel) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         prove(self)
     }
     fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
-        self.public_message(bytes);
+        ProofChannel::public(self, bytes);
         Ok(())
     }
     fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {
-        akita_transcript::send_bytes(self, bytes);
-        Ok(())
+        send_byte_group(self, clear_message_site(bytes.len()), bytes)
     }
     fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
-        Ok(self.verifier_message())
+        challenge_block(self)
     }
     fn fold_challenges(
         &mut self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: &mut u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
@@ -101,55 +118,54 @@ impl ClearChannel for akita_transcript::ProverSession {
                 "fold-response nonce exceeds its search domain".into(),
             ));
         }
-        self.prover_message(&NonceAtom::new(*nonce));
-        sampler.sample_challenges(&mut ProverFoldDraw::new(self, 0, 0), label, count)
+        send_nonce(self, *nonce);
+        sampler.sample_challenges(&mut ProverFoldDraw::new(self, 0, 0), count)
     }
 }
 
-impl FoldSearchChannel for akita_transcript::ProverSession {
+#[cfg(feature = "prover")]
+impl FoldSearchChannel for ProverChannel {
     fn preview_fold_challenges(
         &self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
         let mut preview = FoldPreview::new(self, nonce);
-        sampler.sample_challenges(&mut PreviewFoldDraw::new(&mut preview), label, count)
+        sampler.sample_challenges(&mut PreviewFoldDraw::new(&mut preview), count)
     }
 }
 
-impl ClearChannel for akita_transcript::VerifierSession<'_> {
+impl ClearChannel for VerifierChannel<'_> {
     fn with_verifier_session<R>(
         &mut self,
-        verify: impl FnOnce(&mut akita_transcript::VerifierSession<'_>) -> Result<R, AkitaError>,
+        verify: impl FnOnce(&mut VerifierChannel<'_>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         verify(self)
     }
     fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
-        self.public_message(bytes);
+        ProofChannel::public(self, bytes);
         Ok(())
     }
     fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {
-        let received = akita_transcript::receive_bytes(self, bytes.len())?;
+        let received = receive_byte_group(self, clear_message_site(bytes.len()), bytes.len())?;
         bytes.copy_from_slice(&received);
         Ok(())
     }
     fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
-        self.verifier_message()
+        challenge_block(self)
     }
     fn fold_challenges(
         &mut self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: &mut u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        *nonce = self.prover_message::<NonceAtom>()?.into_inner();
+        *nonce = receive_nonce(self)?;
         if *nonce >= FOLD_RESPONSE_ATTEMPTS {
             return Err(AkitaError::InvalidProof);
         }
-        sampler.sample_challenges(&mut VerifierFoldDraw::new(self, 0, 0), label, count)
+        sampler.sample_challenges(&mut VerifierFoldDraw::new(self, 0, 0), count)
     }
 }
 
@@ -157,7 +173,7 @@ impl ClearChannel for akita_transcript::VerifierSession<'_> {
 /// The header fixes the residue count, so fixed-size absorption is injective.
 pub fn matrix_digest(tagged_bytes: &[u8], residues: &[u32]) -> Result<[u8; 32], AkitaError> {
     const CHUNK: usize = 1 << 12;
-    let mut channel = akita_transcript::new_prover_channel(tagged_bytes, b"")?;
+    let mut channel = akita_transcript::new_prover_channel(tagged_bytes);
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(CHUNK * size_of::<u32>())
@@ -167,47 +183,49 @@ pub fn matrix_digest(tagged_bytes: &[u8], residues: &[u32]) -> Result<[u8; 32], 
         for residue in chunk {
             bytes.extend_from_slice(&residue.to_le_bytes());
         }
-        ClearChannel::public(&mut channel, &bytes)?;
+        ProofChannel::public(&mut channel, &bytes);
     }
-    ClearChannel::challenge_block(&mut channel)
+    challenge_block(&mut channel)
 }
 
-pub fn new_prover() -> Result<akita_transcript::ProverChannel, AkitaError> {
-    akita_transcript::new_prover_channel(b"akita/labinius/clear-binary-opening/v1", b"")
+pub fn new_prover() -> ProverChannel {
+    akita_transcript::new_prover_channel(b"akita/labinius/clear-binary-opening/v1")
 }
 
-pub fn finish_prover(channel: akita_transcript::ProverChannel) -> Vec<u8> {
+pub fn finish_prover(channel: ProverChannel) -> Vec<u8> {
     channel.narg_string().to_vec()
 }
 
-pub fn new_verifier(proof: &[u8]) -> Result<akita_transcript::VerifierChannel<'_>, AkitaError> {
-    akita_transcript::new_verifier_channel(b"akita/labinius/clear-binary-opening/v1", b"", proof)
+pub fn new_verifier(proof: &[u8]) -> VerifierChannel<'_> {
+    akita_transcript::new_verifier_channel(b"akita/labinius/clear-binary-opening/v1", proof)
 }
 
-pub fn finish_verifier(channel: akita_transcript::VerifierChannel<'_>) -> Result<(), AkitaError> {
-    channel.check_eof()
+pub fn finish_verifier(channel: VerifierChannel<'_>) -> Result<(), AkitaError> {
+    channel.check_eof().map_err(|_| AkitaError::InvalidProof)
 }
 
 /// Borrow the existing prover channel for the root reduction over the base
 /// field `F`.
 ///
 /// Every challenge field `E: ExtField<F>` is served by the same channel: a
-/// challenge is `E::DEGREE` base-field draws and a sumcheck message is its
+/// challenge is one codec draw of `E` and a sumcheck message is its
 /// canonical base coordinates, as in Akita's extension-field transcript.
 ///
 /// Every field challenge and round challenge must be the next planned site;
 /// an adapter without a scheduled plan rejects them. The root statement
 /// binding schedules the reduction's plan ([`RootChallengeChannel::schedule`]);
 /// standalone sumchecks schedule [`RootGrindingPlan::sumcheck_rounds`]. The
-/// adapter searches and emits the site's proof-of-work nonce before drawing.
+/// adapter runs the site's transcript proof of work before drawing.
+#[cfg(feature = "prover")]
 pub struct RootSumcheckProverChannel<'state, F> {
-    state: &'state mut akita_transcript::ProverSession,
+    state: &'state mut ProverChannel,
     cursor: RootGrindingCursor,
     base: PhantomData<fn() -> F>,
 }
 
+#[cfg(feature = "prover")]
 impl<'state, F> RootSumcheckProverChannel<'state, F> {
-    pub fn new(state: &'state mut akita_transcript::ProverSession) -> Self {
+    pub fn new(state: &'state mut ProverChannel) -> Self {
         Self {
             state,
             cursor: RootGrindingCursor::default(),
@@ -215,38 +233,34 @@ impl<'state, F> RootSumcheckProverChannel<'state, F> {
         }
     }
 
-    /// Pay the next planned site, which must be `site`: search the bounded
-    /// nonce range on previews of the public state and commit the winner.
+    /// Pay the next planned site, which must be `site`, with the transcript's
+    /// proof of work.
     fn grind(&mut self, site: RootGrindingSite, id: ProtocolSiteId) -> Result<(), AkitaError> {
         let run = self.cursor.next(site)?;
-        let Some(target) = NonZeroU8::new(run.grind_bits()) else {
+        if run.grind_bits() == 0 {
             return Ok(());
-        };
-        let (nonce, preview) =
-            search_grinding_nonce(self.state, run.grind_bits(), run.nonce_bits())
-                .ok_or_else(|| AkitaError::InvalidInput("transcript grinding exhausted".into()))?;
-        let (nonce_record, predicate_record) = grinding_records(id, run.nonce_bits());
-        let predicate = commit_grinding_nonce(self.state, nonce_record, nonce, predicate_record);
-        if predicate != preview || !grinding_predicate_accepts(&predicate, target) {
-            return Err(AkitaError::Internal(
-                "committed grinding predicate differs from its preview".into(),
-            ));
         }
+        let (nonce_record, check_record) = grinding_records(id, run.nonce_bits());
+        prover_context(self.state, nonce_record);
+        self.state
+            .grind(u32::from(run.grind_bits()))
+            .map_err(|_| AkitaError::InvalidInput("transcript grinding exhausted".into()))?;
+        prover_context(self.state, check_record);
         Ok(())
     }
 }
 
 /// Borrow the existing verifier channel for the root reduction over the base
 /// field `F`. Scheduling is as for the prover adapter; a scheduled site's
-/// nonce is received, range-checked and tested before its challenge is drawn.
+/// proof of work is checked before its challenge is drawn.
 pub struct RootSumcheckVerifierChannel<'state, 'proof, F> {
-    state: &'state mut akita_transcript::VerifierSession<'proof>,
+    state: &'state mut VerifierChannel<'proof>,
     cursor: RootGrindingCursor,
     base: PhantomData<fn() -> F>,
 }
 
 impl<'state, 'proof, F> RootSumcheckVerifierChannel<'state, 'proof, F> {
-    pub fn new(state: &'state mut akita_transcript::VerifierSession<'proof>) -> Self {
+    pub fn new(state: &'state mut VerifierChannel<'proof>) -> Self {
         Self {
             state,
             cursor: RootGrindingCursor::default(),
@@ -254,27 +268,25 @@ impl<'state, 'proof, F> RootSumcheckVerifierChannel<'state, 'proof, F> {
         }
     }
 
-    /// Check the next planned site, which must be `site`: its nonce must be
-    /// canonical, inside the search range, and clear the target's predicate
-    /// bits.
+    /// Check the next planned site, which must be `site`: the transcript's
+    /// proof-of-work nonce must be canonical, inside the search range, and
+    /// clear the target's check bits.
     fn grind(&mut self, site: RootGrindingSite, id: ProtocolSiteId) -> Result<(), AkitaError> {
         let run = self.cursor.next(site)?;
-        let Some(target) = NonZeroU8::new(run.grind_bits()) else {
+        if run.grind_bits() == 0 {
             return Ok(());
-        };
-        let (nonce_record, predicate_record) = grinding_records(id, run.nonce_bits());
-        let (nonce, predicate) =
-            receive_grinding_nonce(self.state, nonce_record, predicate_record)?;
-        if u64::from(nonce) >> run.nonce_bits() != 0
-            || !grinding_predicate_accepts(&predicate, target)
-        {
-            return Err(AkitaError::InvalidProof);
         }
+        let (nonce_record, check_record) = grinding_records(id, run.nonce_bits());
+        verifier_context(self.state, nonce_record);
+        self.state
+            .check_grind(u32::from(run.grind_bits()))
+            .map_err(|_| AkitaError::InvalidProof)?;
+        verifier_context(self.state, check_record);
         Ok(())
     }
 }
 
-/// Diagnostic records of one proof-of-work nonce and its predicate draw.
+/// Diagnostic records of one proof-of-work nonce and its check draw.
 fn grinding_records(
     site: ProtocolSiteId,
     nonce_bits: u8,
@@ -290,10 +302,10 @@ fn grinding_records(
         ),
         ProtocolContextRecord::new(
             site_id,
-            ProtocolMessageKind::GrindingPredicate as u32,
+            ProtocolMessageKind::GrindingCheck as u32,
             0,
             0,
-            GRINDING_PREDICATE_LEN as u64,
+            u64::from(GRINDING_CHECK_BYTES),
         ),
     )
 }
@@ -309,12 +321,13 @@ fn root_sumcheck_site(invocation: u32, round: u32, role: SumcheckRole) -> Protoc
     }
 }
 
+#[cfg(feature = "prover")]
 impl<F, E> akita_sumcheck::SumcheckProverChannel<E> for RootSumcheckProverChannel<'_, F>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
-    fn state_mut(&mut self) -> &mut akita_transcript::ProverSession {
+    fn state_mut(&mut self) -> &mut ProverChannel {
         self.state
     }
 
@@ -325,7 +338,7 @@ where
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
         let id = root_sumcheck_site(invocation, round, SumcheckRole::Challenge);
         self.grind(RootGrindingSite::Round { invocation }, id)?;
-        ext_challenge::<F, E, _>(self.state, id)
+        ext_challenge::<E, _>(self.state, id)
     }
 }
 
@@ -333,9 +346,9 @@ impl<'proof, F, E> akita_sumcheck::SumcheckVerifierChannel<'proof, E>
     for RootSumcheckVerifierChannel<'_, 'proof, F>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
 {
-    fn state_mut(&mut self) -> &mut akita_transcript::VerifierSession<'proof> {
+    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
         self.state
     }
 
@@ -346,7 +359,7 @@ where
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
         let id = root_sumcheck_site(invocation, round, SumcheckRole::Challenge);
         self.grind(RootGrindingSite::Round { invocation }, id)?;
-        ext_challenge::<F, E, _>(self.state, id)
+        ext_challenge::<E, _>(self.state, id)
     }
 }
 
@@ -361,7 +374,7 @@ pub trait RootChallengeChannel<E>: ClearChannel {
     fn schedule(&mut self, plan: RootGrindingPlan) -> Result<(), AkitaError>;
 
     /// Pay `site`, which must be the next planned site, then draw
-    /// `coordinates` independent challenges under that one nonce.
+    /// `coordinates` independent challenges under that one proof of work.
     fn field_point(
         &mut self,
         site: RootGrindingSite,
@@ -380,15 +393,14 @@ pub trait RootChallengeChannel<E>: ClearChannel {
 }
 
 /// Draw the `coordinates` challenges of a site whose work is already paid.
-fn field_point<F, E, C>(
+fn field_point<E, C>(
     state: &mut C,
     site: RootGrindingSite,
     coordinates: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    C: ProofChannel + ?Sized,
+    E: ChallengeCodec,
+    C: ProofChannel,
 {
     let mut point = Vec::new();
     point
@@ -396,7 +408,7 @@ where
         .map_err(|_| AkitaError::InvalidInput("root challenge allocation failed".into()))?;
     for coordinate in 0..coordinates {
         let coordinate = u32::try_from(coordinate).map_err(|_| AkitaError::InvalidProof)?;
-        point.push(ext_challenge::<F, E, _>(
+        point.push(ext_challenge::<E, _>(
             state,
             root_field_site(site, coordinate),
         )?);
@@ -417,22 +429,47 @@ fn root_field_site(site: RootGrindingSite, group: u32) -> ProtocolSiteId {
     }
 }
 
+/// Absorb the root reduction's public setup identity on a caller's channel,
+/// before its first challenge: the fixed root-reduction tag, then the identity
+/// as a `u64` little-endian length word and its bytes.
+pub fn bind_root_context<S: ProofChannel>(
+    state: &mut S,
+    identity: &[u8],
+) -> Result<(), AkitaError> {
+    let len = u64::try_from(identity.len())
+        .map_err(|_| AkitaError::InvalidInput("root identity length overflow".into()));
+    let len = state.guard(len)?;
+    let mut bytes = ROOT_SESSION.to_vec();
+    bytes.extend_from_slice(&len.to_le_bytes());
+    bytes.extend_from_slice(identity);
+    akita_transcript::public_bytes(
+        state,
+        ProtocolSiteId {
+            // "LRCX": the root reduction's public context.
+            family: 0x4c52_4358,
+            ..ProtocolSiteId::default()
+        },
+        &bytes,
+    )
+}
+
+const ROOT_SESSION: &[u8] = b"akita/labinius/root-reduction/v1";
+
 /// Standalone root session; separate from the clear-opening session domain.
-pub fn new_root_prover() -> Result<akita_transcript::ProverChannel, AkitaError> {
-    akita_transcript::new_prover_channel(b"akita/labinius/root-reduction/v1", b"")
+pub fn new_root_prover() -> ProverChannel {
+    akita_transcript::new_prover_channel(ROOT_SESSION)
 }
 
 /// Standalone root replay session, bounded by the caller's proof slice.
-pub fn new_root_verifier(
-    proof: &[u8],
-) -> Result<akita_transcript::VerifierChannel<'_>, AkitaError> {
-    akita_transcript::new_verifier_channel(b"akita/labinius/root-reduction/v1", b"", proof)
+pub fn new_root_verifier(proof: &[u8]) -> VerifierChannel<'_> {
+    akita_transcript::new_verifier_channel(ROOT_SESSION, proof)
 }
 
+#[cfg(feature = "prover")]
 impl<F> ClearChannel for RootSumcheckProverChannel<'_, F> {
     fn with_prover_session<R>(
         &mut self,
-        prove: impl FnOnce(&mut akita_transcript::ProverSession) -> Result<R, AkitaError>,
+        prove: impl FnOnce(&mut ProverChannel) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         prove(self.state)
     }
@@ -448,28 +485,27 @@ impl<F> ClearChannel for RootSumcheckProverChannel<'_, F> {
     fn fold_challenges(
         &mut self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: &mut u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        ClearChannel::fold_challenges(self.state, sampler, label, count, nonce)
+        ClearChannel::fold_challenges(self.state, sampler, count, nonce)
     }
 }
+#[cfg(feature = "prover")]
 impl<F> FoldSearchChannel for RootSumcheckProverChannel<'_, F> {
     fn preview_fold_challenges(
         &self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        FoldSearchChannel::preview_fold_challenges(&*self.state, sampler, label, count, nonce)
+        FoldSearchChannel::preview_fold_challenges(&*self.state, sampler, count, nonce)
     }
 }
 impl<F> ClearChannel for RootSumcheckVerifierChannel<'_, '_, F> {
     fn with_verifier_session<R>(
         &mut self,
-        verify: impl FnOnce(&mut akita_transcript::VerifierSession<'_>) -> Result<R, AkitaError>,
+        verify: impl FnOnce(&mut VerifierChannel<'_>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         verify(self.state)
     }
@@ -485,14 +521,14 @@ impl<F> ClearChannel for RootSumcheckVerifierChannel<'_, '_, F> {
     fn fold_challenges(
         &mut self,
         sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
         count: usize,
         nonce: &mut u32,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        ClearChannel::fold_challenges(self.state, sampler, label, count, nonce)
+        ClearChannel::fold_challenges(self.state, sampler, count, nonce)
     }
 }
-impl<F: Field + CanonicalEncoding, E: ExtField<F>> RootChallengeChannel<E>
+#[cfg(feature = "prover")]
+impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> RootChallengeChannel<E>
     for RootSumcheckProverChannel<'_, F>
 {
     fn schedule(&mut self, plan: RootGrindingPlan) -> Result<(), AkitaError> {
@@ -504,13 +540,13 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F>> RootChallengeChannel<E>
         coordinates: usize,
     ) -> Result<Vec<E>, AkitaError> {
         self.grind(site, root_field_site(site, 0))?;
-        field_point::<F, E, _>(self.state, site, coordinates)
+        field_point::<E, _>(self.state, site, coordinates)
     }
     fn finish_schedule(&mut self) -> Result<(), AkitaError> {
         self.cursor.finish()
     }
 }
-impl<F: Field + CanonicalEncoding, E: ExtField<F>> RootChallengeChannel<E>
+impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> RootChallengeChannel<E>
     for RootSumcheckVerifierChannel<'_, '_, F>
 {
     fn schedule(&mut self, plan: RootGrindingPlan) -> Result<(), AkitaError> {
@@ -522,75 +558,9 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F>> RootChallengeChannel<E>
         coordinates: usize,
     ) -> Result<Vec<E>, AkitaError> {
         self.grind(site, root_field_site(site, 0))?;
-        field_point::<F, E, _>(self.state, site, coordinates)
+        field_point::<E, _>(self.state, site, coordinates)
     }
     fn finish_schedule(&mut self) -> Result<(), AkitaError> {
         self.cursor.finish()
-    }
-}
-
-// Owning convenience channels expose the same operations through their borrowed
-// view. Protocol adapters only ever retain that view.
-impl ClearChannel for akita_transcript::ProverChannel {
-    fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
-        ClearChannel::public(&mut **self, bytes)
-    }
-    fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {
-        ClearChannel::message(&mut **self, bytes)
-    }
-    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
-        ClearChannel::challenge_block(&mut **self)
-    }
-    fn fold_challenges(
-        &mut self,
-        sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
-        count: usize,
-        nonce: &mut u32,
-    ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        ClearChannel::fold_challenges(&mut **self, sampler, label, count, nonce)
-    }
-    fn with_prover_session<R>(
-        &mut self,
-        prove: impl FnOnce(&mut akita_transcript::ProverSession) -> Result<R, AkitaError>,
-    ) -> Result<R, AkitaError> {
-        prove(self)
-    }
-}
-impl FoldSearchChannel for akita_transcript::ProverChannel {
-    fn preview_fold_challenges(
-        &self,
-        sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
-        count: usize,
-        nonce: u32,
-    ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        FoldSearchChannel::preview_fold_challenges(&**self, sampler, label, count, nonce)
-    }
-}
-impl ClearChannel for akita_transcript::VerifierChannel<'_> {
-    fn public(&mut self, bytes: &[u8]) -> Result<(), AkitaError> {
-        ClearChannel::public(&mut **self, bytes)
-    }
-    fn message(&mut self, bytes: &mut [u8]) -> Result<(), AkitaError> {
-        ClearChannel::message(&mut **self, bytes)
-    }
-    fn challenge_block(&mut self) -> Result<[u8; 32], AkitaError> {
-        ClearChannel::challenge_block(&mut **self)
-    }
-    fn fold_challenges(
-        &mut self,
-        sampler: &mut BinaryChallengeSampler,
-        label: &[u8],
-        count: usize,
-        nonce: &mut u32,
-    ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        ClearChannel::fold_challenges(&mut **self, sampler, label, count, nonce)
-    }
-    fn with_verifier_session<R>(
-        &mut self,
-        verify: impl FnOnce(&mut akita_transcript::VerifierSession<'_>) -> Result<R, AkitaError>,
-    ) -> Result<R, AkitaError> {
-        verify(self)
     }
 }

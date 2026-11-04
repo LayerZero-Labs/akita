@@ -556,11 +556,13 @@ changes the root grinding plan, whose digest is bound into the instance
 descriptor. The pins that move are:
 
 - [`scripts/binary-source-full-size-digests.tsv`](../scripts/binary-source-full-size-digests.tsv):
-  all 18 rows (16 full-size and the two smoke pins);
+  every row (at the time of writing, 16 full-size and two smoke pins; after
+  the v8 merge, one row per size and shape, 8 full-size and one smoke pin);
 - `assert_base_bytes` in
   [`binary_source_end_to_end/compatibility.rs`](../crates/akita-pcs/tests/binary_source_end_to_end/compatibility.rs):
-  six length and digest pins (both protocols, for word width 128, word width 8
-  and mixed);
+  the length and digest pins for word width 128, word width 8 and mixed (six
+  at the time of writing, one per protocol; three after the v8 merge, which
+  made the two protocols equal);
 - the measured proof-size tables in [binary-source-opening.md](binary-source-opening.md)
   ("Measured proof sizes" and "Full-size measurements"), which must be
   re-measured.
@@ -571,9 +573,9 @@ and grinding modules, `root_repacking.rs`, both `binary_root.rs` drivers and
 the digest TSV). The binary root runs only for a group of kind
 `GroupClaimKind::Binary` (binary_root.rs lines 44-52). The ordinary
 `Tau1Point` and `Tau0Point` runs in `transcript_grinding/plan.rs` are
-untouched. The 70,541-byte pin in
+untouched. The 65,567-byte pin in
 [`ordinary_grouped_root_bytes.rs`](../crates/akita-pcs/tests/ordinary_grouped_root_bytes.rs)
-(line 167) is the gate, run with the extension features both disabled and
+(line 173; 70,541 bytes before the v8 merge) is the gate, run with the extension features both disabled and
 enabled.
 
 ## 6. Alternatives
@@ -667,8 +669,8 @@ implemented as written.
    the branch's reference materializer, and asserts that it is zero on every
    padding address.
 7. Re-pin the digests listed in Section 5 and re-measure the opening spec's
-   tables. Confirm that the ordinary 70,541-byte pin is unchanged with features
-   off and on.
+   tables. Confirm that the ordinary pin (65,567 bytes after the v8 merge,
+   70,541 before it) is unchanged with features off and on.
 
 **Padding-point rule, if selected instead.**
 

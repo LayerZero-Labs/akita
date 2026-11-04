@@ -1,7 +1,7 @@
 //! Direct public coefficient weights for the two binary terminal identities.
 
 use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
-use akita_challenges::{Challenges, FoldChallengeFamily};
+use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use jolt_field::Field;
@@ -10,7 +10,9 @@ use super::{
     binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor, BinaryTerminalClaim,
     BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
-use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
+use crate::native_root_relation::{
+    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH,
+};
 use crate::root_repacking::RootCoefficientRepacking;
 
 /// Addresses of the response low digit, authenticated U view and both carries.
@@ -257,11 +259,14 @@ impl<E: Field> ParityRowWeights<E> {
         Ok(self.batch * sum)
     }
 
+    /// Each row's shifted-remainder kernel is computed in batches through
+    /// [`weigh_units`]; the weights are then streamed in row order.
     pub(crate) fn visit(
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
-        for (row, words) in self.rows.iter().enumerate() {
+        let weigh = |row: usize| -> Result<[E; 162], AkitaError> {
+            let words = self.rows.get(row).ok_or(AkitaError::InvalidProof)?;
             let multiplier: [E; 162] = std::array::from_fn(|index| {
                 let word = words.get(index / 64).copied().unwrap_or(0);
                 E::from_u64((word >> (index % 64)) & 1)
@@ -269,14 +274,20 @@ impl<E: Field> ParityRowWeights<E> {
             let mut kernel = [E::zero(); 162];
             shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, self.alpha, &mut kernel)
                 .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            let base = self.response.base(self.element(row)?, 0)?;
-            for (coefficient, weight) in kernel.into_iter().enumerate() {
-                let signed = if coefficient % 2 == 0 {
-                    weight
-                } else {
-                    -weight
-                };
-                visit(base + 4 * coefficient + row % 4, self.batch * signed)?;
+            Ok(kernel)
+        };
+        for start in (0..self.rows.len()).step_by(WEIGH_BATCH) {
+            let end = self.rows.len().min(start + WEIGH_BATCH);
+            for (row, kernel) in (start..end).zip(weigh_units(start..end, weigh)?) {
+                let base = self.response.base(self.element(row)?, 0)?;
+                for (coefficient, weight) in kernel.into_iter().enumerate() {
+                    let signed = if coefficient % 2 == 0 {
+                        weight
+                    } else {
+                        -weight
+                    };
+                    visit(base + 4 * coefficient + row % 4, self.batch * signed)?;
+                }
             }
         }
         Ok(())
@@ -298,7 +309,7 @@ pub fn binary_scalar_challenges(
         .iter()
         .map(|challenge| {
             challenge.validate_dyn(162)?;
-            if challenge.positions.len() > FoldChallengeFamily::BinaryRoot.weight()
+            if challenge.positions.len() > FoldChallengeDistribution::BinaryRoot.weight()
                 || challenge
                     .coeffs
                     .iter()

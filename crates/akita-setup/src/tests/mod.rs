@@ -43,7 +43,7 @@ impl CommitmentConfig for WrongModulusProfileConfig {
 
     fn ring_challenge_config(
         d: usize,
-    ) -> Result<akita_challenges::FoldChallengeFamily, AkitaError> {
+    ) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError> {
         Cfg::ring_challenge_config(d)
     }
 

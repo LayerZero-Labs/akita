@@ -137,14 +137,14 @@ fn rounds_match_the_brute_force_definition() {
         let plan =
             RootGrindingPlan::sumcheck_rounds::<F, F>(&[(INVOCATION, product_shape(n).unwrap())])
                 .unwrap();
-        let mut state = channel::new_prover().unwrap();
+        let mut state = channel::new_prover();
         let mut prover = RootSumcheckProverChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut prover, plan.clone()).unwrap();
         let (rho, _) =
             prove_product_rounds::<F, F, _>(&mut instance, &mut prover, INVOCATION).unwrap();
         RootChallengeChannel::<F>::finish_schedule(&mut prover).unwrap();
         let proof = channel::finish_prover(state);
-        let mut state = channel::new_verifier(&proof).unwrap();
+        let mut state = channel::new_verifier(&proof);
         let mut verifier = RootSumcheckVerifierChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut verifier, plan).unwrap();
         let replay = verify_product_rounds::<F, F, _>(&mut verifier, INVOCATION, n, claim).unwrap();
@@ -160,7 +160,7 @@ fn rounds_match_the_brute_force_definition() {
 
 #[test]
 fn unscheduled_adapters_reject_the_first_round_challenge() {
-    let mut state = channel::new_prover().unwrap();
+    let mut state = channel::new_prover();
     let mut prover = RootSumcheckProverChannel::<F>::new(&mut state);
     assert!(akita_sumcheck::SumcheckProverChannel::<F>::round_challenge(
         &mut prover,
@@ -169,7 +169,7 @@ fn unscheduled_adapters_reject_the_first_round_challenge() {
     )
     .is_err());
 
-    let mut state = channel::new_verifier(&[]).unwrap();
+    let mut state = channel::new_verifier(&[]);
     let mut verifier = RootSumcheckVerifierChannel::<F>::new(&mut state);
     assert!(akita_sumcheck::SumcheckVerifierChannel::<F>::round_challenge(
         &mut verifier,
@@ -237,7 +237,7 @@ fn a_digit_outside_the_alphabet_fails_the_terminal_check() {
             f,
             prefix: Vec::new(),
         };
-        let mut state = channel::new_prover().unwrap();
+        let mut state = channel::new_prover();
         let mut prover = RootSumcheckProverChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut prover, plan.clone()).unwrap();
         bind_root_sumcheck_instance(&mut prover, RootSumcheckInstance::Combined, INVOCATION, 2)
@@ -252,7 +252,7 @@ fn a_digit_outside_the_alphabet_fails_the_terminal_check() {
         RootChallengeChannel::<F>::finish_schedule(&mut prover).unwrap();
         let proof = channel::finish_prover(state);
         let f = &cheat.f;
-        let mut state = channel::new_verifier(&proof).unwrap();
+        let mut state = channel::new_verifier(&proof);
         let mut verifier = RootSumcheckVerifierChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut verifier, plan).unwrap();
         let replay =

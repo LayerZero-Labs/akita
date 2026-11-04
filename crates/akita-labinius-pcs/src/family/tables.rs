@@ -108,6 +108,7 @@ impl DigitTables {
             precommitteds.push(element);
         }
         Ok(ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: PolynomialGroupLayout::singleton(self.response_log_len),
             precommitteds,
         })

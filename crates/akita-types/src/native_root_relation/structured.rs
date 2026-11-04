@@ -8,10 +8,12 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::{checked, AkitaError};
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
 use crate::binary_source::{
-    DigitAuthenticationWeights, ImageWeights, ParityRowWeights, PrimePlaneWeights,
+    DigitAuthenticationWeights, DirectAWeights, ImageWeights, ParityRowWeights, PrimePlaneWeights,
 };
 use crate::root_repacking::RootCoefficientRepacking;
 
@@ -161,9 +163,29 @@ impl SegmentLanes {
     }
 }
 
+/// Units a family weighs at once before streaming them; bounds the buffer.
+pub(crate) const WEIGH_BATCH: usize = 4096;
+
+/// Weigh the units in `range`, in order, in parallel under `parallel`.
+///
+/// Computing a unit's weights dominates a family's prover stream. Streaming
+/// them into one table stays serial, so a family weighs a batch of units
+/// with this and then visits their addresses.
+pub(crate) fn weigh_units<W: Send>(
+    range: std::ops::Range<usize>,
+    weigh: impl Fn(usize) -> Result<W, AkitaError> + Sync + Send,
+) -> Result<Vec<W>, AkitaError> {
+    #[cfg(feature = "parallel")]
+    let weights = range.into_par_iter().map(weigh).collect();
+    #[cfg(not(feature = "parallel"))]
+    let weights = range.map(weigh).collect();
+    weights
+}
+
 /// The structured public weight families of a binary root.
 #[derive(Clone, Debug)]
 pub(crate) enum RootWeightFamily<E: Field> {
+    DirectA(DirectAWeights<E>),
     Image(ImageWeights<E>),
     Prime(PrimePlaneWeights<E>),
     ParityRows(ParityRowWeights<E>),
@@ -173,6 +195,7 @@ pub(crate) enum RootWeightFamily<E: Field> {
 impl<E: Field> RootWeightFamily<E> {
     pub(crate) fn table_len(&self) -> usize {
         match self {
+            Self::DirectA(direct) => direct.table_len(),
             Self::Image(image) => image.table_len(),
             Self::Prime(prime) => prime.table_len(),
             Self::ParityRows(rows) => rows.table_len(),
@@ -182,6 +205,7 @@ impl<E: Field> RootWeightFamily<E> {
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         match self {
+            Self::DirectA(direct) => direct.evaluate(eq),
             Self::Image(image) => {
                 let _span = tracing::info_span!("root_weights_evaluate_image").entered();
                 image.evaluate(eq)
@@ -207,10 +231,26 @@ impl<E: Field> RootWeightFamily<E> {
         visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         match self {
-            Self::Image(image) => image.visit(visit),
-            Self::Prime(prime) => prime.visit(visit),
-            Self::ParityRows(rows) => rows.visit(visit),
-            Self::Authentication(authentication) => authentication.visit(visit),
+            Self::DirectA(direct) => {
+                let _span = tracing::info_span!("root_weights_visit_direct_a").entered();
+                direct.visit(visit)
+            }
+            Self::Image(image) => {
+                let _span = tracing::info_span!("root_weights_visit_image").entered();
+                image.visit(visit)
+            }
+            Self::Prime(prime) => {
+                let _span = tracing::info_span!("root_weights_visit_prime").entered();
+                prime.visit(visit)
+            }
+            Self::ParityRows(rows) => {
+                let _span = tracing::info_span!("root_weights_visit_parity_rows").entered();
+                rows.visit(visit)
+            }
+            Self::Authentication(authentication) => {
+                let _span = tracing::info_span!("root_weights_visit_authentication").entered();
+                authentication.visit(visit)
+            }
         }
     }
 }

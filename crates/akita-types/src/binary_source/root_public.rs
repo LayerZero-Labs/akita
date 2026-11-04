@@ -209,7 +209,7 @@ impl BinaryRootPublic {
         commitment: &[E],
         d_payload: &[E],
         ordinary_claim: Option<(&[E], E, &[E])>,
-        matrix: Option<&[Vec<[i128; 648]>]>,
+        matrix: Option<super::BinaryAOperand<'_, E>>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
         if batches.len() != self.batch_count {
             return Err(AkitaError::InvalidSize {
@@ -295,7 +295,7 @@ impl BinaryRootPublic {
                 self.plan.repacking(),
                 &self.setup,
                 point,
-                evaluation,
+                core::slice::from_ref(&evaluation),
                 payload,
                 alpha,
                 batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,

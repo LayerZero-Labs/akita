@@ -18,7 +18,7 @@ pub fn prove_field_switch(
     descriptor: &BinarySourceDescriptor,
     claim: &BinaryWordClaim,
     source: &[u128],
-    channel: &mut (impl ProofChannel + ?Sized),
+    channel: &mut impl ProofChannel,
 ) -> Result<BinaryTerminalClaim, AkitaError> {
     claim.validate(descriptor)?;
     let point = claim.carrier_point(descriptor)?;

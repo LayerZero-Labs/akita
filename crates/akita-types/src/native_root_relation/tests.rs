@@ -236,7 +236,7 @@ fn fixture() -> (NativeRootRelation<F>, Vec<F>, Vec<Vec<i128>>) {
             ],
         },
         NativeRootGroup {
-            kind: NativeRootGroupKind::Ordinary(FoldChallengeFamily::pm1_only(4)),
+            kind: NativeRootGroupKind::Ordinary(FoldChallengeDistribution::pm1_only(4)),
             rows: vec![
                 NativeRootRow {
                     polynomial: ordinary_polynomial,
@@ -276,11 +276,11 @@ fn mixed_groups_ring_switch_matches_independent_integer_relation() {
     assert_eq!(relation.row_count(), 5);
     assert_eq!(
         relation.groups()[0].kind.challenge_family(),
-        FoldChallengeFamily::BinaryRoot
+        FoldChallengeDistribution::BinaryRoot
     );
     assert_eq!(
         relation.groups()[1].kind.challenge_family(),
-        FoldChallengeFamily::pm1_only(4)
+        FoldChallengeDistribution::pm1_only(4)
     );
     assert_eq!(
         relation.groups()[0].kind.commitment_modulus(),
@@ -360,10 +360,10 @@ fn malformed_group_families_terms_and_geometry_reject() {
     changed[0].rows.clear();
     assert!(NativeRootRelation::new(repacking.clone(), changed).is_err());
     let mut changed = groups.clone();
-    changed[1].kind = NativeRootGroupKind::Ordinary(FoldChallengeFamily::BinaryRoot);
+    changed[1].kind = NativeRootGroupKind::Ordinary(FoldChallengeDistribution::BinaryRoot);
     assert!(NativeRootRelation::new(repacking.clone(), changed).is_err());
     let mut changed = groups.clone();
-    changed[0].kind = NativeRootGroupKind::Ordinary(FoldChallengeFamily::pm1_only(4));
+    changed[0].kind = NativeRootGroupKind::Ordinary(FoldChallengeDistribution::pm1_only(4));
     assert!(NativeRootRelation::new(repacking.clone(), changed).is_err());
     for mutation in 0..6 {
         let mut changed = groups.clone();

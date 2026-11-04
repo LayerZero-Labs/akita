@@ -8,7 +8,7 @@
 use akita_algebra::ring::{
     shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial, ResidueKernelPoint,
 };
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationPolynomialKind, TrinomialSign};
 #[cfg(feature = "parallel")]
@@ -20,20 +20,20 @@ use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
 mod structured;
 pub use binary_commitment::binary_commitment_group;
-pub(crate) use structured::{RootEq, RootWeightFamily, SegmentLanes};
+pub(crate) use structured::{weigh_units, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH};
 
 /// Source interpretation of one group. Feature enablement never selects it.
 #[derive(Clone, Debug)]
 pub enum NativeRootGroupKind {
-    Ordinary(FoldChallengeFamily),
+    Ordinary(FoldChallengeDistribution),
     Binary(BinarySourceDescriptor),
 }
 
 impl NativeRootGroupKind {
-    pub fn challenge_family(&self) -> FoldChallengeFamily {
+    pub fn challenge_family(&self) -> FoldChallengeDistribution {
         match self {
             Self::Ordinary(family) => *family,
-            Self::Binary(_) => FoldChallengeFamily::BinaryRoot,
+            Self::Binary(_) => FoldChallengeDistribution::BinaryRoot,
         }
     }
 
@@ -375,9 +375,11 @@ impl<E: Field> NativeRootWeights<E> {
             *table.get_mut(address).ok_or(AkitaError::InvalidProof)? += weight;
             Ok(())
         };
+        let span = tracing::info_span!("root_weights_visit_terms").entered();
         for &(address, weight) in &self.terms {
             add(address, weight)?;
         }
+        drop(span);
         for family in &self.families {
             family.visit(&mut add)?;
         }

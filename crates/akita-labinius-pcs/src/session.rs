@@ -64,6 +64,7 @@ impl NestedOpeningSession {
             .map_err(|_| AkitaError::InvalidSetup("opening-key allocation failed".into()))?;
         precommitteds.extend_from_slice(&profiles.precommitteds);
         let key = ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: row.schedule().root_accumulated_setup_prefix_len,
             final_group: profiles.final_group.group,
             precommitteds,
         };

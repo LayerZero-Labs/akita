@@ -1,10 +1,10 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::commitment::SetupPrefixSlot;
 use crate::commitment::{
     CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
-    IntoPortableCommitmentState,
+    IntoPortableCommitmentState, SetupPrefixSlot,
 };
+#[cfg(test)]
 use crate::opaque::DensePoly;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
@@ -12,26 +12,13 @@ use akita_error::{checked, AkitaError};
 use akita_params::SetupPrefixSlotId;
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
 use jolt_field::{CanonicalEncoding, Field};
+#[cfg(test)]
+use std::sync::Arc;
 
-pub(crate) struct ValidatedSetupPrefixCommitment<'a> {
-    id: &'a SetupPrefixSlotId,
-    n_prefix: usize,
-    plan: CommitmentExecutionPlan,
-}
-
-pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
-    expanded: &AkitaExpandedSetup<F>,
-    id: &'a SetupPrefixSlotId,
-) -> Result<ValidatedSetupPrefixCommitment<'a>, AkitaError> {
-    validate_setup_prefix_source(id, expanded.shared_matrix().num_field_elements())
-}
-
-/// Extension seam: validate a prefix against its supplied coefficient source.
-/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
-pub(crate) fn validate_setup_prefix_source(
+pub(crate) fn validate_setup_prefix_commitment(
+    available_fields: usize,
     id: &SetupPrefixSlotId,
-    source_len: usize,
-) -> Result<ValidatedSetupPrefixCommitment<'_>, AkitaError> {
+) -> Result<(), AkitaError> {
     let commitment_profile = &id.commitment_profile;
     commitment_profile.validate(
         commitment_profile
@@ -63,16 +50,13 @@ pub(crate) fn validate_setup_prefix_source(
             "level params witness shape {witness_ring_slots} ring slots does not match full setup prefix {full_prefix_ring_slots}"
         )));
     }
-    if n_prefix > source_len {
+    if akita_params::setup_prefix_slot_field_elements(id)? > available_fields {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length exceeds shared matrix capacity".to_string(),
         ));
     }
-    Ok(ValidatedSetupPrefixCommitment {
-        id,
-        n_prefix,
-        plan: CommitmentExecutionPlan::for_setup_prefix(id)?,
-    })
+    CommitmentExecutionPlan::for_setup_prefix(id)?;
+    Ok(())
 }
 
 /// Commit one actual power-of-two flat prefix of the shared setup matrix.
@@ -86,7 +70,7 @@ pub(crate) fn validate_setup_prefix_source(
 /// or backend commitment fails.
 #[cfg(test)]
 fn commit_setup_prefix<F, SP>(
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     executor: &CommitmentExecutor<'_, F, SP>,
     id: &SetupPrefixSlotId,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
@@ -95,42 +79,23 @@ where
     SP: CommitmentStatePolicy<F>,
     SP::State: IntoPortableCommitmentState<F>,
 {
-    let validated = validate_setup_prefix_commitment(expanded, id)?;
-    commit_validated_setup_prefix(expanded, executor, validated)
+    validate_setup_prefix_commitment(expanded.shared_matrix().num_field_elements(), id)?;
+    let source =
+        DensePoly::from_setup_prefix(Arc::clone(expanded), id.commitment_profile.group.num_vars())?;
+    commit_setup_prefix_source(expanded, executor, id, &source)
 }
 
-pub(crate) fn commit_validated_setup_prefix<F, SP>(
-    expanded: &AkitaExpandedSetup<F>,
-    executor: &CommitmentExecutor<'_, F, SP>,
-    validated: ValidatedSetupPrefixCommitment<'_>,
-) -> Result<SetupPrefixSlot<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + 'static,
-    SP: CommitmentStatePolicy<F>,
-    SP::State: IntoPortableCommitmentState<F>,
-{
-    let source_coefficients = expanded
-        .shared_matrix()
-        .as_field_slice()
-        .get(..validated.n_prefix)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("setup prefix length exceeds shared matrix capacity".into())
-        })?
-        .to_vec();
-    let source = DensePoly::from_field_evals(
-        validated.id.commitment_profile.group.num_vars(),
-        source_coefficients,
-    )?;
-    commit_setup_prefix_source(expanded, executor, validated, &source)
-}
-
-/// Extension seam: commit a validated prefix with the canonical commitment executor.
+/// Extension seam: commit a validated prefix source with the canonical
+/// commitment executor.
 /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+///
+/// The caller validates `id` with [`validate_setup_prefix_commitment`] against
+/// the length of `source`.
 pub(crate) fn commit_setup_prefix_source<F, SP>(
     expanded: &AkitaExpandedSetup<F>,
     executor: &CommitmentExecutor<'_, F, SP>,
-    validated: ValidatedSetupPrefixCommitment<'_>,
-    source: &DensePoly<F>,
+    id: &SetupPrefixSlotId,
+    source: &dyn CommitmentSource<F>,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
     F: Field + CanonicalEncoding + 'static,
@@ -138,8 +103,7 @@ where
     SP::State: IntoPortableCommitmentState<F>,
 {
     executor.validate_setup(expanded)?;
-    let id = validated.id;
-    let plan = validated.plan;
+    let plan = CommitmentExecutionPlan::for_setup_prefix(id)?;
     let sources: [&dyn CommitmentSource<F>; 1] = [source];
     executor.preflight_portable_export(&plan, &sources)?;
     let output = executor.execute_full(&plan, &sources)?;
@@ -169,7 +133,7 @@ where
 
 #[cfg(test)]
 fn extract_setup_prefix_ring_elems<F, const D: usize>(
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     full_prefix_ring_slots: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -209,7 +173,7 @@ mod tests {
         CpuOuterCommitOperation, NttExecutionRequirements,
     };
     use crate::AkitaProverSetup;
-    use akita_challenges::FoldChallengeFamily;
+    use akita_challenges::FoldChallengeDistribution;
     use akita_params::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
         CompressionChainPlan, InnerCommitMatrixParams, OpeningClaimsLayout,
@@ -233,7 +197,7 @@ mod tests {
             2,
             3,
             2,
-            FoldChallengeFamily::production_for_ring_dim(ring_dimension)
+            FoldChallengeDistribution::production_for_ring_dim(ring_dimension)
                 .expect("production challenge"),
         )
         .with_decomp(
@@ -525,6 +489,24 @@ mod tests {
         assert_eq!(slot.id.natural_len, natural_len);
         assert_eq!(slot.id.n_prefix().expect("full prefix len"), n_prefix);
         drop(executor);
+        let streaming = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
+        let exported = streaming
+            .export_setup_prefixes(std::slice::from_ref(&id))
+            .unwrap();
+        let mut expected = slot.clone();
+        expected.commitment.rows = expected
+            .commitment
+            .rows
+            .into_iter()
+            .map(RingVec::into_compact)
+            .collect();
+        assert_eq!(exported.get(&id).unwrap(), &expected);
+        let seeded = CpuBackend::<F, F>::export_setup_prefixes_from_seed(
+            setup.expanded.descriptor(),
+            std::slice::from_ref(&id),
+        )
+        .unwrap();
+        assert_eq!(seeded, exported);
         setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }

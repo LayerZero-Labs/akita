@@ -19,6 +19,7 @@ struct IndexedPlanningRequest {
 pub struct MaterializedEntry {
     request: PlanningRequest,
     schedule: FoldSchedule,
+    planner_cost: Option<PlannerCost>,
 }
 
 impl MaterializedEntry {
@@ -33,6 +34,13 @@ impl MaterializedEntry {
     #[must_use]
     pub const fn schedule(&self) -> &FoldSchedule {
         &self.schedule
+    }
+
+    /// Search work for this row, when [`MaterializationDiagnostics::planner_cost`]
+    /// was requested or the row reused a caller preplan.
+    #[must_use]
+    pub const fn planner_cost(&self) -> Option<PlannerCost> {
+        self.planner_cost
     }
 
     /// Producer declarations for the frozen groups in opening order.
@@ -136,10 +144,15 @@ pub(crate) fn materialized_entries_for_specs(
             );
             (Instant::now(), label)
         });
-        let (outcome, planner_diagnostics) =
-            crate::diagnostics::capture(diagnostics.row_progress, || {
-                materialized_entry(spec, &indexed.request)
-            });
+        let (mut outcome, planner_diagnostics) = crate::diagnostics::capture(
+            diagnostics.row_progress || diagnostics.planner_cost,
+            || materialized_entry(spec, &indexed.request),
+        );
+        if let (Ok(MaterializedRequestOutcome::Planned(entry)), Some(planner_diagnostics)) =
+            (&mut outcome, &planner_diagnostics)
+        {
+            entry.planner_cost = Some(planner_diagnostics.planner_cost());
+        }
         if let Some((started, label)) = progress {
             let counters = &counters.as_ref().expect("progress counters")[indexed.spec_index];
             match &outcome {
@@ -236,10 +249,10 @@ fn materialized_entry(
     let preplanned = spec
         .preplanned
         .iter()
-        .find(|(planned_key, _)| *planned_key == key);
+        .find(|preplanned| preplanned.key == key);
     let reused_preplan = preplanned.is_some();
     let result = match preplanned {
-        Some((_, schedule)) => Ok(schedule.clone()),
+        Some(preplanned) => Ok(preplanned.schedule.clone()),
         None => crate::find_schedule(
             &key,
             spec.source_contract,
@@ -252,6 +265,7 @@ fn materialized_entry(
     let entry = |schedule| MaterializedEntry {
         request: request.clone(),
         schedule,
+        planner_cost: preplanned.map(|preplanned| preplanned.planner_cost),
     };
     match result {
         Ok(schedule) if reused_preplan => {
@@ -378,7 +392,11 @@ mod tests {
         )
         .unwrap();
         spec.keys = vec![group];
-        spec.preplanned = vec![(ScheduleLookupKey::single(group), row.schedule().clone())];
+        spec.preplanned = vec![PreplannedSchedule {
+            key: ScheduleLookupKey::single(group),
+            schedule: row.schedule().clone(),
+            planner_cost: PlannerCost::default(),
+        }];
         render_schedule_artifact_outputs_with_validation(
             std::slice::from_ref(&spec),
             MaterializationDiagnostics::default(),

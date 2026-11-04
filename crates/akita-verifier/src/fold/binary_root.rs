@@ -10,13 +10,14 @@ use akita_params::{
     SetupContributionMode, SumcheckProtocol,
 };
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::binary_source::{
-    binary_projection_values, binary_root_challenges, binary_root_statement, BinaryProjectionRows,
-    BinaryRootPublic,
+    binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
+    binary_root_statement, BinaryProjectionRows, BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{
-    AkitaVerifierSetup, Commitment, DigitRangeEqualityPoint, FpExtEncoding, GrindingReplay,
+    AkitaVerifierSetup, CommittedGroup, DigitRangeEqualityPoint, FpExtEncoding, GrindingReplay,
     OpeningClaims, RingVec,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -24,14 +25,19 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 pub(super) fn verify_root<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
-    claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    claims: &OpeningClaims<'_, E, &CommittedGroup<F>>,
     opening_batch: &OpeningClaimsLayout,
     root_params: &CommittedGroupParams,
     next_fold: Option<&FoldParams>,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     let _span = tracing::info_span!("binary_root_verify").entered();
     if !(1..=2).contains(&claims.num_groups())
@@ -180,16 +186,12 @@ where
     let bounds = public.plan().projection_bounds();
     let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
     let projected_values = binary_projection_values(grinding.state_mut(), bounds, &[0; 7])?;
-    let alpha =
-        grinding.grinded_ext_challenge::<F, E>(GrindingSite::RingSwitchAlpha { level: 0 })?;
+    let alpha = grinding.grinded_ext_challenge::<E>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let tau0 =
-        grinding.grinded_ext_challenges::<F, E>(GrindingSite::Tau0Point { level: 0 }, num_vars)?;
+        grinding.grinded_ext_challenges::<E>(GrindingSite::Tau0Point { level: 0 }, num_vars)?;
     let batches = {
         let _span = tracing::info_span!("binary_root_tau1_draw").entered();
-        grinding.grinded_ext_challenges::<F, E>(
-            GrindingSite::Tau1Point { level: 0 },
-            public.batch_count(),
-        )?
+        binary_root_batch_challenges::<E, _>(grinding, public.batch_count())?
     };
     let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
     let ordinary_payload = ordinary.map(|group| lift(group.commitment().rows().coeffs()));
@@ -233,7 +235,7 @@ where
         DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau0, num_vars, 0)?;
     let stage1 = Stage1Verifier::new(equality_point, DigitRangePlan::new(8)?)
         .verify::<F>(grinding, None, 0)?;
-    let gamma = grinding.grinded_ext_challenge::<F, E>(GrindingSite::Stage2Batch { level: 0 })?;
+    let gamma = grinding.grinded_ext_challenge::<E>(GrindingSite::Stage2Batch { level: 0 })?;
     let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
         grinding,
         SumcheckProtocol::Stage2,
@@ -301,8 +303,7 @@ where
     Ok(FoldVerifyOutput {
         challenges: replay.challenges,
         setup_prefix_opening: Some((stage3.challenges, stage3.setup_prefix_eval)),
-        next_witness,
-        next_witness_last_block_digest: None,
+        next_witness: super::NextWitness::OuterPayload(next_witness),
         opening: witness_eval,
     })
 }

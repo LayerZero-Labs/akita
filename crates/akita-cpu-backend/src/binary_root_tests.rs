@@ -1,13 +1,17 @@
 use super::*;
-use akita_challenges::{FoldChallengeDrawDomain, FoldDraw};
+use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use akita_types::native_root_relation::NativeRootRelation;
 use jolt_field::Ring;
 
 struct SeedDraw;
 impl FoldDraw for SeedDraw {
-    fn absorb_and_squeeze(&mut self, _: &[u8]) -> Result<[u8; 32], AkitaError> {
-        Ok([17; 32])
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![17; len])
     }
 }
 
@@ -85,15 +89,18 @@ fn fixture() -> Fixture {
         }
     }
     let challenges = SeedDraw
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            0,
+        .draw_fold_challenges(
+            &FoldChallengeFamily::new(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                162,
+                FoldChallengeDistribution::BinaryRoot,
+                None,
+            )
+            .unwrap(),
             2,
             2,
-            &FoldChallengeFamily::BinaryRoot,
-            None,
         )
+        .unwrap()
         .unwrap();
     Fixture {
         descriptor,
@@ -111,7 +118,7 @@ fn build(input: &Fixture) -> Result<BinaryRootRelation, AkitaError> {
         &input.sources,
         &input.images,
         &input.challenges,
-        FoldChallengeFamily::BinaryRoot,
+        FoldChallengeDistribution::BinaryRoot,
     )
 }
 
@@ -159,7 +166,8 @@ fn q24_root_matches_integer_fold_division_and_coefficient_repacking() {
             );
         }
     }
-    let (plan, table) = relation.successor_table(256).unwrap();
+    let (plan, table) =
+        BinaryRootRelation::successor_table(&relation.response, &relation.images, 256).unwrap();
     let table = table
         .into_iter()
         .map(|x| Prime128Offset275::from_i64(i64::from(x)))
@@ -213,7 +221,7 @@ fn q24_root_rejects_image_source_and_response_mutation() {
         response,
         &input.images,
         &input.challenges,
-        FoldChallengeFamily::BinaryRoot
+        FoldChallengeDistribution::BinaryRoot
     )
     .is_err());
 }
@@ -227,7 +235,7 @@ fn q24_root_rejects_wrong_family_counts_bounds_and_matrix_representatives() {
         &input.sources,
         &input.images,
         &input.challenges,
-        FoldChallengeFamily::pm1_only(46)
+        FoldChallengeDistribution::pm1_only(46)
     )
     .is_err());
     let mut response = build(&input).unwrap().response;
@@ -238,7 +246,7 @@ fn q24_root_rejects_wrong_family_counts_bounds_and_matrix_representatives() {
         response,
         &input.images,
         &input.challenges,
-        FoldChallengeFamily::BinaryRoot
+        FoldChallengeDistribution::BinaryRoot
     )
     .is_err());
     input.matrix[0][0][0] = i128::from(Q24_CENTERED_BOUND) + 1;
@@ -268,15 +276,18 @@ fn q24_root_accepts_the_full_enforced_image_window() {
     image[0] = Q24Image::from_centered(Q24_CENTERED_BOUND - Q24 as i32).unwrap();
     assert!(image[0].centered() < -Q24_CENTERED_BOUND);
     let challenges = SeedDraw
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            0,
+        .draw_fold_challenges(
+            &FoldChallengeFamily::new(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                162,
+                FoldChallengeDistribution::BinaryRoot,
+                None,
+            )
+            .unwrap(),
             1,
             1,
-            &FoldChallengeFamily::BinaryRoot,
-            None,
         )
+        .unwrap()
         .unwrap();
     let relation = BinaryRootRelation::build(
         &descriptor,
@@ -284,7 +295,7 @@ fn q24_root_accepts_the_full_enforced_image_window() {
         &[source],
         &[image],
         &challenges,
-        FoldChallengeFamily::BinaryRoot,
+        FoldChallengeDistribution::BinaryRoot,
     )
     .unwrap();
     assert!(relation.rows[0].remainder.iter().any(|&x| x != 0));
@@ -295,7 +306,8 @@ fn q24_root_rows_authenticate_the_repacked_response_image_and_padding() {
     type E = Prime128Offset275;
     let input = fixture();
     let fixed = build(&input).unwrap();
-    let (plan, digits) = fixed.successor_table(256).unwrap();
+    let (plan, digits) =
+        BinaryRootRelation::successor_table(&fixed.response, &fixed.images, 256).unwrap();
     let table = digits
         .into_iter()
         .map(|x| E::from_i64(i64::from(x)))

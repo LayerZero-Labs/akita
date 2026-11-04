@@ -8,6 +8,7 @@ pub(super) fn prove_root<Cfg, B>(
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
+    digests: &[akita_transcript::CommitmentDigest],
     layout: &OpeningClaimsLayout,
     handles: &[B::CommitmentHandle],
     schedule: &FoldSchedule,
@@ -50,7 +51,7 @@ where
             claims.group_commitment(index)?,
         )?);
     }
-    root_claims.append_to(&schedule.root.params, grinding)?;
+    root_claims.append_to(&schedule.root.params, digests, grinding)?;
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
         (
             fold::FoldSuccessorParams::Terminal(&schedule.terminal),
@@ -89,6 +90,11 @@ where
         schedule.root.output_witness_len,
         next_binding,
         prepared,
+        handoff
+            .request
+            .setup_batch
+            .filter(|(target, _)| *target as usize == 0)
+            .map(|(_, statement)| statement),
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(
                 backend,

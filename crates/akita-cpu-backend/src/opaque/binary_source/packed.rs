@@ -3,7 +3,8 @@
 use super::*;
 use akita_algebra::{binary::BinaryField128, ring::trinomial::module_map::pack_signed_components};
 use akita_challenges::{
-    BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing, Challenges, FoldChallengeFamily,
+    BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing, Challenges,
+    FoldChallengeDistribution,
 };
 use akita_labinius_prover::{
     commit_binary_clear_limb_prepared, fold_kernel::fold_integer, PreparedLimbCommitMatrix,
@@ -21,19 +22,7 @@ pub(super) fn pack_logical_words(
             "binary logical word table differs from its descriptor".into(),
         ));
     }
-    let count =
-        checked::product([owners, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
-    let bytes = checked::product([count, size_of::<u128>()]).ok_or(AkitaError::InvalidProof)?;
-    if bytes > MAX_BINARY_SOURCE_MATERIAL_BYTES {
-        return Err(AkitaError::InvalidInput(
-            "binary source allocation exceeds its budget".into(),
-        ));
-    }
-    let mut sources = Vec::new();
-    sources
-        .try_reserve_exact(count)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    sources.resize(count, 0);
+    let mut sources = super::import::allocate_kernel_carriers(descriptor)?;
     let words_per_carrier = 128 / index.word_width();
     for (owner, polynomial) in words.iter().enumerate() {
         let owner_start =
@@ -103,14 +92,33 @@ pub(super) fn image_hint(
         .collect()
 }
 
+/// Fold the packed carriers and construct the root relation's residual rows.
 pub(super) fn probe_packed(
     descriptor: &BinarySourceDescriptor,
     matrix: &[Vec<[i128; SOURCE_RING_DEGREE]>],
     sources: &[u128],
     images: &[[Q24Image; SOURCE_RING_DEGREE]],
     challenges: &Challenges,
-    family: FoldChallengeFamily,
+    family: FoldChallengeDistribution,
 ) -> Result<Option<crate::binary_root::BinaryRootRelation>, AkitaError> {
+    let Some(response) = fold_packed(descriptor, sources, challenges, family)? else {
+        return Ok(None);
+    };
+    let _span = tracing::info_span!("binary_root_residual_rows").entered();
+    crate::binary_root::BinaryRootRelation::from_response(
+        descriptor, matrix, response, images, challenges, family,
+    )
+    .map(Some)
+}
+
+/// Fold the packed carriers into the bounded response, or `None` when a
+/// clipped coefficient rejects this nonce.
+pub(super) fn fold_packed(
+    descriptor: &BinarySourceDescriptor,
+    sources: &[u128],
+    challenges: &Challenges,
+    family: FoldChallengeDistribution,
+) -> Result<Option<Vec<[i128; SOURCE_RING_DEGREE]>>, AkitaError> {
     let index = descriptor.index_map();
     let polynomials = descriptor.polynomials().len();
     let scalar_rows = checked::exact_div(index.padded_carriers(), index.columns())
@@ -118,7 +126,7 @@ pub(super) fn probe_packed(
     let ring_rows = checked::exact_div(scalar_rows, 4).ok_or(AkitaError::InvalidProof)?;
     let count =
         checked::product([polynomials, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
-    if family != FoldChallengeFamily::BinaryRoot
+    if family != FoldChallengeDistribution::BinaryRoot
         || sources.len() != count
         || challenges.num_claims() != polynomials
         || challenges.num_live_blocks_per_claim() != index.columns()
@@ -134,6 +142,7 @@ pub(super) fn probe_packed(
         .iter()
         .map(|challenge| BinaryChallenge::try_from_sparse(challenge, &profile))
         .collect::<Result<Vec<_>, _>>()?;
+    let _span = tracing::info_span!("binary_root_fold_integer").entered();
     let mut response = Vec::new();
     response
         .try_reserve_exact(
@@ -168,10 +177,7 @@ pub(super) fn probe_packed(
             response.push(packed);
         }
     }
-    crate::binary_root::BinaryRootRelation::from_response(
-        descriptor, matrix, response, images, challenges, family,
-    )
-    .map(Some)
+    Ok(Some(response))
 }
 
 #[cfg(test)]

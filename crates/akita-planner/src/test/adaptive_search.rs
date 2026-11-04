@@ -3,6 +3,9 @@ use super::*;
 mod relation_cutover;
 #[path = "adaptive_search/selective_l2.rs"]
 mod selective_l2;
+#[cfg(feature = "catalog-gen")]
+#[path = "adaptive_search/setup_budget.rs"]
+mod setup_budget;
 fn onehot_group(num_vars: usize, num_polynomials: usize) -> PolynomialGroupLayout {
     PolynomialGroupLayout::new(num_vars, num_polynomials)
 }
@@ -46,6 +49,7 @@ fn assert_selected_grinding_edge_parity(
         &root_layout,
         challenge_order,
         extension_degree,
+        None,
     )
     .expect("selected schedule has a public grinding plan");
 
@@ -82,9 +86,15 @@ fn assert_selected_grinding_edge_parity(
             .expect("selected relation geometry");
         let edge = akita_params::transcript_grinding_cost_for_planner_edge(
             &fold.params,
+            akita_params::FoldChallengeCost::new(&fold.params, &layout)
+                .expect("selected fold challenge cost"),
             geometry,
             &layout,
             successor,
+            folds.get(index + 1).is_none().then(|| {
+                akita_params::FoldChallengeCost::terminal(&schedule.terminal)
+                    .expect("selected terminal fold cost")
+            }),
             challenge_order,
             extension_degree,
             u32::try_from(index).expect("selected fold level fits u32"),
@@ -118,7 +128,10 @@ fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     source_contract: akita_params::sis::CommittedSourceContract,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::FoldChallengeFamily, AkitaError>,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
     crate::planner::find_schedule(

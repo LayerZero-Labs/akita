@@ -9,6 +9,7 @@ use jolt_field::{CanonicalEncoding, ExtField};
 pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
+    setup_batch_level: Option<u32>,
 ) -> Result<GrindingPlan, AkitaError>
 where
     Cfg::Field: CanonicalEncoding,
@@ -31,6 +32,7 @@ where
         root_layout,
         challenge_order,
         extension_degree,
+        setup_batch_level,
     )
 }
 
@@ -52,7 +54,7 @@ mod tests {
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
-        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
+        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout, None)
             .expect("grinding plan");
 
         assert_eq!(
@@ -88,12 +90,12 @@ mod tests {
                 plan.digest().unwrap(),
             ),
             (
-                43,
-                50,
-                400,
+                45,
+                54,
+                411,
                 [
-                    201, 141, 145, 223, 13, 192, 44, 142, 174, 252, 217, 177, 224, 123, 135, 2,
-                    122, 211, 6, 174, 3, 127, 123, 102, 130, 17, 69, 136, 179, 80, 247, 229,
+                    48, 26, 181, 199, 118, 240, 1, 152, 204, 109, 49, 231, 66, 245, 116, 198, 0,
+                    73, 193, 192, 239, 238, 163, 129, 239, 145, 18, 65, 180, 182, 114, 79
                 ],
             )
         );
@@ -111,7 +113,7 @@ mod tests {
                 layout.root_final_group_layout().expect("root group"),
             ))
             .expect("generated production row");
-        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
+        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout, None)
             .expect("grinding plan");
         let root = &row.schedule().root;
         let rounds = akita_params::sumcheck_rounds(root.params.d_a(), root.output_witness_len);
@@ -154,12 +156,9 @@ mod tests {
             )
             .unwrap();
             for exponent in 0..akita_params::MAX_GRINDING_BITS {
-                assert_eq!(
-                    akita_params::grind_bits_for_loss(1u64 << exponent, order).unwrap(),
-                    exponent + 1,
-                );
+                assert_eq!(order.grind_bits(1u64 << exponent).unwrap(), exponent + 1,);
             }
-            assert_eq!(akita_params::grind_bits_for_loss(3, order).unwrap(), 2);
+            assert_eq!(order.grind_bits(3).unwrap(), 2);
         }
         check::<fp128::OneHot>();
         check::<crate::proof_optimized::fp64::OneHot>();
@@ -179,11 +178,15 @@ mod tests {
                 .expect("workspace schedule catalog");
             for row in catalog.rows() {
                 let layout = row.profiles().opening_layout().expect("opening layout");
-                let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout)
+                let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout, None)
                     .expect("complete grinding plan");
                 let count = |kind| plan.runs().iter().filter(|run| run.kind() == kind).count();
                 assert_eq!(
                     count(GrindingQueryKind::FoldResponse),
+                    row.schedule().num_fold_levels()
+                );
+                assert_eq!(
+                    count(GrindingQueryKind::FoldChallengeWork),
                     row.schedule().num_fold_levels()
                 );
                 let expected_evaluation_batch_levels =

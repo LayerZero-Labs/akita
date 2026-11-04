@@ -1,7 +1,9 @@
 //! Differential tests: structured root weights against the flat reference.
 
 use super::*;
-use crate::binary_source::{BinaryCommittedGroupManifest, BinaryIndexMap, PrimePlaneClaim};
+use crate::binary_source::{
+    BinaryAOperand, BinaryCommittedGroupManifest, BinaryIndexMap, PrimePlaneClaim,
+};
 use crate::AkitaSetupDescriptor;
 use akita_challenges::SparseChallenge;
 use akita_params::sis::{
@@ -233,7 +235,7 @@ fn compile(shape: Shape, seed: u64) -> (BinaryRootPublic, Vec<Compiled>, Vec<Vec
     let points = (0..2)
         .map(|_| (0..num_vars).map(|_| field(&mut rng)).collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    let compiled = [None, Some(&matrix[..])]
+    let compiled = [None, Some(BinaryAOperand::from_canonical(&matrix))]
         .into_iter()
         .map(|matrix| {
             let (structured, negative) = public
@@ -259,7 +261,7 @@ fn compile(shape: Shape, seed: u64) -> (BinaryRootPublic, Vec<Compiled>, Vec<Vec
                 &commitment,
                 &d_payload,
                 ordinary_claim,
-                matrix,
+                matrix.map(|operand| operand.matrix),
             )
             .unwrap();
             Compiled {

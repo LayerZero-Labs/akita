@@ -6,7 +6,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct SetupPrefixSearchKey {
     opening_method: akita_params::OpeningMethod,
-    ring_challenge: FoldChallengeFamily,
+    ring_challenge: FoldChallengeDistribution,
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,

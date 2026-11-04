@@ -1,22 +1,31 @@
 use super::*;
-use crate::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
-use shake::digest::{ExtendableOutput, Update, XofReader};
-use shake::Shake256;
+use crate::{FoldChallengeDistribution, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 
 #[derive(Default)]
 struct Draw {
-    payload: Vec<u8>,
-    seed: [u8; 32],
+    message_lens: Vec<usize>,
 }
 
+const MESSAGE: [u8; 32] = [0x5c; 32];
+
 impl FoldDraw for Draw {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-        self.payload = payload.to_vec();
-        let mut hash = Shake256::default();
-        hash.update(payload);
-        hash.finalize_xof().read(&mut self.seed);
-        Ok(self.seed)
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        self.message_lens.push(len);
+        decode(&MESSAGE[..len.min(MESSAGE.len())])
     }
+}
+
+fn root_family(ring_d: usize) -> Result<FoldChallengeFamily, AkitaError> {
+    FoldChallengeFamily::new(
+        FoldChallengeDrawDomain::EvaluationTrace,
+        ring_d,
+        FoldChallengeDistribution::BinaryRoot,
+        None,
+    )
 }
 
 #[test]
@@ -58,22 +67,15 @@ fn entropy_and_prime_unit_condition_are_exact() {
 
 #[test]
 fn ordinary_group_root_selects_binary_family_and_indexed_columns() {
-    let family = FoldChallengeFamily::BinaryRoot;
+    let family = root_family(162).unwrap();
+    assert_eq!(family.distribution(), FoldChallengeDistribution::BinaryRoot);
+    assert_eq!(family.message_len(8).unwrap(), 32);
+    assert_eq!(family.set_bits(), 136);
     let mut draw = Draw::default();
-    let challenges = draw
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            7,
-            8,
-            1,
-            &family,
-            None,
-        )
-        .unwrap();
-    assert!(draw.payload.ends_with(IDENTITY));
+    let challenges = draw.draw_fold_challenges(&family, 8, 1).unwrap().unwrap();
+    assert_eq!(draw.message_lens, vec![32]);
     let reference = BinaryChallengeSampler::new(profile().unwrap())
-        .sample_from_seed(&draw.seed, 8)
+        .sample_from_seed(&MESSAGE, 8)
         .unwrap();
     for (actual, expected) in challenges.as_slice().iter().zip(reference) {
         assert_eq!(actual.positions.len(), expected.weight());
@@ -88,56 +90,19 @@ fn ordinary_group_root_selects_binary_family_and_indexed_columns() {
         }
     }
     let again = Draw::default()
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            7,
-            8,
-            1,
-            &family,
-            None,
-        )
+        .draw_fold_challenges(&family, 8, 1)
+        .unwrap()
         .unwrap();
     assert_eq!(challenges, again);
-    for (group, blocks, claims) in [(8, 8, 1), (7, 9, 1), (7, 8, 2)] {
-        let mut changed = Draw::default();
-        changed
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                162,
-                group,
-                blocks,
-                claims,
-                &family,
-                None,
-            )
-            .unwrap();
-        assert_ne!(changed.seed, draw.seed);
-    }
-    let mut ordinary = Draw::default();
-    ordinary
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            7,
-            8,
-            1,
-            &FoldChallengeFamily::pm1_only(46),
-            None,
-        )
-        .unwrap();
-    assert_ne!(ordinary.seed, draw.seed);
-    assert!(Draw::default()
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            486,
-            7,
-            8,
-            1,
-            &family,
-            None,
-        )
-        .is_err());
+    assert!(root_family(486).is_err());
+    assert!(FoldChallengeFamily::new(
+        FoldChallengeDrawDomain::EvaluationTrace,
+        162,
+        FoldChallengeDistribution::BinaryRoot,
+        Some(crate::OperatorNormRejection::D64_SELECTIVE_L2),
+    )
+    .is_err());
+    assert!(family.stream(8).is_err());
     assert!(sample(&[0; 32], (1 << 20) + 1).is_err());
 }
 
@@ -173,59 +138,39 @@ fn distinct_supports_have_distinct_binary_images_including_zero() {
 #[test]
 fn binary_family_replays_on_the_callers_live_session() {
     use crate::{ProverFoldDraw, VerifierFoldDraw};
-    use akita_transcript::{new_prover_channel, new_verifier_channel, receive_bytes, send_bytes};
-    let mut prover = new_prover_channel(b"root-family/session", b"root-family/instance").unwrap();
-    send_bytes(&mut prover, &[11, 12]);
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
+    let family = root_family(162).unwrap();
+    let mut prover = new_prover_channel(b"root-family/session");
     let expected = ProverFoldDraw::new(&mut prover, 0, 3)
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            3,
-            8,
-            1,
-            &FoldChallengeFamily::BinaryRoot,
-            None,
-        )
+        .draw_fold_challenges(&family, 8, 1)
         .unwrap();
-    send_bytes(&mut prover, &[13, 14]);
     let proof = prover.narg_string().to_vec();
-    let mut verifier =
-        new_verifier_channel(b"root-family/session", b"root-family/instance", &proof).unwrap();
-    assert_eq!(receive_bytes(&mut verifier, 2).unwrap(), [11, 12]);
+    let mut verifier = new_verifier_channel(b"root-family/session", &proof);
     let actual = VerifierFoldDraw::new(&mut verifier, 0, 3)
-        .draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            162,
-            3,
-            8,
-            1,
-            &FoldChallengeFamily::BinaryRoot,
-            None,
-        )
+        .draw_fold_challenges(&family, 8, 1)
         .unwrap();
     assert_eq!(expected, actual);
-    assert_eq!(receive_bytes(&mut verifier, 2).unwrap(), [13, 14]);
     verifier.check_eof().unwrap();
 }
 
 #[test]
 fn binary_family_encoding_is_explicit_and_roundtrips() {
-    let binary = FoldChallengeFamily::BinaryRoot;
+    let binary = FoldChallengeDistribution::BinaryRoot;
     let encoded = postcard::to_allocvec(&binary).unwrap();
     assert_eq!(
-        postcard::from_bytes::<FoldChallengeFamily>(&encoded).unwrap(),
+        postcard::from_bytes::<FoldChallengeDistribution>(&encoded).unwrap(),
         binary
     );
     let json = serde_json::to_string(&binary).unwrap();
     assert_eq!(json, r#"{"count_pm1":4294967295,"count_pm2":1}"#);
     assert_eq!(
-        serde_json::from_str::<FoldChallengeFamily>(&json).unwrap(),
+        serde_json::from_str::<FoldChallengeDistribution>(&json).unwrap(),
         binary
     );
-    let alias = FoldChallengeFamily::SignedSparse(crate::SparseChallengeConfig {
+    let alias = FoldChallengeDistribution::SignedSparse(crate::SparseChallengeConfig {
         count_pm1: u32::MAX as usize,
         count_pm2: 1,
     });
     assert!(postcard::to_allocvec(&alias).is_err());
-    assert_eq!(binary.domain_separator_bytes(), IDENTITY);
+    assert_eq!(binary.ordering_descriptor_bytes(), IDENTITY);
 }
