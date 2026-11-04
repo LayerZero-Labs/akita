@@ -42,7 +42,7 @@ use super::{
     binary_a_setup_coefficients, BinaryAPrefixLen, BinaryAProduct, BinaryCommittedGroupManifest,
     BinaryRootWitnessPlan,
 };
-use crate::native_root_relation::{RootEq, SegmentLanes};
+use crate::native_root_relation::SegmentLanes;
 
 const SLOTS: usize = BINARY_DIGIT_COMMITMENT_DEGREE;
 const SLOT_BITS: usize = SLOTS.trailing_zeros() as usize;
@@ -80,6 +80,7 @@ impl DigitSegment {
     }
 
     /// Root address of slot `t` of column `j` of period `q`, if a digit is there.
+    #[cfg(any(test, feature = "test-support"))]
     fn address(&self, q: usize, j: usize, t: usize) -> Option<usize> {
         let local = checked::mul_add(j, SLOTS, t)?.checked_sub(self.offset % SLOTS)?;
         let degree = self.lanes.degree();
@@ -474,9 +475,11 @@ impl BinaryTypedPrefix {
         Ok(coefficients)
     }
 
-    /// Dense Stage 3 weights for the prover: the A product, then every B/D
-    /// column copy `batch_row * K(e)`, where `e` holds the root-point equality
-    /// of the copy's digits and `K` is the residue kernel at alpha.
+    /// Dense Stage 3 weights, the reference for [`Self::prover_weight_blocks`]:
+    /// the A product, then every B/D column copy `batch_row * K(e)`, where `e`
+    /// holds the root-point equality of the copy's digits and `K` is the
+    /// residue kernel at alpha.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn prover_weights<E: Field>(
         &self,
         a: &BinaryAProduct<E>,
@@ -503,7 +506,7 @@ impl BinaryTypedPrefix {
                     *cell = row * value;
                 }
             });
-        let eq = RootEq::new(root_point)?;
+        let eq = crate::native_root_relation::RootEq::new(root_point)?;
         let kernel = ResidueKernelPoint::new(alpha, SLOTS)?;
         let cells = weights
             .get_mut(..self.natural_len)

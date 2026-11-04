@@ -10,7 +10,7 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
-use jolt_field::{AdditiveGroup, One};
+use jolt_field::AdditiveGroup;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -392,18 +392,17 @@ where
         prefix.n_prefix()?,
     )?;
     drop(phase);
-    // The shared setup source is built first: converting it into the shared
-    // slice copies it once, and that copy must not overlap the dense weight.
+    // Converting the setup source into the shared slice copies it once.
     let phase = tracing::info_span!("binary_root_stage3_source").entered();
     let coefficients: std::sync::Arc<[_]> = typed
         .setup_coefficients(&expanded.setup_seed.seed, manifest, prefix.n_prefix()?)?
         .into();
     drop(phase);
-    // A, B and D share one dense weight over the typed prefix. It enters as
-    // the index factor: the rounds bind the same variables in the same order,
-    // and the input pass keeps one accumulator instead of one per cell.
+    // A, B and D share one weight over the typed prefix. It stays in live
+    // 64-cell blocks: the six in-block rounds read only those blocks, and the
+    // remaining rounds run on the one-cell block values.
     let phase = tracing::info_span!("binary_root_stage3_weights").entered();
-    let index_factor = typed.prover_weights(
+    let weights = typed.prover_weight_blocks(
         &product,
         &stage2.challenges,
         alpha,
@@ -412,14 +411,12 @@ where
     )?;
     drop(phase);
     let phase = tracing::info_span!("binary_root_stage3_begin").entered();
-    let (claim, session) =
-        backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
-            session: proof_session,
-            level: 0,
-            coefficients,
-            index_factor,
-            coefficient_factor: vec![Cfg::ExtField::one()],
-        })?;
+    let (claim, session) = backend.begin_typed_stage3(crate::backend::TypedStage3Request {
+        session: proof_session,
+        level: 0,
+        coefficients,
+        weights,
+    })?;
     drop(phase);
     akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
     akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;

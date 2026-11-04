@@ -122,9 +122,11 @@ impl<E: Field> Builder<E> {
 }
 
 impl BinaryTypedPrefix {
-    /// The Stage 3 weights of [`Self::prover_weights`], as live 64-cell blocks
-    /// over a small pool of rows. Expanding the blocks gives the dense table
-    /// exactly.
+    /// The Stage 3 weights of the typed prefix, as live 64-cell blocks over a
+    /// small pool of rows: the A product, then every B/D column copy
+    /// `batch_row * K(e)`, where `e` holds the root-point equality of the
+    /// copy's digits and `K` is the residue kernel at alpha. Expanding the
+    /// blocks gives the dense table exactly.
     pub fn prover_weight_blocks<E: Field>(
         &self,
         a: &BinaryAProduct<E>,
