@@ -37,16 +37,28 @@ where
     }
     // Rebuild from authenticated private source material and the accepted fold.
     // No retained public residual or projected value is trusted by this boundary.
+    // The root build's response for these exact challenges is the same fold,
+    // so it is taken when present and recomputed otherwise.
     let family = akita_challenges::FoldChallengeDistribution::BinaryRoot;
-    let response = fold_packed(
-        source.manifest.descriptor(),
-        &source.sources,
-        &request.challenges,
-        family,
-    )?
-    .ok_or_else(|| {
-        AkitaError::InvalidInput("accepted binary response exceeds its interval".into())
-    })?;
+    let accepted = source
+        .accepted
+        .lock()
+        .ok()
+        .and_then(|mut accepted| accepted.take())
+        .filter(|(challenges, _)| challenges == &request.challenges)
+        .map(|(_, response)| response);
+    let response = match accepted {
+        Some(response) => response,
+        None => fold_packed(
+            source.manifest.descriptor(),
+            &source.sources,
+            &request.challenges,
+            family,
+        )?
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("accepted binary response exceeds its interval".into())
+        })?,
+    };
     let span = tracing::info_span!("binary_root_residual_rows").entered();
     let residuals = crate::binary_root::BinaryRootRelation::remainders(
         source.manifest.descriptor(),

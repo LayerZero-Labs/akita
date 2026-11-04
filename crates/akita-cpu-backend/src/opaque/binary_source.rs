@@ -25,7 +25,17 @@ use import::BinarySourceInput;
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
 
+/// The accepted fold challenges and the response they fold the source into.
+type AcceptedResponse = (
+    akita_challenges::Challenges,
+    Vec<[i128; SOURCE_RING_DEGREE]>,
+);
+
 /// Immutable private source and q24 image hint. Neither table is a public payload.
+///
+/// `accepted` is a private cache, not source material: the root build leaves
+/// its response there and the projection takes it back when the challenges
+/// agree. The response is a function of the sources and challenges alone.
 #[derive(Clone)]
 pub(super) struct BinarySourceStorage {
     manifest: BinaryCommittedGroupManifest,
@@ -35,6 +45,7 @@ pub(super) struct BinarySourceStorage {
     matrix: Arc<Vec<Vec<[i128; SOURCE_RING_DEGREE]>>>,
     images: Arc<Vec<[Q24Image; SOURCE_RING_DEGREE]>>,
     image_digits: Arc<Vec<i8>>,
+    accepted: Arc<std::sync::Mutex<Option<AcceptedResponse>>>,
 }
 
 impl<F, E> CpuBackend<F, E>
@@ -124,6 +135,7 @@ where
                 matrix: Arc::new(matrix),
                 images: Arc::new(images),
                 image_digits: Arc::new(image_digits),
+                accepted: Arc::default(),
             }),
             metadata,
         })
@@ -471,6 +483,9 @@ where
         })
         .transpose()?;
     drop(span);
+    if let Ok(mut accepted) = source.accepted.lock() {
+        *accepted = Some((challenges.clone(), response));
+    }
     let span = tracing::info_span!("binary_root_repack").entered();
     let mut natural: Vec<&[i8]> = vec![&response_digits, &source.image_digits];
     if let Some(evaluation) = &evaluation {
