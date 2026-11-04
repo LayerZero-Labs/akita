@@ -346,6 +346,18 @@ impl<E: Field> RootWeightFamily<E> {
                 let _span = tracing::info_span!("root_weights_emit_authentication").entered();
                 authentication.visit(|address, value| profiles.add(address, value))
             }
+            Self::PartialColumns(columns) => {
+                let _span = tracing::info_span!("root_weights_emit_partial_columns").entered();
+                columns.visit(|address, value| profiles.add(address, value))
+            }
+            Self::Translated(lanes) => {
+                let _span = tracing::info_span!("root_weights_emit_translated").entered();
+                lanes.visit(|address, value| profiles.add(address, value))
+            }
+            Self::SourceEvaluation(source) => {
+                let _span = tracing::info_span!("root_weights_emit_source").entered();
+                source.visit(|address, value| profiles.add(address, value))
+            }
         }
     }
 }
