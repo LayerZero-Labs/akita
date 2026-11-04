@@ -64,5 +64,9 @@ mod tests;
 
 #[cfg(feature = "test-support")]
 mod matrix_access;
+#[cfg(any(test, feature = "test-support"))]
+mod root_weight_fixtures;
 #[cfg(feature = "test-support")]
 pub use matrix_access::BinaryAReadGuard;
+#[cfg(any(test, feature = "test-support"))]
+pub use root_weight_fixtures::{root_weight_fixtures, RootFixtureField, RootWeightFixture};

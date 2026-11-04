@@ -128,6 +128,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     )));
                 }
             }
+            RelationWeightOracle::Structured(oracle) => {
+                let domain_len = lane_capacity.checked_mul(coeff_count).ok_or_else(|| {
+                    AkitaError::Internal("stage-2 relation domain overflow".into())
+                })?;
+                if oracle.len() != domain_len {
+                    return Err(AkitaError::Internal(format!(
+                        "stage-2 structured relation domain length: expected {domain_len}, actual {}",
+                        oracle.len(),
+                    )));
+                }
+            }
         }
         linear_terms.validate_len(witness_len)?;
 
@@ -155,6 +166,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                                 * factorization.relation_lane_weights()[lane]
                         }
                         RelationWeightOracle::ReducedDense(dense) => dense.evaluations()[index],
+                        RelationWeightOracle::Structured(oracle) => {
+                            let (even, odd) = oracle.pair(index & !1);
+                            if index % 2 == 0 {
+                                even
+                            } else {
+                                odd
+                            }
+                        }
                     };
                     (
                         ordinary + witness * relation_weight,
@@ -231,6 +250,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 relation: CoefficientRelation::ReducedDense(weights),
                 relation_moments: None,
             },
+            RelationWeightOracle::Structured(oracle) => Phase::Coefficient {
+                witness: WitnessState::CompactPrefix(w_evals_compact),
+                relation: CoefficientRelation::Structured(oracle),
+                relation_moments: None,
+            },
         };
 
         let mut state = RelationRoundState {
@@ -305,6 +329,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 relation: CoefficientRelation::ReducedDense(weights),
                 ..
             } => weights.terminal_weight()? + self.state.linear_terms.final_value()?,
+            Phase::Coefficient {
+                relation: CoefficientRelation::Structured(_),
+                ..
+            } => {
+                return Err(AkitaError::Internal(
+                    "structured relation weights were not handed over after the final fold".into(),
+                ))
+            }
             Phase::Lane { lane, .. } => lane.final_weight()?,
         };
         let additional = self
@@ -378,7 +410,9 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
                     );
                     weights.common_alpha_factor()[0]
                 }
-                CoefficientRelation::ReducedDense(_) => E::one(),
+                CoefficientRelation::ReducedDense(_) | CoefficientRelation::Structured(_) => {
+                    E::one()
+                }
             };
             // Materialize before taking any vector; allocation and field work
             // must not leave the installed phase with an empty witness.
@@ -393,6 +427,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
             let weights = match relation {
                 CoefficientRelation::Factored(weights) => weights.take_lane_weights(),
                 CoefficientRelation::ReducedDense(weights) => weights.take_evaluations(),
+                CoefficientRelation::Structured(oracle) => oracle.take_dense(),
             };
             *phase = Phase::Lane {
                 witness,

@@ -268,9 +268,11 @@ impl<E: Field> PrimePlaneWeights<E> {
         Ok(sum)
     }
 
-    pub(crate) fn visit(
+    /// Stream the response-row and plane-column profiles; digit `d` of each
+    /// weighs `8^d` times its profile entry.
+    pub(crate) fn profiles(
         &self,
-        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+        mut profile: impl FnMut(&SegmentLanes, usize, usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         for (plane_index, plane) in self.planes.iter().enumerate() {
             for (row, &row_weight) in plane.rows.iter().enumerate() {
@@ -281,12 +283,7 @@ impl<E: Field> PrimePlaneWeights<E> {
                 let mut power = plane.relation * row_weight;
                 for coefficient in 0..162 {
                     let signed = if coefficient % 2 == 0 { power } else { -power };
-                    let packed = 4 * coefficient + row % 4;
-                    let mut scale = signed;
-                    for digit in 0..self.response.digits() {
-                        visit(self.response.base(element, digit)? + packed, scale)?;
-                        scale *= E::from_u64(8);
-                    }
+                    profile(&self.response, element, 4 * coefficient + row % 4, signed)?;
                     power *= self.alpha;
                 }
             }
@@ -314,12 +311,12 @@ impl<E: Field> PrimePlaneWeights<E> {
                 for (coefficient, (&relation, &omega)) in
                     kernel.iter().zip(&plane.omega).enumerate()
                 {
-                    let mut scale =
-                        plane.reading * column_weight * omega - plane.relation * relation;
-                    for digit in 0..self.plane_lanes.digits() {
-                        visit(self.plane_lanes.base(element, digit)? + coefficient, scale)?;
-                        scale *= E::from_u64(8);
-                    }
+                    profile(
+                        &self.plane_lanes,
+                        element,
+                        coefficient,
+                        plane.reading * column_weight * omega - plane.relation * relation,
+                    )?;
                 }
             }
         }

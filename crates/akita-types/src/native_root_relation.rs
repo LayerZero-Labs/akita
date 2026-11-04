@@ -16,8 +16,10 @@ use jolt_field::Field;
 use crate::binary_source::{BinarySourceDescriptor, BINARY_SOURCE_Q};
 use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
+mod profiles;
 mod structured;
 pub use binary_commitment::binary_commitment_group;
+pub use profiles::RootWeightProfiles;
 pub(crate) use structured::{weigh_units, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH};
 
 /// Source interpretation of one group. Feature enablement never selects it.
@@ -375,6 +377,23 @@ impl<E: Field> NativeRootWeights<E> {
             family.visit(&mut add)?;
         }
         Ok(table)
+    }
+
+    /// Block profiles of the weight table for the prover's low Stage 2 rounds.
+    ///
+    /// Folding the profiles `k <= block_bits` times gives the materialized
+    /// table folded by the same challenges, entry for entry.
+    pub fn profiles(&self, block_bits: usize) -> Result<RootWeightProfiles<E>, AkitaError> {
+        let mut profiles = profiles::ProfileBuilder::new(self.table_len, block_bits)?;
+        let span = tracing::info_span!("root_weights_emit_terms").entered();
+        for &(address, weight) in &self.terms {
+            profiles.add(address, weight)?;
+        }
+        drop(span);
+        for family in &self.families {
+            family.emit(&mut profiles)?;
+        }
+        Ok(profiles.finish())
     }
 
     /// Check the scalar identity against a fixed table, for construction and

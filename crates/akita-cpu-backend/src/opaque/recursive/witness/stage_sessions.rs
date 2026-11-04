@@ -285,13 +285,6 @@ where
                 actual: evaluations.len(),
             });
         }
-        let lane_bits = domain_len.trailing_zeros() as usize;
-        if stage1_point.len() != lane_bits {
-            return Err(AkitaError::InvalidSize {
-                expected: lane_bits,
-                actual: stage1_point.len(),
-            });
-        }
         if witness.iter().any(|digit| !(-4..=3).contains(digit)) {
             return Err(AkitaError::InvalidInput(
                 "dense Stage 2 witness has a digit outside [-4, 3]".into(),
@@ -300,18 +293,111 @@ where
         let weights = relation_range_image::RelationWeightOracle::ReducedDense(
             relation_range_image::DenseRelationWeights::new(evaluations, domain_len)?,
         );
+        Self::from_public_relation(
+            crate::sources::packed_digits::PackedSignedDigits::from_i8_digits_auto(witness),
+            weights,
+            0,
+            relation_claim,
+            stage1_point,
+            range_image_evaluation,
+            batching,
+        )
+    }
+
+    /// Extension seam: public relation weights in a caller's structured form.
+    ///
+    /// The weights cover a power-of-two domain. The witness holds its live
+    /// prefix of balanced base-eight digits; the rest of the domain is zero.
+    /// The first `coefficient_bits` rounds read weight pairs from the oracle
+    /// and bind it, and the remaining rounds run on its dense handover. The
+    /// round messages equal those of [`Self::from_dense_relation`] on the
+    /// zero-padded witness and the materialized weights.
+    #[cfg_attr(not(any(test, feature = "labinius-trinomial")), allow(dead_code))]
+    pub(crate) fn from_structured_relation(
+        witness: crate::sources::packed_digits::PackedSignedDigits,
+        weights: Box<dyn relation_range_image::StructuredRelationWeights<E>>,
+        coefficient_bits: usize,
+        relation_claim: E,
+        stage1_point: &[E],
+        range_image_evaluation: E,
+        batching: E,
+    ) -> Result<Self, AkitaError> {
+        let domain_len = weights.len();
+        let coefficient_count = akita_error::checked::pow2(coefficient_bits);
+        if !domain_len.is_power_of_two()
+            || coefficient_count.is_none_or(|count| {
+                count > domain_len
+                    || witness.len() > domain_len
+                    || !witness.len().is_multiple_of(count)
+            })
+        {
+            return Err(AkitaError::InvalidInput(
+                "structured Stage 2 witness or coefficient block differs from its domain".into(),
+            ));
+        }
+        if !witness.bounds().fits_balanced_log_basis(3) {
+            return Err(AkitaError::InvalidInput(
+                "structured Stage 2 witness has a digit outside [-4, 3]".into(),
+            ));
+        }
+        Self::from_public_relation(
+            witness,
+            relation_range_image::RelationWeightOracle::Structured(weights),
+            coefficient_bits,
+            relation_claim,
+            stage1_point,
+            range_image_evaluation,
+            batching,
+        )
+    }
+
+    /// Shared entry of the public-relation seams on a power-of-two domain.
+    fn from_public_relation(
+        witness: crate::sources::packed_digits::PackedSignedDigits,
+        weights: relation_range_image::RelationWeightOracle<E>,
+        coefficient_bits: usize,
+        relation_claim: E,
+        stage1_point: &[E],
+        range_image_evaluation: E,
+        batching: E,
+    ) -> Result<Self, AkitaError> {
+        let domain_len = match &weights {
+            relation_range_image::RelationWeightOracle::QuotientFactored(_) => {
+                return Err(AkitaError::Internal(
+                    "public relation seams take unfactored weights".into(),
+                ))
+            }
+            relation_range_image::RelationWeightOracle::ReducedDense(dense) => {
+                dense.evaluations().len()
+            }
+            relation_range_image::RelationWeightOracle::Structured(oracle) => oracle.len(),
+        };
+        let num_vars = domain_len.trailing_zeros() as usize;
+        if stage1_point.len() != num_vars {
+            return Err(AkitaError::InvalidSize {
+                expected: num_vars,
+                actual: stage1_point.len(),
+            });
+        }
+        let lane_bits = num_vars.checked_sub(coefficient_bits).ok_or_else(|| {
+            AkitaError::InvalidInput("public relation coefficient block exceeds its domain".into())
+        })?;
+        let live_lanes = witness.len() >> coefficient_bits;
         let prover = relation_range_image::RelationRangeImageProver::new(
             batching,
-            crate::sources::packed_digits::PackedSignedDigits::from_i8_digits_auto(witness),
+            witness,
             stage1_point,
             range_image_evaluation,
             8,
             weights,
-            domain_len,
+            live_lanes,
             lane_bits,
-            0,
+            coefficient_bits,
             relation_claim,
-            relation_range_image::PreparedProverLinearTerms::zero(domain_len, 1),
+            relation_range_image::PreparedProverLinearTerms::zero(
+                live_lanes,
+                1 << coefficient_bits,
+            ),
             None,
         )?;
         let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);
@@ -560,7 +646,7 @@ where
 
 #[cfg(test)]
 #[path = "stage_sessions_dense_tests.rs"]
-mod dense_relation_tests;
+mod stage_sessions_dense_tests;
 
 #[cfg(feature = "labinius-trinomial")]
 #[path = "native_session.rs"]

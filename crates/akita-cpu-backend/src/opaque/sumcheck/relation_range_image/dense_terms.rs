@@ -31,6 +31,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     self.state.factored_relation_pair(weights)(left).0
                 }
                 CoefficientRelation::ReducedDense(weights) => weights.evaluations()[left],
+                CoefficientRelation::Structured(oracle) => oracle.pair(left).0,
             };
             let t0 = self.state.linear_terms.pair_from_flat_index(left).0;
             at_zero += witness_at(left) * (p0 + t0);
@@ -171,18 +172,6 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         )
     }
 
-    pub(super) fn compute_round_compact_reduced_dense_terms(
-        &self,
-        compact_witness: PackedSignedDigitView<'_>,
-        dense: &[E],
-    ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
-        self.compute_round_compact_dense_terms_with(
-            compact_witness,
-            compact_witness.len().div_ceil(2),
-            |left| (dense[left], dense[left + 1]),
-        )
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::compute_folded_dense_round_terms"
@@ -282,16 +271,29 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         )
     }
 
-    pub(super) fn compute_folded_reduced_dense_round_terms(
+    /// Coefficient round of a relation whose weight pairs `relation_pair`
+    /// reads directly: a reduced dense table or a structured oracle.
+    pub(super) fn compute_unfactored_round_terms(
         &self,
-        folded_witness: &[E],
-        dense: &[E],
+        witness: &WitnessState<E>,
+        relation_pair: impl Fn(usize) -> (E, E) + Sync,
     ) -> (NormRoundTerms<'_, E>, RoundMessage<E>) {
-        self.compute_folded_dense_round_terms_with(
-            folded_witness,
-            folded_witness.len().div_ceil(2),
-            |left| (dense[left], dense[left + 1]),
-        )
+        match witness {
+            WitnessState::CompactPrefix(compact_witness) => {
+                let compact_witness = compact_witness.view();
+                self.compute_round_compact_dense_terms_with(
+                    compact_witness,
+                    compact_witness.len().div_ceil(2),
+                    relation_pair,
+                )
+            }
+            WitnessState::FoldedSuffix(folded_witness) => self
+                .compute_folded_dense_round_terms_with(
+                    folded_witness,
+                    folded_witness.len().div_ceil(2),
+                    relation_pair,
+                ),
+        }
     }
 }
 
