@@ -742,10 +742,10 @@ impl<F: Field + 'static> InnerRelationState<F> for PortableCommitmentHandle<F> {
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("inner-relation row length overflow".into())
                 })?;
+        let rows = self.inner_rows()?;
         if self.ring_dim() != plan.ring_dimension
-            || self.inner_rows().len() != source_count
-            || self
-                .inner_rows()
+            || rows.len() != source_count
+            || rows
                 .iter()
                 .any(|row| row.coeff_len() != expected_coefficients)
         {
@@ -761,7 +761,7 @@ impl<F: Field + 'static> InnerRelationState<F> for PortableCommitmentHandle<F> {
         plan: &CommitInnerPlan,
         source_count: usize,
     ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
-        InnerRelationStateMaterial::new(plan, source_count, self.inner_rows().to_vec())
+        InnerRelationStateMaterial::new(plan, source_count, self.inner_rows()?.into_owned())
     }
 }
 

@@ -5,12 +5,12 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
-use akita_types::RingVec;
+use akita_types::{AkitaExpandedSetup, RingVec};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::borrow::Cow;
 use std::mem::size_of;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 const MAX_DENSE_DIGIT_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
@@ -48,8 +48,19 @@ pub struct DensePoly<F: Field> {
     pub(super) num_vars: usize,
     /// Flat field coefficients in sequential block order (untagged compact
     /// [`RingVec`]; see [`MIN_FLAT_COEFF_LEN`] for the physical padding).
-    coeffs: RingVec<F>,
+    coeffs: DenseCoefficients<F>,
     digit_cache: OnceLock<DenseDigitCache>,
+}
+
+// Setup-prefix polynomials retain a bounded view of the backend's single setup.
+// Ordinary polynomials continue to own their coefficients.
+#[derive(Debug, Clone)]
+enum DenseCoefficients<F: Field> {
+    Owned(RingVec<F>),
+    SetupPrefix {
+        setup: Arc<AkitaExpandedSetup<F>>,
+        len: usize,
+    },
 }
 
 impl<F: Field + Clone> Clone for DensePoly<F> {
@@ -64,7 +75,7 @@ impl<F: Field + Clone> Clone for DensePoly<F> {
 
 impl<F: Field + PartialEq> PartialEq for DensePoly<F> {
     fn eq(&self, other: &Self) -> bool {
-        self.num_vars == other.num_vars && self.coeffs == other.coeffs
+        self.num_vars == other.num_vars && self.field_coeffs() == other.field_coeffs()
     }
 }
 
@@ -89,7 +100,13 @@ fn as_ring_view<F: Field, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>]
 impl<F: Field> DensePoly<F> {
     /// Full physical (zero-padded) flat coefficient buffer.
     pub fn field_coeffs(&self) -> &[F] {
-        self.coeffs.coeffs()
+        match &self.coeffs {
+            DenseCoefficients::Owned(coeffs) => coeffs.coeffs(),
+            // The constructor checks this bound; the setup is immutable.
+            DenseCoefficients::SetupPrefix { setup, len } => {
+                &setup.shared_matrix().as_field_slice()[..*len]
+            }
+        }
     }
 
     /// Ring-element count viewed at dimension `ring_d`.
@@ -131,6 +148,30 @@ impl<F: Field> DensePoly<F> {
 }
 
 impl<F: Field + CanonicalEncoding> DensePoly<F> {
+    pub(crate) fn from_setup_prefix(
+        setup: Arc<AkitaExpandedSetup<F>>,
+        num_vars: usize,
+    ) -> Result<Self, AkitaError> {
+        let len = checked::pow2(num_vars)
+            .ok_or_else(|| AkitaError::InvalidInput("setup-prefix domain overflow".into()))?;
+        let coefficients = setup
+            .shared_matrix()
+            .as_field_slice()
+            .get(..len)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup prefix exceeds backend capacity".into())
+            })?;
+        if len < MIN_FLAT_COEFF_LEN {
+            // Preserve zero padding beyond the polynomial domain for small rings.
+            return Self::from_field_evals(num_vars, coefficients);
+        }
+        Ok(Self {
+            num_vars,
+            coeffs: DenseCoefficients::SetupPrefix { setup, len },
+            digit_cache: OnceLock::new(),
+        })
+    }
+
     /// Pack field-element evaluations into flat dense storage.
     ///
     /// At dimension `D` the first `α = log₂(D)` variables
@@ -168,7 +209,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
 
         Ok(Self {
             num_vars,
-            coeffs: RingVec::from_coeffs(coeffs),
+            coeffs: DenseCoefficients::Owned(RingVec::from_coeffs(coeffs)),
             digit_cache: OnceLock::new(),
         })
     }
@@ -203,7 +244,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
 
         Ok(Self {
             num_vars: total.trailing_zeros() as usize,
-            coeffs: RingVec::from_coeffs(flat),
+            coeffs: DenseCoefficients::Owned(RingVec::from_coeffs(flat)),
             digit_cache: OnceLock::new(),
         })
     }

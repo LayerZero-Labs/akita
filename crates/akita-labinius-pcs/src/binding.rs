@@ -111,9 +111,10 @@ impl Order {
 
 /// Canonical byte length of a commitment with this profile.
 ///
-/// The serializer supplies its fixed header and the compression owner its
-/// terminal coefficient count. There is no profile-only serialized-size
-/// function.
+/// The compression owner supplies the terminal coefficient count, and the
+/// serializer sizes an all-zero commitment of that width. There is no
+/// profile-only serialized-size function, and `CommittedGroup::new` rejects
+/// rows of any other width.
 pub(crate) fn commitment_size<P: FieldFamily>(
     profile: GroupCommitPhaseParams,
 ) -> Result<usize, AkitaError> {
@@ -126,14 +127,16 @@ pub(crate) fn commitment_size<P: FieldFamily>(
         source,
     )?
     .terminal_coefficients();
-    let header = CommittedGroup::new(
-        profile,
-        Commitment::new(RingVec::from_coeffs(Vec::<P::Base>::new())),
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(terminal)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    coefficients.resize(terminal, P::Base::zero());
+    Ok(
+        CommittedGroup::new(profile, Commitment::new(RingVec::from_coeffs(coefficients)))
+            .map_err(|_| AkitaError::InvalidProof)?
+            .compressed_size(),
     )
-    .compressed_size();
-    checked::product([terminal, P::Base::zero().compressed_size()])
-        .and_then(|coefficients| checked::sum([header, coefficients]))
-        .ok_or(AkitaError::InvalidProof)
 }
 
 /// Exchange one canonical commitment of a trusted, fixed-size profile.
@@ -292,6 +295,7 @@ pub(crate) fn bind_opening<P: FieldFamily, S: ClearChannel>(
         row.selection(),
         row.schedule(),
         BasisMode::Lagrange,
+        None,
         Ok,
     )?;
     public_length_prefixed(channel, &descriptor)?;

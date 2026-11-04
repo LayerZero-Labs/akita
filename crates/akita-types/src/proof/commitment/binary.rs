@@ -4,9 +4,10 @@ use super::{Commitment, CommittedGroup, CommittedGroupKind};
 use crate::binary_source::{BinaryCommittedGroupManifest, BINARY_COMMITTED_PAYLOAD_COEFFICIENTS};
 use akita_error::AkitaError;
 use akita_params::GroupCommitPhaseParams;
+use akita_serialization::{AkitaSerialize, Valid};
 use jolt_field::{CanonicalEncoding, Field};
 
-impl<F: Field + CanonicalEncoding> CommittedGroup<F> {
+impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
     /// Select the experimental binary root while retaining an ordinary suffix carrier.
     ///
     /// The carrier profile never describes the binary A/B commitment. Their real
@@ -28,10 +29,7 @@ impl<F: Field + CanonicalEncoding> CommittedGroup<F> {
                 "binary commitment payload shape mismatch".into(),
             ));
         }
-        Ok(Self {
-            profile,
-            commitment,
-            kind: CommittedGroupKind::Binary(manifest),
-        })
+        Self::with_kind(profile, commitment, CommittedGroupKind::Binary(manifest))
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))
     }
 }

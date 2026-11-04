@@ -1,7 +1,7 @@
 //! Direct public coefficient weights for the two binary terminal identities.
 
 use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
-use akita_challenges::{Challenges, FoldChallengeFamily};
+use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use jolt_field::Field;
@@ -298,7 +298,7 @@ pub fn binary_scalar_challenges(
         .iter()
         .map(|challenge| {
             challenge.validate_dyn(162)?;
-            if challenge.positions.len() > FoldChallengeFamily::BinaryRoot.weight()
+            if challenge.positions.len() > FoldChallengeDistribution::BinaryRoot.weight()
                 || challenge
                     .coeffs
                     .iter()

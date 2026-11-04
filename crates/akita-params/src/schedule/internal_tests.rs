@@ -10,7 +10,7 @@ fn accepts_group_local_packing_subring_dimensions() {
                 challenge_subring_dimension: s,
             };
         params.own_group_mut().opening.fold_challenge_config =
-            akita_challenges::FoldChallengeFamily::production_for_ring_dim(s).unwrap();
+            akita_challenges::FoldChallengeDistribution::production_for_ring_dim(s).unwrap();
         params.source_encoding = crate::CommittedSourceEncoding::CanonicalCoefficientTable;
         params
     };
@@ -78,5 +78,20 @@ fn packing_requirement_covers_the_first_two_folds_and_all_multi_chunk_folds() {
     for level in 0..5 {
         assert_eq!(fold_requires_coefficient_packing(1, level), level < 2);
         assert!(fold_requires_coefficient_packing(8, level));
+    }
+}
+
+#[test]
+fn split_last_block_requires_exactly_one_omitted_block() {
+    let segment = [0u8, 1, 2, 3, 4, 5];
+    assert_eq!(
+        split_last_block("e", &segment, 4, 2),
+        Ok((&segment[..4], &segment[4..]))
+    );
+    for (len, sent, block) in [(6, 4, 3), (6, 3, 2), (6, 7, 2), (4, 4, 2)] {
+        assert!(matches!(
+            split_last_block("e", &segment[..len], sent, block),
+            Err(AkitaError::Internal(_))
+        ));
     }
 }

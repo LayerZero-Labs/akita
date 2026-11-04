@@ -21,7 +21,7 @@ fn root_profile() -> BinaryChallengeProfile {
 
 fn challenges(profile: &BinaryChallengeProfile, columns: usize) -> Vec<BinaryChallenge> {
     BinaryChallengeSampler::new(profile.clone())
-        .sample_challenges(&mut FixedDraw, b"fold-kernel-differential", columns)
+        .sample_challenges(&mut FixedDraw, columns)
         .unwrap()
 }
 

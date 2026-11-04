@@ -80,7 +80,7 @@ fn projection_replay_rejects_malformed_challenges_and_nondivisible_images() {
             original.response.clone(),
             &input.images,
             challenges,
-            FoldChallengeFamily::BinaryRoot,
+            FoldChallengeDistribution::BinaryRoot,
         )
     };
     for coefficient in [0, D / 2, D - 1] {

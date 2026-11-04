@@ -1,3 +1,4 @@
+use super::shared_inner::{InnerRowPool, InnerRows};
 use akita_error::AkitaError;
 use akita_params::{
     CompressionChainPlan, CompressionChainWitness, PackedNegativeBinary, RingRelationMode,
@@ -8,7 +9,9 @@ use akita_serialization::{
     DEFAULT_MAX_SEQUENCE_LEN,
 };
 use akita_types::RingVec;
+use jolt_field::CanonicalEncoding;
 use jolt_field::Field;
+use std::borrow::Cow;
 use std::io::{Read, Write};
 
 fn validate_compression_stage_count(stage_count: usize) -> Result<(), SerializationError> {
@@ -58,7 +61,7 @@ fn validate_compression_component_counts(
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PortableCommitmentHandle<F: Field> {
-    inner_rows: Vec<RingVec<F>>,
+    inner_rows: InnerRows<F>,
     ring_dim: usize,
     outer_compression_stages: Vec<Vec<u8>>,
     outer_compression_quotients: Vec<RingVec<F>>,
@@ -82,7 +85,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
     /// per-polynomial coefficient lengths, or storage above repository limits.
     pub(crate) fn new(ring_dim: usize, inner_rows: Vec<RingVec<F>>) -> Result<Self, AkitaError> {
         let hint = Self {
-            inner_rows,
+            inner_rows: InnerRows::Owned(inner_rows),
             ring_dim,
             outer_compression_stages: Vec::new(),
             outer_compression_quotients: Vec::new(),
@@ -106,7 +109,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
         quotients: &[RingVec<F>],
     ) -> Result<Self, AkitaError> {
         let hint = Self {
-            inner_rows,
+            inner_rows: InnerRows::Owned(inner_rows),
             ring_dim,
             outer_compression_stages: witness
                 .stages()
@@ -143,7 +146,7 @@ impl<F: Field> PortableCommitmentHandle<F> {
     ) -> Result<Self, AkitaError> {
         let hint = Self {
             ring_dim: inner_rows.ring_dim(),
-            inner_rows: vec![inner_rows],
+            inner_rows: InnerRows::Owned(vec![inner_rows]),
             outer_compression_stages: witness
                 .stages()
                 .iter()
@@ -161,9 +164,21 @@ impl<F: Field> PortableCommitmentHandle<F> {
         self.ring_dim
     }
 
-    /// Borrow semantic A rows in polynomial order.
-    pub(crate) fn inner_rows(&self) -> &[RingVec<F>] {
-        &self.inner_rows
+    /// Read semantic A rows in polynomial order. Shared rows are reconstructed
+    /// only for consumers that require contiguous coefficient buffers.
+    pub(crate) fn inner_rows(&self) -> Result<Cow<'_, [RingVec<F>]>, AkitaError> {
+        self.inner_rows.materialize()
+    }
+
+    pub(crate) fn inner_ring(&self, polynomial: usize, index: usize) -> Option<&[F]> {
+        self.inner_rows.ring(polynomial, index, self.ring_dim)
+    }
+
+    pub(crate) fn share_inner_rows(&mut self, pool: &InnerRowPool<F>) -> Result<(), AkitaError>
+    where
+        F: CanonicalEncoding,
+    {
+        self.inner_rows.share(pool, self.ring_dim)
     }
 
     /// Rebuild the checked packed witness under the plan derived from the
@@ -322,27 +337,24 @@ impl<F: Field> PortableCommitmentHandle<F> {
         }
         let mut expected_coefficients = None;
         let mut total_coefficients = 0usize;
-        for rows in &self.inner_rows {
-            if rows.ring_dim() != self.ring_dim || !rows.coeff_len().is_multiple_of(self.ring_dim) {
+        for row in self.inner_rows.iter() {
+            let (ring_dim, coeff_len) = row.shape()?;
+            if ring_dim != self.ring_dim || !coeff_len.is_multiple_of(self.ring_dim) {
                 return Err(SerializationError::InvalidData(
                     "commitment hint row storage disagrees with its A ring dimension".into(),
                 ));
             }
             if expected_coefficients
-                .replace(rows.coeff_len())
-                .is_some_and(|expected| expected != rows.coeff_len())
+                .replace(coeff_len)
+                .is_some_and(|expected| expected != coeff_len)
             {
                 return Err(SerializationError::InvalidData(
                     "commitment hint polynomials have inconsistent row lengths".into(),
                 ));
             }
-            total_coefficients = total_coefficients
-                .checked_add(rows.coeff_len())
-                .ok_or_else(|| {
-                    SerializationError::InvalidData(
-                        "commitment hint coefficient count overflow".into(),
-                    )
-                })?;
+            total_coefficients = total_coefficients.checked_add(coeff_len).ok_or_else(|| {
+                SerializationError::InvalidData("commitment hint coefficient count overflow".into())
+            })?;
             checked_shape_len(total_coefficients)?;
         }
         Ok(())
@@ -352,7 +364,11 @@ impl<F: Field> PortableCommitmentHandle<F> {
 impl<F: Field + Valid> Valid for PortableCommitmentHandle<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.validate_shape()?;
-        self.inner_rows.check()?;
+        for row in self.inner_rows.iter() {
+            for coefficient in row.coefficients() {
+                coefficient.check()?;
+            }
+        }
         self.outer_compression_quotients.check()
     }
 }
@@ -368,10 +384,10 @@ impl<F: Field + AkitaSerialize> PortableCommitmentHandle<F> {
             .len()
             .serialize_with_mode(&mut writer, compress)?;
         self.ring_dim.serialize_with_mode(&mut writer, compress)?;
-        for rows in &self.inner_rows {
-            rows.coeff_len()
-                .serialize_with_mode(&mut writer, compress)?;
-            for coefficient in rows.coeffs() {
+        for row in self.inner_rows.iter() {
+            let (_, coeff_len) = row.shape()?;
+            coeff_len.serialize_with_mode(&mut writer, compress)?;
+            for coefficient in row.coefficients() {
                 coefficient.serialize_with_mode(&mut writer, compress)?;
             }
         }
@@ -402,18 +418,7 @@ impl<F: Field + AkitaSerialize> PortableCommitmentHandle<F> {
     pub(crate) fn serialized_size(&self, compress: Compress) -> usize {
         self.inner_rows.len().serialized_size(compress)
             + self.ring_dim.serialized_size(compress)
-            + self
-                .inner_rows
-                .iter()
-                .map(|rows| {
-                    rows.coeff_len().serialized_size(compress)
-                        + rows
-                            .coeffs()
-                            .iter()
-                            .map(|coefficient| coefficient.serialized_size(compress))
-                            .sum::<usize>()
-                })
-                .sum::<usize>()
+            + self.inner_rows.serialized_rows_size(compress)
             + self
                 .outer_compression_stages
                 .iter()
@@ -584,7 +589,7 @@ where
         }
 
         let hint = Self {
-            inner_rows,
+            inner_rows: InnerRows::Owned(inner_rows),
             ring_dim,
             outer_compression_stages,
             outer_compression_quotients,
@@ -631,8 +636,95 @@ mod tests {
     use super::*;
     use akita_params::SisModulusProfileId;
     use jolt_field::{Fp32, Ring, Zero};
+    use std::sync::Arc;
+
+    use crate::commitment::shared_inner::SHARED_MATERIALIZATIONS;
 
     type F = Fp32<251>;
+
+    #[test]
+    fn sharing_setup_prefix_rows_preserves_hint_bytes_and_clones() {
+        let expected =
+            PortableCommitmentHandle::new(2, vec![rows(1, 6, 2), rows(7, 6, 2)]).unwrap();
+        let pool = InnerRowPool::default();
+        let mut shared = expected.clone();
+        shared.share_inner_rows(&pool).unwrap();
+        assert_eq!(shared, expected);
+        let cloned = shared.clone();
+        drop(shared);
+        drop(pool);
+        let materializations = SHARED_MATERIALIZATIONS.get();
+        cloned.check().unwrap();
+        for compress in [Compress::No, Compress::Yes] {
+            let mut original_bytes = Vec::new();
+            expected
+                .serialize_with_mode(&mut original_bytes, compress)
+                .unwrap();
+            let mut shared_bytes = Vec::new();
+            cloned
+                .serialize_with_mode(&mut shared_bytes, compress)
+                .unwrap();
+            cloned
+                .serialize_with_mode(std::io::sink(), compress)
+                .unwrap();
+            assert_eq!(shared_bytes, original_bytes);
+            assert_eq!(cloned.serialized_size(compress), original_bytes.len());
+            let decoded = PortableCommitmentHandle::<F>::deserialize_with_mode(
+                shared_bytes.as_slice(),
+                compress,
+                Validate::Yes,
+                &(),
+            )
+            .unwrap();
+            assert_eq!(cloned, decoded);
+        }
+        assert_eq!(SHARED_MATERIALIZATIONS.get(), materializations);
+    }
+
+    #[test]
+    fn shared_hint_rejects_malformed_blocks_and_shapes_without_materializing() {
+        let block: Arc<[F]> = Arc::from([F::from_u64(1), F::from_u64(2)]);
+        let short: Arc<[F]> = Arc::from([F::from_u64(3)]);
+        let long: Arc<[F]> = Arc::from([F::from_u64(4); 3]);
+        let materializations = SHARED_MATERIALIZATIONS.get();
+        for (ring_dim, shared_rows) in [
+            (0, vec![vec![block.clone()]]),
+            (4, vec![vec![Arc::from([F::from_u64(1); 4])]]),
+            (2, vec![vec![short, long]]),
+            (2, vec![vec![block.clone()], vec![block.clone(), block]]),
+        ] {
+            let mut hint = PortableCommitmentHandle::new(2, vec![rows(1, 2, 2)]).unwrap();
+            hint.inner_rows = InnerRows::Shared {
+                ring_dim,
+                rows: shared_rows,
+            };
+            assert!(hint.check().is_err());
+            assert!(hint.serialize_uncompressed(std::io::sink()).is_err());
+        }
+        assert_eq!(SHARED_MATERIALIZATIONS.get(), materializations);
+    }
+
+    #[test]
+    fn shared_hint_enforces_total_coefficient_limit_without_materializing() {
+        let ring_dim = 1024;
+        let block: Arc<[F]> = vec![F::zero(); ring_dim].into();
+        let mut hint = PortableCommitmentHandle::new(ring_dim, Vec::new()).unwrap();
+        // Each row fits individually, but their logical total exceeds the limit.
+        hint.inner_rows = InnerRows::Shared {
+            ring_dim,
+            rows: vec![vec![block; DEFAULT_MAX_SEQUENCE_LEN / ring_dim / 2 + 1]; 2],
+        };
+        let materializations = SHARED_MATERIALIZATIONS.get();
+        assert!(matches!(
+            hint.check(),
+            Err(SerializationError::LengthLimitExceeded { .. })
+        ));
+        assert!(matches!(
+            hint.serialize_uncompressed(std::io::sink()),
+            Err(SerializationError::LengthLimitExceeded { .. })
+        ));
+        assert_eq!(SHARED_MATERIALIZATIONS.get(), materializations);
+    }
 
     fn rows(start: u64, coefficient_count: usize, ring_dim: usize) -> RingVec<F> {
         RingVec::from_coeffs_with_ring_dim(
@@ -653,7 +745,7 @@ mod tests {
         let mut expected = Vec::new();
         2usize.serialize_uncompressed(&mut expected).unwrap();
         4usize.serialize_uncompressed(&mut expected).unwrap();
-        for row in hint.inner_rows() {
+        for row in hint.inner_rows().unwrap().iter() {
             row.coeff_len()
                 .serialize_uncompressed(&mut expected)
                 .unwrap();
@@ -669,8 +761,14 @@ mod tests {
             PortableCommitmentHandle::<F>::deserialize_uncompressed(&encoded[..], &()).unwrap();
         assert_eq!(decoded, hint);
         assert_eq!(decoded.ring_dim(), 4);
-        assert_eq!(decoded.inner_rows()[0].coeffs()[0], F::from_u64(10));
-        assert_eq!(decoded.inner_rows()[1].coeffs()[0], F::from_u64(30));
+        assert_eq!(
+            decoded.inner_rows().unwrap()[0].coeffs()[0],
+            F::from_u64(10)
+        );
+        assert_eq!(
+            decoded.inner_rows().unwrap()[1].coeffs()[0],
+            F::from_u64(30)
+        );
     }
 
     #[test]

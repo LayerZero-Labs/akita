@@ -33,7 +33,7 @@ class AuthorizationTests(unittest.TestCase):
                 with self.assertRaises(ReviewError):
                     authorize(gh, EVENT)
 
-    def test_accepts_only_current_author_with_write_access(self):
+    def test_accepts_current_author_with_write_access(self):
         self.assertEqual(authorize(FakeGitHub(), EVENT)["number"], 7)
         for change in ("other-author", "fork", "closed", "read-only", "extra-text", "edited", "wrong-repo",
                        "wrong-issue", "sender", "deleted-head", "bot-author"):
@@ -63,6 +63,39 @@ class AuthorizationTests(unittest.TestCase):
                     # A bot opened the PR and its account posts the command.
                     gh.command["user"] = gh.pr["user"] = event["comment"]["user"] = event["sender"] = {
                         **AUTHOR, "type": "Bot"}
+                with self.assertRaises(ReviewError):
+                    authorize(gh, event)
+
+    def test_only_admins_may_request_reviews_of_other_peoples_prs(self):
+        for permission in ("admin", "maintain", "write", "read", "none"):
+            with self.subTest(permission=permission):
+                gh = FakeGitHub()
+                gh.pr["user"] = {"id": 99}
+                gh.permission = permission
+                if permission == "admin":
+                    self.assertEqual(authorize(gh, EVENT)["number"], 7)
+                else:
+                    with self.assertRaises(ReviewError):
+                        authorize(gh, EVENT)
+
+    def test_admin_requests_still_require_valid_events_and_same_repository_prs(self):
+        for change in ("fork", "closed", "bot", "sender", "commenter", "extra-text"):
+            with self.subTest(change=change):
+                gh, event = FakeGitHub(), copy.deepcopy(EVENT)
+                gh.pr["user"] = {"id": 99}
+                gh.permission = "admin"
+                if change == "fork":
+                    gh.pr["head"]["repo"]["full_name"] = "evil/akita"
+                elif change == "closed":
+                    gh.pr["state"] = "closed"
+                elif change == "bot":
+                    gh.command["user"]["type"] = "Bot"
+                elif change == "sender":
+                    event["sender"] = {"id": 99}
+                elif change == "commenter":
+                    event["comment"]["user"] = {"id": 99}
+                else:
+                    gh.command["body"] += "\nplease review"
                 with self.assertRaises(ReviewError):
                     authorize(gh, event)
 
@@ -118,6 +151,27 @@ class AuthorizationTests(unittest.TestCase):
 
 
 class QuotaTests(unittest.TestCase):
+    def test_admins_are_unlimited_on_own_and_other_prs_but_cannot_replay(self):
+        for author in (True, False):
+            with self.subTest(author=author):
+                gh = FakeGitHub()
+                gh.permission = "admin"
+                if not author:
+                    gh.pr["user"] = {"id": 99}
+                for index in range(5):
+                    event = copy.deepcopy(EVENT)
+                    gh.command["id"] = event["comment"]["id"] = 12 + index
+                    self.assertTrue(reserve(gh, event))
+                    self.assertFalse(reserve(gh, event))
+                self.assertEqual(len(gh.writes), 5)
+                self.assertIn("4/3", gh.writes[3][1]["body"])
+                self.assertIn("5/3", gh.writes[4][1]["body"])
+                gh.permission = "write"
+                gh.pr["user"] = copy.deepcopy(AUTHOR)
+                gh.command["id"] = event["comment"]["id"] = 17
+                self.assertFalse(reserve(gh, event))
+                self.assertEqual(len(gh.writes), 5)
+
     def test_three_attempts_survive_force_pushes_without_any_successful_review(self):
         gh = FakeGitHub()
         for index in range(4):
@@ -262,6 +316,21 @@ class SourceToolTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
+    def test_entrypoint_defaults_to_sol_and_preserves_explicit_model_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for model in (None, "custom-review-model"):
+                environment = {"GITHUB_RUN_ATTEMPT": "1", "OPENAI_API_KEY": "test-secret"}
+                if model is not None:
+                    environment["AI_REVIEW_MODEL"] = model
+                with self.subTest(model=model), \
+                        patch.dict(os.environ, environment, clear=True), \
+                        patch.object(sys, "argv", ["run.py", "review", "--directory", directory]), \
+                        patch.object(entrypoint, "load_json", return_value=snapshot()), \
+                        patch.object(entrypoint, "save_json"), \
+                        patch.object(entrypoint, "review", return_value=proposal(snapshot())) as api:
+                    entrypoint.main()
+                    self.assertEqual(api.call_args.args[2], model or "gpt-6.1-sol")
+
     def test_turn_budget_allows_long_reviews_and_stops_a_model_that_never_finishes(self):
         def scripted(finish_at):
             calls = []
@@ -336,8 +405,11 @@ class ModelTests(unittest.TestCase):
             return {"status": "completed", "output": [{"type": "message", "content": [
                 {"type": "output_text", "text": json.dumps(proposal(value)["result"])}]}]}
 
-        result = review(value, "test-secret", "test-model", api)
+        result = review(value, "test-secret", "gpt-6.1-sol", api)
         self.assertEqual(len(calls), 2)
+        for payload in calls:
+            self.assertEqual(payload["model"], "gpt-6.1-sol")
+            self.assertEqual(payload["reasoning"], {"effort": "high"})
         self.assertEqual(len(validate(value, result)), 1)
         self.assertEqual({t["name"] for t in calls[0]["tools"]}, {"read_file", "search"})
 
@@ -370,14 +442,23 @@ class WorkflowTests(unittest.TestCase):
 
 
 class WorkflowQueueTests(unittest.TestCase):
-    def test_only_the_authors_exact_command_shares_the_per_pr_comment_queue(self):
+    def test_only_a_users_exact_command_shares_the_per_pr_comment_queue(self):
         text = (Path(__file__).resolve().parents[2] / ".github/workflows/ai-review.yml").read_text()
         group = re.search(r"\n  group: >-\n((?:    .*\n)+)", text)[1]
         group = " ".join(line.strip() for line in group.splitlines())
         self.assertTrue(group.startswith("ai-review-${{ github.event_name }}-${{ github.event.issue.number || "
                                          "github.event.pull_request.number }}-"))
         self.assertIn("(github.event_name != 'issue_comment' || (github.event.comment.body == '/ai-review' && "
-                      "github.event.comment.user.id == github.event.issue.user.id)) && 'queue' || github.run_id", group)
+                      "github.event.comment.user.type == 'User')) && 'queue' || github.run_id", group)
+
+    def test_workflow_admits_admin_commands_to_authorization_and_defaults_to_sol(self):
+        text = (Path(__file__).resolve().parents[2] / ".github/workflows/ai-review.yml").read_text()
+        reserve_job = text.split("\n  reserve:\n", 1)[1].split("\n  collect:\n", 1)[0]
+        self.assertNotIn("github.event.issue.user.id", reserve_job)
+        for guard in ("github.event.comment.body == '/ai-review'", "github.event.comment.user.type == 'User'",
+                      "github.run_attempt == 1", "github.event.issue.pull_request"):
+            self.assertIn(guard, reserve_job)
+        self.assertIn("AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-6.1-sol' }}", text)
 
 
 class TransportTests(unittest.TestCase):
@@ -397,6 +478,19 @@ class TransportTests(unittest.TestCase):
                                           ("write", 9, False)):
             with patch.object(github, "get", return_value={"permission": permission, "user": {"id": uid}}):
                 self.assertEqual(github.writer(AUTHOR), expected)
+
+    def test_admin_requires_live_admin_permission_and_matching_identity(self):
+        github = GitHub("secret")
+        for permission, uid in (("admin", 42), ("admin", 9), ("maintain", 42), ("write", 42), ("read", 42)):
+            with self.subTest(permission=permission, uid=uid), \
+                    patch.object(github, "get", return_value={"permission": permission, "user": {"id": uid}}) as api:
+                self.assertEqual(github.admin(AUTHOR), permission == "admin" and uid == 42)
+                api.assert_called_once_with("collaborators/maintainer/permission")
+        for user in ({**AUTHOR, "type": "Bot"}, {**AUTHOR, "login": "../maintainer"}):
+            with patch.object(github, "get") as api:
+                self.assertFalse(github.admin(user))
+                self.assertFalse(github.writer(user))
+                api.assert_not_called()
 
     def test_no_redirect_or_model_selected_origin_can_receive_credentials(self):
         with self.assertRaises(ReviewError):

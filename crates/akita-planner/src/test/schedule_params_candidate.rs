@@ -3,7 +3,7 @@ use super::recursive::{
     RecursiveSplitLowerBoundInput,
 };
 use super::*;
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_params::{PolynomialGroupLayout, SisModulusProfileId};
 
 fn synthetic_profile(
@@ -34,7 +34,7 @@ fn synthetic_profile(
 }
 
 fn grouped_level_params() -> CommittedGroupParams {
-    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+    let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
     let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
@@ -95,8 +95,9 @@ fn audited_grouped_level_params() -> CommittedGroupParams {
         .iter()
         .cloned()
         .map(|mut group| {
-            group.opening.fold_challenge_config = FoldChallengeFamily::production_for_ring_dim(64)
-                .expect("production synthetic challenge");
+            group.opening.fold_challenge_config =
+                FoldChallengeDistribution::production_for_ring_dim(64)
+                    .expect("production synthetic challenge");
             group.profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
                 key(SisMatrixRole::Inner),
                 group.profile.inner.matrix.input_width(),
@@ -223,7 +224,7 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
+fn response_model_keeps_one_split_per_fold_work_size() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
@@ -251,37 +252,33 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         FoldCandidatePolicy::Best,
     )
     .expect("modeled late-fold candidates");
-    let linf = candidates
-        .iter()
-        .filter(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::Linf(_)
-            )
-        })
-        .count();
-    let l2 = candidates
-        .iter()
-        .filter(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-        })
-        .count();
-    assert_eq!(linf, 1);
-    assert!(l2 > 0);
-    let l2_block_index_bits = candidates
-        .iter()
-        .filter_map(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-            .then_some(candidate.block_index_bits())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(l2_block_index_bits.len(), 1);
+    // Per route, the best split is kept, then each worse split only when its
+    // fold proof of work is strictly smaller.
+    for l2 in [false, true] {
+        let nonce_bits = candidates
+            .iter()
+            .filter(|(candidate, _)| {
+                matches!(
+                    candidate.inner().matrix.security_route(),
+                    InnerCommitSecurityRoute::L2 { .. }
+                ) == l2
+            })
+            .map(|(candidate, _)| {
+                let layout = candidate
+                    .opening_layout_for_final_group(candidate.group())
+                    .unwrap();
+                akita_params::fold_challenge_runs(0, candidate, &layout)
+                    .unwrap()
+                    .0
+                    .nonce_bits()
+            })
+            .collect::<Vec<_>>();
+        assert!(!nonce_bits.is_empty(), "l2 = {l2}");
+        assert!(
+            nonce_bits.windows(2).all(|pair| pair[0] > pair[1]),
+            "l2 = {l2}: {nonce_bits:?}"
+        );
+    }
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -616,6 +613,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     }
     let frozen_group = synthetic_profile(key.final_group, &candidates[0].0);
     let grouped_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: key.final_group,
         precommitteds: vec![frozen_group],
     };
@@ -697,7 +695,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         );
     }
     let trace_precommit = PlannerOpeningCandidate::evaluation_trace(
-        FoldChallengeFamily::production_for_ring_dim(dimensions.d_a()).unwrap(),
+        FoldChallengeDistribution::production_for_ring_dim(dimensions.d_a()).unwrap(),
     );
     assert!(
         crate::planner::root_level_candidates_with_fresh_preparation(
@@ -731,6 +729,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
 
     let product_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, frozen_group],
     };
@@ -771,6 +770,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     }
 
     let repeated_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group; 256],
     };
@@ -792,6 +792,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: grouped_key.final_group,
             precommitteds: vec![frozen_group; 3],
         },
@@ -825,6 +826,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         .find(|profile| *profile != frozen_group)
         .expect("a second root profile");
     let split_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, other_class, frozen_group],
     };
@@ -870,6 +872,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     // These profiles only feed enumeration, which reads ring dimensions; they
     // are not valid commit-phase profiles and must not be materialized.
     let distinct_classes = |count: usize| ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: (0..count)
             .map(|index| GroupCommitPhaseParams {
@@ -955,6 +958,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         &scalar.first().expect("scalar root candidate").0,
     );
     let grouped_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: scalar_key.final_group,
         precommitteds: vec![frozen],
     };
@@ -1072,7 +1076,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         outer: 64,
         opening: 64,
     };
-    let challenge = FoldChallengeFamily::production_for_ring_dim(128).unwrap();
+    let challenge = FoldChallengeDistribution::production_for_ring_dim(128).unwrap();
     let trace = PlannerOpeningCandidate::evaluation_trace(challenge);
     let exact_packing =
         PlannerOpeningCandidate::coefficient_packing(policy.claim_ext_degree, dimensions, 128)

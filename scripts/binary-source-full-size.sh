@@ -50,8 +50,9 @@ import sys
 
 log, shape, dev, output = sys.argv[1:]
 protocol = "dev" if dev == "1" else "current"
+# The dev protocol currently equals the current protocol: one pin per (log, shape).
 rows = [line.split() for line in pathlib.Path("scripts/binary-source-full-size-digests.tsv").read_text().splitlines() if line and not line.startswith("#")]
-expected = [row[3:] for row in rows if row[:3] == [protocol, log, shape]]
+expected = [row[2:] for row in rows if row[:2] == [log, shape]]
 actual = re.findall(r"^proof bytes=(\d+) digest_algorithm=blake2b256 digest=([0-9a-f]{64})$", pathlib.Path(output).read_text(), re.MULTILINE)
 if len(actual) != 1 or (expected and expected != [list(actual[0])]):
     raise SystemExit(f"proof digest mismatch: expected {expected}, observed {actual}")

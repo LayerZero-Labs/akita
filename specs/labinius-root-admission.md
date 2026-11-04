@@ -48,7 +48,7 @@ rather than panicking on a violated profile invariant.
 ## Ordinary challenge-family integration
 
 With `labinius-challenges` enabled, callers select
-`FoldChallengeFamily::BinaryRoot` through the ordinary `FoldDraw` API. This
+`FoldChallengeDistribution::BinaryRoot` through the ordinary `FoldDraw` API. This
 family uses `Phi243 = Z^162 + Z^81 + 1` and samples uniformly from
 `S46 = union_{0 <= i <= 46} binom([162], i)`. Its exact cardinality is
 107268495235892251993000716928106195079952, with
@@ -74,7 +74,7 @@ condition. For `P = 2^128 - 275`, tests pin `ord_243(P) = 6` and the sufficient
 unit-condition inequality `6 * 127 = 762 >= 81 * bits(6 * 46) = 729` described
 under [proof-prime admission](#proof-prime-admission-and-clear-integer-ranges).
 
-`FoldChallengeFamily` serializes `SignedSparse` through its existing
+`FoldChallengeDistribution` serializes `SignedSparse` through its existing
 `SparseChallengeConfig` representation. `BinaryRoot` reserves the explicit
 count pair `(count_pm1, count_pm2) = (u32::MAX, 1)` in that representation;
 this pair identifies a family and is not a challenge weight. The marker fits

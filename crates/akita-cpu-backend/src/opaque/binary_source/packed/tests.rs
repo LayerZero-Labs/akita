@@ -2,7 +2,7 @@ use super::*;
 use akita_algebra::binary::BinaryField162;
 use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
-use akita_challenges::{FoldChallengeDrawDomain, FoldDraw};
+use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 use akita_types::binary_source::{
     BinaryCommitmentProfiles, BinaryIndexMap, BinaryTerminalClaim, PrimePlaneClaim,
     PrimePlaneManifest,
@@ -11,8 +11,12 @@ use jolt_field::Prime128Offset275;
 
 struct SeedDraw;
 impl FoldDraw for SeedDraw {
-    fn absorb_and_squeeze(&mut self, _: &[u8]) -> Result<[u8; 32], AkitaError> {
-        Ok([17; 32])
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![17; len])
     }
 }
 
@@ -111,15 +115,18 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
         }
         assert_eq!(images, reference_images);
         let challenges = SeedDraw
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                162,
-                0,
+            .draw_fold_challenges(
+                &FoldChallengeFamily::new(
+                    FoldChallengeDrawDomain::EvaluationTrace,
+                    162,
+                    FoldChallengeDistribution::BinaryRoot,
+                    None,
+                )
+                .unwrap(),
                 2,
                 2,
-                &FoldChallengeFamily::BinaryRoot,
-                None,
             )
+            .unwrap()
             .unwrap();
         let reference = crate::binary_root::BinaryRootRelation::build(
             &descriptor,
@@ -127,7 +134,7 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
             &expanded,
             &images,
             &challenges,
-            FoldChallengeFamily::BinaryRoot,
+            FoldChallengeDistribution::BinaryRoot,
         )
         .unwrap();
         let actual = probe_packed(
@@ -136,7 +143,7 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
             &packed,
             &images,
             &challenges,
-            FoldChallengeFamily::BinaryRoot,
+            FoldChallengeDistribution::BinaryRoot,
         )
         .unwrap()
         .unwrap();

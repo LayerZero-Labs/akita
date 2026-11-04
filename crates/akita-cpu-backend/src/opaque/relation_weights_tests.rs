@@ -115,9 +115,9 @@ fn setup_columns_batch_logical_weights_over_one_physical_family() {
     ];
 
     let evaluated = contract_setup_columns(&family, 0..2, &row_weights, 2, 1, |coefficients| {
-        Ok(vec![eval_flat_ring_at_pows_fast(
-            coefficients,
+        Ok(vec![MulBaseUnreduced::dot_base(
             &alpha_powers,
+            coefficients,
         )])
     })
     .unwrap();

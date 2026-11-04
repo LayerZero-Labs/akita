@@ -1,15 +1,16 @@
 //! Authenticated readings with an application-owned source-agreement contract.
 
-use crate::AkitaVerifier;
+use crate::{AkitaVerifier, SetupPolicy};
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::{descriptor_bytes::digest_descriptor_bytes, BasisMode};
 use akita_serialization::{AkitaSerialize, Valid};
+use akita_transcript::VerifierChannel;
 use akita_types::binary_source::{
     BinaryOpening, BinaryWordClaim, PrimePlaneClaim, SourceAgreementBinding,
 };
 use akita_types::opening_claims::GroupClaimKind;
-use akita_types::{FpExtEncoding, GroupBatchStatement};
+use akita_types::{FpExtEncoding, GroupBatchStatement, PendingEof};
 use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 impl<Cfg> AkitaVerifier<Cfg>
@@ -18,25 +19,34 @@ where
     Cfg::Field: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
-    /// Verify one opening and return its separately authenticated binary and
-    /// prime readings under the conditional source-agreement contract.
+    /// Verify one embedded opening and return its separately authenticated
+    /// binary and prime readings under the conditional source-agreement contract.
     ///
     /// `session_id` and `group_id` identify context that the caller has already
     /// authenticated inside the caller's transcript for this exact committed
     /// source. The terminal digest also binds the commitment payload. This method does not add
     /// messages or check agreement between the two readings. The application
     /// must discharge the contract through its own source-agreement proof.
-    /// The caller retains responsibility for final transcript exhaustion.
+    /// As for [`Self::batched_verify_embedded`], only the returned
+    /// [`PendingEof`] accepts the caller's transcript.
     #[allow(clippy::type_complexity)]
-    pub fn batched_verify_readings_in_session(
+    pub fn batched_verify_readings_embedded(
         &self,
-        session: &mut akita_transcript::VerifierSession<'_>,
+        state: &mut VerifierChannel<'_>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
+        mut setup_policy: SetupPolicy<'_, '_, Cfg::ExtField>,
         session_id: [u8; 32],
         group_id: [u8; 32],
-    ) -> Result<BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>, AkitaError> {
-        self.verify_in_session_with_output(session, statement, basis, |claims| {
+    ) -> Result<
+        (
+            PendingEof,
+            BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>,
+        ),
+        AkitaError,
+    > {
+        let pending_len = setup_policy.pending_len();
+        let result = self.verify_on_state(state, statement, basis, &mut setup_policy, |claims| {
             let group = claims.groups().first().ok_or_else(|| {
                 AkitaError::InvalidInput("binary readings require a binary group".into())
             })?;
@@ -72,6 +82,8 @@ where
                 prime.planes().to_vec(),
                 binding,
             ))
-        })
+        });
+        setup_policy.settle(pending_len, result.is_ok());
+        result
     }
 }

@@ -133,6 +133,7 @@ pub(crate) fn prove_matching_byte_model<Cfg: CommitmentConfig>(
         .resolve_selection(selection)
         .expect("selected schedule");
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: resolved.profiles().final_group.group,
         precommitteds: resolved.profiles().precommitteds.clone(),
     };
@@ -146,6 +147,7 @@ pub(crate) fn prove_matching_byte_model<Cfg: CommitmentConfig>(
         &key.opening_layout().expect("opening layout"),
         policy.transcript_grinding_order().expect("grinding order"),
         policy.claim_ext_degree,
+        None,
     )
     .expect("grinding plan")
     .nonce_max_bytes();

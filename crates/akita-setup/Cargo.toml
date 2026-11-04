@@ -10,7 +10,7 @@ readme = "../../README.md"
 
 [features]
 labinius = ["akita-params/labinius-sis"]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",
   "akita-cpu-backend/transcript-blake2b",
@@ -30,7 +30,7 @@ disk-persistence = ["akita-cpu-backend/disk-persistence"]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }

@@ -337,7 +337,7 @@ ReducedEvaluation: dot(setup_ring, H^(d)(r_coeff, alpha))
 ```
 
 The common scanner MUST specialize the lifted power path where
-`eval_ring_at_pows_fast` is faster. Sharing the scanner does not require
+`MulBaseUnreduced::dot_base` is faster. Sharing the scanner does not require
 discarding its optimized inner product.
 
 Because reduced evaluation is forbidden when setup is deferred, the

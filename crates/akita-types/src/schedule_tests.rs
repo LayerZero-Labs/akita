@@ -30,12 +30,12 @@ use crate::{
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
     TerminalLevelProof, TerminalResponse,
 };
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::nonterminal_level_layout;
 use akita_params::{
-    extension_opening_reduction_level_bytes, sumcheck_rounds, terminal_response_bytes,
+    extension_opening_reduction_level_bytes, sumcheck_rounds, terminal_response_max_bytes,
     CommitmentPayloadMode, CommittedGroupBatchProfile, DigitRangePlan, OpeningClaimsLayout,
     PolynomialGroupLayout, RingRelationMode, SisModulusProfileId, TailSegmentGroupLayout,
     TailSegmentLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
@@ -170,7 +170,7 @@ fn recursive_schedule(
     let mut successor = committed_params(successor_ring_dimension);
     if offload {
         successor.own_group_mut().opening.fold_challenge_config =
-            FoldChallengeFamily::production_for_ring_dim(successor_ring_dimension)
+            FoldChallengeDistribution::production_for_ring_dim(successor_ring_dimension)
                 .expect("production setup-prefix challenge");
     }
     let incoming_setup_prefix = offload.then(|| {
@@ -188,6 +188,7 @@ fn recursive_schedule(
     let root_handoff_len = predecessor_ring_dimension.max(successor_ring_dimension);
 
     FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: FoldParams {
             params: predecessor.clone(),
             input_witness_len: predecessor_ring_dimension,
@@ -203,7 +204,7 @@ fn recursive_schedule(
             output_witness_len: successor_ring_dimension,
         }],
         terminal: TerminalFoldParams {
-            fold_challenge_config: FoldChallengeFamily::pm1_only(3),
+            fold_challenge_config: FoldChallengeDistribution::pm1_only(3),
             response_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension: successor_ring_dimension,
@@ -477,7 +478,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let precommitted_group = PolynomialGroupLayout::new(9, 1);
     let mut group_params = producer.clone();
     group_params.own_group_mut().opening.fold_challenge_config =
-        FoldChallengeFamily::production_for_ring_dim(group_params.d_a())
+        FoldChallengeDistribution::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group uses a production ring dimension");
     let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = &group_params.inner().matrix;
@@ -540,7 +541,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let prefix_ring_slots = n_prefix / 64;
     let mut consumer = committed_params_with_geometry(64, prefix_ring_slots, 64);
     consumer.own_group_mut().opening.fold_challenge_config =
-        FoldChallengeFamily::production_for_ring_dim(64)
+        FoldChallengeDistribution::production_for_ring_dim(64)
             .expect("production setup-prefix challenge");
     provision_setup_prefix_capacity(&mut consumer, n_prefix);
     let commitment_params = akita_params::setup_prefix_precommitted_params(&consumer, n_prefix)
@@ -564,7 +565,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 
 #[test]
 fn terminal_projection_preserves_the_fixed_inner_matrix() {
-    let sparse = FoldChallengeFamily::pm1_only(3);
+    let sparse = FoldChallengeDistribution::pm1_only(3);
     let mut committed = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
@@ -604,21 +605,9 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
 
 fn terminal_response_fixture(
     lp: &CommittedGroupParams,
-    num_claims: usize,
 ) -> (TerminalResponse<F>, TerminalResponseShape) {
-    let field_bits = F::MODULUS_BITS;
-    let shape = TerminalResponseShape::from_groups(
-        lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            num_claims,
-            num_claims,
-            1,
-            127,
-        )],
-    )
-    .expect("terminal response shape");
+    let terminal = TerminalFoldParams::from_expanded_group(lp.clone());
+    let shape = TerminalResponseShape::derive(&terminal, 127).expect("terminal response shape");
     let layout = shape.layout.clone();
     let group = layout.groups[0];
     let rice_low_bits = group.z_rice_low_bits;
@@ -721,7 +710,7 @@ fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
 #[test]
 fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
-    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+    let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
@@ -772,8 +761,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
 #[test]
 fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
     const D: usize = 64;
-    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
-    let num_claims = 3;
+    let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
 
     for log_basis in 2..=6 {
         let mut lp = CommittedGroupParams::params_only(
@@ -803,7 +791,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 inner.ring_dimension(),
             );
 
-        let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
+        let (terminal_response, witness_shape) = terminal_response_fixture(&lp);
         let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
@@ -811,7 +799,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         );
 
         // The planner accounts for the final witness separately
-        // (`terminal_response_bytes` on the terminal plan). Subtract
+        // (`terminal_response_max_bytes` on the terminal plan). Subtract
         // it from the serialized terminal level. Nonce messages
         // stream is accounted separately.
         let serialized_without_witness =
@@ -823,7 +811,8 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                  (less terminal_response) at log_basis={log_basis}"
         );
 
-        let scheduled_bytes = terminal_response_bytes(128, &witness_shape);
+        let scheduled_bytes =
+            terminal_response_max_bytes(128, &witness_shape).expect("terminal bound");
         assert!(
             scheduled_bytes >= terminal_response_bytes_runtime,
             "scheduled direct witness budget must cover serialized terminal response \
@@ -835,7 +824,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 #[test]
 fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
-    let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+    let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
@@ -1014,10 +1003,16 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
 }
 
 fn committed_group_for_extractor(num_vars: usize) -> CommittedGroup<F> {
+    let profile = precommitted_descriptor(num_vars);
+    let coefficients = profile
+        .outer_compression_plan()
+        .expect("precommitted compression plan")
+        .terminal_coefficients();
     CommittedGroup::new(
-        precommitted_descriptor(num_vars),
-        Commitment::new(RingVec::from_coeffs(vec![F::zero(); 64])),
+        profile,
+        Commitment::new(RingVec::from_coeffs(vec![F::zero(); coefficients])),
     )
+    .expect("valid precommitted group")
 }
 
 #[test]
@@ -1078,6 +1073,7 @@ fn precommitted_group_profiles_preserve_caller_order() {
 #[test]
 fn group_batch_key_separates_final_arity_from_max_opening_arity() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(14, 3),
         precommitteds: vec![precommitted_descriptor(20)],
     };
@@ -1105,6 +1101,7 @@ fn group_batch_key_separates_final_arity_from_max_opening_arity() {
 #[test]
 fn group_batch_key_allows_independent_precommitted_num_vars() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![precommitted_descriptor(12)],
     };
@@ -1117,6 +1114,7 @@ fn group_batch_key_allows_independent_precommitted_num_vars() {
 #[test]
 fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![precommitted_descriptor(20)],
     };
@@ -1129,6 +1127,7 @@ fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
 #[test]
 fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![{
             let mut descriptor = precommitted_descriptor(10);
@@ -1165,6 +1164,7 @@ fn group_batch_key_identity_binds_ordered_profiles() {
     let first = precommitted_descriptor(12);
     let second = precommitted_descriptor(14);
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![first, second],
     };
@@ -1347,7 +1347,7 @@ fn schedule_row_identity_binds_main_opening_method() {
             challenge_subring_dimension: 64,
         };
     successor.own_group_mut().opening.fold_challenge_config =
-        akita_challenges::FoldChallengeFamily::production_for_ring_dim(64).unwrap();
+        akita_challenges::FoldChallengeDistribution::production_for_ring_dim(64).unwrap();
     let profiles = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
@@ -1367,7 +1367,7 @@ fn schedule_row_identity_binds_main_opening_method() {
         .own_group_mut()
         .opening
         .fold_challenge_config =
-        akita_challenges::FoldChallengeFamily::production_for_ring_dim(64).unwrap();
+        akita_challenges::FoldChallengeDistribution::production_for_ring_dim(64).unwrap();
     assert_ne!(
         digest,
         akita_params::schedule_row_digest(&profiles, &changed)

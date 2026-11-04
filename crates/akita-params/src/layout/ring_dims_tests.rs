@@ -3,7 +3,7 @@ use crate::{
     CommittedGroupParams, FoldParams, FoldSchedule, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalFoldParams, TerminalResponseShape,
 };
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 
 fn committed(ring_dimension: usize) -> CommittedGroupParams {
     CommittedGroupParams::params_only(
@@ -13,7 +13,7 @@ fn committed(ring_dimension: usize) -> CommittedGroupParams {
         1,
         1,
         1,
-        FoldChallengeFamily::pm1_only(ring_dimension.max(31)),
+        FoldChallengeDistribution::pm1_only(ring_dimension.max(31)),
     )
     .with_decomp(8, 32, 2, 2, 2)
     .expect("ring-dimension test params")
@@ -23,6 +23,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
     let terminal_witness = TerminalFoldParams::from_expanded_group(terminal);
     let ring_dimension = terminal_witness.d_a();
     FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: FoldParams {
             params: root.clone(),
             input_witness_len: root.d_a(),
@@ -30,7 +31,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
         },
         recursive_folds: Vec::new(),
         terminal: TerminalFoldParams {
-            fold_challenge_config: FoldChallengeFamily::pm1_only(ring_dimension.max(31)),
+            fold_challenge_config: FoldChallengeDistribution::pm1_only(ring_dimension.max(31)),
             response_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension,
