@@ -239,17 +239,32 @@ impl BinaryRootRelation {
         response_digits
             .try_reserve_exact(response_len)
             .map_err(|_| invalid("binary response digit allocation failed"))?;
-        for element in response {
-            for digit in 0..4 {
-                for &coefficient in element {
+        response_digits.resize(response_len, 0);
+        let split = |(digits, element): (&mut [i8], &[i128; D])| -> Result<(), AkitaError> {
+            for (digit, digits) in digits.chunks_exact_mut(D).enumerate() {
+                for (slot, &coefficient) in digits.iter_mut().zip(element) {
                     let word = coefficient
                         .checked_sub(i128::from(BINARY_RESPONSE_INTERVAL.0))
                         .filter(|&x| (0..4096).contains(&x))
                         .ok_or_else(|| invalid("binary response digit decomposition failed"))?;
-                    response_digits.push(((word >> (3 * digit)) & 7) as i8 - 4);
+                    *slot = ((word >> (3 * digit)) & 7) as i8 - 4;
                 }
             }
+            Ok(())
+        };
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            response_digits
+                .par_chunks_exact_mut(4 * D)
+                .zip(response.par_iter())
+                .try_for_each(split)?;
         }
+        #[cfg(not(feature = "parallel"))]
+        response_digits
+            .chunks_exact_mut(4 * D)
+            .zip(response)
+            .try_for_each(split)?;
         Ok(response_digits)
     }
 
