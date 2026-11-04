@@ -20,7 +20,9 @@ use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
 mod structured;
 pub use binary_commitment::binary_commitment_group;
-pub(crate) use structured::{weigh_units, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH};
+pub(crate) use structured::{
+    weigh_units, RootEq, RootWeightFamily, SegmentLanes, TranslatedLanes, WEIGH_BATCH,
+};
 
 /// Source interpretation of one group. Feature enablement never selects it.
 #[derive(Clone, Debug)]

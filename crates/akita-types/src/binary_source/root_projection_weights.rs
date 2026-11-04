@@ -266,10 +266,11 @@ impl<E: Field> ImageWeights<E> {
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
-        let low = eq.low().get(..648).ok_or(AkitaError::InvalidProof)?;
+        // `low[..648]` is the equality table of the first ten coordinates.
+        let low_point = eq.point().get(..10).ok_or(AkitaError::InvalidProof)?;
         let mut sum = E::zero();
         for (row_index, rho) in self.rho.iter().enumerate() {
-            let adjoint_low = adjoint.apply(rho, low)?;
+            let adjoint_low = adjoint.apply_equality(rho, low_point)?;
             for column in 0..self.columns {
                 let (element, support) = self.row_column(row_index, column)?;
                 let mut dot = E::zero();

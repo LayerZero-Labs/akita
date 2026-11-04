@@ -308,6 +308,38 @@ fn malformed_shapes_and_unrepresentable_degrees_return_errors() {
     assert!(SetupAdjointWeight::new(&adjoint, &row[..3], &[], &row[..2], 1).is_err());
 }
 
+fn equality_adjoint<F: Field + Debug, const D: usize, M: TrinomialModulus>(seed: u64) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
+    let bits = D.next_power_of_two().trailing_zeros() as usize;
+    for _ in 0..3 {
+        let rho: Vec<F> = (0..D).map(|_| random(&mut rng)).collect();
+        let point: Vec<F> = (0..bits).map(|_| random(&mut rng)).collect();
+        let v: Vec<F> = (0..D).map(|k| equality(&point, k)).collect();
+        assert_eq!(
+            adjoint.apply_equality(&rho, &point).unwrap(),
+            adjoint.apply(&rho, &v).unwrap()
+        );
+    }
+    let rho = vec![F::one(); D];
+    assert!(adjoint
+        .apply_equality(&rho, &vec![F::one(); bits + 1])
+        .is_err());
+    assert!(adjoint
+        .apply_equality(&rho[1..], &vec![F::one(); bits])
+        .is_err());
+}
+
+#[test]
+fn equality_adjoint_matches_the_convolution_adjoint() {
+    equality_adjoint::<Prime128Offset275, DEGREE, MinusTrinomial>(0xe648);
+    equality_adjoint::<Prime31Offset19, DEGREE, PlusTrinomial>(0xe649);
+    equality_adjoint::<Prime128Offset275, 162, PlusTrinomial>(0xe162);
+    equality_adjoint::<Prime31Offset19, 2, MinusTrinomial>(0xe002);
+    equality_adjoint::<Prime31Offset19, 6, PlusTrinomial>(0xe006);
+    equality_adjoint::<Prime128Offset275, 8, MinusTrinomial>(0xe008);
+}
+
 fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, columns: usize) {
     let mut rng = StdRng::seed_from_u64(seed);
     let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();

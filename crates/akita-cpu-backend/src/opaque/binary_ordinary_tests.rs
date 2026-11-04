@@ -583,7 +583,10 @@ fn legacy_partial_block_preserves_base_relation_and_repacking_boundary() {
             &batches,
         )
         .unwrap();
-    assert_eq!(previous.terms(), current.terms());
+    assert_eq!(
+        previous.materialize().unwrap(),
+        current.materialize().unwrap()
+    );
     assert_eq!(previous.claim(), current.claim());
     let natural = input
         .backend
@@ -645,16 +648,17 @@ fn one_digit_fixture_matches_frozen_pre_extension_relation_bytes() {
             &batches,
         )
         .unwrap();
-    assert_eq!(previous.terms(), current.terms());
+    // The current weights are structured, so compare the relation they
+    // materialize rather than their explicit terms.
     let mut golden = Vec::new();
     let mut actual = Vec::new();
     previous.claim().serialize_compressed(&mut golden).unwrap();
     current.claim().serialize_compressed(&mut actual).unwrap();
-    for ((old_address, old), (new_address, new)) in previous.terms().iter().zip(current.terms()) {
-        golden.extend_from_slice(&(*old_address as u64).to_le_bytes());
-        actual.extend_from_slice(&(*new_address as u64).to_le_bytes());
-        old.serialize_compressed(&mut golden).unwrap();
-        new.serialize_compressed(&mut actual).unwrap();
+    for weight in previous.materialize().unwrap() {
+        weight.serialize_compressed(&mut golden).unwrap();
+    }
+    for weight in current.materialize().unwrap() {
+        weight.serialize_compressed(&mut actual).unwrap();
     }
     assert_eq!(actual, golden);
 }
