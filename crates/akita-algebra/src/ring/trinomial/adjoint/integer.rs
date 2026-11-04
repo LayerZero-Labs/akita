@@ -15,7 +15,7 @@ use jolt_field::{CanonicalEncoding, Field, One, Prime128OffsetA7F7, Ring, Zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{internal, TrinomialAdjoint};
+use super::{internal, trace, TrinomialAdjoint};
 use crate::fft::{primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 use crate::ring::trinomial::TrinomialModulus;
 
@@ -94,6 +94,11 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
             return Err(AkitaError::InvalidInput(
                 "integer adjoint coefficient exceeds its bound".into(),
             ));
+        }
+        // In the cyclotomic 648 trinomial the sums are ring products, which
+        // the limb domains compute faster than the auxiliary transforms.
+        if M::MIDDLE_COEFFICIENT < 0 && trace::limb_bound(rows.len(), bound, D).is_some() {
+            return trace::apply_rows(rho, rows, bound, canonical);
         }
         let domain = SmoothDomain::new(primitive_nth_root::<Auxiliary>(length), length);
         let mut scratch = Scratch::new(&domain);

@@ -310,10 +310,19 @@ fn malformed_shapes_and_unrepresentable_degrees_return_errors() {
 
 fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, columns: usize) {
     let mut rng = StdRng::seed_from_u64(seed);
-    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
     let rho = (0..3)
         .map(|_| core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)))
         .collect::<Vec<[Prime128Offset275; D]>>();
+    integer_rows_with::<M, D>(&mut rng, &rho, bound, columns);
+}
+
+fn integer_rows_with<M: TrinomialModulus, const D: usize>(
+    rng: &mut StdRng,
+    rho: &[[Prime128Offset275; D]],
+    bound: i128,
+    columns: usize,
+) {
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
     let mut rows = (0..3)
         .map(|_| {
             (0..columns)
@@ -331,7 +340,7 @@ fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, col
     let canonical: fn(&Prime128Offset275) -> Option<u128> =
         |x| jolt_field::CanonicalEncoding::to_u128_checked(x);
     let fast = adjoint
-        .apply_integer_rows(&rho, &rows, bound.unsigned_abs(), canonical)
+        .apply_integer_rows(rho, &rows, bound.unsigned_abs(), canonical)
         .unwrap();
     assert_eq!(fast.len(), columns);
     for (j, h) in fast.iter().enumerate() {
@@ -347,6 +356,28 @@ fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, col
         }
         assert_eq!(h.as_slice(), expected.as_slice(), "column {j}");
     }
+}
+
+/// The 648 trinomial takes the trace-form limb path: functionals at the top
+/// of the field fill every limb, and the extreme rows reach the CRT bound.
+#[test]
+fn trace_limb_rows_match_field_adjoint_for_extreme_functionals() {
+    let mut rng = StdRng::seed_from_u64(15);
+    let top = -Prime128Offset275::one();
+    let rho = vec![
+        [top; DEGREE],
+        core::array::from_fn(|t| {
+            if t % 2 == 0 {
+                top
+            } else {
+                Prime128Offset275::one()
+            }
+        }),
+        core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)),
+    ];
+    integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 7_126_704, 9);
+    // Above the limb domains' operand range the auxiliary transforms remain.
+    integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 1 << 40, 2);
 }
 
 #[test]
