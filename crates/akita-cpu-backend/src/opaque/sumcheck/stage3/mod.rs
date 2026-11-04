@@ -10,6 +10,9 @@ mod factored_tests;
 pub(super) mod product_table;
 #[cfg(test)]
 mod session_tests;
+pub(crate) mod structured;
+#[cfg(all(test, feature = "labinius-trinomial"))]
+mod structured_tests;
 pub(super) mod utils;
 
 use crate::opaque::OperationBinding;
@@ -189,24 +192,38 @@ where
                 "factored setup-product table length differs from its factors".into(),
             ));
         }
-        let proof = request.session.validate_owner(self.owner())?;
-        let context = crate::opaque::ProofContext::new(
-            self.owner_id(),
-            self.owner().setup_digest(),
-            proof.scope_id(),
-            request.level,
-        );
-        let binding = self.binding(request.session, &context)?;
-        let lease = binding.scope_lease().clone();
+        let (binding, lease) = self.stage3_binding(request.session, request.level)?;
         let setup = SetupProductSumcheck::new(
             SetupProductSource::Owned(request.coefficients),
             request.index_factor.len(),
             request.index_factor,
             request.coefficient_factor,
         )?;
-        let claim = setup.input_claim();
         Ok((
-            claim,
+            setup.input_claim(),
+            CpuStage3Session {
+                binding,
+                lease,
+                setup: Stage3Setup::Bound(setup),
+            },
+        ))
+    }
+
+    /// Extension seam: run the factored one-coefficient product with the
+    /// typed prefix weight kept in its live blocks.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    #[cfg(feature = "labinius-trinomial")]
+    fn begin_typed_stage3(
+        &self,
+        request: akita_prover::backend::TypedStage3Request<'_, F, E, Self::ProofSessionHandle>,
+    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        let (binding, lease) = self.stage3_binding(request.session, request.level)?;
+        let setup = SetupProductSumcheck::structured(
+            SetupProductSource::Owned(request.coefficients),
+            Box::new(request.weights),
+        )?;
+        Ok((
+            setup.input_claim(),
             CpuStage3Session {
                 binding,
                 lease,
@@ -253,6 +270,30 @@ where
             return Err(AkitaError::InvalidInput("unbound setup batch".into()));
         };
         setup.folded_table_value()
+    }
+}
+
+impl<F, E> CpuBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + 'static,
+    E: Field + Ring + MulBaseUnreduced<F> + FpExtEncoding<F> + AkitaSerialize + 'static,
+{
+    /// Operation binding of a factored Stage 3 session at `level`.
+    fn stage3_binding(
+        &self,
+        session: &<Self as akita_prover::backend::ProofScopeConsumer>::ProofSessionHandle,
+        level: u32,
+    ) -> Result<(OperationBinding, crate::opaque::ScopeLease), AkitaError> {
+        let proof = session.validate_owner(self.owner())?;
+        let context = crate::opaque::ProofContext::new(
+            self.owner_id(),
+            self.owner().setup_digest(),
+            proof.scope_id(),
+            level,
+        );
+        let binding = self.binding(session, &context)?;
+        let lease = binding.scope_lease().clone();
+        Ok((binding, lease))
     }
 }
 

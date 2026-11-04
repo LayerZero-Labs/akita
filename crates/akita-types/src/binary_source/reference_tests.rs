@@ -545,6 +545,44 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
         let inner = |s: &[F], t: &[F]| s.iter().zip(t).fold(F::zero(), |sum, (&s, &t)| sum + s * t);
         let offloaded = inner(&setup, &weights) - inner(&a_setup, &a_weights);
         assert_eq!(offloaded, direct, "{shape:?}");
+        // The block form expands to the dense weight, and the setup is zero
+        // outside its live blocks.
+        let blocks = prefix
+            .prover_weight_blocks(&a, &root_point, alpha, batch_refs, prefix_len)
+            .unwrap();
+        assert_eq!(blocks.domain_len(), prefix_len, "{shape:?}");
+        let mut expanded = vec![F::zero(); prefix_len];
+        let mut live_setup = vec![F::zero(); prefix_len];
+        for (live, &block) in blocks.blocks().iter().enumerate() {
+            let cells = block * 64..(block + 1) * 64;
+            for (scale, row) in blocks.block_terms(live).unwrap() {
+                for (value, &weight) in expanded[cells.clone()].iter_mut().zip(row) {
+                    *value += scale * weight;
+                }
+            }
+            live_setup[cells.clone()].copy_from_slice(&setup[cells]);
+        }
+        assert_eq!(expanded, weights, "{shape:?}");
+        assert_eq!(live_setup, setup, "{shape:?}");
+        // Binding a bit folds the blocks as it folds the dense table.
+        let challenge = field(&mut rng);
+        let mut bound = blocks.clone();
+        bound.bind(challenge).unwrap();
+        for (live, &block) in bound.blocks().iter().enumerate() {
+            let mut folded = [F::zero(); 32];
+            for (scale, row) in bound.block_terms(live).unwrap() {
+                for (value, &weight) in folded.iter_mut().zip(row) {
+                    *value += scale * weight;
+                }
+            }
+            for (offset, &value) in folded.iter().enumerate() {
+                let (low, high) = (
+                    weights[block * 64 + 2 * offset],
+                    weights[block * 64 + 2 * offset + 1],
+                );
+                assert_eq!(value, low + challenge * (high - low), "{shape:?}");
+            }
+        }
         let point = (0..prefix_len.trailing_zeros())
             .map(|_| field(&mut rng))
             .collect::<Vec<_>>();

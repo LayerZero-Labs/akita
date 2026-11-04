@@ -1,3 +1,4 @@
+use super::structured::{StructuredSetupProduct, StructuredSetupWeights};
 use super::utils::{accumulate_left_round, fold_dense_left_round, fold_factor_in_place};
 #[cfg(test)]
 use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, product_claim};
@@ -20,7 +21,7 @@ pub(in crate::opaque::sumcheck) enum SetupProductSource<F: Field> {
 }
 
 impl<F: Field> SetupProductSource<F> {
-    fn coefficients(&self) -> &[F] {
+    pub(super) fn coefficients(&self) -> &[F] {
         match self {
             Self::Expanded(setup) => setup.shared_matrix().as_field_slice(),
             Self::Owned(table) => table,
@@ -76,6 +77,9 @@ pub struct SetupProductSumcheck<F: Field, E: Field> {
     /// The index table of a one-coefficient view before its first index
     /// fold: every entry is read from the setup source, which is not copied.
     index_from_source: bool,
+    /// Block rounds of a one-coefficient view whose weights stay structured;
+    /// they hand over the dense index state once every block is one cell.
+    structured: Option<Box<StructuredSetupProduct<E>>>,
     index_factor: Vec<E>,
     input_claim: E,
     claim: E,
@@ -138,6 +142,40 @@ where
         )
     }
 
+    /// One-coefficient product of `source` and block-structured weights. The
+    /// source must be zero outside the live blocks.
+    #[cfg_attr(not(feature = "labinius-trinomial"), allow(dead_code))]
+    pub(in crate::opaque::sumcheck) fn structured(
+        source: SetupProductSource<F>,
+        weights: Box<dyn StructuredSetupWeights<E>>,
+    ) -> Result<Self, AkitaError> {
+        let structured = Box::new(StructuredSetupProduct::new(weights)?);
+        let row_capacity = structured.len();
+        if source.coefficients().len() != row_capacity {
+            return Err(AkitaError::InvalidInput(
+                "structured setup weights differ from the source length".into(),
+            ));
+        }
+        let input_claim = structured.input_claim(source.coefficients())?;
+        Ok(Self {
+            setup: Some(source),
+            row_capacity,
+            coefficient_len: 1,
+            total_rounds: row_capacity.trailing_zeros() as usize,
+            coefficient_challenges: Vec::new(),
+            terms: Vec::new(),
+            weights: Vec::new(),
+            index_table: Vec::new(),
+            index_from_source: false,
+            structured: Some(structured),
+            index_factor: Vec::new(),
+            input_claim,
+            claim: input_claim,
+            round: 0,
+            pending: None,
+        })
+    }
+
     pub(in crate::opaque::sumcheck) fn from_prepared(
         setup: SetupProductSource<F>,
         row_capacity: usize,
@@ -173,6 +211,7 @@ where
             weights,
             index_table: Vec::new(),
             index_from_source: false,
+            structured: None,
             index_factor: Vec::new(),
             input_claim,
             claim: input_claim,
@@ -204,7 +243,9 @@ where
     }
 
     fn compute_round_univariate(&self) -> Result<UnivariatePoly<E>, AkitaError> {
-        let (constant, linear, quadratic) = if self.index_from_source {
+        let (constant, linear, quadratic) = if let Some(structured) = &self.structured {
+            structured.round(self.setup.as_ref())?
+        } else if self.index_from_source {
             let source = self.source()?;
             let one = [E::one()];
             accumulate_left_round(
@@ -231,7 +272,17 @@ where
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
-        if round < self.coefficient_len.trailing_zeros() as usize {
+        if let Some(structured) = &mut self.structured {
+            let scattered = structured.bind(self.setup.as_ref(), challenge)?;
+            // The first bind leaves the compact block values, which no
+            // later round reads the source for.
+            self.setup = None;
+            if let Some(state) = scattered {
+                self.index_table = state.table;
+                self.index_factor = state.factor;
+                self.structured = None;
+            }
+        } else if round < self.coefficient_len.trailing_zeros() as usize {
             self.coefficient_challenges.push(challenge);
             for term in &mut self.terms {
                 term.table =

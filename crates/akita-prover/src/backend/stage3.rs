@@ -36,6 +36,20 @@ pub struct FactoredStage3Request<'a, F: Field, E: Field, ProofSession> {
     pub coefficient_factor: Vec<E>,
 }
 
+/// Extension seam: a one-coefficient setup table whose Stage 3 weight stays in
+/// the typed prefix's live blocks.
+/// <https://github.com/LayerZero-Labs/akita/issues/285>.
+///
+/// The table must be zero outside the live blocks. Rounds, challenges and the
+/// final claim equal those of [`FactoredStage3Request`] on the expanded weight.
+#[cfg(feature = "labinius-trinomial")]
+pub struct TypedStage3Request<'a, F: Field, E: Field, ProofSession> {
+    pub session: &'a ProofSession,
+    pub level: u32,
+    pub coefficients: Arc<[F]>,
+    pub weights: akita_types::binary_source::TypedPrefixWeights<E>,
+}
+
 /// Arithmetic for Stage 3. The prover owns prefix selection and transcript order.
 pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
     type Stage3SessionHandle: Send;
@@ -81,6 +95,18 @@ pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
         Err(AkitaError::UnsupportedSchedule(
             "backend does not support alternate factored setup products".into(),
+        ))
+    }
+    /// Extension seam: start the ordinary Stage 3 session on a typed setup
+    /// prefix with block-structured weights. Backends opt in explicitly.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    #[cfg(feature = "labinius-trinomial")]
+    fn begin_typed_stage3(
+        &self,
+        _request: TypedStage3Request<'_, F, E, Self::ProofSessionHandle>,
+    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        Err(AkitaError::UnsupportedSchedule(
+            "backend does not support typed setup products".into(),
         ))
     }
     fn stage3_round_polynomial(

@@ -12,8 +12,9 @@ use akita_params::{
 use jolt_field::{CanonicalEncoding, Prime128Offset275, Ring};
 
 use super::{
-    BinaryAOperand, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic,
-    BinarySourceDescriptor, BinaryTerminalClaim, PrimePlaneClaim, PrimePlaneManifest,
+    BinaryAOperand, BinaryAProduct, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic,
+    BinarySourceDescriptor, BinaryTerminalClaim, BinaryTypedPrefix, PrimePlaneClaim,
+    PrimePlaneManifest, TypedPrefixWeights,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -29,6 +30,16 @@ pub struct RootWeightFixture {
     /// Live witness prefix: the natural end of the repacked digits plus any
     /// extra zero rings.
     pub logical_len: usize,
+    /// Stage 3 on the typed setup prefix at a fixed root point.
+    pub stage3: Stage3Fixture,
+}
+
+/// The typed setup table, its dense Stage 3 weight and the same weight in
+/// live blocks.
+pub struct Stage3Fixture {
+    pub setup: Vec<RootFixtureField>,
+    pub weights: Vec<RootFixtureField>,
+    pub blocks: TypedPrefixWeights<RootFixtureField>,
 }
 
 /// Root shape parameters, as in the structured-weight differential tests.
@@ -122,8 +133,15 @@ fn ordinary_profile() -> GroupCommitPhaseParams {
     profile
 }
 
-/// The root public inputs, the live witness length and the B/D payload length.
-fn public(shape: Shape, stream: &mut Stream) -> (BinaryRootPublic, usize, usize) {
+/// Setup seed of every fixture.
+const SETUP_SEED: [u8; 32] = [41; 32];
+
+/// The root public inputs, its manifest, the live witness length and the B/D
+/// payload length.
+fn public(
+    shape: Shape,
+    stream: &mut Stream,
+) -> (BinaryRootPublic, BinaryCommittedGroupManifest, usize, usize) {
     let index = BinaryIndexMap::new(
         shape.word_width,
         shape.carriers * (128 / shape.word_width),
@@ -169,7 +187,7 @@ fn public(shape: Shape, stream: &mut Stream) -> (BinaryRootPublic, usize, usize)
         max_num_vars: 0,
         max_num_batched_polys: 0,
         num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-        setup_seed: [41u8; 32].into(),
+        setup_seed: SETUP_SEED.into(),
     };
     let ordinary = shape.mixed.then(ordinary_profile);
     let build = |logical_len| {
@@ -190,6 +208,7 @@ fn public(shape: Shape, stream: &mut Stream) -> (BinaryRootPublic, usize, usize)
     let payload_len = manifest.b_rows() * manifest.b_ring_dimension();
     (
         build(logical_len).expect("fixture root"),
+        manifest,
         logical_len,
         payload_len,
     )
@@ -197,7 +216,7 @@ fn public(shape: Shape, stream: &mut Stream) -> (BinaryRootPublic, usize, usize)
 
 fn compile(shape: Shape, seed: u64) -> RootWeightFixture {
     let mut stream = Stream(seed);
-    let (public, logical_len, payload_len) = public(shape, &mut stream);
+    let (public, manifest, logical_len, payload_len) = public(shape, &mut stream);
     let descriptor = public.plan().descriptor().clone();
     let index = descriptor.index_map();
     let owners = descriptor.polynomials().len();
@@ -276,11 +295,46 @@ fn compile(shape: Shape, seed: u64) -> RootWeightFixture {
             Some(operand),
         )
         .expect("fixture relation");
+    let stage3 = stage3(&public, &manifest, &rho, &mut stream);
     RootWeightFixture {
         name: format!("{shape:?}"),
         weights,
         negative_binary_weights,
         logical_len,
+        stage3,
+    }
+}
+
+fn stage3(
+    public: &BinaryRootPublic,
+    manifest: &BinaryCommittedGroupManifest,
+    rho: &[[RootFixtureField; 648]],
+    stream: &mut Stream,
+) -> Stage3Fixture {
+    let plan = public.plan();
+    let typed = BinaryTypedPrefix::from_plan(manifest, plan).expect("fixture typed prefix");
+    let prefix_len = typed.domain_len;
+    let root_point = (0..plan.repacking().domain_len().trailing_zeros())
+        .map(|_| stream.field())
+        .collect::<Vec<_>>();
+    let alpha = stream.field();
+    let batches = [0, 1].map(|_| {
+        (0..manifest.b_rows())
+            .map(|_| stream.field())
+            .collect::<Vec<_>>()
+    });
+    let batches = [batches[0].as_slice(), batches[1].as_slice()];
+    let a = BinaryAProduct::new(plan, rho, &root_point, prefix_len).expect("fixture A product");
+    Stage3Fixture {
+        setup: typed
+            .setup_coefficients(&SETUP_SEED, manifest, prefix_len)
+            .expect("fixture typed setup"),
+        weights: typed
+            .prover_weights(&a, &root_point, alpha, batches, prefix_len)
+            .expect("fixture dense weights"),
+        blocks: typed
+            .prover_weight_blocks(&a, &root_point, alpha, batches, prefix_len)
+            .expect("fixture weight blocks"),
     }
 }
 

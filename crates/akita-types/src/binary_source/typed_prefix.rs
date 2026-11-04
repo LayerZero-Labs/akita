@@ -130,6 +130,25 @@ impl Region {
         )
     }
 
+    /// Prefix address of local index `local`, if the region holds it.
+    fn deposit(&self, local: usize) -> Option<usize> {
+        let Some(free) = &self.free else {
+            return Some(local);
+        };
+        if local.checked_shr(free.len() as u32).unwrap_or(0) != 0 {
+            return None;
+        }
+        let fixed = self
+            .fixed
+            .iter()
+            .fold(0, |cell, &(bit, value)| cell | (usize::from(value) << bit));
+        Some(
+            free.iter()
+                .enumerate()
+                .fold(fixed, |cell, (i, &bit)| cell | (((local >> i) & 1) << bit)),
+        )
+    }
+
     /// Equality factor of the fixed and zero bits at `point`, and the point's
     /// coordinates at the free bits.
     fn view<E: Field>(&self, point: &[E]) -> Result<(E, Vec<E>), AkitaError> {
@@ -176,6 +195,8 @@ impl DigitPiece {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryTypedPrefix {
     a: BinaryAPrefixLen,
+    /// Live A ranks; the rank axis pads to a power of two.
+    a_rank: usize,
     rows: usize,
     segments: Vec<DigitSegment>,
     regions: Vec<Region>,
@@ -317,6 +338,7 @@ impl BinaryTypedPrefix {
             .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
             a,
+            a_rank: manifest.a_rank(),
             rows,
             segments,
             regions,
@@ -796,6 +818,10 @@ fn paired_offset_eq_sum<E: Field>(
     }
     Ok(states[4])
 }
+
+#[path = "typed_prefix_weights.rs"]
+mod weights;
+pub use weights::TypedPrefixWeights;
 
 #[cfg(test)]
 #[path = "typed_prefix_tests.rs"]
