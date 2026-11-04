@@ -126,11 +126,28 @@ package = next(package for package in json.load(sys.stdin)["packages"]
                if package["name"] == "akita-labinius-pcs")
 print(",".join(sorted(set(package["features"]) - {"labinius-catalog-gen"})))
 ')"
-  for features in transcript-blake2b labinius,transcript-blake2b "$runtime_features"; do
+  for features in transcript-keccak labinius,transcript-keccak "$runtime_features"; do
     runtime_tree="$(cargo tree -p "$pkg" --edges normal --no-default-features --features "$features")"
     if grep -qE '(^|[[:space:]])akita-planner([[:space:]]|$)' <<<"$runtime_tree"; then
       echo "planner dependency found in runtime LaBinius PCS ($features)" >&2
       exit 1
     fi
   done
+fi
+
+if [ "${pkg}" = "akita-verifier" ]; then
+  # Spongefish's `yolocrypto` feature exposes raw sponge state for prover-side
+  # nonce search. Only prover features may enable it, so the verifier's
+  # production graph must not, under default or all features. Dev edges are
+  # excluded because verifier tests use the prover-side transcript.
+  for feature_args in "" "--all-features"; do
+    # shellcheck disable=SC2086
+    spongefish_features="$(cargo tree -p "${pkg}" --edges normal,build,features --invert spongefish ${feature_args})"
+    if grep -q 'spongefish feature "yolocrypto"' <<<"${spongefish_features}"; then
+      echo "akita-verifier enables spongefish/yolocrypto (${feature_args:-default features})" >&2
+      grep -B2 -A8 'yolocrypto' <<<"${spongefish_features}" >&2
+      exit 1
+    fi
+  done
+  echo "akita-verifier spongefish feature check passed"
 fi

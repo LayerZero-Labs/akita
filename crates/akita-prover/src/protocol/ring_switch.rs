@@ -1,6 +1,7 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 use akita_error::AkitaError;
 use akita_params::CommittedGroupParams;
+use akita_transcript::ChallengeCodec;
 use akita_types::FpExtEncoding;
 use akita_types::GrindingReplay;
 use akita_types::{
@@ -63,7 +64,7 @@ pub(crate) fn ring_switch_finalize<'a, F, E, B>(
 ) -> Result<RingSwitchFinalization<'a, E, B::RelationHandle>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
     B: crate::backend::OpaqueRelationWitnessKernel<F, E>,
 {
     use crate::backend::RecursiveWitnessHandle;
@@ -139,12 +140,12 @@ where
         ));
     }
     let alpha = grinding
-        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::RingSwitchAlpha { level })?;
-    let tau0 = grinding.grinded_ext_challenges::<F, E>(
+        .grinded_ext_challenge::<E>(akita_params::GrindingSite::RingSwitchAlpha { level })?;
+    let tau0 = grinding.grinded_ext_challenges::<E>(
         akita_params::GrindingSite::Tau0Point { level },
         column_bits + coefficient_bits,
     )?;
-    let tau1 = grinding.grinded_ext_challenges::<F, E>(
+    let tau1 = grinding.grinded_ext_challenges::<E>(
         akita_params::GrindingSite::Tau1Point { level },
         lp.relation_row_index_num_vars(opening_batch)?,
     )?;

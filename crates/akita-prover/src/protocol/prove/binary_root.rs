@@ -5,8 +5,8 @@ use akita_params::{
     SetupContributionMode,
 };
 use akita_types::binary_source::{
-    binary_projection_values, binary_root_challenges, binary_root_statement,
-    BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
+    binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
+    binary_root_statement, BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
@@ -19,6 +19,7 @@ pub(super) fn prove_root<Cfg, B>(
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
+    _digests: &[akita_transcript::CommitmentDigest],
     layout: &OpeningClaimsLayout,
     handles: &[B::CommitmentHandle],
     schedule: &FoldSchedule,
@@ -179,6 +180,7 @@ where
     let mut accepted = None;
     for nonce in 0..akita_params::FOLD_RESPONSE_ATTEMPTS {
         let mut preview = grinding.preview_fold_response(site, nonce)?;
+        let work = preview.take_work()?;
         let challenges =
             binary_root_challenges(&mut PreviewFoldDraw::new(&mut preview), columns, owners)?;
         if let Some(witness) = backend.build_root_group(
@@ -189,13 +191,13 @@ where
             logical_len,
             next.params.d_a(),
         )? {
-            accepted = Some((nonce, challenges, witness));
+            accepted = Some((work, challenges, witness));
             break;
         }
     }
-    let (nonce, preview_challenges, witness) = accepted
+    let (work, preview_challenges, witness) = accepted
         .ok_or_else(|| AkitaError::InvalidInput("binary response rejection exhausted".into()))?;
-    grinding.commit_fold_response(site, nonce)?;
+    grinding.commit_fold_response(site, work)?;
     let challenges = binary_root_challenges(
         &mut ProverFoldDraw::new(grinding.state_mut(), 0, 0),
         columns,
@@ -239,9 +241,8 @@ where
         bounds,
         &projections.project(residual, bounds)?,
     )?;
-    let alpha = grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(
-        GrindingSite::RingSwitchAlpha { level: 0 },
-    )?;
+    let alpha = grinding
+        .grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let domain = FlatBooleanDomain::new(
         logical_len,
         public.plan().repacking().domain_len().trailing_zeros() as usize,
@@ -249,14 +250,11 @@ where
     if domain.domain_len() != public.plan().repacking().domain_len() {
         return Err(AkitaError::InvalidProof);
     }
-    let tau0 = grinding.grinded_ext_challenges::<Cfg::Field, Cfg::ExtField>(
+    let tau0 = grinding.grinded_ext_challenges::<Cfg::ExtField>(
         GrindingSite::Tau0Point { level: 0 },
         domain.num_vars(),
     )?;
-    let batches = grinding.grinded_ext_challenges::<Cfg::Field, Cfg::ExtField>(
-        GrindingSite::Tau1Point { level: 0 },
-        public.batch_count(),
-    )?;
+    let batches = binary_root_batch_challenges::<Cfg::ExtField, _>(grinding, public.batch_count())?;
     let payload = group
         .commitment()
         .rows()
@@ -317,9 +315,7 @@ where
         backend, session, range, domain, tau0, None, grinding, 0,
     )?;
     let gamma =
-        grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(GrindingSite::Stage2Batch {
-            level: 0,
-        })?;
+        grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
     let mut weights = vec![Cfg::ExtField::zero(); domain.domain_len()];
     for &(address, weight) in relation.terms() {
         *weights.get_mut(address).ok_or(AkitaError::InvalidProof)? += weight;
@@ -376,12 +372,17 @@ where
             index_factor,
             coefficient_factor,
         })?;
+    akita_types::stage3_public_slot(
+        grinding,
+        0,
+        &akita_types::binary_source::binary_a_prefix_identity(manifest, &prefix)?,
+    )?;
+    akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
     let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         session,
         claim,
         prefix.n_prefix()?.trailing_zeros() as usize,
-        &akita_types::binary_source::binary_a_prefix_identity(manifest, &prefix)?,
         grinding,
         0,
     )?;

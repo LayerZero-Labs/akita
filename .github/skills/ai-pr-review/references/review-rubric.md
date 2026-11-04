@@ -55,6 +55,10 @@ Extract the intended behavior from live specifications, accepted issues, PR desc
 
 Trace effects across public APIs, call sites, serializers, storage, services, feature flags, build targets, and downstream consumers as applicable. Check wiring as well as implementation: an unused component or a flag that never reaches its consumer can make a seemingly complete feature ineffective. Review tests for assertions that would detect the defect, not merely coverage or similarity to implementation.
 
+For protocol, algorithm or mathematical changes, identify the statement being established, its assumptions and the invariants it requires. Derive the relevant relation far enough to verify that the implementation enforces it. Trace the same values and bounds through the prover/producer, verifier/consumer, serialization, transcript binding and parameter/security accounting where applicable. Check that validation and security claims use the bounds actually enforced by the consumer. Distinguish a new argument from an existing invariant the change must preserve; do not invent theoretical novelty or assume a derivation proves its implementation correct.
+
+Before citing numerical, test or performance results, verify the reviewed commit and the applicable configuration, hardware, workload/dataset and comparison baseline. Label older or nonmatching reports as context only, and distinguish a measured result from a static inference about likely behavior or performance. Missing, stale or unavailable CI is not a pass. In automated mode, use only supplied evidence and state relevant gaps; do not claim access to CI, benchmarks or external reports that the available tools cannot inspect.
+
 Investigate relevant risks rather than mechanically applying every category:
 
 - Empty, invalid, maximum-sized, and adversarial input; numeric overflow; unchecked indexing; unbounded allocations; broken invariants.
@@ -64,6 +68,8 @@ Investigate relevant risks rather than mechanically applying every category:
 - Complexity, hot-path allocations and I/O, contention, latency, memory, and scale. Substantiate performance claims with a workload or measurement.
 - Feature combinations, supported platforms, packaging, deployment/configuration wiring, observability, and recovery where affected.
 - Stale documentation, missing release/migration notes, fixtures, schemas, generated artifacts, or required integration tests.
+
+Before judging a risk, establish the runtime context of the changed code from the repository: how it is invoked, what runs concurrently with it, which boundaries catch failures, and which state outlives a call. Then follow each risk to its consequence: what the caller, later operations, other users and persisted state observe, for how long, and how the system returns to a correct state. "It fails", "it returns an error" or "it is handled" describes a path; an assessment states the consequence and the recovery.
 
 Use the base revision when needed to distinguish a new defect from existing behavior. If a change exposes an old defect through a newly reachable path, explain that causal link.
 

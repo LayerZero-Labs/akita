@@ -43,7 +43,7 @@ where
         &source.sources.expanded(source.manifest.descriptor())?,
         &source.images,
         &request.challenges,
-        akita_challenges::FoldChallengeFamily::BinaryRoot,
+        akita_challenges::FoldChallengeDistribution::BinaryRoot,
     )?;
     let residuals = relation
         .rows

@@ -54,9 +54,9 @@ pub use proof::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, build_compression_relation_weights,
     build_reduced_compression_relation_weights, build_terminal_response_from_payload,
     canonical_extension_opening_reduction_shape, coefficient_packing_relation_events,
-    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, draw_group_fold_challenges,
-    emit_witness_e_planes, emit_witness_t_planes, generate_relation_rhs,
-    prepare_coefficient_packing_batch_semantics, prepare_opening_point,
+    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, derive_public_matrix_range,
+    draw_group_fold_challenges, emit_witness_e_planes, emit_witness_t_planes,
+    generate_relation_rhs, prepare_coefficient_packing_batch_semantics, prepare_opening_point,
     relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
     relation_rhs_row_count, ring_subfield_packed_extension_opening_point, row_coefficients,
@@ -116,9 +116,10 @@ pub use trace_weight::{
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
-    GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProofAcceptance,
-    ProverGrinding, VerifierGrinding,
+    GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance, VerifierGrinding,
 };
+#[cfg(feature = "prover")]
+pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding};
 
 #[cfg(test)]
 mod schedule_tests;
@@ -135,7 +136,12 @@ mod sis_compression_tests;
 #[cfg(test)]
 mod params_tests;
 
+pub use setup_contribution::{
+    materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
+    PreparedCoefficientFunctional, ReducedRoleCoefficientState, SetupIndexWeightMle,
+};
 #[cfg(feature = "labinius-trinomial")]
 pub mod native_root_relation;
 #[cfg(feature = "labinius-trinomial")]
 pub mod root_repacking;
+pub mod setup_claims;

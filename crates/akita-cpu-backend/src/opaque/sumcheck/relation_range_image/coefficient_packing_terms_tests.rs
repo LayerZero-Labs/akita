@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_algebra::poly::multilinear_eval;
-use akita_challenges::{Challenges, FoldChallengeFamily, SparseChallenge};
+use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use akita_params::{
     r_decomp_levels, BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
     OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry,
@@ -39,7 +39,7 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
     let s = 64;
     let d_a = 256;
     let d_d = 128;
-    let config = FoldChallengeFamily::production_for_ring_dim(s).unwrap();
+    let config = FoldChallengeDistribution::production_for_ring_dim(s).unwrap();
     let mut params = akita_params::CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         d_a,

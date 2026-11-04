@@ -1,6 +1,6 @@
 //! Exact integer bounds and wire encoding for seven divisibility projections.
 
-use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing, FoldChallengeFamily};
+use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
 
@@ -50,7 +50,7 @@ impl BinaryProjectionBounds {
         let coefficients = checked::product([residual_rows, 648]).ok_or_else(overflow)?;
         let challenge = BinaryChallengeProfile::bounded_weight(
             BinaryScalarRing::Cyclotomic243,
-            FoldChallengeFamily::BinaryRoot.weight(),
+            FoldChallengeDistribution::BinaryRoot.weight(),
         )?;
         let gamma = u128::from(challenge.multiplication_linf_operator_bound());
         let matrix_bound = u128::from(CANONICAL_IMAGE_WINDOW.0.unsigned_abs());
@@ -161,7 +161,7 @@ pub fn decode_binary_projection(
 /// Exchange all seven signed values before sampling any output batching scalar.
 /// Verifier callers supply seven zero placeholders, which the channel replaces.
 pub fn binary_projection_values(
-    channel: &mut (impl ProofChannel + ?Sized),
+    channel: &mut impl ProofChannel,
     bounds: &BinaryProjectionBounds,
     values: &[i128; BINARY_PROJECTION_COUNT],
 ) -> Result<[i128; BINARY_PROJECTION_COUNT], AkitaError> {

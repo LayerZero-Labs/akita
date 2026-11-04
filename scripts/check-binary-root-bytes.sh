@@ -9,12 +9,12 @@ fi
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
 git diff --exit-code HEAD
-git merge-base --is-ancestor 8f515ebbcb3015cf9988ad6de4004c96075e90cc HEAD
+git merge-base --is-ancestor 357d12b748b356b8da69eb20fe556b79b3234bec HEAD
 unset AKITA_BINARY_BASELINE_DIR AKITA_BINARY_CAPTURE_DIR AKITA_BINARY_BYTE_GOLDENS
 unset AKITA_CAPTURE_BINARY_BYTE_GOLDENS AKITA_BINARY_BYTE_GOLDEN_RECEIPTS
 mkdir -p "$repo/target/binary-root-bytes"
 run_dir="$(mktemp -d "$repo/target/binary-root-bytes/run.XXXXXX")"
-base_revision=8f515ebbcb3015cf9988ad6de4004c96075e90cc
+base_revision=357d12b748b356b8da69eb20fe556b79b3234bec
 head_revision="$(git rev-parse HEAD)"
 echo "$head_revision" > "$run_dir/head.txt"
 echo "$base_revision" > "$run_dir/base.txt"
@@ -43,14 +43,14 @@ source = path.read_text()
 needle = '    let continuation: [u8; 32] = prover.verifier_message();\n'
 if source.count(needle) != 1:
     raise SystemExit('baseline observation site is not unique')
-# The old inline known vectors cover Blake2b only. Leave them enabled there;
-# Keccak is compared with this run's independently compiled baseline instead.
+# The old inline known vectors cover Keccak only. Leave them enabled there;
+# Blake2b is compared with this run's independently compiled baseline instead.
 known = '    compatibility::assert_base_bytes(&proof, mixed, word_width);'
 assert source.count(known) == 1
-source = source.replace(known, '    #[cfg(feature = "transcript-blake2b")]\n' + known)
+source = source.replace(known, '    #[cfg(feature = "transcript-keccak")]\n' + known)
 declaration = '#[path = "binary_source_end_to_end/compatibility.rs"]'
 assert source.count(declaration) == 1
-source = source.replace(declaration, '#[cfg(feature = "transcript-blake2b")]\n' + declaration)
+source = source.replace(declaration, '#[cfg(feature = "transcript-keccak")]\n' + declaration)
 path.write_text(source.replace(needle, needle + hook))
 PY
 

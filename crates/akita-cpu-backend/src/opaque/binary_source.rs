@@ -7,6 +7,7 @@ use akita_algebra::ring::trinomial::{image::Q24Image, signed::signed_trinomial_p
 use akita_algebra::MinusTrinomial;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::checked;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::binary_source::{
     binary_public_digit_commitment, binary_root_matrix, BinaryCommittedGroupManifest,
     BINARY_SOURCE_Q,
@@ -146,7 +147,7 @@ pub(super) fn commit_binary_source<Cfg, F, E>(
 ) -> Result<CommitOutput<F, E>, AkitaError>
 where
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    F: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding + Valid + AkitaSerialize,
     E: Field,
 {
     let binary = source.storage.binary_source().ok_or_else(|| {
@@ -488,7 +489,7 @@ where
         &source.sources.expanded(source.manifest.descriptor())?,
         &source.images,
         challenges,
-        akita_challenges::FoldChallengeFamily::BinaryRoot,
+        akita_challenges::FoldChallengeDistribution::BinaryRoot,
     )?
     else {
         return Ok(None);

@@ -1,4 +1,4 @@
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_cpu_backend::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_error::{checked, AkitaError};
 use akita_params::{
@@ -347,7 +347,7 @@ fn b_slice_report_geometry(
 fn reported_operator_norm_threshold(
     security_route: InnerCommitSecurityRoute,
     ring_dimension: usize,
-    challenge: &FoldChallengeFamily,
+    challenge: &FoldChallengeDistribution,
 ) -> Option<u32> {
     match security_route {
         InnerCommitSecurityRoute::Linf(_) => None,

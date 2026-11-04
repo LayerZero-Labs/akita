@@ -11,7 +11,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_verifier::SetupPolicy;
 use jolt_field::{Ring, Zero};
+use jolt_transcript::{BytesMsg, ProverTranscript};
 
 type Cfg = fp128::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -105,10 +107,9 @@ fn composition(interleave_gkr: bool) {
     let prove = |prefix: &[u8], reverse: bool, suffix: &[u8]| {
         #[cfg(feature = "logging-transcript")]
         akita_transcript::clear_thread_events();
-        let mut session =
-            new_prover_channel(b"aggregate-test/v1", b"application-instance").unwrap();
+        let mut session = new_prover_channel(b"aggregate-test/v1");
         akita_transcript::prover_context(&mut session, application_event(0));
-        session.public_message(prefix);
+        session.public_message(&BytesMsg(prefix));
         let mut challenges = Vec::new();
         for is_root in if reverse {
             [true, false]
@@ -123,7 +124,7 @@ fn composition(interleave_gkr: bool) {
                     .unwrap();
             } else {
                 scheme
-                    .batched_prove_in_session(
+                    .batched_prove_embedded(
                         &setup,
                         opening(),
                         &backend,
@@ -137,19 +138,19 @@ fn composition(interleave_gkr: bool) {
             if interleave_gkr && !is_root {
                 // An application GKR-style round on the very same channel.
                 akita_transcript::prover_context(&mut session, application_event(1));
-                session.prover_message(&[3_u8; 32]);
+                ProverTranscript::send(&mut session, &BytesMsg(vec![3_u8; 32]));
                 akita_transcript::prover_context(&mut session, application_event(2));
                 let challenge: [u8; 32] = session.verifier_message();
                 akita_transcript::prover_context(&mut session, application_event(3));
-                session.prover_message(&challenge);
+                ProverTranscript::send(&mut session, &BytesMsg(challenge.to_vec()));
             }
             challenges.push(session.verifier_message::<[u8; 32]>());
         }
         let opening_end = session.narg_string().len();
         akita_transcript::prover_context(&mut session, application_event(4));
-        session.public_message(suffix);
+        session.public_message(&BytesMsg(suffix));
         let final_challenge: [u8; 32] = session.verifier_message();
-        session.prover_message(&final_challenge);
+        ProverTranscript::send(&mut session, &BytesMsg(final_challenge.to_vec()));
         (
             session.narg_string().to_vec(),
             challenges,
@@ -170,17 +171,12 @@ fn composition(interleave_gkr: bool) {
         "future data cannot change past challenges"
     );
     assert_ne!(final_challenge, changed_suffix);
-    let replay = |proof: &[u8],
-                  domain: &[u8],
-                  instance: &[u8],
-                  prefix: &[u8],
-                  reverse: bool,
-                  suffix: &[u8]| {
+    let replay = |proof: &[u8], domain: &[u8], prefix: &[u8], reverse: bool, suffix: &[u8]| {
         #[cfg(feature = "logging-transcript")]
         akita_transcript::clear_thread_events();
-        let mut session = new_verifier_channel(domain, instance, proof)?;
+        let mut session = new_verifier_channel(domain, proof);
         akita_transcript::verifier_context(&mut session, application_event(0));
-        session.public_message(prefix);
+        session.public_message(&BytesMsg(prefix));
         for is_root in if reverse {
             [true, false]
         } else {
@@ -195,42 +191,35 @@ fn composition(interleave_gkr: bool) {
                     &mut session,
                 )?;
             } else {
-                verifier.batched_verify_in_session(
+                // The outer session owns EOF, checked after the suffix.
+                let _pending = verifier.batched_verify_embedded(
                     &mut session,
                     statement(),
                     BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
                 )?;
             }
             #[cfg(feature = "logging-transcript")]
             assert_events_retained(&earlier);
             if interleave_gkr && !is_root {
                 akita_transcript::verifier_context(&mut session, application_event(1));
-                assert_eq!(session.prover_message::<[u8; 32]>()?, [3_u8; 32]);
+                assert_eq!(receive(&mut session)?, [3_u8; 32]);
                 akita_transcript::verifier_context(&mut session, application_event(2));
-                let challenge: [u8; 32] = session.verifier_message()?;
+                let challenge: [u8; 32] = session.verifier_message();
                 akita_transcript::verifier_context(&mut session, application_event(3));
-                assert_eq!(session.prover_message::<[u8; 32]>()?, challenge);
+                assert_eq!(receive(&mut session)?, challenge);
             }
-            let _: [u8; 32] = session.verifier_message()?;
+            let _: [u8; 32] = session.verifier_message();
         }
         akita_transcript::verifier_context(&mut session, application_event(4));
-        session.public_message(suffix);
-        let expected: [u8; 32] = session.verifier_message()?;
-        let received: [u8; 32] = session.prover_message()?;
-        if expected != received {
+        session.public_message(&BytesMsg(suffix));
+        let expected: [u8; 32] = session.verifier_message();
+        if receive(&mut session)? != expected {
             return Err(AkitaError::InvalidProof);
         }
-        session.check_eof()
+        session.check_eof().map_err(|_| AkitaError::InvalidProof)
     };
-    replay(
-        &proof,
-        b"aggregate-test/v1",
-        b"application-instance",
-        b"prefix",
-        false,
-        b"suffix",
-    )
-    .unwrap();
+    replay(&proof, b"aggregate-test/v1", b"prefix", false, b"suffix").unwrap();
     #[cfg(feature = "logging-transcript")]
     {
         assert!(!prover_events.is_empty());
@@ -257,70 +246,34 @@ fn composition(interleave_gkr: bool) {
             }
         }
     }
-    // The second constructor argument binds application instance context, not the hash suite.
-    for (domain, instance, prefix, reverse, suffix) in [
+    for (domain, prefix, reverse, suffix) in [
         (
             b"wrong-domain".as_slice(),
-            b"application-instance".as_slice(),
             b"prefix".as_slice(),
             false,
             b"suffix".as_slice(),
         ),
-        (
-            b"aggregate-test/v1",
-            b"wrong-instance",
-            b"prefix",
-            false,
-            b"suffix",
-        ),
-        (
-            b"aggregate-test/v1",
-            b"application-instance",
-            b"wrong-prefix",
-            false,
-            b"suffix",
-        ),
-        (
-            b"aggregate-test/v1",
-            b"application-instance",
-            b"prefix",
-            true,
-            b"suffix",
-        ),
-        (
-            b"aggregate-test/v1",
-            b"application-instance",
-            b"prefix",
-            false,
-            b"wrong-suffix",
-        ),
+        (b"aggregate-test/v1", b"wrong-prefix", false, b"suffix"),
+        (b"aggregate-test/v1", b"prefix", true, b"suffix"),
+        (b"aggregate-test/v1", b"prefix", false, b"wrong-suffix"),
     ] {
-        assert!(replay(&proof, domain, instance, prefix, reverse, suffix).is_err());
+        assert!(replay(&proof, domain, prefix, reverse, suffix).is_err());
     }
     let mut corrupted = proof.clone();
     corrupted[opening_end / 2] ^= 1;
     for bad in [&proof[..opening_end - 1], corrupted.as_slice()] {
-        assert!(replay(
-            bad,
-            b"aggregate-test/v1",
-            b"application-instance",
-            b"prefix",
-            false,
-            b"suffix"
-        )
-        .is_err());
+        assert!(replay(bad, b"aggregate-test/v1", b"prefix", false, b"suffix").is_err());
     }
     let mut trailing = proof;
     trailing.push(0);
-    assert!(replay(
-        &trailing,
-        b"aggregate-test/v1",
-        b"application-instance",
-        b"prefix",
-        false,
-        b"suffix"
-    )
-    .is_err());
+    assert!(replay(&trailing, b"aggregate-test/v1", b"prefix", false, b"suffix").is_err());
+}
+
+fn receive(session: &mut akita_transcript::VerifierChannel<'_>) -> Result<Vec<u8>, AkitaError> {
+    session
+        .prover_message::<BytesMsg>()
+        .map(|message| message.0)
+        .map_err(|_| AkitaError::InvalidProof)
 }
 
 fn application_event(stage: u8) -> akita_transcript::ProtocolContextRecord {

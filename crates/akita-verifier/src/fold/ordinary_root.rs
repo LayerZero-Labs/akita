@@ -6,27 +6,32 @@ use akita_params::{
     SetupContributionMode, TerminalFoldParams,
 };
 use akita_serialization::AkitaSerialize;
-use akita_types::Commitment;
+use akita_transcript::ChallengeCodec;
+use akita_types::CommittedGroup;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
-/// Extension seam: dispatch a root by its declared group relation kind.
-/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_root<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
-    claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    claims: &OpeningClaims<'_, E, &CommittedGroup<F>>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&FoldParams>,
     terminal: &TerminalFoldParams,
+    setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     root_lp.validate_opening_batch(opening_batch)?;
     for group_index in 0..opening_batch.num_groups() {
@@ -52,14 +57,15 @@ where
             .last()
             .ok_or(AkitaError::InvalidProof)?
             .ring_dimension();
-        akita_transcript::public_fields_verifier(
+        // The digest and the rows used below come from this same group.
+        akita_transcript::public_bytes(
             grinding.state_mut(),
             akita_types::FoldSite::RootCommitment {
                 group: group_index,
                 ring_dimension: ring_dim,
             }
             .id()?,
-            commitment.rows().coeffs(),
+            commitment.digest().as_bytes(),
         )?;
     }
     for (group_index, group) in claims.groups().iter().enumerate() {
@@ -171,5 +177,6 @@ where
             stage3,
             evaluation_trace_basis: basis,
         },
+        setup_policy,
     )
 }

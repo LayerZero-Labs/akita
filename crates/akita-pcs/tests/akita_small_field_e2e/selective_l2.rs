@@ -55,7 +55,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         assert_eq!(l2_step.params.d_a(), 128);
         assert_eq!(
             l2_step.params.fold_challenge_config(),
-            akita_challenges::FoldChallengeFamily::SignedSparse(
+            akita_challenges::FoldChallengeDistribution::SignedSparse(
                 akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG
             ),
         );
@@ -128,6 +128,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
         };
@@ -229,6 +230,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
         };

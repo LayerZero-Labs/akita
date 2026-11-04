@@ -71,8 +71,9 @@ where
         }
         let polynomials = handle.committed.source.dense_polynomials()?;
         let retained = handle.committed.ordinary_retained()?;
+        let inner_rows = retained.inner_rows()?;
         if polynomials.len() != profile.group.num_polynomials()
-            || retained.inner_rows().len() != polynomials.len()
+            || inner_rows.len() != polynomials.len()
             || retained.ring_dim() != a_degree
         {
             return Err(AkitaError::InvalidProof);
@@ -99,7 +100,7 @@ where
         ])
         .ok_or(AkitaError::InvalidProof)?;
         let mut t = Vec::new();
-        for image in retained.inner_rows() {
+        for image in inner_rows.iter() {
             if checked::product([image_elements, a_degree]) != Some(image.coeff_len()) {
                 return Err(AkitaError::InvalidInput(
                     "ordinary inner image differs from its frozen profile".into(),

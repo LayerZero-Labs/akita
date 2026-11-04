@@ -1,6 +1,6 @@
 //! Per-source producer planning for explicitly selected signed native sources.
 
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::{
@@ -18,7 +18,7 @@ pub fn plan_signed_ordinary_source(
     group: PolynomialGroupLayout,
     width: OrdinarySourceWidth,
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     // Validate the caller's complete domain before selecting a sorted prefix.
     akita_schedules::planner_support::validate_policy(policy)?;

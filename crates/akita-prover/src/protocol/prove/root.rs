@@ -9,9 +9,11 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
     schedules: &'s TrustedScheduleCatalog<Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
     basis: BasisMode,
+    setup_batch_level: Option<u32>,
 ) -> Result<
     (
         &'s akita_config::ResolvedScheduleRow,
+        Vec<akita_transcript::CommitmentDigest>,
         ProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
         akita_params::GrindingPlan,
         Vec<u8>,
@@ -32,7 +34,7 @@ where
         + 'static,
     H: crate::CommitmentHandleMetadata,
 {
-    let (selection, claims) = opening.into_low_level_parts();
+    let (selection, digests, claims) = opening.into_low_level_parts();
     let resolved = schedules.resolve_selection(selection)?;
     resolved.validate_opening_layout(claims.opening_layout())?;
     let (grinding_plan, descriptor_bytes) =
@@ -42,13 +44,14 @@ where
             selection,
             resolved.schedule(),
             basis,
+            setup_batch_level,
             |plan| {
                 claims
                     .opening_claims()
                     .root_grinding_plan(plan, resolved.schedule())
             },
         )?;
-    Ok((resolved, claims, grinding_plan, descriptor_bytes))
+    Ok((resolved, digests, claims, grinding_plan, descriptor_bytes))
 }
 
 /// Extension seam: dispatch a root by its declared group relation kind.
@@ -60,6 +63,7 @@ pub(super) fn prove_root<Cfg, B>(
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
+    digests: &[akita_transcript::CommitmentDigest],
     layout: &OpeningClaimsLayout,
     handles: &[B::CommitmentHandle],
     schedule: &FoldSchedule,
@@ -93,6 +97,7 @@ where
                 prefix_slots,
                 backend,
                 claims,
+                digests,
                 layout,
                 handles,
                 schedule,
@@ -108,6 +113,7 @@ where
                 prefix_slots,
                 backend,
                 claims,
+                digests,
                 layout,
                 handles,
                 schedule,

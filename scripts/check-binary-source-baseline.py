@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 
-BASE = "8f515ebbcb3015cf9988ad6de4004c96075e90cc"
+BASE = "357d12b748b356b8da69eb20fe556b79b3234bec"
 FIXTURE = Path("crates/akita-pcs/tests/binary_source_end_to_end.rs")
 CASES = ("false-128", "false-8", "true-128")
 TESTS = (
@@ -123,17 +123,17 @@ def capture(root, run_dir, worktrees, label, revision, features, baseline=None):
         if text.count(anchor) != 1:
             raise RuntimeError(f"{label}: expected exactly one fixture anchor: {anchor!r}")
         text = text.replace(anchor, anchor + addition)
-    # Upstream's fixed vectors cover Blake2b. The external baseline supplies
-    # Keccak expectations; no proof constants are taken from the candidate.
+    # Upstream's fixed vectors cover Keccak. The external baseline supplies
+    # Blake2b expectations; no proof constants are taken from the candidate.
     known = '    compatibility::assert_base_bytes(&proof, mixed, word_width);'
     if label == "base":
         if text.count(known) != 1:
             raise RuntimeError("baseline known-vector anchor changed")
-        text = text.replace(known, '    #[cfg(feature = "transcript-blake2b")]\n' + known)
+        text = text.replace(known, '    #[cfg(feature = "transcript-keccak")]\n' + known)
         declaration = '#[path = "binary_source_end_to_end/compatibility.rs"]'
         if text.count(declaration) != 1:
             raise RuntimeError("baseline known-vector module changed")
-        text = text.replace(declaration, '#[cfg(feature = "transcript-blake2b")]\n' + declaration)
+        text = text.replace(declaration, '#[cfg(feature = "transcript-keccak")]\n' + declaration)
     fixture.write_text(text + CAPTURE_FUNCTION)
     (run_dir / f"{label}-fixture.rs").write_text(text + CAPTURE_FUNCTION)
     prime_fixture = checkout / PRIME_FIXTURE
@@ -202,7 +202,7 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=("transcript-blake2b", "transcript-keccak"),
-                        default="transcript-blake2b")
+                        default="transcript-keccak")
     parser.add_argument("--dev-protocol", action="store_true")
     parser.add_argument("--no-parallel", action="store_true")
     args = parser.parse_args()

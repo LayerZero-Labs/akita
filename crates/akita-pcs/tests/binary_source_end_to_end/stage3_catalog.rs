@@ -77,6 +77,7 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
     let mixed_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(18),
         precommitteds: vec![carrier.profiles().final_group],
+        root_accumulated_setup_prefix_len: 0,
     };
     let cached = std::fs::read(artifact_path()).ok().map(|bytes| {
         ValidatedScheduleCatalog::from_artifact_bytes(

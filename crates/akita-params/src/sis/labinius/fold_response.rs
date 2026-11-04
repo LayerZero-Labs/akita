@@ -97,7 +97,7 @@ impl LabiniusFoldResponse {
                 "LaBinius fold response scalar/commitment degree mismatch".into(),
             ));
         }
-        let sparse = akita_challenges::FoldChallengeFamily::SignedSparse(
+        let sparse = akita_challenges::FoldChallengeDistribution::SignedSparse(
             SparseChallengeConfig::pm1_only(challenge.weight_cap()),
         );
         let norms = FoldChallengeNorms::new(&sparse);

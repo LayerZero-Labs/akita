@@ -9,7 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-params/transcript-blake2b",
