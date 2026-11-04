@@ -143,7 +143,17 @@ fn public(shape: Shape, rng: &mut StdRng) -> BinaryRootPublic {
     build(natural_end + shape.extra_rings * 64).unwrap()
 }
 
-fn check(shape: Shape, seed: u64) {
+/// One structured and one flat compilation of a root relation.
+struct Compiled {
+    structured: NativeRootWeights<F>,
+    negative: Vec<(usize, F)>,
+    flat: NativeRootWeights<F>,
+    flat_negative: Vec<(usize, F)>,
+}
+
+/// Compile one shape's root relation both ways, without and with A, and draw
+/// two evaluation points on its domain.
+fn compile(shape: Shape, seed: u64) -> (BinaryRootPublic, Vec<Compiled>, Vec<Vec<F>>) {
     let mut rng = StdRng::seed_from_u64(seed);
     let public = public(shape, &mut rng);
     let descriptor = public.plan().descriptor().clone();
@@ -215,9 +225,24 @@ fn check(shape: Shape, seed: u64) {
     let points = (0..2)
         .map(|_| (0..num_vars).map(|_| field(&mut rng)).collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    for matrix in [None, Some(&matrix[..])] {
-        let (structured, negative) = public
-            .relation(
+    let compiled = [None, Some(&matrix[..])]
+        .into_iter()
+        .map(|matrix| {
+            let (structured, negative) = public
+                .relation(
+                    &challenges,
+                    alpha,
+                    &batches,
+                    &rho,
+                    &projected,
+                    &commitment,
+                    &d_payload,
+                    ordinary_claim,
+                    matrix,
+                )
+                .unwrap();
+            let (flat, flat_negative) = root_relation(
+                &public,
                 &challenges,
                 alpha,
                 &batches,
@@ -229,19 +254,27 @@ fn check(shape: Shape, seed: u64) {
                 matrix,
             )
             .unwrap();
-        let (flat, flat_negative) = root_relation(
-            &public,
-            &challenges,
-            alpha,
-            &batches,
-            &rho,
-            &projected,
-            &commitment,
-            &d_payload,
-            ordinary_claim,
-            matrix,
-        )
-        .unwrap();
+            Compiled {
+                structured,
+                negative,
+                flat,
+                flat_negative,
+            }
+        })
+        .collect();
+    (public, compiled, points)
+}
+
+fn check(shape: Shape, seed: u64) {
+    let (public, compiled, points) = compile(shape, seed);
+    let domain_len = public.plan().repacking().domain_len();
+    for Compiled {
+        structured,
+        negative,
+        flat,
+        flat_negative,
+    } in compiled
+    {
         assert_eq!(negative, flat_negative, "{shape:?}");
         assert_eq!(structured.claim(), flat.claim(), "{shape:?}");
         assert_eq!(structured.table_len(), domain_len);
@@ -263,8 +296,10 @@ fn check(shape: Shape, seed: u64) {
     }
 }
 
-#[test]
-fn structured_root_weights_match_the_flat_reference_on_every_end_to_end_shape() {
+/// The end-to-end shapes: word widths 128 and 8, one and two owners, word
+/// claim on and off, zero to five prime planes, an enlarged outgoing witness
+/// and the mixed ordinary root.
+fn shapes() -> [Shape; 8] {
     let base = Shape {
         word_width: 128,
         owners: 1,
@@ -273,7 +308,7 @@ fn structured_root_weights_match_the_flat_reference_on_every_end_to_end_shape() 
         extra_rings: 0,
         mixed: false,
     };
-    let shapes = [
+    [
         base,
         Shape {
             word_width: 8,
@@ -311,8 +346,48 @@ fn structured_root_weights_match_the_flat_reference_on_every_end_to_end_shape() 
             extra_rings: 3,
             ..base
         },
-    ];
-    for (seed, shape) in shapes.into_iter().enumerate() {
+    ]
+}
+
+#[test]
+fn structured_root_weights_match_the_flat_reference_on_every_end_to_end_shape() {
+    for (seed, shape) in shapes().into_iter().enumerate() {
         check(shape, seed as u64);
+    }
+}
+
+/// The deletion rule's support lemma: every compiled root row, including the
+/// negative-bit rows, is zero on every padding address.
+#[test]
+fn compiled_root_weights_vanish_on_every_padding_address() {
+    for (seed, shape) in shapes().into_iter().enumerate() {
+        let (public, compiled, _) = compile(shape, seed as u64);
+        let repacking = public.plan().repacking();
+        let padding = (0..repacking.domain_len())
+            .filter(|&address| repacking.is_padding_address(address).unwrap())
+            .collect::<Vec<_>>();
+        assert!(!padding.is_empty(), "{shape:?}");
+        for Compiled {
+            structured,
+            negative,
+            flat,
+            ..
+        } in compiled
+        {
+            let table = structured.materialize().unwrap();
+            let mut reference = vec![F::zero(); repacking.domain_len()];
+            for &(address, weight) in flat.terms() {
+                reference[address] += weight;
+            }
+            for &address in &padding {
+                assert!(
+                    table[address].is_zero() && reference[address].is_zero(),
+                    "{shape:?}: weight on padding address {address}"
+                );
+            }
+            for &(address, _) in &negative {
+                assert!(!repacking.is_padding_address(address).unwrap(), "{shape:?}");
+            }
+        }
     }
 }

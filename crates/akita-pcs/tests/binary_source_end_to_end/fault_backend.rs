@@ -52,6 +52,13 @@ impl Fault {
         Self::Padding,
     ];
 
+    /// No root row reads a padding address, so an in-range digit there leaves
+    /// the public relation and every reading unchanged. The range check, the
+    /// successor and its norm checks still bound the committed digit.
+    pub(super) fn is_accepted(self) -> bool {
+        matches!(self, Self::Padding)
+    }
+
     fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
         let segment = match self {
             Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
@@ -250,14 +257,16 @@ impl FaultBackend {
             .fold(F::zero(), |sum, (&weight, &digit)| {
                 sum + weight * F::from_i64(i64::from(digit))
             });
-        if !matches!(
-            self.fault,
-            Fault::ForeignCommitment | Fault::ForeignPartials
-        ) {
-            assert_ne!(
+        match self.fault {
+            Fault::ForeignCommitment | Fault::ForeignPartials => {}
+            Fault::Padding => assert_eq!(
+                actual, claim,
+                "no root row may read the mutated padding address"
+            ),
+            _ => assert_ne!(
                 actual, claim,
                 "the selected mutation must violate the public relation"
-            );
+            ),
         }
         let anchor = digits.iter().position(|&digit| digit != 0).unwrap();
         let value = F::from_i64(i64::from(digits[anchor]));

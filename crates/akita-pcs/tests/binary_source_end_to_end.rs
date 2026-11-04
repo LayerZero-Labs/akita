@@ -421,7 +421,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             "completed adversarial {fault:?} proof: {} bytes",
             malformed.len()
         );
-        let rejected = catch_unwind(AssertUnwindSafe(|| {
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
             let mut replay =
                 new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", &malformed)
                     .unwrap();
@@ -432,8 +432,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
                 BasisMode::Lagrange,
             )
         }));
-        assert!(rejected.is_ok(), "{fault:?} caused a verifier panic");
-        assert!(rejected.unwrap().is_err(), "{fault:?} was accepted");
+        assert!(outcome.is_ok(), "{fault:?} caused a verifier panic");
+        let outcome = outcome.unwrap();
+        if fault.is_accepted() {
+            outcome.unwrap_or_else(|error| panic!("{fault:?} was rejected: {error}"));
+        } else {
+            assert!(outcome.is_err(), "{fault:?} was accepted");
+        }
     };
     if let Some(fault) = authentication_fault {
         prove_fault(fault);
@@ -619,7 +624,9 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         // These adversarial backends commit a changed private digit table and
         // finish an entire proof using a deliberately incorrect Stage-2 public
         // oracle. Rejection therefore exercises the verifier, rather than only
-        // the honest prover's construction checks.
+        // the honest prover's construction checks. A changed padding digit
+        // violates no root row, so its proof verifies against the same
+        // readings.
         for fault in Fault::ALL {
             prove_fault(fault);
         }

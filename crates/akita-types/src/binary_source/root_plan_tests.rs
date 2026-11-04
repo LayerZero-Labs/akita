@@ -44,7 +44,7 @@ fn five_segments_share_addresses_when_scheduled_domain_grows() {
 }
 
 #[test]
-fn direct_weights_join_a_terminal_carries_and_extended_padding() {
+fn direct_weights_join_a_and_terminal_carries_but_not_extended_padding() {
     let descriptor = descriptor();
     let plan = BinaryRootWitnessPlan::new(&descriptor, 2, 256)
         .unwrap()
@@ -87,12 +87,16 @@ fn direct_weights_join_a_terminal_carries_and_extended_padding() {
         plan.repacking().coefficient_address(2, 0, 0, 0).unwrap(),
         plan.repacking().coefficient_address(3, 0, 0, 0).unwrap(),
         plan.repacking().coefficient_address(4, 0, 0, 0).unwrap(),
-        131071,
     ] {
         let mut altered = table.clone();
         altered[address] = F::one();
         assert!(weights.check_table(&altered).is_err());
     }
+    // No root row reads the enlarged domain's padding.
+    assert!(plan.repacking().is_padding_address(131071).unwrap());
+    let mut altered = table.clone();
+    altered[131071] = F::one();
+    weights.check_table(&altered).unwrap();
     let mut invalid_matrix = matrix.clone();
     invalid_matrix[0][0][0] = i128::from(CANONICAL_IMAGE_WINDOW.1) + 1;
     assert!(binary_direct_a_weights(
