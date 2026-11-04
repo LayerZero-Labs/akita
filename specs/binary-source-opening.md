@@ -1400,6 +1400,35 @@ N=2^22 and from 20.7 to 23.4 seconds at N=2^23. At N=2^22 the prefix domain
 grows from 2^24 to 2^25, and at both sizes the prover also builds the
 dense `16 * 2^k'`-byte Stage 3 weight.
 
+### Verification after the verifier speedups and the v8 merge
+
+These rows compare two builds at N=2^22. The base is the offload after the
+v8 merge, `237eb5a13` (executable SHA-256
+`71f17c7eb0c73c19298578523ee2d7f9afd88e1bc897f67b16cb780c077d468a`, the
+executable of the section above). The final build is the verifier speedups
+after the v8 merge, `841a32355` (executable SHA-256
+`acec1a1edf447f829c200380ca7380fe328ee7e90892831e4e3d66ee96c90815`). Both
+come from the measurement feature set. The final executable proved each
+shape once, and every proof reproduced its pin. Both executables then
+verified that fixture three times in isolated processes, alternating base and
+final, with Rayon's default thread pool and the catalog cache. All 24
+verifications reported `verification passed=true`, matched the caller's
+transcript continuation and kept online A reads forbidden. Each cell is the
+median of three, with the peak RSS of that median run. The one-minute load
+before each run was between 9.10 and 9.48. The logs are
+`$CARGO_TARGET_DIR/320-logs/22-<shape>.{prove,r4.v<i>,r6.v<i>}.txt`.
+
+| Shape | Base (ms) | Base RSS bytes | Final (ms) | Final RSS bytes | Final `binary_root_verify` (ms) | Loads |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| word | 15.2 | 76,087,296 | 9.9 | 74,219,520 | 3.9 | 9.48 |
+| word-prime | 17.2 | 157,401,088 | 11.4 | 157,040,640 | 4.7 | 9.10–9.28 |
+| word-prime-ordinary | 190.9 | 644,890,624 | 17.1 | 170,377,216 | 10.2 | 9.17 |
+| prime5 | 15.3 | 127,778,816 | 11.3 | 126,992,384 | 4.3 | 9.44 |
+
+The mixed shape's ordinary-root weights (`binary_root_weights_ordinary`)
+take 2.0 ms in the final median run, against 149.4 ms in the base. The
+binary-only shapes gain 4.0–5.8 ms, close to the pre-v8 gains below.
+
 ### Verification after the verifier speedups
 
 These measurements predate the v8 merge.
