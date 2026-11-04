@@ -1468,7 +1468,15 @@ serves both sides: the verifier evaluates the family's multilinear extension
 at the Stage 2 point, and the prover streams the same field elements into its
 dense table. No family stores one term per address or scans the outgoing
 domain. A test-only copy of the previous flat construction checks the
-evaluation and the dense table on every end-to-end shape.
+evaluation and the dense table on sixteen small shapes. Thirteen use the
+end-to-end geometry of 8 padded carriers and 2 columns, which has one response
+quad. Without the mixed ordinary group they cover the word claim with zero,
+one or five prime planes, prime-only claims with two or three planes, word
+widths 128 and 8, one and two owners, and extra zero rings. With the mixed
+group they cover zero, one, two or five planes beside the word claim, and one,
+two or five prime-only planes. Three more use 32 carriers and 2 columns, or 64
+carriers and 4 columns, which have four response quads. No tested shape
+reaches a production-size geometry.
 
 - **Image.** One coefficient adjoint per owner and A row is applied to the
   low equality block, followed by each column's challenge support of at most
@@ -1504,15 +1512,19 @@ every row's 162-coefficient kernel. It keeps one `shifted_remainder_evaluations`
 call per row: 497 field multiplication operators (10 for exponentiation to 81,
 one for the modulus evaluation, 162 for Horner evaluation and 324 for the shift
 recurrence), plus 162 for the batch scaling. The same call executes 407 binary
-field addition/subtraction operators, excluding 81 unary sign negations. The
-same subset tables would cost the prover 21 vector additions of 162 entries
-per row. The counts below exclude equality-weight generation, field
-conversion, column kernels, carry kernels and unary negations.
+field addition/subtraction operators, excluding 81 unary sign negations.
+Materializing the dense table then adds each of the row's 162 weights into its
+address, so a complete parity row costs 569 additions/subtractions. The same
+subset tables would cost the prover 21 vector additions of 162 entries per row.
+The prover kernel columns below count kernel generation and batch scaling only,
+excluding dense accumulation; the last prover column adds it. All counts
+exclude equality-weight generation, field conversion, column kernels, carry
+kernels and unary negations.
 
-| N | Row weights M | Verifier multiplications | Verifier additions | Prover row multiplications | Prover row additions/subtractions | Proposed subset additions |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | 16,384 | 6,085 | 370,956 | 10,797,056 | 6,668,288 | 856,064 |
-| 2^23 | 32,768 | 10,181 | 719,116 | 21,594,112 | 13,336,576 | 1,712,128 |
+| N | Row weights M | Verifier multiplications | Verifier additions | Prover kernel multiplications | Prover kernel additions/subtractions | Prover additions/subtractions with accumulation | Proposed subset additions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2^22 | 16,384 | 6,085 | 370,956 | 10,797,056 | 6,668,288 | 9,322,496 | 856,064 |
+| 2^23 | 32,768 | 10,181 | 719,116 | 21,594,112 | 13,336,576 | 18,644,992 | 1,712,128 |
 
 These count executed Rust arithmetic operators, including multiplication by
 zero or a sign; they are not measured machine instructions. The verifier
