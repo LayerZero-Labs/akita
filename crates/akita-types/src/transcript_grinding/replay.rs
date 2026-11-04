@@ -1,15 +1,21 @@
-//! Inline nonce replay for transcript grinding.
+//! Inline Spongefish nonce replay for transcript grinding.
 
-use crate::FoldDrawRecord;
-use crate::FoldSite;
 use akita_error::AkitaError;
-use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_SUMCHECK};
-use akita_params::{FoldResponseSearch, GrindingPlan, GrindingQueryKind, GrindingSite};
-use jolt_algebra::{CanonicalEncoding, ExtField, Field};
-use jolt_sumcheck::{ProverRoundContext, SumcheckError, SumcheckSite, VerifierRoundContext};
-use jolt_transcript::{
-    Channel, Fork, PadSlots, PrivateChannel, ProverTranscript, SiteId, Sponge, TranscriptError,
-    VerifierTranscript, FORK_SEED_LEN,
+use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
+#[cfg(feature = "prover")]
+use akita_sumcheck::SumcheckProverChannel;
+use akita_sumcheck::{SumcheckRole, SumcheckVerifierChannel};
+use akita_transcript::{
+    ext_challenges, nonce_max_bytes, receive_nonce, reject, verifier_context, ChallengeCodec,
+    ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, VerifierChannel,
+    VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS, SITE_FAMILY_SUMCHECK,
+};
+#[cfg(feature = "prover")]
+use akita_transcript::{
+    nonce_encoded_len, prover_context, send_nonce, FoldPreview, FoldWork, ProverChannel,
+    ProverTranscript,
+use crate::FoldSite;
+use jolt_transcript::{Channel, PadSlots, PrivateChannel};
 };
 use std::marker::PhantomData;
 
@@ -52,6 +58,7 @@ impl<'a> GrindingPlanCursor<'a> {
         Some(entry)
     }
 
+    #[cfg(feature = "prover")]
     fn peek(&self) -> Option<GrindingPlanEntry> {
         let run = *self.plan.runs().get(self.run_index)?;
         Some(GrindingPlanEntry {
@@ -59,6 +66,22 @@ impl<'a> GrindingPlanCursor<'a> {
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
             fold_search: run.fold_response_search(),
+        })
+    }
+
+    /// Entry of the run after the current one, when the cursor sits at the
+    /// start of a single-entry run.
+    #[cfg(feature = "prover")]
+    fn peek_following(&self) -> Option<GrindingPlanEntry> {
+        let current = self.plan.runs().get(self.run_index)?;
+        if self.run_offset != 0 || current.multiplicity() != 1 {
+            return None;
+        }
+        let run = *self.plan.runs().get(self.run_index.checked_add(1)?)?;
+        Some(GrindingPlanEntry {
+            site: run.site(),
+            grind_bits: run.grind_bits(),
+            nonce_bits: run.nonce_bits(),
         })
     }
 
@@ -123,17 +146,55 @@ fn next_entry(
     Ok(entry)
 }
 
-/// Diagnostic site of a proof-of-work nonce and its predicate.
-fn grinding_site(site: GrindingSite, grind_bits: u8, nonce_bits: u8) -> SiteId {
-    site.site_id(u32::from(grind_bits) | (u32::from(nonce_bits) << 8))
-        .into()
+/// Difficulty of one proof-of-work entry, or `None` when the entry's nonce
+/// width is not the `grind_bits + 7` that Jolt's proof-of-work step reads.
+fn pow_bits(entry: GrindingPlanEntry) -> Option<u32> {
+    let nonce_bits = match entry.grind_bits {
+        0 => 0,
+        bits => bits.checked_add(GRINDING_NONCE_SLACK_BITS)?,
+    };
+    (entry.nonce_bits == nonce_bits).then_some(u32::from(entry.grind_bits))
 }
 
-/// Diagnostic site of a fold-response nonce.
-fn fold_response_site(site: GrindingSite, nonce_bits: u8) -> SiteId {
-    site.site_id(u32::from(nonce_bits)).into()
+fn grinding_records(
+    site: GrindingSite,
+    grind_bits: u8,
+    nonce_bits: u8,
+) -> (ProtocolContextRecord, ProtocolContextRecord) {
+    let detail = u32::from(grind_bits) | (u32::from(nonce_bits) << 8);
+    let site_id = site.site_id(detail).to_bytes();
+    (
+        ProtocolContextRecord::new(
+            site_id,
+            ProtocolMessageKind::GrindingNonce as u32,
+            1,
+            nonce_max_bytes(nonce_bits) as u64,
+            0,
+        ),
+        ProtocolContextRecord::new(
+            site_id,
+            ProtocolMessageKind::GrindingCheck as u32,
+            0,
+            0,
+            u64::from(GRINDING_CHECK_BYTES),
+        ),
+    )
 }
 
+fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRecord {
+    ProtocolContextRecord::new(
+        site.site_id(u32::from(nonce_bits)).to_bytes(),
+        ProtocolMessageKind::FoldResponseNonce as u32,
+        1,
+        nonce_max_bytes(nonce_bits) as u64,
+        0,
+    )
+}
+
+/// One side of grinding-plan replay.
+
+// T0-PORT(private): dev's masked-channel abstraction over the NARG transcript, kept verbatim;
+// re-express over akita_transcript::ProofChannel so masked channels can drive the grinding replay.
 /// A prover channel Akita runs its grinding plan over: the clear transcript,
 /// or a masked channel over it (`specs/whiteout-akita.md` §4.5).
 /// Witness-dependent messages go through its [`PrivateChannel`]. Beside it
@@ -246,14 +307,14 @@ impl<H: Sponge> VerifierGrindingChannel for VerifierTranscript<'_, H> {
 /// transcript, so it leaves the replay unusable and `finish` fails even if the
 /// caller drops the error.
 pub trait GrindingReplay {
-    /// The role's channel. Witness-dependent field messages go through its
-    /// [`PrivateChannel`] seam.
-    type State: Channel + PrivateChannel<Error: Into<AkitaError>>;
+    // T0-PORT(private): dev's State was Channel + PrivateChannel so masked channels plug in; re-express on v8.
+    /// The role-specific proof channel state.
+    type State: ProofChannel;
 
-    /// Borrow the transcript for ordinary protocol messages and challenges.
+    /// Borrow the state for ordinary protocol messages and challenges.
     ///
     /// Callers must propagate errors from operations on this borrow before
-    /// `finish`; the verifier transcript also records them itself.
+    /// `finish`; the verifier state also records them itself.
     fn state_mut(&mut self) -> &mut Self::State;
 
     /// Mark this replay as failed.
@@ -284,69 +345,50 @@ pub trait GrindingReplay {
         }
     }
 
-    /// Apply scheduled work and draw the site's extension-field challenge.
+    /// Apply one scheduled grinding query and draw the `count` challenges it
+    /// protects as one challenge message, directly after the proof of work.
     ///
     /// # Errors
     ///
-    /// Propagates [`GrindingReplay::grind_query`] failures.
-    fn grinded_ext_challenge<F, E>(&mut self, site: GrindingSite) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
-        self.grind_query(site)?;
-        let state = self.state_mut();
-        state.site(site.site_id(u32::default()).into());
-        Ok(state.challenge())
-    }
-
-    /// Apply one scheduled grinding query and draw `count` independent
-    /// extension challenges protected by that query.
-    ///
-    /// Some Akita query sites protect a vector of independent field draws with
-    /// one proof-of-work nonce; each draw gets a distinct diagnostic site.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`GrindingReplay::grind_query`] failures and rejects counts
-    /// that cannot be allocated or indexed.
-    fn grinded_ext_challenges<F, E>(
+    /// Propagates [`GrindingReplay::grind_query`] failures, and rejects a
+    /// count the challenge codec does not support.
+    fn grinded_ext_challenges<E: ChallengeCodec>(
         &mut self,
         site: GrindingSite,
         count: usize,
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-    {
+    ) -> Result<Vec<E>, AkitaError> {
         self.grind_query(site)?;
-        let mut challenges = Vec::new();
-        if challenges.try_reserve_exact(count).is_err() {
+        let result = ext_challenges::<E, _>(self.state_mut(), site.site_id(u32::default()), count);
+        if result.is_err() {
             self.poison();
-            return Err(AkitaError::InvalidProof);
         }
-        for index in 0..count {
-            let Ok(group) = u32::try_from(index) else {
-                self.poison();
-                return Err(AkitaError::InvalidProof);
-            };
-            let challenge_site = ProtocolSiteId {
-                group,
-                ..site.site_id(u32::default())
-            };
-            let state = self.state_mut();
-            state.site(challenge_site.into());
-            challenges.push(state.challenge());
-        }
-        Ok(challenges)
+        result
+    }
+
+    /// Apply scheduled work and draw the site's single challenge.
+    ///
+    /// # Errors
+    ///
+    /// As for [`GrindingReplay::grinded_ext_challenges`].
+    fn grinded_ext_challenge<E: ChallengeCodec>(
+        &mut self,
+        site: GrindingSite,
+    ) -> Result<E, AkitaError> {
+        let mut challenges = self.grinded_ext_challenges::<E>(site, 1)?;
+        challenges.pop().ok_or_else(|| {
+            self.poison();
+            AkitaError::Internal("challenge codec returned no element".into())
+        })
     }
 }
 
-impl<H: Sponge, C: ProverGrindingChannel<Sponge = H>> GrindingReplay for ProverGrinding<'_, H, C> {
-    type State = C;
+// T0-PORT(private): dev made this generic over the channel C (clear or masked, specs/whiteout-akita.md §4.5); re-express on v8.
+#[cfg(feature = "prover")]
+impl GrindingReplay for ProverGrinding<'_> {
+    type State = ProverChannel;
 
-    fn state_mut(&mut self) -> &mut C {
-        self.state
+    fn state_mut(&mut self) -> &mut ProverChannel {
+        &mut *self.state
     }
 
     fn poison(&mut self) {
@@ -354,7 +396,7 @@ impl<H: Sponge, C: ProverGrindingChannel<Sponge = H>> GrindingReplay for ProverG
     }
 
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let result = self.grind_query_inner(site);
+        let result = self.grind_query_inner(site, GrindingQueryKind::ProofOfWork);
         if result.is_err() {
             self.poison();
         }
@@ -362,21 +404,21 @@ impl<H: Sponge, C: ProverGrindingChannel<Sponge = H>> GrindingReplay for ProverG
     }
 }
 
-impl<'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>> GrindingReplay
-    for VerifierGrinding<'_, 'proof, H, C>
-{
-    type State = C;
+// T0-PORT(private): dev made this generic over the channel C (clear or masked, specs/whiteout-akita.md §4.5); re-express on v8.
+impl<'proof> GrindingReplay for VerifierGrinding<'proof, '_> {
+    type State = VerifierChannel<'proof>;
 
-    fn state_mut(&mut self) -> &mut C {
-        self.state
+    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
+        &mut *self.state
     }
 
     fn poison(&mut self) {
         self.invalid = true;
+        let _ = reject(self.state);
     }
 
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let result = self.grind_query_inner(site);
+        let result = self.grind_query_inner(site, GrindingQueryKind::ProofOfWork);
         if result.is_err() {
             self.poison();
         }
@@ -384,138 +426,85 @@ impl<'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>> GrindingReplay
     }
 }
 
-/// Prover channel paired with exact grinding-plan progress.
-pub struct ProverGrinding<'a, H: Sponge, C = ProverTranscript<H>> {
-    state: &'a mut C,
-    cursor: GrindingPlanCursor<'a>,
+// T0-PORT(private): dev made this generic over the channel C (clear or masked, specs/whiteout-akita.md §4.5); re-express on v8.
+/// Prover-side state paired with exact grinding-plan progress.
+///
+/// The state is borrowed: it is Akita's own standalone channel or a caller's
+/// channel that Akita's messages join.
+#[cfg(feature = "prover")]
+pub struct ProverGrinding<'plan> {
+    state: &'plan mut ProverChannel,
+    cursor: GrindingPlanCursor<'plan>,
     serialized_nonce_bytes: usize,
     invalid: bool,
-    /// The fork seed of the fold-response search in progress, squeezed by
-    /// [`begin_fold_response`](Self::begin_fold_response).
-    fold_seed: Option<(GrindingSite, [u8; FORK_SEED_LEN])>,
-    /// `H` is `C`'s sponge; it names the [`Fork`]s this context returns.
-    _sponge: PhantomData<fn() -> H>,
 }
 
-impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, C> {
-    /// Attach the caller's prover channel to its public grinding plan.
+#[cfg(feature = "prover")]
+impl<'plan> ProverGrinding<'plan> {
+    /// Attach a prover channel to its public grinding plan.
     #[must_use]
-    pub fn new(state: &'a mut C, plan: &'a GrindingPlan) -> Self {
+    pub fn new(state: &'plan mut ProverChannel, plan: &'plan GrindingPlan) -> Self {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
             serialized_nonce_bytes: 0,
             invalid: false,
-            fold_seed: None,
-            _sponge: PhantomData,
+        // T0-PORT(private): dev's Fork-seeded fold-response search (begin_fold_response) and one-shot responses (W2) lived here; re-express on v8.
         }
     }
 
-    fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork)?;
-        if entry.grind_bits == 0 {
-            return (entry.nonce_bits == 0).then_some(()).ok_or_else(|| {
-                AkitaError::Internal("zero-bit grinding entry has nonzero nonce bits".into())
-            });
+    fn grind_query_inner(
+        &mut self,
+        site: GrindingSite,
+        kind: GrindingQueryKind,
+    ) -> Result<(), AkitaError> {
+        self.proof_of_work(site, kind, |state, bits| {
+            state.grind(bits).map_err(|_| {
+                AkitaError::Internal("transcript proof of work failed to find a nonce".into())
+            })
+        })
+    }
+
+    /// Consume the next proof-of-work entry and let `work` produce it on the
+    /// live channel: a fresh search, or a nonce already found on a preview.
+    fn proof_of_work(
+        &mut self,
+        site: GrindingSite,
+        kind: GrindingQueryKind,
+        work: impl FnOnce(&mut ProverChannel, u32) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let entry = next_entry(&mut self.cursor, site, kind)?;
+        let bits = pow_bits(entry).ok_or_else(|| {
+            AkitaError::Internal("grinding entry nonce width differs from grind_bits + 7".into())
+        })?;
+        if bits == 0 {
+            return Ok(());
         }
-        self.state
-            .site(grinding_site(site, entry.grind_bits, entry.nonce_bits));
-        let start = self.state.narg_len();
-        self.state
-            .grind(entry.grind_bits)
-            .map_err(|error| match error {
-                TranscriptError::GrindingExhausted => {
-                    AkitaError::InvalidInput("transcript grinding exhausted".into())
-                }
-                TranscriptError::UnsupportedGrinding => AkitaError::InvalidSetup(
-                    "scheduled grinding bits exceed the transcript maximum".into(),
-                ),
-                other => AkitaError::Internal(format!("prover grinding failed: {other}")),
+        let (nonce_record, check_record) =
+            grinding_records(site, entry.grind_bits, entry.nonce_bits);
+        let start = self.state.narg_string().len();
+        prover_context(self.state, nonce_record);
+        work(self.state, bits)?;
+        prover_context(self.state, check_record);
+        let nonce_bytes = self.state.narg_string().len() - start;
+        self.serialized_nonce_bytes = self
+            .serialized_nonce_bytes
+            .checked_add(nonce_bytes)
+            .ok_or_else(|| {
+                AkitaError::Internal("proof-of-work serialized nonce byte count overflow".into())
             })?;
-        self.record_nonce_bytes(start)?;
         Ok(())
     }
 
-    fn record_nonce_bytes(&mut self, start: usize) -> Result<usize, AkitaError> {
-        let len = self.state.narg_len() - start;
-        self.serialized_nonce_bytes = self
-            .serialized_nonce_bytes
-            .checked_add(len)
-            .ok_or_else(|| AkitaError::Internal("serialized nonce byte count overflow".into()))?;
-        Ok(len)
-    }
-
-    /// Starts the scheduled fold-response search at `site`: squeezes the
-    /// fork seed every candidate counter is tried under, and returns how the
-    /// plan searches this site.
-    pub fn begin_fold_response(
-        &mut self,
-        site: GrindingSite,
-    ) -> Result<FoldResponseSearch, AkitaError> {
-        let result = self.begin_fold_response_inner(site);
-        self.invalid |= result.is_err();
-        result
-    }
-
-    fn begin_fold_response_inner(
-        &mut self,
-        site: GrindingSite,
-    ) -> Result<FoldResponseSearch, AkitaError> {
-        let entry = self.cursor.peek().ok_or_else(|| {
-            AkitaError::InvalidInput("fold-response search has no remaining plan entry".into())
-        })?;
-        if entry.site != site || site.kind() != GrindingQueryKind::FoldResponse {
-            return Err(AkitaError::InvalidInput(
-                "fold-response search site differs from the next plan entry".into(),
-            ));
-        }
-        if self.fold_seed.is_some() {
-            return Err(AkitaError::InvalidInput(
-                "a fold-response search is already in progress".into(),
-            ));
-        }
-        let search = entry.fold_search.ok_or_else(|| {
-            AkitaError::InvalidInput("fold-response plan entry has no search".into())
-        })?;
-        self.state.site(fold_response_site(site, entry.nonce_bits));
-        self.fold_seed = Some((site, self.state.challenge_bytes()));
-        Ok(search)
-    }
-
-    /// The fork a candidate `counter`'s fold challenges are drawn from, for the
-    /// search [`begin_fold_response`](Self::begin_fold_response) started.
-    pub fn fold_response_fork(
-        &self,
-        site: GrindingSite,
-        counter: u32,
-    ) -> Result<Fork<H>, AkitaError> {
-        let entry = self.cursor.peek().ok_or_else(|| {
-            AkitaError::InvalidInput("fold-response candidate has no remaining plan entry".into())
-        })?;
-        match self.fold_seed {
-            Some((seed_site, seed)) if seed_site == site && entry.site == site => {
-                if value_fits(counter, entry.nonce_bits) {
-                    Ok(Fork::new(&seed, counter))
-                } else {
-                    Err(AkitaError::InvalidInput(
-                        "fold-response candidate exceeds its scheduled bit width".into(),
-                    ))
-                }
-            }
-            Some(_) | None => Err(AkitaError::InvalidInput(
-                "fold-response candidate has no search in progress at its site".into(),
-            )),
-        }
-    }
-
-    /// Sends the accepted fold-response `counter` as a nonce message and
-    /// returns its fork, which the accepted fold challenges come from.
+    /// Emit the accepted fold-response nonce as a canonical message, then the
+    /// fold's proof of work found on its preview, which protects every
+    /// fold-challenge message drawn after it.
     pub fn commit_fold_response(
         &mut self,
         site: GrindingSite,
-        counter: u32,
-    ) -> Result<Fork<H>, AkitaError> {
-        let result = self.commit_fold_response_inner(site, counter);
+        work: FoldWork,
+    ) -> Result<(), AkitaError> {
+        let result = self.commit_fold_response_inner(site, work);
         self.invalid |= result.is_err();
         result
     }
@@ -523,56 +512,99 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
     fn commit_fold_response_inner(
         &mut self,
         site: GrindingSite,
-        counter: u32,
-    ) -> Result<Fork<H>, AkitaError> {
+        work: FoldWork,
+    ) -> Result<(), AkitaError> {
+        let counter = work.nonce();
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
-        let Some((seed_site, seed)) = self.fold_seed.take() else {
-            return Err(AkitaError::InvalidInput(
-                "fold-response commit has no search in progress".into(),
-            ));
-        };
-        if seed_site != site {
-            return Err(AkitaError::InvalidInput(
-                "fold-response commit site differs from its search".into(),
-            ));
-        }
         if !value_fits(counter, entry.nonce_bits) {
             return Err(AkitaError::InvalidInput(
                 "fold-response nonce exceeds its scheduled bit width".into(),
             ));
         }
-        // A one-shot response sends no nonce: its counter is always 0.
-        if entry.fold_search == Some(FoldResponseSearch::OneShot) {
-            return Ok(Fork::new(&seed, counter));
-        }
-        self.state.site(fold_response_site(site, entry.nonce_bits));
-        let start = self.state.narg_len();
-        self.state.send_nonce(counter);
-        let encoded_bytes = self.record_nonce_bytes(start)?;
+        // T0-PORT(private): dev: a one-shot fold response (W2, zk levels) sends no nonce; re-express on v8.
+        prover_context(self.state, fold_response_record(site, entry.nonce_bits));
+        send_nonce(self.state, counter);
+        self.serialized_nonce_bytes = self
+            .serialized_nonce_bytes
+            .checked_add(nonce_encoded_len(counter))
+            .ok_or_else(|| {
+                AkitaError::Internal("fold-response serialized nonce byte count overflow".into())
+            })?;
         tracing::info!(
             role = "prover",
             level = site.level(),
             accepted_nonce = counter,
             rejected_attempts = counter,
             attempts = u64::from(counter) + 1,
-            encoded_bytes,
+            encoded_bytes = nonce_encoded_len(counter),
             "native fold response nonce"
         );
-        Ok(Fork::new(&seed, counter))
+        self.proof_of_work(
+            GrindingSite::FoldChallengeWork {
+                level: site.level(),
+            },
+            GrindingQueryKind::FoldChallengeWork,
+            |state, _bits| work.commit(state),
+        )
     }
 
-    /// Consume the plan entries for one sparse fold group, and log the group's
-    /// accepted fork draws at its [`FoldSite::FoldChallenge`] site.
+    /// Preview a fold-response candidate from the current public state
+    /// without advancing either the live state or the grinding plan: absorb
+    /// the candidate nonce, then run the fold's proof of work. Pass the
+    /// accepted preview's [`FoldPreview::take_work`] to
+    /// [`commit_fold_response`](Self::commit_fold_response).
+    pub fn preview_fold_response(
+        &self,
+        site: GrindingSite,
+        counter: u32,
+    ) -> Result<FoldPreview, AkitaError> {
+        let entry = self.cursor.peek().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "fold-response preview has no remaining grinding plan entry".into(),
+            )
+        })?;
+        if entry.site != site {
+            return Err(AkitaError::InvalidInput(
+                "fold-response preview site differs from grinding plan".into(),
+            ));
+        }
+        if site.kind() != GrindingQueryKind::FoldResponse {
+            return Err(AkitaError::InvalidInput(
+                "fold-response preview query kind is not FoldResponse".into(),
+            ));
+        }
+        if !value_fits(counter, entry.nonce_bits) {
+            return Err(AkitaError::InvalidInput(
+                "fold-response preview nonce exceeds scheduled bit width".into(),
+            ));
+        }
+        let work_site = GrindingSite::FoldChallengeWork {
+            level: site.level(),
+        };
+        let work = self
+            .cursor
+            .peek_following()
+            .filter(|work| work.site == work_site)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "fold-response preview is not followed by the fold proof of work".into(),
+                )
+            })?;
+        let bits = pow_bits(work).ok_or_else(|| {
+            AkitaError::Internal("grinding entry nonce width differs from grind_bits + 7".into())
+        })?;
+        let mut preview = FoldPreview::new(self.state, counter);
+        preview.grind(bits)?;
+        Ok(preview)
+    }
+
+    /// Consume the plan entries for one sparse fold group.
     pub fn record_fold_challenges(
         &mut self,
         level: u32,
         group: u32,
         coordinate_count: usize,
-        draws: &FoldDrawRecord,
     ) -> Result<(), AkitaError> {
-        self.state
-            .site(FoldSite::FoldChallenge { level, group }.id()?.into());
-        draws.log_into(&mut *self.state);
         let result = coordinate_count
             .checked_add(1)
             .ok_or_else(|| {
@@ -600,9 +632,8 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
         Ok(())
     }
 
-    /// Require that replay consumed the complete grinding plan without error.
-    ///
-    /// The proof bytes stay in the caller's transcript.
+    /// Finish plan replay. Akita's messages are now in the borrowed channel's
+    /// argument string.
     pub fn finish(self) -> Result<(), AkitaError> {
         if self.invalid {
             return Err(AkitaError::InvalidInput(
@@ -619,64 +650,99 @@ impl<'a, H: Sponge, C: ProverGrindingChannel<Sponge = H>> ProverGrinding<'a, H, 
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::finish_proof_ranges(self.state);
         Ok(())
     }
 }
 
-/// Verifier channel paired with exact grinding-plan progress.
-pub struct VerifierGrinding<'a, 'proof, H: Sponge, C = VerifierTranscript<'proof, H>> {
-    state: &'a mut C,
-    cursor: GrindingPlanCursor<'a>,
-    serialized_nonce_bytes: usize,
+// T0-PORT(private): dev made this generic over the channel C (clear or masked); re-express on v8.
+/// Verifier-side state paired with exact grinding-plan progress.
+///
+/// The state is borrowed: it is Akita's own standalone channel or a caller's
+/// channel whose argument string continues with Akita's proof.
+pub struct VerifierGrinding<'proof, 'plan> {
+    state: &'plan mut VerifierChannel<'proof>,
+    cursor: GrindingPlanCursor<'plan>,
     invalid: bool,
     /// `C`'s sponge and proof lifetime, which name its [`Fork`]s.
     _transcript: PhantomData<fn() -> &'proof H>,
 }
 
-impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>>
-    VerifierGrinding<'a, 'proof, H, C>
-{
-    /// Attach the caller's verifier channel to its public grinding plan.
+/// Evidence that replay consumed the complete grinding plan and proof.
+///
+/// The private field makes this value constructible only by
+/// [`PendingEof::check_eof`].
+#[derive(Debug)]
+pub struct ProofAcceptance {
+    _private: (),
+}
+
+/// Evidence that Akita's verifier accepted its part of the argument string,
+/// before the end of that string is checked.
+///
+/// The verifier state may carry a caller's messages after Akita's, so the
+/// owner of the state checks the end once its own last message is read. A
+/// poisoned state fails that check, so no rejected proof reaches
+/// [`ProofAcceptance`].
+#[derive(Debug)]
+#[must_use = "Akita's proof is accepted only after `PendingEof::check_eof`"]
+pub struct PendingEof {
+    _private: (),
+}
+
+impl PendingEof {
+    /// Consume the verifier state and require that its whole argument string
+    /// was read and never rejected.
+    ///
+    /// `state` must be the state Akita verified on. Nothing ties the token to
+    /// that state, so passing another state skips this check.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] on unread bytes or a rejected
+    /// state.
+    pub fn check_eof(self, state: VerifierChannel<'_>) -> Result<ProofAcceptance, AkitaError> {
+        state.check_eof().map_err(|_| AkitaError::InvalidProof)?;
+        Ok(ProofAcceptance { _private: () })
+    }
+}
+
+impl<'proof, 'plan> VerifierGrinding<'proof, 'plan> {
+    /// Attach a verifier channel to its public grinding plan.
     #[must_use]
-    pub fn new(state: &'a mut C, plan: &'a GrindingPlan) -> Self {
+    pub const fn new(state: &'plan mut VerifierChannel<'proof>, plan: &'plan GrindingPlan) -> Self {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
-            serialized_nonce_bytes: 0,
             invalid: false,
             _transcript: PhantomData,
         }
     }
 
-    fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork)?;
-        if entry.grind_bits == 0 {
-            return (entry.nonce_bits == 0)
-                .then_some(())
-                .ok_or(AkitaError::InvalidProof);
+    fn grind_query_inner(
+        &mut self,
+        site: GrindingSite,
+        kind: GrindingQueryKind,
+    ) -> Result<(), AkitaError> {
+        let entry = next_entry(&mut self.cursor, site, kind)?;
+        let bits = pow_bits(entry).ok_or(AkitaError::InvalidProof)?;
+        if bits == 0 {
+            return Ok(());
         }
+        let (nonce_record, check_record) =
+            grinding_records(site, entry.grind_bits, entry.nonce_bits);
+        verifier_context(self.state, nonce_record);
         self.state
-            .site(grinding_site(site, entry.grind_bits, entry.nonce_bits));
-        let remaining = self.state.remaining();
-        self.state.check_grind(entry.grind_bits)?;
-        self.record_nonce_bytes(remaining)
-    }
-
-    fn record_nonce_bytes(&mut self, remaining_before: usize) -> Result<(), AkitaError> {
-        self.serialized_nonce_bytes = self
-            .serialized_nonce_bytes
-            .checked_add(
-                remaining_before
-                    .checked_sub(self.state.remaining())
-                    .ok_or(AkitaError::InvalidProof)?,
-            )
-            .ok_or(AkitaError::InvalidProof)?;
+            .check_grind(bits)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        verifier_context(self.state, check_record);
         Ok(())
     }
 
-    /// Squeezes the next scheduled fold-response fork seed, receives the
-    /// counter, and returns the fork the fold challenges are drawn from.
-    pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<Fork<H>, AkitaError> {
+    /// Receive the next scheduled fold-response nonce, then check the fold's
+    /// proof of work.
+    pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let result = self.read_fold_response_inner(site);
         if result.is_err() {
             self.poison();
@@ -684,33 +750,30 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>>
         result
     }
 
-    fn read_fold_response_inner(&mut self, site: GrindingSite) -> Result<Fork<H>, AkitaError> {
+    fn read_fold_response_inner(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
-        self.state.site(fold_response_site(site, entry.nonce_bits));
-        let seed: [u8; FORK_SEED_LEN] = self.state.challenge_bytes();
-        // A one-shot response carries no nonce; reading one would consume a
-        // byte of the next message.
-        if entry.fold_search == Some(FoldResponseSearch::OneShot) {
-            return Ok(Fork::new(&seed, 0));
+        // T0-PORT(private): dev: a one-shot fold response (W2) carries no nonce on the verifier side; re-express on v8.
+        verifier_context(self.state, fold_response_record(site, entry.nonce_bits));
+        let counter = receive_nonce(self.state)?;
+        if !value_fits(counter, entry.nonce_bits) {
+            return Err(AkitaError::InvalidProof);
         }
-        let remaining = self.state.remaining();
-        let counter = self.state.receive_nonce(entry.nonce_bits)?;
-        self.record_nonce_bytes(remaining)?;
-        Ok(Fork::new(&seed, counter))
+        self.grind_query_inner(
+            GrindingSite::FoldChallengeWork {
+                level: site.level(),
+            },
+            GrindingQueryKind::FoldChallengeWork,
+        )?;
+        Ok(counter)
     }
 
-    /// Consume the plan entries for one sparse fold group, and log the group's
-    /// accepted fork draws at its [`FoldSite::FoldChallenge`] site.
+    /// Consume the plan entries for one sparse fold group.
     pub fn record_fold_challenges(
         &mut self,
         level: u32,
         group: u32,
         coordinate_count: usize,
-        draws: &FoldDrawRecord,
     ) -> Result<(), AkitaError> {
-        self.state
-            .site(FoldSite::FoldChallenge { level, group }.id()?.into());
-        draws.log_into(&mut *self.state);
         let result = coordinate_count
             .checked_add(1)
             .ok_or(AkitaError::InvalidProof)
@@ -735,20 +798,19 @@ impl<'a, 'proof, H: Sponge, C: VerifierGrindingChannel<Sponge = H>>
         Ok(())
     }
 
-    /// Require that replay consumed the complete grinding plan without error.
+    /// Require grinding-plan completion. The end of the argument string is
+    /// checked by the state's owner through the returned [`PendingEof`].
     ///
-    /// Proof exhaustion is the caller's check: the outermost verifier finishes
-    /// the transcript.
-    pub fn finish(self) -> Result<(), AkitaError> {
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] and rejects the state when an
+    /// earlier step failed or the plan has unconsumed entries.
+    pub fn finish(mut self) -> Result<PendingEof, AkitaError> {
         if self.invalid || !self.cursor.is_finished() {
+            self.poison();
             return Err(AkitaError::InvalidProof);
         }
-        tracing::info!(
-            role = "verifier",
-            native_nonce_bytes_actual = self.serialized_nonce_bytes,
-            "native proof nonce bytes"
-        );
-        Ok(())
+        Ok(PendingEof { _private: () })
     }
 }
 
@@ -809,34 +871,38 @@ fn grinding_sumcheck_site(
     protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
-    site: SumcheckSite,
-) -> SiteId {
+    invocation: u32,
+    round: u32,
+    role: SumcheckRole,
+) -> ProtocolSiteId {
     ProtocolSiteId {
         family: SITE_FAMILY_SUMCHECK,
         invocation: protocol.tag(),
         level,
         stage,
-        round: site.round,
-        group: site.invocation,
-        detail: site.role as u32,
+        round,
+        group: invocation,
+        detail: role as u32,
+        ..ProtocolSiteId::default()
     }
-    .into()
 }
 
-/// Sumcheck round context borrowing a prover grinding context.
-pub struct GrindingSumcheckProver<'context, 'a, F, E, H: Sponge, C = ProverTranscript<H>> {
-    grinding: &'context mut ProverGrinding<'a, H, C>,
+/// Standard-sumcheck channel borrowing a prover grinding context.
+#[cfg(feature = "prover")]
+pub struct GrindingSumcheckProver<'context, 'plan, F, E> {
+    grinding: &'context mut ProverGrinding<'plan>,
     protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'a, F, E, H: Sponge, C> GrindingSumcheckProver<'context, 'a, F, E, H, C> {
+#[cfg(feature = "prover")]
+impl<'context, 'plan, F, E> GrindingSumcheckProver<'context, 'plan, F, E> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
-        grinding: &'context mut ProverGrinding<'a, H, C>,
+        grinding: &'context mut ProverGrinding<'plan>,
         protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
@@ -851,22 +917,17 @@ impl<'context, 'a, F, E, H: Sponge, C> GrindingSumcheckProver<'context, 'a, F, E
     }
 }
 
-impl<F, E, H, C> ProverRoundContext<E> for GrindingSumcheckProver<'_, '_, F, E, H, C>
+#[cfg(feature = "prover")]
+impl<F, E> SumcheckProverChannel<E> for GrindingSumcheckProver<'_, '_, F, E>
 where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    H: Sponge,
-    C: ProverGrindingChannel<Sponge = H, Error: Into<SumcheckError<E>>>,
+    E: ChallengeCodec,
 {
-    type Channel = C;
-    type Error = AkitaError;
-
-    fn channel_mut(&mut self) -> &mut C {
+    fn state_mut(&mut self) -> &mut ProverChannel {
         self.grinding.state_mut()
     }
 
-    fn site(&self, site: SumcheckSite) -> Option<SiteId> {
-        Some(grinding_sumcheck_site(
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+        grinding_sumcheck_site(
             self.protocol,
             self.level,
             self.stage,
@@ -881,7 +942,7 @@ where
             ));
         }
         self.grinding
-            .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
+            .grinded_ext_challenge::<E>(GrindingSite::SumcheckRound {
                 protocol: self.protocol,
                 level: self.level,
                 stage: self.stage,
@@ -890,22 +951,21 @@ where
     }
 }
 
-/// Sumcheck round context borrowing a verifier-side grinding replay: the
-/// verifier's [`VerifierGrinding`] over the clear transcript or a masked
-/// channel, or a [`CountingGrinding`] pad-layout replay.
-pub struct GrindingSumcheckVerifier<'context, F, E, G> {
-    grinding: &'context mut G,
+// T0-PORT(private): dev's verifier sumcheck context was generic over any GrindingReplay (masked channel, CountingGrinding); re-express on v8.
+/// Standard-sumcheck channel borrowing a verifier grinding context.
+pub struct GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
+    grinding: &'context mut VerifierGrinding<'proof, 'plan>,
     protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, F, E, G> GrindingSumcheckVerifier<'context, F, E, G> {
+impl<'context, 'proof, 'plan, F, E> GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
-        grinding: &'context mut G,
+        grinding: &'context mut VerifierGrinding<'proof, 'plan>,
         protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
@@ -920,21 +980,18 @@ impl<'context, F, E, G> GrindingSumcheckVerifier<'context, F, E, G> {
     }
 }
 
-impl<F, E, G> VerifierRoundContext<E> for GrindingSumcheckVerifier<'_, F, E, G>
+// T0-PORT(private): dev used PrivateChannel here; re-express on v8.
+impl<'proof, F, E> SumcheckVerifierChannel<'proof, E>
+    for GrindingSumcheckVerifier<'_, 'proof, '_, F, E>
 where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    G: GrindingReplay<State: PrivateChannel<Error: Into<SumcheckError<E>>>>,
+    E: ChallengeCodec,
 {
-    type Channel = G::State;
-    type Error = AkitaError;
-
-    fn channel_mut(&mut self) -> &mut G::State {
+    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
         self.grinding.state_mut()
     }
 
-    fn site(&self, site: SumcheckSite) -> Option<SiteId> {
-        Some(grinding_sumcheck_site(
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+        grinding_sumcheck_site(
             self.protocol,
             self.level,
             self.stage,
@@ -942,14 +999,15 @@ where
         ))
     }
 
-    fn challenge(&mut self, site: SumcheckSite) -> Result<E, AkitaError> {
-        if site.invocation != 0 {
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
+        if invocation != 0 {
+            self.grinding.poison();
             return Err(AkitaError::InvalidInput(
                 "grinding sumcheck verifier invocation is not zero".into(),
             ));
         }
         self.grinding
-            .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
+            .grinded_ext_challenge::<E>(GrindingSite::SumcheckRound {
                 protocol: self.protocol,
                 level: self.level,
                 stage: self.stage,
@@ -1021,160 +1079,14 @@ where
     }
 }
 
-impl<F, E, G: GrindingReplay> Channel for PublicGrindingSumcheck<'_, F, E, G> {
-    type Sponge = <G::State as Channel>::Sponge;
-
-    fn site(&mut self, site: SiteId) {
-        self.grinding.state_mut().site(site);
-    }
-
-    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize) {
-        self.grinding
-            .state_mut()
-            .record_fork_draw(absorbed, squeezed);
-    }
-
-    fn public<A: jolt_algebra::CanonicalBytes>(&mut self, value: &A) {
-        self.grinding.state_mut().public(value);
-    }
-
-    fn public_all<A: jolt_algebra::CanonicalBytes>(&mut self, values: &[A]) {
-        self.grinding.state_mut().public_all(values);
-    }
-
-    fn public_bytes(&mut self, bytes: &[u8]) {
-        self.grinding.state_mut().public_bytes(bytes);
-    }
-
-    fn exchange<A: jolt_algebra::CanonicalDecode>(
-        &mut self,
-        value: &mut A,
-    ) -> Result<(), TranscriptError> {
-        self.grinding.state_mut().exchange(value)
-    }
-
-    fn exchange_all<A: jolt_algebra::CanonicalDecode>(
-        &mut self,
-        values: &mut [A],
-    ) -> Result<(), TranscriptError> {
-        self.grinding.state_mut().exchange_all(values)
-    }
-
-    fn exchange_public<A: jolt_algebra::CanonicalDecode>(
-        &mut self,
-        value: &mut A,
-    ) -> Result<(), TranscriptError> {
-        self.grinding.state_mut().exchange_public(value)
-    }
-
-    fn exchange_public_all<A: jolt_algebra::CanonicalDecode>(
-        &mut self,
-        values: &mut [A],
-    ) -> Result<(), TranscriptError> {
-        self.grinding.state_mut().exchange_public_all(values)
-    }
-
-    fn challenge<C: Field>(&mut self) -> C {
-        self.grinding.state_mut().challenge()
-    }
-
-    fn challenge_small<C: CanonicalEncoding>(&mut self) -> C {
-        self.grinding.state_mut().challenge_small()
-    }
-
-    fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
-        self.grinding.state_mut().challenge_bytes()
-    }
-}
-
-impl<F, E, G: GrindingReplay> PrivateChannel for PublicGrindingSumcheck<'_, F, E, G> {
-    type Error = TranscriptError;
-
-    fn exchange_private<B, X>(&mut self, values: &mut [X]) -> Result<PadSlots, TranscriptError>
-    where
-        B: Field + CanonicalEncoding,
-        X: ExtField<B> + jolt_algebra::CanonicalDecode,
-    {
-        self.exchange_public_all(values)?;
-        Ok(PadSlots::default())
-    }
-
-    fn bind_derived<B, X>(&mut self, claim: &X) -> Result<(), TranscriptError>
-    where
-        B: Field + CanonicalEncoding,
-        X: ExtField<B> + jolt_algebra::CanonicalDecode,
-    {
-        self.public(claim);
-        Ok(())
-    }
-
-    fn exchange_private_base<B>(&mut self, values: &mut [B]) -> Result<PadSlots, TranscriptError>
-    where
-        B: Field + CanonicalEncoding,
-    {
-        self.exchange_public_all(values)?;
-        Ok(PadSlots::default())
-    }
-
-    fn bind_derived_base<B>(&mut self, claim: &B) -> Result<(), TranscriptError>
-    where
-        B: Field + CanonicalEncoding,
-    {
-        self.public(claim);
-        Ok(())
-    }
-}
-
-impl<F, E, G> ProverRoundContext<E> for PublicGrindingSumcheck<'_, F, E, G>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    G: GrindingReplay,
-{
-    type Channel = Self;
-    type Error = AkitaError;
-
-    fn channel_mut(&mut self) -> &mut Self {
-        self
-    }
-
-    fn site(&self, site: SumcheckSite) -> Option<SiteId> {
-        Some(self.sumcheck_site(site))
-    }
-
-    fn challenge(&mut self, site: SumcheckSite) -> Result<E, AkitaError> {
-        self.draw(site)
-    }
-}
-
-impl<F, E, G> VerifierRoundContext<E> for PublicGrindingSumcheck<'_, F, E, G>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    G: GrindingReplay,
-{
-    type Channel = Self;
-    type Error = AkitaError;
-
-    fn channel_mut(&mut self) -> &mut Self {
-        self
-    }
-
-    fn site(&self, site: SumcheckSite) -> Option<SiteId> {
-        Some(self.sumcheck_site(site))
-    }
-
-    fn challenge(&mut self, site: SumcheckSite) -> Result<E, AkitaError> {
-        self.draw(site)
-    }
-}
-
+// T0-PORT(private): dev's Channel/PrivateChannel/round-context impls for PublicGrindingSumcheck
+// (A42: rounds public in both modes) were dropped with the old driver; re-express on v8.
 #[cfg(feature = "zk")]
 #[path = "replay/counting.rs"]
 mod counting;
 #[cfg(feature = "zk")]
 pub use counting::CountingGrinding;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "prover"))]
 #[path = "replay/tests.rs"]
 mod tests;

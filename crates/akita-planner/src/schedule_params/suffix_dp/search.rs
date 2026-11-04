@@ -30,6 +30,9 @@ fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState<'_>) ->
 /// any successor is planned.
 struct CandidateEdges {
     natural_setup_field_len: usize,
+    /// The setup length an offloaded successor commits: the natural length,
+    /// or at the root the accumulated root setup prefix when that is longer.
+    offloaded_setup_field_len: usize,
     direct_edge_is_admissible: bool,
     prune_direct_edge: bool,
 }
@@ -103,6 +106,11 @@ fn candidate_edges(
     let natural_len = guide
         .map(|(_, natural_len)| natural_len)
         .map_or_else(|| active_setup_field_len(params, search.opening_layout), Ok)?;
+    let offloaded_setup_field_len = natural_len.max(
+        ctx.root_lookup_key
+            .filter(|_| ctx.level_zero_is_root && state.level == 0)
+            .map_or(0, |key| key.root_accumulated_setup_prefix_len),
+    );
     let direct_edge_is_admissible =
         state
             .topology
@@ -144,6 +152,7 @@ fn candidate_edges(
     }
     Ok(EdgeDecision::Planned(CandidateEdges {
         natural_setup_field_len: natural_len,
+        offloaded_setup_field_len,
         direct_edge_is_admissible,
         prune_direct_edge,
     }))
@@ -162,7 +171,7 @@ fn child_requests(
     let params = &candidate.params;
     let Some(query) = search
         .query_search
-        .child(ctx, state, search.opening_layout, params)?
+        .child(ctx, state, search.opening_layout, params, candidate.fold_cost)?
     else {
         return Ok(None);
     };
@@ -206,7 +215,7 @@ fn child_requests(
     let offloaded = SuffixTopology::offloaded_successor(
         params.ring_relation_mode,
         params.payload_mode,
-        edges.natural_setup_field_len,
+        edges.offloaded_setup_field_len,
     )
     .filter(|_| {
         guided_successor_is_offloaded != Some(false)
@@ -291,7 +300,9 @@ fn price_planned_fold_candidate(
         search.opening_layout,
         LevelCandidateEdge {
             params: &candidate.params,
+            fold_cost: candidate.fold_cost,
             natural_setup_field_len: edges.natural_setup_field_len,
+            offloaded_setup_field_len: edges.offloaded_setup_field_len,
             require_child_fold: search.require_child_fold,
         },
         CandidateChildren {

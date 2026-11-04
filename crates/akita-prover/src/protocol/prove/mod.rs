@@ -25,9 +25,8 @@ use akita_types::{
     Commitment,
 };
 use jolt_algebra::CyclotomicRing;
-use jolt_algebra::{CanonicalDecode, Fold, Unreduced};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
-use jolt_transcript::Sponge;
+use jolt_algebra::{Fold, Unreduced};
 
 pub(crate) struct ExtensionOpeningReduction<E: Field> {
     pub(crate) final_claims: Vec<E>,
@@ -47,7 +46,7 @@ mod registry;
 mod root;
 mod suffix;
 
-pub use execution::{batched_prove, catch_prover_panic};
+pub use execution::{batched_prove, batched_prove_embedded, catch_prover_panic};
 pub(in crate::protocol::prove) use fold::{prepare_fold, prove_fold, PreparedFold};
 pub use fold::{prove_digit_range, DigitRangeOutput};
 pub(in crate::protocol) use fold_kernels::*;

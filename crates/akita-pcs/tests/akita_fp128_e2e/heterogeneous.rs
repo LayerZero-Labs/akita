@@ -42,7 +42,7 @@ fn heterogeneous_group_types() {
                 .map(|i| (i % 3 == 0).then_some((i % onehot_k_pre) as u8))
                 .collect(),
         )
-        .expect("K=256 precommitted poly");
+        .expect("K=16 precommitted poly");
 
         let dense_evals_a = (0..(1usize << DENSE_PRE_NV))
             .map(|i| F::from_u64((i % 257) as u64))
@@ -72,7 +72,7 @@ fn heterogeneous_group_types() {
                     .expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
-            .expect("K=256 precommit");
+            .expect("K=16 precommit");
 
         // Dense pre-group committed on the same backend under the dense family,
         // so its profile matches the Dense descriptor in catalog entry
@@ -89,8 +89,8 @@ fn heterogeneous_group_types() {
             .expect("dense precommit");
 
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![
-            onehot_pre_commitment.profile,
-            dense_commitment.profile,
+            *onehot_pre_commitment.profile(),
+            *dense_commitment.profile(),
         ])
         .expect("nonempty precommitted groups");
         let akita_cpu_backend::CommitOutput {
@@ -126,7 +126,7 @@ fn heterogeneous_group_types() {
                 vec![onehot_pre_opening],
                 onehot_pre_commitment.clone(),
             )
-            .expect("K=256 prover group"),
+            .expect("K=16 prover group"),
             PolynomialGroupClaims::new(
                 dense_point.clone(),
                 vec![dense_opening_a, dense_opening_b],
@@ -179,7 +179,7 @@ fn heterogeneous_group_types() {
                 vec![onehot_pre_opening],
                 &onehot_pre_commitment,
             )
-            .expect("K=256 verifier group"),
+            .expect("K=16 verifier group"),
             PolynomialGroupClaims::new(
                 dense_point,
                 vec![dense_opening_a, dense_opening_b],
@@ -193,11 +193,12 @@ fn heterogeneous_group_types() {
         onehot_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .expect("heterogeneous verify");
@@ -263,7 +264,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         // full-width decomposition at the same basis. The independently planned
         // full-width family may choose another basis, so comparing its raw digit
         // count would not compare like with like.
-        let bounded_digits = bounded_commitment.profile.inner.digits;
+        let bounded_digits = bounded_commitment.profile().inner.digits;
         let full_width_digits_at_bounded_basis =
             akita_params::sis::compute_num_digits_field_width(128, bounded_digits.log_basis);
         assert!(
@@ -272,7 +273,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         );
 
         let precommitteds =
-            PrecommittedGroupProfiles::from_profiles(vec![bounded_commitment.profile])
+            PrecommittedGroupProfiles::from_profiles(vec![*bounded_commitment.profile()])
                 .expect("nonempty precommitted groups");
         let final_polys = [final_onehot.clone()];
         let akita_cpu_backend::CommitOutput {
@@ -335,7 +336,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         assert_eq!(schedule.root.params.precommitted_groups().len(), 1);
         assert_eq!(
             precommitted.profile.inner.digits.num_digits,
-            bounded_commitment.profile.inner.digits.num_digits,
+            bounded_commitment.profile().inner.digits.num_digits,
             "the resolved row must carry the bounded producer's own digit depth"
         );
         // The root itself is planned at the one-hot bound, so the two groups
@@ -360,11 +361,12 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         onehot_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .expect("mixed-bound verify");
@@ -389,11 +391,12 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         assert!(
             onehot_scheme
                 .verifier(verifier_setup.clone())
-                .and_then(|verifier| verifier.verify_standalone(
+                .and_then(|verifier| verifier.batched_verify(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
-                    BasisMode::Lagrange
+                    BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 ))
                 .is_err(),
             "a tampered bounded-group opening must not verify"
@@ -426,10 +429,10 @@ fn bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size() {
 // A schedule's declared source *class* is a producer obligation, not only a
 // planning input, and it is independent of the numeric bound.
 //
-// `fp128::OneHot` prices at most one hot position per 256 source coefficients.
+// `fp128::OneHot` prices at most one hot position per 16 source coefficients.
 // A dense polynomial whose values are all `1` reports centered reach `(0, 1)`,
 // which sits comfortably inside that schedule's one-digit `[-4, 3]` balanced
-// envelope — so every magnitude test admits it, while it carries up to 256x the
+// envelope — so every magnitude test admits it, while it carries up to 16x the
 // per-chunk energy the frozen response caps were planned for. Only a check on the
 // representation itself can reject it, and it must be rejected at `commit` rather
 // than surface later as an unexplained proof failure.
@@ -839,25 +842,20 @@ fn explicit_commitment_transfer_between_backends() {
         let root = registry.register(&receiver, &prefixes).unwrap();
         let mut route =
             akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        let mut transcript = jolt_transcript::ProverTranscript::<akita_pcs::AkitaSponge>::new(
-            &akita_pcs::PROOF_STREAM_PROTOCOL,
-            session,
-        );
-        akita_prover::batched_prove::<Cfg, _, _>(
+        let proof = akita_prover::batched_prove::<Cfg, _>(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
             prover_data,
-            &mut transcript,
+            session,
             BasisMode::Lagrange,
             &mut route,
         )
         .expect("heterogeneous prove");
-        let proof = transcript.finish();
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     session,
                     GroupBatchStatement::new(
@@ -872,6 +870,7 @@ fn explicit_commitment_transfer_between_backends() {
                     )
                     .expect("statement"),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .expect("heterogeneous verify");
@@ -921,11 +920,12 @@ where
                 .clone(),
         )
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 session,
                 verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");

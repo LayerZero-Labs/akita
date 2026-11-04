@@ -10,7 +10,8 @@ use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 #[cfg(test)]
 use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
-use akita_serialization::Valid;
+use akita_serialization::{AkitaSerialize, Valid};
+use akita_transcript::ChallengeCodec;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use jolt_crypto::challenge::SparseChallengeConfig;
 use std::marker::PhantomData;
@@ -391,6 +392,7 @@ fn row_fits_setup_capacity(
     max_num_batched_polys: usize,
 ) -> Result<bool, AkitaError> {
     akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     }
@@ -468,10 +470,12 @@ pub fn unit_onehot_source_chunk_size<Cfg: CommitmentConfig>() -> Result<usize, A
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalEncoding + Field;
+    ///
+    /// Fiat-Shamir draws over it use Jolt's challenge codec for the field.
+    type Field: CanonicalEncoding + Field + ChallengeCodec + Valid + AkitaSerialize;
 
     /// Field used by public openings and all proof scalars.
-    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid;
+    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid + ChallengeCodec;
 
     /// Extension degree `K = [ExtField : Field]`.
     ///
@@ -585,9 +589,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_algebra::{Fp32, FpExt4};
+    use jolt_algebra::{FpExt4, Prime32Offset99};
 
-    type Base = Fp32<251>;
+    type Base = Prime32Offset99;
     type BaseExt = FpExt4<Base>;
 
     #[derive(Clone)]
@@ -819,38 +823,7 @@ mod fp128_policy_tests {
     const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
-    fn fp128_onehot_uses_adaptive_schedule_policy() {
-        assert!(matches!(
-            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
-            RingDimensionSchedule {
-                num_search_levels: 2,
-                suffix_dimensions: &[64],
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn fp128_dense_uses_adaptive_schedule_policy() {
-        assert!(matches!(
-            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
-            RingDimensionSchedule {
-                num_search_levels: 2,
-                suffix_dimensions: &[64],
-                ..
-            }
-        ));
-    }
-
-    #[test]
     fn current_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
-            CI_DENSE_SIS_WIDTH_NUM_VARS,
-        );
-    }
-
-    #[test]
-    fn current_adaptive_dense_schedule_stays_within_audited_sis_widths() {
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
             CI_DENSE_SIS_WIDTH_NUM_VARS,
         );

@@ -67,9 +67,10 @@ pub use compression_relation_weights::{
 };
 pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges, OpeningFamily};
+#[cfg(feature = "prover")]
+pub use fold_draw::PreviewFoldDraw;
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, FoldDrawRecord, ForkFoldDraw,
-    FOLD_CHALLENGE_SEED_LEN,
+    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
 };
 
 #[cfg(test)]

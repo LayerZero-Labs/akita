@@ -1,4 +1,6 @@
 use super::PhysicalBWeightTerm;
+use akita_algebra::row_batch::WeightedRowBatch;
+use jolt_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 #[cfg(test)]
 use jolt_algebra::ring::eval_flat_ring_at_pows_fast;
@@ -150,7 +152,9 @@ where
     let setup = setup_flat
         .get(range.clone())
         .ok_or(AkitaError::InvalidProof)?;
-    let mut acc = E::zero();
+    // Rows with a zero weight contribute nothing; the rest go through the
+    // shared-powers kernel in bounded batches.
+    let mut batch = WeightedRowBatch::new(base_pows);
     for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
         range,
         segment,
@@ -163,12 +167,12 @@ where
         |offset, weight| {
             if !weight.is_zero() {
                 let ring = setup.get(offset).ok_or(AkitaError::InvalidProof)?;
-                acc += eval_ring_at_pows_fast(ring, base_pows) * weight;
+                batch.push(ring.coefficients(), weight);
             }
             Ok(())
         },
     )?;
-    Ok(acc)
+    Ok(batch.finish())
 }
 
 #[inline(always)]
@@ -385,7 +389,7 @@ where
             AkitaError::InvalidSetup("weighted setup coeff start overflow".into())
         })?;
         let coeffs = checked_slice(row, coeff_start, ring_d, "weighted setup coeffs")?;
-        acc += row_weight * col_weight * eval_flat_ring_at_pows_fast::<Base, E>(coeffs, alpha_pows);
+        acc += row_weight * col_weight * MulBaseUnreduced::dot_base(alpha_pows, coeffs);
     }
     Ok(acc)
 }

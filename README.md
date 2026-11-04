@@ -13,7 +13,7 @@ The workspace is a family of focused `akita-*` crates under `crates/`. [`docs/cr
 
 - `akita-error` owns the shared protocol error.
 - Jolt's `jolt-algebra` package owns shared field, cyclotomic ring, NTT, FFT, and checked integer arithmetic; `akita-serialization` and `akita-algebra` own Akita encoding and polynomial utilities.
-- Jolt's `jolt-crypto` package owns sparse challenge sampling and public-matrix derivation; `akita-sumcheck` owns generic sumcheck machinery; Fiat-Shamir runs on the caller-supplied `jolt-transcript` proof channel.
+- Jolt's `jolt-crypto` package owns sparse challenge sampling and public-matrix derivation; `akita-transcript` owns Akita's Fiat-Shamir policy over `jolt-transcript`, which runs inside the caller's transcript; `akita-sumcheck` owns generic sumcheck machinery.
 - `akita-params` owns parameter geometry, sizing, SIS tables, schedules, witness layout, dispatch, and grinding plans.
 - `akita-types` owns proof, setup, and claim wire values, shared protocol math, and native transcript replay used by both roles.
 - `akita-sis-estimator` owns offline scalar SIS attack-cost estimation and table certification.

@@ -29,7 +29,6 @@
 //! matrix marks `#[ignore]`. The recursive catalogs are excluded for the same
 //! reason: every recursive row is production-sized.
 
-use crate::common::sponge::{TestSponge, TEST_PROTOCOL};
 use crate::common::{dense_opening_lagrange, load_workspace_scheme, onehot_opening_lagrange};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
@@ -37,7 +36,7 @@ use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};
 use akita_params::{
     BasisMode, ChunkedWitnessCfg, CommitmentPayloadMode, GroupCommitPhaseParams,
     InnerCommitSecurityRoute, MultiChunkProfileId, OpeningMethod, PhysicalL2NormProofShape,
-    ProtocolSiteId, RingRelationMode,
+    RingRelationMode,
 };
 use akita_prover::SelectedProverOpeningData;
 use akita_schedules::ResolvedScheduleRow;
@@ -47,7 +46,6 @@ use jolt_algebra::{
     CanonicalBytes, CanonicalEncoding, ExtField, Fold, PseudoMersenne, Ring, Unreduced,
     WithCommitAccumulator,
 };
-use jolt_transcript::{ProverTranscript, TranscriptEvent, VerifierTranscript};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -223,7 +221,10 @@ where
 fn row_event_streams<Cfg, S>(
     scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
     row: &ResolvedScheduleRow,
-) -> (Vec<TranscriptEvent>, Vec<TranscriptEvent>)
+) -> (
+    Vec<akita_transcript::TranscriptEvent>,
+    Vec<akita_transcript::TranscriptEvent>,
+)
 where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding
@@ -308,7 +309,7 @@ where
             .iter()
             .zip(&openings)
             .map(|(commitment, evaluations)| {
-                let num_vars = commitment.profile.group.num_vars();
+                let num_vars = commitment.profile().group.num_vars();
                 PolynomialGroupClaims::new(
                     point[..num_vars].to_vec(),
                     evaluations.clone(),
@@ -332,25 +333,18 @@ where
         "claims must select the probed row"
     );
 
-    let mut prover = ProverTranscript::<TestSponge>::new(&TEST_PROTOCOL, LABEL);
-    crate::common::caller_transcript::prove_on_transcript(
-        scheme,
-        &setup,
-        prover_data,
-        &backend,
-        &mut prover,
-        BasisMode::Lagrange,
-    )
-    .expect("prove");
-    let prover_events = prover.events().to_vec();
-    let proof = prover.finish();
+    akita_transcript::clear_thread_events();
+    let proof = scheme
+        .batched_prove(&setup, prover_data, &backend, LABEL, BasisMode::Lagrange)
+        .expect("prove");
+    let prover_events = akita_transcript::thread_events();
 
     let verifier_claims = OpeningClaims::from_groups(
         commitments
             .iter()
             .zip(&openings)
             .map(|(commitment, evaluations)| {
-                let num_vars = commitment.profile.group.num_vars();
+                let num_vars = commitment.profile().group.num_vars();
                 PolynomialGroupClaims::new(
                     point[..num_vars].to_vec(),
                     evaluations.clone(),
@@ -361,26 +355,35 @@ where
             .collect(),
     )
     .expect("verifier claims");
-    let mut verifier = VerifierTranscript::<TestSponge>::new(&TEST_PROTOCOL, LABEL, &proof);
+    akita_transcript::clear_thread_events();
     scheme
         .verifier(verifier_setup)
-        .and_then(|akita| {
-            akita.batched_verify(
-                &mut verifier,
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                LABEL,
                 GroupBatchStatement::new(selection, verifier_claims).expect("statement"),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("honest proof verifies");
-    let verifier_events = verifier.events().to_vec();
-    verifier.finish().expect("honest proof is consumed exactly");
+    let verifier_events = akita_transcript::thread_events();
     (prover_events, verifier_events)
 }
 
 /// Index and both sides of the first differing event, or the length mismatch.
-fn first_divergence(prover: &[TranscriptEvent], verifier: &[TranscriptEvent]) -> String {
-    let site = |event: Option<&TranscriptEvent>| {
-        event.map(|event| (ProtocolSiteId::from_bytes(event.site.0), event.op))
+fn first_divergence(
+    prover: &[akita_transcript::TranscriptEvent],
+    verifier: &[akita_transcript::TranscriptEvent],
+) -> String {
+    let site = |event: Option<&akita_transcript::TranscriptEvent>| {
+        event.map(|akita_transcript::TranscriptEvent::Context(record)| {
+            (
+                akita_transcript::ProtocolSiteId::from_bytes(record.site_id),
+                record.kind,
+            )
+        })
     };
     let index = prover
         .iter()

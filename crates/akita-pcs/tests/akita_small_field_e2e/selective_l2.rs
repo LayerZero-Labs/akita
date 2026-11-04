@@ -121,11 +121,12 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.verify_standalone(
+                    verifier.batched_verify(
                         candidate,
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
         };
@@ -222,11 +223,12 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.verify_standalone(
+                    verifier.batched_verify(
                         candidate,
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
         };

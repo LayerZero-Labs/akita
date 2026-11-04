@@ -28,7 +28,7 @@ fn profile_commit_group_returns_exact_frozen_layout() {
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
-    let frozen_layout = commitment.profile;
+    let frozen_layout = *commitment.profile();
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
@@ -114,8 +114,8 @@ fn profile_commit_group_allows_independent_groups() {
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit B");
-        let pre_a_frozen = pre_a_commitment.profile;
-        let pre_b_frozen = pre_b_commitment.profile;
+        let pre_a_frozen = *pre_a_commitment.profile();
+        let pre_b_frozen = *pre_b_commitment.profile();
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
@@ -152,6 +152,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_b_frozen = catalog_profile(&scheme, pre_b_key);
     let pre_c_frozen = catalog_profile(&scheme, pre_c_key);
     let multi_group_key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: akita_params::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
@@ -239,6 +240,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         )
         .expect("precommit B");
     let multi_group_key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: akita_params::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
@@ -260,8 +262,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7004),
     ];
     let precommitteds = akita_params::PrecommittedGroupProfiles::from_profiles(vec![
-        pre_a_commitment.profile,
-        pre_b_commitment.profile,
+        *pre_a_commitment.profile(),
+        *pre_b_commitment.profile(),
     ])
     .expect("nonempty precommitted groups");
     let akita_cpu_backend::CommitOutput {
@@ -348,7 +350,7 @@ fn commit_group_returns_frozen_exact_layout() {
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit group");
-    let frozen_layout = commitment.profile;
+    let frozen_layout = *commitment.profile();
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
@@ -452,7 +454,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 b"test/batched-onehot-shape",
                 selected_statement::<OneHotCfg>(
@@ -467,6 +469,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 )
                 .expect("valid one-hot verifier statement"),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("batched onehot verify");

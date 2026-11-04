@@ -207,7 +207,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -217,13 +217,14 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
 }
 
 /// Onehot variant of [`run_dense_e2e`]. `K` is the onehot chunk size selected
-/// by the config; standard one-hot presets use `K = 256`.
+/// by the config; standard one-hot presets use `K = 16`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
@@ -329,7 +330,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -339,6 +340,7 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
@@ -352,7 +354,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &tampered,
                 session,
                 verify_input::<Cfg>(
@@ -362,6 +364,7 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("tampering the terminal response must be rejected");
@@ -372,7 +375,7 @@ where
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &wrong_binding,
                 session,
                 verify_input::<Cfg>(
@@ -382,6 +385,7 @@ where
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("schedule/proof binding mismatch must reject without panic");
@@ -475,7 +479,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -485,6 +489,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("batched verify");
@@ -582,7 +587,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 session,
                 verify_input::<Cfg>(
@@ -592,6 +597,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("batched onehot verify");

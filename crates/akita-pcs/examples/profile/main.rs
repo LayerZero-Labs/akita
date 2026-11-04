@@ -14,8 +14,7 @@
 ))]
 compile_error!("profile-bench-selected is internal; enable one profile-ci-* group instead");
 
-#[path = "../support/caller_transcript.rs"]
-mod caller_transcript;
+mod contract;
 mod modes;
 mod monitor;
 mod parallel;

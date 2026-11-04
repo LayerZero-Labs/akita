@@ -20,9 +20,9 @@ use std::collections::BTreeMap;
 /// # Errors
 ///
 /// Returns an error for malformed geometry, address overflow, unsupported
-/// equality arity, or recurrence work above
+/// equality arity, or recurrence work that takes `work` above
 /// [`crate::offset_eq::MAX_COMPACT_STRIDE_TERMS`].
-pub fn eval_boolean_pair_tensor_families<
+pub(super) fn eval_unfactored_tensor_families<
     F: Field,
     const LEFT_MONOMIAL: bool,
     const RIGHT_MONOMIAL: bool,
@@ -30,6 +30,7 @@ pub fn eval_boolean_pair_tensor_families<
     left_challenges: &[F],
     right_challenges: &[F],
     families: &[EqPairTensorFamily<F>],
+    work: &mut usize,
 ) -> Result<F, AkitaError> {
     if left_challenges.len() >= usize::BITS as usize
         || right_challenges.len() >= usize::BITS as usize
@@ -47,7 +48,6 @@ pub fn eval_boolean_pair_tensor_families<
     let mut multi_axis_batches =
         BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<&EqPairTensorFamily<F>>>::new();
     let mut scalar_seeds = Vec::new();
-    let mut work = 0usize;
     let mut acc = F::zero();
     for family in families {
         if family.scalar.is_zero() {
@@ -57,7 +57,7 @@ pub fn eval_boolean_pair_tensor_families<
             left_challenges,
             right_challenges,
             family,
-            &mut work,
+            work,
         )? {
             acc += value;
             continue;
@@ -93,7 +93,7 @@ pub fn eval_boolean_pair_tensor_families<
                     right_challenges,
                     &[family],
                     &recurrence_geometry,
-                    &mut work,
+                    work,
                 )?;
             } else {
                 multi_axis_batches
@@ -123,7 +123,7 @@ pub fn eval_boolean_pair_tensor_families<
             family.scalar,
             &mut batches,
             &mut scalar_seeds,
-            &mut work,
+            work,
         )?;
     }
     for (recurrence_geometry, families) in multi_axis_batches {
@@ -132,7 +132,7 @@ pub fn eval_boolean_pair_tensor_families<
             right_challenges,
             &families,
             &recurrence_geometry,
-            &mut work,
+            work,
         )?;
     }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
@@ -148,7 +148,7 @@ pub fn eval_boolean_pair_tensor_families<
             right_stride,
             len,
             &seeds,
-            &mut work,
+            work,
         )?;
     }
     Ok(acc)
@@ -530,6 +530,9 @@ fn collect_residual_seeds<F: Field>(
         .axes
         .get(axis_index)
         .ok_or_else(|| AkitaError::Internal("residual seed recursion axis is absent".into()))?;
+    // Charge every visited coordinate before the loop; see
+    // `collect_tensor_family_seeds`.
+    charge_work(work, axis.len)?;
     for coordinate in 0..axis.len {
         let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
             AkitaError::InvalidInput("residual seed axis coordinate weight is absent".into())
@@ -686,6 +689,9 @@ fn collect_tensor_family_seeds<F: Field>(
         .axes
         .get(axis_index)
         .ok_or_else(|| AkitaError::Internal("tensor seed recursion axis is absent".into()))?;
+    // Charge every visited coordinate, including zero-weight ones that never
+    // reach a seed, before the loop so a long axis cannot bypass the bound.
+    charge_work(work, axis.len)?;
     for coordinate in 0..axis.len {
         let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
             AkitaError::InvalidInput("tensor seed axis coordinate weight is absent".into())

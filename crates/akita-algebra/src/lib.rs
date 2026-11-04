@@ -20,6 +20,7 @@ mod cyclotomic_inverse;
 pub mod eq_poly;
 pub mod offset_eq;
 pub mod poly;
+pub mod row_batch;
 pub mod split_eq;
 #[cfg(feature = "labinius-trinomial")]
 pub mod trinomial;

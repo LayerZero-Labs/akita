@@ -21,6 +21,7 @@
 //! - `jolt-algebra` - Shared field traits, concrete fields, and packing
 //! - `akita-serialization` - Serialization abstractions
 //! - `akita-algebra` - Multilinear and equality polynomial helpers
+//! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - `akita-verifier` - Verifier replay without prover-only polynomial backends
 //! - `akita-prover` - Generic protocol sequencing and opaque backend contracts
@@ -59,7 +60,7 @@ pub use akita_prover::{
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, TrustedBytes, Validate};
 pub use akita_setup::new_prover_setup;
-pub use akita_types::{AkitaSponge, OpeningClaims, PolynomialGroupClaims, PROOF_STREAM_PROTOCOL};
+pub use akita_types::{OpeningClaims, PolynomialGroupClaims};
 pub use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier, TrustedTerminalCache};
 pub use jolt_algebra::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
@@ -77,5 +78,6 @@ pub use scheme::AkitaCommitmentScheme;
 pub mod zk;
 
 pub use akita_prover::{
-    batched_prove, BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy,
+    batched_prove, batched_prove_embedded, BackendId, BackendRegistry, FixedFoldRoute,
+    FoldExecutionPolicy,
 };

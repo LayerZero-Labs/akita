@@ -1,59 +1,201 @@
-//! Fallible prover kernels driven by `jolt-sumcheck`'s single-instance driver.
+//! Sumcheck prover/verifier trait interfaces.
 //!
-//! Every method that does work returns `Result`, so a stale session, an
-//! invalid round progression, or a failed internal invariant reaches the caller
-//! as an [`AkitaError`] instead of aborting the prover. The public shape of an
-//! instance (input claim, degree bound, equality point) lives in the caller's
-//! `jolt_sumcheck::SingleInstance`, not in the kernel.
-//!
-//! [`EqFactoredSumcheckKernel`] is for sumchecks whose round polynomial factors
-//! as `s(X) = eq(τ, X) · q(X)`; the kernel returns `q` with its constant term
-//! omitted, and [`crate::FusedEqFactoredRounds`] recovers it from the running
-//! claim and the instance's `τ`.
+//! The standard `SumcheckInstance{Prover,Verifier}` pair drives the generic
+//! sumcheck loop. The `EqFactored*` variants are for sumchecks whose round
+//! polynomial factors as `s(X) = l(X) * q(X)`, where `l` is a linear eq
+//! factor; the prover sends `q` with its constant term omitted.
 
 use akita_error::AkitaError;
 use jolt_algebra::Field;
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
-/// A standard sumcheck kernel, driven through [`crate::FusedRounds`].
-pub trait SumcheckKernel<E: Field> {
-    /// Number of rounds (variables bound by the sumcheck).
+/// Prover-side sumcheck instance interface.
+///
+/// This trait encapsulates the protocol-specific logic required to compute each
+/// per-round univariate polynomial `g_j(X)` and to update (fold) internal state
+/// after receiving the verifier challenge `r_j`.
+///
+/// Akita §4.3 will implement concrete instances for `H_0` and `H_α`.
+pub trait SumcheckInstanceProver<E: Field>: Send + Sync {
+    /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
-    /// The round polynomial `g_round(X)`, with `g(0) + g(1) = claim`.
+    /// Maximum allowed degree for any round univariate polynomial.
+    fn degree_bound(&self) -> usize;
+
+    /// The initial claimed sum that this sumcheck instance is proving.
+    fn input_claim(&self) -> E;
+
+    /// Compute the prover message `g_round(X)` given the previous running claim.
+    ///
+    /// In standard sumcheck, `previous_claim` is the expected value of the
+    /// remaining sum after binding previous challenges, and must satisfy:
+    ///
+    /// `g_round(0) + g_round(1) == previous_claim`.
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UnivariatePoly<E>;
+
+    /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
+    fn ingest_challenge(&mut self, round: usize, r_round: E);
+
+    /// Optional end-of-protocol hook after the last challenge has been ingested.
+    fn finalize(&mut self) {}
+}
+
+/// Fallible arithmetic boundary used by the canonical sumcheck driver.
+///
+/// Backends can reject stale sessions or invalid round progression without
+/// manufacturing a polynomial or panicking. In-memory arithmetic instances
+/// retain their infallible interface through [`InfallibleSumcheck`].
+pub trait SumcheckKernel<E: Field> {
+    fn num_rounds(&self) -> usize;
+    fn degree_bound(&self) -> usize;
+    fn input_claim(&self) -> E;
     fn round_polynomial(&mut self, round: usize, claim: E)
         -> Result<UnivariatePoly<E>, AkitaError>;
-
-    /// Binds the current variable to `challenge`.
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
+    fn finish(&mut self) -> Result<(), AkitaError>;
+}
 
-    /// End-of-protocol hook after the last challenge is bound.
+/// Adapt an in-memory arithmetic instance to the fallible protocol driver.
+pub struct InfallibleSumcheck<'a, P: ?Sized>(pub &'a mut P);
+
+impl<E: Field, P: SumcheckInstanceProver<E> + ?Sized> SumcheckKernel<E>
+    for InfallibleSumcheck<'_, P>
+{
+    fn num_rounds(&self) -> usize {
+        SumcheckInstanceProver::num_rounds(self.0)
+    }
+
+    fn degree_bound(&self) -> usize {
+        SumcheckInstanceProver::degree_bound(self.0)
+    }
+
+    fn input_claim(&self) -> E {
+        SumcheckInstanceProver::input_claim(self.0)
+    }
+
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        claim: E,
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
+        Ok(self.0.compute_round_univariate(round, claim))
+    }
+
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        self.0.ingest_challenge(round, challenge);
+        Ok(())
+    }
+
     fn finish(&mut self) -> Result<(), AkitaError> {
+        self.0.finalize();
         Ok(())
     }
 }
 
-/// A normalized equality-factored sumcheck kernel, driven through
-/// [`crate::FusedEqFactoredRounds`].
+/// Verifier-side sumcheck instance interface.
 ///
-/// In round `j` the round polynomial is `eq(τ_j, X) · q_j(X)`, and the claim is
-/// normalized: equality factors of earlier rounds are absent from it.
-pub trait EqFactoredSumcheckKernel<E: Field> {
-    /// Number of rounds (variables bound by the sumcheck).
+/// Implementations provide the initial claim and the oracle evaluation at the
+/// challenge point, enabling the verifier to perform the final consistency check.
+pub trait SumcheckInstanceVerifier<E: Field>: Send + Sync {
+    /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
-    /// `q_round` without its constant term, from the normalized running claim.
+    /// Maximum allowed degree for any round univariate polynomial.
+    fn degree_bound(&self) -> usize;
+
+    /// The initial claimed sum that this sumcheck instance is proving.
+    fn input_claim(&self) -> E;
+
+    /// Compute the expected final evaluation `f(r_0, ..., r_{n-1})` at the
+    /// challenge point derived during the protocol.
+    ///
+    /// # Errors
+    ///
+    /// May return an error if internal evaluations fail (e.g., malformed
+    /// evaluation tables from untrusted proof data).
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError>;
+}
+
+/// Prover-side interface for normalized equality-factored sumchecks.
+///
+/// In round `j`, the normalized round polynomial is
+/// `eq(tau_j, X) * q_j(X)`. The prover sends `q_j` with its constant term
+/// omitted. Because `eq(tau_j, 0) + eq(tau_j, 1) = 1`, the verifier recovers
+/// that term from the running claim using `tau_j`, without division. Any
+/// equality factors from earlier rounds are deliberately absent from this
+/// interface and from the normalized claim.
+pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
+    /// Number of rounds (i.e. number of variables bound by sumcheck).
+    fn num_rounds(&self) -> usize;
+
+    /// Maximum allowed degree of the inner polynomial `q(X)` in each round.
+    fn degree_bound(&self) -> usize;
+
+    /// The initial unscaled sum claim proved by the instance.
+    fn input_claim(&self) -> E;
+
+    /// Equality point coordinate `tau` for the current round.
+    fn current_tau(&self) -> E;
+
+    /// Compute the eq-factored round message from the normalized running claim.
+    fn compute_round_eq_factored(&mut self, round: usize, claim: E) -> OmittedConstantPoly<E>;
+
+    /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
+    fn ingest_challenge(&mut self, round: usize, r_round: E);
+
+    /// Optional end-of-protocol hook after the last challenge has been ingested.
+    fn finalize(&mut self) {}
+}
+
+/// Fallible boundary for equality-factored sumcheck rounds supplied by a backend.
+pub trait EqFactoredSumcheckKernel<E: Field> {
+    fn num_rounds(&self) -> usize;
+    fn degree_bound(&self) -> usize;
+    fn input_claim(&self) -> E;
+    fn current_tau(&self) -> E;
     fn round_polynomial(
         &mut self,
         round: usize,
         claim: E,
     ) -> Result<OmittedConstantPoly<E>, AkitaError>;
-
-    /// Binds the current variable to `challenge`.
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
+    fn finish(&mut self) -> Result<(), AkitaError>;
+}
 
-    /// End-of-protocol hook after the last challenge is bound.
+/// Adapt an in-memory equality-factored instance to the fallible driver.
+pub struct InfallibleEqFactoredSumcheck<'a, P: ?Sized>(pub &'a mut P);
+
+impl<E: Field, P: EqFactoredSumcheckInstanceProver<E> + ?Sized> EqFactoredSumcheckKernel<E>
+    for InfallibleEqFactoredSumcheck<'_, P>
+{
+    fn num_rounds(&self) -> usize {
+        EqFactoredSumcheckInstanceProver::num_rounds(self.0)
+    }
+    fn degree_bound(&self) -> usize {
+        EqFactoredSumcheckInstanceProver::degree_bound(self.0)
+    }
+    fn input_claim(&self) -> E {
+        EqFactoredSumcheckInstanceProver::input_claim(self.0)
+    }
+    fn current_tau(&self) -> E {
+        EqFactoredSumcheckInstanceProver::current_tau(self.0)
+    }
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        claim: E,
+    ) -> Result<OmittedConstantPoly<E>, AkitaError> {
+        Ok(EqFactoredSumcheckInstanceProver::compute_round_eq_factored(
+            self.0, round, claim,
+        ))
+    }
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        EqFactoredSumcheckInstanceProver::ingest_challenge(self.0, round, challenge);
+        Ok(())
+    }
     fn finish(&mut self) -> Result<(), AkitaError> {
+        EqFactoredSumcheckInstanceProver::finalize(self.0);
         Ok(())
     }
 }

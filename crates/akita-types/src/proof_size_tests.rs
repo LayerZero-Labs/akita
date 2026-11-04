@@ -24,9 +24,9 @@ mod tests {
     use akita_params::sis::sis_l2_table_key_for_collision_sq;
     use akita_params::InnerCommitSecurityRoute;
     use akita_params::{
-        terminal_response_bytes, OpeningClaimsLayout, PhysicalL2NormProofShape, SisL2TableDigest,
-        SisModulusProfileId, TerminalResponseShape, DEFAULT_SIS_SECURITY_POLICY,
-        SETUP_SUMCHECK_DEGREE,
+        terminal_response_max_bytes, OpeningClaimsLayout, PhysicalL2NormProofShape,
+        SisL2TableDigest, SisModulusProfileId, TerminalFoldParams, TerminalResponseShape,
+        DEFAULT_SIS_SECURITY_POLICY, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -83,21 +83,9 @@ mod tests {
 
     fn terminal_response_fixture(
         lp: &CommittedGroupParams,
-        num_claims: usize,
     ) -> (TerminalResponse<F>, TerminalResponseShape) {
-        let field_bits = F::MODULUS_BITS;
-        let shape = TerminalResponseShape::from_groups(
-            lp,
-            field_bits,
-            [(
-                lp.final_group_scalar().expect("scalar final group"),
-                num_claims,
-                num_claims,
-                1,
-                127,
-            )],
-        )
-        .expect("terminal response shape");
+        let terminal = TerminalFoldParams::from_expanded_group(lp.clone());
+        let shape = TerminalResponseShape::derive(&terminal, 127).expect("terminal response shape");
         let layout = shape.layout.clone();
         let group = layout.groups[0];
         let rice_low_bits = group.z_rice_low_bits;
@@ -786,7 +774,6 @@ mod tests {
     fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let num_claims = 3;
 
         for log_basis in 2..=6 {
             let mut lp = CommittedGroupParams::params_only(
@@ -815,7 +802,7 @@ mod tests {
                     inner.ring_dimension(),
                 );
 
-            let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
+            let (terminal_response, witness_shape) = terminal_response_fixture(&lp);
             let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
@@ -832,7 +819,8 @@ mod tests {
                  (less terminal_response) at log_basis={log_basis}"
             );
 
-            let scheduled_bytes = terminal_response_bytes(128, &witness_shape);
+            let scheduled_bytes =
+                terminal_response_max_bytes(128, &witness_shape).expect("terminal bound");
             assert!(
                 scheduled_bytes >= terminal_response_bytes_runtime,
                 "scheduled direct witness budget must cover serialized terminal response \

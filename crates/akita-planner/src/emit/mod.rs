@@ -94,6 +94,8 @@ impl PrecommittedProducer {
 /// One grouped generation request whose lookup key is derived from its producers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupedGenerationRequest {
+    /// Largest inherited setup-prefix domain aggregated by the offloaded root; zero is empty.
+    pub root_accumulated_setup_prefix_len: usize,
     final_group: PolynomialGroupLayout,
     precommitted_producers: Vec<PrecommittedProducer>,
 }
@@ -105,6 +107,7 @@ impl GroupedGenerationRequest {
         precommitted_producers: Vec<PrecommittedProducer>,
     ) -> Self {
         Self {
+            root_accumulated_setup_prefix_len: 0,
             final_group,
             precommitted_producers,
         }
@@ -113,6 +116,7 @@ impl GroupedGenerationRequest {
     #[must_use]
     pub fn key(&self) -> ScheduleLookupKey {
         ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: self.root_accumulated_setup_prefix_len,
             final_group: self.final_group,
             precommitteds: self
                 .precommitted_producers

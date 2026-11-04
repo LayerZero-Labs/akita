@@ -33,32 +33,54 @@ parallel = [
 
 [dependencies]
 akita-algebra = { path = "../crates/akita-algebra" }
-akita-config = { path = "../crates/akita-config", default-features = false }
-akita-setup = { path = "../crates/akita-setup", default-features = false }
-akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false }
-akita-error = { path = "../crates/akita-error" }
-akita-params = { path = "../crates/akita-params", default-features = false }
-akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = [
-  "response-model-diagnostics",
-] }
-akita-prover = { path = "../crates/akita-prover", default-features = false }
-akita-schedules = { path = "../crates/akita-schedules", default-features = false }
-akita-serialization = { path = "../crates/akita-serialization" }
-akita-sumcheck = { path = "../crates/akita-sumcheck", default-features = false }
-akita-types = { path = "../crates/akita-types", default-features = false }
-akita-verifier = { path = "../crates/akita-verifier", default-features = false }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
-  "asm",
-  "solinas",
-] }
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "lattice",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "transcript-blake2b",
 ] }
+akita-config = { path = "../crates/akita-config", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-setup = { path = "../crates/akita-setup", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-error = { path = "../crates/akita-error" }
+akita-params = { path = "../crates/akita-params", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = [
+  "transcript-keccak",
+  "response-model-diagnostics",
+] }
+akita-prover = { path = "../crates/akita-prover", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-schedules = { path = "../crates/akita-schedules", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-serialization = { path = "../crates/akita-serialization" }
+akita-sumcheck = { path = "../crates/akita-sumcheck", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-transcript = { path = "../crates/akita-transcript", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-types = { path = "../crates/akita-types", default-features = false, features = [
+  "transcript-keccak",
+] }
+akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = [
+  "transcript-keccak",
+] }
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 libfuzzer-sys = "0.4.12"
 num-bigint = "0.4"
 rayon = "1.10"
@@ -83,6 +105,13 @@ jolt-crypto = { path = "../../jolt/.claude/worktrees/whiteout-dev/crates/jolt-cr
 [[bin]]
 name = "serialization_vec"
 path = "fuzz_targets/serialization_vec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transcript_labels"
+path = "fuzz_targets/transcript_labels.rs"
 test = false
 doc = false
 bench = false

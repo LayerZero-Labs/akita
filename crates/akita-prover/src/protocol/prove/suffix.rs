@@ -1,4 +1,5 @@
 use super::*;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use jolt_algebra::AdditiveGroup;
 /// Transcript-derived continuation; no backend-private storage.
@@ -19,16 +20,12 @@ pub struct SuffixProverState<F: Field, E: Field, MaterialHandle, WitnessHandle> 
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-pub(super) fn prove_recursive_step<
-    Cfg,
-    B,
-    H: Sponge,
-    C: crate::protocol::ProverFoldChannel<Cfg::ExtField, Sponge = H>,
->(
+// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+pub(super) fn prove_recursive_step<Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     current_state: SuffixProverState<
         Cfg::Field,
         Cfg::ExtField,
@@ -38,8 +35,8 @@ pub(super) fn prove_recursive_step<
     schedule: &FoldSchedule,
     session: &B::ProofSessionHandle,
     index: usize,
-    handoff: &mut impl super::registry::SuccessorHandoff<Cfg, B>,
-    payload: &mut impl fold::SuccessorPayload<Cfg::Field>,
+    // T0-PORT(private): dev used SuccessorHandoff here; re-express on v8.
+    handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg>,
 ) -> Result<
     ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
     AkitaError,
@@ -85,7 +82,7 @@ where
             )
         },
     );
-    let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B, _, _>(
+    let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         prefix_slots,
         grinding,
@@ -96,7 +93,7 @@ where
         step.output_witness_len,
         next_params.inner_ring_dimension(),
     )?;
-    prove_fold::<Cfg::Field, Cfg::ExtField, B, _, _>(
+    let output = prove_fold::<Cfg::Field, Cfg::ExtField, B>(
         expanded,
         prefix_slots,
         backend,
@@ -108,7 +105,11 @@ where
         step.output_witness_len,
         next_binding,
         prepared,
-        payload,
+        handoff
+            .request
+            .setup_batch
+            .filter(|(target, _)| *target as usize == level)
+            .map(|(_, statement)| statement),
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(
                 backend,
@@ -126,15 +127,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_terminal_suffix<
-    F,
-    E,
-    B,
-    H: Sponge,
-    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
->(
+// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+pub(super) fn prove_terminal_suffix<F, E, B>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
     current_state: SuffixProverState<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>,
     scheduled: &TerminalFoldParams,
@@ -144,6 +140,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -200,34 +197,17 @@ where
         .groups
         .first()
         .ok_or_else(|| AkitaError::Internal("terminal response shape has no group".into()))?;
-    let terminal_message = crate::backend::TerminalCommitmentMaterialKernel::terminal_message(
-        backend,
-        &commitment_material,
-    )?;
+    // The `t` prefix and its last-block digest were absorbed when the
+    // predecessor fold sent them as the next witness.
     let fold_level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    // Only the `t` blocks the predecessor fold sent as fields are public here.
-    // Under `dev-protocol` that excludes the last block, which the
-    // predecessor bound with a digest.
-    grinding.state_mut().site(
-        akita_types::FoldSite::TerminalTFields { level: fold_level }
-            .id()?
-            .into(),
-    );
-    grinding.state_mut().public_all(
-        terminal_message
-            .fields()
-            .get(..group.t_field_elems)
-            .ok_or_else(|| {
-                AkitaError::Internal("terminal t state is shorter than its scheduled prefix".into())
-            })?,
-    );
     let mut t_sent = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
         backend,
         commitment_material,
     )?
     .into_coeffs();
-    t_sent.truncate(group.t_field_elems);
+    let t_sent_len = scheduled.split_last_t_block(&t_sent)?.0.len();
+    t_sent.truncate(t_sent_len);
     let t_sent = akita_types::RingVec::from_coeffs(t_sent);
 
     let consumer = backend;
@@ -252,7 +232,7 @@ where
                 point: &sumcheck_challenges,
                 ring_dimension: params.d_a(),
             }];
-            let proved = prove_extension_opening_reduction::<F, E, B, _, _>(
+            let proved = prove_extension_opening_reduction::<F, E, B>(
                 backend,
                 session,
                 &context,
@@ -271,12 +251,11 @@ where
         } else {
             (sumcheck_challenges, None)
         };
-        grinding.state_mut().site(
-            akita_types::FoldSite::TerminalPoint { level: fold_level }
-                .id()?
-                .into(),
-        );
-        grinding.state_mut().public_all(&protocol_point);
+        akita_transcript::public_extensions::<F, E, _>(
+            grinding.state_mut(),
+            akita_types::FoldSite::TerminalPoint { level: fold_level }.id()?,
+            &protocol_point,
+        )?;
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -310,14 +289,13 @@ where
                         opening_handle,
                     )?;
                 if reduction.is_none() {
-                    grinding.state_mut().site(
-                        akita_types::FoldSite::TerminalOpening { level: fold_level }
-                            .id()?
-                            .into(),
-                    );
-                    grinding.state_mut().public_all(&scalar_openings);
+                    akita_transcript::public_extensions::<F, E, _>(
+                        grinding.state_mut(),
+                        akita_types::FoldSite::TerminalOpening { level: fold_level }.id()?,
+                        &scalar_openings,
+                    )?;
                 }
-                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E, _, _>(
+                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E>(
                     &reduction,
                     &scalar_openings,
                     &opening_batch,
@@ -341,55 +319,39 @@ where
                 let e_folded = folded_by_claim.into_iter().next().ok_or_else(|| {
                     AkitaError::Internal("terminal backend returned no folded opening".into())
                 })?;
-                let (e_sent, e_last_block) = e_folded
-                    .coeffs()
-                    .split_at_checked(group.e_field_elems)
-                    .ok_or_else(|| {
-                        AkitaError::Internal(
-                            "terminal folded opening is shorter than its scheduled prefix".into(),
-                        )
-                    })?;
-                grinding.state_mut().site(
-                    akita_types::FoldSite::TerminalEFields { level: fold_level }
-                        .id()?
-                        .into(),
-                );
-                grinding.state_mut().exchange_all(&mut e_sent.to_vec())?;
-                if akita_params::RECOMPUTE_LAST_BLOCK {
-                    akita_types::send_field_digest(
-                        grinding.state_mut(),
-                        akita_types::FoldSite::TerminalEDigest { level: fold_level }
-                            .id()?
-                            .into(),
-                        e_last_block,
-                    )?;
-                } else if !e_last_block.is_empty() {
-                    return Err(AkitaError::Internal(
-                        "terminal folded opening is longer than its scheduled length".into(),
-                    ));
-                }
+                let (e_sent, e_last_block) = params.split_last_e_block(e_folded.coeffs())?;
+                let e_sent_len = e_sent.len();
+                akita_transcript::send_field_group(
+                    grinding.state_mut(),
+                    akita_types::FoldSite::TerminalEFields { level: fold_level }.id()?,
+                    e_sent,
+                )?;
+                akita_transcript::send_field_digest(
+                    grinding.state_mut(),
+                    akita_types::FoldSite::TerminalEDigest { level: fold_level }.id()?,
+                    e_last_block,
+                )?;
                 let output = crate::protocol::fold_grind::sample_terminal_fold_response::<
                     F,
                     E,
                     B::WitnessHandle,
                     _,
                     D,
-                    _,
-                    _,
                 >(
                     consumer,
                     grinding,
                     fold_level,
                     params,
-                    &scheduled.fold_challenge_config,
                     witness_source,
                     &scheduled.response_shape,
                 )?;
+                let mut e_sent = e_folded.into_coeffs();
+                e_sent.truncate(e_sent_len);
                 let terminal_response = akita_types::build_terminal_response_from_payload::<F>(
                     params,
                     &scheduled.response_shape,
-                    &akita_types::RingVec::from_coeffs(e_sent.to_vec()),
-                    t_sent.clone(),
+                    akita_types::RingVec::from_coeffs(e_sent),
+                    t_sent,
                     output.encoded_payload,
                 )?;
                 Ok::<_, AkitaError>(terminal_response)
@@ -407,19 +369,19 @@ where
         native_terminal_t_field_elements = terminal_response.t_fields.coeff_len(),
         "native terminal response bytes"
     );
-    let state = grinding.state_mut();
-    state.site(
-        akita_types::FoldSite::TerminalZPayload { level: fold_level }
-            .id()?
-            .into(),
-    );
-    state.send_bounded_public_bytes(z_payload, group.z_payload_bytes)
+    // T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+    akita_transcript::send_bounded_bytes(
+        grinding.state_mut(),
+        akita_types::FoldSite::TerminalZPayload { level: fold_level }.id()?,
+        z_payload,
+        group.z_payload_bytes,
+    )
 }
 #[allow(clippy::too_many_arguments)]
-fn prepare_suffix<F, E, B, H: Sponge, C: crate::protocol::ProverFoldChannel<E, Sponge = H>>(
+fn prepare_suffix<F, E, B>(
     backend: &B,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     current_state: SuffixProverState<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>,
     level: usize,
     level_params: &CommittedGroupParams,
@@ -431,6 +393,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -541,22 +504,8 @@ where
         )?);
     }
     materials.push(witness_material);
-    grinding.state_mut().site(
-        akita_types::FoldSite::WitnessCommitment {
-            level: fold_level,
-            ring_dimension: geometry.transcript_ring_dimension(),
-        }
-        .id()?
-        .into(),
-    );
-    grinding.state_mut().public_all(
-        claims
-            .opening_claims()
-            .group_commitment(witness_index)?
-            .rows()
-            .coeffs(),
-    );
-    let prepared = prepare_fold::<F, E, B, _, _>(
+    // The outer payload was absorbed when it was sent as the next witness.
+    let prepared = prepare_fold::<F, E, B>(
         backend,
         claims,
         materials,
@@ -580,9 +529,8 @@ where
 mod tests {
     use super::*;
     use crate::protocol::prove::fold_kernels::prepare_evaluation_trace_claim;
-    use akita_types::PROOF_STREAM_PROTOCOL;
+    use akita_transcript::new_prover_channel;
     use jolt_algebra::{One, Prime32Offset99, Zero};
-    use jolt_transcript::ProverTranscript;
 
     type TestF = Prime32Offset99;
 
@@ -609,13 +557,10 @@ mod tests {
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
-        let mut transcript = ProverTranscript::<akita_types::AkitaSponge>::new(
-            &PROOF_STREAM_PROTOCOL,
-            b"test/suffix-shared-trace-target",
-        );
+        let mut channel = new_prover_channel(b"test/suffix-shared-trace-target");
         let plan = evaluation_batch_plan();
-        let mut grinding = akita_types::ProverGrinding::new(&mut transcript, &plan);
-        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _, _>(
+        let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF>(
             &reduction,
             &openings,
             &opening_batch,
@@ -643,13 +588,10 @@ mod tests {
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("two-claim opening batch");
-        let mut transcript = ProverTranscript::<akita_types::AkitaSponge>::new(
-            &PROOF_STREAM_PROTOCOL,
-            b"test/suffix-independent-late-eor-batch",
-        );
+        let mut channel = new_prover_channel(b"test/suffix-independent-late-eor-batch");
         let plan = evaluation_batch_plan();
-        let mut grinding = akita_types::ProverGrinding::new(&mut transcript, &plan);
-        let result = prepare_evaluation_trace_claim::<TestF, TestF, _, _>(
+        let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
+        let result = prepare_evaluation_trace_claim::<TestF, TestF>(
             &reduction,
             &openings,
             &opening_batch,

@@ -58,8 +58,8 @@ or prover implementation.
 | external `jolt-algebra` | Field, ring, NTT/CRT, FFT, and checked integer arithmetic |
 | `akita-algebra` | Multilinear and equality polynomial arithmetic |
 | `akita-serialization` | Canonical encoding and checked decoding |
-| external `jolt-crypto` and `jolt-transcript`, and `akita-types::transcript` | Instance binding and challenge derivation |
-| `akita-sumcheck` | Sumcheck kernel traits and adapters to `jolt-sumcheck`'s driver |
+| `akita-transcript` and `akita-challenges` | Instance binding and challenge derivation |
+| `akita-sumcheck` | Shared sumcheck proof types and drivers |
 | `akita-types` | Public proof, setup, schedule, commitment, and claim shapes |
 | `akita-planner` | Offline schedule search and cost evaluation |
 | `akita-schedules` | External schedule artifact decoding, admission, and lookup |

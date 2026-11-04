@@ -18,6 +18,8 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `artifact/`  | bin  | Runs the Akita prover and writes the verifier-input blob.        |
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
 | `guest/`     | lib  | Declarative Jolt entrypoints plus Akita's recursion integration owner. |
+| `inline-parity/guest/` | lib | Runs Akita's CRT+NTT paths with `ntt-inline`. |
+| `inline-parity/host/`  | bin | Traces that guest and compares it with a portable native run. |
 
 ## Quick start with an exact CI case
 
@@ -81,6 +83,23 @@ trace done
 
 Most of `deserialize_input` is decoding the expanded verifier-setup matrix
 that lives inside the blob; the proof itself is a tiny fraction.
+
+## Guest inline parity
+
+`ntt-inline` takes effect only in a riscv64 guest. `akita-inline-parity-host`
+builds a guest with it, traces it under Jolt's emulator (no proving), and
+fails unless each inline executes, the `D = 64` CRT parameters select the Jolt NTT backend while
+`D = 128` falls back to the generic path, and every result matches a native
+run on the portable kernels. CI runs it in the `inline-parity` job of
+`.github/workflows/jolt-verifier-profile-smoke.yml`.
+
+```bash
+# The jolt CLI must match the pinned SDK revision.
+cargo install --git https://github.com/a16z/jolt --rev <pinned rev> --locked \
+    --profile ci --root /tmp/jolt-cli jolt
+JOLT_PATH=/tmp/jolt-cli/bin/jolt \
+    cargo run --release -p akita-inline-parity-host
+```
 
 ## Running the full prove pipeline
 
@@ -177,9 +196,10 @@ overrides for those values.
    reads no clock (the Jolt runtime doesn't implement `clock_gettime`). Three
    `start_cycle_tracking` / `end_cycle_tracking` pairs wrap input decoding,
    verifier preparation, and statement construction plus verification.
-   The guest verifies a standalone proof: `verify_standalone` starts the
-   verifier transcript, binds the canonical instance descriptor as its first
-   public message, and requires the proof to be consumed exactly.
+   The guest constructs an unbound verifier transcript and the verifier binds
+   the canonical instance descriptor; it must not use a prover-side placeholder
+   transcript, because Spongefish prover state may ask for entropy that the Jolt
+   guest runtime does not provide.
    This profile is a trusted host-artifact benchmark: the guest decodes the
    verifier setup through the explicitly trusted cached-matrix path. Seed/matrix
    shape metadata and field elements are still validated, but the guest skips

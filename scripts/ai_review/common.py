@@ -67,12 +67,17 @@ class GitHub:
                 return items
         raise ReviewError("Pagination limit reached; refusing incomplete review")
 
-    def writer(self, user):
+    def permission(self, user):
         if user.get("type") != "User" or not re.fullmatch(r"[A-Za-z0-9-]+", user.get("login", "")):
-            return False
+            return None
         permission = self.get(f"collaborators/{user['login']}/permission")
-        return (permission.get("user", {}).get("id") == user.get("id")
-                and permission.get("permission") in ("admin", "maintain", "write"))
+        return permission.get("permission") if permission.get("user", {}).get("id") == user.get("id") else None
+
+    def writer(self, user):
+        return self.permission(user) in ("admin", "maintain", "write")
+
+    def admin(self, user):
+        return self.permission(user) == "admin"
 
 
 def digest(value):
@@ -142,13 +147,14 @@ def authorize(github, event):
     if (comment.get("body", "") != "/ai-review"
             or comment.get("user", {}).get("type") != "User"
             or comment.get("issue_url") != f"https://api.github.com/repos/{REPOSITORY}/issues/{number}"
-            or comment.get("user", {}).get("id") != pr.get("user", {}).get("id")
             or comment.get("user", {}).get("id") != event["comment"].get("user", {}).get("id")
             or event.get("sender", {}).get("id") != comment.get("user", {}).get("id")
             or pr.get("state") != "open"
             or (pr.get("head", {}).get("repo") or {}).get("full_name") != REPOSITORY
             or (pr.get("base", {}).get("repo") or {}).get("full_name") != REPOSITORY
-            or not github.writer(comment["user"])):
+            or not github.writer(comment["user"])
+            # Repository admins may request reviews of any PR, including other people's.
+            or (comment["user"]["id"] != pr.get("user", {}).get("id") and not github.admin(comment["user"]))):
         raise ReviewError("Review request is not authorized")
     return pr
 

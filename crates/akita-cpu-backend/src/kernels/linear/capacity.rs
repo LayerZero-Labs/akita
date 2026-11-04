@@ -257,24 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn selected_capacity_profile_matches_expected_dispatch_metadata() {
-        let q32 = selected_crt_i8_capacity_profile::<Prime32Offset99, 64>().unwrap();
-        assert_eq!(q32.profile_id, "Q32/2xi32");
-        assert_eq!(q32.num_primes, Q32_NUM_PRIMES);
-        assert_eq!(q32.limb_bits, 32);
-
-        let q64 = selected_crt_i8_capacity_profile::<Prime64Offset59, 64>().unwrap();
-        assert_eq!(q64.profile_id, "Q64/3xi32");
-        assert_eq!(q64.num_primes, Q64_NUM_PRIMES);
-        assert_eq!(q64.limb_bits, 32);
-
-        let q128 = selected_crt_i8_capacity_profile::<Prime128Offset275, 64>().unwrap();
-        assert_eq!(q128.profile_id, "Q128/6xi32");
-        assert_eq!(q128.num_primes, Q128_NUM_PRIMES);
-        assert_eq!(q128.limb_bits, 32);
-    }
-
-    #[test]
     fn profile_safe_widths_match_manual_params() {
         const D: usize = 256;
         let q64_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);

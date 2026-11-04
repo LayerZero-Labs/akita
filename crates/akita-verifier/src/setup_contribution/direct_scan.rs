@@ -1,55 +1,5 @@
 use super::*;
 
-/// Coefficient functional used by the one fused direct-setup traversal.
-///
-/// Lifted evaluation preserves the existing alpha-power factorization.
-/// Reduced evaluation instead contracts each native setup ring against the
-/// terminal residue kernel prepared from the exact Stage-2 coefficient point.
-/// The point contains only the common low coefficient coordinates; role-lane
-/// coordinates remain owned by the setup plan's checked relation tensors.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreparedCoefficientFunctional<E: Field> {
-    LiftedPower {
-        alpha: E,
-    },
-    ReducedEvaluation {
-        alpha: E,
-        coefficient_point: Arc<[E]>,
-    },
-}
-
-impl<E: Field> PreparedCoefficientFunctional<E> {
-    #[must_use]
-    pub const fn lifted_power(alpha: E) -> Self {
-        Self::LiftedPower { alpha }
-    }
-
-    pub fn reduced_evaluation(
-        alpha: E,
-        coefficient_point: &[E],
-        geometry: RelationAddressGeometry,
-    ) -> Result<Self, AkitaError> {
-        let expected = geometry.relation_coefficient_variable_count();
-        if coefficient_point.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: coefficient_point.len(),
-            });
-        }
-        Ok(Self::ReducedEvaluation {
-            alpha,
-            coefficient_point: coefficient_point.to_vec().into(),
-        })
-    }
-
-    #[must_use]
-    pub const fn alpha(&self) -> E {
-        match self {
-            Self::LiftedPower { alpha } | Self::ReducedEvaluation { alpha, .. } => *alpha,
-        }
-    }
-}
-
 /// Challenge-dependent state of one direct setup scan.
 ///
 /// A scan takes ownership of one prepared [`SetupContributionPlan`] and binds
@@ -92,12 +42,6 @@ impl<E> DirectScanWeights<E> {
 pub(crate) struct ReducedDirectScanWeights<E> {
     pub(crate) weights: DirectScanWeights<E>,
     pub(crate) roles: [ReducedRoleCoefficientState<E>; 3],
-}
-
-#[derive(Clone)]
-pub(crate) struct ReducedRoleCoefficientState<E> {
-    pub(crate) functional: Arc<[E]>,
-    pub(crate) equality: Arc<[E]>,
 }
 
 /// Packed D/B/A partition of one group's projected setup footprint.
@@ -252,7 +196,7 @@ fn intern_reduced_functional<E: Field>(
     Ok(candidate)
 }
 
-fn materialize_reduced_direct_scan_weights<E: Field>(
+pub(crate) fn materialize_reduced_direct_scan_weights<E: Field>(
     plan: &SetupContributionPlan<E>,
     group: &SetupContributionGroupPlan<E>,
     alpha: E,

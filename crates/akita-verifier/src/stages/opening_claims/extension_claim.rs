@@ -6,6 +6,8 @@ use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
+use akita_types::GrindingReplay;
 use akita_types::{
     canonical_extension_opening_reduction_shape,
     derive_tensor_extension_opening_claim_from_partials, prepare_opening_point,
@@ -13,9 +15,7 @@ use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     FpExtEncoding, PreparedOpeningPoint,
 };
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Ring};
-use jolt_sumcheck::{verify_single, SingleFormat, SingleInstance};
-use jolt_transcript::Channel;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(crate) struct PreparedProtocolPoint<F: Field, E: Field> {
     pub(crate) prepared: PreparedOpeningPoint<F, E>,
@@ -67,16 +67,16 @@ where
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError>;
 }
-struct GrindingEorVerifierStream<'a, G> {
-    grinding: &'a mut G,
+// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
+struct GrindingEorVerifierStream<'a, 'proof, 'plan> {
+    grinding: &'a mut akita_types::VerifierGrinding<'proof, 'plan>,
     level: u32,
 }
 
-impl<F, E, G> EorVerifierStream<F, E> for GrindingEorVerifierStream<'_, G>
+impl<F, E> EorVerifierStream<F, E> for GrindingEorVerifierStream<'_, '_, '_>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    G: ClaimReplay<F, E>,
+    E: ExtField<F> + ChallengeCodec,
 {
     fn prefix(
         &mut self,
@@ -85,7 +85,8 @@ where
         partial_count: usize,
         split_bits: usize,
     ) -> Result<EorPrefix<E>, AkitaError> {
-        let partials = akita_types::extension_slots::<E>(partial_count)?;
+        let partials =
+            akita_transcript::extension_slots::<E, _>(self.grinding.state_mut(), partial_count)?;
         let prefix = akita_types::eor_prefix::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -108,7 +109,7 @@ where
         input_claim: E,
         num_rounds: usize,
     ) -> Result<(E, Vec<E>), AkitaError> {
-        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
+        let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
             self.grinding,
             akita_params::SumcheckProtocol::ExtensionOpeningReduction,
             self.level,
@@ -128,8 +129,10 @@ where
     }
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
-        let mut final_claims =
-            akita_types::extension_slots::<E>(opening_batch.num_total_polynomials())?;
+        let mut final_claims = akita_transcript::extension_slots::<E, _>(
+            self.grinding.state_mut(),
+            opening_batch.num_total_polynomials(),
+        )?;
         akita_types::eor_final_claims::<F, E, _>(
             self.grinding,
             opening_batch,
@@ -181,17 +184,18 @@ where
         })
         .collect()
 }
-fn verify_eor_sumcheck<F, E, G: ClaimReplay<F, E>>(
+// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
+fn verify_eor_sumcheck<F, E>(
     group_points: &[&[E]],
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     requires_reduction: bool,
-    grinding: &mut G,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
 {
     if !requires_reduction {
         return Ok(None);
@@ -209,20 +213,21 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_extension_claim_suffix_prefix<F, E, G: ClaimReplay<F, E>>(
+// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
+pub(crate) fn verify_extension_claim_suffix_prefix<F, E>(
     group_points: &[&[E]],
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    grinding: &mut G,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
-    let replay = verify_eor_sumcheck::<F, E, _>(
+    let replay = verify_eor_sumcheck::<F, E>(
         group_points,
         openings,
         opening_batch,
@@ -268,15 +273,15 @@ where
         protocol_points.push(protocol_point);
     }
     for (group_index, protocol_point) in protocol_points.iter().enumerate() {
-        grinding.state_mut().site(
+        akita_transcript::public_extensions::<F, E, _>(
+            grinding.state_mut(),
             akita_types::FoldSite::GroupPoint {
                 level,
                 group: group_index,
             }
-            .id()?
-            .into(),
-        );
-        grinding.state_mut().public_all(protocol_point);
+            .id()?,
+            protocol_point,
+        )?;
     }
     Ok(FoldClaimMaterial {
         prepared_points,
@@ -286,20 +291,21 @@ where
     })
 }
 
-pub(crate) fn verify_extension_claim_terminal_suffix<F, E, G: ClaimReplay<F, E>>(
+// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
+pub(crate) fn verify_extension_claim_terminal_suffix<F, E>(
     opening_point: &[E],
     opening: E,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     params: &TerminalFoldParams,
-    grinding: &mut G,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
-    let replay = verify_eor_sumcheck::<F, E, _>(
+    let replay = verify_eor_sumcheck::<F, E>(
         &[opening_point],
         &[opening],
         opening_batch,
@@ -460,12 +466,10 @@ mod tests {
     use super::*;
 
     use akita_params::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
-    use akita_sumcheck::SumcheckKernel;
-    use akita_types::{AkitaSponge, PROOF_STREAM_PROTOCOL};
+    use akita_sumcheck::SumcheckInstanceProver;
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_algebra::{FpExt4, Prime32Offset99, Zero};
     use jolt_poly::UnivariatePoly;
-    use jolt_sumcheck::prove_single;
-    use jolt_transcript::{ProverTranscript, VerifierTranscript};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
@@ -554,9 +558,8 @@ mod tests {
             akita_params::GrindingPlan::new(runs, challenge_order).unwrap()
         };
 
-        let mut transcript =
-            ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, b"native-eor-verifier");
-        let mut prover = akita_types::ProverGrinding::new(&mut transcript, &plan);
+        let mut state = new_prover_channel(b"native-eor-verifier");
+        let mut prover = akita_types::ProverGrinding::new(&mut state, &plan);
         akita_types::eor_prefix::<F, E, _>(
             &mut prover,
             &opening_batch,
@@ -566,7 +569,7 @@ mod tests {
         )
         .unwrap();
         let mut sumcheck = ZeroEorProver { rounds };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
             &mut prover,
             akita_params::SumcheckProtocol::ExtensionOpeningReduction,
             level,
@@ -592,15 +595,11 @@ mod tests {
         )
         .unwrap();
         prover.finish().unwrap();
-        let proof = transcript.finish();
+        let proof = state.narg_string().to_vec();
 
-        let mut transcript = VerifierTranscript::<AkitaSponge>::new(
-            &PROOF_STREAM_PROTOCOL,
-            b"native-eor-verifier",
-            &proof,
-        );
-        let mut verifier = akita_types::VerifierGrinding::new(&mut transcript, &plan);
-        let replay = verify_eor_sumcheck::<F, E, _>(
+        let mut state = new_verifier_channel(b"native-eor-verifier", &proof);
+        let mut verifier = akita_types::VerifierGrinding::new(&mut state, &plan);
+        let replay = verify_eor_sumcheck::<F, E>(
             &group_points,
             &openings,
             &opening_batch,
@@ -612,7 +611,6 @@ mod tests {
         .unwrap();
         assert_eq!(replay.rho.len(), rounds);
         assert_eq!(replay.final_claims, vec![E::zero()]);
-        verifier.finish().unwrap();
-        transcript.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

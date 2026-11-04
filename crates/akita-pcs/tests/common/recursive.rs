@@ -1,4 +1,3 @@
-use super::sponge::{prove_on_test_sponge, verify_on_test_sponge};
 use super::*;
 
 /// Final-group variables of the recursive multi-group round trip.
@@ -65,6 +64,7 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         .profiles()
         .final_group;
     let schedule_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
         precommitteds: vec![pre_frozen, pre_frozen],
     };
@@ -175,15 +175,15 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     );
     let selection = prover_claims.selection();
 
-    let proof = prove_on_test_sponge(
-        &recursive_scheme,
-        setup,
-        prover_claims,
-        stack,
-        transcript_domain,
-        BasisMode::Lagrange,
-    )
-    .expect("generated-profile recursive proof");
+    let proof = recursive_scheme
+        .batched_prove(
+            setup,
+            prover_claims,
+            stack,
+            transcript_domain,
+            BasisMode::Lagrange,
+        )
+        .expect("generated-profile recursive proof");
 
     let verifier_setup = recursive_scheme
         .setup_verifier_for_schedule(setup, &schedule, &opening_layout)
@@ -211,12 +211,12 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     recursive_scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verify_on_test_sponge(
-                &verifier,
+            verifier.batched_verify(
                 &proof,
                 transcript_domain,
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("generated-profile recursive verify");
@@ -229,12 +229,12 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         let alternate_result = recursive_scheme
             .verifier(alternate_verifier_setup.clone())
             .and_then(|verifier| {
-                verify_on_test_sponge(
-                    &verifier,
+                verifier.batched_verify(
                     &proof,
                     transcript_domain,
                     verify_claims(final_openings.clone()),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             });
         assert!(
@@ -247,12 +247,12 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
         let result = recursive_scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verify_on_test_sponge(
-                    &verifier,
+                verifier.batched_verify(
                     &tampered_proof,
                     transcript_domain,
                     verify_claims(final_openings.clone()),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             });
         assert!(
@@ -287,12 +287,12 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
     let tampered_result = recursive_scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verify_on_test_sponge(
-                &verifier,
+            verifier.batched_verify(
                 &proof,
                 transcript_domain,
                 verify_claims(tampered),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         });
     assert!(

@@ -44,10 +44,9 @@ CI runs these exact Clippy configurations; all must pass because the feature
 graphs differ:
 
 ```bash
-cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
-cargo clippy --all --all-targets --release --no-default-features -- -D warnings
-cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics -- -D warnings
-cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,logging -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features transcript-keccak -- -D warnings
+cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
 ```
 
 Run path-specific workflows such as portability, Jolt compatibility, fuzzing,
@@ -107,7 +106,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 
 - `parallel` — Rayon parallelization (default)
 - `disk-persistence` — disk-backed persistence for some commitment flows
-- `logging` (`akita-pcs`) — records transcript events (site, operation, argument-string range) for the transcript-hardening suites
+- `logging-transcript` — `LoggingTranscript` schedule events and smell checks
 - `response-model-diagnostics` — expensive source and response energy measurements for model calibration
 
 Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).

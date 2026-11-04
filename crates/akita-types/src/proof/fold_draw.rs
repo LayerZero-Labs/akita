@@ -1,279 +1,248 @@
-//! Fold-challenge draws from a fold-response fork, shared by both roles.
+//! Fold-challenge drawing: one challenge message per commitment group, over
+//! the live channel or a prover-side preview.
+//!
+//! A draw absorbs nothing. The schedule bound in the instance descriptor fixes
+//! the family, and the group's position in the transcript fixes its index and
+//! counts, so the message continues the squeeze run before it.
 
+use jolt_crypto::challenge::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
-use jolt_crypto::challenge::{
-    sample_indexed_challenges_from_seed, Challenges, OperatorNormRejection, SparseChallengeConfig,
-};
-use jolt_transcript::{Channel, Fork, Sponge};
+use akita_transcript::ProofChannel;
 
-/// Byte length of every fold-challenge seed.
-pub const FOLD_CHALLENGE_SEED_LEN: usize = 32;
+pub use akita_params::{FoldChallengeDrawDomain, FoldChallengeFamily};
 
-const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
-/// Label suffix of the sparse-challenge Fiat–Shamir absorb buffer for one draw
-/// batch. It is embedded in the public fold payload.
-const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
-const SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN: &[u8] =
-    b"akita/subring-coefficient-packing-fold-challenge/v1";
-
-/// Algebraic domain of one fold-challenge draw.
-///
-/// Coefficient packing adds an explicit method domain and challenge-subring
-/// dimension before the seed is squeezed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FoldChallengeDrawDomain {
-    EvaluationTrace,
-    SubringCoefficientPacking { challenge_subring_dimension: usize },
-}
-
-/// Build the canonical transcript prefix for one group-local fold draw.
-///
-/// The prefix binds the group index, exact `num_live_blocks`, claim count, and
-/// challenge count before the sparse challenge seed is squeezed.
-///
-/// # Errors
-///
-/// Returns an error if a platform-sized count does not fit the canonical u64
-/// encoding.
-pub fn fold_challenge_sample_label(
-    group_index: usize,
-    num_live_blocks: usize,
-    num_claims: usize,
-) -> Result<Vec<u8>, AkitaError> {
-    let group_index = u64::try_from(group_index)
-        .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u64".to_string()))?;
-    let num_live_blocks = u64::try_from(num_live_blocks)
-        .map_err(|_| AkitaError::InvalidSetup("num_live_blocks exceeds u64".to_string()))?;
-    let num_claims = u64::try_from(num_claims)
-        .map_err(|_| AkitaError::InvalidSetup("fold claim count exceeds u64".to_string()))?;
-    let base_label = CHALLENGE_WITNESS_FOLD;
-    let mut label = Vec::with_capacity(FOLD_CHALLENGE_ROUND_DOMAIN.len() + base_label.len() + 24);
-    label.extend_from_slice(FOLD_CHALLENGE_ROUND_DOMAIN);
-    label.extend_from_slice(&group_index.to_le_bytes());
-    label.extend_from_slice(&num_live_blocks.to_le_bytes());
-    label.extend_from_slice(&num_claims.to_le_bytes());
-    label.extend_from_slice(base_label);
-    Ok(label)
-}
-
-/// A source of fold-challenge seeds: absorbs a draw's public context, then
-/// squeezes its seed. [`ForkFoldDraw`] is the protocol's; tests capture the
-/// context through it.
 pub trait FoldDraw {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN];
-
-    #[allow(clippy::too_many_arguments)]
-    fn draw_folding_challenges_with_rejection(
+    /// Squeeze one group's challenge message of exactly `len` bytes and
+    /// decode it. `decode` returns `None` when an operator-norm pool runs out;
+    /// the verifier adapter rejects then.
+    fn draw_message(
         &mut self,
-        domain: FoldChallengeDrawDomain,
-        ring_d: usize,
-        group_index: usize,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
+    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError>;
+
+    /// Draw one group's challenges: squeeze and decode one message of the
+    /// family's fixed length.
+    ///
+    /// Returns `None` when the message's operator-norm pool runs out, which
+    /// a prover treats as a failed fold-response candidate. The verifier
+    /// adapter rejects instead, so it never returns `None`.
+    fn draw_fold_challenges(
+        &mut self,
+        family: &FoldChallengeFamily,
         num_live_blocks: usize,
         num_claims: usize,
-        cfg: &SparseChallengeConfig,
-        rejection: Option<OperatorNormRejection>,
-    ) -> Result<Challenges, AkitaError> {
-        if let FoldChallengeDrawDomain::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } = domain
-        {
-            if ring_d != challenge_subring_dimension {
-                return Err(AkitaError::InvalidInput(
-                    "coefficient-packing draw dimension mismatch".into(),
-                ));
-            }
-            if rejection.is_some() {
-                return Err(AkitaError::InvalidInput(
-                    "coefficient-packing draws require the L-infinity security route".into(),
-                ));
-            }
-        }
+    ) -> Result<Option<Challenges>, AkitaError> {
         if num_live_blocks == 0 || num_claims == 0 {
             return Err(AkitaError::InvalidInput(
                 "fold challenges require positive num_live_blocks and claims".to_string(),
             ));
         }
-
         let total = num_live_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
         })?;
-        let sample_label = fold_challenge_sample_label(group_index, num_live_blocks, num_claims)?;
-        let domain_sep = cfg.domain_separator_bytes();
-        let mut absorb_buf = Vec::with_capacity(sample_label.len() + 8 + 8 + domain_sep.len());
-        absorb_buf.extend_from_slice(&sample_label);
-        absorb_buf.extend_from_slice(&(total as u64).to_le_bytes());
-        absorb_buf.extend_from_slice(&(ring_d as u64).to_le_bytes());
-        absorb_buf.extend_from_slice(&domain_sep);
-        if matches!(
-            domain,
-            FoldChallengeDrawDomain::SubringCoefficientPacking { .. }
-        ) {
-            absorb_buf.extend_from_slice(SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN);
-        }
-        if let Some(rejection) = rejection {
-            absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
-        }
-        let seed = self.absorb_and_squeeze(&absorb_buf);
-        // The sampler validates `ring_d`, `cfg`, and `rejection`.
-        let challenges = sample_indexed_challenges_from_seed(&seed, ring_d, total, cfg, rejection)?;
-        Challenges::from_sparse(challenges, num_live_blocks, num_claims).map_err(AkitaError::from)
+        let stream = family.stream(total)?;
+        let challenges =
+            self.draw_message(stream.message_len(), |message| stream.decode(message))?;
+        challenges
+            .map(|challenges| {
+                Challenges::from_sampled(
+                    challenges,
+                    num_live_blocks,
+                    num_claims,
+                    family.ring_d(),
+                    family.config(),
+                )
+            })
+            .transpose()
     }
 }
 
-/// Fold-root draws from the seeded [`Fork`] of a fold-response site.
-///
-/// The prover tries counters, each on its own fork, and both roles draw the
-/// accepted counter's fold challenges from that fork, group by group in group
-/// order. The fork's seed is squeezed from the live transcript and its counter
-/// is a prover message, so every draw is bound to the transcript.
-///
-/// Fork draws never reach the transcript's sponge, so the adapter keeps a
-/// [`FoldDrawRecord`] of them. Both roles log the accepted fork's record into
-/// the transcript's event log, which keeps these draws visible to event
-/// comparisons without recording rejected candidates.
-pub struct ForkFoldDraw<'a, H> {
-    fork: &'a mut Fork<H>,
-    record: FoldDrawRecord,
+fn fold_record(
+    level: u32,
+    group: u32,
+    message_len: usize,
+) -> akita_transcript::ProtocolContextRecord {
+    akita_transcript::ProtocolContextRecord::new(
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_FOLD_CHALLENGE,
+            level,
+            group,
+            ..akita_transcript::ProtocolSiteId::default()
+        }
+        .to_bytes(),
+        akita_transcript::ProtocolMessageKind::Challenge as u32,
+        0,
+        0,
+        message_len as u64,
+    )
 }
 
-impl<'a, H> ForkFoldDraw<'a, H> {
-    /// Bind this short-lived draw adapter to one fold-response fork.
+/// One group-local fold draw against a candidate public state.
+#[cfg(feature = "prover")]
+pub struct PreviewFoldDraw<'a> {
+    preview: &'a mut akita_transcript::FoldPreview,
+}
+
+#[cfg(feature = "prover")]
+impl<'a> PreviewFoldDraw<'a> {
+    /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
-    pub const fn new(fork: &'a mut Fork<H>) -> Self {
+    pub const fn new(preview: &'a mut akita_transcript::FoldPreview) -> Self {
+        Self { preview }
+    }
+}
+
+#[cfg(feature = "prover")]
+impl FoldDraw for PreviewFoldDraw<'_> {
+    fn draw_message(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
+    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        self.preview.challenge_message(len, decode)
+    }
+}
+
+/// One group-local fold draw against the live prover channel.
+pub struct ProverFoldDraw<'a> {
+    state: &'a mut akita_transcript::ProverChannel,
+    level: u32,
+    group: u32,
+}
+
+impl<'a> ProverFoldDraw<'a> {
+    /// Bind this short-lived draw adapter to one schedule-derived fold group.
+    #[must_use]
+    pub const fn new(
+        state: &'a mut akita_transcript::ProverChannel,
+        level: u32,
+        group: u32,
+    ) -> Self {
         Self {
-            fork,
-            record: FoldDrawRecord(Vec::new()),
+            state,
+            level,
+            group,
         }
-    }
-
-    /// The draws made since the last call, in draw order.
-    pub fn take_record(&mut self) -> FoldDrawRecord {
-        core::mem::take(&mut self.record)
     }
 }
 
-impl<H: Sponge> FoldDraw for ForkFoldDraw<'_, H> {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-        self.fork.absorb(payload);
-        self.record.0.push((payload.len(), FOLD_CHALLENGE_SEED_LEN));
-        self.fork.squeeze()
+impl FoldDraw for ProverFoldDraw<'_> {
+    fn draw_message(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
+    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        self.state.context(fold_record(self.level, self.group, len));
+        self.state.challenge_message(len, decode)
     }
 }
 
-/// The absorbed-context and seed byte lengths of a run of fork draws, in draw
-/// order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FoldDrawRecord(Vec<(usize, usize)>);
+/// One group-local fold draw against the live verifier channel.
+pub struct VerifierFoldDraw<'a, 'proof> {
+    state: &'a mut akita_transcript::VerifierChannel<'proof>,
+    level: u32,
+    group: u32,
+}
 
-impl FoldDrawRecord {
-    /// Log every draw into `channel`'s event log at its current site, through
-    /// [`Channel::record_fork_draw`]. The sponge is untouched.
-    pub fn log_into(&self, channel: &mut impl Channel) {
-        for &(absorbed, squeezed) in &self.0 {
-            channel.record_fork_draw(absorbed, squeezed);
+impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
+    /// Bind this short-lived draw adapter to one schedule-derived fold group.
+    #[must_use]
+    pub const fn new(
+        state: &'a mut akita_transcript::VerifierChannel<'proof>,
+        level: u32,
+        group: u32,
+    ) -> Self {
+        Self {
+            state,
+            level,
+            group,
         }
+    }
+}
+
+impl FoldDraw for VerifierFoldDraw<'_, '_> {
+    fn draw_message(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
+    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        self.state.context(fold_record(self.level, self.group, len));
+        self.state.challenge_message(len, |message| {
+            decode(message)?.map(Some).ok_or(AkitaError::InvalidProof)
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_crypto::challenge::{OperatorNormRejection, SparseChallengeConfig};
 
     #[derive(Default)]
     struct CapturingDraw {
-        payloads: Vec<Vec<u8>>,
+        message_lens: Vec<usize>,
     }
 
     impl FoldDraw for CapturingDraw {
-        fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-            self.payloads.push(payload.to_vec());
-            [7; FOLD_CHALLENGE_SEED_LEN]
+        fn draw_message(
+            &mut self,
+            len: usize,
+            decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
+        ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+            self.message_lens.push(len);
+            decode(&vec![7; len])
         }
     }
 
-    #[test]
-    fn evaluation_trace_draw_uses_nonce_free_group_payload() {
-        let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        let mut draw = CapturingDraw::default();
-        draw.draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            64,
-            2,
-            3,
-            4,
-            &config,
-            None,
-        )
-        .unwrap();
-        let label = fold_challenge_sample_label(2, 3, 4).unwrap();
-        let mut expected = label;
-        expected.extend_from_slice(&12u64.to_le_bytes());
-        expected.extend_from_slice(&64u64.to_le_bytes());
-        expected.extend_from_slice(&config.domain_separator_bytes());
-        assert_eq!(draw.payloads, vec![expected]);
+    fn family(
+        domain: FoldChallengeDrawDomain,
+        ring_d: usize,
+        config: SparseChallengeConfig,
+    ) -> Result<FoldChallengeFamily, AkitaError> {
+        FoldChallengeFamily::new(domain, ring_d, config, None)
     }
 
     #[test]
-    fn packing_draw_binds_method_and_subring_dimension() {
-        let mut draw_64 = CapturingDraw::default();
+    fn evaluation_trace_draw_squeezes_one_family_message() {
+        let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let family = family(FoldChallengeDrawDomain::EvaluationTrace, 64, config).unwrap();
+        let mut draw = CapturingDraw::default();
+        let challenges = draw.draw_fold_challenges(&family, 3, 4).unwrap().unwrap();
+        assert_eq!(challenges.num_claims(), 4);
+        assert_eq!(
+            draw.message_lens,
+            vec![family.stream(12).unwrap().message_len()]
+        );
+        assert!(draw.draw_fold_challenges(&family, 0, 4).is_err());
+        assert!(draw.draw_fold_challenges(&family, 3, 0).is_err());
+        assert_eq!(draw.message_lens.len(), 1);
+    }
+
+    #[test]
+    fn packing_family_requires_matching_subring_dimension() {
+        let packing = |d: usize| FoldChallengeDrawDomain::SubringCoefficientPacking {
+            challenge_subring_dimension: d,
+        };
         let config_64 = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        draw_64
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::SubringCoefficientPacking {
-                    challenge_subring_dimension: 64,
-                },
-                64,
-                0,
-                2,
-                1,
-                &config_64,
-                None,
-            )
-            .unwrap();
-        assert!(draw_64.payloads[0].ends_with(SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN));
-
-        let mut draw_128 = CapturingDraw::default();
         let config_128 = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+        let mut draw_64 = CapturingDraw::default();
+        draw_64
+            .draw_fold_challenges(&family(packing(64), 64, config_64).unwrap(), 2, 1)
+            .unwrap();
+        let mut draw_128 = CapturingDraw::default();
         draw_128
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::SubringCoefficientPacking {
-                    challenge_subring_dimension: 128,
-                },
-                128,
-                0,
-                2,
-                1,
-                &config_128,
-                None,
-            )
+            .draw_fold_challenges(&family(packing(128), 128, config_128).unwrap(), 2, 1)
             .unwrap();
-        assert_ne!(draw_64.payloads, draw_128.payloads);
-        assert!(CapturingDraw::default()
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::SubringCoefficientPacking {
-                    challenge_subring_dimension: 64,
-                },
-                128,
-                0,
-                2,
-                1,
-                &config_128,
-                None,
-            )
-            .is_err());
-
-        let mut evaluation_trace = CapturingDraw::default();
-        evaluation_trace
-            .draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                64,
-                0,
-                2,
-                1,
-                &config_64,
-                None,
-            )
-            .unwrap();
-        assert_ne!(draw_64.payloads, evaluation_trace.payloads);
+        assert_eq!(draw_64.message_lens.len(), 1);
+        assert_eq!(draw_128.message_lens.len(), 1);
+        assert!(family(packing(64), 128, config_128).is_err());
+        assert!(FoldChallengeFamily::new(
+            packing(64),
+            64,
+            jolt_crypto::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+            Some(OperatorNormRejection::D64_SELECTIVE_L2),
+        )
+        .is_err());
     }
 }

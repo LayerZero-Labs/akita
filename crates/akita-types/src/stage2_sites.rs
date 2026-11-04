@@ -2,9 +2,10 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_STAGE2};
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Channel, PadSlots, PrivateChannel};
+use akita_transcript::{exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE2};
+use core::slice;
+use jolt_transcript::PadSlots;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
     ProtocolSiteId {
@@ -28,23 +29,24 @@ pub fn stage2_w_eval<F, E, G>(
 ) -> Result<(E, PadSlots), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
-    let state = grinding.state_mut();
-    state.site(witness_evaluation_site(level).into());
-    let slots = state
-        .exchange_private::<F, E>(std::slice::from_mut(&mut evaluation))
-        .map_err(Into::<AkitaError>::into)?;
-    Ok((evaluation, slots))
+    // T0-PORT(private): dev used exchange_private here; re-express on v8.
+    exchange_extension_group::<F, E, _>(
+        grinding.state_mut(),
+        witness_evaluation_site(level),
+        slice::from_mut(&mut evaluation),
+    )?;
+    Ok((evaluation, PadSlots::default()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "prover"))]
 mod tests {
     use super::*;
-    use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_algebra::{CanonicalBytes, FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -57,23 +59,22 @@ mod tests {
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
         .unwrap();
-        let mut transcript = new_prover(b"native-stage2");
-        let mut prover = ProverGrinding::new(&mut transcript, &plan);
+        let mut state = new_prover_channel(b"native-stage2");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         let evaluation = E::from_u64(42);
         stage2_w_eval::<F, E, _>(&mut prover, 7, evaluation).unwrap();
         prover.finish().unwrap();
-        let proof = transcript.finish();
+        let proof = state.narg_string().to_vec();
         assert_eq!(proof.len(), E::DEGREE * F::NUM_BYTES);
 
-        let mut transcript = new_verifier(b"native-stage2", &proof);
-        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
+        let mut state = new_verifier_channel(b"native-stage2", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         assert_eq!(
             stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero())
                 .unwrap()
                 .0,
             evaluation
         );
-        verifier.finish().unwrap();
-        transcript.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

@@ -6,6 +6,7 @@ use crate::ProverOpeningData;
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_params::{CommittedGroupParams, SignedDigitKernel, MAX_I8_LOG_BASIS};
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 #[cfg(test)]
 use akita_types::RingRelationGroupOpening;
@@ -13,9 +14,6 @@ use akita_types::RingVec;
 use akita_types::{OpeningFamily, RingRelationInstance};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
-#[cfg(test)]
-use jolt_crypto::challenge::Challenges;
-use jolt_transcript::Sponge;
 
 use super::fold_grind;
 use super::prove::PreparedGroupOpening;
@@ -136,15 +134,7 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::prepare")]
     #[inline(never)]
-    pub(in crate::protocol) fn prepare<
-        'claims,
-        'source,
-        F,
-        PointF,
-        B,
-        H: Sponge,
-        C: super::ProverFoldChannel<PointF, Sponge = H>,
-    >(
+    pub(in crate::protocol) fn prepare<'claims, 'source, F, PointF, B>(
         opening_ctx: &OperationCtx<'_, F, B>,
         prepared_group_openings: Vec<PreparedGroupOpening<PointF, B::PreparedOpeningHandle>>,
         commitment_material: Vec<B::CommitmentMaterialHandle>,
@@ -155,7 +145,8 @@ impl RingRelationProver {
             F,
         >,
         lp: CommittedGroupParams,
-        grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+        // T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+        grinding: &mut akita_types::ProverGrinding<'_>,
         level: u32,
         reduction: &Option<crate::protocol::prove::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
@@ -172,6 +163,7 @@ impl RingRelationProver {
             + 'static,
         <F as Unreduced>::Wide: From<F>,
         PointF: akita_types::FpExtEncoding<F>
+            + ChallengeCodec
             + jolt_algebra::ExtField<F>
             + akita_serialization::AkitaSerialize,
         B: crate::backend::ProverBackend<F, PointF>,
@@ -262,21 +254,16 @@ impl RingRelationProver {
                     .into(),
             ));
         }
-        grinding.state_mut().site(
+        akita_transcript::send_field_group(
+            grinding.state_mut(),
             akita_types::FoldSite::OpeningPayload {
                 level,
                 ring_dimension: opening_payload_ring_dimension,
             }
-            .id()?
-            .into(),
-        );
-        // The payload is public in both modes: in ZK mode its own commitment
-        // randomness hides it, not pads. WARNING: exchanged in place. This
-        // relies on `Channel`'s contract that the prover leaves values
-        // unchanged; the relation below still reads `opening_payload`.
-        grinding
-            .state_mut()
-            .exchange_public_all(opening_payload.coeffs_mut())?;
+            // T0-PORT(private): dev used exchange_public_all, randomness here; re-express on v8.
+            .id()?,
+            opening_payload.coeffs(),
+        )?;
         drop(opening_rows_span);
 
         // Public claim batching is intentionally delayed until every
@@ -284,7 +271,7 @@ impl RingRelationProver {
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.
         let (trace_claim, row_coefficients) =
-            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF, _, _>(
+            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF>(
                 reduction,
                 scalar_openings,
                 trace_opening_batch,
@@ -340,16 +327,15 @@ impl RingRelationProver {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
-        let grind_outputs =
-            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B, _, _>(
-                opening_ctx,
-                grinding,
-                level,
-                &lp,
-                &opening_batch,
-                &grind_groups,
-                None,
-            )?;
+        let grind_outputs = fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B>(
+            opening_ctx,
+            grinding,
+            level,
+            &lp,
+            &opening_batch,
+            &grind_groups,
+            None,
+        )?;
         drop(_grind_span);
         if grind_outputs.len() != num_groups {
             return Err(AkitaError::Internal(

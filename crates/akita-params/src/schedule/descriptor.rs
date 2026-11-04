@@ -101,6 +101,9 @@ impl FoldSchedule {
             );
         }
         self.terminal.append_descriptor_bytes(bytes);
+        if self.root_accumulated_setup_prefix_len != 0 {
+            push_usize(bytes, self.root_accumulated_setup_prefix_len);
+        }
         append_zk_descriptor_bytes(bytes, self.zk);
     }
 }

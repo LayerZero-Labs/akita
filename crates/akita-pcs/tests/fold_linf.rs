@@ -2,7 +2,6 @@
 
 mod common;
 
-use crate::common::sponge::{prove_on_test_sponge, verify_on_test_sponge};
 use akita_cpu_backend::CpuBackend;
 use akita_params::GrindingPlan;
 use akita_pcs::AkitaCommitmentScheme;
@@ -37,9 +36,12 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
                 .expect("singleton group layout"),
         ))
         .expect("layout");
-    let grinding_plan =
-        akita_config::derive_transcript_grinding_plan::<OneHotCfg>(row.schedule(), &opening_layout)
-            .expect("grinding plan");
+    let grinding_plan = akita_config::derive_transcript_grinding_plan::<OneHotCfg>(
+        row.schedule(),
+        &opening_layout,
+        None,
+    )
+    .expect("grinding plan");
     assert!(
         grinding_plan.runs().iter().any(|run| run.grind_bits() > 0),
         "fixture must exercise nonzero grinding"
@@ -67,24 +69,24 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
-    let proof = prove_on_test_sponge(
-        &scheme,
-        &setup,
-        prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
-        &stack,
-        LABEL,
-        BasisMode::Lagrange,
-    )
-    .expect("prove");
+    let proof = scheme
+        .batched_prove(
+            &setup,
+            prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
+            &stack,
+            LABEL,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verify_on_test_sponge(
-                &verifier,
+            verifier.batched_verify(
                 &proof,
                 LABEL,
                 verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
@@ -105,8 +107,7 @@ impl FoldLinfGrindFixture {
         self.scheme
             .verifier(self.verifier_setup.clone())
             .and_then(|verifier| {
-                verify_on_test_sponge(
-                    &verifier,
+                verifier.batched_verify(
                     proof,
                     LABEL,
                     verify_input::<OneHotCfg>(
@@ -116,6 +117,7 @@ impl FoldLinfGrindFixture {
                         self.scheme.schedules(),
                     ),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
     }

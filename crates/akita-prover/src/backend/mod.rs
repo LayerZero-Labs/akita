@@ -104,3 +104,6 @@ where
         + TerminalCommitmentMaterialKernel<F, B::CommitmentMaterialHandle>,
 {
 }
+
+mod setup_batch;
+pub use setup_batch::{SetupBatchBackend, SetupBatchKernel, SetupBatchRequest};

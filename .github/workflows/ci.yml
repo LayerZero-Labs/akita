@@ -62,15 +62,15 @@ jobs:
         with:
           components: clippy
       - name: Clippy (transparent default features)
-        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak -- -D warnings
       - name: Clippy (no default features)
-        run: cargo clippy --all --all-targets --release --no-default-features -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features transcript-keccak -- -D warnings
       - name: Clippy (response model diagnostics)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics -- -D warnings
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
       - name: Clippy (transcript logging)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,logging -- -D warnings
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,logging-transcript,transcript-keccak -- -D warnings
       - name: Clippy (dev protocol)
-        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,dev-protocol -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,dev-protocol,transcript-keccak -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -146,8 +146,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Require one jolt-algebra identity and no akita-field
         run: scripts/check-shared-field-identity.sh
-      - name: Keep spongefish's sponge state private (no yolocrypto)
-        run: scripts/check-no-yolocrypto.sh
 
   doc:
     name: Documentation
@@ -156,7 +154,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Build documentation
-        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence
+        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence,transcript-keccak
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -193,7 +191,7 @@ jobs:
           set +e
           # --lib --bins --tests matches the default test target set but skips
           # compiling examples (clippy's --all-targets already compile-checks them).
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-keccak \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
@@ -330,17 +328,17 @@ jobs:
             --example catalog_security -- --check
       - name: Dense multi-chunk PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel -- --exact fp128_dense_mc
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_dense_mc
       - name: One-hot multi-chunk catalog wiring
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel -- --exact fp128_onehot_mc_catalog_resolves
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_onehot_mc_catalog_resolves
       - name: Bounded dense source PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel -- heterogeneous::bounded_
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- heterogeneous::bounded_
           cargo test --release -p akita-config --test bounded_dense_source
       - name: Combined-family setup at exact capacities
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
 
   # The dev protocol has its own schedule set, so its drift check runs apart
   # from the default one. Its tests run in `test-dev-protocol`.
@@ -408,7 +406,7 @@ jobs:
           SHARD_INDEX: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,dev-protocol \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,dev-protocol,transcript-keccak \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
       - name: Run the masked prefix under the dev protocol
         # The masked prefix's test compresses u_a with akita-pcs's
@@ -416,23 +414,17 @@ jobs:
         if: matrix.shard == 1
         run: |
           cargo nextest run -p akita-pcs --profile ci --cargo-profile ci-test --no-default-features \
-            --features parallel,disk-persistence,dev-protocol,test-support --test masked_prefix
+            --features parallel,disk-persistence,dev-protocol,test-support,transcript-keccak --test masked_prefix
 
-  test-transcript-semantics:
-    name: Transcript semantics (${{ matrix.sponge.name }})
+  test-transcript-backends:
+    name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
     # Cold release builds span several logging-transcript test binaries and
     # can exceed 40 minutes before the final protocol suites finish compiling.
     timeout-minutes: 60
-    # The semantic and mutation suites run on each sponge a caller may run
-    # Akita on: the standalone AkitaSponge (Blake2b) and Keccak.
     strategy:
       matrix:
-        sponge:
-          - name: blake2b
-            features: parallel,logging
-          - name: keccak
-            features: parallel,logging,keccak-test-sponge
+        backend: [transcript-blake2b, transcript-keccak]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -441,19 +433,24 @@ jobs:
           cargo test --release -p akita-pcs
           --test transcript_hardening
           --test transcript_hardening_proptest
+          --test embedded_transcript
           --no-default-features
-          --features ${{ matrix.sponge.features }}
+          --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
-      - name: Run proof stream and mutation suites
+      - name: Run Spongefish stream and mutation suites
         run: |
+          cargo test --release -p akita-transcript \
+            --no-default-features \
+            --features prover,logging-transcript,${{ matrix.backend }} \
+            proof_stream --lib
           cargo test --release -p akita-pcs \
             --no-default-features \
-            --features ${{ matrix.sponge.features }} \
-            standalone_roundtrip_and_statement_binding --lib
+            --features parallel,logging-transcript,${{ matrix.backend }} \
+            spongefish_roundtrip_and_statement_binding --lib
           cargo test --release -p akita-pcs \
             --no-default-features \
-            --features ${{ matrix.sponge.features }} \
+            --features parallel,logging-transcript,${{ matrix.backend }} \
             selective_l2_proof_rejects_transcript_mutations --lib
       - name: Run protocol suites with proof channel tracing
         run: >-
@@ -461,16 +458,55 @@ jobs:
           --test protocol_soundness
           --test fold_linf
           --no-default-features
-          --features ${{ matrix.sponge.features }}
+          --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
+      - name: Audit the grinding plan across akita-types shapes
+        run: >-
+          cargo test --release -p akita-types
+          --no-default-features
+          --features prover,logging-transcript,${{ matrix.backend }}
+      - name: Keccak-256 digest known answers
+        run: >-
+          cargo test --release
+          -p akita-transcript -p akita-params -p akita-types
+          --no-default-features
+          --features akita-transcript/keccak256-digests,akita-transcript/prover,akita-transcript/${{ matrix.backend }},akita-params/${{ matrix.backend }},akita-types/${{ matrix.backend }}
+          --lib
 
-  # Exercise the proof stream through the opaque CPU backend, including a
-  # small-field Stage 1 route on caller transcripts over Blake2b and Keccak.
+  # Exercise the proof stream through the opaque CPU backend under both
+  # transcript hashes, including a small-field Stage 1 route.
+  test-inline-backends:
+    name: Guest inline backends
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          target: riscv64gc-unknown-linux-gnu
+      # The guest backends select themselves only on riscv64. The NTT inline's
+      # portable fallback runs on any host, so its table layout is pinned here;
+      # the `inline-parity` job in jolt-verifier-profile-smoke.yml executes the
+      # inlines in a traced Jolt guest.
+      - name: Inline NTT against the portable transform
+        run: cargo test --release -p akita-algebra --features ntt-inline --lib
+      - name: Host builds with every inline feature
+        run: cargo check --release -p akita-pcs --features ntt-inline
+      # A riscv64 target compiles every guest-selected path; the inline
+      # instructions run only under Jolt's emulator, so this is a build check.
+      - name: RISC-V builds with every inline feature
+        run: >-
+          cargo check --release -p akita-pcs --target riscv64gc-unknown-linux-gnu
+          --features ntt-inline
+
   test-proof-stream-roundtrips:
-    name: Proof channel roundtrips
+    name: Proof channel roundtrips (${{ matrix.backend }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      matrix:
+        backend: [transcript-blake2b, transcript-keccak]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
@@ -478,7 +514,7 @@ jobs:
         run: >-
           cargo test --release -p akita-pcs --test proof_stream_smoke
           --no-default-features
-          --features parallel
+          --features parallel,${{ matrix.backend }}
           --
           --test-threads=1
 

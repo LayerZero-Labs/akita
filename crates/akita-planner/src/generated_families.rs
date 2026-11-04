@@ -202,6 +202,7 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
     (30, 4),
     (32, 1),
     (32, 4),
+    (33, 1),
     (36, 1),
     (40, 1),
     (44, 1),
@@ -227,16 +228,25 @@ const FP128_RESPONSE_DIGITS_RECURSIVE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(27),
 ];
 
-const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] = onehot_keys![(16, 1), (32, 1)];
+const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
+    onehot_keys![(16, 1), (29, 1), (32, 1)];
 
-const FP128_ONEHOT_RECURSIVE_KEYS: &[PolynomialGroupLayout] = onehot_keys![(36, 1)];
+const FP128_ONEHOT_RECURSIVE_KEYS: &[PolynomialGroupLayout] = onehot_keys![(33, 1), (36, 1)];
 
-const FP128_ONEHOT_MULTI_CHUNK_W2_KEYS: &[PolynomialGroupLayout] = onehot_keys![(14, 1), (32, 1)];
+const FP128_ONEHOT_MULTI_CHUNK_W2_KEYS: &[PolynomialGroupLayout] =
+    onehot_keys![(14, 1), (29, 1), (32, 1)];
+
+const FP128_ONEHOT_MULTI_CHUNK_R3_KEYS: &[PolynomialGroupLayout] = onehot_keys![(16, 1), (32, 1)];
 
 const FP128_ONEHOT_MULTI_CHUNK_W2R3_KEYS: &[PolynomialGroupLayout] =
     onehot_keys![(14, 1), (16, 1), (32, 1)];
 
-const FP128_ONEHOT_MULTI_CHUNK_W4_KEYS: &[PolynomialGroupLayout] = onehot_keys![(32, 1)];
+const FP128_ONEHOT_MULTI_CHUNK_W4_KEYS: &[PolynomialGroupLayout] = onehot_keys![(29, 1), (32, 1)];
+
+// Two nv16 precommits followed by a two-polynomial final group.
+const FP128_ONEHOT_GROUPED_FINALS: &[usize] = &[31, 32, 34];
+const FP128_ONEHOT_MULTI_CHUNK_R2_GROUPED_FINALS: &[usize] = &[29, 32, 34];
+const FP128_ONEHOT_MULTI_CHUNK_R3_GROUPED_FINALS: &[usize] = &[32, 34];
 
 const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(16)];
@@ -277,6 +287,7 @@ const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
     (20, 1),
     (28, 1),
     (30, 1),
+    (31, 1),
     (34, 1)
 ];
 
@@ -302,7 +313,8 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(30),
 ];
 
-const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1), (34, 1), (35, 1)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] =
+    onehot_keys![(28, 1), (30, 1), (32, 1), (34, 1), (35, 1)];
 
 /// One generated schedule-artifact family.
 ///
@@ -391,7 +403,11 @@ fn fp128_onehot_grouped_requests(
     preplans: &GenerationPreplans,
     chunking: ChunkedWitnessCfg,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>(preplans, chunking)?;
+    let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>(
+        preplans,
+        FP128_ONEHOT_GROUPED_FINALS,
+        chunking,
+    )?;
     keys.push(heterogeneous_onehot_catalog_key(preplans)?);
     keys.push(bounded_dense_onehot_catalog_key(preplans)?);
     keys.extend(onehot_group_batch_test_keys::<fp128::OneHot>(
@@ -412,15 +428,6 @@ fn fp128_onehot_grouped_requests(
         chunking,
     )?);
     Ok(sorted_grouped_requests(keys))
-}
-
-fn fp128_onehot_multichunk_grouped_requests<Cfg: CommitmentConfig + 'static>(
-    preplans: &GenerationPreplans,
-    chunking: ChunkedWitnessCfg,
-) -> Result<GroupedGenerationRequests, AkitaError> {
-    Ok(sorted_grouped_requests(
-        recursive_onehot_chunked_profile_keys::<Cfg>(preplans, chunking)?,
-    ))
 }
 
 fn fp128_onehot_multichunk_w2r2_grouped_requests(
@@ -540,22 +547,6 @@ fn fp128_dense_grouped_requests(
 
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
-    chunking: ChunkedWitnessCfg,
-) -> Result<GroupedGenerationRequests, AkitaError> {
-    // Keep the historical (32, 2) profiling key for e2e catalog tests, and ship
-    // (34, 2) as the larger profile-bench fixture.
-    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32, 34], chunking)
-}
-
-fn recursive_onehot_chunked_profile_keys<BaseCfg: CommitmentConfig + 'static>(
-    preplans: &GenerationPreplans,
-    chunking: ChunkedWitnessCfg,
-) -> Result<GroupedGenerationRequests, AkitaError> {
-    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32, 34], chunking)
-}
-
-fn recursive_onehot_profile_keys_for_finals<BaseCfg: CommitmentConfig + 'static>(
-    preplans: &GenerationPreplans,
     final_num_vars: &[usize],
     chunking: ChunkedWitnessCfg,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
@@ -671,7 +662,7 @@ macro_rules! family_row {
             family_name_fn: <$cfg as CommitmentConfig>::schedule_family_name,
             scalar_keys: $keys,
             scalar_plan_source: TypeId::of::<$cfg>,
-            grouped_requests: |preplans, chunking| $group_keys(preplans, chunking),
+            grouped_requests: $group_keys,
             policy: || policy_of::<$cfg>($chunking),
             source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -686,7 +677,7 @@ macro_rules! family_row {
             family_name_fn: <$cfg as CommitmentConfig>::schedule_family_name,
             scalar_keys: $keys,
             scalar_plan_source: TypeId::of::<$cfg>,
-            grouped_requests: |preplans, chunking| $group_keys(preplans, chunking),
+            grouped_requests: $group_keys,
             policy: || policy_of::<$cfg>($chunking),
             source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -787,7 +778,11 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         FP128_ONEHOT_RECURSIVE_KEYS,
         RecursiveCommitmentConfig<fp128::OneHot>,
         fp128::OneHot,
-        recursive_onehot_profile_keys::<fp128::OneHot>,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHot>(
+            preplans,
+            FP128_ONEHOT_GROUPED_FINALS,
+            chunking
+        ),
         ChunkedWitnessCfg::default_non_chunked()
     ),
     family_row!(
@@ -795,7 +790,11 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
         fp128::OneHotMultiChunk,
-        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>(
+            preplans,
+            FP128_ONEHOT_MULTI_CHUNK_R2_GROUPED_FINALS,
+            chunking
+        ),
         MultiChunkProfileId::W8R2.cfg()
     ),
     family_row!(
@@ -815,7 +814,11 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
         FP128_ONEHOT_MULTI_CHUNK_KEYS,
         fp128::OneHotMultiChunk,
-        fp128_onehot_multichunk_grouped_requests::<fp128::OneHotMultiChunk>,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>(
+            preplans,
+            FP128_ONEHOT_MULTI_CHUNK_R2_GROUPED_FINALS,
+            chunking
+        ),
         MultiChunkProfileId::W8R2.cfg()
     ),
     family_row!(
@@ -843,15 +846,19 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         MultiChunkProfileId::W2R3.cfg()
     ),
     family_row!(
-        FP128_ONEHOT_MULTI_CHUNK_KEYS,
+        FP128_ONEHOT_MULTI_CHUNK_R3_KEYS,
         fp128::OneHotMultiChunkW4R3,
         no_grouped_requests,
         MultiChunkProfileId::W4R3.cfg()
     ),
     family_row!(
-        FP128_ONEHOT_MULTI_CHUNK_KEYS,
+        FP128_ONEHOT_MULTI_CHUNK_R3_KEYS,
         fp128::OneHotMultiChunkW8R3,
-        fp128_onehot_multichunk_grouped_requests::<fp128::OneHotMultiChunkW8R3>,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunkW8R3>(
+            preplans,
+            FP128_ONEHOT_MULTI_CHUNK_R3_GROUPED_FINALS,
+            chunking
+        ),
         MultiChunkProfileId::W8R3.cfg()
     ),
     family_row!(
@@ -865,7 +872,11 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>,
         fp128::OneHotMultiChunkW2R3,
-        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunkW2R3>,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunkW2R3>(
+            preplans,
+            FP128_ONEHOT_MULTI_CHUNK_R3_GROUPED_FINALS,
+            chunking
+        ),
         MultiChunkProfileId::W2R3.cfg()
     ),
     family_row!(
@@ -873,7 +884,11 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>,
         fp128::OneHotMultiChunkW4R3,
-        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunkW4R3>,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunkW4R3>(
+            preplans,
+            FP128_ONEHOT_MULTI_CHUNK_R3_GROUPED_FINALS,
+            chunking
+        ),
         MultiChunkProfileId::W4R3.cfg()
     ),
     family_row!(
@@ -881,7 +896,11 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>,
         fp128::OneHotMultiChunkW8R3,
-        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunkW8R3>,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunkW8R3>(
+            preplans,
+            FP128_ONEHOT_MULTI_CHUNK_R3_GROUPED_FINALS,
+            chunking
+        ),
         MultiChunkProfileId::W8R3.cfg()
     ),
     family_row!(

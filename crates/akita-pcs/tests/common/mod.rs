@@ -1,12 +1,9 @@
 #![allow(dead_code)]
 
-#[path = "../../examples/support/caller_transcript.rs"]
-pub(crate) mod caller_transcript;
-#[cfg(feature = "logging")]
+#[cfg(feature = "logging-transcript")]
 pub(crate) mod mutations;
 mod opening_oracles;
 pub(crate) mod proof_size;
-pub(crate) mod sponge;
 #[path = "../../examples/support/workspace_schedules.rs"]
 mod workspace_schedules;
 
@@ -33,8 +30,8 @@ use akita_types::{
     AkitaExpandedSetup, AkitaVerifierSetup, GroupBatchStatement, SetupPrefixVerifierRegistry,
 };
 pub(super) use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
-pub(super) use jolt_algebra::CanonicalEncoding;
 use jolt_algebra::One;
+pub(super) use jolt_algebra::{CanonicalBytes, CanonicalEncoding, Field};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};
@@ -74,6 +71,28 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn thread")
         .join()
         .expect("test thread panicked");
+}
+
+/// Stable digest used by versioned protocol epochs.
+pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
+where
+    FF: Field + CanonicalEncoding + CanonicalBytes + akita_transcript::ChallengeCodec + 'static,
+{
+    let mut transcript = akita_transcript::new_prover_channel(b"akita/protocol-epoch/digest");
+    akita_transcript::bind_instance(&mut transcript, payload).expect("bind epoch payload");
+    akita_transcript::ext_challenge::<FF, _>(
+        &mut transcript,
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
+            detail: 0x4550_4f43,
+            ..akita_transcript::ProtocolSiteId::default()
+        },
+    )
+    .expect("supported protocol field")
+    .to_bytes_le_vec()
+    .iter()
+    .map(|byte| format!("{byte:02x}"))
+    .collect()
 }
 
 #[allow(clippy::type_complexity)]
@@ -137,7 +156,7 @@ where
             .collect(),
     };
     let selection = schedules
-        .resolve_profiles(&profiles)
+        .resolve_profiles(&profiles, 0)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid selected verifier statement")
@@ -164,7 +183,7 @@ where
         precommitteds: Vec::new(),
     };
     let selection = schedules
-        .resolve_profiles(&profiles)
+        .resolve_profiles(&profiles, 0)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
@@ -394,21 +413,4 @@ pub(super) fn make_onehot_poly_with_k(nv: usize, k: usize, seed: u64) -> OneHotP
         .map(|_| Some(rng.gen_range(0..k) as u8))
         .collect();
     OneHotPoly::<F, u8>::new(k, indices).expect("onehot poly")
-}
-
-/// Run the core prover on a fresh [`akita_types::AkitaSponge`] transcript under
-/// [`akita_types::PROOF_STREAM_PROTOCOL`] bound to `session`, and return its
-/// argument string, as `AkitaVerifier::verify_standalone` reads it.
-pub(crate) fn prove_on_session(
-    session: &[u8],
-    prove: impl FnOnce(
-        &mut jolt_transcript::ProverTranscript<akita_types::AkitaSponge>,
-    ) -> Result<(), akita_error::AkitaError>,
-) -> Result<Vec<u8>, akita_error::AkitaError> {
-    let mut transcript = jolt_transcript::ProverTranscript::<akita_types::AkitaSponge>::new(
-        &akita_types::PROOF_STREAM_PROTOCOL,
-        session,
-    );
-    prove(&mut transcript)?;
-    Ok(transcript.finish())
 }

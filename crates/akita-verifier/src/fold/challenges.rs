@@ -1,18 +1,19 @@
 //! Fold-challenge draw for every opening group of one recursive level.
 
+use akita_types::VerifierFoldDraw;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_types::GrindingReplay;
 use akita_types::{draw_group_fold_challenges, GroupFoldChallenges};
-use akita_types::{FoldResponseReplay, ForkFoldDraw};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
-use jolt_transcript::Fork;
 
-/// The sparse fold roots of every group of one recursive level, drawn in
-/// group order from the level's fold-response fork.
-pub(crate) fn derive_multi_group_stage1_challenges<F, E, G: FoldResponseReplay>(
-    grinding: &mut G,
-    fork: &mut Fork<G::Sponge>,
+// T0-PORT(private): dev made this generic over `G: FoldResponseReplay` so the masked
+// prefix and the counting replay (CountingGrinding) draw through it; re-express on v8.
+/// Draw each group's sparse fold challenges for one recursive level: one
+/// squeezed message per group, in group order.
+pub(crate) fn derive_multi_group_stage1_challenges<F, E>(
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
@@ -26,14 +27,16 @@ where
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         let group = u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?;
-        let mut draw = ForkFoldDraw::new(fork);
-        let drawn = draw_group_fold_challenges::<F, E, _>(&mut draw, &group_lp, group_index, k_g)?;
-        let draws = draw.take_record();
+        let drawn = {
+            let mut live = VerifierFoldDraw::new(grinding.state_mut(), level, group);
+            draw_group_fold_challenges::<F, E, _>(&mut live, &group_lp, k_g)?
+                .ok_or(AkitaError::InvalidProof)?
+        };
         let coordinate_count = group_lp
             .num_live_blocks()
             .checked_mul(k_g)
             .ok_or(AkitaError::InvalidProof)?;
-        grinding.record_fold_challenges(level, group, coordinate_count, &draws)?;
+        grinding.record_fold_challenges(level, group, coordinate_count)?;
         group_challenges.push(drawn);
     }
     Ok(group_challenges)

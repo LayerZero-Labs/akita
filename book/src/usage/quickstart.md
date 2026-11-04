@@ -139,7 +139,7 @@ in proof systems.
 
 ## Transport the proof
 
-The proof is already the canonical argument byte string. Store or
+The proof is already the canonical Spongefish argument byte string. Store or
 send it directly; the public schedule bounds every message the verifier reads.
 
 ```rust
@@ -166,7 +166,13 @@ let verifier_claims = OpeningClaims::from_groups(vec![
 ])?;
 let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
-verifier.verify_standalone(&proof_bytes, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
+verifier.batched_verify(
+    &proof_bytes,
+    TRANSCRIPT_DOMAIN,
+    statement,
+    BasisMode::Lagrange,
+    akita_verifier::SetupPolicy::Check(None),
+)?;
 ```
 
 Akita constructs fresh prover and verifier states and binds the complete

@@ -23,7 +23,8 @@ variables.
 
 Every supported fold challenge is a [`SparseChallengeConfig`]: its nonzero
 positions and magnitudes are sampled without replacement, and every nonzero
-coefficient receives an independent uniform sign. Conditioned on the positions
+coefficient receives an independent uniform sign (before any operator-norm
+filter, see invariant 1). Conditioned on the positions
 and magnitudes, each output coordinate of `z` is a Rademacher sum. Akita uses
 that concentration bound to size the honest cap as
 
@@ -105,11 +106,9 @@ pre-challenge randomness. See
 [Polynomial commitments and binding](../book/src/foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
 For a multi-group fold, all groups share the same candidate nonce and must pass
-together. Each group root then derives every claim-major block coordinate from
-a separate fixed-width indexed SHAKE256 query. These coordinate queries do not
-mutate the live transcript; with the root and nonce fixed, changing one query
-leaves all other coordinates fixed. The `p = 1/8` calculation is a marginal,
-per-group sizing guarantee.
+together. Each group then decodes all of its challenges from one fixed-length
+squeezed message ([sparse-challenge-stream](sparse-challenge-stream.md)). The
+`p = 1/8` calculation is a marginal, per-group sizing guarantee.
 It does not assert independence between groups or a joint expected-attempt
 bound. The hard probe cap is the protocol-wide termination guarantee.
 
@@ -137,14 +136,17 @@ for the current group and terminal ownership model.
 ## Security and correctness invariants
 
 1. **One challenge law.** Every valid `SparseChallengeConfig` has fixed
-   magnitudes and independent signs, so the same conditional Rademacher proof
-   applies. `challenge_l2_sq_max` is the single variance source.
+   magnitudes. Without operator-norm filtering its signs are independent, so
+   the same conditional Rademacher proof applies; a filtered family's signs
+   are not independent of its positions, and its completeness rests on the
+   measured covariance in
+   [selective-l2-fold-security-sizing](selective-l2-fold-security-sizing.md#measured-challenge-covariance).
+   `challenge_l2_sq_max` is the single variance source.
 2. **One sizing source.** Planner and prover consume the same SIS primitives and
    scheduled digit depths. Security pricing does not reconstruct a competing
    cap.
-3. **Transcript symmetry.** Prover and verifier decode and absorb the same
-   packed nonce before squeezing the same group root and indexed coordinate
-   streams.
+3. **Transcript symmetry.** Prover and verifier read and absorb the same
+   nonce before squeezing the same group challenge messages.
 4. **Structural verification.** The verifier relies on the digit-range or
    terminal-response checks, not on an unverifiable claim that grinding found a
    small response.

@@ -166,13 +166,14 @@ macro_rules! strict_decode_and_verify {
             None,
         )
         .map_err(|err| format!("strict host verifier setup failed: {err}"))?
-        .verify_standalone(
+        .batched_verify(
             &decoded.proof,
             &decoded.transcript_domain,
             decoded
                 .verifier_statement()
                 .map_err(|err| format!("strict input statement failed: {err}"))?,
             BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
         )
         .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
         (decoded, schedules)
@@ -198,13 +199,14 @@ macro_rules! strict_fp128_preflight {
             Some(TrustedTerminalCache::Decode(&cache)),
         )
         .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?
-        .verify_standalone(
+        .batched_verify(
             &decoded.proof,
             &decoded.transcript_domain,
             decoded
                 .verifier_statement()
                 .map_err(|err| format!("cached input statement failed: {err}"))?,
             BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
         )
         .map_err(|err| format!("prepared verifier cache self-check rejected proof: {err}"))?;
         let metadata = prepared_verifier_ntt_cache_metadata(&cache)
@@ -357,16 +359,21 @@ macro_rules! run_selected_guest {
             "prover program-io"
         );
 
-        let now = Instant::now();
-        let is_valid = verify($blob, output, program_io.panic, proof);
-        let verifier_secs = now.elapsed().as_secs_f64();
-        info!(verifier_secs, is_valid, "Jolt verifier finished");
-        if !is_valid {
-            return Err("Jolt verifier rejected the proof".to_string());
+        // A panicking guest writes no output, which decodes as the success
+        // code 0, so the panic flag must be rejected on its own.
+        if program_io.panic {
+            return Err("guest panicked".to_string());
         }
         if output != 0 {
             return Err(format!("guest reported Akita-verify failure: {output}"));
         }
+
+        // Verify the statement this run must establish: no panic, success code.
+        let now = Instant::now();
+        let verdict = verify($blob, 0, false, proof);
+        let verifier_secs = now.elapsed().as_secs_f64();
+        info!(verifier_secs, is_valid = verdict.is_ok(), "Jolt verifier finished");
+        verdict.map_err(|err| format!("Jolt verifier rejected the proof: {err:?}"))?;
         info!(case = %$case, "Akita-in-Jolt proof OK");
         Ok(())
     }};

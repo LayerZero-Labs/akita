@@ -1,12 +1,14 @@
 //! Schedule-owned grinding-plan derivation from public geometry.
 
-use crate::transcript_grinding::{GrindingPlanAccumulator, GrindingPlanSink, SumcheckRoundBatch};
+use crate::transcript_grinding::{
+    GrindingPlanAccumulator, GrindingPlanSink, PlannerEdgeSink, SumcheckRoundBatch,
+};
 use crate::{
     independent_batch_loss_factor, multilinear_point_loss_factor, polynomial_identity_loss_factor,
     powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
-    CommittedGroupParams, DigitRangePlan, FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun,
-    GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, Stage1StageShape, SumcheckProtocol,
-    TranscriptGrindingCost,
+    CommittedGroupParams, DigitRangePlan, FoldChallengeCost, FoldSchedule, FoldSuccessor,
+    GrindingPlan, GrindingRun, GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout,
+    Stage1StageShape, SumcheckProtocol, TranscriptGrindingCost, MAX_SETUP_BATCH_CLAIMS,
 };
 use akita_error::AkitaError;
 use jolt_algebra::narrowing::{usize_to_u32, usize_to_u64};
@@ -22,22 +24,42 @@ fn validate_claim_extension_degree(extension_degree: usize) -> Result<(), AkitaE
         .map_err(|_| AkitaError::InvalidSetup("grinding extension degree exceeds u32".into()))
 }
 
-/// Price one planner edge using the canonical query builders.
+/// Price one planner edge using the canonical query builders. `fold` is the
+/// [`FoldChallengeCost`] of `params` under `layout`, and `terminal_fold` is
+/// [`FoldChallengeCost::terminal`] of a terminal `successor`, which the
+/// planner prices once per candidate.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `terminal_fold` is present for
+/// a recursive successor or missing for a terminal one, or when any query of
+/// the edge cannot be priced.
 #[allow(clippy::too_many_arguments)]
 pub fn transcript_grinding_cost_for_planner_edge(
     params: &CommittedGroupParams,
+    fold: FoldChallengeCost,
     relation_geometry: crate::RelationAddressGeometry,
     layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
+    terminal_fold: Option<FoldChallengeCost>,
     challenge_order: ChallengeFieldOrder,
     claim_extension_degree: usize,
     level: u32,
 ) -> Result<TranscriptGrindingCost, AkitaError> {
     layout.check()?;
     validate_claim_extension_degree(claim_extension_degree)?;
-    let mut accumulator = GrindingPlanAccumulator::new(challenge_order);
+    if matches!(successor, FoldSuccessor::Terminal(_)) != terminal_fold.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "planner edge needs a terminal fold cost exactly for a terminal successor".into(),
+        ));
+    }
+    let mut sink = PlannerEdgeSink {
+        accumulator: GrindingPlanAccumulator::new(challenge_order),
+        fold,
+        terminal_fold,
+    };
     let rounds = append_nonterminal(
-        &mut accumulator,
+        &mut sink,
         challenge_order,
         claim_extension_degree,
         None,
@@ -46,10 +68,11 @@ pub fn transcript_grinding_cost_for_planner_edge(
         relation_geometry.relation_point_variable_count(),
         layout,
         successor,
+        false,
     )?;
     if let FoldSuccessor::Terminal(terminal) = successor {
         append_terminal(
-            &mut accumulator,
+            &mut sink,
             challenge_order,
             claim_extension_degree,
             None,
@@ -60,17 +83,21 @@ pub fn transcript_grinding_cost_for_planner_edge(
             terminal,
         )?;
     }
-    Ok(accumulator.cost())
+    Ok(sink.accumulator.cost())
 }
 
 /// Derive the only accepted grinding plan from field metadata and public protocol shape.
 ///
 /// The fold responses at the levels a zero-knowledge cut masks are one-shot.
+///
+/// `setup_batch_level` names the nonterminal fold whose Stage 3 also reduces a
+/// setup-claim batch, when the call carries one.
 pub fn derive_transcript_grinding_plan_from_public_shape(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
     challenge_order: ChallengeFieldOrder,
     claim_extension_degree: usize,
+    setup_batch_level: Option<u32>,
 ) -> Result<GrindingPlan, AkitaError> {
     let one_shot_through = schedule.zk.map(|zk| zk.cut_level());
     schedule.validate_structure()?;
@@ -99,6 +126,11 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
             schedule.root.output_witness_len,
         )?
         .relation_point_variable_count();
+    if setup_batch_level.is_some_and(|level| level as usize > schedule.recursive_folds.len()) {
+        return Err(AkitaError::InvalidSetup(
+            "setup batch target must be a nonterminal fold".into(),
+        ));
+    }
     let mut predecessor_rounds = append_nonterminal(
         &mut sink,
         challenge_order,
@@ -109,6 +141,7 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
         root_rounds,
         root_layout,
         root_successor,
+        setup_batch_level == Some(0),
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
@@ -130,16 +163,18 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
                 fold.output_witness_len,
             )?
             .relation_point_variable_count();
+        let level = usize_to_u32(index + 1, "grinding level")?;
         predecessor_rounds = append_nonterminal(
             &mut sink,
             challenge_order,
             claim_extension_degree,
             one_shot_through,
-            usize_to_u32(index + 1, "grinding level")?,
+            level,
             &fold.params,
             relation_rounds,
             &layout,
             successor,
+            setup_batch_level == Some(level),
         )?;
     }
 
@@ -169,6 +204,7 @@ fn append_nonterminal(
     relation_rounds: usize,
     layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
+    setup_batch: bool,
 ) -> Result<usize, AkitaError> {
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
@@ -186,7 +222,7 @@ fn append_nonterminal(
         level,
         one_shot_through,
     ))?;
-    append_fold_queries(sink, level, params, layout)?;
+    sink.fold_queries(level, params, layout)?;
 
     let alpha_loss = params
         .validated_groups(layout)?
@@ -275,6 +311,15 @@ fn append_nonterminal(
         rounds,
         degree: crate::STAGE2_SUMCHECK_DEGREE,
     })?;
+    // A setup batch draws its coefficients after Stage 2: Stage 3 then reduces
+    // the batch, or, without Stage 3, the verifier decides it directly.
+    if setup_batch {
+        sink.push(GrindingRun::proof_of_work(
+            GrindingSite::SetupBatch { level },
+            independent_batch_loss_factor(MAX_SETUP_BATCH_CLAIMS)?,
+            challenge_order,
+        )?)?;
+    }
     if let FoldSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
             sink.sumcheck_rounds(SumcheckRoundBatch {
@@ -283,7 +328,7 @@ fn append_nonterminal(
                 level,
                 stage: 0,
                 rounds: prefix.profile.group.num_vars(),
-                degree: 2,
+                degree: crate::SETUP_SUMCHECK_DEGREE,
             })?;
         }
     }
@@ -346,6 +391,37 @@ pub fn derive_digit_range_grinding_plan_from_public_shape(
     GrindingPlan::new(runs, challenge_order)
 }
 
+/// Derive the plan of one standalone setup-batch reduction: its coefficient
+/// query priced at the exact claim count, then its degree-two rounds.
+pub fn derive_setup_batch_grinding_plan(
+    challenge_order: ChallengeFieldOrder,
+    claims: usize,
+    rounds: usize,
+) -> Result<GrindingPlan, AkitaError> {
+    if claims == 0 || claims > MAX_SETUP_BATCH_CLAIMS {
+        return Err(AkitaError::InvalidInput("invalid setup batch shape".into()));
+    }
+    let mut runs = Vec::new();
+    let mut sink = |run| {
+        runs.push(run);
+        Ok(())
+    };
+    sink.push(GrindingRun::proof_of_work(
+        GrindingSite::SetupBatch { level: 0 },
+        independent_batch_loss_factor(claims)?,
+        challenge_order,
+    )?)?;
+    sink.sumcheck_rounds(SumcheckRoundBatch {
+        challenge_order,
+        protocol: SumcheckProtocol::SetupBatch,
+        level: 0,
+        stage: 0,
+        rounds,
+        degree: crate::SETUP_SUMCHECK_DEGREE,
+    })?;
+    GrindingPlan::new(runs, challenge_order)
+}
+
 fn append_terminal(
     sink: &mut impl GrindingPlanSink,
     challenge_order: ChallengeFieldOrder,
@@ -363,36 +439,60 @@ fn append_terminal(
         level,
         one_shot_through,
     ))?;
-    sink.push(GrindingRun::fold_challenge_group(
-        level,
-        0,
-        usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
-    )?)?;
-    Ok(())
+    sink.terminal_fold_queries(level, terminal)
 }
 
-fn append_fold_queries(
-    sink: &mut impl GrindingPlanSink,
+/// The terminal fold's proof of work at `level` and its challenge-message
+/// run, in plan order.
+pub(crate) fn terminal_fold_challenge_runs(
+    level: u32,
+    terminal: &crate::TerminalFoldParams,
+) -> Result<(GrindingRun, GrindingRun), AkitaError> {
+    let live_blocks = terminal.blocks.live_blocks;
+    let family = terminal.fold_challenge_family()?;
+    // The set size does not depend on the count, but the message must fit.
+    family.stream(live_blocks)?;
+    let challenges = usize_to_u64(live_blocks, "terminal fold coordinates")?;
+    Ok((
+        GrindingRun::fold_challenge_work(level, challenges, family.set_bits())?,
+        GrindingRun::fold_challenge_group(level, 0, challenges)?,
+    ))
+}
+
+/// The fold proof of work at `level` and the challenge-message run of each
+/// commitment group, in plan order.
+///
+/// One proof of work protects every group message of the fold, so it is
+/// priced for all of the fold's challenges against its smallest set.
+pub fn fold_challenge_runs(
     level: u32,
     params: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
-) -> Result<(), AkitaError> {
+) -> Result<(GrindingRun, Vec<GrindingRun>), AkitaError> {
     let groups = params.validated_groups(layout)?;
+    let mut runs = Vec::with_capacity(groups.len());
+    let mut challenges = 0u64;
+    let mut set_bits = u32::MAX;
     for (group_index, (group_layout, group_params)) in
         layout.groups().iter().zip(groups).enumerate()
     {
         let group = usize_to_u32(group_index, "fold challenge group")?;
-        let multiplicity = group_layout
+        let count = group_layout
             .num_polynomials()
             .checked_mul(group_params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
-        sink.push(GrindingRun::fold_challenge_group(
-            level,
-            group,
-            usize_to_u64(multiplicity, "fold coordinate count")?,
-        )?)?;
+        let family = group_params.fold_challenge_family()?;
+        // The set size does not depend on the count, but the message must fit.
+        family.stream(count)?;
+        set_bits = set_bits.min(family.set_bits());
+        let count = usize_to_u64(count, "fold coordinate count")?;
+        challenges = challenges
+            .checked_add(count)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold challenge count overflow".into()))?;
+        runs.push(GrindingRun::fold_challenge_group(level, group, count)?);
     }
-    Ok(())
+    let work = GrindingRun::fold_challenge_work(level, challenges, set_bits)?;
+    Ok((work, runs))
 }
 
 fn append_eor(
@@ -485,7 +585,8 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+                .expect("production challenge"),
         )
         .with_decomp(1, 1, 2, 2, 2)
         .expect("test fold params")
@@ -542,6 +643,7 @@ mod tests {
                         7,
                         &layout,
                         FoldSuccessor::Recursive(&successor),
+                        false,
                     )
                     .unwrap();
                     let alpha = runs
@@ -588,6 +690,7 @@ mod tests {
             expected_rounds,
             &layout,
             FoldSuccessor::Recursive(&successor),
+            false,
         )
         .expect("nonterminal grinding runs");
         assert_eq!(rounds, expected_rounds);
@@ -707,6 +810,7 @@ mod tests {
                             rounds,
                             &layout,
                             FoldSuccessor::Recursive(&successor),
+                            false,
                         )
                         .unwrap();
                         let mut priced = GrindingPlanAccumulator::new(challenge_order);
@@ -720,6 +824,7 @@ mod tests {
                             rounds,
                             &layout,
                             FoldSuccessor::Recursive(&successor),
+                            false,
                         )
                         .unwrap();
                         let materialized =
@@ -952,6 +1057,7 @@ mod tests {
                 7,
                 &layout,
                 FoldSuccessor::Recursive(&successor),
+                false,
             )
             .unwrap();
             let batches = claim_batch_runs(&runs)

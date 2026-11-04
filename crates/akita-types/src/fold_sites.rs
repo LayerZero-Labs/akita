@@ -7,8 +7,8 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_params::transcript_site::{
-    ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_NEXT_WITNESS,
+use akita_transcript::{
+    ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
     SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_TERMINAL,
 };
 use jolt_algebra::narrowing::usize_to_u32;
@@ -21,7 +21,7 @@ use jolt_transcript::{Channel, PrivateChannel};
 /// [`Self::id`], so callers never narrow them just to fill a site field.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FoldSite {
-    /// Root commitment rows for one opening group.
+    /// Root commitment digest for one opening group.
     RootCommitment { group: usize, ring_dimension: usize },
     /// Root opening point for one opening group.
     RootPoint { group: usize },
@@ -29,8 +29,6 @@ pub enum FoldSite {
     GroupPoint { level: u32, group: usize },
     /// Scalar openings bound before a non-terminal fold's relation.
     Openings { level: u32 },
-    /// Committed witness rows bound before the terminal fold.
-    WitnessCommitment { level: u32, ring_dimension: usize },
     /// Terminal scalar opening bound when no extension reduction runs.
     TerminalOpening { level: u32 },
     /// Terminal protocol point.
@@ -39,24 +37,17 @@ pub enum FoldSite {
     OpeningPayload { level: u32, ring_dimension: usize },
     /// Outer commitment payload for the next fold's witness.
     NextWitnessPayload { level: u32 },
-    /// Inner `t` state handed to the suffix-terminal fold. Under
-    /// `dev-protocol` it stops before the last block.
+    /// Inner `t` state handed to the suffix-terminal fold, stopping before
+    /// the last block.
     NextWitnessInnerState { level: u32 },
-    /// Digest of the last inner `t` block, which the terminal recomputes under
-    /// `dev-protocol`.
+    /// Digest of the last inner `t` block, which the terminal recomputes.
     NextWitnessInnerStateDigest { level: u32 },
-    /// Terminal `e` fields. Under `dev-protocol` they stop before the
-    /// last block.
+    /// Terminal `e` fields, stopping before the last block.
     TerminalEFields { level: u32 },
-    /// Digest of the last terminal `e` block, which the terminal recomputes
-    /// under `dev-protocol`.
+    /// Digest of the last terminal `e` block, which the terminal recomputes.
     TerminalEDigest { level: u32 },
-    /// Terminal public `t` fields.
-    TerminalTFields { level: u32 },
     /// Terminal `z` response payload.
     TerminalZPayload { level: u32 },
-    /// Sparse fold-challenge root of one commitment group.
-    FoldChallenge { level: u32, group: u32 },
 }
 
 impl FoldSite {
@@ -91,13 +82,6 @@ impl FoldSite {
                 ..site(SITE_FAMILY_FOLD_BINDING, level, 1)
             },
             Self::Openings { level } => site(SITE_FAMILY_FOLD_BINDING, level, 2),
-            Self::WitnessCommitment {
-                level,
-                ring_dimension,
-            } => ProtocolSiteId {
-                detail: usize_to_u32(ring_dimension, "fold site ring dimension")?,
-                ..site(SITE_FAMILY_FOLD_BINDING, level, 3)
-            },
             Self::TerminalOpening { level } => site(SITE_FAMILY_FOLD_BINDING, level, 4),
             Self::TerminalPoint { level } => site(SITE_FAMILY_FOLD_BINDING, level, 5),
             Self::OpeningPayload {
@@ -111,15 +95,10 @@ impl FoldSite {
             Self::NextWitnessInnerState { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 2),
             Self::NextWitnessInnerStateDigest { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 3),
             Self::TerminalEFields { level } => site(SITE_FAMILY_TERMINAL, level, 1),
-            Self::TerminalTFields { level } => site(SITE_FAMILY_TERMINAL, level, 2),
             Self::TerminalEDigest { level } => site(SITE_FAMILY_TERMINAL, level, 3),
             Self::TerminalZPayload { level } => ProtocolSiteId {
                 round: 3,
                 ..site(SITE_FAMILY_TERMINAL, level, 0)
-            },
-            Self::FoldChallenge { level, group } => ProtocolSiteId {
-                group,
-                ..site(SITE_FAMILY_FOLD_CHALLENGE, level, 0)
             },
         })
     }
@@ -192,10 +171,6 @@ mod tests {
         for site in [
             FoldSite::RootCommitment {
                 group: 0,
-                ring_dimension: too_large,
-            },
-            FoldSite::WitnessCommitment {
-                level: 1,
                 ring_dimension: too_large,
             },
             FoldSite::OpeningPayload {

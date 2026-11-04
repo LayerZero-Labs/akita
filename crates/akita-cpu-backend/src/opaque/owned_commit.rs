@@ -15,6 +15,7 @@ where
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
+        + akita_serialization::Valid
         + jolt_algebra::Ring
         + Unreduced
         + WithCommitAccumulator
@@ -65,7 +66,7 @@ where
             &sources,
             None,
         )?;
-        if recomputed.commitment != committed.public || retained != committed.retained {
+        if *recomputed.commitment() != committed.public || retained != committed.retained {
             return Err(AkitaError::InvalidInput(
                 "transferred commitment does not match backend setup".into(),
             ));
@@ -89,7 +90,13 @@ where
 
 impl<F, E> CpuBackend<F, E>
 where
-    F: Field + CanonicalEncoding + AkitaSerialize + Unreduced + WithCommitAccumulator + 'static,
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + akita_serialization::Valid
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
     F::Wide: From<F>,
     E: FpExtEncoding<F> + 'static,
 {

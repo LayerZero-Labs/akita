@@ -45,11 +45,12 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.verify_standalone(
+                    verifier.batched_verify(
                         &proof,
                         b"test/prove",
                         verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
                 .expect("production verifier must replay the reduced-relation suffix");
@@ -59,11 +60,12 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
             scheme
                 .verifier(verifier_setup.clone())
                 .and_then(|verifier| {
-                    verifier.verify_standalone(
+                    verifier.batched_verify(
                         &proof,
                         b"test/prove",
                         verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
                 .expect_err("production verifier must reject a tampered reduced stage2 proof");
@@ -128,7 +130,7 @@ fn verify_rejects_wrong_opening() {
     let result = scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 b"test/prove",
                 verifier_claims(
@@ -138,6 +140,7 @@ fn verify_rejects_wrong_opening() {
                     &commitments[0],
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         });
 
@@ -148,16 +151,16 @@ fn verify_rejects_wrong_opening() {
 }
 
 #[test]
-fn standalone_roundtrip_and_statement_binding() {
+fn spongefish_roundtrip_and_statement_binding() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(standalone_roundtrip_and_statement_binding_inner)
+        .spawn(spongefish_roundtrip_and_statement_binding_inner)
         .expect("native test thread")
         .join()
         .expect("native test thread panicked");
 }
 
-fn standalone_roundtrip_and_statement_binding_inner() {
+fn spongefish_roundtrip_and_statement_binding_inner() {
     let scheme = workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
         .expect("workspace schedule artifact");
     let layout = singleton_layout(&scheme, 16);
@@ -203,44 +206,48 @@ fn standalone_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("native verification");
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening + F::one()], &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("native verification must bind the claimed opening");
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 b"test/different-session",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("native verification must bind the session");
     let error = scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening, opening], &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("the statement must fit the setup's batch capacity");
@@ -256,11 +263,12 @@ fn standalone_roundtrip_and_statement_binding_inner() {
     let error = scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &[],
                 b"test/prove",
                 verifier_claims(&scheme, short_point, &[opening], &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("a claim point shorter than its commitment profile must reject");
@@ -276,11 +284,12 @@ fn standalone_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &truncated,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("truncated native proof must reject");
@@ -289,11 +298,12 @@ fn standalone_roundtrip_and_statement_binding_inner() {
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &trailing,
                 b"test/prove",
                 verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect_err("trailing native proof bytes must reject");
@@ -304,11 +314,12 @@ fn standalone_roundtrip_and_statement_binding_inner() {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &mutated,
                     b"test/prove",
                     verifier_claims(&scheme, &opening_point, &[opening], &commitment),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
     }));

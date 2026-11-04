@@ -152,10 +152,13 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let openings = [opening];
     let selection = scheme
         .schedules()
-        .resolve_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitments[0].profile(),
-            precommitteds: Vec::new(),
-        })
+        .resolve_profiles(
+            &CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            },
+            0,
+        )
         .expect("select generated schedule row")
         .selection();
 
@@ -209,7 +212,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     group.bench_function(format!("verify/{mode_label}"), |b| {
         b.iter(|| {
             verifier
-                .verify_standalone(
+                .batched_verify(
                     black_box(&proof),
                     b"bench",
                     black_box(verifier_claims(
@@ -219,6 +222,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                         &commitments[0],
                     )),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
                 .unwrap();
         })
@@ -229,11 +233,12 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     if measure_stage2 {
         relation_phase_timing::report(label, nv, 3, || {
             verifier
-                .verify_standalone(
+                .batched_verify(
                     &proof,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &commitments[0]),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
                 .unwrap();
         });
@@ -242,7 +247,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             b.iter_custom(|iterations| {
                 relation_phase_timing::measure_complete_stage2(iterations, || {
                     verifier
-                        .verify_standalone(
+                        .batched_verify(
                             black_box(&proof),
                             b"bench",
                             black_box(verifier_claims(
@@ -252,6 +257,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                                 &commitments[0],
                             )),
                             BasisMode::Lagrange,
+                            akita_verifier::SetupPolicy::Check(None),
                         )
                         .unwrap();
                 })
@@ -282,11 +288,12 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 )
                 .unwrap();
             verifier
-                .verify_standalone(
+                .batched_verify(
                     &pf,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
                 .unwrap();
             black_box(())
@@ -385,10 +392,13 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     let openings = [opening];
     let selection = scheme
         .schedules()
-        .resolve_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitments[0].profile(),
-            precommitteds: Vec::new(),
-        })
+        .resolve_profiles(
+            &CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            },
+            0,
+        )
         .expect("select generated schedule row")
         .selection();
 
@@ -442,7 +452,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     group.bench_function(format!("verify/{mode_label}"), |b| {
         b.iter(|| {
             verifier
-                .verify_standalone(
+                .batched_verify(
                     black_box(&proof),
                     b"bench",
                     black_box(verifier_claims(
@@ -452,6 +462,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                         &commitments[0],
                     )),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
                 .unwrap();
         })
@@ -480,11 +491,12 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 )
                 .unwrap();
             verifier
-                .verify_standalone(
+                .batched_verify(
                     &pf,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
                 .unwrap();
             black_box(())

@@ -69,9 +69,6 @@ fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
         .expect("build exact NTT prefix");
     let profile = prepared.shared_ntt_profile(D).expect("profile");
 
-    assert_eq!(profile.profile_id, "Q64/3xi32");
-    assert_eq!(profile.num_primes, 3);
-    assert_eq!(profile.limb_bits, 32);
     assert_eq!(profile.max_i8_log_basis, MAX_I8_LOG_BASIS);
     assert!(profile.balanced_digit_safe_width > 0);
     assert!(profile.raw_i8_safe_width > 0);

@@ -9,6 +9,13 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
+default = ["transcript-keccak"]
+transcript-blake2b = [
+  "akita-params/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-params/transcript-keccak",
+]
 # Zero-knowledge catalogs (`ScheduleAdmission::ZeroKnowledge`).
 zk = ["akita-params/zk"]
 # Used only through `#[serde(with = "serde_bytes")]`, which machete cannot see.

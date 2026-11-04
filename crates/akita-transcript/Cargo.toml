@@ -1,0 +1,38 @@
+[package]
+name = "akita-transcript"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Fiat-Shamir transcripts for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+akita-error = { version = "0.1.0", path = "../akita-error" }
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+  "solinas",
+] }
+sha3 = "0.12.0"
+spongefish = { version = "=0.8.0", default-features = false }
+
+[features]
+default = ["transcript-keccak"]
+logging-transcript = []
+transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
+transcript-keccak = ["jolt-transcript/transcript-keccak"]
+# Keccak-256 instead of SHA3-256 for every digest a statement or key binds,
+# for applications whose recursion guest uses Jolt's Keccak-256 inline. The
+# `PROTOCOL_TAG` names the selection.
+keccak256-digests = ["jolt-transcript/keccak256-digests"]
+# The prover's proof-of-work and fold-response searches copy the public sponge
+# state, which spongefish 0.8.0 exposes only under `yolocrypto`. Verifier
+# builds leave this feature off.
+prover = ["jolt-transcript/prover-grinding", "spongefish/yolocrypto"]
+
+[lints]
+workspace = true

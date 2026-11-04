@@ -20,15 +20,25 @@ use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Distinct from the `AKSCVFY1` views, whose rows have no zero-knowledge
-/// schedule: postcard writes every row's `zk` option, so the two layouts
-/// differ under the same descriptor version.
-const VERIFIER_MAGIC: [u8; 8] = *b"AKSCVFY2";
+/// Format magic; its last byte is the binary view version. Version 2 added
+/// `FoldSchedule::root_accumulated_setup_prefix_len` to every carried row on
+/// `main`, and Whiteout's view version 2 (`AKSCVFY2` on the integration
+/// branch) wrote every row's `zk` option. This view carries both, so it is
+/// version 3: views written by either version 2 must be regenerated.
+const VERIFIER_MAGIC: [u8; 8] = *b"AKSCVFY3";
 
 /// Byte bound for a view: the full identity list plus one JSON row's budget
 /// for the carried rows. It bounds decoding before any count check runs.
 const MAX_VERIFIER_VIEW_BYTES: usize =
     MAX_TRUSTED_CATALOG_ROWS * 32 + MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES;
+
+/// The leading fields of [`BinaryVerifierCatalog`], decoded alone so a view in
+/// another format or epoch is rejected before its rows are decoded.
+#[derive(Deserialize)]
+struct BinaryVerifierCatalogHeader {
+    magic: [u8; 8],
+    protocol_epoch: u32,
+}
 
 #[derive(Serialize, Deserialize)]
 struct BinaryVerifierCatalog {
@@ -148,16 +158,25 @@ impl ValidatedScheduleCatalog {
                 "verifier catalog exceeds byte limit".into(),
             ));
         }
+        let (header, _): (BinaryVerifierCatalogHeader, &[u8]) = postcard::take_from_bytes(bytes)
+            .map_err(|error| {
+                AkitaError::InvalidSetup(format!("invalid verifier catalog header: {error}"))
+            })?;
+        if header.magic != VERIFIER_MAGIC
+            || header.protocol_epoch != AKITA_INSTANCE_DESCRIPTOR_VERSION
+        {
+            return Err(AkitaError::InvalidSetup(
+                "unsupported verifier catalog format version or protocol epoch; regenerate the view"
+                    .into(),
+            ));
+        }
         let (artifact, rest): (BinaryVerifierCatalog, &[u8]) = postcard::take_from_bytes(bytes)
             .map_err(|error| {
                 AkitaError::InvalidSetup(format!("invalid verifier catalog: {error}"))
             })?;
-        if !rest.is_empty()
-            || artifact.magic != VERIFIER_MAGIC
-            || artifact.protocol_epoch != AKITA_INSTANCE_DESCRIPTOR_VERSION
-        {
+        if !rest.is_empty() {
             return Err(AkitaError::InvalidSetup(
-                "unsupported verifier catalog format or trailing bytes".into(),
+                "verifier catalog has trailing bytes".into(),
             ));
         }
         if artifact.family_name != expected_family_name

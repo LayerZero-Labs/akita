@@ -27,6 +27,8 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev =
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "transcript-blake2b",
 ] }
@@ -37,6 +39,21 @@ rayon = { version = "1.10", optional = true }
 jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", optional = true }
 
 [features]
+default = ["transcript-keccak"]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-sumcheck/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-sumcheck/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
+]
 benchmark-support = []
 # The masked prefix of a zero-knowledge opening (`specs/whiteout-akita.md`
 # §4.5–4.6). It selects nothing: a zero-knowledge configuration does.
@@ -47,6 +64,11 @@ zk = [
   "akita-params/zk",
   "akita-config/zk",
 ]
+# Optional (default off): the setup scan's cached structured
+# E, T and Z contractions sum their two-factor products through
+# `Field::sum_of_products` / `Field::dot_product` (same field values; one
+# readout per sum on a field-inline guest). The scan-path kernels are unchanged.
+setup-sop-structured = []
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -64,6 +86,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
   "test-support",
 ] }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
+  "prover",
   "test-support",
 ] }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }

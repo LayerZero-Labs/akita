@@ -8,7 +8,8 @@ mod replay;
 #[cfg(feature = "zk")]
 pub use replay::CountingGrinding;
 pub use replay::{
-    FoldResponseReplay, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
-    ProverGrinding, ProverGrindingChannel, PublicGrindingSumcheck, VerifierGrinding,
-    VerifierGrindingChannel,
+    FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance,
+    PublicGrindingSumcheck, VerifierGrinding, VerifierGrindingChannel,
 };
+#[cfg(feature = "prover")]
+pub use replay::{GrindingSumcheckProver, ProverGrinding};

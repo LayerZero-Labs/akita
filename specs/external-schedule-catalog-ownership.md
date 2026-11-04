@@ -474,6 +474,11 @@ before decoding, requires a strictly increasing identity list, audits each
 carried row exactly as the JSON loader does, requires each carried row's
 recomputed digest to be in the list, recomputes the catalog digest from the
 list, and rejects any encoding that does not re-encode to the same bytes.
+The magic's last byte is the view format version, and the loader checks it and
+the protocol epoch before decoding any row. Version 2 (`AKSCVFY2`) added the
+root accumulation demand to every carried schedule; a view written by an
+earlier version fails with a version error and must be regenerated with
+`to_verifier_view`.
 
 A view is as trusted as its bytes. It reproduces the full catalog's digest, but
 it does not authenticate the omitted identities: an application that needs the

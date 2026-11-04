@@ -18,7 +18,6 @@ use akita_params::{
     PolynomialGroupLayout,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_pcs::{AkitaSponge, PROOF_STREAM_PROTOCOL};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::FpExtEncoding;
 use jolt_algebra::solinas::parallel::*;
@@ -27,7 +26,6 @@ use jolt_algebra::{
     PseudoMersenne, Ring,
 };
 use jolt_algebra::{Fold, Unreduced, WithCommitAccumulator};
-use jolt_transcript::ProverTranscript;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -101,34 +99,32 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         let commitments = [commitment];
         let selection = scheme
             .schedules()
-            .resolve_profiles(&CommittedGroupBatchProfile {
-                final_group: *commitments[0].profile(),
-                precommitteds: Vec::new(),
-            })
+            .resolve_profiles(
+                &CommittedGroupBatchProfile {
+                    final_group: *commitments[0].profile(),
+                    precommitteds: Vec::new(),
+                },
+                0,
+            )
             .expect("select generated schedule row")
             .selection();
         let t0 = Instant::now();
-        let mut transcript =
-            ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, b"profile");
-        crate::caller_transcript::prove_on_transcript(
-            scheme,
-            setup,
-            prover_claims::<Cfg>(
-                scheme.schedules(),
-                selection,
-                pt,
-                &openings,
-                &commitments[0],
-                hint,
-            ),
-            backend,
-            &mut transcript,
-            BasisMode::Lagrange,
-        )
-        .unwrap();
-        #[cfg(feature = "logging")]
-        crate::report::print_wire_events(label, transcript.events());
-        let proof = transcript.finish();
+        let proof = scheme
+            .batched_prove(
+                setup,
+                prover_claims::<Cfg>(
+                    scheme.schedules(),
+                    selection,
+                    pt,
+                    &openings,
+                    &commitments[0],
+                    hint,
+                ),
+                backend,
+                b"profile",
+                BasisMode::Lagrange,
+            )
+            .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
         (commitments, proof)
     };
@@ -153,8 +149,9 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .as_ref()
             .expect("runtime schedule was resolved")
     });
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
-        .expect("profile grinding plan");
+    let grinding_plan =
+        derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch, None)
+            .expect("profile grinding plan");
     print_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     tracing::info!(
         label,
@@ -224,10 +221,13 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         verifier_claims(
             scheme
                 .schedules()
-                .resolve_profiles(&CommittedGroupBatchProfile {
-                    final_group: *commitments[0].profile(),
-                    precommitteds: Vec::new(),
-                })
+                .resolve_profiles(
+                    &CommittedGroupBatchProfile {
+                        final_group: *commitments[0].profile(),
+                        precommitteds: Vec::new(),
+                    },
+                    0,
+                )
                 .expect("select verifier schedule row")
                 .selection(),
             pt,
@@ -238,8 +238,15 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let verifier = scheme
         .verifier(verifier_setup.clone())
         .expect("verifier for the profile setup");
-    let verify =
-        |claims| verifier.verify_standalone(&proof, b"profile", claims, BasisMode::Lagrange);
+    let verify = |claims| {
+        verifier.batched_verify(
+            &proof,
+            b"profile",
+            claims,
+            BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
+        )
+    };
     run_verifier_timings(label, pools, "profile", prepare, verify);
     report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

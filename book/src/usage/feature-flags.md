@@ -1,6 +1,6 @@
 # Feature flags and build recipes
 
-Akita uses Cargo features for compute support and diagnostics. Schedule
+Akita uses Cargo features for transcript backends and compute support. Schedule
 rows are external runtime artifacts, not Cargo features. The default
 `akita-pcs` build is a parallel CPU configuration for ordinary use.
 
@@ -9,8 +9,9 @@ rows are external runtime artifacts, not Cargo features. The default
 | Feature | What it provides |
 | --- | --- |
 | `parallel` | Rayon execution across field arithmetic, setup, proving, sumcheck, and verification |
+| `transcript-keccak` | The default Spongefish transcript backend |
 
-The normal build uses it:
+The normal build uses both:
 
 ```bash
 cargo build -p akita-pcs --release
@@ -20,10 +21,12 @@ cargo build -p akita-pcs --release
 
 ### Sequential CPU build
 
-Remove Rayon:
+Keep the default transcript while removing Rayon:
 
 ```bash
-cargo build -p akita-pcs --release --no-default-features
+cargo build -p akita-pcs --release \
+  --no-default-features \
+  --features transcript-keccak
 ```
 
 This build produces the same protocol results. It changes local execution and
@@ -48,13 +51,54 @@ caches remain local memory state and rebuild from the public setup.
 
 Backend routing requires no Cargo feature; see [backend routing](../how/architecture.md#backend-routing).
 
-## Transcript sponge
+## Transcript backends
 
-The sponge is not a Cargo feature. The core prove and verify entry points are
-generic over a `jolt_transcript::Sponge` and run on the caller's transcript;
-the standalone API uses `AkitaSponge` (Blake2b-512). The sponge is bound into
-the transcript's protocol identifier, so prover and verifier must use the same
-sponge and protocol revision.
+Production builds enable exactly one transcript backend. Keccak is the
+default; Blake2b stays available as an opt-in feature. To select Blake2b,
+build with `--no-default-features` and enable `transcript-blake2b`.
+
+| Feature | Backend |
+| --- | --- |
+| `transcript-keccak` | Keccak based Spongefish transcript (default) |
+| `transcript-blake2b` | Blake2b based Spongefish transcript (opt-in) |
+
+The transcript backend is part of proof compatibility. Prover and verifier
+must use the same backend and protocol revision.
+
+### Digest hash
+
+`keccak256-digests` (on `akita-pcs` and `akita-transcript`) replaces SHA3-256
+with Keccak-256 for every digest Akita binds: the instance descriptor's
+digests, commitment digests, and the schedule and planner-policy digests. It
+is for an application whose recursion guest checks those digests with Jolt's
+Keccak-256 inline. The protocol tag names the selection, so a proof made under
+one digest hash never verifies under the other. The feature is independent of
+the transcript backend.
+
+The checked-in `.aks` catalogs carry SHA3-256 digests. A build with
+`keccak256-digests` rejects them with `AkitaError::InvalidSetup` at the
+planner-policy digest check, so such an application must regenerate its
+catalogs with `gen_schedule_artifacts` built under the same feature (for
+example `--features akita-transcript/keccak256-digests`).
+
+Cargo unifies features across a build, so any crate in the dependency graph
+that enables `keccak256-digests` turns it on for every Akita crate in that
+build. Check the resolved feature set with `cargo tree -e features` when a
+catalog that loads elsewhere fails this check.
+
+### Prover-side transcript feature
+
+`akita-transcript`, `akita-challenges`, and `akita-types` each have a `prover`
+feature. It enables the proof-of-work nonce search and the fold-response
+preview. Both evaluate candidate nonces on a copy of the sponge state, and
+Spongefish exposes that state only under its `yolocrypto` feature. `akita-prover`
+turns `prover` on; `akita-verifier` leaves it off. The dependency hygiene check
+`scripts/check-crate-deps.sh akita-verifier` fails if the verifier's own
+dependency graph enables `yolocrypto`.
+
+Cargo unifies features within one build. A binary that links the prover
+therefore compiles its verifier with `yolocrypto` as well. The feature changes
+which Spongefish items are visible; it does not change proof bytes.
 
 ## Schedule catalog storage
 
@@ -64,21 +108,41 @@ parameter channel; Akita itself accepts bytes or a validated catalog and does
 not choose that storage policy. The [configuration guide](./configuration.md)
 explains which family to choose.
 
+## Guest inline backends
+
+These features matter only to a Jolt RISC-V guest verifier. On `riscv64` they
+route hot primitives through Jolt inlines with the same outputs as the portable
+paths; every other target keeps the portable path.
+
+| Feature | Inline |
+| --- | --- |
+| `ntt-inline` | 64-point i32 negacyclic NTT and six-product pointwise dot (`jolt-inlines-ntt`) |
+
 ## Diagnostic features
 
 | Feature | Purpose |
 | --- | --- |
-| `logging` (`akita-pcs`) | Records every transcript operation with its site and argument-string range, for the transcript-hardening suites and the profile example's wire report |
+| `logging-transcript` | Records transcript schedule events and checks that wire values are absorbed before challenges |
 | `response-model-diagnostics` | Measures complete source and response energies for planner model calibration |
+| `compression-weights-crosscheck` | Checks every factored compression relation weight evaluation against the per-event evaluation and counts its evaluation tiers |
 
 `response-model-diagnostics` scans witness data that normal proving does not
 scan. Use it for model calibration runs, not for ordinary performance numbers.
 
-The transcript-hardening suites compare the prover's and verifier's event
-streams under `logging`:
+`compression-weights-crosscheck` (on `akita-types`, forwarded by `akita-pcs`)
+evaluates every compression relation weight table both by factor and event by
+event, at the verifier's point and at seeded random points, and compares each
+grouped builder family with the per-event builder. A difference fails
+verification. Each evaluation emits one `tracing` event at `INFO` with its
+evaluation tiers and builder outcomes. It is for native diagnostic runs; it
+changes no proof, transcript or default build.
+
+The `transcript_schedule` example uses `logging-transcript`:
 
 ```bash
-cargo test --release -p akita-pcs --features logging --test transcript_hardening
+cargo run -p akita-pcs \
+  --features logging-transcript \
+  --example transcript_schedule
 ```
 
 ## Profile CI features
@@ -99,3 +163,15 @@ Pin every Akita crate to the same commit or release and record the accepted
 feature set and approved catalog digest with the deployment. This gives the
 prover and verifier the same catalog identity, transcript backend, public types,
 and proof format.
+
+## External setup accumulation
+
+Setup accumulation needs no Cargo feature. The verifier takes a `SetupPolicy`:
+`Check(None)` for ordinary verification, `Check(Some(&mut accumulator))` for
+inherited claims or an empty accumulator, or `Defer(&mut accumulator)` to export
+direct setup evaluations. For ordinary verification, pass
+`akita_verifier::SetupPolicy::Check(None)`.
+Every policy checks Stage 3 completely; only direct setup evaluations are deferred.
+Attach auxiliary archived-proof advice with `SetupClaimAccumulator::with_advice`.
+See [external setup accumulation](../how/recursion.md#external-setup-accumulation)
+for inheritance and final-discharge requirements.

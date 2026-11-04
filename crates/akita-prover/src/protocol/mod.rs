@@ -25,8 +25,8 @@ where
 pub use prove::execution;
 
 pub use prove::{
-    batched_prove, catch_prover_panic, prove_digit_range, DigitRangeOutput, ProveLevelOutput,
-    SuffixProverState,
+    batched_prove, batched_prove_embedded, catch_prover_panic, prove_digit_range, DigitRangeOutput,
+    ProveLevelOutput, SuffixProverState,
 };
 #[cfg(feature = "zk")]
 pub use prove::{prove_masked_prefix, ResidualOpening};

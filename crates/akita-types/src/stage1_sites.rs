@@ -2,9 +2,10 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_STAGE1};
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Channel, PadSlots, PrivateChannel};
+use akita_transcript::{exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE1};
+use core::slice;
+use jolt_transcript::PadSlots;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const ROLE_CHILD_CLAIMS: u32 = 1;
 const ROLE_RANGE_IMAGE: u32 = 2;
@@ -31,15 +32,15 @@ pub fn stage1_child_claims<F, E, G>(
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
-    let state = grinding.state_mut();
-    state.site(stage1_site(level, stage, ROLE_CHILD_CLAIMS).into());
-    state
-        .exchange_private::<F, E>(claims)
-        .map_err(Into::<AkitaError>::into)?;
-    Ok(())
+    // T0-PORT(private): dev used exchange_private here; re-express on v8.
+    exchange_extension_group::<F, E, _>(
+        grinding.state_mut(),
+        stage1_site(level, stage, ROLE_CHILD_CLAIMS),
+        claims,
+    )
 }
 
 /// Exchange the final range-image evaluation after leaf sumcheck challenges.
@@ -53,23 +54,24 @@ pub fn stage1_range_image<F, E, G>(
 ) -> Result<(E, PadSlots), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
-    let state = grinding.state_mut();
-    state.site(stage1_site(level, stage, ROLE_RANGE_IMAGE).into());
-    let slots = state
-        .exchange_private::<F, E>(std::slice::from_mut(&mut evaluation))
-        .map_err(Into::<AkitaError>::into)?;
-    Ok((evaluation, slots))
+    // T0-PORT(private): dev used exchange_private here; re-express on v8.
+    exchange_extension_group::<F, E, _>(
+        grinding.state_mut(),
+        stage1_site(level, stage, ROLE_RANGE_IMAGE),
+        slice::from_mut(&mut evaluation),
+    )?;
+    Ok((evaluation, PadSlots::default()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "prover"))]
 mod tests {
     use super::*;
-    use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -91,23 +93,23 @@ mod tests {
         .unwrap();
         let mut claims = [E::from_u64(3), E::from_u64(5), E::from_u64(8)];
         let range_image = E::from_u64(13);
-        let mut transcript = new_prover(b"native-stage1");
-        let mut prover = ProverGrinding::new(&mut transcript, &plan);
+        let mut state = new_prover_channel(b"native-stage1");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         stage1_child_claims::<F, E, _>(&mut prover, level, stage, &mut claims).unwrap();
         let prover_gamma = prover
-            .grinded_ext_challenge::<F, E>(GrindingSite::Stage1InterstageBatch { level, stage })
+            .grinded_ext_challenge::<E>(GrindingSite::Stage1InterstageBatch { level, stage })
             .unwrap();
         stage1_range_image::<F, E, _>(&mut prover, level, stage + 1, range_image).unwrap();
         prover.finish().unwrap();
-        let proof = transcript.finish();
+        let proof = state.narg_string().to_vec();
 
-        let mut transcript = new_verifier(b"native-stage1", &proof);
-        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
+        let mut state = new_verifier_channel(b"native-stage1", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         let mut received = [E::zero(); 3];
         stage1_child_claims::<F, E, _>(&mut verifier, level, stage, &mut received).unwrap();
         assert_eq!(received, claims);
         let verifier_gamma = verifier
-            .grinded_ext_challenge::<F, E>(GrindingSite::Stage1InterstageBatch { level, stage })
+            .grinded_ext_challenge::<E>(GrindingSite::Stage1InterstageBatch { level, stage })
             .unwrap();
         assert_eq!(verifier_gamma, prover_gamma);
         assert_eq!(
@@ -116,7 +118,6 @@ mod tests {
                 .0,
             range_image
         );
-        verifier.finish().unwrap();
-        transcript.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

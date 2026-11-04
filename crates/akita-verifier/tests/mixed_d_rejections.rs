@@ -51,6 +51,7 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
     let root = params(128);
     let terminal_witness = TerminalFoldParams::from_expanded_group(params(64));
     let schedule = FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: FoldParams {
             params: root.clone(),
             input_witness_len: 256,

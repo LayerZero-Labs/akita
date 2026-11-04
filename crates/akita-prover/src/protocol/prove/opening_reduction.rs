@@ -1,4 +1,5 @@
 use super::*;
+use akita_transcript::ChallengeCodec;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{prove_single, SingleFormat, SingleInstance, SingleReduction};
 pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
@@ -8,13 +9,7 @@ pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
 
 /// Drive one aggregate EOR session; individual contributions stay inside the backend.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prove_extension_opening_reduction<
-    F,
-    E,
-    B,
-    H: Sponge,
-    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
->(
+pub(crate) fn prove_extension_opening_reduction<F, E, B>(
     backend: &B,
     session: &B::ProofSessionHandle,
     context: &crate::backend::ProofContext,
@@ -25,7 +20,8 @@ pub(crate) fn prove_extension_opening_reduction<
         B::CommitmentHandle,
         B::WitnessHandle,
     >],
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    // T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     expected_openings: &[E],
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
@@ -38,7 +34,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize
         + 'static
-        + CanonicalDecode,
+        + ChallengeCodec,
     B: crate::backend::OpaqueEorKernel<F, E>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
@@ -104,14 +100,7 @@ where
         rounds: max_tail_vars,
         field: std::marker::PhantomData,
     };
-    let instance = SingleInstance {
-        input_claim,
-        rounds: max_tail_vars,
-        degree: akita_params::EXTENSION_OPENING_REDUCTION_DEGREE,
-        format: SingleFormat::Compressed,
-        invocation: akita_types::EOR_SUMCHECK_INVOCATION,
-    };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _, _>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
         grinding,
         akita_params::SumcheckProtocol::ExtensionOpeningReduction,
         level,

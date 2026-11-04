@@ -384,7 +384,7 @@ mod tests {
             point
                 .eval_position_at::<L>(0, &alpha_pows)
                 .expect("compact evaluation"),
-            eval_ring_at_pows_fast(&expected_ring, &alpha_pows)
+            MulBaseUnreduced::dot_base(&alpha_pows, expected_ring.coefficients())
         );
 
         let rhs = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {

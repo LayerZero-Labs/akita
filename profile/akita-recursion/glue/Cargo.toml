@@ -10,6 +10,17 @@ readme = "../../../README.md"
 publish = false
 
 [features]
+default = ["transcript-keccak"]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
+]
 trusted-benchmark-artifact = []
 
 [dependencies]
@@ -31,6 +42,7 @@ jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = 
 ] }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false, features = [
   "test-support",
+  "transcript-keccak",
 ] }
 
 [lints.rust]

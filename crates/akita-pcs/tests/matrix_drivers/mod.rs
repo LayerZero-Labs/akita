@@ -123,11 +123,12 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     transcript_domain,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .expect("recursive direct verify");
@@ -192,11 +193,12 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| panic!("verify dense nv={nv}: {e:?}"));
@@ -250,11 +252,12 @@ pub(super) fn prove_verify_onehot_roundtrip<Cfg>(
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     label,
                     verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| panic!("verify onehot nv={nv}: {e:?}"));
@@ -296,8 +299,9 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
         let final_evals = dense_field_evals(final_nv, final_seed);
         let final_poly =
             DensePoly::<F>::from_field_evals(final_nv, &final_evals).expect("final dense poly");
-        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
-            .expect("nonempty precommitted groups");
+        let precommitteds =
+            PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
+                .expect("nonempty precommitted groups");
         let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
             private_handle: final_hint,
@@ -312,8 +316,9 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
             .expect("final commit");
 
         let schedule_key = ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: PolynomialGroupLayout::new(final_nv, 1),
-            precommitteds: vec![pre_commitment.profile],
+            precommitteds: vec![*pre_commitment.profile()],
         };
         // The openings come from independent oracles, so the schedule is not
         // needed to project them. Keep the lookup as a structural check that
@@ -379,11 +384,12 @@ pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| {
@@ -420,8 +426,9 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             .expect("precommit");
 
         let final_poly = make_onehot_poly_with_k(final_nv, k, 0x0bee_f001_u64 ^ final_nv as u64);
-        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
-            .expect("nonempty precommitted groups");
+        let precommitteds =
+            PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
+                .expect("nonempty precommitted groups");
         let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
             private_handle: final_hint,
@@ -484,11 +491,12 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &proof,
                     label,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .unwrap_or_else(|e| {

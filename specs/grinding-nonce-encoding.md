@@ -20,7 +20,7 @@ current protocol uses inline nonces. Sections 1 and 2 use the current exact
 field-cardinality pricing policy.
 
 The two encodings do not define grinding security. They transport the bounded
-integer selected by grinding. The public grinding plan, nonce range, predicate,
+integer selected by grinding. The public grinding plan, nonce range, proof-of-work check,
 challenge order, response equations, and verifier checks define the security
 contract.
 
@@ -72,14 +72,18 @@ the base modulus and `e` is the challenge extension degree. In the supported
 128-bit towers, a power-of-two loss requires one more bit than its binary
 logarithm. The nominal modulus bit width cannot replace the field cardinality.
 
-Before drawing the protected challenge, the prover searches for a nonce whose
-separate 32-byte predicate begins with `g` zero bits, read low bit first. One
-candidate passes with probability `2^-g`, so the expected search is about
-`2^g` candidates.
+Before drawing the protected challenge, the prover searches for a nonce after
+which the next 8 squeezed check bytes, read as a little-endian `u64`, have `g`
+zero low-order bits. One candidate passes with probability `2^-g`, so the
+expected search is about `2^g` candidates. Since protocol v8 the search and
+check are `grind` and `check_grind` from `jolt-transcript`: the nonce is
+canonical unsigned LEB128 in the proof string and is absorbed as one
+little-endian `u64` word, and the last candidate is `2^(g+7) - 1`. Before v8
+Akita squeezed a 32-byte check.
 
 This does not add entropy and does not make the protected challenge larger.
-It makes each accepted attempt more expensive. Conditioned on a valid
-predicate, the actual protocol challenge is drawn separately and retains its
+It makes each accepted attempt more expensive. Conditioned on a passing
+check, the actual protocol challenge is drawn separately and retains its
 required distribution.
 
 ### 1.2 What happens during proof-of-work grinding
@@ -91,26 +95,24 @@ w = g + 7 bits
 ```
 
 The seven slack bits give the prover `2^(g+7)` candidates, 128 times the
-expected `2^g` work. Under the ideal predicate model, bounded-search exhaustion
+expected `2^g` work. Under the ideal random-oracle model, bounded-search exhaustion
 is at most approximately `exp(-128)`.
 
 The prover performs:
 
-1. Fix the complete transcript history before the protected query, and
-   squeeze the 32-byte fork seed from it.
+1. Fix the complete transcript history before the protected query.
 2. Try nonce candidates in the public range `0 <= nonce < 2^w`.
-3. Squeeze the candidate's predicate from its seeded fork, a fresh sponge
-   keyed by the seed and the candidate.
-4. Accept a candidate if the first `g` predicate bits are zero.
+3. Preview the grinding transition on a clone of the public transcript state.
+4. Accept a candidate if the low `g` check bits are zero.
 5. Commit the accepted nonce once to the live transcript.
 6. Draw the protected protocol challenge separately.
 
 The verifier performs:
 
-1. Squeeze the same fork seed, then read the next scheduled nonce.
+1. Read the next scheduled nonce.
 2. Check that it fits the public `w`-bit range.
-3. Reproduce the predicate on the nonce's fork.
-4. Reject unless the first `g` predicate bits are zero.
+3. Squeeze the same check bytes.
+4. Reject unless their low `g` bits are zero.
 5. Draw the protected challenge from the resulting live state.
 
 The honest prover searches upward from zero and uses the first winner. The
@@ -118,7 +120,7 @@ verifier intentionally accepts *any* in-range winner. Requiring the first
 winner would make the verifier repeat the prover's search and is unnecessary
 for the soundness accounting.
 
-For a zero-bit target, `w = 0`: there is no nonce, no predicate squeeze, and no
+For a zero-bit target, `w = 0`: there is no nonce, no check squeeze, and no
 grinding-specific transcript transition. The site can remain in the public
 plan as an ordering and query-accounting obligation.
 
@@ -158,16 +160,18 @@ The grinding plan is derived only from trusted public data:
 Its digest is bound into the instance descriptor. Proof bytes do not choose the
 number, order, width, or meaning of grinding entries.
 
-There are three kinds of plan entries:
+There are four kinds of plan entries:
 
 | Kind | Purpose | Nonce bytes? |
 | --- | --- | --- |
 | `ProofOfWork` | Price a Fiat--Shamir query's algebraic loss | Only when `g > 0` |
 | `FoldResponse` | Bounded search for an acceptable folded response | Always one 12-bit nonce |
-| `FoldChallengeGroup` | Audit one group root and all indexed coordinates | No nonce |
+| `FoldChallengeWork` | Price one fold's group messages against its sparse challenge set | Only when `g > 0` |
+| `FoldChallengeGroup` | Record one group's sparse challenge message | No nonce |
 
-The last kind is important for query counting and replay order but is not
-additional proof-of-work.
+`FoldChallengeGroup` is important for query counting and replay order but is
+not proof-of-work. `FoldChallengeWork` and the sparse message layout are
+specified in [sparse-challenge-stream](sparse-challenge-stream.md).
 
 ### 2.1 Nonterminal fold level
 
@@ -191,13 +195,14 @@ Depending on the public layout, the plan contains:
 
 - an optional evaluation/row batching challenge (see
   [claim batching](#claim-batching-sites));
-- exactly one 12-bit fold-response search for the level; and
+- exactly one 12-bit fold-response search for the level;
+- one fold-challenge proof-of-work entry for the level, priced against the
+  level's pair count and smallest sparse challenge set; and
 - one zero-width fold-challenge-group entry per commitment group, with
-  multiplicity covering the group root and every indexed sparse coordinate.
+  multiplicity covering the group message and its challenge count.
 
-The sparse fold challenges themselves do not receive extra proof-of-work.
-Their certified support and the indexed-address soundness bound are
-described in the [transcript grinding specification](transcript-grinding.md#indexed-address-fold-bound).
+The fold proof of work and its soundness bound are described in the
+[transcript grinding specification](transcript-grinding.md#fold-message-bound).
 
 #### Ring switch and evaluation points
 
@@ -538,8 +543,10 @@ continuation bit | seven value bits
 - High bit `1`: another byte follows.
 - High bit `0`: this is the final byte.
 
-Akita uses unsigned LEB128 for `u32` nonces. It does not use signed LEB128 or
-ZigZag encoding.
+Akita uses unsigned LEB128 for its nonces: `u32` for the fold-response nonce
+that this section's decoder reads, and `u64` for the proof-of-work nonce that
+Jolt's `grind` sends, at most ten bytes at the 57-bit cap. It does not use
+signed LEB128 or ZigZag encoding.
 
 | Integer | Canonical unsigned LEB128 | Bytes |
 | ---: | --- | ---: |
@@ -711,28 +718,35 @@ fold-response site, the nonce is an inline Spongefish prover message.
 
 For PoW:
 
-1. Squeeze the 32-byte fork seed from the live Spongefish state.
-2. For each candidate, squeeze the predicate from its fork (a fresh sponge
-   that absorbed the fork tag, the seed, and `LE32(candidate)`).
-3. When a candidate passes, emit it once with `prover_message` as its
-   canonical unsigned LEB128 encoding (`jolt_transcript::Nonce`).
-4. Spongefish appends the LEB128 bytes to the argument and absorbs the same
+1. Clone only the public Spongefish state for preview.
+2. Encode the candidate in canonical unsigned LEB128.
+3. Absorb those bytes into the preview state.
+4. Squeeze the separate check bytes.
+5. When a candidate passes, emit it once, one single-byte prover message per
+   LEB128 byte.
+6. Spongefish appends the LEB128 bytes to the argument and absorbs the same
    bytes into the live state.
-5. The verifier squeezes the same seed, and its matching `prover_message`
-   decodes and absorbs exactly those proof bytes before it checks the
-   predicate on the same fork.
+7. The verifier reads and absorbs exactly those proof bytes, one byte at a
+   time, before squeezing and checking the same check bytes.
 
-Fold-response search squeezes one fork seed, derives every candidate's group
-roots in canonical order on that candidate's fork, and commits the accepted
-nonce once. Both roles take the roots from the accepted nonce's fork; no
-transcript state is copied.
+Since protocol v8 these steps are Jolt's `grind` and `check_grind`. The
+nonce is still one prover message with canonical LEB128 wire bytes, but the
+transcript absorbs it as one little-endian `u64` word, and the check is 8
+squeezed bytes rather than 32.
+
+Fold-response search similarly previews by absorbing one nonce, runs the
+fold's proof of work and squeezes every group's sparse challenge message in
+canonical order, and commits the accepted nonce once before repeating that
+sequence on the live state. Since protocol v8 that nonce, too, is LEB128 on
+the wire and absorbed as one little-endian `u64` word.
 
 There is no nonce prefix, count, width field, or separate packed suffix. The
 public positional grammar and grinding-plan cursor say when a nonce must occur;
 LEB128 says where that individual integer ends.
 
-Because the LEB128 proof bytes are now the absorbed transcript bytes, this is a
-protocol change rather than only a storage change. Challenges differ from main,
+Because the LEB128 proof bytes became the absorbed transcript bytes, PR #37
+was a protocol change rather than only a storage change. Protocol v8 changed
+the absorbed form again, to one `u64` word per nonce. Challenges differ from main,
 and the protocol uses a new version.
 
 ## 8. Detailed size comparison
@@ -815,7 +829,7 @@ parser bound cannot use the honest measurement.
 
 ### 8.4 Why honest PoW tends to favor LEB128
 
-A `g`-bit predicate has expected first winner on the scale of `2^g`, while the
+A `g`-bit check has expected first winner on the scale of `2^g`, while the
 scheduled domain width is `g + 7`. Main always pays for the seven slack bits.
 LEB128 usually pays for the significant bits of the actual first winner.
 
@@ -947,7 +961,7 @@ requires:
 - the exact next grinding-plan site;
 - a canonical LEB128 integer;
 - the scheduled range check;
-- a valid PoW predicate or fold response;
+- a passing proof-of-work check or fold response;
 - complete plan consumption; and
 - Spongefish end-of-argument consumption.
 
@@ -976,9 +990,9 @@ choice if the sole objective is the smallest fixed worst-case nonce section.
 
 Current PR:
 
-- `jolt-transcript` (`grinding.rs`, `nonce.rs`, `fork.rs`, `prover.rs`,
-  `verifier.rs`; originally `akita-transcript`) — unsigned LEB128 codec,
-  seeded-fork search, nonce message, receipt, and challenge extraction;
+- `crates/akita-transcript/src/proof_stream/nonce.rs` — unsigned LEB128 codec;
+- `crates/akita-transcript/src/proof_stream.rs` — preview, commit, receipt,
+  absorption, and challenge extraction;
 - `crates/akita-types/src/transcript_grinding/replay.rs` — public plan
   cursor and verifier checks;
 - `crates/akita-params/src/transcript_grinding/plan.rs` — canonical plan

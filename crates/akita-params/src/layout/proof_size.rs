@@ -19,23 +19,12 @@ pub fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
 }
 
-/// Serialized byte size for a terminal direct witness shape.
-pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -> usize {
-    crate::layout::tail_segments::terminal_response_upper_bound_bytes(
-        field_bits,
-        &shape.layout,
-        shape.layout.z_payload_bytes(),
-    )
-}
-
 /// Maximum bytes emitted by the native terminal suffix grammar.
 ///
 /// The proof bound reserves the scheduled `e` and `t` field payload budget
 /// across the predecessor-to-suffix boundary. Each group adds one `u32`
 /// length followed by the bounded `z` payload, and
 /// [`TERMINAL_BLOCK_DIGEST_BYTES`] for the blocks the verifier recomputes.
-/// The legacy structured response instead uses eight framing bytes per group
-/// and carries no digests.
 pub fn terminal_response_max_bytes(
     field_bits: u32,
     shape: &TerminalResponseShape,
@@ -418,12 +407,11 @@ mod tests {
     #[test]
     fn terminal_bound_uses_u32_group_framing_and_block_digests() {
         let shape = sample_terminal_shape();
-        let legacy = terminal_response_bytes(64, &shape);
-        let max_bytes = terminal_response_max_bytes(64, &shape).unwrap();
-        let groups = shape.layout.groups.len();
+        let group = shape.layout.groups[0];
+        let field_payload = (group.e_field_elems + group.t_field_elems) * field_bytes(64);
         assert_eq!(
-            max_bytes + 4 * groups,
-            legacy + TERMINAL_BLOCK_DIGEST_BYTES * groups
+            terminal_response_max_bytes(64, &shape).unwrap(),
+            4 + group.z_payload_bytes + field_payload + TERMINAL_BLOCK_DIGEST_BYTES
         );
     }
 

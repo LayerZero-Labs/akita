@@ -81,6 +81,8 @@ pub enum AkitaError {
 /// Prover-only transcript failures (grinding exhaustion, an over-bound
 /// message) are classified at their call sites instead, since they are input
 /// or setup errors rather than rejections.
+// T0-PORT(private): main's jolt-transcript has no `TranscriptError`; the masked channels'
+// errors need a v8 classification (spongefish `VerificationError` rejects the proof).
 impl From<jolt_transcript::TranscriptError> for AkitaError {
     fn from(error: jolt_transcript::TranscriptError) -> Self {
         use jolt_transcript::TranscriptError;

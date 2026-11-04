@@ -405,10 +405,6 @@ upstream commit `1618f4b6dc97effcec3568ca7cf2b7420ac9e75f`, the merge commit of
 Jolt PR #1942 on Jolt `main`. That revision includes the merged field stack,
 kernel work, and coefficient access from Jolt PRs #1792, #1794, and #1810.
 
-The transcript unification (Akita PR #185) temporarily pins
-`f15e9b17ccb933d3a0ad49be049cca999256e1e3` on Jolt PR #2000's branch, which
-carries the spongefish transcript; it repins to Jolt `main` once that PR merges.
-
 Audit delta from the previous pin `e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c`
 to `1618f4b6dc97effcec3568ca7cf2b7420ac9e75f` in `crates/jolt-field`:
 

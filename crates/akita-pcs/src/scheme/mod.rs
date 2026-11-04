@@ -6,12 +6,12 @@ use akita_error::AkitaError;
 use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity};
 use akita_prover::{BackendRegistry, FixedFoldRoute, ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_transcript::ProverChannel;
 use akita_types::AkitaVerifierSetup;
-use akita_types::{AkitaSponge, FpExtEncoding, PROOF_STREAM_PROTOCOL};
+use akita_types::FpExtEncoding;
 use akita_verifier::AkitaVerifier;
 use jolt_algebra::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_algebra::{Fold, Unreduced, WithCommitAccumulator};
-use jolt_transcript::{ProverTranscript, Sponge};
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
@@ -116,15 +116,14 @@ where
         setup.to_verifier_setup(capacity)
     }
 
-    /// Produce a fused batched opening proof from retained commitments.
+    /// Produce a fused batched opening proof from retained commitments, in a
+    /// standalone transcript under `session`.
+    ///
+    /// This is [`Self::batched_prove_embedded`] on a fresh channel for
+    /// `session`, and the returned bytes are that channel's proof string.
     ///
     /// Each handle retains its exact source. The backend validates public claims
-    /// against that commitment before creating independent proof state. The
-    /// proof is the argument string of a fresh [`AkitaSponge`] transcript under
-    /// [`PROOF_STREAM_PROTOCOL`] bound to `session`, as
-    /// [`AkitaVerifier::verify_standalone`] reads it. To embed Akita in an outer
-    /// transcript instead, call [`akita_prover::batched_prove`] with that
-    /// transcript.
+    /// against that commitment before creating independent proof state.
     ///
     /// # Errors
     ///
@@ -156,9 +155,9 @@ where
         >,
     {
         let started = Instant::now();
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, session);
-        self.prove_on_transcript(setup, opening, backend, &mut transcript, basis)?;
-        let proof = transcript.finish();
+        let mut channel = akita_transcript::new_prover_channel(session);
+        self.batched_prove_embedded(setup, opening, backend, &mut channel, basis)?;
+        let proof = channel.narg_string().to_vec();
         tracing::info!(
             proof_bytes = proof.len(),
             elapsed_s = started.elapsed().as_secs_f64(),
@@ -167,9 +166,21 @@ where
         Ok(proof)
     }
 
-    /// The body of [`batched_prove`](Self::batched_prove) on any transcript:
-    /// import the schedule's setup prefixes, route every fold to `backend`,
-    /// and run the core prover. The caller finishes `transcript`.
+    /// Produce a fused batched opening proof inside the caller's transcript.
+    ///
+    /// The proof bytes are appended to `channel`'s proof string, and the
+    /// challenges come from `channel`'s sponge. Akita absorbs its own
+    /// statement first: the protocol tag, the instance descriptor, each opened
+    /// group's [`akita_transcript::CommitmentDigest`], the opening points and
+    /// the claimed values. The caller need not absorb any of these; it binds
+    /// only what its own challenges depend on, before it squeezes them. The
+    /// verifier must call `AkitaVerifier::batched_verify_embedded` at the same
+    /// point of the same transcript.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for mismatched ownership, setup, claims, or an invalid
+    /// protocol transition. The channel is then unusable for a proof.
     ///
     /// A panic anywhere in this body, including schedule resolution, prefix
     /// import, and backend registration, is returned as
@@ -177,7 +188,7 @@ where
     /// Commitment and setup entry points are not wrapped: a panic there still
     /// unwinds into the caller.
     #[allow(clippy::type_complexity)]
-    pub(crate) fn prove_on_transcript<'a, H: Sponge>(
+    pub fn batched_prove_embedded<'a>(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         opening: SelectedProverOpeningData<
@@ -187,7 +198,7 @@ where
             Cfg::Field,
         >,
         backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
-        transcript: &mut ProverTranscript<H>,
+        channel: &mut ProverChannel,
         basis: BasisMode,
     ) -> Result<(), AkitaError>
     where
@@ -208,15 +219,15 @@ where
             )?;
             let prefix_slots =
                 backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
-            let mut registry = BackendRegistry::<Cfg, H>::new()?;
+            let mut registry = BackendRegistry::<Cfg>::new()?;
             let root = registry.register(backend, &prefix_slots)?;
             let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-            akita_prover::batched_prove::<Cfg, _, _>(
+            akita_prover::batched_prove_embedded::<Cfg, _>(
                 setup.expanded.descriptor(),
                 &self.schedules,
                 &registry,
                 opening,
-                transcript,
+                channel,
                 basis,
                 &mut route,
             )

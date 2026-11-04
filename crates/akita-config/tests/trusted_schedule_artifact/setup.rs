@@ -52,15 +52,15 @@ fn recursive_prefix_slot_id_fixture() {
     assert_eq!(
         onehot,
         (
-            3,
-            "b05e9e22c5fe5435137b641b2223070767f4227dce561178c18ceed012251d1b".to_string(),
+            4,
+            "a7bbd692801b2843e5af5b13097612e5f9961fdf6071dd7f48f109ff7f6e932f".to_string(),
         )
     );
     assert_eq!(
         multichunk,
         (
-            2,
-            "3409f71ed207efe55f7eeab29bf12e4bcf87928808f8832ed9a702547ad5ec58".to_string(),
+            3,
+            "836185d421459efc7f48a00ed2f6753176d40f6b0183cd70d29380ca8777979d".to_string(),
         )
     );
 }

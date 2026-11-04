@@ -9,9 +9,11 @@ pub(super) fn resolve_root<'a, 's, Cfg, H>(
     schedules: &'s TrustedScheduleCatalog<Cfg>,
     opening: SelectedProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
     basis: BasisMode,
+    setup_batch_level: Option<u32>,
 ) -> Result<
     (
         &'s akita_config::ResolvedScheduleRow,
+        Vec<akita_transcript::CommitmentDigest>,
         ProverOpeningData<'a, Cfg::ExtField, H, Cfg::Field>,
         akita_params::GrindingPlan,
         Vec<u8>,
@@ -32,7 +34,7 @@ where
         + 'static,
     H: crate::CommitmentHandleMetadata,
 {
-    let (selection, claims) = opening.into_low_level_parts();
+    let (selection, digests, claims) = opening.into_low_level_parts();
     let resolved = schedules.resolve_selection(selection)?;
     resolved.validate_opening_layout(claims.opening_layout())?;
     let (grinding_plan, descriptor_bytes) =
@@ -42,29 +44,27 @@ where
             selection,
             resolved.schedule(),
             basis,
+            setup_batch_level,
         )?;
-    Ok((resolved, claims, grinding_plan, descriptor_bytes))
+    Ok((resolved, digests, claims, grinding_plan, descriptor_bytes))
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-pub(super) fn prove_root<
-    Cfg,
-    B,
-    S: Sponge,
-    C: crate::protocol::ProverFoldChannel<Cfg::ExtField, Sponge = S>,
->(
+pub(super) fn prove_root<Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
+    digests: &[akita_transcript::CommitmentDigest],
     layout: &OpeningClaimsLayout,
     handles: &[B::CommitmentHandle],
     schedule: &FoldSchedule,
     proof_session: &B::ProofSessionHandle,
-    grinding: &mut akita_types::ProverGrinding<'_, S, C>,
+    // T0-PORT(private): dev used ProverGrinding<'_, S, C>, SuccessorHandoff here; re-express on v8.
+    grinding: &mut akita_types::ProverGrinding<'_>,
     basis: BasisMode,
-    handoff: &mut impl super::registry::SuccessorHandoff<Cfg, B>,
+    handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg>,
 ) -> Result<
     ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
     AkitaError,
@@ -100,7 +100,7 @@ where
             claims.group_commitment(index)?,
         )?);
     }
-    root_claims.append_to(&schedule.root.params, grinding)?;
+    root_claims.append_to(&schedule.root.params, digests, grinding)?;
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
         (
             fold::FoldSuccessorParams::Terminal(&schedule.terminal),
@@ -113,7 +113,7 @@ where
             )
         },
     );
-    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B, _, _>(
+    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         root_claims,
         material,
@@ -127,7 +127,7 @@ where
         next_params.inner_ring_dimension(),
         false,
     )?;
-    prove_fold::<Cfg::Field, Cfg::ExtField, B, _, _>(
+    prove_fold::<Cfg::Field, Cfg::ExtField, B>(
         expanded,
         prefix_slots,
         backend,
@@ -139,9 +139,12 @@ where
         schedule.root.output_witness_len,
         next_binding,
         prepared,
-        // The root is never a zero-knowledge cut: admission pins the cut at
-        // `ZK_CUT_LEVEL = 1`, and `prove_masked_prefix` refuses level 0.
-        &mut fold::RawPayload,
+        // T0-PORT(private): dev used RawPayload, masked_prefix here; re-express on v8.
+        handoff
+            .request
+            .setup_batch
+            .filter(|(target, _)| *target as usize == 0)
+            .map(|(_, statement)| statement),
         |relation, commitment, binding, witness, material| {
             handoff.handoff_successor(
                 backend,

@@ -11,6 +11,8 @@ use std::sync::Arc;
 use akita_params::BasisMode;
 use akita_types::ValidatedCoefficientPackingGroup;
 
+use super::packed_direct::PackedDirect;
+
 /// One verifier group's compact coefficient-packing semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CoefficientPackingVerifierGroupSemantics<E: Field> {
@@ -34,8 +36,15 @@ pub(crate) struct CoefficientPackingCompactFactors<E: Field> {
     pub(super) packing_z_point: Arc<[E]>,
     pub(super) affine_relation_families: Vec<CoefficientPackingAffineRelationFamily<E>>,
     pub(super) quotient_families: Vec<EqPairTensorFamily<E>>,
-    pub(super) direct_opening_families: Vec<EqPairTensorFamily<E>>,
+    pub(super) direct_opening: DirectOpening<E>,
     pub(super) packing_z_families: Vec<EqPairTensorFamily<E>>,
+}
+
+/// Exactly one direct-opening representation, selected from the fixed geometry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum DirectOpening<E: Field> {
+    Packed(PackedDirect<E>),
+    Families(Vec<EqPairTensorFamily<E>>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -251,10 +260,15 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
                 eval_boolean_pair_tensor_families::<_, true, false>(left, point, families)
             }
         };
-        Ok(
-            evaluate(&self.direct_opening_point, &self.direct_opening_families)?
-                + evaluate(&self.packing_z_point, &self.packing_z_families)?,
-        )
+
+        let direct = match &self.direct_opening {
+            DirectOpening::Packed(packed) => {
+                packed.evaluate(self.basis, &self.direct_opening_point, point)?
+            }
+            DirectOpening::Families(families) => evaluate(&self.direct_opening_point, families)?,
+        };
+        let z = evaluate(&self.packing_z_point, &self.packing_z_families)?;
+        Ok(direct + z)
     }
 }
 
@@ -387,6 +401,7 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
     let claim_coefficients = shared_slice(group.group_claim_coefficients(), "packing claim axis")?;
     let coefficient_weights = shared_slice(group.alpha_powers(), "packing coefficient axis")?;
     let opening_gadget = shared_slice(group.opening_gadget(), "packing digit axis")?;
+    let packed_direct = PackedDirect::new(group, Arc::clone(&opening_gadget), &claim_coefficients)?;
     let mut affine_relation_families = Vec::new();
     let mut quotient_families = Vec::new();
     let mut direct_opening_families = Vec::new();
@@ -419,7 +434,6 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
             }
         }
         let challenge_weights: Arc<[E]> = challenge_weights.into();
-        let block_segments = dyadic_segments(unit.global_block_range())?;
         let mut plane_segments = 0usize;
         for plane in 0..k {
             let mut plane_offset = 0usize;
@@ -437,36 +451,6 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
             }
         }
         reserve_families(&mut affine_relation_families, plane_segments)?;
-        // A full direct-opening plane can cross several physical E role
-        // subcolumns. When those boundaries are coefficient-aligned, retain
-        // the role as another unit tensor axis instead of emitting one family
-        // per subcolumn. Unlike the affine relation above, this source term
-        // has no alpha weight along the role axis.
-        let compact_role_axis = if s > group.d_d() && s.is_multiple_of(group.d_d()) {
-            let role_subcolumns = s / group.d_d();
-            let role_stride = group
-                .opening_gadget()
-                .len()
-                .checked_mul(group.d_d())
-                .ok_or_else(|| AkitaError::InvalidSetup("packing role stride overflow".into()))?;
-            Some(EqPairTensorAxis::unit(
-                role_subcolumns,
-                group.d_d(),
-                role_stride,
-            ))
-        } else {
-            None
-        };
-        let direct_plane_segments = if compact_role_axis.is_some() {
-            k
-        } else {
-            plane_segments
-        };
-        let direct_count = direct_plane_segments
-            .checked_mul(digit_segments.len())
-            .and_then(|count| count.checked_mul(block_segments.len()))
-            .ok_or_else(|| AkitaError::InvalidInput("packing family count overflow".into()))?;
-        reserve_families(&mut direct_opening_families, direct_count)?;
         for (plane, &basis_element) in group.basis().iter().enumerate() {
             let mut plane_offset = 0usize;
             while plane_offset < s {
@@ -513,6 +497,40 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
             }
         }
 
+        if packed_direct.is_some() {
+            continue;
+        }
+        let block_segments = dyadic_segments(unit.global_block_range())?;
+        // A full direct-opening plane can cross several physical E role
+        // subcolumns. When those boundaries are coefficient-aligned, retain
+        // the role as another unit tensor axis instead of emitting one family
+        // per subcolumn. Unlike the affine relation above, this source term
+        // has no alpha weight along the role axis.
+        let compact_role_axis = if s > group.d_d() && s.is_multiple_of(group.d_d()) {
+            let role_subcolumns = s / group.d_d();
+            let role_stride = group
+                .opening_gadget()
+                .len()
+                .checked_mul(group.d_d())
+                .ok_or_else(|| AkitaError::InvalidSetup("packing role stride overflow".into()))?;
+            Some(EqPairTensorAxis::unit(
+                role_subcolumns,
+                group.d_d(),
+                role_stride,
+            ))
+        } else {
+            None
+        };
+        let direct_plane_segments = if compact_role_axis.is_some() {
+            k
+        } else {
+            plane_segments
+        };
+        let direct_count = direct_plane_segments
+            .checked_mul(digit_segments.len())
+            .and_then(|count| count.checked_mul(block_segments.len()))
+            .ok_or_else(|| AkitaError::InvalidInput("packing family count overflow".into()))?;
+        reserve_families(&mut direct_opening_families, direct_count)?;
         let claim_stride = unit
             .num_live_blocks()
             .checked_mul(semantic_stride)
@@ -732,7 +750,12 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
         &mut packing_z_point,
         group.prepared_point().position_point(),
     )?;
+    let direct_opening = match packed_direct {
+        Some(packed) => DirectOpening::Packed(packed),
+        None => DirectOpening::Families(direct_opening_families),
+    };
     Ok(CoefficientPackingCompactFactors {
+        direct_opening,
         basis: group.prepared_point().basis(),
         physical_field_len: group.physical_field_len(),
         coefficient_weights,
@@ -740,7 +763,6 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
         packing_z_point: packing_z_point.into(),
         affine_relation_families,
         quotient_families,
-        direct_opening_families,
         packing_z_families,
     })
 }

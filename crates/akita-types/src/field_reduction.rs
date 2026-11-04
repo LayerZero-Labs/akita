@@ -12,9 +12,7 @@ use jolt_algebra::{CanonicalDecode, Ext2, ExtField, Field, FpExt4, FpExt8, Pseud
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
-///
-/// Their canonical transcript encoding is the same coordinates in order.
-pub trait FpExtEncoding<F: Field>: ExtField<F> + CanonicalDecode {
+pub trait FpExtEncoding<F: Field>: ExtField<F> {
     /// Borrow coordinates in the ring-subfield basis.
     fn ext_coords(&self) -> &[F];
 

@@ -60,11 +60,12 @@ fn commit_prove_verify<Cfg, P>(
                 .clone(),
         )
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 &proof,
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");

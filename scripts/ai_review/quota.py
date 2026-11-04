@@ -24,7 +24,9 @@ def reserve(github, event):
     if event["comment"]["id"] in requests:
         print("This request already consumed a review attempt")
         return False
-    if len(requests) >= MAX_REVIEWS:
+    # Repository admins are not limited; their attempts still count, so the
+    # counter can pass the limit (4/3, 5/3, ...).
+    if len(requests) >= MAX_REVIEWS and not github.admin(event["comment"]["user"]):
         print(f"AI review limit reached ({MAX_REVIEWS} attempts per PR)")
         return False
     body = (f"{ATTEMPT_MARKER}{event['comment']['id']} -->\n\n"

@@ -2,9 +2,11 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2};
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Channel, PrivateChannel};
+use akita_transcript::{
+    exchange_extension_group, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
+    ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2,
+};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const ROLE_INTEGER: u32 = 1;
 const ROLE_SUBCLAIMS: u32 = 2;
@@ -31,21 +33,21 @@ pub fn l2_prefix<F, E, G>(
 ) -> Result<u128, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
     let state = grinding.state_mut();
-    state.site(site(level, ROLE_INTEGER).into());
-    // A u128 travels as its sixteen little-endian bytes, as a clear message:
-    // the L2 route is never scheduled at a masked level
-    // (`specs/whiteout-akita.md` §2.5.0, Q8), whose channel would refuse it.
-    let mut integer = response_l2_sq.to_le_bytes();
-    state.exchange(&mut integer)?;
-    let integer = u128::from_le_bytes(integer);
-    state.site(site(level, ROLE_SUBCLAIMS).into());
-    state
-        .exchange_private::<F, E>(subclaims)
-        .map_err(Into::<AkitaError>::into)?;
+    // T0-PORT(private): dev used exchange_private, masked here; re-express on v8.
+    state.context(ProtocolContextRecord::new(
+        site(level, ROLE_INTEGER).to_bytes(),
+        ProtocolMessageKind::ProofAtoms as u32,
+        1,
+        16,
+        0,
+    ));
+    let mut integer = response_l2_sq;
+    state.exchange(std::slice::from_mut(&mut integer))?;
+    exchange_extension_group::<F, E, _>(state, site(level, ROLE_SUBCLAIMS), subclaims)?;
     Ok(integer)
 }
 
@@ -57,23 +59,23 @@ pub fn l2_virtual_evaluations<F, E, G>(
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
-    let state = grinding.state_mut();
-    state.site(site(level, ROLE_VIRTUAL_EVALUATIONS).into());
-    state
-        .exchange_private::<F, E>(evaluations)
-        .map_err(Into::<AkitaError>::into)?;
-    Ok(())
+    // T0-PORT(private): dev used exchange_private here; re-express on v8.
+    exchange_extension_group::<F, E, _>(
+        grinding.state_mut(),
+        site(level, ROLE_VIRTUAL_EVALUATIONS),
+        evaluations,
+    )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "prover"))]
 mod tests {
     use super::*;
-    use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -88,15 +90,15 @@ mod tests {
         .unwrap();
         let mut subclaims = [E::from_u64(3), E::from_u64(5)];
         let mut virtuals = [E::from_u64(8), E::from_u64(13), E::from_u64(21)];
-        let mut transcript = new_prover(b"native-l2");
-        let mut prover = ProverGrinding::new(&mut transcript, &plan);
+        let mut state = new_prover_channel(b"native-l2");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
         l2_prefix::<F, E, _>(&mut prover, 4, u128::MAX - 9, &mut subclaims).unwrap();
         l2_virtual_evaluations::<F, E, _>(&mut prover, 4, &mut virtuals).unwrap();
         prover.finish().unwrap();
-        let proof = transcript.finish();
+        let proof = state.narg_string().to_vec();
 
-        let mut transcript = new_verifier(b"native-l2", &proof);
-        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
+        let mut state = new_verifier_channel(b"native-l2", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
         let mut received_subclaims = [E::zero(); 2];
         assert_eq!(
             l2_prefix::<F, E, _>(&mut verifier, 4, 0, &mut received_subclaims).unwrap(),
@@ -106,7 +108,6 @@ mod tests {
         let mut received_virtuals = [E::zero(); 3];
         l2_virtual_evaluations::<F, E, _>(&mut verifier, 4, &mut received_virtuals).unwrap();
         assert_eq!(received_virtuals, virtuals);
-        verifier.finish().unwrap();
-        transcript.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

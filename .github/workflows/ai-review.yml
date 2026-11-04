@@ -11,12 +11,15 @@ permissions: {}
 concurrency:
   # One queue per PR and event type, so PR invalidation is never displaced by a
   # comment run. GitHub keeps one pending run per group, so comments other than
-  # the author's exact command get a group of their own and cannot replace a
-  # queued review request.
+  # an exact command from a user get a group of their own and cannot replace a
+  # queued review request. Whether the commenter may request a review (the PR
+  # author or a repository admin) needs an API call, so `reserve` decides it: an
+  # exact command from someone else can replace a pending request, then is refused
+  # without reserving an attempt.
   group: >-
     ai-review-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{
     (github.event_name != 'issue_comment' || (github.event.comment.body == '/ai-review' &&
-    github.event.comment.user.id == github.event.issue.user.id)) && 'queue' || github.run_id }}
+    github.event.comment.user.type == 'User')) && 'queue' || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -49,7 +52,6 @@ jobs:
       github.repository == 'LayerZero-Labs/akita' &&
       github.event.issue.pull_request &&
       github.event.comment.body == '/ai-review' &&
-      github.event.comment.user.id == github.event.issue.user.id &&
       github.event.comment.user.type == 'User'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -63,7 +65,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Authorize and reserve one of three attempts
+      - name: Authorize and reserve an attempt (admins are unlimited)
         id: reserve
         env:
           GH_TOKEN: ${{ github.token }}
@@ -118,7 +120,7 @@ jobs:
       - name: Review through bounded source tools
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-6-astra' }}
+          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-6.1-sol' }}
         run: python3 scripts/ai_review/run.py review --directory "$RUNNER_TEMP/ai-review"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

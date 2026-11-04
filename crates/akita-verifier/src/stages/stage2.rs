@@ -4,6 +4,7 @@ use crate::claims::ClaimReplay;
 use crate::coefficient_packing_relation::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
+use crate::fold::FoldSetup;
 use crate::relation::evaluation_trace::PreparedEvaluationTrace;
 use crate::relation::{PreparedRelationGroups, RelationMatrixEvaluator};
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
@@ -14,6 +15,7 @@ use akita_algebra::{
 };
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::AkitaVerifierSetup;
 use akita_types::Stage2OracleWeights;
 use akita_types::{
@@ -21,8 +23,7 @@ use akita_types::{
     OpeningFamily, ReducedCompressionRelationWeights,
 };
 use jolt_algebra::solinas::parallel::*;
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use jolt_sumcheck::{SingleFormat, SingleInstance};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 pub(crate) struct EvaluationTraceStage2<E: Field, V = E> {
     pub(crate) trace: PreparedEvaluationTrace<E>,
@@ -151,6 +152,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field, V = E> {
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
     compression: Stage2CompressionOracle<'a, E>,
     setup_claim: Option<E>,
+    external_relation_weight: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
     opening_semantics: Stage2OpeningSemantics<'a, E, V>,
@@ -174,6 +176,7 @@ pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field, V = E> {
     pub(crate) alpha: E,
     /// Stage 3 setup claim when the setup contribution is deferred.
     pub(crate) setup_claim: Option<E>,
+    pub(crate) external_relation_weight: Option<E>,
     /// Relation lane variable count.
     pub(crate) col_bits: usize,
     /// Relation coefficient variable count.
@@ -217,6 +220,7 @@ where
             setup,
             alpha,
             setup_claim,
+            external_relation_weight,
             col_bits,
             ring_bits,
             opening_semantics,
@@ -241,6 +245,7 @@ where
             relation_matrix_evaluator,
             compression,
             setup_claim,
+            external_relation_weight,
             setup,
             alpha,
             opening_semantics,
@@ -267,6 +272,10 @@ where
             PreparedRelationGroups::ReducedEvaluation(_)
         );
         let evaluate_relation_weight = || {
+            if let Some(weight) = self.external_relation_weight {
+                return Ok(weight);
+            }
+
             // `cfg_join!` may execute this closure on a Rayon worker which does
             // not inherit the caller's `stage2_verifier` span. Carry the
             // authenticated relation mode on this worker-local owner so phase
@@ -360,8 +369,9 @@ pub(crate) struct Stage2Output<E: Field, V = E> {
 
 /// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
 /// physical L2 input claims.
-pub(crate) fn replay_stage2<F, E, G: ClaimReplay<F, E>>(
-    grinding: &mut G,
+// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
+pub(crate) fn replay_stage2<F, E>(
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
     stage1: &Stage1Replay<'_, E, G::Claim>,
     relation_claim: E,
@@ -370,19 +380,14 @@ pub(crate) fn replay_stage2<F, E, G: ClaimReplay<F, E>>(
 ) -> Result<Stage2RoundReplay<E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
 {
-    let input_claim = G::add(
-        &G::add(
-            &G::scale(&stage1.range_image_evaluation, stage1.batching_coeff),
-            &G::constant(relation_claim),
-        ),
-        &G::add(
-            opening_semantics.opening_claim(),
-            &G::constant(stage1.physical_l2_claim),
-        ),
-    );
-    let (challenges, output_claim) = grinding.single_sumcheck(
+    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
+        + relation_claim
+        + opening_semantics.opening_claim()
+        + stage1.physical_l2_claim;
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+        grinding,
         akita_params::SumcheckProtocol::Stage2,
         level,
         0,
@@ -403,25 +408,35 @@ where
     })
 }
 
-/// Check the Stage 2 output claim once the Stage 3 setup claim is known.
-pub(crate) fn validate_stage2_replay<F, E, G: ClaimReplay<F, E>>(
-    grinding: &mut G,
+// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
+/// Resolve this fold's setup contribution and check the Stage 2 output claim.
+pub(crate) fn validate_stage2_replay<F, E>(
     setup: &AkitaVerifierSetup<F>,
     stage1: Stage1Replay<'_, E, G::Claim>,
     rs: &RingSwitchVerifyOutput<E>,
     setup_claim: Option<E>,
-    opening_semantics: Stage2OpeningSemantics<'_, E, G::Claim>,
-    replay: Stage2RoundReplay<E, G::Claim>,
-) -> Result<Stage2Output<E, G::Claim>, AkitaError>
+    // T0-PORT(private): dev used G::Claim here; re-express on v8.
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
+    replay: Stage2RoundReplay<E>,
+    fold_setup: FoldSetup<'_, '_, E>,
+) -> Result<Stage2Output<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + Ring
-        + AkitaSerialize
-        + MulBaseUnreduced<F>
-        + CanonicalDecode,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
 {
+    let external_relation_weight = match fold_setup {
+        FoldSetup::Ordinary => None,
+        FoldSetup::Offloaded(outer) => Some(outer.relation_weight),
+        FoldSetup::Deferred(accumulator) => Some(
+            rs.relation_matrix_evaluator
+                .eval_flat_at_point_with_external_setup::<F>(
+                    &replay.challenges,
+                    rs.alpha,
+                    |query| accumulator.resolve(query),
+                )?,
+        ),
+    };
+
     let witness_eval = replay.witness_eval;
     let stage2_verifier = AkitaStage2Verifier::<F, E, G::Claim>::new(Stage2VerifierInput {
         batching_coeff: stage1.batching_coeff,
@@ -431,6 +446,7 @@ where
         setup: setup.expanded(),
         alpha: rs.alpha,
         setup_claim,
+        external_relation_weight,
         col_bits: rs.relation_address_geometry.relation_lane_variable_count(),
         ring_bits: rs
             .relation_address_geometry
@@ -688,6 +704,7 @@ mod tests {
             setup: &setup,
             alpha,
             setup_claim: None,
+            external_relation_weight: None,
             col_bits: relation_address_geometry.relation_lane_variable_count(),
             ring_bits: relation_address_geometry.relation_coefficient_variable_count(),
             opening_semantics: Stage2OpeningSemantics::packing::<F, Clear<'_>>(

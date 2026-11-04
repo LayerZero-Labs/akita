@@ -1,4 +1,4 @@
-//! Fold-l∞ Fiat–Shamir grind: search counters on fold-response forks, send the winning one.
+//! Fold-l∞ Fiat–Shamir grind: preview off-sponge clones, commit the winning nonce.
 
 #[cfg(feature = "response-model-diagnostics")]
 use crate::backend::AcceptedFoldHandle;
@@ -6,6 +6,7 @@ use crate::backend::{
     FoldProbeDiagnostics, FoldProbeGeometry, FoldProbeOutcome, ValidatedFoldAcceptancePlan,
     ValidatedFoldProbePlan, ValidatedTerminalFoldProbePlan,
 };
+use akita_challenges::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
 use akita_error::AkitaError;
 use akita_params::FoldResponseSearch;
 #[cfg(test)]
@@ -15,13 +16,13 @@ use akita_params::{
     TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
 };
 use akita_types::draw_group_fold_challenges;
+use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
 use akita_types::{FoldDraw, ForkFoldDraw};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
-use jolt_transcript::Sponge;
 
 #[cfg(feature = "response-model-diagnostics")]
 #[inline]
@@ -51,8 +52,6 @@ pub(crate) struct FoldProbeOutput<FoldHandle> {
     pub(crate) fold_handle: FoldHandle,
     pub(crate) challenges: GroupFoldChallenges,
     pub(crate) diagnostics: FoldProbeDiagnostics,
-    /// The group's fork draws, logged once the fork is accepted.
-    pub(crate) draws: akita_types::FoldDrawRecord,
 }
 
 pub(crate) struct TerminalFoldGrindOutput {
@@ -63,20 +62,12 @@ pub(crate) struct TerminalFoldGrindOutput {
 /// cap. The returned witness retains centered `z` coefficients only; terminal
 /// `e` and `t` are never gadget decomposed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_terminal_fold_response<
-    F,
-    E,
-    H,
-    B,
-    const D: usize,
-    S: Sponge,
-    C: super::ProverFoldChannel<E, Sponge = S>,
->(
+// T0-PORT(private): dev used ProverGrinding<'_, S, C> here; re-express on v8.
+pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, S, C>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     params: &TerminalFoldParams,
-    sparse: &jolt_crypto::challenge::SparseChallengeConfig,
     witness: &H,
     shape: &TerminalResponseShape,
 ) -> Result<TerminalFoldGrindOutput, AkitaError>
@@ -106,32 +97,19 @@ where
     let linf_cap = expected_group.z_linf_cap;
     params.validate_terminal_linf_cap(linf_cap)?;
     let response_l2_sq_cap = params.response_l2_sq_cap();
-    let operator_rejection = if response_l2_sq_cap.is_some() {
-        Some(
-            jolt_crypto::challenge::selective_l2_operator_norm_rejection(params.d_a(), sparse)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
-                })?,
-        )
-    } else {
-        None
-    };
+    let family = params.fold_challenge_family()?;
     let point_indices = [0usize];
     let site = akita_params::GrindingSite::FoldResponse { level };
-    let search = grinding.begin_fold_response(site)?;
-    let (nonce, (fold_handle, encoding, diagnostics, draws)) =
-        accepted_fold_response(search, level, FOLD_RESPONSE_ATTEMPTS, |nonce| {
-            let mut fork = grinding.fold_response_fork(site, nonce)?;
-            let mut draw = ForkFoldDraw::new(&mut fork);
-            let challenges = draw.draw_folding_challenges_with_rejection(
-                akita_types::FoldChallengeDrawDomain::EvaluationTrace,
-                params.d_a(),
-                0,
-                params.blocks.live_blocks,
-                1,
-                sparse,
-                operator_rejection,
-            )?;
+    let (nonce, (work, fold_handle, challenges, encoding, diagnostics)) =
+        first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
+            let mut preview_state = grinding.preview_fold_response(site, nonce)?;
+            let work = preview_state.take_work()?;
+            let mut preview = PreviewFoldDraw::new(&mut preview_state);
+            let Some(challenges) =
+                preview.draw_fold_challenges(&family, params.blocks.live_blocks, 1)?
+            else {
+                return Ok(None);
+            };
             let selected = challenges.select_claims(&point_indices)?;
             let plan = ValidatedTerminalFoldProbePlan::new::<D>(
                 &selected,
@@ -152,20 +130,28 @@ where
                     fold_handle,
                     diagnostics,
                 } => Ok(Some((
+                    work,
                     fold_handle,
+                    challenges,
                     crate::backend::ValidatedTerminalZEncodingPlan::from_probe(&plan),
                     diagnostics,
-                    draw.take_record(),
                 ))),
             }
         })?;
-    // The verifier draws the same challenges from this counter's fork.
-    grinding.commit_fold_response(site, nonce)?;
-    grinding.record_fold_challenges(level, 0, params.blocks.live_blocks, &draws)?;
+    grinding.commit_fold_response(site, work)?;
+    let mut live = ProverFoldDraw::new(grinding.state_mut(), level, 0);
+    let live_challenges = live.draw_fold_challenges(&family, params.blocks.live_blocks, 1)?;
+    if live_challenges.as_ref() != Some(&challenges) {
+        return Err(AkitaError::Internal(
+            "terminal grind preview did not match live transcript replay".into(),
+        ));
+    }
+    grinding.record_fold_challenges(level, 0, params.blocks.live_blocks)?;
     #[cfg(not(feature = "response-model-diagnostics"))]
-    let _ = diagnostics;
+    let _ = (nonce, diagnostics);
     #[cfg(feature = "response-model-diagnostics")]
     if response_model_diagnostics_enabled() {
+        let sparse = &params.fold_challenge_config;
         let source_l2_sq = diagnostics.source_l2_sq();
         let conditional_mean_l2_sq =
             source_l2_sq.and_then(|energy| energy.checked_mul(sparse.challenge_l2_sq_max()));
@@ -242,15 +228,10 @@ fn accepted_fold_response<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn replay_multi_group_fold_decompose_witnesses<
-    F,
-    E,
-    B,
-    H: Sponge,
-    C: super::ProverFoldChannel<E, Sponge = H>,
->(
+// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+fn replay_multi_group_fold_decompose_witnesses<F, E, B>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, B::PreparedOpeningHandle>],
@@ -270,21 +251,23 @@ where
         ));
     }
     let site = akita_params::GrindingSite::FoldResponse { level };
-    let search = grinding.begin_fold_response(site)?;
-    let (nonce, mut candidate_outputs) =
-        accepted_fold_response(search, level, max_grind_attempts, |nonce| {
+    let (nonce, (work, mut candidate_outputs)) =
+        first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
-            {
-                let mut fork = grinding.fold_response_fork(site, nonce)?;
-                let mut draw = ForkFoldDraw::new(&mut fork);
+            let work = {
+                let mut preview_state = grinding.preview_fold_response(site, nonce)?;
+                let work = preview_state.take_work()?;
+                let mut preview = PreviewFoldDraw::new(&mut preview_state);
                 for prepared_group in groups {
                     let group = &prepared_group.input;
-                    let challenges = draw_group_fold_challenges::<F, E, _>(
-                        &mut draw,
+                    let Some(challenges) = draw_group_fold_challenges::<F, E, _>(
+                        &mut preview,
                         &group.params,
-                        group.group_index,
                         group.num_polynomials,
-                    )?;
+                    )?
+                    else {
+                        return Ok(None);
+                    };
                     let ranges = (root_lp.witness_chunk.num_chunks > 1)
                         .then(|| {
                             root_lp.witness_block_ranges(
@@ -331,21 +314,35 @@ where
                             fold_handle,
                             challenges,
                             diagnostics,
-                            draws: draw.take_record(),
                         },
                     };
                     candidate_outputs.push(output);
                 }
-            }
-            Ok(Some(candidate_outputs))
+                work
+            };
+            Ok(Some((work, candidate_outputs)))
         })?;
 
-    // The verifier draws the same challenges, group by group, from this
-    // counter's fork.
-    grinding.commit_fold_response(site, nonce)?;
+    grinding.commit_fold_response(site, work)?;
     {
+        let _span = tracing::info_span!("fold_grind_live_replay").entered();
         for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
             let group = &prepared_group.input;
+            let challenges = {
+                let group_index = u32::try_from(group.group_index)
+                    .map_err(|_| AkitaError::Internal("fold group index exceeds u32".into()))?;
+                let mut live = ProverFoldDraw::new(grinding.state_mut(), level, group_index);
+                draw_group_fold_challenges::<F, E, _>(
+                    &mut live,
+                    &group.params,
+                    group.num_polynomials,
+                )?
+            };
+            if challenges.as_ref() != Some(&output.challenges) {
+                return Err(AkitaError::Internal(
+                    "fold grind preview did not match live transcript replay".to_string(),
+                ));
+            }
             let group_index = u32::try_from(group.group_index)
                 .map_err(|_| AkitaError::Internal("fold group index exceeds u32".into()))?;
             let coordinate_count = group
@@ -353,7 +350,7 @@ where
                 .num_live_blocks()
                 .checked_mul(group.num_polynomials)
                 .ok_or_else(|| AkitaError::Internal("fold coordinate count overflow".into()))?;
-            grinding.record_fold_challenges(level, group_index, coordinate_count, &output.draws)?;
+            grinding.record_fold_challenges(level, group_index, coordinate_count)?;
             tracing::info!(
                 group_index = group.group_index,
                 nonce,
@@ -415,15 +412,10 @@ where
 /// When `tail_t_vectors` is set, the terminal response must fit the exact cap
 /// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<
-    F,
-    E,
-    B,
-    H: Sponge,
-    C: super::ProverFoldChannel<E, Sponge = H>,
->(
+// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -484,7 +476,7 @@ where
             ),
         });
     }
-    replay_multi_group_fold_decompose_witnesses::<F, E, B, _, _>(
+    replay_multi_group_fold_decompose_witnesses::<F, E, B>(
         opening_ctx,
         grinding,
         level,
@@ -508,9 +500,16 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> [u8; 32] {
+        fn draw_message(
+            &mut self,
+            len: usize,
+            decode: impl FnOnce(
+                &[u8],
+            )
+                -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError>,
+        ) -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError> {
             self.draws += 1;
-            [11; akita_types::FOLD_CHALLENGE_SEED_LEN]
+            decode(&vec![11; len])
         }
     }
 
@@ -534,8 +533,9 @@ mod tests {
             SparseChallengeConfig::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
-        let challenges =
-            draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 3, 2).unwrap();
+        let challenges = draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 2)
+            .unwrap()
+            .unwrap();
         assert_eq!(draw.draws, 1);
         let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
@@ -583,8 +583,7 @@ mod tests {
             params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();
             assert!(
-                draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 0, 1)
-                    .is_err()
+                draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 1).is_err()
             );
             assert_eq!(draw.draws, 0);
         }

@@ -4,8 +4,9 @@
 use crate::claims::ClaimReplay;
 use akita_error::AkitaError;
 use akita_params::OpeningClaimsLayout;
+use akita_transcript::ChallengeCodec;
 use akita_types::{OpeningFamily, PreparedOpeningPoint};
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 mod coefficient_packing;
 mod extension_claim;
@@ -41,15 +42,16 @@ pub(crate) struct FoldClaimMaterial<F: Field, E: Field, V = E> {
     pub(crate) reduction_factors: Option<Vec<E>>,
 }
 
-pub(crate) fn finalize_claims<F, E, G: ClaimReplay<F, E>>(
+// T0-PORT(private): dev used ClaimReplay, G::Claim here; re-express on v8.
+pub(crate) fn finalize_claims<F, E>(
     opening_shape: &OpeningClaimsLayout,
-    material: FoldClaimMaterial<F, E, G::Claim>,
-    grinding: &mut G,
+    material: FoldClaimMaterial<F, E>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<FoldPrefix<F, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
 {
     if material.openings.len() != opening_shape.num_total_polynomials()
         || material.prepared_points.len() != opening_shape.num_groups()

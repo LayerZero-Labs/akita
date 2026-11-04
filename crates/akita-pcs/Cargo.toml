@@ -22,13 +22,42 @@ include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
 no-default-features = true
-features = ["parallel"]
+features = ["parallel", "transcript-keccak"]
 
 [package.metadata.cargo-machete]
 ignored = ["akita-setup"]
 
 [features]
-default = ["parallel"]
+default = ["parallel", "transcript-keccak"]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
+  "akita-prover/transcript-blake2b",
+  "akita-planner/transcript-blake2b",
+  "akita-setup/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+  "akita-verifier/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
+  "akita-prover/transcript-keccak",
+  "akita-planner/transcript-keccak",
+  "akita-setup/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
+  "akita-verifier/transcript-keccak",
+]
+# Optional (default off): sums of products at the structured
+# sites of the verifier's setup scan (same field values).
+setup-sop-structured = ["akita-verifier/setup-sop-structured"]
+# Keccak-256 instead of SHA3-256 digests; see `akita-transcript`.
+keccak256-digests = ["akita-transcript/keccak256-digests"]
+# 64-point NTT and pointwise-dot inlines for a RISC-V guest verifier.
+ntt-inline = ["akita-algebra/ntt-inline"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -66,11 +95,11 @@ disk-persistence = [
   "akita-setup/disk-persistence",
   "akita-cpu-backend/disk-persistence",
 ]
-# Records prover and verifier transcript events for the transcript-hardening
-# suites and the profile example's wire report.
-logging = ["jolt-transcript/logging"]
-# Run the transcript-semantics test suites on Keccak instead of `AkitaSponge`.
-keccak-test-sponge = []
+logging-transcript = [
+  "akita-transcript/logging-transcript",
+  "akita-prover/logging-transcript",
+  "akita-cpu-backend/logging-transcript",
+]
 response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
 # Dev-only terminal wire variant; see `akita-params`.
 dev-protocol = ["akita-params/dev-protocol"]
@@ -102,6 +131,7 @@ test-support = ["zk-prover"]
 # pool and synthetic Σ instance. Diagnostics only; implies `zk-prover`
 # through `test-support`.
 zk-diagnostics = ["test-support", "jolt-zk/whiteout-diagnostics"]
+compression-weights-crosscheck = ["akita-types/compression-weights-crosscheck"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -115,9 +145,7 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev =
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
-  "transcript-blake2b",
-] }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }

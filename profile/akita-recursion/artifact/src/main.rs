@@ -312,7 +312,13 @@ fn verify_proof(
 ) -> Result<(), String> {
     AkitaVerifier::new(verifier_setup.clone(), schedules.clone())
         .map_err(|err| format!("verifier setup rejected: {err}"))?
-        .verify_standalone(proof, session, statement, BasisMode::Lagrange)
+        .batched_verify(
+            proof,
+            session,
+            statement,
+            BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
+        )
         .map_err(|err| format!("verifier rejected proof: {err}"))
 }
 
@@ -437,7 +443,13 @@ macro_rules! generate_scalar_case {
         scheme
             .verifier(verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)
+                verifier.batched_verify(
+                    &proof,
+                    TRANSCRIPT_DOMAIN,
+                    statement,
+                    BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
+                )
             })
         .map_err(|err| format!("{} host-side sanity verify: {err}", case))?;
 
@@ -467,11 +479,12 @@ macro_rules! generate_scalar_case {
         scheme
             .verifier(decoded.verifier_setup.clone())
             .and_then(|verifier| {
-                verifier.verify_standalone(
+                verifier.batched_verify(
                     &decoded.proof,
                     &decoded.transcript_domain,
                     decoded_statement,
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
         .map_err(|err| format!("{} decoded blob verify: {err}", case))?;
@@ -606,6 +619,7 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("precommit profile: {err}"))?;
     let final_group = PolynomialGroupLayout::new(nv, FINAL_POLYS);
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };

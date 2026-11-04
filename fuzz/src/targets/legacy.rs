@@ -7,7 +7,11 @@ use jolt_algebra::{CanonicalBytes, Prime128Offset275 as F, Ring};
 use jolt_sumcheck::{
     verify_single, SingleFormat, SingleInstance, SumcheckSite, VerifierRoundContext,
 };
-use jolt_transcript::{Blake2b512, Channel, ProtocolId, SiteId, VerifierTranscript};
+use akita_transcript::{
+    ext_challenge, new_prover_channel, new_verifier_channel, public_bytes, ProtocolSiteId,
+    VerifierChannel, SITE_FAMILY_SUMCHECK,
+};
+use jolt_algebra::{CanonicalBytes, Prime128Offset275 as F, Ring};
 
 pub fn serialization_vec(data: &[u8]) {
     let _ = Vec::<u8>::deserialize_compressed(data, &());
@@ -22,7 +26,14 @@ pub fn serialization_vec(data: &[u8]) {
     }
 }
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("akita-fuzz/sumcheck-rounds");
+pub fn transcript_labels(data: &[u8]) {
+    let split = data.len().min(255);
+    let (label, bytes) = data.split_at(split);
+
+    let mut transcript = new_prover_channel(label);
+    let _ = public_bytes(&mut transcript, ProtocolSiteId::default(), bytes);
+    let _: F = ext_challenge(&mut transcript, ProtocolSiteId::default()).unwrap();
+}
 
 struct FuzzVerifierChannel<'proof> {
     state: VerifierTranscript<'proof, Blake2b512>,
@@ -44,10 +55,9 @@ impl<'proof> VerifierRoundContext<F> for FuzzVerifierChannel<'proof> {
         Some(SiteId(bytes))
     }
 
-    fn challenge(&mut self, site: SumcheckSite) -> Result<F, AkitaError> {
-        if let Some(site) = self.site(site) {
-            self.state.site(site);
-        }
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
+        let site = self.sumcheck_site(invocation, round, SumcheckRole::Challenge);
+        let challenge = ext_challenge::<F, _>(&mut self.state, site)?;
         self.challenges += 1;
         Ok(self.state.challenge())
     }
@@ -59,6 +69,10 @@ pub fn sumcheck_rounds(data: &[u8]) {
     };
     let num_rounds = usize::from(rounds % 5);
     let degree_bound = usize::from(degree % 5);
+    let Ok(shape) = SumcheckShape::new(num_rounds, degree_bound) else {
+        return;
+    };
+    let state = new_verifier_channel(b"fuzz/sumcheck-rounds", data);
     let mut channel = FuzzVerifierChannel {
         state: VerifierTranscript::new(&PROTOCOL, b"fixture", data),
         challenges: 0,

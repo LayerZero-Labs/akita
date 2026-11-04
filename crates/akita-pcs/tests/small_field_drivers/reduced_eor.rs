@@ -22,11 +22,12 @@ fn verify(
         .scheme
         .verifier(roundtrip.verifier_setup.clone())
         .and_then(|verifier| {
-            verifier.verify_standalone(
+            verifier.batched_verify(
                 proof,
                 label,
                 GroupBatchStatement::new(roundtrip.selection, claims)?,
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
 }

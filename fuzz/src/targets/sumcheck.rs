@@ -10,7 +10,17 @@
 use crate::input::Reader;
 use crate::{gen, stats};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use akita_error::AkitaError;
+use akita_sumcheck::{
+    prove_sumcheck, verify_sumcheck, InfallibleSumcheck, SumcheckInstanceProver,
+    SumcheckInstanceVerifier, SumcheckProverChannel, SumcheckRole, SumcheckShape,
+    SumcheckVerifierChannel,
+};
+use akita_transcript::{
+    ext_challenge, new_prover_channel, new_verifier_channel, ChallengeCodec, ProtocolSiteId,
+    ProverChannel as ProverState, VerifierChannel as VerifierState, SITE_FAMILY_SUMCHECK,
+};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_single, verify_single, ProveRounds, ProverRoundContext, SingleFormat, SingleInstance,
@@ -43,11 +53,10 @@ struct ProverContext {
     state: ProverTranscript<Blake2b512>,
 }
 
-impl<E: Field> ProverRoundContext<E> for ProverContext {
-    type Channel = ProverTranscript<Blake2b512>;
-    type Error = SumcheckError<E>;
-
-    fn channel_mut(&mut self) -> &mut Self::Channel {
+impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> SumcheckProverChannel<E>
+    for ProverChannel<F, E>
+{
+    fn state_mut(&mut self) -> &mut ProverState {
         &mut self.state
     }
 
@@ -55,9 +64,12 @@ impl<E: Field> ProverRoundContext<E> for ProverContext {
         Some(site(sumcheck_site))
     }
 
-    fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<E, SumcheckError<E>> {
-        self.state.site(site(sumcheck_site));
-        Ok(self.state.challenge())
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
+        ext_challenge::<E, _>(
+            &mut self.state,
+            site(invocation, round, SumcheckRole::Challenge),
+        )
+        .map_err(|_| AkitaError::InvalidProof)
     }
 }
 
@@ -65,11 +77,10 @@ struct VerifierContext<'proof> {
     state: VerifierTranscript<'proof, Blake2b512>,
 }
 
-impl<'proof, E: Field> VerifierRoundContext<E> for VerifierContext<'proof> {
-    type Channel = VerifierTranscript<'proof, Blake2b512>;
-    type Error = SumcheckError<E>;
-
-    fn channel_mut(&mut self) -> &mut Self::Channel {
+impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>
+    SumcheckVerifierChannel<'proof, E> for VerifierChannel<'proof, F, E>
+{
+    fn state_mut(&mut self) -> &mut VerifierState<'proof> {
         &mut self.state
     }
 
@@ -77,9 +88,12 @@ impl<'proof, E: Field> VerifierRoundContext<E> for VerifierContext<'proof> {
         Some(site(sumcheck_site))
     }
 
-    fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<E, SumcheckError<E>> {
-        self.state.site(site(sumcheck_site));
-        Ok(self.state.challenge())
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
+        ext_challenge::<E, _>(
+            &mut self.state,
+            site(invocation, round, SumcheckRole::Challenge),
+        )
+        .map_err(|_| AkitaError::InvalidProof)
     }
 }
 
@@ -159,7 +173,28 @@ fn evaluate<E: Field>(table: &[E], point: &[E]) -> E {
     layer[0]
 }
 
-fn case<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(reader: &mut Reader<'_>) {
+impl<E: Field> SumcheckInstanceVerifier<E> for ProductVerifier<E> {
+    fn num_rounds(&self) -> usize {
+        self.rounds
+    }
+
+    fn degree_bound(&self) -> usize {
+        self.tables.len()
+    }
+
+    fn input_claim(&self) -> E {
+        self.claim
+    }
+
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
+        Ok(self
+            .tables
+            .iter()
+            .fold(E::one(), |acc, table| acc * evaluate(table, challenges)))
+    }
+}
+
+fn case<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(reader: &mut Reader<'_>) {
     // The negative-check choice leads the input so large tables cannot starve it.
     let negative = reader.u8() % 4;
     let tamper_offset = reader.u32() as usize;
@@ -199,8 +234,9 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(reader: 
         tables: tables.clone(),
         rounds,
     };
-    let mut prover = ProverContext {
-        state: ProverTranscript::new(&PROTOCOL, &session),
+    let mut prover = ProverChannel::<F, E> {
+        state: new_prover_channel(&session),
+        _marker: PhantomData,
     };
     let reduction =
         prove_single::<F, E, SumcheckError<E>, _>(&mut member, &instance(claim), &mut prover)
@@ -221,16 +257,16 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(reader: 
         let mut channel = VerifierContext {
             state: VerifierTranscript::new(&PROTOCOL, &session, proof),
         };
-        let replayed = verify_single::<F, E, SumcheckError<E>, _>(&instance(claim), &mut channel)
-            .map_err(|_| ())?;
-        channel.state.finish().map_err(|_| ())?;
-        let oracle = tables.iter().fold(E::one(), |acc, table| {
-            acc * evaluate(table, &replayed.challenges)
-        });
-        if replayed.output_claim != oracle {
-            return Err(());
-        }
-        Ok(replayed.challenges)
+        let mut channel = VerifierChannel::<F, E> {
+            state: new_verifier_channel(&session, proof),
+            _marker: PhantomData,
+        };
+        let replayed = verify_sumcheck::<F, E, _, _>(&verifier, &mut channel, shape, invocation)?;
+        channel
+            .state
+            .check_eof()
+            .map_err(|_| AkitaError::InvalidProof)?;
+        Ok(replayed)
     };
     assert_eq!(
         verify(&proof, claim).expect("honest sumcheck must verify"),

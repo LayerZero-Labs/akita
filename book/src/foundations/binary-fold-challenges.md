@@ -211,12 +211,12 @@ This implementation is a challenge foundation only. It does not:
 - derive response intervals or SIS parameters; or
 - replace Akita's ordinary sparse challenge families.
 
-The public API is exported from `crates/akita-challenges/src/lib.rs`. Exact
+The public API is exported from `jolt-crypto/src/challenge/lib.rs`. Exact
 counts and shell selection live in
-`crates/akita-challenges/src/binary/combinatorics.rs`; profile identities and
-bounds live in `crates/akita-challenges/src/binary/profile.rs`; sampling lives
-in `crates/akita-challenges/src/binary/sampler.rs`; and the deterministic sign
-map lives in `crates/akita-challenges/src/binary/sign.rs`.
+`jolt-crypto/src/challenge/binary/combinatorics.rs`; profile identities and
+bounds live in `jolt-crypto/src/challenge/binary/profile.rs`; sampling lives
+in `jolt-crypto/src/challenge/binary/sampler.rs`; and the deterministic sign
+map lives in `jolt-crypto/src/challenge/binary/sign.rs`.
 
 The focused tests exhaustively enumerate small support balls, check the exact
 degree-162 and degree-486 budget boundaries, exercise counts above 256 bits,

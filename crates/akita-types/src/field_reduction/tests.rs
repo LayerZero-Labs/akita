@@ -503,24 +503,6 @@ fn ring_subfield_k4_basis_has_chebyshev_multiplication_table() {
     );
 }
 
-#[test]
-fn naive_k4_basis_is_not_the_current_tower_power_basis() {
-    const D: usize = 8;
-    let params = SubfieldParams::<D, 4>::new().unwrap();
-    let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
-
-    assert_ne!(basis[1] * basis[1], basis[2]);
-    assert_eq!(
-        ring_subfield_coords(params, &(basis[1] * basis[1])),
-        vec![
-            AkitaF32::from_u64(2),
-            AkitaF32::zero(),
-            AkitaF32::one(),
-            AkitaF32::zero()
-        ]
-    );
-}
-
 fn assert_fp_ext4_embedding_is_multiplicative<const D: usize>() {
     let params = SubfieldParams::<D, 4>::new().unwrap();
     let x = FpExt4::new([

@@ -25,14 +25,31 @@ jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev 
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "transcript-blake2b",
 ] }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+rand_core = "0.6"
+shake = "0.1.0"
 tracing = "0.1"
 jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", optional = true }
 
 [features]
+default = ["transcript-keccak"]
 test-support = ["akita-params/test-support"]
 # The masked channels and the counting replay of a zero-knowledge opening's
 # masked levels (`specs/whiteout-akita.md` §4.5).
 zk = ["dep:jolt-zk", "akita-error/zk", "akita-params/zk"]
+# Prover-side grinding replay, which searches on a copy of the sponge state.
+prover = ["akita-transcript/prover"]
+transcript-blake2b = [
+  "akita-sumcheck/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-sumcheck/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-params/transcript-keccak",
+]
 parallel = [
   "akita-params/parallel",
   "akita-algebra/parallel",
@@ -40,6 +57,14 @@ parallel = [
   "jolt-crypto/parallel",
 ]
 labinius-trinomial = ["akita-algebra/labinius-trinomial"]
+logging-transcript = [
+  "akita-params/logging-transcript",
+  "akita-transcript/logging-transcript",
+]
+# Diagnostic: cross-checks every factored compression relation weight
+# evaluation against the per-event evaluation and counts the evaluation tiers.
+# Native diagnostic builds only; no default feature enables it.
+compression-weights-crosscheck = []
 
 [dev-dependencies]
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
@@ -52,6 +77,7 @@ jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", re
 # Test-only: the masked claim domains the shared stage checks lower into.
 jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3" }
 rand = "0.8"
+spongefish = { version = "=0.8.0", default-features = false }
 
 [[bench]]
 name = "golomb_rice"

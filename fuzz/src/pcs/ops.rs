@@ -204,7 +204,7 @@ where
         basis: BasisMode,
     ) -> Result<Vec<u8>, AkitaError> {
         akita_config::transcript_instance_descriptor::<Self::Field, Self>(
-            setup, layout, selection, schedule, basis,
+            setup, layout, selection, schedule, basis, None,
         )
         .map(|(_, bytes)| bytes)
     }
@@ -336,6 +336,12 @@ where
         statement: Statement<'_, Self>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        verifier.verify_standalone(proof, session, statement, basis)
+        verifier.batched_verify(
+            proof,
+            session,
+            statement,
+            basis,
+            akita_verifier::SetupPolicy::Check(None),
+        )
     }
 }

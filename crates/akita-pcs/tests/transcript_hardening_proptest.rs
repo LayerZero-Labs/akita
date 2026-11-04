@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 mod common;
 
-use crate::common::sponge::{prove_on_test_sponge, verify_on_test_sponge};
 use akita_cpu_backend::CpuBackend;
 use akita_params::OpeningClaimsLayout;
 use common::*;
@@ -63,27 +62,26 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
-    let proof = prove_on_test_sponge(
-        &scheme,
-        &setup,
-        prove_input::<DenseCfg>(
-            &opening_point,
-            &openings,
-            &commitment,
-            hint,
-            scheme.schedules(),
-        ),
-        &stack,
-        b"hardening/proptest/native",
-        basis_mode,
-    )
-    .expect("prove");
+    let proof = scheme
+        .batched_prove(
+            &setup,
+            prove_input::<DenseCfg>(
+                &opening_point,
+                &openings,
+                &commitment,
+                hint,
+                scheme.schedules(),
+            ),
+            &stack,
+            b"hardening/proptest/native",
+            basis_mode,
+        )
+        .expect("prove");
 
     scheme
         .verifier(verifier_setup.clone())
         .and_then(|verifier| {
-            verify_on_test_sponge(
-                &verifier,
+            verifier.batched_verify(
                 &proof,
                 b"hardening/proptest/native",
                 verify_input::<DenseCfg>(
@@ -93,6 +91,7 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
                     scheme.schedules(),
                 ),
                 basis_mode,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .expect("verify");
@@ -100,12 +99,12 @@ fn dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     trailing.push(0);
     assert!(scheme
         .verifier(verifier_setup.clone())
-        .and_then(|verifier| verify_on_test_sponge(
-            &verifier,
+        .and_then(|verifier| verifier.batched_verify(
             &trailing,
             b"hardening/proptest/native",
             verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules(),),
-            basis_mode
+            basis_mode,
+            akita_verifier::SetupPolicy::Check(None),
         ))
         .is_err());
 }

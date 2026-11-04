@@ -7,9 +7,11 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_params::transcript_site::{ProtocolSiteId, SITE_FAMILY_STAGE3};
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::Channel;
+use akita_transcript::{
+    exchange_extension_group, public_bytes, ProtocolSiteId, SITE_FAMILY_STAGE3,
+};
+use core::slice;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const ROLE_SETUP_SLOT: u32 = 1;
 const ROLE_INPUT_CLAIM: u32 = 2;
@@ -25,17 +27,23 @@ fn site(level: u32, role: u32) -> ProtocolSiteId {
 }
 
 /// Bind the selected public setup-prefix slot.
-pub fn stage3_public_slot<G: GrindingReplay>(grinding: &mut G, level: u32, encoded_slot: &[u8]) {
-    let state = grinding.state_mut();
-    state.site(site(level, ROLE_SETUP_SLOT).into());
-    state.public_bytes(encoded_slot);
+pub fn stage3_public_slot<G: GrindingReplay>(
+    grinding: &mut G,
+    level: u32,
+    encoded_slot: &[u8],
+) -> Result<(), AkitaError> {
+    public_bytes(
+        grinding.state_mut(),
+        site(level, ROLE_SETUP_SLOT),
+        encoded_slot,
+    )
 }
 
 /// Exchange the setup-product input claim before sumcheck challenges.
 pub fn stage3_claim<F, E, G>(grinding: &mut G, level: u32, claim: E) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
     exchange_one::<F, E, G>(grinding, site(level, ROLE_INPUT_CLAIM), claim)
@@ -49,7 +57,7 @@ pub fn stage3_prefix_eval<F, E, G>(
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
     exchange_one::<F, E, G>(grinding, site(level, ROLE_PREFIX_EVAL), evaluation)
@@ -62,21 +70,20 @@ fn exchange_one<F, E, G>(
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F>,
     G: GrindingReplay,
 {
-    let state = grinding.state_mut();
-    state.site(site.into());
-    state.exchange_public_all(std::slice::from_mut(&mut value))?;
+    // T0-PORT(private): dev used exchange_public_all here; re-express on v8.
+    exchange_extension_group::<F, E, _>(grinding.state_mut(), site, slice::from_mut(&mut value))?;
     Ok(value)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "prover"))]
 mod tests {
     use super::*;
-    use crate::transcript::test_transcripts::{prover as new_prover, verifier as new_verifier};
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
@@ -92,17 +99,17 @@ mod tests {
         let slot = b"canonical setup slot";
         let claim = E::from_u64(17);
         let prefix_eval = E::from_u64(29);
-        let mut transcript = new_prover(b"native-stage3");
-        let mut prover = ProverGrinding::new(&mut transcript, &plan);
-        stage3_public_slot(&mut prover, 3, slot);
+        let mut state = new_prover_channel(b"native-stage3");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
+        stage3_public_slot(&mut prover, 3, slot).unwrap();
         stage3_claim::<F, E, _>(&mut prover, 3, claim).unwrap();
         stage3_prefix_eval::<F, E, _>(&mut prover, 3, prefix_eval).unwrap();
         prover.finish().unwrap();
-        let proof = transcript.finish();
+        let proof = state.narg_string().to_vec();
 
-        let mut transcript = new_verifier(b"native-stage3", &proof);
-        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
-        stage3_public_slot(&mut verifier, 3, slot);
+        let mut state = new_verifier_channel(b"native-stage3", &proof);
+        let mut verifier = VerifierGrinding::new(&mut state, &plan);
+        stage3_public_slot(&mut verifier, 3, slot).unwrap();
         assert_eq!(
             stage3_claim::<F, E, _>(&mut verifier, 3, E::zero()).unwrap(),
             claim
@@ -111,7 +118,6 @@ mod tests {
             stage3_prefix_eval::<F, E, _>(&mut verifier, 3, E::zero()).unwrap(),
             prefix_eval
         );
-        verifier.finish().unwrap();
-        transcript.finish().unwrap();
+        verifier.finish().unwrap().check_eof(state).unwrap();
     }
 }

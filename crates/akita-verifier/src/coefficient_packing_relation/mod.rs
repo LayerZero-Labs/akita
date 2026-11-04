@@ -51,3 +51,5 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+mod packed_direct;

@@ -7,15 +7,15 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::{BasisMode, FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::CommitmentDigest;
 use akita_types::{
-    AkitaSetupDescriptor, AkitaSponge, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding,
+    AkitaSetupDescriptor, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding,
     SetupPrefixVerifierSlot,
 };
 use jolt_algebra::{
     AdditiveGroup, CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
     Unreduced,
 };
-use jolt_transcript::Sponge;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     any::{Any, TypeId},
@@ -106,6 +106,10 @@ pub(super) struct ProofRequest<'p, Cfg: CommitmentConfig> {
     pub(super) schedule: &'p FoldSchedule,
     pub(super) layout: &'p OpeningClaimsLayout,
     pub(super) identity: u64,
+    pub(super) setup_batch: Option<(
+        u32,
+        &'p akita_types::setup_claims::SetupBatchStatement<Cfg::ExtField>,
+    )>,
 }
 
 pub(super) type ExecutionContinuation<Cfg> = (
@@ -113,14 +117,15 @@ pub(super) type ExecutionContinuation<Cfg> = (
     ResidentSuccessor,
 );
 
-pub(super) trait Executor<Cfg: CommitmentConfig, S: Sponge> {
+pub(super) trait Executor<Cfg: CommitmentConfig> {
     fn identity(&self) -> BackendInstanceIdentity;
     fn backend_type_id(&self) -> TypeId;
     fn root(
         &self,
-        handoff: &mut FoldHandoff<'_, '_, '_, Cfg, S>,
-        grinding: &mut ProverGrinding<'_, S>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
+        grinding: &mut ProverGrinding<'_>,
         claims: &OpeningClaims<'_, Cfg::ExtField, Commitment<Cfg::Field>>,
+        digests: &[CommitmentDigest],
         handles: &dyn Any,
         basis: BasisMode,
     ) -> Result<ExecutionContinuation<Cfg>, AkitaError>;
@@ -134,8 +139,8 @@ pub(super) trait Executor<Cfg: CommitmentConfig, S: Sponge> {
     ) -> Result<ResidentSuccessor, AkitaError>;
     fn recursive(
         &self,
-        handoff: &mut FoldHandoff<'_, '_, '_, Cfg, S>,
-        grinding: &mut ProverGrinding<'_, S>,
+        handoff: &mut FoldHandoff<'_, '_, '_, Cfg>,
+        grinding: &mut ProverGrinding<'_>,
         public: FoldPublicState<Cfg::Field, Cfg::ExtField>,
         resident: ResidentSuccessor,
         index: usize,
@@ -144,7 +149,7 @@ pub(super) trait Executor<Cfg: CommitmentConfig, S: Sponge> {
         &self,
         id: BackendId,
         request: &ProofRequest<'_, Cfg>,
-        grinding: &mut ProverGrinding<'_, S>,
+        grinding: &mut ProverGrinding<'_>,
         public: FoldPublicState<Cfg::Field, Cfg::ExtField>,
         resident: ResidentSuccessor,
     ) -> Result<(), AkitaError>;
@@ -163,21 +168,18 @@ pub(super) struct TypedExecutor<
 }
 
 /// Reusable instances and setup resources; selected sessions are prepared before proving.
-///
-/// `S` is the sponge of the transcript the registry proves on.
-pub struct BackendRegistry<'a, Cfg: CommitmentConfig, S: Sponge = AkitaSponge> {
+pub struct BackendRegistry<'a, Cfg: CommitmentConfig> {
     identity: u64,
-    pub(super) slots: Vec<Box<dyn Executor<Cfg, S> + 'a>>,
-    bridges: HashMap<(TypeId, TypeId), Box<ErasedBridge<Cfg, S>>>,
+    pub(super) slots: Vec<Box<dyn Executor<Cfg> + 'a>>,
+    bridges: HashMap<(TypeId, TypeId), Box<ErasedBridge<Cfg>>>,
     pub(super) public_prefixes:
         BTreeMap<SetupPrefixSlotId, &'a SetupPrefixVerifierSlot<Cfg::Field>>,
     pub(super) active: Cell<bool>,
 }
 
-impl<'a, Cfg, S> BackendRegistry<'a, Cfg, S>
+impl<'a, Cfg> BackendRegistry<'a, Cfg>
 where
     Cfg: CommitmentConfig,
-    S: Sponge,
     Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
@@ -292,8 +294,8 @@ where
     }
 }
 
-impl<Cfg: CommitmentConfig, S: Sponge> BackendRegistry<'_, Cfg, S> {
-    pub(super) fn slot(&self, id: BackendId) -> Result<&dyn Executor<Cfg, S>, AkitaError> {
+impl<Cfg: CommitmentConfig> BackendRegistry<'_, Cfg> {
+    pub(super) fn slot(&self, id: BackendId) -> Result<&dyn Executor<Cfg>, AkitaError> {
         if id.registry != self.identity {
             return Err(AkitaError::InvalidInput(
                 "backend ID belongs to another registry".into(),
@@ -309,7 +311,7 @@ impl<Cfg: CommitmentConfig, S: Sponge> BackendRegistry<'_, Cfg, S> {
         &self,
         source: BackendId,
         destination: BackendId,
-    ) -> Result<&ErasedBridge<Cfg, S>, AkitaError> {
+    ) -> Result<&ErasedBridge<Cfg>, AkitaError> {
         let key = (
             self.slot(source)?.backend_type_id(),
             self.slot(destination)?.backend_type_id(),
@@ -320,25 +322,25 @@ impl<Cfg: CommitmentConfig, S: Sponge> BackendRegistry<'_, Cfg, S> {
     }
 }
 
-type ErasedBridge<Cfg, S> = dyn Fn(
+type ErasedBridge<Cfg> = dyn Fn(
     Box<dyn Any + Send>,
-    &dyn Executor<Cfg, S>,
+    &dyn Executor<Cfg>,
     BackendId,
     &ValidatedSuccessorHandoffPlan<'_, <Cfg as CommitmentConfig>::Field>,
 ) -> Result<ResidentSuccessor, AkitaError>;
 
-pub(super) struct FoldHandoff<'r, 'a, 'p, Cfg: CommitmentConfig, S: Sponge> {
-    pub(super) registry: &'r BackendRegistry<'a, Cfg, S>,
+pub(super) struct FoldHandoff<'r, 'a, 'p, Cfg: CommitmentConfig> {
+    pub(super) registry: &'r BackendRegistry<'a, Cfg>,
     pub(super) request: &'r ProofRequest<'p, Cfg>,
     pub(super) current: BackendId,
     pub(super) next: BackendId,
     pub(super) adopted: Option<ResidentSuccessor>,
 }
 
-pub(super) struct RegistryProofGuard<'r, 'a, Cfg: CommitmentConfig, S: Sponge>(
-    pub(super) &'r BackendRegistry<'a, Cfg, S>,
+pub(super) struct RegistryProofGuard<'r, 'a, Cfg: CommitmentConfig>(
+    pub(super) &'r BackendRegistry<'a, Cfg>,
 );
-impl<Cfg: CommitmentConfig, S: Sponge> Drop for RegistryProofGuard<'_, '_, Cfg, S> {
+impl<Cfg: CommitmentConfig> Drop for RegistryProofGuard<'_, '_, Cfg> {
     fn drop(&mut self) {
         for slot in &self.0.slots {
             slot.abort();
@@ -347,6 +349,8 @@ impl<Cfg: CommitmentConfig, S: Sponge> Drop for RegistryProofGuard<'_, '_, Cfg, 
     }
 }
 
+// T0-PORT(private): dev's `SuccessorHandoff` seam (the masked prefix hands a fold's successor
+// off without the registry) was written over FoldHandoff's old sponge parameter `S`; re-express on v8.
 /// Where a fold's committed successor goes before the producer's sumchecks:
 /// to the next fold's owner through the registry ([`FoldHandoff`]), or
 /// nowhere when one backend proves every level.
@@ -396,7 +400,7 @@ where
     }
 }
 
-impl<Cfg: CommitmentConfig, S: Sponge> FoldHandoff<'_, '_, '_, Cfg, S> {
+impl<Cfg: CommitmentConfig> FoldHandoff<'_, '_, '_, Cfg> {
     pub(super) fn complete<B: ProverBackend<Cfg::Field, Cfg::ExtField>>(
         &mut self,
         backend: &B,

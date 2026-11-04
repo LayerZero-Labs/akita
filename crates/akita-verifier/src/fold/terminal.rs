@@ -2,27 +2,32 @@
 //! response to the direct terminal checks.
 
 use super::suffix::SuffixVerifierState;
+use super::NextWitness;
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::verify_extension_claim_terminal_suffix;
 use akita_error::AkitaError;
 use akita_params::{OpeningClaimsLayout, TerminalFoldParams};
 use akita_serialization::AkitaSerialize;
-use akita_types::FoldDraw;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{prepare_opening_point, FpExtEncoding, RingVec};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
-use jolt_transcript::{Channel, Sponge};
 
-pub(super) fn verify_terminal_suffix<F, E, H: Sponge>(
+pub(super) fn verify_terminal_suffix<F, E>(
     terminal_ntt: &TerminalNttCache,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_, H>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
     current_state: &SuffixVerifierState<F, E>,
     scheduled: &TerminalFoldParams,
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     if current_state.witness_len != scheduled.input_witness_len
         || current_state.setup_prefix_opening.is_some()
@@ -35,20 +40,23 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
+    let NextWitness::TerminalT {
+        sent: t_sent,
+        last_block_digest: t_last_block_digest,
+    } = &current_state.witness
+    else {
+        return Err(AkitaError::Internal(
+            "terminal scheduled after an outer payload witness".into(),
+        ));
+    };
     if scheduled.response_shape.layout.groups.len() != 1
-        || current_state.witness.coeff_len() != group.t_field_elems
-        || !current_state.witness.can_decode_vec(scheduled.d_a())
+        || t_sent.coeff_len() != group.t_field_elems
+        || !t_sent.can_decode_vec(scheduled.d_a())
     {
         return Err(AkitaError::InvalidProof);
     }
-    grinding.state_mut().site(
-        akita_types::FoldSite::TerminalTFields { level }
-            .id()?
-            .into(),
-    );
-    grinding
-        .state_mut()
-        .public_all(current_state.witness.coeffs());
+    // The `t` prefix and its last-block digest were absorbed when they were
+    // received as the next witness.
     let recursive_num_vars = scheduled.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
@@ -72,7 +80,7 @@ where
         )?;
         (prepared, current_state.opening_point.clone(), None)
     } else {
-        let replay = verify_extension_claim_terminal_suffix::<F, E, _>(
+        let replay = verify_extension_claim_terminal_suffix::<F, E>(
             &current_state.opening_point,
             current_state.opening,
             &opening_batch,
@@ -88,17 +96,17 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         (group.prepared, group.protocol, replay.final_relation)
     };
-    grinding
-        .state_mut()
-        .site(akita_types::FoldSite::TerminalPoint { level }.id()?.into());
-    grinding.state_mut().public_all(&protocol_point);
+    akita_transcript::public_extensions::<F, E, _>(
+        grinding.state_mut(),
+        akita_types::FoldSite::TerminalPoint { level }.id()?,
+        &protocol_point,
+    )?;
     if final_relation.is_none() {
-        grinding.state_mut().site(
-            akita_types::FoldSite::TerminalOpening { level }
-                .id()?
-                .into(),
-        );
-        grinding.state_mut().public(&current_state.opening);
+        akita_transcript::public_extensions::<F, E, _>(
+            grinding.state_mut(),
+            akita_types::FoldSite::TerminalOpening { level }.id()?,
+            std::slice::from_ref(&current_state.opening),
+        )?;
     }
     let row_coefficients = akita_types::row_coefficients::<F, E, _>(
         &opening_batch,
@@ -108,86 +116,49 @@ where
     if row_coefficients.as_slice() != [E::one()] {
         return Err(AkitaError::InvalidProof);
     }
-    let e_fields = {
-        let state = grinding.state_mut();
-        state.site(
-            akita_types::FoldSite::TerminalEFields { level }
-                .id()?
-                .into(),
-        );
-        state.receive_n::<F>(group.e_field_elems)
-    }
+    let e_fields = akita_transcript::receive_field_group::<F>(
+        grinding.state_mut(),
+        akita_types::FoldSite::TerminalEFields { level }.id()?,
+        group.e_field_elems,
+    )
     .map(RingVec::from_coeffs)?;
-    // Under `dev-protocol` both segments omit their last block. The
-    // predecessor fold bound the `t` digest next to the carried state, and the
-    // `e` digest arrives here, before the fold challenges.
-    let last_block_digests = if akita_params::RECOMPUTE_LAST_BLOCK {
-        Some(crate::terminal::direct::LastBlockDigests {
-            t: current_state
-                .witness_last_block_digest
-                .ok_or(AkitaError::InvalidProof)?,
-            e: akita_types::receive_field_digest(
-                grinding.state_mut(),
-                akita_types::FoldSite::TerminalEDigest { level }
-                    .id()?
-                    .into(),
-            )?,
-        })
-    } else {
-        None
+    // Both segments omit their last block. The predecessor fold bound the `t`
+    // digest next to the carried state, and the `e` digest arrives here, before
+    // the fold challenges.
+    let last_block_digests = crate::terminal::direct::LastBlockDigests {
+        t: *t_last_block_digest,
+        e: akita_transcript::receive_field_digest(
+            grinding.state_mut(),
+            akita_types::FoldSite::TerminalEDigest { level }.id()?,
+        )?,
     };
-    let mut fork =
-        grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
-    let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
-        Some(
-            jolt_crypto::challenge::selective_l2_operator_norm_rejection(
-                scheduled.d_a(),
-                &scheduled.fold_challenge_config,
-            )
-            .ok_or(AkitaError::InvalidProof)?,
-        )
-    } else {
-        None
-    };
-    let mut draw = akita_types::ForkFoldDraw::new(&mut fork);
+    grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;
+    let family = scheduled.fold_challenge_family()?;
     let challenges = {
-        draw.draw_folding_challenges_with_rejection(
-            akita_types::FoldChallengeDrawDomain::EvaluationTrace,
-            scheduled.d_a(),
-            0,
-            scheduled.blocks.live_blocks,
-            1,
-            &scheduled.fold_challenge_config,
-            operator_rejection,
-        )?
+        let mut draw = akita_types::VerifierFoldDraw::new(grinding.state_mut(), level, 0);
+        draw.draw_fold_challenges(&family, scheduled.blocks.live_blocks, 1)?
+            .ok_or(AkitaError::InvalidProof)?
     };
-    let draws = draw.take_record();
-    grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks, &draws)?;
-    let z_payload = {
-        let state = grinding.state_mut();
-        state.site(
-            akita_types::FoldSite::TerminalZPayload { level }
-                .id()?
-                .into(),
-        );
-        state
-            .receive_bounded_bytes(group.z_payload_bytes)
-            .map(<[u8]>::to_vec)
-    }?;
+    grinding.record_fold_challenges(level, 0, scheduled.blocks.live_blocks)?;
+    let z_payload = akita_transcript::receive_bounded_bytes(
+        grinding.state_mut(),
+        akita_types::FoldSite::TerminalZPayload { level }.id()?,
+        group.z_payload_bytes,
+    )?;
     scheduled.validate_terminal_linf_cap(group.z_linf_cap)?;
     let terminal_response = akita_types::TerminalResponse {
         layout: scheduled.response_shape.layout.clone(),
         z_payloads: vec![z_payload],
         e_fields,
-        t_fields: current_state.witness.clone(),
+        t_fields: t_sent.clone(),
     };
-    let e_fields = crate::terminal::direct::verify_terminal_ring_relations::<_, H>(
+    let e_fields = crate::terminal::direct::verify_terminal_ring_relations(
         terminal_ntt,
         &challenges,
         &prepared_point.ring_multiplier_point,
         scheduled,
         &terminal_response,
-        last_block_digests.as_ref(),
+        &last_block_digests,
     )?;
     let (target, scale) = match final_relation {
         Some((claims, factors)) => (

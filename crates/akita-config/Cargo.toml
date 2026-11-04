@@ -10,6 +10,19 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
+default = ["transcript-keccak"]
+transcript-blake2b = [
+  "akita-schedules/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-schedules/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
+]
 test-support = []
 dev-protocol = ["akita-params/dev-protocol"]
 # Zero-knowledge configurations (`ZkCommitmentConfig`) and their catalogs,
@@ -27,6 +40,7 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev =
 ] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 
@@ -34,7 +48,6 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
   "test-support",
 ] }
-rand_core = "0.6"
 serde_json = "1"
 
 [lints]

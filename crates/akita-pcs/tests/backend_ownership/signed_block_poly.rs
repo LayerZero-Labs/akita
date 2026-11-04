@@ -102,7 +102,7 @@ fn roundtrip(storage: Storage, len: usize) {
             .batched_prove(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange)
             .unwrap();
         verifier
-            .verify_standalone(
+            .batched_verify(
                 &proof,
                 DOMAIN,
                 common::verify_input::<Cfg>(
@@ -112,6 +112,7 @@ fn roundtrip(storage: Storage, len: usize) {
                     scheme.schedules(),
                 ),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
             .unwrap();
         proof_bytes.push(proof);

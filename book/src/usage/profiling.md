@@ -12,7 +12,7 @@ Run this command from `crates/akita-pcs`:
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=36 \
   cargo run --release --no-default-features \
-  --features parallel,profile-onehot-fp128 \
+  --features parallel,profile-onehot-fp128,transcript-keccak \
   --example profile
 ```
 
@@ -27,7 +27,7 @@ debugging the harness itself.
 
 `onehot_fp128` commits to one multilinear polynomial with $2^{36}$ entries and
 opens it at one 36 coordinate point. The source stores one selected position in
-each 256 entry chunk.
+each 16 entry chunk.
 
 The public statement proves commitment and opening consistency. One hot is the
 prover representation that lets Akita skip zero work. A host constraint system
@@ -121,7 +121,7 @@ Build without `parallel` to measure the same workload sequentially:
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features profile-onehot-fp128 \
+  --features profile-onehot-fp128,transcript-keccak \
   --example profile
 ```
 
@@ -133,7 +133,7 @@ calibration adds full witness scans, so enable it explicitly for those runs:
 ```bash
 AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features parallel,profile-onehot-fp128,response-model-diagnostics \
+  --features parallel,profile-onehot-fp128,transcript-keccak,response-model-diagnostics \
   --example profile
 ```
 

@@ -18,9 +18,9 @@ orchestration lives in `akita-pcs`.
 | `jolt-crypto` (external, `lattice` feature) | Sparse fold challenges, operator-norm rejection, and public-matrix derivation |
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Multilinear, equality, split-equality, and offset-equality polynomial utilities; LaBinius binary and trinomial arithmetic (opt-in) |
-| `jolt-transcript` (external) | Fiat-Shamir proof channel (NARG prover/verifier transcripts, sponges, grinding) |
+| `akita-transcript` | Akita's Fiat-Shamir policy over `jolt-transcript` (external): session, proof atoms, descriptor preamble, `ProofChannel` |
 | `akita-challenges` | LaBinius binary challenge families (opt-in); sparse challenges live in `jolt-crypto` |
-| `akita-sumcheck` | Sumcheck kernel traits, driver adapters, folding |
+| `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
 | `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
 | `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and artifact certification |
@@ -43,9 +43,9 @@ graph TD
   Ser["akita-serialization"]
   Field["jolt-algebra (external)"]
   Algebra["akita-algebra"]
-  Transcript["jolt-transcript (external)"]
+  Transcript["akita-transcript"]
+  JoltTranscript["jolt-transcript (external)"]
   Crypto["jolt-crypto"]
-  JoltSumcheck["jolt-sumcheck (external)"]
   Sumcheck["akita-sumcheck"]
   Params["akita-params"]
   Types["akita-types"]
@@ -80,8 +80,10 @@ graph TD
   Algebra --> Error
   Algebra --> Field
   Algebra --> Ser
+  Transcript --> Error
   Transcript --> Field
-  Error --> Transcript
+  Transcript --> JoltTranscript
+  Transcript --> Error
   Crypto --> Field
   Sumcheck --> Error
   Sumcheck --> Algebra
@@ -119,6 +121,7 @@ graph TD
   Config --> Error
   Config --> Crypto
   Config --> Field
+  Config --> Transcript
   Config --> Types
   Config --> Schedules
   Verifier --> Params
@@ -149,6 +152,7 @@ graph TD
   Cpu --> Field
   Cpu --> Ser
   Cpu --> Sumcheck
+  Cpu --> Transcript
   Cpu --> Types
   Setup --> Params
   Setup --> Error

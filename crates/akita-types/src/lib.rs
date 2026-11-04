@@ -19,7 +19,6 @@ mod stage3_sites;
 mod stage_checks;
 mod subring_coefficient_packing;
 pub mod trace_weight;
-pub mod transcript;
 mod transcript_grinding;
 pub use eor_sites::{eor_final_claims, eor_prefix, EorPrefix, EOR_SUMCHECK_INVOCATION};
 pub use extension_opening_reduction::{
@@ -83,9 +82,10 @@ pub use proof::{
     coefficient_packing_fixture, coefficient_packing_multigroup_fixture, CoefficientPackingFixture,
     CoefficientPackingMultigroupFixture,
 };
+#[cfg(feature = "prover")]
+pub use proof::PreviewFoldDraw;
 pub use proof::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, FoldDrawRecord, ForkFoldDraw,
-    FOLD_CHALLENGE_SEED_LEN,
+    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
 };
 #[cfg(test)]
 pub(crate) use proof::{
@@ -117,9 +117,6 @@ pub use subring_coefficient_packing::{
 pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
-};
-pub use transcript::{
-    extension_slots, AkitaSponge, PROOF_STREAM_PROTOCOL, PROOF_STREAM_PROTOCOL_NAME,
 };
 #[cfg(feature = "zk")]
 pub use transcript_grinding::CountingGrinding;
@@ -156,10 +153,11 @@ pub fn residual_point<F: jolt_algebra::Field>(
     )
 }
 pub use transcript_grinding::{
-    FoldResponseReplay, GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier,
-    ProverGrinding, ProverGrindingChannel, PublicGrindingSumcheck, VerifierGrinding,
-    VerifierGrindingChannel,
+    FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance,
+    PublicGrindingSumcheck, VerifierGrinding, VerifierGrindingChannel,
 };
+#[cfg(feature = "prover")]
+pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding};
 
 #[cfg(test)]
 mod schedule_tests;
@@ -175,3 +173,9 @@ mod sis_compression_tests;
 
 #[cfg(test)]
 mod params_tests;
+
+pub use setup_contribution::{
+    materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
+    PreparedCoefficientFunctional, ReducedRoleCoefficientState, SetupIndexWeightMle,
+};
+pub mod setup_claims;

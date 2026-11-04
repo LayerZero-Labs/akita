@@ -1,6 +1,7 @@
 use super::*;
 use crate::backend::OperationCtx;
 use crate::backend::{EvaluationTraceDescription, Stage2OpeningDescription};
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use jolt_algebra::AdditiveGroup;
 
@@ -70,15 +71,7 @@ pub(in crate::protocol::prove) struct PreparedFold<
     clippy::too_many_arguments,
     clippy::type_complexity
 )]
-pub(super) fn prepare_fold<
-    'claims,
-    'source,
-    F,
-    E,
-    B,
-    H: Sponge,
-    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
->(
+pub(super) fn prepare_fold<'claims, 'source, F, E, B>(
     backend: &B,
     block_claims: ProverOpeningData<
         'claims,
@@ -88,7 +81,8 @@ pub(super) fn prepare_fold<
     >,
     commitment_material: Vec<B::CommitmentMaterialHandle>,
     pad_base_evals: bool,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    // T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
@@ -101,6 +95,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -131,7 +126,7 @@ where
             .iter()
             .flat_map(|g| g.evaluations().iter().copied())
             .collect::<Vec<_>>();
-        let reduced = prove_extension_opening_reduction::<F, E, B, _, _>(
+        let reduced = prove_extension_opening_reduction::<F, E, B>(
             backend,
             session,
             &context,
@@ -261,47 +256,24 @@ where
             }
         }
         if pad_base_evals {
-            grinding.state_mut().site(
+            akita_transcript::public_extensions::<F, E, _>(
+                grinding.state_mut(),
                 akita_types::FoldSite::GroupPoint {
                     level,
                     group: group_index,
                 }
-                .id()?
-                .into(),
-            );
-            grinding
-                .state_mut()
-                .public_all(requests[group_index].plan.point());
+                .id()?,
+                requests[group_index].plan.point(),
+            )?;
         }
         scalar_openings.extend_from_slice(prepared.scalar_openings());
     }
     if reduction.is_none() {
-        // A setup prefix is group 0, with one evaluation; every later group's
-        // openings are derived claims.
-        let (prefix, derived) = match (
-            level_params.setup_prefix(),
-            prepared_group_openings.as_slice(),
-        ) {
-            (Some(_), [prefix, derived @ ..]) => match prefix.scalar_openings() {
-                [evaluation] => (Some(evaluation), derived),
-                _ => {
-                    return Err(AkitaError::Internal(
-                        "setup-prefix group does not open exactly one polynomial".into(),
-                    ))
-                }
-            },
-            (Some(_), []) => {
-                return Err(AkitaError::Internal(
-                    "fold with a setup prefix has no opening groups".into(),
-                ))
-            }
-            (None, derived) => (None, derived),
-        };
-        let derived = derived
-            .iter()
-            .flat_map(|group| group.scalar_openings().iter().copied())
-            .collect::<Vec<_>>();
-        akita_types::bind_fold_openings::<F, E, _>(grinding, level, prefix, &derived)?;
+        akita_transcript::public_extensions::<F, E, _>(
+            grinding.state_mut(),
+            akita_types::FoldSite::Openings { level }.id()?,
+            &scalar_openings,
+        )?;
     }
     let crate::protocol::ring_relation::PreparedRingRelationOutput {
         relation:
@@ -312,7 +284,7 @@ where
             },
         trace_claim,
         row_coefficients,
-    } = RingRelationProver::prepare::<F, E, B, _, _>(
+    } = RingRelationProver::prepare::<F, E, B>(
         opening,
         prepared_group_openings,
         commitment_material,
@@ -386,19 +358,15 @@ struct CommittedNextWitness<F: Field, WitnessHandle, M> {
     commitment_material_handle: M,
 }
 
-fn prepare_physical_l2_batch<
-    F,
-    E,
-    H: Sponge,
-    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
->(
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+fn prepare_physical_l2_batch<F, E>(
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
 ) -> Result<Option<PhysicalL2ProverReplay<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F> + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize + ChallengeCodec,
 {
     let Some(mut replay) = physical_l2 else {
         return Ok(None);
@@ -406,33 +374,28 @@ where
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
     let eta = grinding
-        .grinded_ext_challenge::<F, E>(akita_params::GrindingSite::L2VirtualBatch { level })?;
+        .grinded_ext_challenge::<E>(akita_params::GrindingSite::L2VirtualBatch { level })?;
     (replay.claim, replay.batching) =
         batch_l2_virtual_evaluations(eta, &replay.virtual_evaluations);
     Ok(Some(replay))
 }
 
-fn prepare_stage2_compression<
-    F,
-    E,
-    H,
-    S: Sponge,
-    C: crate::protocol::ProverFoldChannel<E, Sponge = S>,
->(
-    grinding: &mut akita_types::ProverGrinding<'_, S, C>,
+// T0-PORT(private): dev used ProverGrinding<'_, S, C> here; re-express on v8.
+fn prepare_stage2_compression<F, E, H>(
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
     rs: &mut RingSwitchOutput<E, H>,
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F> + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize + ChallengeCodec,
 {
     if !rs.compressed {
         return Ok(E::zero());
     }
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::CompressionBinary { level })
+    grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::CompressionBinary { level })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -549,9 +512,10 @@ where
 /// Build, commit, and transcript-bind the witness consumed by the successor.
 /// The logical witness is computed once and retained for ring switching.
 #[allow(clippy::too_many_arguments)]
-fn commit_next_witness<F, E, B, H: Sponge, C: crate::protocol::ProverFoldChannel<E, Sponge = H>>(
+// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+fn commit_next_witness<F, E, B>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: u32,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
@@ -603,16 +567,12 @@ where
             crate::backend::NextWitnessBindingMessage::OuterPayload(public_commitment),
             akita_params::NextWitnessBindingPolicy::OuterPayload,
         ) => {
-            grinding.state_mut().site(
-                akita_types::FoldSite::NextWitnessPayload { level }
-                    .id()?
-                    .into(),
-            );
-            // Public in both modes: at the cut level this is cm(u_a), u_a
-            // being hidden by its own randomness r_a (A47).
-            grinding
-                .state_mut()
-                .exchange_public_all(&mut payload.payload(level, public_commitment.coeffs())?)?;
+            // T0-PORT(private): dev used exchange_public_all, randomness here; re-express on v8.
+            akita_transcript::send_field_group(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessPayload { level }.id()?,
+                public_commitment.coeffs(),
+            )?;
             NextWitnessState::OuterPayload(public_commitment)
         }
         (
@@ -624,36 +584,19 @@ where
                     "terminal inner state bound for a recursive successor".into(),
                 ));
             };
-            // Under `dev-protocol` the scheduled prefix stops before
-            // the last block, which travels as a digest. Otherwise the prefix
-            // is the whole state.
-            let (sent, last_block) = message
-                .fields()
-                .split_at_checked(terminal.response_shape.layout.t_field_elems())
-                .ok_or_else(|| {
-                    AkitaError::Internal(
-                        "terminal inner state is shorter than its scheduled prefix".into(),
-                    )
-                })?;
-            grinding.state_mut().site(
-                akita_types::FoldSite::NextWitnessInnerState { level }
-                    .id()?
-                    .into(),
-            );
-            grinding.state_mut().exchange_all(&mut sent.to_vec())?;
-            if akita_params::RECOMPUTE_LAST_BLOCK {
-                akita_types::send_field_digest(
-                    grinding.state_mut(),
-                    akita_types::FoldSite::NextWitnessInnerStateDigest { level }
-                        .id()?
-                        .into(),
-                    last_block,
-                )?;
-            } else if !last_block.is_empty() {
-                return Err(AkitaError::Internal(
-                    "terminal inner state is longer than its scheduled length".into(),
-                ));
-            }
+            // The scheduled prefix stops before the last block, which travels
+            // as a digest.
+            let (sent, last_block) = terminal.split_last_t_block(message.fields())?;
+            akita_transcript::send_field_group(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessInnerState { level }.id()?,
+                sent,
+            )?;
+            akita_transcript::send_field_digest(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessInnerStateDigest { level }.id()?,
+                last_block,
+            )?;
             NextWitnessState::TerminalInnerState(message)
         }
         _ => {
@@ -684,25 +627,20 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub(in crate::protocol::prove) fn prove_fold<
-    F,
-    E,
-    B,
-    H: Sponge,
-    C: crate::protocol::ProverFoldChannel<E, Sponge = H>,
->(
+pub(in crate::protocol::prove) fn prove_fold<F, E, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
     backend: &B,
     session: &B::ProofSessionHandle,
-    grinding: &mut akita_types::ProverGrinding<'_, H, C>,
+    // T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
+    grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
     lp: &CommittedGroupParams,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
     prepared_fold: PreparedFold<F, E, B::WitnessHandle>,
-    payload: &mut impl SuccessorPayload<F>,
+    setup_batch: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
     handoff: impl FnOnce(
         &RingRelationInstance<F>,
         &crate::backend::ValidatedRecursiveWitnessCommitPlan,
@@ -715,6 +653,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
+        + ChallengeCodec
         + ExtField<F>
         + Unreduced
         + Fold
@@ -762,7 +701,7 @@ where
         witness_handle: mut next_witness,
         binding: next_commitment_binding,
         commitment_material_handle,
-    } = commit_next_witness::<F, E, B, _, _>(
+    } = commit_next_witness::<F, E, B>(
         backend,
         grinding,
         fold_level,
@@ -786,7 +725,7 @@ where
         backend.proof_context(session, fold_level)?,
     );
     let next_opening_source_len = committed_witness_len / next_opening_ring_dim;
-    let ring_switch = ring_switch_finalize::<F, E, B, _, _>(
+    let ring_switch = ring_switch_finalize::<F, E, B>(
         &consumer_ctx,
         &instance,
         grinding,
@@ -832,8 +771,7 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
-        range_leaf,
-    } = prove_stage1::<F, E, _, _, _>(
+    } = prove_stage1::<F, E, _>(
         &consumer_ctx,
         grinding,
         fold_level,
@@ -841,10 +779,10 @@ where
         lp,
         &relation_range_image_plan,
     )?;
-    let physical_l2 = prepare_physical_l2_batch::<F, E, _, _>(grinding, level, physical_l2)?;
-    let compression = prepare_stage2_compression::<F, E, _, _, _>(grinding, level, &mut rs)?;
+    let physical_l2 = prepare_physical_l2_batch::<F, E>(grinding, level, physical_l2)?;
+    let compression = prepare_stage2_compression::<F, E, _>(grinding, level, &mut rs)?;
     let batching_coeff =
-        grinding.grinded_ext_challenge::<F, E>(akita_params::GrindingSite::Stage2Batch {
+        grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::Stage2Batch {
             level: fold_level,
         })?;
     let (linear_terms, scalar_opening_claim) = prepare_relation_sumcheck::<F, E, _>(
@@ -874,7 +812,7 @@ where
     let Stage2ProveOutput {
         challenges: sumcheck_challenges,
         witness_evaluation: w_eval,
-    } = prove_stage2::<F, E, _, _, _>(
+    } = prove_stage2::<F, E, _>(
         &consumer_ctx,
         level,
         grinding,
@@ -899,27 +837,26 @@ where
             relation_plan: &relation_range_image_plan,
             groups: &relation_groups,
         },
+        setup_batch
+            .filter(|_| next_params.setup_contribution_mode() == SetupContributionMode::Direct),
     )?;
-    akita_types::stage2_w_eval::<F, E, _>(grinding, fold_level, w_eval)?;
-    let stage3_sumcheck_proof = match next_params.recursive() {
-        Some(next_fold_params) => prove_stage3::<F, E, _, _, _>(
-            consumer,
-            session,
-            level,
-            next_params.setup_contribution_mode(),
-            expanded,
-            prefix_slots,
-            lp,
-            &next_fold_params.params,
-            &instance,
-            &tau1,
-            alpha,
-            &sumcheck_challenges,
-            relation_address_geometry,
-            grinding,
-        )?,
-        None => None,
-    };
+    let stage3_sumcheck_proof = prove_stage3::<F, E, _>(
+        consumer,
+        session,
+        level,
+        next_params.setup_contribution_mode(),
+        expanded,
+        prefix_slots,
+        lp,
+        next_params.recursive().map(|next| &next.params),
+        &instance,
+        &tau1,
+        alpha,
+        &sumcheck_challenges,
+        relation_address_geometry,
+        grinding,
+        setup_batch,
+    )?;
     let setup_prefix_opening =
         stage3_sumcheck_proof.map(|stage3| (stage3.setup_prefix_point, stage3.setup_prefix_eval));
 
