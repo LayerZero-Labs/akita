@@ -12,6 +12,8 @@ use akita_types::binary_source::{
     binary_scalar_challenges, binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor,
     BinaryTerminalClaim, BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Natural coefficient-order digit segments fixed by the outgoing commitment.
 /// No carry table is a clear proof message.
@@ -116,31 +118,34 @@ pub(crate) fn packed_row_partials(
         checked::product([owner, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
     let range =
         checked::range(owner_start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
-    for (column, words) in sources
-        .get(range)
-        .ok_or(AkitaError::InvalidProof)?
-        .chunks_exact(rows)
-        .enumerate()
-    {
+    let sources = sources.get(range).ok_or(AkitaError::InvalidProof)?;
+    let owner_len = checked::product([columns, 162]).ok_or(AkitaError::InvalidProof)?;
+    let range = checked::product([owner, owner_len])
+        .and_then(|start| checked::range(start, owner_len))
+        .ok_or(AkitaError::InvalidProof)?;
+    let targets = partials.get_mut(range).ok_or(AkitaError::InvalidProof)?;
+    let column = |(words, targets): (&[u128], &mut [i8])| -> Result<(), AkitaError> {
         let mut value = BinaryField162::ZERO;
         for (&word, &weight) in words.iter().zip(&weights) {
             let embedded = BinaryField162::from_words([word as u64, (word >> 64) as u64, 0])
                 .ok_or(AkitaError::InvalidProof)?;
             value += weight * embedded;
         }
-        let start = checked::mul_add(owner, columns, column)
-            .and_then(|x| checked::product([x, 162]))
-            .ok_or(AkitaError::InvalidProof)?;
-        let range = checked::range(start, 162).ok_or(AkitaError::InvalidProof)?;
-        for (target, bit) in partials
-            .get_mut(range)
-            .ok_or(AkitaError::InvalidProof)?
-            .iter_mut()
-            .zip(binary_scalar_lift(value))
-        {
+        for (target, bit) in targets.iter_mut().zip(binary_scalar_lift(value)) {
             *target = bit as i8;
         }
-    }
+        Ok(())
+    };
+    #[cfg(feature = "parallel")]
+    sources
+        .par_chunks_exact(rows)
+        .zip(targets.par_chunks_exact_mut(162))
+        .try_for_each(column)?;
+    #[cfg(not(feature = "parallel"))]
+    sources
+        .chunks_exact(rows)
+        .zip(targets.chunks_exact_mut(162))
+        .try_for_each(column)?;
     Ok(partials)
 }
 
