@@ -1,15 +1,12 @@
 //! Ordinary commitment preimages authenticated in a mixed native root.
 
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
 };
-#[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, CanonicalEncoding, Field, Prime128Offset275};
+use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
 
 use super::paired_offset_eq_sum;
 use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, TranslatedLanes};
@@ -252,20 +249,14 @@ impl OrdinaryNativeRootPlan {
             return Err(AkitaError::InvalidProof);
         };
         let mut families = Vec::new();
-        let mut translated = |copies, lanes| {
+        let mut translated = |copies, lanes, residue| {
             families.push(RootWeightFamily::Translated(TranslatedLanes::new(
-                table_len, copies, lanes,
+                table_len, copies, lanes, residue,
             )?));
             Ok::<_, AkitaError>(())
         };
-        // A rows read their kernels against the source in every block.
-        let a_kernels = role_kernels(
-            matrix,
-            a.output_rank(),
-            a.input_width(),
-            a.ring_dimension(),
-            alpha,
-        )?;
+        // A rows read their residue kernels against the source in every block.
+        let a_rings = role_rings(matrix, a.output_rank(), a.input_width(), a.ring_dimension())?;
         let positions = self.profile.blocks.positions_per_block;
         for a_row in 0..a.output_rank() {
             let copies = (0..self.profile.blocks.live_blocks)
@@ -282,11 +273,11 @@ impl OrdinaryNativeRootPlan {
                 .map(|position| {
                     Ok((
                         s_lanes.offset(position, 0)?,
-                        kernel(&a_kernels, a.input_width(), a_row, position)?,
+                        ring(&a_rings, a.input_width(), a_row, position)?,
                     ))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            translated(copies, kernels)?;
+            translated(copies, kernels, Some(alpha))?;
         }
         // Every A image subtracts its recomposed T digits, scaled by its row.
         let image_copies = a_batches
@@ -317,16 +308,10 @@ impl OrdinaryNativeRootPlan {
                 digit_scale *= E::from_u64(8);
             }
         }
-        translated(image_copies, recomposition)?;
-        // B rows read their kernels against the T digits of every slice; slices
-        // of one width share one pattern.
-        let b_kernels = role_kernels(
-            matrix,
-            b.output_rank(),
-            b.input_width(),
-            b.ring_dimension(),
-            alpha,
-        )?;
+        translated(image_copies, recomposition, None)?;
+        // B rows read their residue kernels against the T digits of every
+        // slice; slices of one width share one pattern.
+        let b_rings = role_rings(matrix, b.output_rank(), b.input_width(), b.ring_dimension())?;
         let block_elements =
             checked::product([a.output_rank(), subcolumns]).ok_or(AkitaError::InvalidProof)?;
         let geometry = self.profile.derive_slice_geometry()?;
@@ -362,11 +347,11 @@ impl OrdinaryNativeRootPlan {
                             .ok_or(AkitaError::InvalidProof)?;
                         kernels.push((
                             t_lanes.offset(element, digit)?,
-                            kernel(&b_kernels, b.input_width(), b_row, column)?,
+                            ring(&b_rings, b.input_width(), b_row, column)?,
                         ));
                     }
                 }
-                translated(copies, kernels)?;
+                translated(copies, kernels, Some(alpha))?;
             }
         }
         // Every B image coefficient subtracts its recomposed first-map bits.
@@ -387,23 +372,24 @@ impl OrdinaryNativeRootPlan {
         translated(
             f_lanes.bit_copies(first.input_coefficients(), image.len())?,
             vec![(0, image)],
+            None,
         )?;
-        // Each compression map reads its kernels against its input digits.
+        // Each compression map reads its residue kernels against its input
+        // digits.
         for (map, lanes, batch) in [
             (first, &f_lanes, first_batch),
             (second, &h_lanes, second_batch),
         ] {
-            let map_kernels =
-                role_kernels(matrix, 1, map.input_width(), map.ring_dimension(), alpha)?;
+            let map_rings = role_rings(matrix, 1, map.input_width(), map.ring_dimension())?;
             let kernels = (0..map.input_width())
                 .map(|column| {
                     Ok((
                         lanes.offset(column, 0)?,
-                        kernel(&map_kernels, map.input_width(), 0, column)?,
+                        ring(&map_rings, map.input_width(), 0, column)?,
                     ))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            translated(vec![(lanes.base(0, 0)?, batch)], kernels)?;
+            translated(vec![(lanes.base(0, 0)?, batch)], kernels, Some(alpha))?;
         }
         let mut output = Vec::new();
         let mut power = -first_batch;
@@ -414,6 +400,7 @@ impl OrdinaryNativeRootPlan {
         translated(
             h_lanes.bit_copies(second.input_coefficients(), output.len())?,
             vec![(0, output)],
+            None,
         )?;
         let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
         families.push(RootWeightFamily::SourceEvaluation(
@@ -441,27 +428,25 @@ impl OrdinaryNativeRootPlan {
     }
 }
 
-/// Residue kernels of every entry of one public matrix role, row-major.
+/// Ring coefficients of every entry of one public matrix role, row-major.
 ///
 /// Entry `(row, column)` is the degree-`degree` ring at flat offset
-/// `(row * width + column) * degree` of the ordinary setup prefix. Entries are
-/// independent, so they are computed in parallel under `parallel`.
-fn role_kernels<E: Field>(
+/// `(row * width + column) * degree` of the ordinary setup prefix.
+fn role_rings<E: Field>(
     matrix: &[Prime128Offset275],
     rows: usize,
     width: usize,
     degree: usize,
-    alpha: E,
 ) -> Result<Vec<Vec<E>>, AkitaError> {
     let len = checked::product([rows, width, degree]).ok_or(AkitaError::InvalidProof)?;
     let coefficients = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
     if degree == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let point = ResidueKernelPoint::new(alpha, degree)?;
-    cfg_chunks!(coefficients, degree)
+    coefficients
+        .chunks_exact(degree)
         .map(|entry| {
-            let coefficients = entry
+            entry
                 .iter()
                 .map(|coefficient| {
                     coefficient
@@ -469,17 +454,14 @@ fn role_kernels<E: Field>(
                         .map(E::from_u128)
                         .ok_or(AkitaError::InvalidProof)
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut weights = vec![E::zero(); degree];
-            point.field_kernel_into(&coefficients, &mut weights)?;
-            Ok(weights)
+                .collect()
         })
         .collect()
 }
 
-/// A copy of kernel `(row, column)` of a role with `width` columns.
-fn kernel<E: Field>(
-    kernels: &[Vec<E>],
+/// A copy of ring `(row, column)` of a role with `width` columns.
+fn ring<E: Field>(
+    rings: &[Vec<E>],
     width: usize,
     row: usize,
     column: usize,
@@ -488,7 +470,7 @@ fn kernel<E: Field>(
         return Err(AkitaError::InvalidProof);
     }
     checked::mul_add(row, width, column)
-        .and_then(|entry| kernels.get(entry))
+        .and_then(|entry| rings.get(entry))
         .cloned()
         .ok_or(AkitaError::InvalidProof)
 }

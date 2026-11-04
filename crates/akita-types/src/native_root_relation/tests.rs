@@ -469,3 +469,50 @@ fn both_trinomial_signs_match_independent_long_division() {
         weights.check_table(&table).unwrap();
     }
 }
+
+#[test]
+fn residue_lanes_match_their_explicit_kernels_across_low_blocks() {
+    let (alpha, degree, table_len) = (F::from_u64(29), 64, 1 << 13);
+    let point = akita_algebra::ring::ResidueKernelPoint::new(alpha, degree).unwrap();
+    // Lanes at 1000 cross a low block from base 0, and the lane at 0 does
+    // from base 2000; the other lanes read whole windows.
+    let rings = [0usize, 64, 1000, 3000]
+        .map(|offset| {
+            let ring = (0..degree)
+                .map(|c| F::from_u64((offset * 7 + c * 13 + 1) as u64))
+                .collect::<Vec<_>>();
+            (offset, ring)
+        })
+        .to_vec();
+    let kernels = rings
+        .iter()
+        .map(|(offset, ring)| (*offset, point.field_kernel(ring).unwrap()))
+        .collect::<Vec<_>>();
+    let copies = [(0, 3), (5, 7), (1029, 11), (2000, 13)]
+        .map(|(base, scale)| (base, F::from_u64(scale)))
+        .to_vec();
+    let weights = |lanes, residue| {
+        let family = TranslatedLanes::new(table_len, copies.clone(), lanes, residue).unwrap();
+        NativeRootWeights::structured(
+            table_len,
+            Vec::new(),
+            vec![RootWeightFamily::Translated(family)],
+            F::zero(),
+        )
+        .unwrap()
+    };
+    let residue = weights(rings, Some(alpha));
+    let explicit = weights(kernels, None);
+    let table = explicit.materialize().unwrap();
+    assert_eq!(residue.materialize().unwrap(), table);
+    let point = (0..13)
+        .map(|index| F::from_u64(101 + 37 * index))
+        .collect::<Vec<_>>();
+    let dense = akita_algebra::eq_poly::EqPolynomial::evals(&point)
+        .unwrap()
+        .into_iter()
+        .zip(&table)
+        .fold(F::zero(), |sum, (eq, &weight)| sum + eq * weight);
+    assert_eq!(residue.evaluate(&point).unwrap(), dense);
+    assert_eq!(explicit.evaluate(&point).unwrap(), dense);
+}

@@ -6,7 +6,10 @@
 //! field elements into its dense Stage 2 table. Both read one construction,
 //! so the two sides cannot disagree about a weight.
 
+use std::borrow::Cow;
+
 use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
@@ -258,11 +261,20 @@ impl<E: Field> RootWeightFamily<E> {
 /// sum per high block, and every copy in the class combines them with its own
 /// high factors. Verification costs `classes * pattern + copies * span / 2^b`
 /// operations instead of `copies * pattern`.
+///
+/// With a residue point, each lane holds the coefficients `a` of one
+/// negacyclic ring element and its weights are the residue kernel
+/// `w_j = (X^j a mod X^d + 1)(alpha)`. That kernel is a Hankel product, so the
+/// part of a lane inside one low block reads `<a, K(x)>`, where `x` holds the
+/// lane's low factors in that block and zeros elsewhere. These kernels depend
+/// only on the lane's low offset, so the verifier computes them once per
+/// offset instead of one kernel per lane.
 #[derive(Clone, Debug)]
 pub(crate) struct TranslatedLanes<E: Field> {
     table_len: usize,
     copies: Vec<(usize, E)>,
     lanes: Vec<(usize, Vec<E>)>,
+    residue: Option<ResidueKernelPoint<E>>,
     /// One past the largest lane address relative to a base.
     span: usize,
 }
@@ -271,12 +283,23 @@ pub(crate) struct TranslatedLanes<E: Field> {
 const PATTERN_CHUNK_LANES: usize = 16;
 
 impl<E: Field> TranslatedLanes<E> {
-    /// Check that every copy of every lane stays inside the table.
+    /// Check that every copy of every lane stays inside the table, and that
+    /// residue lanes hold one ring element of a power-of-two degree.
     pub(crate) fn new(
         table_len: usize,
         copies: Vec<(usize, E)>,
         lanes: Vec<(usize, Vec<E>)>,
+        residue: Option<E>,
     ) -> Result<Self, AkitaError> {
+        let residue = match (residue, lanes.first()) {
+            (Some(alpha), Some((_, ring))) => {
+                if lanes.iter().any(|(_, lane)| lane.len() != ring.len()) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                Some(ResidueKernelPoint::new(alpha, ring.len())?)
+            }
+            _ => None,
+        };
         let span = lanes
             .iter()
             .map(|(offset, weights)| checked::sum([*offset, weights.len()]))
@@ -296,6 +319,7 @@ impl<E: Field> TranslatedLanes<E> {
             table_len,
             copies,
             lanes,
+            residue,
             span,
         })
     }
@@ -316,10 +340,26 @@ impl<E: Field> TranslatedLanes<E> {
         let blocks = checked::sum([block - 1, self.span])
             .map(|end| end.div_ceil(block))
             .ok_or(AkitaError::InvalidProof)?;
+        // Residue kernels of the low windows that lanes read, one per low
+        // block a lane meets, by low offset; every class shares them.
+        let mut windows = Vec::new();
+        if let Some(point) = &self.residue {
+            windows.resize(block, None);
+            for copies in classes.chunk_by(|left, right| left.0 == right.0) {
+                let class = copies.first().ok_or(AkitaError::InvalidProof)?.0;
+                for (offset, _) in &self.lanes {
+                    let start = (class + offset) % block;
+                    let slot = windows.get_mut(start).ok_or(AkitaError::InvalidProof)?;
+                    if slot.is_none() {
+                        *slot = Some(residue_windows(point, eq.low(), start)?);
+                    }
+                }
+            }
+        }
         let mut sum = E::zero();
         for copies in classes.chunk_by(|left, right| left.0 == right.0) {
             let class = copies.first().ok_or(AkitaError::InvalidProof)?.0;
-            let partials = self.pattern_partials(eq, class, blocks)?;
+            let partials = self.pattern_partials(eq, class, blocks, &windows)?;
             for &(_, base, scale) in copies {
                 let mut copy = E::zero();
                 for (index, &partial) in partials.iter().enumerate() {
@@ -342,15 +382,31 @@ impl<E: Field> TranslatedLanes<E> {
         eq: &RootEq<E>,
         class: usize,
         blocks: usize,
+        windows: &[Option<Vec<Vec<E>>>],
     ) -> Result<Vec<E>, AkitaError> {
         let low = eq.low();
         let block = low.len();
         cfg_chunks!(self.lanes, PATTERN_CHUNK_LANES)
             .map(|lanes| {
                 let mut partials = vec![E::zero(); blocks];
-                for (offset, weights) in lanes {
+                for (offset, lane) in lanes {
                     let mut address = class + offset;
-                    let mut weights = weights.as_slice();
+                    if self.residue.is_some() {
+                        let window = windows
+                            .get(address % block)
+                            .and_then(Option::as_ref)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        for (index, kernel) in window.iter().enumerate() {
+                            *partials
+                                .get_mut(address / block + index)
+                                .ok_or(AkitaError::InvalidProof)? += lane
+                                .iter()
+                                .zip(kernel)
+                                .fold(E::zero(), |dot, (&weight, &factor)| dot + weight * factor);
+                        }
+                        continue;
+                    }
+                    let mut weights = lane.as_slice();
                     while !weights.is_empty() {
                         let start = address % block;
                         let (run, rest) = weights.split_at(weights.len().min(block - start));
@@ -382,8 +438,17 @@ impl<E: Field> TranslatedLanes<E> {
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
+        let kernels = match &self.residue {
+            Some(point) => Cow::Owned(
+                self.lanes
+                    .iter()
+                    .map(|(offset, ring)| Ok((*offset, point.field_kernel(ring)?)))
+                    .collect::<Result<Vec<_>, AkitaError>>()?,
+            ),
+            None => Cow::Borrowed(&self.lanes),
+        };
         for &(base, scale) in &self.copies {
-            for (offset, weights) in &self.lanes {
+            for (offset, weights) in kernels.iter() {
                 for (coefficient, &weight) in weights.iter().enumerate() {
                     visit(base + offset + coefficient, scale * weight)?;
                 }
@@ -391,4 +456,31 @@ impl<E: Field> TranslatedLanes<E> {
         }
         Ok(())
     }
+}
+
+/// Residue kernels of the low factors a degree-`d` lane at low offset
+/// `start` reads, one per low block it meets, each zero outside its run.
+fn residue_windows<E: Field>(
+    point: &ResidueKernelPoint<E>,
+    low: &[E],
+    start: usize,
+) -> Result<Vec<Vec<E>>, AkitaError> {
+    let degree = point.dimension();
+    let mut windows = Vec::new();
+    let (mut position, mut low_start) = (0, start);
+    while position < degree {
+        let run = (degree - position).min(low.len() - low_start);
+        let factors = low
+            .get(low_start..low_start + run)
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut window = vec![E::zero(); degree];
+        window
+            .get_mut(position..position + run)
+            .ok_or(AkitaError::InvalidProof)?
+            .copy_from_slice(factors);
+        windows.push(point.field_kernel(&window)?);
+        position += run;
+        low_start = 0;
+    }
+    Ok(windows)
 }
