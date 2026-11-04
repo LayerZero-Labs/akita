@@ -233,34 +233,75 @@ impl<E: Field> ProfileBuilder<E> {
         Ok(())
     }
 
-    /// Add `8^d * value` at `offset` of every digit lane `d` of `element`.
+    /// Add one profile to every element of `lanes`, in parallel.
     ///
-    /// Lanes whose stride is a multiple of the block width keep one shared
-    /// profile per element; narrower lanes fall back to per-address terms.
-    pub(crate) fn add_recomposed(
+    /// `add(element, profile)` adds to the element's `degree` natural
+    /// coefficients, which digit lane `d` weighs by `8^d`. Lanes whose stride
+    /// is a multiple of the block width keep one shared profile per element;
+    /// narrower lanes stream the nonzero entries as per-address terms.
+    pub(crate) fn add_shared(
         &mut self,
         lanes: &SegmentLanes,
-        element: usize,
-        offset: usize,
-        value: E,
+        add: impl Fn(usize, &mut [E]) -> Result<(), AkitaError> + Sync + Send,
     ) -> Result<(), AkitaError> {
-        if offset >= lanes.degree() {
-            return Err(AkitaError::InvalidProof);
-        }
+        let degree = lanes.degree();
         if lanes.stride() & (self.width() - 1) != 0 {
-            return lanes.recompose(element, offset, value, &mut |address, value| {
-                self.add(address, value)
-            });
+            let mut profile = vec![E::zero(); degree];
+            for element in 0..lanes.elements() {
+                profile.fill(E::zero());
+                add(element, &mut profile)?;
+                for (offset, &value) in profile.iter().enumerate() {
+                    if !value.is_zero() {
+                        lanes.recompose(element, offset, value, &mut |address, value| {
+                            self.add(address, value)
+                        })?;
+                    }
+                }
+            }
+            return Ok(());
         }
-        let first = lanes.base(element, 0)? >> self.block_bits;
-        let shared = match self.blocks.get(first) {
-            Some(weight) if weight.shared != 0 => weight.shared,
-            Some(_) => self.share(lanes, element)?,
-            None => return Err(AkitaError::InvalidProof),
-        };
-        // The element's shared rows are contiguous, so `offset` indexes them
-        // directly.
-        self.rows[((shared as usize) << self.block_bits) + offset] += value;
+        let mut shared = Vec::with_capacity(lanes.elements());
+        for element in 0..lanes.elements() {
+            let first = lanes.base(element, 0)? >> self.block_bits;
+            let row = match self.blocks.get(first) {
+                Some(weight) if weight.shared != 0 => weight.shared,
+                Some(_) => self.share(lanes, element)?,
+                None => return Err(AkitaError::InvalidProof),
+            };
+            shared.push((row as usize, element));
+        }
+        // Every element owns distinct contiguous rows; split them off in
+        // row order.
+        shared.sort_unstable();
+        let span = degree.div_ceil(self.width()) << self.block_bits;
+        let mut profiles = Vec::with_capacity(shared.len());
+        let mut rest = self.rows.as_mut_slice();
+        let mut position = 0;
+        for (row, element) in shared {
+            let start = (row << self.block_bits)
+                .checked_sub(position)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (_, tail) = rest
+                .split_at_mut_checked(start)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (rows, tail) = tail
+                .split_at_mut_checked(span)
+                .ok_or(AkitaError::InvalidProof)?;
+            profiles.push((
+                element,
+                rows.get_mut(..degree).ok_or(AkitaError::InvalidProof)?,
+            ));
+            rest = tail;
+            position = (row << self.block_bits) + span;
+        }
+        #[cfg(feature = "parallel")]
+        profiles
+            .par_iter_mut()
+            .try_for_each(|(element, profile)| add(*element, profile))?;
+        #[cfg(not(feature = "parallel"))]
+        profiles
+            .iter_mut()
+            .try_for_each(|(element, profile)| add(*element, profile))?;
         Ok(())
     }
 
