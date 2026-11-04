@@ -1,0 +1,181 @@
+{
+  "date": "2026-11-03",
+  "measured_revision": "38383cc4db2ab6703c7114da62f2be480ec7d016",
+  "measured_main_revision": "0ac494cad881b8f8e01c6bad16c1e171e12e402d",
+  "merged_main_revision": "209ffa1ae8227e45af2beb32595b92d754ca163a",
+  "post_measurement_main_change": "Trusted in-place setup deserialization cap fix; outside the measured commitment path",
+  "workload": {
+    "num_vars": 38,
+    "k_chunk": 16,
+    "setup_mode": "recursive",
+    "field": "fp128",
+    "transcript": "blake2b",
+    "logical_coefficients": 274877906944,
+    "independent_onehot_indices": 17179869184,
+    "resident_witness_bytes": 34359738368,
+    "root_ring_dimension": 512,
+    "threads": 16
+  },
+  "methodology": {
+    "repeat_samples_per_method": {
+      "arm64": 1,
+      "x86_64": 2
+    },
+    "arm64_partial_run": "Three verified trials retained before the interrupted fourth trial; initial NTT trial excluded from comparison",
+    "warmup_excluded": true,
+    "setup_and_preprocessing_excluded": true,
+    "witness_conversion_included": true,
+    "witness_gadget_decomposition": false,
+    "exact_root_cache_additional_bytes": 1073741824,
+    "both_methods_share_prepared_cache_footprint": true,
+    "native_cpu_release_build": true,
+    "rust_version": "1.95.0",
+    "ntt_choice": "explicit experimental selector; both algorithms are available on both CPU architectures",
+    "confidence_intervals": false
+  },
+  "measurements": {
+    "arm64": {
+      "cpu": "Apple M4 Max",
+      "ntt_variant": "ntt-exact",
+      "accumulation_samples_s": [
+        148.162314
+      ],
+      "ntt_samples_s": [
+        90.366669
+      ],
+      "accumulation_mean_s": 148.162314,
+      "ntt_mean_s": 90.366669,
+      "time_reduction_percent": 39.0083304179496,
+      "speedup": 1.6395681686574062,
+      "full_size_trials": [
+        {
+          "trial": 0,
+          "mode": "accumulation",
+          "requested": "accumulation",
+          "commit_s": 148.162314,
+          "prove_s": 67.294539,
+          "storage_read_bytes": null,
+          "both_verified": true
+        },
+        {
+          "trial": 1,
+          "mode": "ntt-exact",
+          "requested": "ntt-exact",
+          "commit_s": 93.572528,
+          "prove_s": 49.025798,
+          "storage_read_bytes": null,
+          "both_verified": true
+        },
+        {
+          "trial": 2,
+          "mode": "ntt-exact",
+          "requested": "best",
+          "commit_s": 90.366669,
+          "prove_s": 29.533915,
+          "storage_read_bytes": null,
+          "both_verified": true
+        }
+      ],
+      "supervisor_pauses_outside_commit": 2
+    },
+    "x86_64": {
+      "cpu": "AMD Ryzen 9 9950X",
+      "ntt_variant": "ntt-panel5@8x48x0",
+      "accumulation_samples_s": [
+        84.399267,
+        84.895354
+      ],
+      "ntt_samples_s": [
+        68.904981,
+        68.971111
+      ],
+      "accumulation_mean_s": 84.6473105,
+      "ntt_mean_s": 68.938046,
+      "time_reduction_percent": 18.558492180327455,
+      "speedup": 1.227875105424369,
+      "full_size_trials": [
+        {
+          "trial": 0,
+          "mode": "accumulation",
+          "requested": "accumulation",
+          "commit_s": 84.399267,
+          "prove_s": 21.770538,
+          "storage_read_bytes": 0,
+          "both_verified": true
+        },
+        {
+          "trial": 1,
+          "mode": "ntt-panel5@8x48x0",
+          "requested": "ntt-panel5@8x48x0",
+          "commit_s": 68.952787,
+          "prove_s": 21.895973,
+          "storage_read_bytes": 0,
+          "both_verified": true
+        },
+        {
+          "trial": 2,
+          "mode": "ntt-panel5@8x48x0",
+          "requested": "best",
+          "commit_s": 68.904981,
+          "prove_s": 21.551348,
+          "storage_read_bytes": 0,
+          "both_verified": true
+        },
+        {
+          "trial": 3,
+          "mode": "accumulation",
+          "requested": "accumulation",
+          "commit_s": 84.895354,
+          "prove_s": 21.648063,
+          "storage_read_bytes": 0,
+          "both_verified": true
+        },
+        {
+          "trial": 4,
+          "mode": "ntt-panel5@8x48x0",
+          "requested": "best",
+          "commit_s": 68.971111,
+          "prove_s": 21.744725,
+          "storage_read_bytes": 0,
+          "both_verified": true
+        }
+      ],
+      "supervisor_pauses_outside_commit": 0
+    }
+  },
+  "correctness": {
+    "completed_smoke_proofs": 12,
+    "completed_full_size_proofs": 8,
+    "both_verifier_thread_policies_passed": true,
+    "bytes_identical_across_variants_and_cpus": true,
+    "payloads": {
+      "32": {
+        "proof_bytes": 77954,
+        "proof_sha256": "34f8e0b5730603317f2fca47d4e298357881284bb26c9a6815f27809adfc36ec",
+        "commitment_bytes": 471,
+        "commitment_sha256": "78a6f0770e0efd7ec72aac3aefdb059d0cdc55f8af63c088876bdcccf9b49e88"
+      },
+      "38": {
+        "proof_bytes": 88229,
+        "proof_sha256": "a2a238bbf2b73a61eca82bfc0da73d8c644dc97d2dd4ceb785c8d9c5743d6dcf",
+        "commitment_bytes": 471,
+        "commitment_sha256": "e5a30996a0529f2621c6f49208912ea974c792e9392b7f3e5eec6c94d2b0fc5a"
+      }
+    }
+  },
+  "validation": {
+    "onehot_ntt_tests_passed": 3,
+    "performance_tests_ignored": 1,
+    "trusted_artifact_tests_passed": 26,
+    "transcript_tests_passed_per_backend": 25,
+    "fuzz_library_tests_passed": 4,
+    "fuzz_runner_tests_passed": 20,
+    "fuzz_workspace_all_targets_check": true,
+    "clippy_configurations_passed": 6,
+    "cheap_preflight_passed": true,
+    "production_catalog_rows_identical_to_main": 126,
+    "experiment_catalog_rows_regenerated": 3,
+    "full_workspace_nextest_run_locally": false,
+    "mdbook_render_run_locally": false
+  }
+}

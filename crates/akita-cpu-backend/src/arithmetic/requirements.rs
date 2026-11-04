@@ -56,6 +56,28 @@ impl NttExecutionRequirements {
         let mut requirements = Self::from_prove_schedule(schedule)?;
         let root = &schedule.root.params;
         requirements.add_group_commit(0, root, SignedCommitSource::Dense)?;
+        if std::env::var("AKITA_ONEHOT_NTT_PREWARM_EXACT").as_deref() == Ok("1") {
+            let inner = root.inner();
+            let width = inner.matrix.input_width();
+            let key = NttCacheKey::from_matrix_shape(
+                inner.matrix.ring_dimension(),
+                inner.matrix.output_rank(),
+                width,
+                NttTransformDomain::ExactNegacyclicI16 {
+                    width,
+                    // Experimental exact one-hot input uses basis-2 validation.
+                    rhs_abs_bound: 2,
+                },
+            )?;
+            requirements.add_commitment_matrix(
+                0,
+                CommitmentNttRoute::InnerOuter,
+                CommitmentNttStage::Inner,
+                key,
+                matrix_extent(inner.matrix.output_rank(), width)?,
+            )?;
+        }
+
         for precommitted in root.precommitted_groups() {
             requirements.add_precommitted_commit(0, precommitted)?;
         }

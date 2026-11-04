@@ -196,5 +196,20 @@
     "num_polys": null,
     "precommitted": [],
     "final_polys": null
+  },
+  {
+    "mode": "onehot_fp128_k16",
+    "setup_mode": "recursive",
+    "family": "fp128_onehot_k16_recursive",
+    "num_vars": [
+      32,
+      38,
+      40
+    ],
+    "num_polys": [
+      1
+    ],
+    "precommitted": [],
+    "final_polys": null
   }
 ]

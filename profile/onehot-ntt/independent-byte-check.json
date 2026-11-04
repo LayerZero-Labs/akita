@@ -1,0 +1,16 @@
+{
+  "full_proofs_checked": 56,
+  "counts": {
+    "mac/nv32": 6,
+    "mac/nv38": 6,
+    "leopard/nv32": 6,
+    "leopard/nv38": 6,
+    "mac-initial/nv32": 6,
+    "mac-initial/nv38": 10,
+    "leopard-initial/nv32": 6,
+    "leopard-initial/nv38": 10
+  },
+  "all_proofs_and_commitments_identical_per_nv_across_hosts_versions_and_modes": true,
+  "nv38_proof_sha256": "0283079873554610b5bcec106f84492d2a4240ee021bfb4189170eba3c76f899",
+  "nv38_commitment_sha256": "dd5db80bf872066c63f868e528d87117b490184626dc42a3f8a797885f93692f"
+}

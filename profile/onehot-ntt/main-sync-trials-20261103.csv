@@ -1,0 +1,21 @@
+cpu,architecture,nv,threads,kind,trial,mode,requested,commit_s,prove_s,storage_read_bytes,both_verified
+Apple M4 Max,arm64,32,16,smoke,0,accumulation,accumulation,1.850874,0.843775,,True
+Apple M4 Max,arm64,32,16,smoke,1,ntt-legacy,ntt-legacy,1.86653,0.875116,,True
+Apple M4 Max,arm64,32,16,smoke,2,ntt-exact,ntt-exact,1.075953,0.839373,,True
+Apple M4 Max,arm64,32,16,smoke,3,ntt-panel6,ntt-panel6,1.811908,0.843661,,True
+Apple M4 Max,arm64,32,16,smoke,4,ntt-panel5,ntt-panel5,1.549037,0.91647,,True
+Apple M4 Max,arm64,32,16,smoke,5,ntt-binary5,ntt-binary5,2.398493,0.879722,,True
+Apple M4 Max,arm64,38,16,baseline,0,accumulation,accumulation,148.162314,67.294539,,True
+Apple M4 Max,arm64,38,16,warmup,1,ntt-exact,ntt-exact,93.572528,49.025798,,True
+Apple M4 Max,arm64,38,16,repeat,2,ntt-exact,best,90.366669,29.533915,,True
+AMD Ryzen 9 9950X,x86_64,32,16,smoke,0,accumulation,accumulation,1.296816,0.784096,0,True
+AMD Ryzen 9 9950X,x86_64,32,16,smoke,1,ntt-legacy,ntt-legacy,1.764842,0.786587,0,True
+AMD Ryzen 9 9950X,x86_64,32,16,smoke,2,ntt-exact,ntt-exact,2.086462,0.785422,0,True
+AMD Ryzen 9 9950X,x86_64,32,16,smoke,3,ntt-panel6,ntt-panel6,1.341439,0.800298,0,True
+AMD Ryzen 9 9950X,x86_64,32,16,smoke,4,ntt-panel5,ntt-panel5,1.1297,0.792515,0,True
+AMD Ryzen 9 9950X,x86_64,32,16,smoke,5,ntt-binary5,ntt-binary5,1.819169,0.807489,0,True
+AMD Ryzen 9 9950X,x86_64,38,16,baseline,0,accumulation,accumulation,84.399267,21.770538,0,True
+AMD Ryzen 9 9950X,x86_64,38,16,warmup,1,ntt-panel5@8x48x0,ntt-panel5@8x48x0,68.952787,21.895973,0,True
+AMD Ryzen 9 9950X,x86_64,38,16,repeat,2,ntt-panel5@8x48x0,best,68.904981,21.551348,0,True
+AMD Ryzen 9 9950X,x86_64,38,16,baseline,3,accumulation,accumulation,84.895354,21.648063,0,True
+AMD Ryzen 9 9950X,x86_64,38,16,repeat,4,ntt-panel5@8x48x0,best,68.971111,21.744725,0,True

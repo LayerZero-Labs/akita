@@ -1,0 +1,49 @@
+{
+  "nv": 32,
+  "trials": [
+    {
+      "mode": "accumulation",
+      "both_verified": true
+    },
+    {
+      "mode": "ntt-legacy",
+      "both_verified": true
+    },
+    {
+      "mode": "ntt-panel6",
+      "both_verified": true
+    },
+    {
+      "mode": "ntt-panel5",
+      "both_verified": true
+    },
+    {
+      "mode": "ntt-binary5",
+      "both_verified": true
+    },
+    {
+      "mode": "ntt-exact",
+      "both_verified": true
+    }
+  ],
+  "proof_bytes": 82964,
+  "proof_sha256": "9814e0082ec9fab482898e1cb0a55fad174d5ae0fa2591299f8118861879f660",
+  "proof_all_identical": true,
+  "commitment_bytes": 471,
+  "commitment_sha256": "78a6f0770e0efd7ec72aac3aefdb059d0cdc55f8af63c088876bdcccf9b49e88",
+  "commitment_all_identical": true,
+  "purpose": "Correctness smoke test after main merge; no refreshed nv38 performance claim.",
+  "date": "2026-10-23",
+  "main_revision": "e423a39032fec35651b2de33b4cd1efc06254177",
+  "validation": {
+    "ntt_focused_tests": "3 passed, 1 ignored performance screen",
+    "scalar_differential_tests": "2 passed",
+    "algebra_tests": "167 passed, 1 ignored",
+    "config_admission_tests": "26 passed",
+    "required_clippy_feature_configurations": "all 3 passed",
+    "repository_preflight": "passed except full all-family schedule regeneration was scoped to changed K16 family",
+    "schedule_regeneration": "K16 nv32, nv38, nv40 regenerated twice with identical artifact bytes; existing main artifacts unchanged",
+    "full_workspace_nextest": "not run"
+  },
+  "k16_artifact_sha256": "1cba4b2ab5465ce8076fd549b65acdddaab246c8fb94b29b5a691fccb7d69305"
+}

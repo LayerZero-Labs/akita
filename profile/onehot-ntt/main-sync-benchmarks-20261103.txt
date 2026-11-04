@@ -1,0 +1,22 @@
+Fresh main-synchronized one-hot NTT benchmark (2026-11-03)
+Measured source: 38383cc4db2ab6703c7114da62f2be480ec7d016
+Main in measured binary: 0ac494cad881b8f8e01c6bad16c1e171e12e402d
+PR also includes main 209ffa1ae8227e45af2beb32595b92d754ca163a (trusted setup-view decode fix, outside the timed path).
+nv=38, K=16, recursive FP128, D=512, 16 threads, resident independent indices.
+One accepted sample per method on ARM64; two per method on x86-64. Initial NTT trial excluded.
+The ARM64 process was interrupted during its fourth trial; only the preceding three fully verified trials are retained.
+Setup/preprocessing excluded; witness conversion included.
+
+Apple M4 Max: accumulation 148.162314s; ntt-exact 90.366669s; reduction 39.008% (1.6396x).
+  samples: accumulation [148.162314]; NTT [90.366669]
+AMD Ryzen 9 9950X: accumulation 84.647311s; ntt-panel5@8x48x0 68.938046s; reduction 18.558% (1.2279x).
+  samples: accumulation [84.399267, 84.895354]; NTT [68.904981, 68.971111]
+
+Exact NTT uses an additional 1 GiB preprocessed root cache. Both methods shared the prepared-cache footprint. The x86 run enabled AVX-512 NTT. GPU was unused.
+Both algorithm choices are explicitly selectable on both architectures; there is no machine-name-based selection.
+12 smoke proofs and 8 full-size proofs passed single-threaded and multithreaded verification. All included serialized commitments and proofs match across variants and CPUs.
+The protocols and proof hashes differ from the pre-main results because main introduced protocol v8; NTT and accumulation agree within this revision.
+These are workload-specific measurements, not confidence intervals; the ARM64 comparison has only one accepted pair. Default commitment selection remains accumulation.
+No known competing compute job was detected during accepted timed commits. Contended commits and incomplete preparations were excluded; the three completed ARM64 trials preceding the aborted fourth trial were retained. Raw logs, proofs, hashes, idle checks and memory diagnostics are archived locally.
+Supervisor pauses outside commitment can increase reported proof wall times; this comparison uses commitment times only.
+Full workspace Nextest and local mdbook rendering were not run; see PR CI.
