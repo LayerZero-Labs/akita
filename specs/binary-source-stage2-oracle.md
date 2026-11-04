@@ -156,7 +156,7 @@ Binding is linear and block-local. `bind(r)` folds every pool row in place
 (one `fold_evals_in_place` over the whole pool, because rows are contiguous
 and of even width) and keeps the block records. `pair(left)` reads the two
 weights of one pair. After `T` rounds each row has one entry, and
-`into_dense()` returns the `2^(n-T)` folded weights
+`take_dense()` returns the `2^(n-T)` folded weights
 `scale_s * pool[shared_s] + pool[own_s]`. These are exactly the dense table
 folded `T` times.
 
@@ -170,7 +170,7 @@ pub(crate) trait StructuredRelationWeights<E: Field>: Send + Sync {
     fn len(&self) -> usize;
     fn pair(&self, left: usize) -> (E, E);
     fn bind(&mut self, challenge: E);
-    fn into_dense(self: Box<Self>) -> Vec<E>;
+    fn take_dense(&mut self) -> Vec<E>;
 }
 ```
 
@@ -178,7 +178,7 @@ pub(crate) trait StructuredRelationWeights<E: Field>: Send + Sync {
 it. Coefficient rounds call the existing generic compact and folded kernels
 with `|left| oracle.pair(left)`, the same kernels the reduced dense path calls
 with `|left| (dense[left], dense[left + 1])`. Ingest binds the oracle where the
-dense path binds its table. At the lane transition, `into_dense` supplies the
+dense path binds its table. At the lane transition, `take_dense` supplies the
 lane weights with scale one. `CpuStage2SessionHandle::from_structured_relation`
 shares its constructor with `from_dense_relation` and takes the coefficient bit
 count. The dense path keeps zero coefficient bits and is unchanged for every
@@ -256,4 +256,59 @@ follow below. All four shapes have `n = 25` at 2^22 except `prime5` (`n = 26`).
 
 ## Measurements
 
-Pending.
+The baseline executable is `f92e959ee`; the structured executable is
+`2e59907c9`, whose code is that of this note's final commit. Both were built
+with `--features parallel,binary-source-measurements,transcript-blake2b,logging-transcript`.
+Each configuration proved three times in isolated processes, interleaving
+the two executables, with `BINARY_SOURCE_CATALOG_CACHE` set to one catalog.
+A discarded warm-up run filled the catalog for each shape first. All 33
+measured runs reproduced their digest pins and verified. The figures are
+medians in milliseconds. The one-minute load ranged over 7.37–12.69: the host
+was shared, so differences of a few tens of milliseconds are noise. Logs are
+`$CARGO_TARGET_DIR/logs/m-{base,new2}-<log>-<shape>-<run>.txt`.
+
+| N | Shape | Weights + Stage 2, base → structured | › profile build | Complete proving, base → structured | Prover peak RSS bytes, base → structured |
+| --- | --- | --- | ---: | --- | --- |
+| 2^22 | `word` | 451.7 → 175.0 | 97.3 | 1,524.1 → 1,273.1 (−251) | 4,194,680,832 → 2,581,151,744 (−38%) |
+| 2^22 | `word-prime` | 555.6 → 227.3 | 140.4 | 1,746.6 → 1,416.0 (−331) | 4,195,729,408 → 2,646,753,280 (−37%) |
+| 2^22 | `word-prime-ordinary` | 572.5 → 270.9 | 169.2 | 2,041.4 → 1,753.5 (−288) | 4,753,358,848 → 3,263,168,512 (−31%) |
+| 2^22 | `prime5` | 1,194.2 → 415.7 | 287.2 | 2,686.3 → 1,866.9 (−819) | 6,945,423,360 → 2,792,046,592 (−60%) |
+| 2^23 | `word-prime` | 993.5 → 334.3 | 200.3 | 3,148.9 → 2,497.3 (−652) | 8,059,813,888 → 4,623,138,816 (−43%) |
+
+"Weights + Stage 2" is `binary_root_relation_materialize` plus
+`binary_root_stage2` for the baseline. The structured executable has no
+materialization span; its `binary_root_stage2` includes the profile build
+(`binary_root_weight_profiles`).
+
+What the measurements show:
+
+- **Stage 2 rounds.** Excluding the profile build, the root's Stage 2 now
+  takes about 80–130 ms at 2^22, against 310–590 ms. The baseline's root
+  `RelationRangeImageProver::new` took about 123 ms at 2^22 `word-prime`
+  building its dense field-element state; the structured one takes
+  under 0.1 ms, because round 0 reads the packed digits.
+- **Profile build.** The profile build is the larger remaining part, and the
+  authentication family dominates it: 52 ms (`word`), 76 ms (`word-prime`) and
+  170 ms (`prime5`) at 2^22. Its setup columns have no shared structure, so
+  its own rows are as dense as the table over the authenticated region. The
+  build is bound by weighing the setup entries, which runs in parallel
+  batches; streaming into the profiles is not the bottleneck. A synthetic
+  microbenchmark of the row pool's growth showed that reserving it up front
+  saves nothing.
+- **Memory.** Peak RSS falls by 31–60%, so the 5% ceiling holds with room.
+  The dense table and the dense field-element witness of round 0 no longer
+  exist together.
+- **Against the estimates.** Complete proving gains match the estimates for
+  `word-prime` and `prime5`. The weight build is slower than estimated:
+  authentication costs what it did in the dense build, and the cost model
+  undercounted it.
+- **The 0.4–0.8 s target.** Complete proving at 2^22 `word-prime` is now about
+  1.42 s. Even with no weight build and no Stage 2 at all, it would be about
+  1.19 s. The rest belongs to the projections, relation compile, the D
+  commitment, the root commitment, Stage 3 and the ordinary suffix folds.
+
+Further gains in this span need cheaper authentication weights, for example
+reusing setup entries the prover has already derived for the commitment.
+That sits in relation compile, which this change does not touch.
+Fusing the witness fold into the next coefficient round, as the lane rounds
+do, would save at most a few tens of milliseconds.

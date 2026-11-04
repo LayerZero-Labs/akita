@@ -1496,6 +1496,27 @@ kernel, and the image hint uses its prepared limb commitment. Scaled to this
 geometry, each spends about 20–30% more CPU time than that crate's own
 single-threaded benchmark.
 
+#### Structured Stage 2
+
+The binary root's Stage 2 now reads its public weight as block profiles
+instead of a dense table. This removes the weight materialization span, and
+round 0 runs on the packed digits. The design and full measurements are in
+[`binary-source-stage2-oracle.md`](binary-source-stage2-oracle.md). The
+baseline is `f92e959ee` and the structured executable is `2e59907c9`. Each
+figure is the median of three interleaved runs with the catalog cache; all 33
+runs reproduced their pins. One-minute loads were 7.37–12.69.
+
+| N | Shape | Weight materialization + Stage 2 (ms) | Complete proving (ms) | Prover peak RSS bytes |
+| --- | --- | --- | --- | --- |
+| 2^22 | `word` | 451.7 → 175.0 | 1,524.1 → 1,273.1 | 4,194,680,832 → 2,581,151,744 |
+| 2^22 | `word-prime` | 555.6 → 227.3 | 1,746.6 → 1,416.0 | 4,195,729,408 → 2,646,753,280 |
+| 2^22 | `word-prime-ordinary` | 572.5 → 270.9 | 2,041.4 → 1,753.5 | 4,753,358,848 → 3,263,168,512 |
+| 2^22 | `prime5` | 1,194.2 → 415.7 | 2,686.3 → 1,866.9 | 6,945,423,360 → 2,792,046,592 |
+| 2^23 | `word-prime` | 993.5 → 334.3 | 3,148.9 → 2,497.3 | 8,059,813,888 → 4,623,138,816 |
+
+The representation cost described above is now mostly the authentication
+family's weight build, which has no shared structure.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
