@@ -43,7 +43,50 @@ impl FixtureCatalog {
     }
 }
 
+/// Reuse a planned fixture catalog from `BINARY_SOURCE_CATALOG_CACHE`.
+///
+/// Planning is deterministic, so a cached row for the same protocol, size
+/// and shape is the catalog that planning would produce. Repeated prover
+/// measurements use it to skip planning; it is never a supported artifact.
 pub(super) fn build(
+    log: usize,
+    shape: &str,
+    directory: &Path,
+) -> Result<(TrustedScheduleCatalog<FullSize>, ScheduleLookupKey)> {
+    let cache = std::env::var_os("BINARY_SOURCE_CATALOG_CACHE").map(|cache| {
+        Path::new(&cache).join(format!(
+            "native-catalog-{}-{log}-{shape}.json",
+            if akita_params::DEV_PROTOCOL {
+                "dev"
+            } else {
+                "current"
+            }
+        ))
+    });
+    if let Some(bytes) = cache.as_ref().and_then(|path| std::fs::read(path).ok()) {
+        std::fs::write(directory.join("native-catalog.json"), &bytes)?;
+        let fixture: FixtureCatalog = serde_json::from_slice(&bytes)?;
+        let key = match fixture.ordinary.first() {
+            Some((profiles, _)) => ScheduleLookupKey {
+                final_group: profiles.final_group.group,
+                precommitteds: vec![profiles.final_group],
+            },
+            None => ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log)),
+        };
+        println!(
+            "native_transition physical_cells={} prefix_cells={} catalog_cache=hit",
+            fixture.physical_cells, fixture.prefix_cells
+        );
+        return Ok((fixture.admit()?, key));
+    }
+    let (catalog, key) = plan(log, shape, directory)?;
+    if let Some(path) = cache {
+        std::fs::copy(directory.join("native-catalog.json"), path)?;
+    }
+    Ok((catalog, key))
+}
+
+fn plan(
     log: usize,
     shape: &str,
     directory: &Path,
