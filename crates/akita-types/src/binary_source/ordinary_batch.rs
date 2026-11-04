@@ -79,8 +79,10 @@ impl OrdinaryNativeRootBatch {
         if claims.len() != self.plans.len() || batches.len() != self.linear_batch_count {
             return Err(AkitaError::InvalidProof);
         }
-        let mut terms = Vec::new();
-        let mut claim = E::zero();
+        let mut components = Vec::new();
+        components
+            .try_reserve_exact(self.plans.len())
+            .map_err(|_| AkitaError::InvalidProof)?;
         let mut offset = 0;
         for (plan, public) in self.plans.iter().zip(claims) {
             if public.profile != plan.profile() || Some(public.width) != plan.source_width() {
@@ -89,7 +91,7 @@ impl OrdinaryNativeRootBatch {
             let range = checked::range(offset, plan.linear_batch_count())
                 .ok_or(AkitaError::InvalidProof)?;
             offset = range.end;
-            let weights = plan.linear_weights(
+            components.push(plan.linear_weights(
                 repacking,
                 setup,
                 public.point,
@@ -97,13 +99,8 @@ impl OrdinaryNativeRootBatch {
                 public.payload,
                 alpha,
                 batches.get(range).ok_or(AkitaError::InvalidProof)?,
-            )?;
-            terms
-                .try_reserve_exact(weights.terms().len())
-                .map_err(|_| AkitaError::InvalidProof)?;
-            terms.extend_from_slice(weights.terms());
-            claim += weights.claim();
+            )?);
         }
-        NativeRootWeights::new(repacking.domain_len(), terms, claim)
+        NativeRootWeights::merge(repacking.domain_len(), components, E::zero())
     }
 }

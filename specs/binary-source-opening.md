@@ -583,6 +583,12 @@ The implementation splits the products and retains their required windows.
 Its existing arithmetic count is 154,872 field multiplications per adjoint,
 versus 419,904 for the dense 648-by-648 product (464,616 versus 1,259,712 for
 rank three). These counts do not include all surrounding field operations.
+The verifier's inputs are equality tables `v[t] = eq(r_t, t)`, for which
+`TrinomialAdjoint::apply_equality` computes the same `h_i` without
+convolutions. The set bits of D = 648 split `0..D` into aligned blocks of
+512, 128 and 8; on each block the correlation with `g_i` folds one equality
+coordinate per level, `X_(l+1)(t) = X_l(t) + r[l] (X_l(t + 2^l) - X_l(t))`.
+That costs 18,505 multiplications at D = 648.
 
 Order 10 uses the same Stage 3 session, sumcheck transport and verification
 as ordinary setup offloading:
@@ -1394,72 +1400,133 @@ N=2^22 and from 20.7 to 23.4 seconds at N=2^23. At N=2^22 the prefix domain
 grows from 2^24 to 2^25, and at both sizes the prover also builds the
 dense `16 * 2^k'`-byte Stage 3 weight.
 
-### B/D setup offload: verification before and after
+### Verification after the verifier speedups and the v8 merge
+
+These rows compare two builds at N=2^22. The base is the offload after the
+v8 merge, `237eb5a13` (executable SHA-256
+`71f17c7eb0c73c19298578523ee2d7f9afd88e1bc897f67b16cb780c077d468a`, the
+executable of the section above). The final build is the verifier speedups
+after the v8 merge, `841a32355` (executable SHA-256
+`acec1a1edf447f829c200380ca7380fe328ee7e90892831e4e3d66ee96c90815`). Both
+come from the measurement feature set. The final executable proved each
+shape once, and every proof reproduced its pin. Both executables then
+verified that fixture three times in isolated processes, alternating base and
+final, with Rayon's default thread pool and the catalog cache. All 24
+verifications reported `verification passed=true`, matched the caller's
+transcript continuation and kept online A reads forbidden. Each cell is the
+median of three, with the peak RSS of that median run. The one-minute load
+before each run was between 9.10 and 9.48. The logs are
+`$CARGO_TARGET_DIR/320-logs/22-<shape>.{prove,r4.v<i>,r6.v<i>}.txt`.
+
+| Shape | Base (ms) | Base RSS bytes | Final (ms) | Final RSS bytes | Final `binary_root_verify` (ms) | Loads |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| word | 15.2 | 76,087,296 | 9.9 | 74,219,520 | 3.9 | 9.48 |
+| word-prime | 17.2 | 157,401,088 | 11.4 | 157,040,640 | 4.7 | 9.10–9.28 |
+| word-prime-ordinary | 190.9 | 644,890,624 | 17.1 | 170,377,216 | 10.2 | 9.17 |
+| prime5 | 15.3 | 127,778,816 | 11.3 | 126,992,384 | 4.3 | 9.44 |
+
+The mixed shape's ordinary-root weights (`binary_root_weights_ordinary`)
+take 2.0 ms in the final median run, against 149.4 ms in the base. The
+binary-only shapes gain 4.0–5.8 ms, close to the pre-v8 gains below.
+
+### Verification after the verifier speedups
 
 These measurements predate the v8 merge.
 
-The B/D setup offload
-([binary-source-setup-offload.md](binary-source-setup-offload.md)) moves the
-B and D authentication weights into the typed prefix and Stage 3. Online
-verification no longer derives any B/D setup entry. The table compares three
-builds on the same current-protocol fixtures:
+Six byte-preserving commits after the B/D setup offload make the binary root
+verifier cheaper. None changes setup, commitment or proof bytes, the
+transcript, or the digest pins. They compare two builds:
 
-- **Base** is commit `798c0fb06`, the parent of this work (executable SHA-256
-  `16d8741916517c4f47b7617ce8f3a59a974cab4db3d2a2d519df9ba2fc2da0a0`).
-- **Speedups** is commit `db34922aa`, which adds four byte-preserving
-  verifier speedups (one XOF read per B/D setup entry, parallel B/D columns,
-  reused ordinary-root residue kernels and parallel explicit-term sums) and a
-  feature-gating fix
-  (executable SHA-256
-  `0d55a560e7101c976541b69e2d19e9c5247862cfd55d4619091cea932166577d`).
-- **Offload** is commit `7ca9e6656`, the source of the pre-v8 results below.
+- **Base** is commit `1bed82e3c`, whose source equals the offload commit
+  `7ca9e6656` apart from documentation (executable SHA-256
+  `a2cb4f7ab91231a8043e346525022d17b690182a2483335aa05bb04ca685dcfb`).
+- **Final** is commit `4fcb1e43f` (executable SHA-256
+  `adf284b81a8e11b745c00b2bba8820cc37fc28b01bb3bbeba964e0237b3a5fdb`).
 
-Base and speedups verified the same proofs, three times each, alternating per
-configuration; proof bytes are identical between them. The offload builds its
-own proofs. Each cell is the median of three isolated verification
-processes, with the peak RSS of that median run. The logs are
-`$CARGO_TARGET_DIR/bd-offload/{base,speedups}/<log>-<shape>.verify<i>.txt`
-and `$CARGO_TARGET_DIR/bd-offload/<log>-<shape>.verify<i>.txt`.
+Both executables come from the measurement feature set (`parallel`,
+`binary-source-measurements`, `transcript-blake2b`, `logging-transcript`).
+The base executable proved each configuration once. Both executables then
+verified that fixture three times in isolated processes, alternating base and
+final, with Rayon's default thread pool (parallel) and with
+`RAYON_NUM_THREADS=1` (single-threaded). Every one of the 96 runs reported
+`verification passed=true`, matching caller transcript continuation and
+forbidden online A reads. Each cell is the median of three runs, with the
+peak RSS of the median run. Other jobs shared the host: the one-minute load
+before each run was between 11.33 and 12.75 and is listed per configuration.
 
-| N | Shape | Base ms | Base RSS bytes | Speedups ms | Speedups RSS bytes | Offload ms | Offload RSS bytes |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 249.3 | 74,022,912 | 33.7 | 75,939,840 | 14.9 | 75,284,480 |
-| 2^22 | word-prime | 353.0 | 75,268,096 | 43.2 | 77,643,776 | 16.1 | 157,270,016 |
-| 2^22 | word-prime-ordinary | 601.2 | 562,708,480 | 150.5 | 566,575,104 | 124.8 | 644,710,400 |
-| 2^22 | prime5 | 764.5 | 78,872,576 | 72.3 | 84,705,280 | 15.2 | 126,566,400 |
-| 2^23 | word | 253.1 | 154,927,104 | 34.2 | 157,614,080 | 16.2 | 156,794,880 |
-| 2^23 | word-prime | 364.1 | 158,023,680 | 51.4 | 159,121,408 | 17.5 | 157,450,240 |
-| 2^23 | word-prime-ordinary | 803.9 | 1,038,237,696 | 241.5 | 1,048,707,072 | 215.2 | 1,047,756,800 |
-| 2^23 | prime5 | 785.3 | 157,761,536 | 84.1 | 163,905,536 | 16.5 | 133,218,304 |
+Parallel verification:
 
-The one-minute load before each of the three verification runs:
+| N | Shape | Base ns | Base RSS bytes | Final ns | Final RSS bytes | Base loads | Final loads |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2^22 | word | 15,142,208 | 75,726,848 | 10,073,500 | 73,875,456 | 12.75, 12.75, 12.75 | 12.75, 12.75, 12.75 |
+| 2^22 | word-prime | 16,765,875 | 156,794,880 | 11,340,417 | 156,041,216 | 12.75, 12.53, 12.53 | 12.75, 12.53, 12.53 |
+| 2^22 | word-prime-ordinary | 135,130,833 | 642,465,792 | 18,496,416 | 169,033,728 | 12.53, 12.53, 12.65 | 12.53, 12.53, 12.65 |
+| 2^22 | prime5 | 15,454,333 | 126,779,392 | 11,070,084 | 126,599,168 | 12.65, 12.65, 12.65 | 12.65, 12.65, 12.65 |
+| 2^23 | word | 16,360,000 | 155,762,688 | 10,521,500 | 155,336,704 | 12.65, 12.65, 12.12 | 12.65, 12.12, 12.12 |
+| 2^23 | word-prime | 17,831,459 | 156,680,192 | 12,408,375 | 156,696,576 | 12.12, 12.12, 12.12 | 12.12, 12.12, 12.12 |
+| 2^23 | word-prime-ordinary | 226,495,292 | 1,047,445,504 | 19,017,292 | 178,913,280 | 12.12, 11.71, 11.71 | 11.71, 11.71, 11.71 |
+| 2^23 | prime5 | 17,002,667 | 133,906,432 | 12,002,583 | 134,529,024 | 11.71, 11.33, 11.33 | 11.71, 11.33, 11.33 |
 
-| N | Shape | Base loads | Speedups loads | Offload loads |
-| --- | --- | --- | --- | --- |
-| 2^22 | word | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 6.19, 6.19, 6.19 |
-| 2^22 | word-prime | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 7.49, 7.49, 7.49 |
-| 2^22 | word-prime-ordinary | 4.59, 4.59, 4.59 | 4.59, 4.59, 4.59 | 7.30, 7.30, 7.30 |
-| 2^22 | prime5 | 4.59, 4.73, 4.73 | 4.59, 4.59, 4.59 | 6.23, 6.13, 6.13 |
-| 2^23 | word | 5.85, 5.85, 5.85 | 5.85, 5.85, 5.85 | 5.86, 5.86, 5.86 |
-| 2^23 | word-prime | 3.58, 3.77, 3.77 | 3.77, 3.77, 3.77 | 5.69, 5.69, 5.69 |
-| 2^23 | word-prime-ordinary | 3.87, 3.87, 3.87 | 3.80, 3.80, 3.80 | 5.82, 5.82, 5.82 |
-| 2^23 | prime5 | 3.82, 3.72, 3.72 | 3.82, 3.82, 3.82 | 6.39, 6.39, 6.39 |
+Single-threaded verification:
 
-With the speedups alone, B/D authentication (`root_weights_evaluate_authentication`)
-was still 28.0 of 43.2 ms at N=2^22 `word-prime` and 58.3 of 72.3 ms at
-N=2^22 `prime5`. After the offload that span is gone, and the binary-only
-shapes verify in 14.9–17.5 ms at both sizes. The mixed shape's remaining
-time is the ordinary root's flat-term construction
-(`binary_root_weights_ordinary`: 85.9 ms at N=2^22 and 160.7 ms at N=2^23),
-which the offload does not touch.
+| N | Shape | Base ns | Base RSS bytes | Final ns | Final RSS bytes | Base loads | Final loads |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2^22 | word | 24,055,375 | 72,368,128 | 18,791,041 | 71,663,616 | 12.75, 12.75, 12.75 | 12.75, 12.75, 12.75 |
+| 2^22 | word-prime | 31,414,834 | 153,567,232 | 25,839,667 | 152,993,792 | 12.75, 12.53, 12.53 | 12.53, 12.53, 12.53 |
+| 2^22 | word-prime-ordinary | 212,846,833 | 642,318,336 | 35,422,959 | 166,313,984 | 12.53, 12.53, 12.65 | 12.53, 12.53, 12.65 |
+| 2^22 | prime5 | 29,563,167 | 124,616,704 | 25,417,667 | 125,337,600 | 12.65, 12.65, 12.65 | 12.65, 12.65, 12.65 |
+| 2^23 | word | 30,198,208 | 153,518,080 | 24,942,750 | 153,337,856 | 12.65, 12.12, 12.12 | 12.65, 12.12, 12.12 |
+| 2^23 | word-prime | 32,319,875 | 154,828,800 | 26,771,375 | 154,206,208 | 12.12, 12.12, 12.12 | 12.12, 12.12, 12.12 |
+| 2^23 | word-prime-ordinary | 356,886,167 | 1,044,185,088 | 38,534,125 | 175,882,240 | 11.71, 11.71, 11.71 | 11.71, 11.71, 11.71 |
+| 2^23 | prime5 | 32,119,250 | 131,989,504 | 27,139,667 | 132,005,888 | 11.71, 11.33, 11.33 | 11.71, 11.33, 11.33 |
 
-Verifier peak RSS follows the selected prefix, not the B/D work. Where the
-prefix domain grows (N=2^22 `word-prime` and `word-prime-ordinary` from 2^24
-to 2^25, `prime5` to 2^26), the successor folds and their prepared setup grow
-with it. Against the speedups build, RSS rises by 42 MB (`prime5`) to 80 MB
-(`word-prime`) at N=2^22. Where it does not grow (N=2^22 `word`, and N=2^23
-except `prime5`), RSS is within 2 MB of the speedups build. N=2^23 `prime5` drops by
-31 MB under its different successor schedule.
+The mixed shape gains most: 7.3× parallel and 6.0× single-threaded at
+N=2^22, 11.9× and 9.3× at N=2^23. Its verifier peak RSS falls from 642 MB to
+169 MB and from 1,047 MB to 179 MB, because the ordinary root no longer builds
+one flat term per address. The binary-only shapes gain 4.4–5.8 ms parallel
+and 4.1–5.6 ms single-threaded; their RSS is unchanged within 2 MB.
+
+The inclusive spans of the single-threaded median runs locate the change,
+base → final, in milliseconds. The ordinary suffix's Stage 2 verification
+(`stage2_verifier`, which contains `relation_setup_scan`) is untouched and
+is now the largest single cost.
+
+| Span | 2^22 word | 2^22 word-prime | 2^22 word-prime-ordinary | 2^22 prime5 | 2^23 word | 2^23 word-prime | 2^23 word-prime-ordinary | 2^23 prime5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `verify_complete_opening` | 24.1 → 18.8 | 31.4 → 25.8 | 212.8 → 35.4 | 29.6 → 25.4 | 30.2 → 24.9 | 32.3 → 26.8 | 356.9 → 38.5 | 32.1 → 27.1 |
+| `binary_root_verify` | 9.2 → 3.8 | 10.4 → 4.6 | 191.9 → 14.3 | 8.5 → 4.3 | 9.8 → 4.4 | 11.3 → 5.7 | 335.7 → 17.4 | 10.1 → 5.2 |
+| `binary_root_relation_compile` | 3.9 → 1.4 | 4.3 → 1.7 | 112.7 → 5.8 | 1.7 → 1.8 | 4.0 → 1.5 | 4.5 → 2.0 | 203.4 → 9.2 | 2.2 → 2.1 |
+| `binary_root_weights_ordinary` | absent | absent | 94.8 → 3.9 | absent | absent | absent | 174.9 → 7.1 | absent |
+| `derive_public_matrix_prefix` | absent | absent | 2.4 → 2.4 | absent | absent | absent | 4.8 → 4.8 | absent |
+| `binary_root_tau1_draw` | 0.0 → 0.0 | 0.0 → 0.0 | 3.3 → 3.3 | 0.0 → 0.0 | 0.0 → 0.0 | 0.0 → 0.0 | 1.8 → 1.8 | 0.0 → 0.0 |
+| `binary_root_relation_evaluate` | 2.8 → 1.3 | 3.4 → 1.7 | 72.4 → 3.2 | 4.3 → 1.4 | 3.3 → 1.8 | 4.1 → 2.5 | 127.4 → 4.6 | 5.3 → 1.9 |
+| `binary_root_a_stage3` | 1.8 → 0.4 | 2.0 → 0.5 | 1.9 → 0.5 | 1.9 → 0.5 | 1.8 → 0.3 | 1.9 → 0.5 | 1.9 → 0.5 | 1.9 → 0.5 |
+| `stage2_verifier` | 13.0 → 13.2 | 19.1 → 19.3 | 19.0 → 19.1 | 19.1 → 19.1 | 18.5 → 18.7 | 19.1 → 19.2 | 19.2 → 19.2 | 19.8 → 20.0 |
+| `relation_setup_scan` | 10.0 → 10.1 | 17.0 → 17.1 | 16.8 → 17.0 | 15.8 → 15.9 | 16.4 → 16.6 | 16.9 → 17.0 | 17.1 → 17.0 | 16.5 → 16.8 |
+
+In the parallel median runs `binary_root_verify` takes 3.8–5.5 ms for the
+binary-only shapes and 11.9 and 12.4 ms for the mixed shape; `stage2_verifier`
+takes 4.3–5.3 ms and `relation_setup_scan` 2.7–3.7 ms.
+
+Each commit was measured against its parent, median of three, on the
+configurations it targets; the commit messages hold the same figures. The
+first commit's before figures are the base medians above, because its own
+runs measured only the commit (peak RSS 169 MB and 179 MB). The runs were
+under different loads than the table above, so the steps do not sum to the
+base-to-final difference.
+
+| Commit | Change | Configuration | Parallel ms | Single-threaded ms | Load |
+| --- | --- | --- | --- | --- | --- |
+| `85902a75e` | Ordinary root rows as translated patterns with residue kernels, evaluated in closed form | 2^22 / 2^23 mixed | 135.1 → 26.5 / 226.5 → 29.3 | 212.8 → 43.4 / 356.9 → 47.9 | 8.8–16.7 |
+| `b66cfdb7f` | Ordinary root residue kernels derived in parallel; superseded by `4fcb1e43f` | 2^22 / 2^23 mixed | 26.5 → 25.9 / 29.3 → 27.5 | 43.4 → 43.4 / 47.9 → 47.2 | 8.8–16.7 |
+| `86cc8a002` | Terminal partial columns as one structured family | 2^22 word / 2^23 word | 15.9 → 13.5 / 23.1 → 18.4 | 23.8 → 21.5 / 31.1 → 28.8 | 10.5–13.4 |
+| `9fbde6581` | Trinomial adjoint of an equality table in closed form | 2^22 word-prime / 2^23 word-prime | 14.3 → 11.7 / 17.3 → 14.3 | 28.7 → 25.7 / 30.1 → 27.0 | 21.4–23.1 |
+| `2c31ad17d` | Prime plane work shared across one polynomial's planes | 2^22 prime5 / 2^23 prime5 | 12.6 → 10.7 / 14.0 → 11.4 | 26.3 → 25.0 / 28.3 → 26.4 | 6.7–6.9 |
+| `4fcb1e43f` | Ordinary root residue kernels read through low windows | 2^22 / 2^23 mixed | 20.2 → 17.7 / 20.2 → 18.3 | 37.5 → 34.6 / 42.3 → 38.0 | 7.4–7.5 |
+
+The figures before these speedups, with the B/D offload comparison, are in
+the appendix. The logs are in the measurement target directory under
+`r6/logs/<log>-<shape>.{base,final}.t{all,1}.v<i>.txt`.
 
 ### Results after the v8 merge, before the offload
 
@@ -1509,15 +1576,15 @@ changes, uncommitted, and documentation edits. One executable (SHA-256
 `252c55385c76e2bee28b13c30bf45f1151310d133215f1cd82eb3c8016d50eeb`) served
 every configuration. Each configuration proved once, supplying its row of the
 digest TSV, then verified three times in isolated processes from the same
-fixture. The tables report the median verification time and the peak RSS of
-that median run, and the fixture setup deserialization of that run; every
-other phase row and the prover peak RSS come from the single proving run. All
-three verifications of every configuration reported
+fixture. The fixture setup deserialization row comes from the median
+verification run; every other phase row and the prover peak RSS come from the
+single proving run. All three verifications of every configuration reported
 `verification passed=true`, matching caller transcript continuation and
 forbidden online A reads. The logs are
 `$CARGO_TARGET_DIR/bd-offload/<log>-<shape>.{prove,verify1,verify2,verify3}.txt`.
-The figures before the offload are in the appendix. The `uptime` load triples
-of these runs are:
+Pre-v8 verification time and verifier peak RSS after the verifier speedups
+are in the section of that name above; the values this campaign measured, and the figures before the offload, are in the
+appendix. The `uptime` load triples of these runs are:
 
 | N | Shape | Before proving | After proving | After the third verification |
 | --- | --- | --- | --- | --- |
@@ -1530,16 +1597,16 @@ of these runs are:
 | 2^23 | word-prime-ordinary | 6.39/6.31/6.44 | 5.82/6.16/6.38 | 5.82/6.16/6.38 |
 | 2^23 | prime5 | 5.69/6.37/6.48 | 6.39/6.31/6.44 | 6.39/6.31/6.44 |
 
-| N | Shape | Proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 87,801 | 25,828 | 5,180,358,656 | 75,284,480 |
-| 2^22 | word-prime | 89,464 | 25,976 | 6,055,002,112 | 157,270,016 |
-| 2^22 | word-prime-ordinary | 89,463 | 25,976 | 6,232,817,664 | 644,710,400 |
-| 2^22 | prime5 | 94,242 | 26,374 | 10,003,873,792 | 126,566,400 |
-| 2^23 | word | 89,626 | 25,992 | 10,183,802,880 | 156,794,880 |
-| 2^23 | word-prime | 89,658 | 26,024 | 10,190,553,088 | 157,450,240 |
-| 2^23 | word-prime-ordinary | 89,661 | 26,026 | 10,211,393,536 | 1,047,756,800 |
-| 2^23 | prime5 | 94,261 | 26,392 | 10,593,697,792 | 133,218,304 |
+| N | Shape | Proof bytes | Atoms | Prover peak RSS bytes |
+| --- | --- | ---: | ---: | ---: |
+| 2^22 | word | 87,801 | 25,828 | 5,180,358,656 |
+| 2^22 | word-prime | 89,464 | 25,976 | 6,055,002,112 |
+| 2^22 | word-prime-ordinary | 89,463 | 25,976 | 6,232,817,664 |
+| 2^22 | prime5 | 94,242 | 26,374 | 10,003,873,792 |
+| 2^23 | word | 89,626 | 25,992 | 10,183,802,880 |
+| 2^23 | word-prime | 89,658 | 26,024 | 10,190,553,088 |
+| 2^23 | word-prime-ordinary | 89,661 | 26,026 | 10,211,393,536 |
+| 2^23 | prime5 | 94,261 | 26,392 | 10,593,697,792 |
 
 The complete proof partition below is bytes/atoms per category across all fold
 levels. The other category includes the remaining payload, framing and work
@@ -1603,7 +1670,6 @@ N=2^22:
 | Fixture setup deserialization | 67,061,667 | 169,304,125 | 169,284,834 | 132,578,625 |
 | Parity row convolution | 9,774,666 | 10,652,542 | 9,926,000 | absent |
 | Complete proving | 11,321,687,750 | 12,357,436,292 | 12,534,301,083 | 16,359,650,083 |
-| Complete verification | 14,900,416 | 16,091,291 | 124,834,791 | 15,235,792 |
 
 N=2^23:
 
@@ -1620,7 +1686,6 @@ N=2^23:
 | Fixture setup deserialization | 169,508,125 | 169,406,583 | 169,441,375 | 140,536,833 |
 | Parity row convolution | 19,365,292 | 19,173,750 | 20,151,834 | absent |
 | Complete proving | 21,856,220,334 | 22,819,519,709 | 23,138,842,542 | 26,659,122,166 |
-| Complete verification | 16,205,875 | 17,545,167 | 215,159,375 | 16,455,833 |
 
 ### Prover span profile
 
@@ -1848,7 +1913,10 @@ same procedure. Every run verified with matching caller transcript
 continuation and forbidden online A reads. The logs are
 `$CARGO_TARGET_DIR/bd-offload/<log>-<shape>-dev.{prove,verify1,verify2,verify3}.txt`.
 The recursive output chains equal the current-protocol chains above. The
-`uptime` load triples are:
+verification rows and verifier peak RSS below predate the verifier speedups
+and were not remeasured. The dev protocol runs the same binary root
+verifier, so similar gains are expected but unmeasured. The `uptime` load
+triples are:
 
 | N | Shape | Before proving | After proving | After the third verification |
 | --- | --- | --- | --- | --- |
@@ -2007,17 +2075,19 @@ pass, final `word-prime` complete proving took 12,357,436,292 ns and
 measured without the offload, brought it to 1,737,754,208 ns and
 2,927,935,667 ns, the prover span profile medians: 2.2 and 1.8 times the
 upper ends of the targets.
-Section 12.5's verifier targets of 5–10 ms and 6–13 ms are also not achieved,
-though they are now within a factor of two: the corresponding complete
-verification times are 16,091,291 ns and 17,545,167 ns, under the
-verifier-run load triples. Of these, the binary root takes 9.7 and 10.8 ms
-(`binary_root_verify`), and its relation compile and evaluation take 7.1 and
-8.1 ms.
+Section 12.5's verifier targets are 5–10 ms at N=2^22 and 6–13 ms at
+N=2^23. After the verifier speedups, parallel `word-prime` verification takes
+12,408,375 ns at N=2^23, within its target, and 11,340,417 ns at N=2^22,
+1.3 ms above it, under one-minute loads of 12.12–12.75. Single-threaded it
+takes 25,839,667 ns and 26,771,375 ns, so neither target is met there. The binary
+root takes 4.3 and 5.5 ms parallel (`binary_root_verify`). The ordinary
+suffix's Stage 2 verification takes 5.3 and 5.1 ms parallel and 19.3 and
+19.2 ms single-threaded, most of it the direct setup scan.
 
 Dev-protocol `word-prime` proving took 12,329,756,500 ns and 23,120,246,417 ns
 in the offload campaign, and 1,674,145,125 ns and 2,910,122,000 ns in the
-prover-speed medians; verification took 16,311,917 ns and 19,281,709 ns,
-under its recorded loads. These also exceed both design timing ranges.
+prover-speed medians; verification took 16,311,917 ns and 19,281,709 ns
+before the verifier speedups, under its recorded loads.
 
 ### Verifier and kernel cost relative to the design
 
@@ -2025,7 +2095,11 @@ The timings in this subsection predate the v8 merge.
 The verifier draws one batching coefficient per root row and none per padding
 cell. At N=2^22 `word-prime` the median τ₁ draw takes 2,250 ns, against
 861,793,834 ns for the 17,129,090 per-cell padding challenges it drew before
-the deletion (appendix). The design's section 8.2 values 856,064 and 1,712,128
+the deletion (appendix). The mixed shape adds one row per digit of the two
+ordinary compression segments (`w(w+1)=0`): 69,632 coefficients at N=2^22 and
+36,864 at N=2^23, which take 3.3 and 1.8 ms single-threaded
+(`binary_root_tau1_draw`) and are the largest binary-root cost that a
+byte-preserving change cannot remove. The design's section 8.2 values 856,064 and 1,712,128
 count additions in a proposed shared-subset direct-weight kernel, not the
 complete verifier. The canonical A accessor remains absent from online
 verification.
@@ -2047,11 +2121,28 @@ reaches a production-size geometry.
 
 - **Image.** One coefficient adjoint per owner and A row is applied to the
   low equality block, followed by each column's challenge support of at most
-  46 entries.
-- **Prime planes.** Each plane uses four signed power sums of the low block,
-  plus one shifted-remainder kernel at each of the four 256-coefficient lane
-  offsets.
+  46 entries. Because the input is an equality table, the adjoint runs in
+  closed form (`TrinomialAdjoint::apply_equality`); the typed A product uses
+  the same call.
+- **Prime planes.** Four signed power sums of the low block and one
+  shifted-remainder kernel per 162-coefficient low-block slot serve every
+  plane. Planes of one polynomial read the same response elements and the same
+  challenge supports, so their relation rows combine before the high factors
+  and the support dot products (signed additions of kernel entries) are taken
+  once per polynomial, column and slot.
 - **Parity rows.** Rows are answered by Four Russians subset sums.
+- **Terminal partial columns.** The partial-column rows of one owner form one
+  family (`PartialColumnWeights`). Per column the verifier adds the bits and
+  the ±1 challenge coefficients into one multiplier and reads one
+  shifted-remainder pattern per low offset, instead of one explicit term per
+  column coefficient.
+- **Ordinary root.** Each ordinary identity repeats one public pattern (an A
+  row in every block, a B row in every slice, a compression map, a
+  recomposition at every bit), kept once as `TranslatedLanes`. For the A rows,
+  B rows and maps the lane is a residue kernel of a setup ring, so the
+  verifier evaluates it from the ring and the low block through split
+  windows (`ResidueKernelPoint`) without expanding the kernel. The scalar
+  source evaluation is one offset-equality sum.
 - **B and D.** The setup-dependent B/D weights move to the typed prefix and
   Stage 3. The verifier evaluates their terminal weight from the segment
   geometry and the piece placement, with no setup read
@@ -2063,11 +2154,13 @@ SHAKE256 ring entries at N=2^22 `word-prime` and evaluated one residue kernel
 per setup column. After the byte-preserving speedups that span
 (`root_weights_evaluate_authentication`) still took 28.0 ms of 43.2 ms; at
 N=2^22 `prime5` it took 58.3 of 72.3 ms. The offload removes it (comparison
-table above). The mixed shape's ordinary root still derives its setup matrix
-during verification, but that derivation is small (0.69 ms at N=2^22; setup
-offload note, §9.3). Its `binary_root_weights_ordinary` span is dominated by
-building the flat terms: 85,915,708 ns at N=2^22 and 160,702,291 ns at
-N=2^23 in the median current-protocol runs.
+table in the appendix). The mixed shape's ordinary root still derives its
+setup matrix during verification. In the single-threaded median runs that
+derivation (`derive_public_matrix_prefix`) takes 2.4 ms at N=2^22 and 4.8 ms
+at N=2^23, of 3.9 and 7.1 ms for `binary_root_weights_ordinary`; parallel it
+takes 0.6 and 0.9 ms. Before the verifier speedups that span was dominated by
+building one flat term per ordinary coefficient weight: 85,915,708 ns at
+N=2^22 and 160,702,291 ns at N=2^23 in the offload campaign.
 
 The parity rows follow sections 5.3 and 8.2 on the verifier side. By the Hankel
 symmetry of the shifted remainders, row `r` contributes the subset sum of
@@ -2101,12 +2194,14 @@ columns include its four shifted-remainder calls (1,988 multiplications and
 coefficient-kernel work, so it is not an end-to-end operation total.
 
 The design's rough 59,049-multiplication adjoint estimate also does not describe
-the current kernel. As detailed in the typed A section above, the implemented
+the current kernels. As detailed in the typed A section above, the general
 two-convolution adjoint uses 154,872 leaf field multiplications per rank row,
-or 464,616 for rank three. Surrounding contractions add further operations.
-The verifier applies it once per owner and A row, to the low equality block,
-rather than once per carrier column. The prover expands each column by at most
-46 signed shifts of the extended row.
+or 464,616 for rank three. The verifier only applies the adjoint to equality
+tables, once per owner and A row for the image and once per rank row for the
+A product, and uses the closed form: 18,505 multiplications per application
+at D = 648, or 55,515 for rank three. Surrounding contractions add further
+operations. The prover expands each column by at most 46 signed shifts of the
+extended row.
 
 ### Memory
 
@@ -2121,7 +2216,9 @@ offload adds a dense `16 * 2^k'`-byte Stage 3 weight in every shape. Removing
 Stage 3's redundant full-length index table left the process peak nearly
 unchanged. Whole-process peak RSS does not say which phase sets the peak, so
 that attribution is unmeasured. The setup offload note, §8, separates prefix
-growth, dense weights and backend state.
+growth, dense weights and backend state. Before the v8 merge, the largest
+verifier peak after the verifier speedups was 178,913,280 bytes (N=2^23
+`word-prime-ordinary`, parallel), down from 1,047,445,504 bytes before them.
 
 The prover-speed pass was measured without the offload. Its N=2^23
 `word-prime` medians were 8,051,064,832 bytes in the current protocol and
@@ -2153,6 +2250,104 @@ arithmetic boundary, without expanding signed source rings. Differential
 regressions compare image, response, residual, prime-plane and binary partial
 values with the previous arithmetic for multiple polynomials, narrow word
 widths and padding.
+
+## Verifier protocol-change candidates
+
+The byte-preserving speedups leave three costs that need a change to the
+proof or the transcript. None is implemented. Expected gains are upper
+bounds read from the single-threaded and parallel median spans of the final
+verification runs. They omit the cost of whatever replaces the removed work.
+
+### Structured negative-bit batch
+
+**Cost.** The mixed shape batches one τ₁ coefficient per digit of the two
+ordinary compression segments, 69,632 at N=2^22 and 36,864 at N=2^23. Each is
+an independent grinded extension challenge, so `binary_root_tau1_draw` takes
+3.3 and 1.8 ms in both thread modes. That is 9% and 5% of single-threaded
+mixed verification and 18% and 9% of parallel.
+
+**Change.** Draw the negative-bit range as an equality tensor
+`eq(τ_neg, i)` over `ceil(log2(rows))` = 17 or 16 fresh coordinates, or as
+powers of one challenge, instead of one coefficient per row. The rest of τ₁
+is unchanged. The field-message count stays the same, but every later
+challenge moves, so the proof bytes, the transcript state and the digest pins
+change. Serialized grinding nonces are variable-length, so the proof length
+can change by a few bytes, and repricing the batch can change the grinding
+schedule.
+The negative-bit weight is already evaluated through its support's
+multilinear extension (`negative_binary_support_mle`, 0.02 ms); with tensor
+coefficients it has a closed form.
+
+**Expected gain.** About 3.3 ms at N=2^22 and 1.8 ms at N=2^23 for the mixed
+shape, in both thread modes. Other shapes have no negative-bit rows.
+
+**Soundness question.** Independent coefficients let a nonzero row residual
+survive the batch with probability `1/P`. Tensor coefficients give a nonzero
+multilinear polynomial in `τ_neg`, so the error is at most `17/P` or `16/P`;
+powers give at most `(rows - 1)/P`. The question is whether the root's
+soundness argument uses the independence of τ₁ anywhere else, for example
+where the negative-bit range is combined with the other ranges and with the
+Stage 2 batching challenge, and whether the grinding schedule for
+`GrindingSite::Tau1Point` depends on the number of drawn coefficients.
+
+### Ordinary root setup rows through a setup prefix
+
+**Cost.** The mixed shape's ordinary root derives its setup matrix during
+verification (`derive_public_matrix_prefix`: 2.4 and 4.8 ms single-threaded,
+0.6 and 0.9 ms parallel). It evaluates the A, B and compression-map rows as
+residue-kernel lanes. `binary_root_weights_ordinary` takes 3.9 and 7.1 ms
+single-threaded and 2.1 and 3.1 ms parallel. The ordinary share of the
+relation evaluation, the mixed span minus the `word-prime` span, is about 1.5
+and 2.1 ms single-threaded and 1.1 and 1.4 ms parallel.
+
+**Change.** Move the setup-dependent ordinary rows into a Stage 3 setup
+product claim, as the B/D setup offload did for the binary rows
+([binary-source-setup-offload.md](binary-source-setup-offload.md)). The
+ordinary root reads the canonical ordinary setup prefix with each role's own
+dimensions, so the claim would be against that prefix's prepared commitment.
+It would be either a second Stage 3 session or a batch with the typed prefix
+claim. A second session adds `32k + 32` field-message bytes for a prefix of
+`2^k` cells, plus scheduled grinding nonces. The Stage 2 linear weight loses
+those rows, and the transcript changes.
+
+**Expected gain.** At most 5.4 ms at N=2^22 and 9.2 ms at N=2^23
+single-threaded, and 3.2 and 4.5 ms parallel, less the added Stage 3 replay.
+The binary root's Stage 3 replay (`binary_root_a_stage3`) takes 0.3–0.5 ms
+for comparison.
+
+**Soundness question.** The B/D offload argument carries over: the product
+sumcheck adds `2k/P`, and the prefix commitment's binding is used. Open
+questions are whether the ordinary prefix identity is authenticated at the
+root the way the typed prefix is, and whether two prefix claims of different
+lengths can share one Stage 3 session without a new batching term.
+
+### Suffix setup scans
+
+This cost belongs to the ordinary protocol on `main`, not to the binary
+source extension.
+
+**Cost.** Each of the six ordinary suffix folds evaluates its setup
+contribution directly from the expanded setup (`SetupContributionMode::Direct`,
+span `relation_setup_scan`). Together they take 10.1–17.1 ms single-threaded
+and 2.7–3.7 ms parallel. This is the largest remaining verifier cost: 54–67%
+of single-threaded binary-only verification.
+
+**Change.** Select the recursive setup-contribution mode
+(`SetupContributionMode::Recursive`) for some suffix folds. That moves each
+selected fold's setup contribution into a Stage 3 session against a setup
+prefix. It is a schedule change in the planner, and it changes proof bytes
+and the transcript. Each moved fold adds `32k + 32` field-message bytes and
+its scheduled grinding nonces. A byte-preserving speedup of the scan kernel
+on `main` is a separate option and was not examined here.
+
+**Expected gain.** Up to 17 ms single-threaded and 3.7 ms parallel if every
+fold moves, less one Stage 3 replay per moved fold. The proof grows with each
+moved fold, so the choice trades proof bytes against verifier time.
+
+**Soundness question.** None beyond the ordinary protocol's existing
+setup-prefix argument. Each moved fold adds `2k/P` of sumcheck error and
+relies on the binding of its prefix commitment. The planner's security
+accounting has to price those terms.
 
 ## Appendix: full-size measurement history
 
@@ -2740,6 +2935,94 @@ before the offload were, in the current and dev protocols: prime only
 planes; word and prime 86,024/80,991, 86,060/80,963 and 86,029/80,973; the
 word-only fixtures 86,070/80,987 (width 128), 86,046/81,013 (width 8) and
 86,155/81,075 (with the ordinary group).
+
+### B/D setup offload: verification before and after
+
+This comparison preceded the byte-preserving verifier speedups after the
+offload; its offload column is the base of the pre-v8 tables after the
+verifier speedups.
+
+The B/D setup offload
+([binary-source-setup-offload.md](binary-source-setup-offload.md)) moves the
+B and D authentication weights into the typed prefix and Stage 3. Online
+verification no longer derives any B/D setup entry. The table compares three
+builds on the same current-protocol fixtures:
+
+- **Base** is commit `798c0fb06`, the parent of this work (executable SHA-256
+  `16d8741916517c4f47b7617ce8f3a59a974cab4db3d2a2d519df9ba2fc2da0a0`).
+- **Speedups** is commit `db34922aa`, which adds four byte-preserving
+  verifier speedups (one XOF read per B/D setup entry, parallel B/D columns,
+  reused ordinary-root residue kernels and parallel explicit-term sums) and a
+  feature-gating fix
+  (executable SHA-256
+  `0d55a560e7101c976541b69e2d19e9c5247862cfd55d4619091cea932166577d`).
+- **Offload** is commit `7ca9e6656`, the source of the pre-v8
+  current-protocol results.
+
+Base and speedups verified the same proofs, three times each, alternating per
+configuration; proof bytes are identical between them. The offload builds its
+own proofs. Each cell is the median of three isolated verification
+processes, with the peak RSS of that median run. The logs are
+`$CARGO_TARGET_DIR/bd-offload/{base,speedups}/<log>-<shape>.verify<i>.txt`
+and `$CARGO_TARGET_DIR/bd-offload/<log>-<shape>.verify<i>.txt`.
+
+| N | Shape | Base ms | Base RSS bytes | Speedups ms | Speedups RSS bytes | Offload ms | Offload RSS bytes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2^22 | word | 249.3 | 74,022,912 | 33.7 | 75,939,840 | 14.9 | 75,284,480 |
+| 2^22 | word-prime | 353.0 | 75,268,096 | 43.2 | 77,643,776 | 16.1 | 157,270,016 |
+| 2^22 | word-prime-ordinary | 601.2 | 562,708,480 | 150.5 | 566,575,104 | 124.8 | 644,710,400 |
+| 2^22 | prime5 | 764.5 | 78,872,576 | 72.3 | 84,705,280 | 15.2 | 126,566,400 |
+| 2^23 | word | 253.1 | 154,927,104 | 34.2 | 157,614,080 | 16.2 | 156,794,880 |
+| 2^23 | word-prime | 364.1 | 158,023,680 | 51.4 | 159,121,408 | 17.5 | 157,450,240 |
+| 2^23 | word-prime-ordinary | 803.9 | 1,038,237,696 | 241.5 | 1,048,707,072 | 215.2 | 1,047,756,800 |
+| 2^23 | prime5 | 785.3 | 157,761,536 | 84.1 | 163,905,536 | 16.5 | 133,218,304 |
+
+The one-minute load before each of the three verification runs:
+
+| N | Shape | Base loads | Speedups loads | Offload loads |
+| --- | --- | --- | --- | --- |
+| 2^22 | word | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 6.19, 6.19, 6.19 |
+| 2^22 | word-prime | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 7.49, 7.49, 7.49 |
+| 2^22 | word-prime-ordinary | 4.59, 4.59, 4.59 | 4.59, 4.59, 4.59 | 7.30, 7.30, 7.30 |
+| 2^22 | prime5 | 4.59, 4.73, 4.73 | 4.59, 4.59, 4.59 | 6.23, 6.13, 6.13 |
+| 2^23 | word | 5.85, 5.85, 5.85 | 5.85, 5.85, 5.85 | 5.86, 5.86, 5.86 |
+| 2^23 | word-prime | 3.58, 3.77, 3.77 | 3.77, 3.77, 3.77 | 5.69, 5.69, 5.69 |
+| 2^23 | word-prime-ordinary | 3.87, 3.87, 3.87 | 3.80, 3.80, 3.80 | 5.82, 5.82, 5.82 |
+| 2^23 | prime5 | 3.82, 3.72, 3.72 | 3.82, 3.82, 3.82 | 6.39, 6.39, 6.39 |
+
+With the speedups alone, B/D authentication (`root_weights_evaluate_authentication`)
+was still 28.0 of 43.2 ms at N=2^22 `word-prime` and 58.3 of 72.3 ms at
+N=2^22 `prime5`. After the offload that span is gone, and the binary-only
+shapes verify in 14.9–17.5 ms at both sizes. The mixed shape's remaining
+time is the ordinary root's flat-term construction
+(`binary_root_weights_ordinary`: 85.9 ms at N=2^22 and 160.7 ms at N=2^23),
+which the offload does not touch.
+
+Verifier peak RSS follows the selected prefix, not the B/D work. Where the
+prefix domain grows (N=2^22 `word-prime` and `word-prime-ordinary` from 2^24
+to 2^25, `prime5` to 2^26), the successor folds and their prepared setup grow
+with it. Against the speedups build, RSS rises by 42 MB (`prime5`) to 80 MB
+(`word-prime`) at N=2^22. Where it does not grow (N=2^22 `word`, and N=2^23
+except `prime5`), RSS is within 2 MB of the speedups build. N=2^23 `prime5` drops by
+31 MB under its different successor schedule.
+
+### Verification before the verifier speedups
+
+The pre-v8 current-protocol campaign on `7ca9e6656` reported these complete
+verification medians and verifier peak RSS values, under the load triples of
+that campaign. The parallel base column of the pre-v8 table after the
+verifier speedups remeasures the same source.
+
+| N | Shape | Complete verification ns | Verifier peak RSS bytes |
+| --- | --- | ---: | ---: |
+| 2^22 | word | 14,900,416 | 75,284,480 |
+| 2^22 | word-prime | 16,091,291 | 157,270,016 |
+| 2^22 | word-prime-ordinary | 124,834,791 | 644,710,400 |
+| 2^22 | prime5 | 15,235,792 | 126,566,400 |
+| 2^23 | word | 16,205,875 | 156,794,880 |
+| 2^23 | word-prime | 17,545,167 | 157,450,240 |
+| 2^23 | word-prime-ordinary | 215,159,375 | 1,047,756,800 |
+| 2^23 | prime5 | 16,455,833 | 133,218,304 |
 
 ### Before the prover-speed pass
 

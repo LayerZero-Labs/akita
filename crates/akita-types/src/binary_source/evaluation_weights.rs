@@ -89,7 +89,7 @@ impl BinaryTerminalClaim {
                 return Err(AkitaError::InvalidProof);
             }
         }
-        let scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
+        let mut scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
         let mut rows = Vec::new();
         rows.try_reserve_exact(scalar_rows)
             .map_err(|_| AkitaError::InvalidProof)?;
@@ -102,39 +102,28 @@ impl BinaryTerminalClaim {
             first_element: checked::product([owner, ring_rows]).ok_or(AkitaError::InvalidProof)?,
             rows,
         };
-        let mut terms = Vec::new();
-        for (column, weight) in column_weights.into_iter().enumerate() {
-            let challenge_index =
-                checked::mul_add(owner, columns, column).ok_or(AkitaError::InvalidProof)?;
-            let challenge = scalar_challenges
-                .get(challenge_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            let multiplier = binary_scalar_lift(weight).map(E::from_i128);
-            let mut value_kernel = [E::zero(); 162];
-            let mut parity_kernel = [E::zero(); 162];
-            shifted_remainder_evaluations::<E, PlusTrinomial>(
-                &multiplier,
-                alpha,
-                &mut value_kernel,
-            )
-            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            shifted_remainder_evaluations::<E, PlusTrinomial>(
-                &challenge.map(E::from_i128),
-                alpha,
-                &mut parity_kernel,
-            )
-            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            for (coefficient, (value, parity)) in
-                value_kernel.into_iter().zip(parity_kernel).enumerate()
-            {
-                terms.extend(repacking.coefficient_weights(
-                    segments.partials,
-                    challenge_index,
-                    coefficient,
-                    batches[1] * value - batches[0] * parity,
-                )?);
-            }
+        let first_column = checked::product([owner, columns]).ok_or(AkitaError::InvalidProof)?;
+        let owner_challenges = checked::range(first_column, columns)
+            .and_then(|range| scalar_challenges.get_mut(range))
+            .ok_or(AkitaError::InvalidProof)?;
+        if column_weights.len() != columns {
+            return Err(AkitaError::InvalidProof);
         }
+        let partial_columns = PartialColumnWeights {
+            partials: SegmentLanes::new(repacking, segments.partials)?,
+            table_len: repacking.domain_len(),
+            alpha,
+            batches,
+            first_element: first_column,
+            columns: column_weights
+                .into_iter()
+                .zip(owner_challenges.iter_mut())
+                .map(|(weight, challenge)| {
+                    (weight.to_words(), std::mem::replace(challenge, [0; 162]))
+                })
+                .collect(),
+        };
+        let mut terms = Vec::new();
         let mut power = E::one();
         for coefficient in 0..162 {
             for (segment, batch) in [
@@ -161,7 +150,10 @@ impl BinaryTerminalClaim {
         NativeRootWeights::structured(
             repacking.domain_len(),
             terms,
-            vec![RootWeightFamily::ParityRows(parity_rows)],
+            vec![
+                RootWeightFamily::ParityRows(parity_rows),
+                RootWeightFamily::PartialColumns(partial_columns),
+            ],
             batches[1] * target,
         )
     }
@@ -288,6 +280,104 @@ impl<E: Field> ParityRowWeights<E> {
                     };
                     visit(base + 4 * coefficient + row % 4, self.batch * signed)?;
                 }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The terminal identities' column part: every authenticated U column of the
+/// claimed owner against its value multiplier and its parity challenge.
+///
+/// Column `j` weighs natural coefficient `c` of its partials lane by
+/// `value_batch * SRE(bits_j, alpha)[c] - parity_batch * SRE(chi_j, alpha)[c]`.
+/// Partials lanes are aligned, so by the Hankel symmetry of the shifted
+/// remainders the column reads `high * sum_s (value_batch * bits_j[s] -
+/// parity_batch * chi_j[s]) * P[s]`, where `P = SRE(low[o..o + 162], alpha)`
+/// for the lane's low offset `o`. Bits and challenge coefficients lie in
+/// `{-1, 0, 1}`, so each column costs additions only. The prover needs each
+/// column's full kernel, which one shifted-remainder pass of the combined
+/// multiplier gives.
+#[derive(Clone, Debug)]
+pub(crate) struct PartialColumnWeights<E: Field> {
+    partials: SegmentLanes,
+    table_len: usize,
+    alpha: E,
+    /// Parity then value batching weights.
+    batches: [E; 2],
+    first_element: usize,
+    /// Canonical column weight as little-endian words, and the lifted parity
+    /// challenge, per column.
+    columns: Vec<([u64; 3], [i128; 162])>,
+}
+
+impl<E: Field> PartialColumnWeights<E> {
+    pub(crate) fn table_len(&self) -> usize {
+        self.table_len
+    }
+
+    fn base(&self, column: usize) -> Result<usize, AkitaError> {
+        checked::sum([self.first_element, column])
+            .ok_or(AkitaError::InvalidProof)
+            .and_then(|element| self.partials.base(element, 0))
+    }
+
+    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+        let mut patterns: Vec<(usize, [E; 162])> = Vec::new();
+        let (mut values, mut parities) = (E::zero(), E::zero());
+        for (column, (words, challenge)) in self.columns.iter().enumerate() {
+            let base = self.base(column)?;
+            let offset = eq.low_offset(base);
+            let pattern = match patterns.iter().position(|(start, _)| *start == offset) {
+                Some(index) => index,
+                None => {
+                    let low = checked::range(offset, 162)
+                        .and_then(|range| eq.low().get(range))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let mut sums = [E::zero(); 162];
+                    shifted_remainder_evaluations::<E, PlusTrinomial>(low, self.alpha, &mut sums)
+                        .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+                    patterns.push((offset, sums));
+                    patterns.len() - 1
+                }
+            };
+            let sums = &patterns.get(pattern).ok_or(AkitaError::InvalidProof)?.1;
+            let (mut value, mut parity) = (E::zero(), E::zero());
+            for (s, (&sum, &coefficient)) in sums.iter().zip(challenge).enumerate() {
+                if (words.get(s / 64).copied().unwrap_or(0) >> (s % 64)) & 1 == 1 {
+                    value += sum;
+                }
+                match coefficient {
+                    0 => {}
+                    1 => parity += sum,
+                    -1 => parity -= sum,
+                    _ => return Err(AkitaError::InvalidProof),
+                }
+            }
+            let high = eq.high(base)?;
+            values += high * value;
+            parities += high * parity;
+        }
+        Ok(self.batches[1] * values - self.batches[0] * parities)
+    }
+
+    pub(crate) fn visit(
+        &self,
+        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        for (column, (words, challenge)) in self.columns.iter().enumerate() {
+            let mut multiplier = [E::zero(); 162];
+            for (index, (slot, &coefficient)) in multiplier.iter_mut().zip(challenge).enumerate() {
+                let bit = (words.get(index / 64).copied().unwrap_or(0) >> (index % 64)) & 1;
+                *slot = self.batches[1] * E::from_u64(bit)
+                    - self.batches[0] * E::from_i128(coefficient);
+            }
+            let mut kernel = [E::zero(); 162];
+            shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, self.alpha, &mut kernel)
+                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+            let base = self.base(column)?;
+            for (coefficient, weight) in kernel.into_iter().enumerate() {
+                visit(base + coefficient, weight)?;
             }
         }
         Ok(())

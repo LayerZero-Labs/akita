@@ -612,15 +612,17 @@ pub(crate) fn root_relation<E: Field>(
         )
     };
     let ordinary_weights = match (&public.ordinary, ordinary_claim) {
-        (Some(ordinary), Some((point, evaluation, payload))) => Some(ordinary.linear_weights(
-            public.plan.repacking(),
-            &public.setup,
-            point,
-            core::slice::from_ref(&evaluation),
-            payload,
-            alpha,
-            batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
-        )?),
+        (Some(ordinary), Some((point, evaluation, payload))) => {
+            Some(ordinary.reference_linear_weights(
+                public.plan.repacking(),
+                &public.setup,
+                point,
+                core::slice::from_ref(&evaluation),
+                payload,
+                alpha,
+                batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
+            )?)
+        }
         (None, None) => None,
         _ => return Err(AkitaError::InvalidProof),
     };

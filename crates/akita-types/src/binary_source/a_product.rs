@@ -103,8 +103,9 @@ pub fn binary_a_setup_coefficients<F: Field>(
 /// stride 1024. Its digit contraction is included in `h`; the remaining point
 /// addresses source rows and owners. The owner equality is contracted into one
 /// coefficient factor, so every polynomial in the group shares one product.
-/// Owner rows are combined before the adjoint, which uses two exact length
-/// 1295 convolutions per rank row, independently of the matrix width.
+/// Owner rows are combined before the adjoint, which reads the coefficient
+/// equality table in closed form once per rank row, independently of the
+/// matrix width.
 #[derive(Clone, Debug)]
 pub struct BinaryAProduct<E: Field> {
     coefficient_factor: Vec<E>,
@@ -156,7 +157,6 @@ impl<E: Field> BinaryAProduct<E> {
         if owners > checked::pow2(owner_point.len()).ok_or(AkitaError::InvalidProof)? {
             return Err(AkitaError::InvalidProof);
         }
-        let v = EqPolynomial::evals_prefix(coefficient_point, DEGREE)?;
         let digits = EqPolynomial::evals(digit_point)?;
         let mut power = E::one();
         let mut digit_weight = E::zero();
@@ -183,7 +183,10 @@ impl<E: Field> BinaryAProduct<E> {
             .chunks_exact_mut(STRIDE)
             .zip(combined.chunks_exact(DEGREE))
         {
-            for (slot, weight) in target.iter_mut().zip(adjoint.apply(row, &v)?) {
+            for (slot, weight) in target
+                .iter_mut()
+                .zip(adjoint.apply_equality(row, coefficient_point)?)
+            {
                 *slot = digit_weight * weight;
             }
         }
