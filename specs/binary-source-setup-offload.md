@@ -166,10 +166,12 @@ shapes the offsets are multiples of 64 and the lane counts are multiples of
 shapes exercise offsets 4, 8 and 16 modulo 64, `J = 82` and partial last
 periods.
 
-**Pieces.** The image segment has 768 = 512 + 256 periods, U has 8, and one
-EP plane has 344 = 256 + 64 + 16 + 8; `J = 81 = 64 + 16 + 1`. A segment
+**Pieces.** The image segment has 768 = 512 + 256 periods and U has 8. The
+single EP segment holds every prime plane and has `344 * planes` periods
+(344 = 256 + 64 + 16 + 8 for one plane); `J = 81 = 64 + 16 + 1`. A segment
 therefore contributes `2 * popcount(periods) * popcount(J)` pieces: 12 for the
-image, 6 for U and 24 per EP plane.
+image, 6 for U, and for EP 24 with one plane and 36 with five
+(1,720 = 1024 + 512 + 128 + 32 + 16 + 8 periods).
 
 **Regions.** The holes lie in the zero padding of the A tensor: the padded
 rank slots, and coefficients `[704, 768)` and `[768, 1024)` of the live
@@ -447,13 +449,13 @@ host before and after it:
 | 2^22 | word | 24 | 5,206,458,368 → 5,189,353,472 |
 | 2^22 | prime5 | 26 | 10,007,166,976 → 10,012,590,080 |
 
-Removing a 256 MiB (`word`) or 1 GiB (`prime5`) Stage 3 table changed the peak
-by less than 20 MB, so the process peak lies outside Stage 3 at these shapes.
-The growth in the table above is therefore not explained by the Stage 3
-dense state. Where `k' > k` it is consistent with prefix growth. At 2^22
-`word` (+0.14 GB) and the 2^23 shapes with `k' = k` (+0.26 to +0.69 GB), the
-prefix domain is unchanged; which phase sets the peak there has not been
-located.
+Removing a 256 MiB (`word`) or 1 GiB (`prime5`) Stage 3 table changed the
+process peak by less than 20 MB. Whole-process peak RSS cannot attribute the
+peak to a phase, in part because the allocator may retain freed memory, so
+which phase sets the peak is unmeasured. Where `k' > k` the growth is
+consistent with prefix growth. At 2^22 `word` (+0.14 GB) and the 2^23 shapes
+with `k' = k` (+0.26 to +0.69 GB), the prefix domain is unchanged, and the
+source of the growth has not been located.
 
 ## 9. Alternatives
 
