@@ -236,12 +236,15 @@ where
 {
     /// Extension seam: combine direct public linear weights with the ordinary range-image relation.
     /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    /// The weights keep their structured families; the backend chooses how
+    /// to serve them to its rounds.
     /// Sparse negative-binary weights optionally add per-address `w(w+1)` predicates.
+    #[cfg(feature = "labinius-trinomial")]
     #[allow(clippy::too_many_arguments)]
     fn begin_root_relation(
         &self,
         _witness: &Self::WitnessHandle,
-        _weights: Vec<E>,
+        _weights: akita_types::native_root_relation::NativeRootWeights<E>,
         _negative_binary_weights: Vec<(usize, E)>,
         _claim: E,
         _stage1_point: &[E],

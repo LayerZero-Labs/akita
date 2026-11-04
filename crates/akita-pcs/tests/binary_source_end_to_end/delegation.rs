@@ -302,7 +302,7 @@ impl OpaqueStage2Kernel<F, E> for FaultBackend {
     fn begin_root_relation(
         &self,
         _witness: &Self::WitnessHandle,
-        _weights: Vec<E>,
+        _weights: akita_types::native_root_relation::NativeRootWeights<E>,
         _negative_binary_weights: Vec<(usize, E)>,
         _claim: E,
         _stage1_point: &[E],
