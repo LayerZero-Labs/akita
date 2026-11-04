@@ -1152,19 +1152,19 @@ packed representation preserves the bytes of the expanded one.
 All eight full-size runs and the smoke run reproduce the pins above. Each
 reports `proof_digest_pin matched=True` and `verification passed=true`, matches
 the caller's transcript continuation and keeps online A reads forbidden. The
-logs are `$CARGO_TARGET_DIR/v8-logs/312-<log>-<shape>.txt`. Timings were not
-re-measured.
+logs are `$CARGO_TARGET_DIR/v8-logs/315-<log>-<shape>.txt`, measured with the
+structured root weights. Timings were not re-measured.
 
 | N | Shape | Proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 82,746 | 25,570 | 5,709,398,016 | 1,475,493,888 |
-| 2^22 | word-prime | 82,752 | 25,579 | 7,144,800,256 | 2,122,989,568 |
-| 2^22 | word-prime-ordinary | 82,724 | 25,550 | 7,517,847,552 | 2,405,122,048 |
-| 2^22 | prime5 | 79,876 | 25,419 | 12,592,611,328 | 6,240,387,072 |
-| 2^23 | word | 84,599 | 25,763 | 10,970,923,008 | 2,471,493,632 |
-| 2^23 | word-prime | 84,563 | 25,726 | 13,714,145,280 | 3,693,330,432 |
-| 2^23 | word-prime-ordinary | 84,577 | 25,742 | 12,833,374,208 | 4,207,067,136 |
-| 2^23 | prime5 | 81,604 | 25,629 | 14,641,741,824 | 8,441,823,232 |
+| 2^22 | word | 82,746 | 25,570 | 5,485,903,872 | 687,947,776 |
+| 2^22 | word-prime | 82,752 | 25,579 | 5,463,867,392 | 631,193,600 |
+| 2^22 | word-prime-ordinary | 82,724 | 25,550 | 5,657,493,504 | 956,940,288 |
+| 2^22 | prime5 | 79,876 | 25,419 | 8,829,763,584 | 1,483,948,032 |
+| 2^23 | word | 84,599 | 25,763 | 10,746,789,888 | 1,501,184,000 |
+| 2^23 | word-prime | 84,563 | 25,726 | 10,721,607,680 | 1,445,691,392 |
+| 2^23 | word-prime-ordinary | 84,577 | 25,742 | 9,882,910,720 | 2,033,008,640 |
+| 2^23 | prime5 | 81,604 | 25,629 | 10,098,294,784 | 1,218,478,080 |
 
 The partition's first six categories equal the pre-v8 tables below. The
 remaining payload, framing and work category is, in bytes/atoms:
@@ -1501,8 +1501,8 @@ this sizing. Setup coefficients, the factored Stage 3 product,
 Section 12.3's serialized `word-prime` estimates were 89,033 and 89,525 bytes.
 The measured v8 proofs are 82,752 and 84,563 bytes, differences of **-6,281**
 and **-4,962** bytes. Before the v8 merge, the current-protocol proofs were
-87,786 and 89,661 bytes, differences of **-1,247** and **+136** bytes. The estimates used the smaller proposed
-A-prefix domains and planner-estimated ordinary suffix bytes; the measured
+87,786 and 89,661 bytes, differences of **-1,247** and **+136** bytes. The
+estimates used the smaller proposed A-prefix domains and planner-estimated ordinary suffix bytes; the measured
 proofs use the corrected rank/coefficient padding and exact native-root
 transition. Their similar total sizes do not validate the original suffix
 estimate or its individual message assumptions. Section 12.1's five-plane row
@@ -1535,6 +1535,7 @@ turn noisy timing differences into isolated optimization measurements.
 
 ### Verifier and kernel cost relative to the design
 
+The timings in this subsection predate the v8 merge.
 The verifier keeps one linear cost beyond section 12.5's direct-weight
 estimate. It draws one field challenge for each zero-padding cell and reads
 each challenge against the Stage 2 point. In particular the minimum
@@ -1623,7 +1624,7 @@ rather than once per carrier column. The prover expands each column by at most
 
 ### Memory
 
-The N=2^23 `word-prime` prover peak is 13,714,145,280 bytes after the v8
+The N=2^23 `word-prime` prover peak is 10,721,607,680 bytes after the v8
 merge. Before it, the peak was 12,891,324,416 bytes in the current protocol and
 13,666,058,240 bytes in the dev protocol. All three are below one fifth of the
 68,719,476,736-byte host. Peak RSS includes cold preparation in each
