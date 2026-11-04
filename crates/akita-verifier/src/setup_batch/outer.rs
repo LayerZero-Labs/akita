@@ -207,7 +207,9 @@ mod tests {
                 num_field_elements: 64,
                 setup_seed: [19; 32].into(),
             },
-            akita_types::derive_public_matrix_prefix(64, &[19; 32].into()),
+            akita_params::FlatMatrix::from_flat_data(
+                jolt_crypto::lattice::derive_public_matrix_prefix(64, &[19; 32].into()).unwrap(),
+            ),
         );
         let domain = SetupPolynomialId::new::<F, F>(&setup, 64).unwrap();
         let claims = [7, 11]
@@ -252,7 +254,9 @@ mod tests {
                 num_field_elements: LEN,
                 setup_seed: [19; 32].into(),
             },
-            akita_types::derive_public_matrix_prefix(LEN, &[19; 32].into()),
+            akita_params::FlatMatrix::from_flat_data(
+                jolt_crypto::lattice::derive_public_matrix_prefix(LEN, &[19; 32].into()).unwrap(),
+            ),
         );
         let polynomial = SetupPolynomialId::new::<F, F>(&setup, LEN).unwrap();
         let query = SetupQuery::evaluation(vec![F::one(); 12]).unwrap();

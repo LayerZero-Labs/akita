@@ -332,7 +332,7 @@ mod tests {
         ];
         let alpha = extension(19);
         let oracle = contract_setup_columns(&family, 0..2, &row_weights, 2, D, |coefficients| {
-            residue_kernel::<F, E>(coefficients, alpha)
+            residue_kernel::<F, E>(coefficients, alpha).map_err(AkitaError::from)
         })
         .unwrap();
         let point = ResidueKernelPoint::new(alpha, D).unwrap();

@@ -374,7 +374,10 @@ mod tests {
                 num_field_elements: 1,
                 setup_seed: [43; 32].into(),
             },
-            akita_types::derive_public_matrix_prefix::<F>(1, &[43; 32].into()),
+            akita_params::FlatMatrix::from_flat_data(
+                jolt_crypto::lattice::derive_public_matrix_prefix::<F>(1, &[43; 32].into())
+                    .unwrap(),
+            ),
         );
         let value = setup.shared_matrix().as_field_slice()[0];
         let domain = SetupPolynomialId::new::<F, F>(&setup, 1).unwrap();
@@ -416,7 +419,7 @@ mod tests {
                 let mut state = akita_transcript::new_verifier_channel(b"checked-stage3", &proof);
                 akita_transcript::bind_instance(&mut state, b"fixture").unwrap();
                 let mut verifier = VerifierGrinding::new(&mut state, &plan);
-                let result = verify_setup_sumcheck::<F, F>(
+                let result = verify_setup_sumcheck::<F, F, _>(
                     &statement,
                     &[coefficient],
                     value,

@@ -41,7 +41,8 @@ pub(crate) struct SumcheckInstance<E> {
 
 /// A fold verifier's replay: the grinding replay it reads the proof through,
 /// and how it holds and checks the claims that depend on the witness.
-pub(crate) trait ClaimReplay<F, E>: FoldResponseReplay<State: PrivateProofChannel<F>>
+pub(crate) trait ClaimReplay<F, E>:
+    FoldResponseReplay<State: PrivateProofChannel<F>>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,

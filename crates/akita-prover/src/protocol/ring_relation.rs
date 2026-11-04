@@ -3,8 +3,6 @@
 //! Coordinates public relation messages while private witness storage stays in the backend.
 use crate::backend::OperationCtx;
 use crate::ProverOpeningData;
-#[cfg(test)]
-use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_params::{CommittedGroupParams, SignedDigitKernel, MAX_I8_LOG_BASIS};
@@ -16,6 +14,8 @@ use akita_types::RingVec;
 use akita_types::{OpeningFamily, RingRelationInstance};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
+#[cfg(test)]
+use jolt_crypto::challenge::Challenges;
 
 use super::fold_grind;
 use super::prove::PreparedGroupOpening;
@@ -330,15 +330,16 @@ impl RingRelationProver {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
-        let grind_outputs = fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B, C>(
-            opening_ctx,
-            grinding,
-            level,
-            &lp,
-            &opening_batch,
-            &grind_groups,
-            None,
-        )?;
+        let grind_outputs =
+            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B, C>(
+                opening_ctx,
+                grinding,
+                level,
+                &lp,
+                &opening_batch,
+                &grind_groups,
+                None,
+            )?;
         drop(_grind_span);
         if grind_outputs.len() != num_groups {
             return Err(AkitaError::Internal(

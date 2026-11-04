@@ -14,7 +14,9 @@ fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>>
                 num_field_elements: len,
                 setup_seed: seed,
             },
-            derive_public_matrix_prefix(len, &[23; 32].into()),
+            akita_params::FlatMatrix::from_flat_data(
+                derive_public_matrix_prefix(len, &[23; 32].into()).unwrap(),
+            ),
         ),
     )
 }

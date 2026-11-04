@@ -334,7 +334,13 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
         // evaluation, consistent rounds) and the verifier accepts it once
         // `validate_stage2_replay` skips the oracle check.
         assert_eq!(
-            verifier.verify_standalone(&faulted, DOMAIN, statement, BasisMode::Lagrange),
+            verifier.batched_verify(
+                &faulted,
+                DOMAIN,
+                statement,
+                BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
+            ),
             Err(AkitaError::InvalidProof)
         );
     }

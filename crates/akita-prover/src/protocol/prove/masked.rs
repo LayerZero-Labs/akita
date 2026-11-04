@@ -1,27 +1,28 @@
 //! The zero-knowledge opening's prover side up to the cut
 //! (`specs/whiteout-akita.md` §4.5–4.6).
 //!
-//! Levels `0..=cut_level` run the ordinary fold prover over jolt-zk's masked
-//! channel: every witness-dependent message goes out as m̂ = m + p with the
+//! Levels `0..=cut_level` run the ordinary fold prover over Akita's masked
+//! channel ([`MaskedProverChannel`]): every witness-dependent message goes out as m̂ = m + p with the
 //! next committed pads, and the statement claims and derived claims bind
 //! nothing. The opening stops after the cut level's Stage 2
 //! (`SuffixEnd::Cut`) and hands back the [`ResidualOpening`] and Akita's
 //! auxiliary values.
 
 use super::fold::SuccessorPayload;
-use super::registry::SuccessorHandoff;
 use super::*;
 use crate::backend::{
     FoldExecutionRequirements, ProofScope, ResidualExportKernel, ResidualWitness,
-    ValidatedRecursiveWitnessCommitPlan,
 };
 use crate::SelectedProverOpeningData;
 use akita_config::TrustedScheduleCatalog;
 use akita_params::zk::{AdmittedZkSchedule, ResidualGeometry};
-use akita_types::{check_range_leaf, AkitaSetupDescriptor, MaskedOpeningClaims, ProverGrinding};
+use akita_transcript::ProverChannel;
+use akita_types::{
+    check_range_leaf, AkitaSetupDescriptor, MaskedOpeningClaims, MaskedProverChannel,
+    ProverGrinding,
+};
 use jolt_algebra::{AdditiveGroup, JoltField};
 use jolt_poly::{Point, HIGH_TO_LOW};
-use jolt_transcript::{Channel, ProverTranscript};
 use jolt_zk::masking::{CommittedPads, ValuesDomain, ZkError};
 use jolt_zk::whiteout::ImageCompression;
 use zeroize::Zeroizing;
@@ -83,34 +84,9 @@ impl<F: JoltField> SuccessorPayload<F> for CutPayload<'_, F> {
     }
 }
 
-/// One backend proves every masked level, so a committed successor stays
-/// where it is.
-struct OwnBackend;
-
-impl<Cfg, B> SuccessorHandoff<Cfg, B> for OwnBackend
-where
-    Cfg: CommitmentConfig,
-    B: ProverBackend<Cfg::Field, Cfg::ExtField>,
-{
-    fn handoff_successor(
-        &mut self,
-        _: &B,
-        _: &B::ProofSessionHandle,
-        _: usize,
-        _: &CommittedGroupParams,
-        _: &RingRelationInstance<Cfg::Field>,
-        _: &ValidatedRecursiveWitnessCommitPlan,
-        _: &NextWitnessState<Cfg::Field>,
-        _: &B::WitnessHandle,
-        _: &B::CommitmentMaterialHandle,
-    ) -> Result<(), AkitaError> {
-        Ok(())
-    }
-}
-
 /// Proves levels `0..=cut_level` of a zero-knowledge opening on `backend`,
-/// sending every witness-dependent message through `pads`' masked channel on
-/// `transcript`, and stops after the cut level's Stage 2.
+/// sending every witness-dependent message masked by `pads` on `state`, and
+/// stops after the cut level's Stage 2.
 ///
 /// `openings` are the statement claims as affine forms over the pads, in
 /// group order; each must decode under `pads` to the claim in `opening`. The
@@ -130,7 +106,7 @@ where
 /// the fold prover's errors otherwise. A panic is returned as
 /// [`AkitaError::Internal`].
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn prove_masked_prefix<Cfg, B, S, O>(
+pub fn prove_masked_prefix<Cfg, B, O>(
     expanded: &AkitaSetupDescriptor,
     schedules: &TrustedScheduleCatalog<Cfg>,
     backend: &B,
@@ -138,7 +114,7 @@ pub fn prove_masked_prefix<Cfg, B, S, O>(
     opening: SelectedProverOpeningData<'_, Cfg::ExtField, B::CommitmentHandle, Cfg::Field>,
     openings: &MaskedOpeningClaims<Cfg::ExtField>,
     pads: &mut CommittedPads<Cfg::ExtField, O>,
-    transcript: &mut ProverTranscript<S>,
+    state: &mut ProverChannel,
     compression: &dyn ImageCompression<Cfg::Field>,
     basis: BasisMode,
 ) -> Result<
@@ -171,11 +147,12 @@ where
         + ResidualExportKernel<Cfg::Field, Cfg::ExtField>
         + 'static,
     B::CommitmentHandle: crate::CommitmentHandleMetadata,
-    S: Sponge,
 {
     catch_prover_panic(move || {
-        let (resolved, claims, grinding_plan, descriptor_bytes) =
-            root::resolve_root::<Cfg, B::CommitmentHandle>(expanded, schedules, opening, basis)?;
+        let (resolved, digests, claims, grinding_plan, descriptor_bytes) =
+            root::resolve_root::<Cfg, B::CommitmentHandle>(
+                expanded, schedules, opening, basis, None,
+            )?;
         let schedule = resolved.schedule();
         let layout = claims.opening_layout();
         let admitted =
@@ -208,38 +185,36 @@ where
                 &FoldExecutionRequirements::new(schedule, layout, level)?,
             )?;
         }
-        let mut channel = pads.channel(transcript);
-        channel.site(
-            akita_params::ProtocolSiteId {
-                family: akita_params::transcript_site::SITE_FAMILY_ROOT_STATEMENT,
-                ..akita_params::ProtocolSiteId::default()
-            }
-            .into(),
-        );
-        channel.public_bytes(&descriptor_bytes);
+        akita_transcript::bind_instance(state, &descriptor_bytes)?;
+        let mut channel = MaskedProverChannel::new(state, pads);
         let mut grinding = ProverGrinding::new(&mut channel, &grinding_plan);
-        let mut level = root::prove_root::<Cfg, B, S, _>(
+        let mut payload = CutPayload {
+            cut_level,
+            compression,
+            sent: None,
+        };
+        // One backend proves every masked level, so a committed successor
+        // stays where it is: no handoff.
+        let mut level = root::prove_root_with::<Cfg, B, _>(
             expanded,
             prefixes,
             backend,
             claims.opening_claims(),
+            &digests,
             layout,
             &claims.groups,
             schedule,
             scope.session(),
             &mut grinding,
             basis,
-            &mut OwnBackend,
+            None,
+            |_, _, _, _, _| Ok(()),
+            &mut payload,
         )?;
         let mut auxiliary = ValuesDomain::default();
-        let mut payload = CutPayload {
-            cut_level,
-            compression,
-            sent: None,
-        };
         for index in 0..cut_level as usize {
             level.lower_range_leaf(&mut auxiliary)?;
-            level = suffix::prove_recursive_step::<Cfg, B, S, _>(
+            level = suffix::prove_recursive_level::<Cfg, B, _>(
                 expanded,
                 prefixes,
                 backend,
@@ -248,7 +223,8 @@ where
                 schedule,
                 scope.session(),
                 index,
-                &mut OwnBackend,
+                None,
+                |_, _, _, _, _| Ok(()),
                 &mut payload,
             )?;
         }

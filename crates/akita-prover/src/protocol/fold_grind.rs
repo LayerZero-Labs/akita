@@ -6,7 +6,6 @@ use crate::backend::{
     FoldProbeDiagnostics, FoldProbeGeometry, FoldProbeOutcome, ValidatedFoldAcceptancePlan,
     ValidatedFoldProbePlan, ValidatedTerminalFoldProbePlan,
 };
-use akita_types::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
 use akita_error::AkitaError;
 use akita_params::FoldResponseSearch;
 #[cfg(test)]
@@ -20,6 +19,7 @@ use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
+use akita_types::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
 
@@ -330,7 +330,8 @@ where
             let challenges = {
                 let group_index = u32::try_from(group.group_index)
                     .map_err(|_| AkitaError::Internal("fold group index exceeds u32".into()))?;
-                let mut live = ProverFoldDraw::new(grinding.state_mut().clear_state(), level, group_index);
+                let mut live =
+                    ProverFoldDraw::new(grinding.state_mut().clear_state(), level, group_index);
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
@@ -488,8 +489,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_crypto::challenge::SparseChallengeConfig;
     use akita_params::SisModulusProfileId;
+    use jolt_crypto::challenge::SparseChallengeConfig;
 
     type F = jolt_algebra::Prime128Offset275;
 
@@ -499,14 +500,11 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn draw_message(
+        fn draw_message<T>(
             &mut self,
             len: usize,
-            decode: impl FnOnce(
-                &[u8],
-            )
-                -> Result<Option<Vec<jolt_crypto::challenge::SparseChallenge>>, AkitaError>,
-        ) -> Result<Option<Vec<jolt_crypto::challenge::SparseChallenge>>, AkitaError> {
+            decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+        ) -> Result<Option<T>, AkitaError> {
             self.draws += 1;
             decode(&vec![11; len])
         }

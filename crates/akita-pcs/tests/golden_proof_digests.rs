@@ -151,7 +151,7 @@ fn fp128_onehot_16_precommitted_14() -> String {
         )
         .expect("precommit");
     let final_poly = make_onehot_poly::<Cfg>(FINAL_NV, 0x601d_0006);
-    let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
+    let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
         .expect("nonempty precommitted groups");
     let CommitOutput {
         committed_group: final_commitment,

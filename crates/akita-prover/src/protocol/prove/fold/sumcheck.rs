@@ -604,14 +604,8 @@ where
 {
     let (claim, equality_coordinates, _) =
         prove_stage1_products::<F, E, _, _>(steps, plan, equality_point, grinding, level)?;
-    let leaf = prove_stage1_leaf::<F, E, _, _>(
-        steps,
-        plan,
-        claim,
-        equality_coordinates,
-        grinding,
-        level,
-    )?;
+    let leaf =
+        prove_stage1_leaf::<F, E, _, _>(steps, plan, claim, equality_coordinates, grinding, level)?;
     let stage = u32::try_from(plan.product_stage_arities().len())
         .map_err(|_| AkitaError::Internal("stage 1 range-image stage index exceeds u32".into()))?;
     akita_types::stage1_range_image::<F, E, _>(grinding, level, stage, leaf.range_image)?;

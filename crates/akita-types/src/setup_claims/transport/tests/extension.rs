@@ -1,5 +1,7 @@
 use super::super::*;
-use crate::{derive_public_matrix_prefix, AkitaExpandedSetup, AkitaSetupDescriptor, FpExtEncoding};
+use crate::{AkitaExpandedSetup, AkitaSetupDescriptor, FpExtEncoding};
+use akita_params::FlatMatrix;
+use jolt_crypto::lattice::derive_public_matrix_prefix;
 use jolt_algebra::{Ext2, FpExt4, FpExt8, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 fn round_trip<F, E>()
@@ -14,7 +16,7 @@ where
             num_field_elements: 64,
             setup_seed: [19; 32].into(),
         },
-        derive_public_matrix_prefix(64, &[19; 32].into()),
+        FlatMatrix::from_flat_data(derive_public_matrix_prefix(64, &[19; 32].into()).unwrap()),
     );
     let polynomial = SetupPolynomialId::new::<F, E>(&setup, 64).unwrap();
     let value = |seed| E::from_base_fn(|coordinate| F::from_u64(seed + 13 * coordinate as u64));
@@ -147,7 +149,7 @@ where
             num_field_elements: fields,
             setup_seed: [19; 32].into(),
         },
-        derive_public_matrix_prefix(fields, &[19; 32].into()),
+        FlatMatrix::from_flat_data(derive_public_matrix_prefix(fields, &[19; 32].into()).unwrap()),
     );
     let polynomial = SetupPolynomialId::new::<F, E>(&setup, fields).unwrap();
     let query = SetupQuery::from_native_terms(vec![NativeTerm {

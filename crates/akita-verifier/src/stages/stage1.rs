@@ -345,7 +345,7 @@ mod tests {
     use akita_transcript::{
         exchange_extension_group, new_prover_channel, new_verifier_channel, public_extensions,
     };
-    use akita_types::{grinding_sumcheck_body_site, ProverGrinding};
+    use akita_types::{grinding_sumcheck_body_site, GrindingReplay, ProverGrinding};
     use jolt_algebra::{FpExt4, Prime32Offset99, Zero};
 
     type F = Prime32Offset99;
@@ -393,8 +393,11 @@ mod tests {
         let equality_point =
             DigitRangeEqualityPoint::from_column_then_ring_challenges(&[E::from_u64(5)], 1, 0)
                 .unwrap();
-        Stage1Verifier::new(equality_point, DigitRangePlan::new(8).unwrap())
-            .verify_clear::<F>(&mut verifier, None, level)
+        Stage1Verifier::new(equality_point, DigitRangePlan::new(8).unwrap()).verify_clear::<F>(
+            &mut verifier,
+            None,
+            level,
+        )
     }
 
     #[test]

@@ -354,7 +354,7 @@ fn descriptor_is_word_aligned_and_rejects_noncanonical_words() {
     bad_flag[presence] = 2;
     for changed in [wide_degree, bad_flag] {
         assert!(matches!(
-            AkitaInstanceDescriptor::deserialize_uncompressed_exact(&changed, &()),
+            AkitaInstanceDescriptor::deserialize_uncompressed_exact(&changed, &ProtocolFeatureSet::default()),
             Err(SerializationError::InvalidData(_))
         ));
     }

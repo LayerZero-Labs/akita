@@ -531,23 +531,6 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     verifier.finish().unwrap().check_eof(state).unwrap();
 }
 
-/// A public check rejects in the verifier's replay and is skipped by the
-/// counting replay, which runs over arbitrary bytes and gives no verdict.
-#[test]
-fn public_checks_reject_unless_counting() {
-    let plan = plan();
-    let mut transcript = new_verifier(b"public-check", &[]);
-    let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
-    assert_eq!(verifier.check_public(true), Ok(()));
-    assert_eq!(verifier.check_public(false), Err(AkitaError::InvalidProof));
-    #[cfg(feature = "zk")]
-    {
-        let mut transcript = new_verifier(b"public-check", &[]);
-        let mut counting = CountingGrinding::new(&mut transcript, &plan);
-        assert_eq!(counting.check_public(false), Ok(()));
-    }
-}
-
 /// A dense multilinear table summed by a degree-1 sumcheck, binding its top
 /// variable first.
 struct DenseSum(Vec<F>);
@@ -564,36 +547,39 @@ impl DenseSum {
     }
 }
 
-impl jolt_sumcheck::ProveRounds<F, AkitaError> for DenseSum {
+impl akita_sumcheck::SumcheckInstanceProver<F> for DenseSum {
     fn num_rounds(&self) -> usize {
         self.0.len().trailing_zeros() as usize
     }
 
-    fn prove_round(
+    fn degree_bound(&self) -> usize {
+        1
+    }
+
+    fn input_claim(&self) -> F {
+        self.0.iter().copied().sum()
+    }
+
+    fn compute_round_univariate(
         &mut self,
-        bind: Option<F>,
         _round: usize,
         _previous_claim: F,
-    ) -> Result<jolt_poly::UnivariatePoly<F>, AkitaError> {
-        if let Some(challenge) = bind {
-            self.bind(challenge);
-        }
+    ) -> jolt_poly::UnivariatePoly<F> {
         let half = self.0.len() / 2;
         let low: F = self.0[..half].iter().copied().sum();
         let high: F = self.0[half..].iter().copied().sum();
-        Ok(jolt_poly::UnivariatePoly::new(vec![low, high - low]))
+        jolt_poly::UnivariatePoly::new(vec![low, high - low])
     }
 
-    fn finish_rounds(&mut self, bind: F) -> Result<(), AkitaError> {
-        self.bind(bind);
-        Ok(())
+    fn ingest_challenge(&mut self, _round: usize, challenge: F) {
+        self.bind(challenge);
     }
 }
 
 /// Over the clear transcript, a sumcheck proved through
-/// [`PublicGrindingSumcheck`] sends exactly the bytes it sends through
-/// [`GrindingSumcheckProver`], so moving Stage 3 onto public rounds leaves
-/// clear proofs unchanged.
+/// [`GrindingSumcheckProver::new_public`] sends exactly the bytes it sends
+/// through [`GrindingSumcheckProver::new`], so moving Stage 3 onto public
+/// rounds leaves clear proofs unchanged.
 #[test]
 fn public_rounds_send_the_clear_bytes() {
     const ROUNDS: u32 = 3;
@@ -622,33 +608,25 @@ fn public_rounds_send_the_clear_bytes() {
     let table: Vec<F> = (0..1u64 << ROUNDS)
         .map(|value| F::from_u64(3 * value + 1))
         .collect();
-    let instance = jolt_sumcheck::SingleInstance {
-        input_claim: table.iter().copied().sum(),
-        rounds: ROUNDS as usize,
-        degree: 1,
-        format: jolt_sumcheck::SingleFormat::Compressed,
-        invocation: 0,
-    };
+    let shape = akita_sumcheck::SumcheckShape::new(ROUNDS as usize, 1).unwrap();
     let prove = |public: bool| {
-        let mut transcript = new_prover(b"public-rounds");
+        let mut transcript = new_prover_channel(b"public-rounds");
         let mut grinding = ProverGrinding::new(&mut transcript, &plan);
         let mut member = DenseSum(table.clone());
-        let reduction = if public {
-            jolt_sumcheck::prove_single::<F, F, AkitaError, _>(
-                &mut member,
-                &instance,
-                &mut PublicGrindingSumcheck::<F, F, _>::new(&mut grinding, protocol, 0, 0),
-            )
+        let mut channel = if public {
+            GrindingSumcheckProver::<F, F>::new_public(&mut grinding, protocol, 0, 0)
         } else {
-            jolt_sumcheck::prove_single::<F, F, AkitaError, _>(
-                &mut member,
-                &instance,
-                &mut GrindingSumcheckProver::<F, F, _, _>::new(&mut grinding, protocol, 0, 0),
-            )
-        }
+            GrindingSumcheckProver::<F, F>::new(&mut grinding, protocol, 0, 0)
+        };
+        let (challenges, _) = akita_sumcheck::prove_sumcheck::<F, F, _, _>(
+            &mut akita_sumcheck::InfallibleSumcheck(&mut member),
+            &mut channel,
+            shape,
+            0,
+        )
         .unwrap();
         grinding.finish().unwrap();
-        (transcript.finish(), reduction.challenges)
+        (transcript.narg_string().to_vec(), challenges)
     };
     let (clear, clear_challenges) = prove(false);
     let (public, public_challenges) = prove(true);

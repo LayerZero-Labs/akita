@@ -77,8 +77,9 @@ where
         opening_batch,
         instance,
     )?;
-    let opening_capacity = jolt_algebra::checked::product([opening_source_len, opening_ring_dim])
-        .ok_or_else(|| AkitaError::Internal("opening capacity overflow".into()))?;
+    let opening_capacity =
+        jolt_algebra::checked::product([opening_source_len, opening_ring_dim])
+            .ok_or_else(|| AkitaError::Internal("opening capacity overflow".into()))?;
     if opening_ring_dim == 0
         || !opening_ring_dim.is_power_of_two()
         || witness_handle.manifest().logical_len() > opening_capacity

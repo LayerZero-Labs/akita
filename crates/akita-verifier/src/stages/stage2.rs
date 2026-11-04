@@ -536,7 +536,7 @@ mod tests {
 
     type F = Prime64Offset59;
     type E = Ext2<F>;
-    type Clear<'a> = akita_types::VerifierGrinding<'a, 'a, akita_types::AkitaSponge>;
+    type Clear<'a> = akita_types::VerifierGrinding<'a, 'a>;
 
     #[test]
     fn packing_batch_drives_stage2_claim_and_compact_weight_once() {

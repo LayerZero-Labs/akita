@@ -9,11 +9,11 @@ use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use crate::stages::stage2::Stage2OpeningSemantics;
 use akita_error::AkitaError;
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
+use akita_transcript::ChallengeCodec;
 use akita_types::{
     ensure_trace_stage2_supported, proof::relation::relation_row_weight, EvaluationTraceInputs,
     FpExtEncoding, OpeningFamily,
 };
-use akita_transcript::ChallengeCodec;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Fold-level inputs to the Stage 2 opening semantics.

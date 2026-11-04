@@ -5,6 +5,7 @@
 
 use super::root::verify_root;
 use super::suffix::{verify_suffix_level, SuffixVerifierState};
+use super::NextWitness;
 use super::verify::OpeningPlan;
 use crate::masked::{CompressedCut, MaskedPrefix, MaskedReplay, ResidualClaim};
 use crate::AkitaVerifier;
@@ -13,13 +14,13 @@ use akita_error::AkitaError;
 use akita_params::zk::{AdmittedZkSchedule, ResidualGeometry};
 use akita_params::BasisMode;
 use akita_serialization::{AkitaSerialize, Valid};
+use akita_transcript::{PrivateProofChannel, VerifierChannel};
 use akita_types::{
     CommittedGroup, CountingGrinding, FoldResponseReplay, FpExtEncoding, GroupBatchStatement,
-    MaskedOpeningClaims, OpeningClaims, VerifierGrinding,
+    MaskedOpeningClaims, MaskedVerifierChannel, OpeningClaims, VerifierGrinding,
+    VerifierGrindingChannel,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, JoltField, PseudoMersenne, Ring};
-use jolt_sumcheck::SumcheckError;
-use jolt_transcript::{PrivateChannel, Sponge, VerifierTranscript};
 use jolt_zk::masking::{CommittedPadsView, ZkError};
 use jolt_zk::whiteout::ImageCompression;
 
@@ -35,7 +36,7 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
 {
     /// Replays levels `0..=cut_level` of a zero-knowledge opening over the
-    /// masked channel of `pads` on `transcript`, and returns the masked
+    /// masked channel of `pads` on `state`, and returns the masked
     /// prefix: its stage checks, to lower into residual rows once the
     /// auxiliary block has arrived, and the [`ResidualClaim`] at the cut.
     ///
@@ -43,7 +44,7 @@ where
     /// its evaluations are not read. The claims are `openings`, affine forms
     /// over the pads in group order. The caller must already have absorbed
     /// the masked statement claims those forms are built from into
-    /// `transcript`, before this call: the replay binds none of them.
+    /// `state`, before this call: the replay binds none of them.
     ///
     /// The cut level sends u_a as its compression under `compression`, the
     /// response proof's chain (`specs/whiteout-akita.md` A47); the
@@ -55,9 +56,9 @@ where
     /// the selected schedule is not an admitted zero-knowledge schedule
     /// (`ZkOpeningSchedule::admit`), and the fold verifier's errors otherwise.
     #[tracing::instrument(skip_all, name = "AkitaVerifier::verify_masked_prefix")]
-    pub fn verify_masked_prefix<H: Sponge, C>(
+    pub fn verify_masked_prefix<C>(
         &self,
-        transcript: &mut VerifierTranscript<'_, H>,
+        state: &mut VerifierChannel<'_>,
         pads: &mut CommittedPadsView<C>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         openings: MaskedOpeningClaims<Cfg::ExtField>,
@@ -68,13 +69,19 @@ where
         let claims = statement.into_claims();
         let (opening, cut) =
             self.plan_masked_opening(selection, &claims, &openings, compression, basis)?;
-        let mut channel = pads.channel(transcript);
-        opening.absorb_descriptor(&mut channel);
-        let mut grinding = VerifierGrinding::new(&mut channel, &opening.grinding_plan);
-        let prefix =
-            self.replay_masked_levels(&mut grinding, &opening, &claims, openings, basis, cut)?;
-        grinding.finish_through(cut.level)?;
-        Ok(prefix)
+        let result = (|| {
+            akita_transcript::bind_instance(state, &opening.descriptor_bytes)?;
+            let mut channel = MaskedVerifierChannel::new(state, pads);
+            let mut grinding = VerifierGrinding::new(&mut channel, &opening.grinding_plan);
+            let prefix =
+                self.replay_masked_levels(&mut grinding, &opening, &claims, openings, basis, cut)?;
+            grinding.finish_through(cut.level)?;
+            Ok(prefix)
+        })();
+        if result.is_err() {
+            let _ = akita_transcript::reject(state);
+        }
+        result
     }
 
     /// The pad-layout replay of [`verify_masked_prefix`](Self::verify_masked_prefix)
@@ -83,8 +90,8 @@ where
     /// masked messages' pads, and [`MaskedPrefix::shape`] the auxiliary slots
     /// and operands.
     ///
-    /// `transcript` must read zero bytes, or come from a reader that never
-    /// fails, long enough for the prefix; never a proof's bytes. The layout is
+    /// `state` must read zero bytes, long enough for the prefix; never a
+    /// proof's bytes. The layout is
     /// a function of the public schedule, and a proof can end early or fail to
     /// decode.
     ///
@@ -93,9 +100,9 @@ where
     /// As [`verify_masked_prefix`](Self::verify_masked_prefix), except that
     /// no proof-of-work nonce is read or checked.
     #[tracing::instrument(skip_all, name = "AkitaVerifier::count_masked_prefix")]
-    pub fn count_masked_prefix<H: Sponge>(
+    pub fn count_masked_prefix(
         &self,
-        transcript: &mut VerifierTranscript<'_, H>,
+        state: &mut VerifierChannel<'_>,
         view: &mut CommittedPadsView<()>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         openings: MaskedOpeningClaims<Cfg::ExtField>,
@@ -106,8 +113,8 @@ where
         let claims = statement.into_claims();
         let (opening, cut) =
             self.plan_masked_opening(selection, &claims, &openings, compression, basis)?;
-        let mut channel = view.channel(transcript);
-        opening.absorb_descriptor(&mut channel);
+        akita_transcript::bind_instance(state, &opening.descriptor_bytes)?;
+        let mut channel = MaskedVerifierChannel::new(state, view);
         let mut grinding = CountingGrinding::new(&mut channel, &opening.grinding_plan);
         let prefix =
             self.replay_masked_levels(&mut grinding, &opening, &claims, openings, basis, cut)?;
@@ -123,7 +130,7 @@ where
         compression: &dyn ImageCompression<Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(OpeningPlan<'_>, CompressedCut), AkitaError> {
-        let opening = self.plan_opening(selection, claims, basis)?;
+        let opening = self.plan_opening(selection, claims, basis, None)?;
         let admitted = AdmittedZkSchedule::new(
             opening.schedule,
             Cfg::committed_source_contract()?,
@@ -144,7 +151,7 @@ where
         Ok((opening, cut))
     }
 
-    fn replay_masked_levels<G>(
+    fn replay_masked_levels<'proof, G>(
         &self,
         grinding: &mut G,
         opening: &OpeningPlan<'_>,
@@ -154,12 +161,16 @@ where
         cut: CompressedCut,
     ) -> Result<MaskedPrefix<Cfg::ExtField, Cfg::Field>, AkitaError>
     where
-        G: FoldResponseReplay<State: PrivateChannel<Error: Into<SumcheckError<Cfg::ExtField>>>>,
+        G: FoldResponseReplay<
+            State: PrivateProofChannel<Cfg::Field> + VerifierGrindingChannel<'proof>,
+        >,
     {
         let setup = &self.setup;
         let schedule = opening.schedule;
         let raw_claims = opening.raw_claims(claims)?;
         let mut replay = MaskedReplay::new(grinding, cut);
+        // A masked opening checks its setup contribution in full at every level.
+        let mut setup_policy = crate::SetupPolicy::Check(None);
         let root_span = tracing::info_span!("masked_prefix_level", level = 0).entered();
         let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
             setup,
@@ -171,20 +182,35 @@ where
             &schedule.root_fold().params,
             schedule.recursive_folds.first(),
             &schedule.terminal,
+            &mut setup_policy,
         )?;
         drop(root_span);
         let mut state =
             SuffixVerifierState::from_root(root, schedule.root_fold().output_witness_len);
         for offset in 0..cut.level as usize {
             let _span = tracing::info_span!("masked_prefix_level", level = offset + 1).entered();
-            state = verify_suffix_level(setup, &mut replay, schedule, offset, state)?;
+            state = verify_suffix_level(
+                setup,
+                &mut replay,
+                schedule,
+                offset,
+                state,
+                &mut setup_policy,
+            )?;
         }
+        // Admission puts a recursive fold after the cut, so its successor
+        // message is the compressed u_a payload, never a terminal state.
+        let NextWitness::OuterPayload(payload) = state.witness else {
+            return Err(AkitaError::UnsupportedSchedule(
+                "the zero-knowledge cut hands its witness to the terminal".into(),
+            ));
+        };
         let claim = ResidualClaim::new(
             cut.level,
             state.opening_point,
             state.witness_len,
             state.opening,
-            state.witness.coeffs().to_vec(),
+            payload.coeffs().to_vec(),
         );
         Ok(MaskedPrefix::new(replay, claim))
     }

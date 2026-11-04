@@ -2,8 +2,6 @@
 
 use akita_algebra::row_batch::ROW_BATCH;
 use akita_algebra::CyclotomicInverse;
-use jolt_algebra::CyclotomicRing;
-use jolt_crypto::challenge::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
 use akita_transcript::{field_digest, FIELD_DIGEST_BYTES};
@@ -12,7 +10,9 @@ use akita_types::{
     PreparedOpeningPoint, RingMultiplierOpeningPoint, RingVec, TerminalResponse,
 };
 use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_crypto::challenge::{Challenges, SparseChallenge};
 use std::iter::repeat_n;
 
 use crate::prepared_cache::TerminalNttCache;

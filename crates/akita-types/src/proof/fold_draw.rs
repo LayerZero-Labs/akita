@@ -174,11 +174,11 @@ mod tests {
     }
 
     impl FoldDraw for CapturingDraw {
-        fn draw_message(
+        fn draw_message<T>(
             &mut self,
             len: usize,
-            decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-        ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+            decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+        ) -> Result<Option<T>, AkitaError> {
             self.message_lens.push(len);
             decode(&vec![7; len])
         }

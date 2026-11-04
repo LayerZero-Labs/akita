@@ -19,8 +19,6 @@
 //! per element. The descriptor is therefore a whole number of words.
 
 #[cfg(test)]
-mod sis_modulus_profile_tag_tests;
-#[cfg(test)]
 mod tests;
 mod transcript_grinding_binding;
 
@@ -438,7 +436,7 @@ impl AkitaDeserialize for ProtocolFeatureSet {
     fn deserialize_with_mode<R: Read>(
         reader: R,
         _compress: Compress,
-        validate: Validate,
+        _validate: Validate,
         expected: &ProtocolFeatureSet,
     ) -> Result<Self, SerializationError> {
         let out = Self {

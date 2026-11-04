@@ -305,13 +305,14 @@ where
     akita_config::require_clear_opening::<Cfg>()?;
     catch_prover_panic(move || {
         let setup_batch = opening.setup_batch;
-        let (resolved, digests, claims, grinding_plan, descriptor_bytes) = root::resolve_root::<Cfg, H>(
-            expanded,
-            schedules,
-            opening,
-            basis,
-            setup_batch.map(|(level, _)| level),
-        )?;
+        let (resolved, digests, claims, grinding_plan, descriptor_bytes) =
+            root::resolve_root::<Cfg, H>(
+                expanded,
+                schedules,
+                opening,
+                basis,
+                setup_batch.map(|(level, _)| level),
+            )?;
         if setup_batch
             .is_some_and(|(level, _)| level as usize >= resolved.schedule().num_fold_levels() - 1)
         {
@@ -328,8 +329,11 @@ where
         let mut owners = Vec::with_capacity(resolved.schedule().num_fold_levels());
         let mut selected = vec![false; registry.slots.len()];
         for level in 0..resolved.schedule().num_fold_levels() {
-            let requirements =
-                FoldExecutionRequirements::new(resolved.schedule(), claims.opening_layout(), level)?;
+            let requirements = FoldExecutionRequirements::new(
+                resolved.schedule(),
+                claims.opening_layout(),
+                level,
+            )?;
             let current = owners.last().copied();
             let owner = policy.choose_backend(current, &requirements)?;
             registry.slot(owner)?;
@@ -366,15 +370,19 @@ where
             registry,
             request: &request,
             current: root_id,
-            next: *owners
-                .get(1)
-                .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
+            next: *owners.get(1).ok_or_else(|| {
+                AkitaError::Internal("proof schedule has no successor fold".into())
+            })?,
             adopted: None,
         };
         akita_transcript::bind_instance(channel, &descriptor_bytes)?;
         let mut grinding = ProverGrinding::new(channel, &grinding_plan);
         if let Some((level, statement)) = setup_batch {
-            akita_types::setup_claims::transcript::bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
+            akita_types::setup_claims::transcript::bind_outer_statement::<
+                Cfg::Field,
+                Cfg::ExtField,
+                _,
+            >(
                 akita_types::GrindingReplay::state_mut(&mut grinding),
                 level,
                 statement,
@@ -391,9 +399,9 @@ where
         for index in 0..request.schedule.recursive_folds.len() {
             let owner = resident.owner;
             handoff.current = owner;
-            handoff.next = *owners
-                .get(index + 2)
-                .ok_or_else(|| AkitaError::Internal("resolved route has no successor fold".into()))?;
+            handoff.next = *owners.get(index + 2).ok_or_else(|| {
+                AkitaError::Internal("resolved route has no successor fold".into())
+            })?;
             (public, resident) = registry.slot(owner)?.recursive(
                 &mut handoff,
                 &mut grinding,
@@ -421,7 +429,6 @@ where
         Ok(())
     })
 }
-
 
 /// Runs `prove`, returning a panic inside it as [`AkitaError::Internal`]
 /// instead of unwinding into the caller. This relies on `panic = "unwind"`,

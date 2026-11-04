@@ -625,7 +625,7 @@ mod tests {
         let mut channel = new_prover_channel(b"test/suffix-shared-trace-target");
         let plan = evaluation_batch_plan();
         let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
-        let err = match prepare_evaluation_trace_claim::<TestF, TestF>(
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,
             &opening_batch,
@@ -656,7 +656,7 @@ mod tests {
         let mut channel = new_prover_channel(b"test/suffix-independent-late-eor-batch");
         let plan = evaluation_batch_plan();
         let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
-        let result = prepare_evaluation_trace_claim::<TestF, TestF>(
+        let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,
             &opening_batch,
