@@ -72,7 +72,7 @@ impl<E: Field> RootEq<E> {
 ///
 /// A lane is one digit of one element: `stride` consecutive addresses whose
 /// first `degree` hold natural coefficients and the rest are zero padding.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SegmentLanes {
     start: usize,
     stride: usize,
@@ -109,6 +109,9 @@ impl SegmentLanes {
         })
     }
 
+    pub(crate) fn start(&self) -> usize {
+        self.start
+    }
     pub(crate) fn stride(&self) -> usize {
         self.stride
     }

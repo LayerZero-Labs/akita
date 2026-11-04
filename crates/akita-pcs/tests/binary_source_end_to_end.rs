@@ -39,7 +39,8 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
+    BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryTypedPrefix,
+    BinaryWordClaim,
 };
 use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::SetupPolicy;
@@ -409,14 +410,22 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         .skip(1)
         .filter_map(|fold| fold.params.setup_prefix().and_then(|p| p.slot_id()))
         .collect::<Vec<_>>();
+    let typed = BinaryTypedPrefix::new(
+        &manifest,
+        true,
+        0,
+        resolved.schedule().recursive_folds[0].params.d_a(),
+    )
+    .unwrap();
     let prefixes = backend
-        .prepare_binary_a_prefixes(&manifest, &first_prefix, &later_prefixes)
+        .prepare_binary_a_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
         .unwrap();
     let ordinary_verifier_setup = scheme.setup_verifier(&setup).unwrap();
     let verifier_setup = backend
         .prepare_binary_a_verifier_setup(
             &ordinary_verifier_setup,
             &manifest,
+            &typed,
             &first_prefix,
             &prefixes.get(&first_prefix).unwrap().public,
         )
@@ -427,6 +436,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             backend.as_ref(),
             &ordinary_verifier_setup,
             &manifest,
+            &typed,
             &first_prefix,
         );
     }

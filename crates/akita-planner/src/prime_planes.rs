@@ -7,7 +7,7 @@ use akita_params::sis::ajtai_key::{
 };
 use akita_params::GroupCommitPhaseParams;
 use akita_types::binary_source::{
-    BinaryAPrefixLen, BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan,
+    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryTypedPrefix, OrdinaryNativeRootPlan,
     PrimePlaneManifest,
 };
 
@@ -30,8 +30,8 @@ pub struct BinaryPrimePlanePrice {
     /// Ring elements needed by that ordinary domain at the chosen dimension.
     pub outgoing_ring_elements: usize,
     pub segment_physical_cells: Vec<usize>,
-    /// Typed A prefix the first successor's setup prefix must hold.
-    pub typed_prefix: BinaryAPrefixLen,
+    /// Typed prefix (A, then B/D setup) the first successor's setup prefix must hold.
+    pub typed_prefix: BinaryTypedPrefix,
 }
 
 /// Price every selected plane through the verifier's canonical witness plan.
@@ -114,7 +114,12 @@ pub fn price_binary_root_planes(
         )
         .ok_or(AkitaError::InvalidProof)?,
         segment_physical_cells,
-        typed_prefix: BinaryAPrefixLen::new(manifest.descriptor().index_map(), manifest.a_rank())?,
+        typed_prefix: BinaryTypedPrefix::new(
+            manifest,
+            word,
+            prime.planes().len(),
+            destination_ring_dimension,
+        )?,
     })
 }
 
@@ -214,7 +219,21 @@ mod tests {
                     assert_eq!(price.outgoing_physical_cells, expected);
                     assert_eq!(price.d_columns, planes * 27864 + if word { 648 } else { 0 });
                     assert_eq!(price.outgoing_domain_len, expected.next_power_of_two());
-                    assert_eq!(price.typed_prefix.domain_len, 1 << (bits + 2));
+                    // B/D copies fill the A tensor's zero padding first. At
+                    // 2^23 up to two planes fit, leaving the A-only 2^25.
+                    let typed = match (bits, word, planes) {
+                        (22, false, 1) => 20179968,
+                        (22, false, 2) => 23746560,
+                        (22, false, _) => 34446336,
+                        (22, true, 1) => 20262912,
+                        (22, true, 2) => 23829504,
+                        (22, true, _) => 34529280,
+                        (_, false, 5) => 43097088,
+                        (_, true, 5) => 43180032,
+                        _ => 33554432,
+                    };
+                    assert_eq!(price.typed_prefix.natural_len, typed);
+                    assert_eq!(price.typed_prefix.domain_len, typed.next_power_of_two());
                     println!("prime_plane n={bits} word={word} planes={planes}: {price:?}");
                 }
             }
