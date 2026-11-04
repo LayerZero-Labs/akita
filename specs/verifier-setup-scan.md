@@ -160,7 +160,7 @@ indicative only.
 | binary source 2^23 `word-prime` | 3.10 → 2.82 | 16.58 → 14.52 | 6.2–8.1 |
 | ordinary `onehot_fp128`, nv 32 | 3.60 → 2.18 | 10.94 → 9.23 | 11.7–17.1 |
 
-The single-threaded scan is 13–16% faster across all five configurations.
+The single-threaded scan is 12–16% faster across all five configurations.
 Per commit, at binary source 2^22 `word-prime`, one thread:
 
 | Commit | Before (ms) | After (ms) | Load |
@@ -179,11 +179,10 @@ In nine interleaved parallel runs at 2^22 `word-prime` (load 8–11), jobs of
 favored 256-ring jobs, 1.91 against 2.27 ms. The column-first contraction
 also changes the trade-off. Each job now ends with 64 reductions and 64
 `E × E` multiplications, so 256-ring jobs cost 0.3 ms single-threaded (8.64
-against 8.96 ms). Choosing the size from the Rayon pool's thread count would
-avoid that cost. The verifier reaches Rayon only through
-`jolt_field::solinas::parallel`, and in the workspace-wide
-`--no-default-features` build Cargo enables the verifier's `parallel`
-feature without linking `rayon`, so the thread count is not available.
+against 8.96 ms). Choosing the size from the Rayon pool's thread count
+would avoid that cost; the verifier's `parallel` feature enables
+`dep:rayon`, so the thread count is available under that feature. Without a
+measurable parallel gain from smaller jobs, this was not pursued.
 Carrying the unreduced column sums through the Rayon fold, one finish per
 split, measured slower in both modes. The job size stays 2048.
 
