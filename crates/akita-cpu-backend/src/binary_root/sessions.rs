@@ -1,11 +1,16 @@
 //! CPU sessions for a native root on the ordinary successor digit table.
 
+use crate::opaque::sumcheck::relation_range_image::StructuredRelationWeights;
+use crate::opaque::sumcheck::stage3::structured::StructuredSetupWeights;
 use crate::opaque::{
     CpuBackend, CpuProofSessionHandle, CpuStage1SessionHandle, CpuStage2SessionHandle,
     CpuWitnessHandle, OperationBinding, ProofContext, RecursiveWitnessFlat, WitnessPhase,
 };
+use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
 use akita_params::{DigitRangePlan, FlatBooleanDomain};
+use akita_types::binary_source::TypedPrefixWeights;
+use akita_types::native_root_relation::{NativeRootWeights, RootWeightProfiles};
 use akita_types::DigitRangeEqualityPoint;
 use jolt_field::{Field, Fold, Ring, Unreduced};
 
@@ -108,11 +113,58 @@ where
     })
 }
 
+/// Every lane of a recomposed binary family (direct A, image, prime) spans at
+/// least 256 addresses and starts on a multiple of its stride, so the first
+/// eight Stage 2 rounds bind only in-lane bits for those families. Narrower
+/// lanes, such as mixed ordinary segments, carry their weights in per-block
+/// rows, which may span lane boundaries.
+const ROOT_PROFILE_BLOCK_BITS: usize = 8;
+
+impl<E: Field + Fold> StructuredRelationWeights<E> for RootWeightProfiles<E> {
+    fn len(&self) -> usize {
+        RootWeightProfiles::len(self)
+    }
+
+    fn pair(&self, left: usize) -> (E, E) {
+        RootWeightProfiles::pair(self, left)
+    }
+
+    fn bind(&mut self, challenge: E) {
+        RootWeightProfiles::bind(self, challenge);
+    }
+
+    fn take_dense(&mut self) -> Vec<E> {
+        RootWeightProfiles::take_dense(self)
+    }
+}
+
+impl<E: Field> StructuredSetupWeights<E> for TypedPrefixWeights<E> {
+    fn len(&self) -> usize {
+        self.domain_len()
+    }
+
+    fn width(&self) -> usize {
+        TypedPrefixWeights::width(self)
+    }
+
+    fn blocks(&self) -> &[usize] {
+        TypedPrefixWeights::blocks(self)
+    }
+
+    fn block_terms(&self, live: usize) -> Result<[(E, &[E]); 2], AkitaError> {
+        TypedPrefixWeights::block_terms(self, live)
+    }
+
+    fn bind(&mut self, challenge: E) -> Result<(), AkitaError> {
+        TypedPrefixWeights::bind(self, challenge)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn begin_root_relation<F, E>(
     backend: &CpuBackend<F, E>,
     witness: &CpuWitnessHandle,
-    weights: Vec<E>,
+    weights: NativeRootWeights<E>,
     negative_binary_weights: Vec<(usize, E)>,
     claim: E,
     stage1_point: &[E],
@@ -125,20 +177,35 @@ where
 {
     let parent = validate_root_witness(backend, witness)?;
     let domain_len = witness.manifest.commitment_domain_len();
-    if weights.len() != domain_len || !domain_len.is_power_of_two() {
+    if weights.table_len() != domain_len || !domain_len.is_power_of_two() {
         return Err(AkitaError::InvalidInput(
             "native root weights differ from the committed witness domain".into(),
         ));
     }
-    let mut digits = Vec::new();
-    digits
-        .try_reserve_exact(domain_len)
-        .map_err(|_| AkitaError::InvalidInput("native root witness allocation failed".into()))?;
-    digits.extend(witness.logical.digits());
-    digits.resize(domain_len, 0);
-    let mut session = CpuStage2SessionHandle::from_dense_relation(
+    let block_bits = (domain_len.trailing_zeros() as usize).min(ROOT_PROFILE_BLOCK_BITS);
+    let span = tracing::info_span!("binary_root_weight_profiles").entered();
+    let profiles = weights.profiles(block_bits)?;
+    drop(weights);
+    drop(span);
+    // Stage 2 reads the live prefix; the rest of the domain is zero. The
+    // prefix covers whole profile blocks.
+    let digits = witness.logical.packed_digits();
+    let live_len = digits.len().next_multiple_of(1 << block_bits);
+    let digits = if live_len == digits.len() {
+        digits.clone()
+    } else {
+        let mut padded = Vec::new();
+        padded.try_reserve_exact(live_len).map_err(|_| {
+            AkitaError::InvalidInput("native root witness allocation failed".into())
+        })?;
+        padded.extend(digits.iter());
+        padded.resize(live_len, 0);
+        PackedSignedDigits::from_i8_digits_auto(padded)
+    };
+    let mut session = CpuStage2SessionHandle::from_structured_relation(
         digits,
-        weights,
+        Box::new(profiles),
+        block_bits,
         claim,
         stage1_point,
         range_image_evaluation,
@@ -150,3 +217,7 @@ where
     session.set_operation_binding(binding, lease);
     Ok(session)
 }
+
+#[cfg(test)]
+#[path = "stage2_oracle_tests.rs"]
+mod stage2_oracle_tests;

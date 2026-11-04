@@ -17,7 +17,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{new_prover_channel, new_verifier_channel};
-use akita_types::binary_source::{BinaryAReadGuard, BinaryCommittedGroupManifest};
+use akita_types::binary_source::{
+    BinaryAReadGuard, BinaryCommittedGroupManifest, BinaryTypedPrefix,
+};
 use akita_types::{
     AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
@@ -196,7 +198,13 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         .first()
         .and_then(|fold| fold.params.setup_prefix())
         .and_then(|prefix| prefix.slot_id())
-        .ok_or("missing typed A prefix")?;
+        .ok_or("missing typed prefix")?;
+    let typed = BinaryTypedPrefix::new(
+        &manifest,
+        claims.word(&descriptor)?.is_some(),
+        claims.prime().len(),
+        schedule.recursive_folds[0].params.d_a(),
+    )?;
     let later = schedule
         .recursive_folds
         .iter()
@@ -209,7 +217,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         .collect::<Vec<_>>();
     let prefixes = {
         let _span = tracing::info_span!("cold_prefix_preparation").entered();
-        let prefixes = backend.prepare_binary_a_prefixes(&manifest, &first, &later)?;
+        let prefixes = backend.prepare_binary_a_prefixes(&manifest, &typed, &first, &later)?;
         if log != 10 {
             let ordinary_ids = later
                 .iter()
@@ -228,6 +236,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         backend.prepare_binary_a_verifier_setup(
             &ordinary,
             &manifest,
+            &typed,
             &first,
             &prefixes.get(&first).ok_or("missing prefix")?.public,
         )?

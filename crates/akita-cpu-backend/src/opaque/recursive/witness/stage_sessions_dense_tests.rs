@@ -175,3 +175,138 @@ fn dense_singleton_has_the_same_terminal_equation_without_rounds() {
     assert_eq!(claims.witness_evaluation(), witness);
     assert_eq!(claims.final_claim(), relation + batching * range_image);
 }
+
+/// The dense table behind the structured seam, folded exactly as the dense
+/// entry folds it.
+struct DenseOracle(Vec<F>);
+
+impl relation_range_image::StructuredRelationWeights<F> for DenseOracle {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn pair(&self, left: usize) -> (F, F) {
+        (self.0[left], self.0[left + 1])
+    }
+
+    fn bind(&mut self, challenge: F) {
+        akita_sumcheck::fold_evals_in_place(&mut self.0, challenge);
+    }
+
+    fn take_dense(&mut self) -> Vec<F> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+fn structured_session(
+    witness: &[i8],
+    weights: Vec<F>,
+    coefficient_bits: usize,
+    relation: F,
+    point: &[F],
+    range_image: F,
+) -> Result<CpuStage2SessionHandle<F>, AkitaError> {
+    CpuStage2SessionHandle::from_structured_relation(
+        crate::sources::packed_digits::PackedSignedDigits::from_i8_digits_auto(witness.to_vec()),
+        Box::new(DenseOracle(weights)),
+        coefficient_bits,
+        relation,
+        point,
+        range_image,
+        F::from_u64(23),
+    )
+}
+
+#[test]
+fn structured_entry_matches_dense_entry_round_by_round() {
+    const BITS: usize = 5;
+    let domain = 1 << BITS;
+    let digits = (0..domain)
+        .map(|index| ((index * 5 + 3) % 8) as i8 - 4)
+        .collect::<Vec<_>>();
+    let weights = (0..domain as u64)
+        .map(|index| F::from_u64(index * index * 31 + 7))
+        .collect::<Vec<_>>();
+    let point = (0..BITS as u64)
+        .map(|bit| F::from_u64(41 + 6 * bit))
+        .collect::<Vec<_>>();
+    let challenges = (0..BITS as u64)
+        .map(|bit| F::from_u64(97 + 10 * bit))
+        .collect::<Vec<_>>();
+    for live in [domain, 24, 16, 8] {
+        let mut padded = digits[..live].to_vec();
+        padded.resize(domain, 0);
+        let mut range_image = F::zero();
+        let mut relation = F::zero();
+        for (address, (&digit, &weight)) in padded.iter().zip(&weights).enumerate() {
+            let digit = F::from_i64(i64::from(digit));
+            range_image += boolean_weight(address, &point) * digit * (digit + F::one());
+            relation += digit * weight;
+        }
+        for coefficient_bits in 0..=BITS {
+            if live % (1 << coefficient_bits) != 0 {
+                continue;
+            }
+            let mut dense = CpuStage2SessionHandle::from_dense_relation(
+                padded.clone(),
+                weights.clone(),
+                relation,
+                &point,
+                range_image,
+                F::from_u64(23),
+            )
+            .unwrap();
+            let mut structured = structured_session(
+                &digits[..live],
+                weights.clone(),
+                coefficient_bits,
+                relation,
+                &point,
+                range_image,
+            )
+            .unwrap();
+            assert_eq!(structured.input_claim(), dense.input_claim());
+            assert_eq!(structured.num_rounds(), BITS);
+            let mut claim = dense.input_claim();
+            for (round, &challenge) in challenges.iter().enumerate() {
+                let expected = dense.round_polynomial(round, claim).unwrap();
+                let actual = structured.round_polynomial(round, claim).unwrap();
+                assert_eq!(actual, expected, "live {live}, bits {coefficient_bits}");
+                claim = expected.evaluate(challenge);
+                dense.bind_challenge(round, challenge).unwrap();
+                structured.bind_challenge(round, challenge).unwrap();
+            }
+            let dense = dense.finish().unwrap();
+            let structured = structured.finish().unwrap();
+            assert_eq!(structured.witness_evaluation(), dense.witness_evaluation());
+            assert_eq!(structured.final_claim(), dense.final_claim());
+        }
+    }
+}
+
+#[test]
+fn structured_entry_checks_its_witness_and_coefficient_block() {
+    let point = [F::from_u64(3); 3];
+    let weights = || vec![F::one(); 8];
+    for (witness, coefficient_bits) in [
+        (vec![0i8; 9], 0),
+        (vec![0; 6], 2),
+        (vec![0; 8], 4),
+        (vec![4, 0], 1),
+        (vec![-5, 0], 1),
+    ] {
+        assert!(structured_session(
+            &witness,
+            weights(),
+            coefficient_bits,
+            F::zero(),
+            &point,
+            F::zero()
+        )
+        .is_err());
+    }
+    assert!(structured_session(&[0; 8], weights(), 1, F::zero(), &point[..2], F::zero()).is_err());
+    assert!(
+        structured_session(&[0; 8], vec![F::one(); 6], 1, F::zero(), &point, F::zero()).is_err()
+    );
+}

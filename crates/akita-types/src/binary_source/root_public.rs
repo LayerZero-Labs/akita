@@ -4,7 +4,9 @@ use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::{derive_centered_q_matrix, SetupStreamLabel, SetupStreamRole};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_chunks, cfg_iter_mut, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
@@ -12,6 +14,7 @@ use super::{
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
+use std::ops::Range;
 
 /// Materialize the q24 source matrix from its canonical typed setup identity.
 ///
@@ -40,13 +43,14 @@ pub fn binary_root_matrix(
         entries
             .try_reserve_exact(columns)
             .map_err(|_| AkitaError::InvalidProof)?;
-        for entry in row.chunks_exact(648) {
-            let mut lifted = [0i128; 648];
-            for (output, &coefficient) in lifted.iter_mut().zip(entry) {
-                *output = i128::from(coefficient);
-            }
-            entries.push(lifted);
-        }
+        entries.resize(columns, [0i128; 648]);
+        cfg_iter_mut!(entries)
+            .zip(cfg_chunks!(row, 648))
+            .for_each(|(lifted, entry)| {
+                for (output, &coefficient) in lifted.iter_mut().zip(entry) {
+                    *output = i128::from(coefficient);
+                }
+            });
         matrix.push(entries);
     }
     if matrix.len() != manifest.a_rank() {
@@ -151,13 +155,52 @@ impl BinaryRootPublic {
         self.batch_count
     }
 
+    /// Batch ranges: terminal, B, D, ordinary rows, negative bits, prime rows.
+    fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
+        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
+            .ok_or(AkitaError::InvalidProof)?;
+        let b =
+            checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
+        let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
+        let ordinary_rows = checked::range(
+            d.end,
+            self.ordinary
+                .as_ref()
+                .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+        let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
+            .ok_or(AkitaError::InvalidProof)?;
+        let prime_rows = checked::range(
+            negative_bits.end,
+            checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+        Ok([terminal, b, d, ordinary_rows, negative_bits, prime_rows])
+    }
+
+    /// Row batches of the B and D authentication rows, in that order.
+    pub fn authentication_batches<'a, E>(
+        &self,
+        batches: &'a [E],
+    ) -> Result<[&'a [E]; 2], AkitaError> {
+        if batches.len() != self.batch_count {
+            return Err(AkitaError::InvalidProof);
+        }
+        let [_, b, d, ..] = self.batch_ranges()?;
+        Ok([
+            batches.get(b).ok_or(AkitaError::InvalidProof)?,
+            batches.get(d).ok_or(AkitaError::InvalidProof)?,
+        ])
+    }
+
     /// Compile the single linear oracle after the outgoing commitment.
     ///
     /// Batch coordinates are independent field challenges, one per row.
     /// `commitment` is the public B payload; `d_payload`
     /// is the order-three commitment to the selected word and prime views.
-    /// Proving supplies A; verification omits it and authenticates its contribution
-    /// through the typed prefix. `rho` batches the public projection rows with mu.
+    /// Proving supplies A; verification omits A and the B/D weights and
+    /// authenticates their contribution through the typed prefix. `rho` batches the public projection rows with mu.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
         &self,
@@ -186,25 +229,7 @@ impl BinaryRootPublic {
             .iter()
             .zip(projected_values)
             .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
-        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
-            .ok_or(AkitaError::InvalidProof)?;
-        let b =
-            checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let ordinary_rows = checked::range(
-            d.end,
-            self.ordinary
-                .as_ref()
-                .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-        let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
-            .ok_or(AkitaError::InvalidProof)?;
-        let prime_rows = checked::range(
-            negative_bits.end,
-            checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
+        let [terminal, b, d, ordinary_rows, negative_bits, prime_rows] = self.batch_ranges()?;
         let span = tracing::info_span!("binary_root_weights_algebra").entered();
         let algebra = self.plan.relation_weights(
             self.claim.as_ref(),
@@ -256,6 +281,17 @@ impl BinaryRootPublic {
             batches.get(d).ok_or(AkitaError::InvalidProof)?,
         )?;
         drop(span);
+        // The typed prefix carries the B/D weights into Stage 3; verification
+        // keeps only their claims.
+        let (b_weights, d_weights) = if matrix.is_some() {
+            (b_weights, d_weights)
+        } else {
+            let domain_len = self.plan.repacking().domain_len();
+            (
+                NativeRootWeights::new(domain_len, Vec::new(), b_weights.claim())?,
+                NativeRootWeights::new(domain_len, Vec::new(), d_weights.claim())?,
+            )
+        };
         let span = tracing::info_span!("binary_root_weights_ordinary").entered();
         let ordinary_weights = match (&self.ordinary, ordinary_claim) {
             (Some(ordinary), Some((point, evaluation, payload))) => Some(ordinary.linear_weights(

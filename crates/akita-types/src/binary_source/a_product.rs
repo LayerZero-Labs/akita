@@ -5,16 +5,14 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_error::{checked, AkitaError};
-use akita_params::SetupPrefixSlotId;
-use akita_serialization::AkitaSerialize;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
 use super::{BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan};
 
-const DEGREE: usize = 648;
-const STRIDE: usize = 1024;
+pub(super) const DEGREE: usize = 648;
+pub(super) const STRIDE: usize = 1024;
 
 /// Size of the canonical typed A prefix: one row per source ring row, each
 /// holding the rank axis padded to a power of two times 1024 coefficients.
@@ -65,11 +63,12 @@ impl BinaryAPrefixLen {
     }
 }
 
-/// Canonical typed prefix: source row, padded rank row, padded coefficient.
-/// All padding is zero, including any extra capacity of the selected prefix.
-/// `matrix` is [`binary_root_matrix`](super::binary_root_matrix) for the same manifest; a caller that
-/// already holds it does not derive it again. This function is for setup
-/// preparation and proving, never online verification.
+/// Canonical A part of the typed prefix: source row, padded rank row, padded
+/// coefficient. Every other cell is zero; [`super::BinaryTypedPrefix`] adds
+/// the B/D setup. `matrix` is [`binary_root_matrix`](super::binary_root_matrix)
+/// for the same manifest; a caller that already holds it does not derive it
+/// again. This function is for setup preparation and proving, never online
+/// verification.
 pub fn binary_a_setup_coefficients<F: Field>(
     matrix: &[Vec<[i128; DEGREE]>],
     manifest: &BinaryCommittedGroupManifest,
@@ -106,28 +105,15 @@ pub fn binary_a_setup_coefficients<F: Field>(
     Ok(coefficients)
 }
 
-/// Bind the stream label, complete manifest, layout version and scheduled slot.
-/// The prepared prefix commitment is bound again by ordinary grouped recursion.
-pub fn binary_a_prefix_identity(
-    manifest: &BinaryCommittedGroupManifest,
-    slot: &SetupPrefixSlotId,
-) -> Result<Vec<u8>, AkitaError> {
-    manifest.validate()?;
-    let mut bytes = b"akita/binary-source/typed-a-prefix/j-rank-coefficient/v1".to_vec();
-    bytes.extend(manifest.canonical_bytes());
-    slot.serialize_compressed(&mut bytes)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    Ok(bytes)
-}
-
 /// Factored setup weights at the root Stage 2 point, with no A coefficients.
 ///
 /// The response occupies the first segment, with four digits and coefficient
 /// stride 1024. Its digit contraction is included in `h`; the remaining point
 /// addresses source rows and owners. The owner equality is contracted into one
 /// coefficient factor, so every polynomial in the group shares one product.
-/// Owner rows are combined before the adjoint, which uses two exact length
-/// 1295 convolutions per rank row, independently of the matrix width.
+/// Owner rows are combined before the adjoint, which reads the coefficient
+/// equality table in closed form once per rank row, independently of the
+/// matrix width.
 #[derive(Clone, Debug)]
 pub struct BinaryAProduct<E: Field> {
     coefficient_factor: Vec<E>,
@@ -179,7 +165,6 @@ impl<E: Field> BinaryAProduct<E> {
         if owners > checked::pow2(owner_point.len()).ok_or(AkitaError::InvalidProof)? {
             return Err(AkitaError::InvalidProof);
         }
-        let v = EqPolynomial::evals_prefix(coefficient_point, DEGREE)?;
         let digits = EqPolynomial::evals(digit_point)?;
         let mut power = E::one();
         let mut digit_weight = E::zero();
@@ -206,7 +191,10 @@ impl<E: Field> BinaryAProduct<E> {
             .chunks_exact_mut(STRIDE)
             .zip(combined.chunks_exact(DEGREE))
         {
-            for (slot, weight) in target.iter_mut().zip(adjoint.apply(row, &v)?) {
+            for (slot, weight) in target
+                .iter_mut()
+                .zip(adjoint.apply_equality(row, coefficient_point)?)
+            {
                 *slot = digit_weight * weight;
             }
         }

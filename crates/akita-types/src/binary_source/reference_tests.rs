@@ -467,3 +467,134 @@ fn compiled_root_weights_vanish_on_every_padding_address() {
         }
     }
 }
+
+/// The typed prefix carries the B/D rows exactly: its stored setup against
+/// the prover's dense weights is the direct authentication weight at the root
+/// point, and the verifier's terminal weight is the dense weights' extension.
+#[test]
+fn typed_prefix_offloads_the_digit_authentication_rows() {
+    use crate::binary_source::{
+        binary_digit_authentication_weights, BinaryAProduct, BinaryTypedPrefix,
+    };
+    use akita_algebra::eq_poly::EqPolynomial;
+    use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
+    for (seed, shape) in shapes().into_iter().enumerate() {
+        let mut rng = StdRng::seed_from_u64(1000 + seed as u64);
+        let public = public(shape, &mut rng);
+        let plan = public.plan();
+        let manifest = &public.manifest;
+        let prefix = BinaryTypedPrefix::from_plan(manifest, plan).unwrap();
+        assert_eq!(
+            BinaryTypedPrefix::new(manifest, shape.word_claim, shape.prime_planes, 64).unwrap(),
+            prefix,
+            "{shape:?}"
+        );
+        let prefix_len = prefix.domain_len;
+        let root_point = (0..plan.repacking().domain_len().trailing_zeros())
+            .map(|_| field(&mut rng))
+            .collect::<Vec<_>>();
+        let alpha = field(&mut rng);
+        let batches = [0, 1].map(|_| (0..2).map(|_| field(&mut rng)).collect::<Vec<_>>());
+        let seed_bytes = public.setup.setup_seed.seed;
+        let labels = [
+            manifest.b_label(),
+            SetupStreamLabel {
+                role: SetupStreamRole::WitnessCommitment,
+                ..manifest.b_label()
+            },
+        ];
+        let mut direct = F::zero();
+        for (role, segments) in [vec![1], plan.opening_segments()].into_iter().enumerate() {
+            direct += binary_digit_authentication_weights(
+                plan,
+                &segments,
+                &seed_bytes,
+                labels[role],
+                &[F::zero(); 128],
+                alpha,
+                &batches[role],
+            )
+            .unwrap()
+            .evaluate(&root_point)
+            .unwrap();
+        }
+        let owners = plan.descriptor().polynomials().len();
+        let rho = (0..owners * plan.rank())
+            .map(|_| core::array::from_fn(|_| field(&mut rng)))
+            .collect::<Vec<[F; 648]>>();
+        let a = BinaryAProduct::new(plan, &rho, &root_point, prefix_len).unwrap();
+        let setup = prefix
+            .setup_coefficients::<F>(&seed_bytes, manifest, prefix_len)
+            .unwrap();
+        let batch_refs = [batches[0].as_slice(), batches[1].as_slice()];
+        let weights = prefix
+            .prover_weights(&a, &root_point, alpha, batch_refs, prefix_len)
+            .unwrap();
+        // Digit copies may fill the A tensor's zero padding, so compare
+        // against the A-only prefix: zero batches leave only the A weights.
+        let a_setup = crate::binary_source::binary_a_setup_coefficients::<F>(
+            &crate::binary_source::binary_root_matrix(&seed_bytes, manifest).unwrap(),
+            manifest,
+            prefix_len,
+        )
+        .unwrap();
+        let zero = [F::zero(); 2];
+        let a_weights = prefix
+            .prover_weights(&a, &root_point, alpha, [&zero, &zero], prefix_len)
+            .unwrap();
+        let inner = |s: &[F], t: &[F]| s.iter().zip(t).fold(F::zero(), |sum, (&s, &t)| sum + s * t);
+        let offloaded = inner(&setup, &weights) - inner(&a_setup, &a_weights);
+        assert_eq!(offloaded, direct, "{shape:?}");
+        // The block form expands to the dense weight, and the setup is zero
+        // outside its live blocks.
+        let blocks = prefix
+            .prover_weight_blocks(&a, &root_point, alpha, batch_refs, prefix_len)
+            .unwrap();
+        assert_eq!(blocks.domain_len(), prefix_len, "{shape:?}");
+        let mut expanded = vec![F::zero(); prefix_len];
+        let mut live_setup = vec![F::zero(); prefix_len];
+        for (live, &block) in blocks.blocks().iter().enumerate() {
+            let cells = block * 64..(block + 1) * 64;
+            for (scale, row) in blocks.block_terms(live).unwrap() {
+                for (value, &weight) in expanded[cells.clone()].iter_mut().zip(row) {
+                    *value += scale * weight;
+                }
+            }
+            live_setup[cells.clone()].copy_from_slice(&setup[cells]);
+        }
+        assert_eq!(expanded, weights, "{shape:?}");
+        assert_eq!(live_setup, setup, "{shape:?}");
+        // Binding a bit folds the blocks as it folds the dense table.
+        let challenge = field(&mut rng);
+        let mut bound = blocks.clone();
+        bound.bind(challenge).unwrap();
+        for (live, &block) in bound.blocks().iter().enumerate() {
+            let mut folded = [F::zero(); 32];
+            for (scale, row) in bound.block_terms(live).unwrap() {
+                for (value, &weight) in folded.iter_mut().zip(row) {
+                    *value += scale * weight;
+                }
+            }
+            for (offset, &value) in folded.iter().enumerate() {
+                let (low, high) = (
+                    weights[block * 64 + 2 * offset],
+                    weights[block * 64 + 2 * offset + 1],
+                );
+                assert_eq!(value, low + challenge * (high - low), "{shape:?}");
+            }
+        }
+        let point = (0..prefix_len.trailing_zeros())
+            .map(|_| field(&mut rng))
+            .collect::<Vec<_>>();
+        let extension = EqPolynomial::evals(&point)
+            .unwrap()
+            .into_iter()
+            .zip(&weights)
+            .fold(F::zero(), |sum, (eq, &t)| sum + eq * t);
+        let terminal = a.evaluate(&point).unwrap()
+            + prefix
+                .digit_weight(&point, &root_point, alpha, batch_refs)
+                .unwrap();
+        assert_eq!(terminal, extension, "{shape:?}");
+    }
+}

@@ -302,7 +302,7 @@ impl OpaqueStage2Kernel<F, E> for FaultBackend {
     fn begin_root_relation(
         &self,
         _witness: &Self::WitnessHandle,
-        _weights: Vec<E>,
+        _weights: akita_types::native_root_relation::NativeRootWeights<E>,
         _negative_binary_weights: Vec<(usize, E)>,
         _claim: E,
         _stage1_point: &[E],
@@ -377,6 +377,17 @@ impl OpaqueStage3Kernel<F, E> for FaultBackend {
         request: FactoredStage3Request<'_, F, E, Self::ProofSessionHandle>,
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
         self.inner.begin_factored_stage3(request)
+    }
+    fn begin_typed_stage3(
+        &self,
+        request: akita_prover::backend::TypedStage3Request<
+            '_,
+            E,
+            Self::ProofSessionHandle,
+            <Self as ProverHandleFamily<F, E>>::CommitmentHandle,
+        >,
+    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        self.inner.begin_typed_stage3(request)
     }
     fn stage3_round_polynomial(
         &self,

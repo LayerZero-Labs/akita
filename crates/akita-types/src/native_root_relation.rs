@@ -11,14 +11,20 @@ use akita_algebra::ring::{
 use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationPolynomialKind, TrinomialSign};
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_chunks, Field};
 
 use crate::binary_source::{BinarySourceDescriptor, BINARY_SOURCE_Q};
 use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
+mod profiles;
 mod structured;
 pub use binary_commitment::binary_commitment_group;
-pub(crate) use structured::{weigh_units, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH};
+pub use profiles::RootWeightProfiles;
+pub(crate) use structured::{
+    weigh_units, RootEq, RootWeightFamily, SegmentLanes, TranslatedLanes, WEIGH_BATCH,
+};
 
 /// Source interpretation of one group. Feature enablement never selects it.
 #[derive(Clone, Debug)]
@@ -340,9 +346,16 @@ impl<E: Field> NativeRootWeights<E> {
             });
         }
         let equality = akita_algebra::offset_eq::OffsetEqWindow::new(point)?;
-        let mut value = self.terms.iter().fold(E::zero(), |acc, &(index, weight)| {
-            acc + weight * equality.eval(index)
-        });
+        // Field addition is exact, so chunked partial sums give the same value.
+        let mut value = cfg_chunks!(self.terms, 1 << 14)
+            .map(|chunk| {
+                chunk.iter().fold(E::zero(), |acc, &(index, weight)| {
+                    acc + weight * equality.eval(index)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .fold(E::zero(), |acc, partial| acc + partial);
         if !self.families.is_empty() {
             let equality = RootEq::new(point)?;
             for family in &self.families {
@@ -375,6 +388,23 @@ impl<E: Field> NativeRootWeights<E> {
             family.visit(&mut add)?;
         }
         Ok(table)
+    }
+
+    /// Block profiles of the weight table for the prover's low Stage 2 rounds.
+    ///
+    /// Folding the profiles `k <= block_bits` times gives the materialized
+    /// table folded by the same challenges, entry for entry.
+    pub fn profiles(&self, block_bits: usize) -> Result<RootWeightProfiles<E>, AkitaError> {
+        let mut profiles = profiles::ProfileBuilder::new(self.table_len, block_bits)?;
+        let span = tracing::info_span!("root_weights_emit_terms").entered();
+        for &(address, weight) in &self.terms {
+            profiles.add(address, weight)?;
+        }
+        drop(span);
+        for family in &self.families {
+            family.emit(&mut profiles)?;
+        }
+        Ok(profiles.finish())
     }
 
     /// Check the scalar identity against a fixed table, for construction and

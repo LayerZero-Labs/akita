@@ -112,6 +112,70 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
         }
         Ok(h)
     }
+
+    /// Compute [`Self::apply`] for `v[k] = eq(point, k)`, `k < D`, without
+    /// convolutions.
+    ///
+    /// `point` has `ceil(log2(D))` coordinates in little-endian bit order.
+    /// The set bits of `D` split `0..D` into aligned blocks `b + [0, 2^m)`,
+    /// on which `v[b + j] = c_b * eq(point[..m], j)`. On one block the
+    /// correlation `X_m(s) = sum_j eq(point[..m], j) g(b + s + j)` follows
+    /// from `X_0(t) = g(b + t)` and
+    /// `X_(l+1)(t) = X_l(t) + point[l] * (X_l(t + 2^l) - X_l(t))`,
+    /// one multiplication per entry and level: 18,505 multiplications
+    /// at `D = 648`, against about 155,000 for the two convolutions.
+    pub fn apply_equality<F: Field>(&self, rho: &[F], point: &[F]) -> Result<Vec<F>, AkitaError> {
+        let bits = checked::ceil_log2(D)
+            .ok_or_else(|| AkitaError::InvalidInput("trinomial adjoint size overflow".into()))?;
+        if point.len() != bits {
+            return Err(AkitaError::InvalidSize {
+                expected: bits,
+                actual: point.len(),
+            });
+        }
+        let g = self.extend_row(rho)?;
+        let mut h = field_buffer(D)?;
+        let mut block = Vec::new();
+        for m in (0..=bits).rev().filter(|&m| (D >> m) & 1 == 1) {
+            let start = D >> (m + 1) << (m + 1);
+            let width = 1usize << m;
+            let window = g
+                .get(start..start + D + width - 1)
+                .ok_or_else(|| internal("equality block window"))?;
+            block.clear();
+            block.extend_from_slice(window);
+            for (level, &coordinate) in point.iter().take(m).enumerate() {
+                let stride = 1usize << level;
+                let live = block.len() - stride;
+                for t in 0..live {
+                    let next = *block
+                        .get(t + stride)
+                        .ok_or_else(|| internal("equality block level"))?;
+                    let slot = block
+                        .get_mut(t)
+                        .ok_or_else(|| internal("equality block level"))?;
+                    *slot += coordinate * (next - *slot);
+                }
+                block.truncate(live);
+            }
+            let scale =
+                point
+                    .iter()
+                    .enumerate()
+                    .skip(m)
+                    .fold(F::one(), |acc, (bit, &coordinate)| {
+                        acc * if (start >> bit) & 1 == 1 {
+                            coordinate
+                        } else {
+                            F::one() - coordinate
+                        }
+                    });
+            for (slot, &value) in h.iter_mut().zip(&block) {
+                *slot += scale * value;
+            }
+        }
+        Ok(h)
+    }
 }
 
 /// Ordinary exact convolution of equally sized, nonempty field vectors.
@@ -330,12 +394,8 @@ impl<'a, F: Field> SetupAdjointWeight<'a, F> {
                 actual: rho.len(),
             });
         }
-        let mut v = field_buffer(D)?;
-        for (k, slot) in v.iter_mut().enumerate() {
-            *slot = eq_eval_at_index(r_k, k);
-        }
         Ok(Self {
-            h: adjoint.apply(rho, &v)?,
+            h: adjoint.apply_equality(rho, r_k)?,
             r_j,
             columns,
         })
