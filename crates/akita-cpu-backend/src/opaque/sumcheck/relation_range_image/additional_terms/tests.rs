@@ -137,7 +137,6 @@ fn multi_task_rounds_and_binds_match_serial_reference() {
         let polynomial = if round == 0 {
             terms
                 .round_message_compact(packed_witness.view(), &[])
-                .unwrap()
                 .into_polynomial(claim)
         } else {
             terms.round_message_folded(&folded).into_polynomial(claim)
@@ -230,7 +229,6 @@ fn round_polynomial_matches_boolean_sum_and_fold() {
     assert_eq!(prover.input_claim(&packed_witness), claim);
     let polynomial = prover
         .round_message_compact(packed_witness.view(), &[])
-        .unwrap()
         .into_polynomial(claim);
     assert_eq!(
         polynomial.evaluate(F::zero()) + polynomial.evaluate(F::one()),
@@ -241,7 +239,6 @@ fn round_polynomial_matches_boolean_sum_and_fold() {
     prover.bind(challenge);
     let next = prover
         .round_message_compact(packed_witness.view(), &[challenge])
-        .unwrap()
         .into_polynomial(next_claim);
     assert_eq!(
         next.evaluate(F::zero()) + next.evaluate(F::one()),
@@ -300,7 +297,6 @@ fn coefficient_kernel_matches_direct_cubic_evaluation() {
         + reference_round_evaluation(&terms, &witness, F::one());
     let polynomial = terms
         .round_message_compact(packed_witness.view(), &[])
-        .unwrap()
         .into_polynomial(claim);
     for point in 0..=5 {
         let point = F::from_u64(point);

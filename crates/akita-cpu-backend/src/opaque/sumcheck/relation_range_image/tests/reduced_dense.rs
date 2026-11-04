@@ -91,13 +91,13 @@ fn reduced_dense_oracle_matches_factored_stage2_across_all_rounds() {
     let mut claim = factored.input_claim();
     assert_eq!(claim, dense.input_claim());
     for round in 0..lane_bits + coefficient_bits {
-        let factored_poly = factored.round_polynomial(round, claim).unwrap();
-        let dense_poly = dense.round_polynomial(round, claim).unwrap();
+        let factored_poly = factored.compute_round_univariate(round, claim);
+        let dense_poly = dense.compute_round_univariate(round, claim);
         assert_eq!(dense_poly, factored_poly, "round {round}");
         let challenge = F::from_u64(71 + round as u64);
         claim = factored_poly.evaluate(challenge);
-        factored.bind_challenge(round, challenge).unwrap();
-        dense.bind_challenge(round, challenge).unwrap();
+        factored.ingest_challenge(round, challenge);
+        dense.ingest_challenge(round, challenge);
     }
     assert_eq!(
         dense.final_w_eval().unwrap(),

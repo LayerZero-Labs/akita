@@ -143,7 +143,7 @@ fn two_round_relation_session() -> ConsumerStage2Session<F> {
             1,
         )
         .unwrap();
-    let claim = prover.input_claim();
+    let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);
     ConsumerStage2Session::for_test(prover, claim)
 }
 

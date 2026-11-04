@@ -140,14 +140,14 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         // debug/test builds and never runs in release proving.
         #[cfg(debug_assertions)]
         {
-            let (ordinary_relation_sum, structured_relation_sum) = (0..witness_len).try_fold(
-                (E::zero(), E::zero()),
-                |(ordinary, structured), index| {
+            let (ordinary_relation_sum, structured_relation_sum) =
+                (0..witness_len).fold((E::zero(), E::zero()), |(ordinary, structured), index| {
                     let lane = index / coeff_count;
                     let coefficient = index % coeff_count;
-                    let w = w_evals_compact.view().get(index).ok_or_else(|| {
-                        AkitaError::Internal("relation witness is shorter than its domain".into())
-                    })?;
+                    let w = w_evals_compact
+                        .view()
+                        .get(index)
+                        .expect("debug relation witness index is in bounds");
                     let witness = E::from_i64(i64::from(w));
                     let relation_weight = match &relation_weights {
                         RelationWeightOracle::QuotientFactored(factorization) => {
@@ -156,12 +156,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         }
                         RelationWeightOracle::ReducedDense(dense) => dense.evaluations()[index],
                     };
-                    Ok::<_, AkitaError>((
+                    (
                         ordinary + witness * relation_weight,
                         structured + witness * linear_terms.get(lane, coefficient, coeff_count),
-                    ))
-                },
-            )?;
+                    )
+                });
             let additional_claim = additional_relation_terms
                 .as_ref()
                 .map_or_else(E::zero, |terms| terms.input_claim(&w_evals_compact));
@@ -237,7 +236,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             cached_round_message: None,
             rounds_completed: 0,
         };
-        state.advance_phase(&mut phase)?;
+        state.advance_phase(&mut phase);
         Ok(Self { phase, state })
     }
 
@@ -306,29 +305,27 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         Ok(virtual_claim + witness * relation_weight + additional)
     }
 
-    pub(super) fn additional_round_message(&self) -> Result<Option<RoundMessage<E>>, AkitaError> {
-        let Some(additional) = self.state.additional_relation_terms.as_ref() else {
-            return Ok(None);
-        };
-        Ok(Some(match &self.phase {
+    pub(super) fn additional_round_message(&self) -> Option<RoundMessage<E>> {
+        let additional = self.state.additional_relation_terms.as_ref()?;
+        Some(match &self.phase {
             Phase::CompactPrefix {
                 witness, engine, ..
-            } => additional.round_message_compact(witness.view(), engine.challenges())?,
+            } => additional.round_message_compact(witness.view(), engine.challenges()),
             Phase::Coefficient {
                 witness: WitnessState::CompactPrefix(witness),
                 ..
-            } => additional.round_message_compact(witness.view(), &[])?,
+            } => additional.round_message_compact(witness.view(), &[]),
             Phase::Coefficient {
                 witness: WitnessState::FoldedSuffix(witness),
                 ..
             }
             | Phase::Lane { witness, .. } => additional.round_message_folded(witness),
-        }))
+        })
     }
 }
 
 impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
-    pub(super) fn advance_phase(&mut self, phase: &mut Phase<E>) -> Result<(), AkitaError> {
+    pub(super) fn advance_phase(&mut self, phase: &mut Phase<E>) {
         if let Phase::CompactPrefix {
             witness,
             weights,
@@ -340,7 +337,7 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
                     witness.view(),
                     &self.split_eq,
                     self.split_eq.prepare_linear_q_recovery(),
-                )?;
+                );
                 let mut relation =
                     engine.relation_message(weights.common_alpha_factor(), &self.linear_terms);
                 let norm_poly = self.norm_poly_from_prefix(norm);
@@ -356,21 +353,21 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         }
 
         if self.rounds_completed < self.coefficient_bits() {
-            return Ok(());
+            return;
         }
         if let Phase::Coefficient {
             witness, relation, ..
         } = phase
         {
             let weight_scale = match relation {
-                CoefficientRelation::Factored(weights) => match weights.common_alpha_factor() {
-                    [weight] => *weight,
-                    _ => {
-                        return Err(AkitaError::Internal(
-                            "lane transition requires every coefficient weight to be bound".into(),
-                        ))
-                    }
-                },
+                CoefficientRelation::Factored(weights) => {
+                    assert_eq!(
+                        weights.common_alpha_factor().len(),
+                        1,
+                        "lane transition requires every coefficient weight to be bound"
+                    );
+                    weights.common_alpha_factor()[0]
+                }
                 CoefficientRelation::ReducedDense(_) => E::one(),
             };
             // Materialize before taking any vector; allocation and field work
@@ -396,7 +393,6 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
                 lane.prepare_weights(self.live_lane_count, weight_scale, &mut self.linear_terms);
             }
         }
-        Ok(())
     }
 
     #[inline]

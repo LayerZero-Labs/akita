@@ -4,7 +4,7 @@ use akita_config::proof_optimized::fp128::OneHot;
 use akita_error::AkitaError;
 use akita_params::*;
 use akita_prover::backend::*;
-use akita_sumcheck::{FusedRounds, SumcheckKernel};
+use akita_sumcheck::SumcheckKernel;
 use akita_types::*;
 use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_poly::UnivariatePoly;
@@ -783,7 +783,7 @@ mod extension_challenges {
                                 .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
                     },
                 );
-                let mut sumcheck = GrindingSumcheckVerifier::<F, E, _>::new(
+                let mut sumcheck = GrindingSumcheckVerifier::<F, E>::new(
                     &mut replay,
                     SumcheckProtocol::ExtensionOpeningReduction,
                     1,

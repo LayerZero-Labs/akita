@@ -2,7 +2,7 @@
 
 use akita_algebra::{eq_poly::EqPolynomial, offset_eq::OffsetEqWindow};
 use akita_error::AkitaError;
-use jolt_algebra::reduce_signed_accum;
+use akita_sumcheck::reduce_signed_accum;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::Unreduced;
 use jolt_algebra::{Field, Ring, Zero};
@@ -312,16 +312,17 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         bound: &[E],
-    ) -> Result<super::RoundMessage<E>, AkitaError>
+    ) -> super::RoundMessage<E>
     where
         E: Unreduced,
     {
         if bound.is_empty() {
-            return Ok(self.round_message_compact_initial(compact_witness));
+            return self.round_message_compact_initial(compact_witness);
         }
-        let bound_weights = EqPolynomial::evals(bound)?;
+        let bound_weights =
+            EqPolynomial::evals(bound).expect("compact prefix binds few coefficient challenges");
         let stride = bound_weights.len();
-        Ok(self.round_message_with(|index| {
+        self.round_message_with(|index| {
             bound_weights
                 .iter()
                 .enumerate()
@@ -330,7 +331,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                         .get(index * stride + offset)
                         .map_or(sum, |value| sum + weight * E::from_i64(i64::from(value)))
                 })
-        }))
+        })
     }
 
     /// First-round specialization while the witness is still packed signed digits.

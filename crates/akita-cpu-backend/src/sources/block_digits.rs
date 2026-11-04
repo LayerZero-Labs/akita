@@ -6,9 +6,10 @@ use crate::sources::poly_helpers::{
 };
 use akita_error::AkitaError;
 use akita_params::SignedDigitKernel;
+use jolt_algebra::lift_ct;
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::CyclotomicRing;
-use jolt_algebra::{lift_ct, CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_crypto::challenge::SparseChallenge;
 use std::ops::Range;
 

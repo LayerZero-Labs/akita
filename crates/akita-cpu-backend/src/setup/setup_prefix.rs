@@ -15,7 +15,9 @@ use akita_params::SetupPrefixSlotId;
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
 use jolt_algebra::checked;
 #[cfg(test)]
-use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Field};
+use jolt_algebra::CyclotomicRing;
+#[cfg(test)]
+use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(test)]
 use std::sync::Arc;
 

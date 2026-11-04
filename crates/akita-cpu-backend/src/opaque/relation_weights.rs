@@ -24,7 +24,6 @@ pub(crate) enum RelationWeightDescription<E: Field> {
 use std::ops::Range;
 
 use akita_algebra::eq_poly::SplitEqEvals;
-use jolt_algebra::ring::scalar_powers;
 use akita_error::AkitaError;
 use akita_params::{
     gadget_row_scalars, r_decomp_levels, CommittedGroupParams, OpeningClaimsLayout, OpeningMethod,

@@ -260,7 +260,7 @@ mod tests {
     use akita_params::SisModulusProfileId;
     use akita_types::AkitaSetupDescriptor;
     use jolt_algebra::Prime128OffsetA7F7;
-    use jolt_crypto::lattice::PublicMatrixSeed;
+    use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 
     type F = Prime128OffsetA7F7;
 
@@ -271,7 +271,7 @@ mod tests {
                 max_num_vars: 8,
                 max_num_batched_polys: 1,
                 num_field_elements: 64,
-                setup_seed: PublicMatrixSeed::shake256_paged_v1([9; 32]),
+                setup_seed: AkitaSetupSeed::shake256_paged_v1([9; 32]),
             },
             CommitInnerPlan {
                 ring_dimension: 64,

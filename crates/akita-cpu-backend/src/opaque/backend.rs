@@ -92,10 +92,10 @@ pub struct CpuBackend<F: Field, E> {
     /// One setup-prefix value is retained per slot for the life of this backend.
     /// Overlapping cold acquisitions may derive duplicate candidates without waiting.
     pub(super) setup_prefix_cache: SetupPrefixCache<CachedSetupPrefix<F>>,
-    /// Source of the hiding randomness of schedules that declare it.
-    pub(crate) hiding_rng: Arc<crate::hiding::HidingRng>,
     // Scoped to this backend's setup seed. Only live, identical ring rows share storage.
     pub(super) setup_prefix_inner_rows: InnerRowPool<F>,
+    /// Source of the hiding randomness of schedules that declare it.
+    pub(crate) hiding_rng: Arc<crate::hiding::HidingRng>,
     extension: PhantomData<fn() -> E>,
 }
 
@@ -141,8 +141,8 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: Some(CpuPreparedSetup::new(expanded)),
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
-            hiding_rng: Arc::new(crate::hiding::HidingRng::os()),
             setup_prefix_inner_rows: InnerRowPool::default(),
+            hiding_rng: Arc::new(crate::hiding::HidingRng::os()),
             extension: PhantomData,
         })
     }
@@ -315,8 +315,8 @@ impl<F: Field, E> CpuBackend<F, E> {
             prepared: None,
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
-            hiding_rng: Arc::new(crate::hiding::HidingRng::os()),
             setup_prefix_inner_rows: InnerRowPool::default(),
+            hiding_rng: Arc::new(crate::hiding::HidingRng::os()),
             extension: PhantomData,
         })
     }

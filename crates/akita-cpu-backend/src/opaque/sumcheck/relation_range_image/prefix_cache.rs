@@ -7,7 +7,7 @@
 
 use crate::opaque::sumcheck::prefix_lookup::*;
 use akita_error::AkitaError;
-use jolt_algebra::reduce_signed_accum;
+use akita_sumcheck::reduce_signed_accum;
 use jolt_algebra::{Field, Ring, Unreduced, Zero};
 use jolt_poly::UnivariatePoly;
 

@@ -4,7 +4,7 @@ use crate::opaque::sumcheck::prefix_lookup::test_support::*;
 use crate::opaque::LowBasisRangeCheckProver;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_sumcheck::EqFactoredSumcheckKernel;
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::DigitRangeEqualityPoint;
 use jolt_algebra::{Field, One, Prime128Offset275, Ring, Unreduced, Zero};
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
@@ -569,13 +569,13 @@ fn stage1_prefix_proof_reconstructs_first_two_rounds() {
         ring_bits,
     )
     .unwrap();
-    let round0 = prover.round_polynomial(0, F::zero()).unwrap();
+    let round0 = prover.compute_round_eq_factored(0, F::zero());
     assert_eq!(cache.reconstruct_round0_eq_poly(), round0);
 
     let r0 = F::from_u64(9);
-    prover.bind_challenge(0, r0).unwrap();
+    prover.ingest_challenge(0, r0);
 
-    let round1 = prover.round_polynomial(1, F::zero()).unwrap();
+    let round1 = prover.compute_round_eq_factored(1, F::zero());
     assert_eq!(cache.reconstruct_round1_eq_poly(r0), round1);
 }
 

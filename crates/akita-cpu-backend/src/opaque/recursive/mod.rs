@@ -4,10 +4,6 @@
 //! views, and the setup-prefix source adapter.
 
 mod commit;
-#[cfg_attr(
-    not(test),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
 pub(in crate::opaque) mod opening;
 mod relation_witness;
 mod witness;

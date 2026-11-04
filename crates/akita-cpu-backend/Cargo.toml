@@ -119,11 +119,6 @@ name = "root_kernels"
 harness = false
 
 [[bench]]
-name = "trinomial_relation"
-harness = false
-required-features = ["labinius-trinomial"]
-
-[[bench]]
 name = "quotient_kernels"
 harness = false
 

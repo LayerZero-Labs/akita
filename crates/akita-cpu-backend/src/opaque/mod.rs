@@ -25,10 +25,6 @@ mod residual;
 mod source;
 #[doc(hidden)]
 pub mod standalone;
-#[cfg_attr(
-    not(test),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
 pub(crate) mod sumcheck;
 
 mod transfer;

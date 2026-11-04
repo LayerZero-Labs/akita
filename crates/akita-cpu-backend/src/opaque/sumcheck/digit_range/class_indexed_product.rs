@@ -16,7 +16,7 @@ use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_params::DigitRangePlan;
-use akita_sumcheck::EqFactoredSumcheckKernel;
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use jolt_algebra::{Field, Ring};
 use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
@@ -234,7 +234,7 @@ fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
     claim: E,
     tau: E,
     interpolation: RoundInterpolation<E>,
-) -> Result<[E; MAX_TREE_STAGE_Q_DEGREE + 1], AkitaError> {
+) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
     let inverse_one_minus_tau = (E::one() - tau).inverse();
     let parent_weights = ParentWeights::new(parent_weights);
     let arity_two_coefficients = |constant: E, at_one: E, leading: E| {
@@ -317,17 +317,17 @@ fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
             arity_four_product_values_with_zero(padding, padding, parent_weights),
         )
     };
-    Ok(match arity {
+    match arity {
         ProductArity::Two => match inverse_one_minus_tau {
             None => {
-                let [at_zero, at_one, leading] = arity_two_values_with_zero()?;
+                let [at_zero, at_one, leading] = arity_two_values_with_zero();
                 arity_two_coefficients(at_zero, at_one, leading)
             }
             Some(inverse) => {
                 #[cfg(debug_assertions)]
-                let [at_zero, at_one, leading] = arity_two_values_with_zero()?;
+                let [at_zero, at_one, leading] = arity_two_values_with_zero();
                 #[cfg(not(debug_assertions))]
-                let [at_one, leading] = arity_two_values()?;
+                let [at_one, leading] = arity_two_values();
                 let constant = (claim - tau * at_one) * inverse;
                 #[cfg(debug_assertions)]
                 debug_assert_eq!(constant, at_zero);
@@ -337,22 +337,22 @@ fn accumulate_round<E: Field + Ring + Unreduced, const LANES: usize>(
         ProductArity::Four => match inverse_one_minus_tau {
             None => {
                 let [at_zero, at_one, leading, at_minus_one, at_two] =
-                    arity_four_values_with_zero()?;
+                    arity_four_values_with_zero();
                 arity_four_coefficients(at_zero, at_one, leading, at_minus_one, at_two)
             }
             Some(inverse) => {
                 #[cfg(debug_assertions)]
                 let [at_zero, at_one, leading, at_minus_one, at_two] =
-                    arity_four_values_with_zero()?;
+                    arity_four_values_with_zero();
                 #[cfg(not(debug_assertions))]
-                let [at_one, leading, at_minus_one, at_two] = arity_four_values()?;
+                let [at_one, leading, at_minus_one, at_two] = arity_four_values();
                 let constant = (claim - tau * at_one) * inverse;
                 #[cfg(debug_assertions)]
                 debug_assert_eq!(constant, at_zero);
                 arity_four_coefficients(constant, at_one, leading, at_minus_one, at_two)
             }
         },
-    })
+    }
 }
 
 /// One eq-factored product substage that keeps compact classes through its first two rounds.
@@ -362,6 +362,7 @@ pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize
     quartet_layout: ExactPrefixLayout,
     parent_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
+    input_claim: E,
     interpolation: RoundInterpolation<E>,
     arity: ProductArity,
     num_rounds: usize,
@@ -376,6 +377,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
         stage_index: usize,
         parent_weights: Vec<E>,
         equality_point: &[E],
+        input_claim: E,
     ) -> Result<Self, AkitaError> {
         let arity = plan
             .product_stage_arities()
@@ -431,6 +433,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             }),
             parent_weights,
             split_eq: GruenSplitEq::new(equality_point)?,
+            input_claim,
             interpolation: RoundInterpolation::new().ok_or_else(|| {
                 AkitaError::Internal(
                     "digit-range interpolation constants are not invertible in the field".into(),
@@ -450,30 +453,26 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
     }
 }
 
-impl<E: Field + Ring + Fold + Unreduced, const LANES: usize>
-    ClassIndexedProductSubcheckProver<E, LANES>
-{
-    pub(super) fn degree_bound(&self) -> usize {
-        self.arity.degree()
-    }
-
-    pub(super) fn current_tau(&self) -> E {
-        self.split_eq.current_tau()
-    }
-}
-
-impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckKernel<E>
+impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckInstanceProver<E>
     for ClassIndexedProductSubcheckProver<E, LANES>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
 
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        claim: E,
-    ) -> Result<OmittedConstantPoly<E>, AkitaError> {
+    fn degree_bound(&self) -> usize {
+        self.arity.degree()
+    }
+
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn current_tau(&self) -> E {
+        self.split_eq.current_tau()
+    }
+
+    fn compute_round_eq_factored(&mut self, round: usize, claim: E) -> OmittedConstantPoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
         let (equality_prefix_weights, equality_suffix_weights) =
             self.split_eq.remaining_eq_tables();
@@ -499,7 +498,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckK
                     |pair_index| source.ordered_pair_index(pair_index),
                     |pair| pair_coefficients.coefficients_by_pair_index(pair),
                     pair_coefficients.coefficients_by_pair_index(0),
-                )?
+                )
             }
             ProductTableState::FirstChallengeFolded(FirstChallengeFoldedProductState {
                 source,
@@ -539,7 +538,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckK
                         claim,
                         self.split_eq.current_tau(),
                         self.interpolation,
-                    )?
+                    )
                 }
             }
             ProductTableState::Materialized(table) => {
@@ -566,16 +565,13 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckK
                     claim,
                     self.split_eq.current_tau(),
                     self.interpolation,
-                )?
+                )
             }
         };
-        let q = coefficients.get(..=self.arity.degree()).ok_or_else(|| {
-            AkitaError::Internal("product degree exceeds its coefficient buffer".into())
-        })?;
-        Ok(OmittedConstantPoly::from_q_coefficients(q.to_vec()))
+        OmittedConstantPoly::from_q_coefficients(coefficients[..=self.arity.degree()].to_vec())
     }
 
-    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+    fn ingest_challenge(&mut self, round: usize, challenge: E) {
         debug_assert_eq!(round, self.rounds_completed);
         self.split_eq.bind(challenge);
         if self.rounds_completed == 0 && self.num_rounds >= 2 {
@@ -625,7 +621,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckK
                                 )
                             },
                             quartets.coefficients_by_pair_indices(0, 0),
-                        )?)
+                        ))
                     } else {
                         None
                     };
@@ -644,7 +640,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckK
             if let Some(deferred) = deferred {
                 self.product_table = deferred;
                 self.rounds_completed += 1;
-                return Ok(());
+                return;
             }
         }
 
@@ -686,7 +682,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckK
             if let Some(table) = folded_after_two_rounds {
                 self.product_table = ProductTableState::Materialized(table);
                 self.rounds_completed += 1;
-                return Ok(());
+                return;
             }
         }
 
@@ -731,12 +727,13 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckK
             )
             .entered();
             let fold_context = E::precompute(challenge);
-            table.fold_in_place(|left, right| {
-                std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
-            })?;
+            table
+                .fold_in_place(|left, right| {
+                    std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
+                })
+                .expect("validated exact-prefix product state can fold");
         }
         self.rounds_completed += 1;
-        Ok(())
     }
 }
 
@@ -749,6 +746,7 @@ mod tests {
     fn final_child_claims_reject_every_unfinished_storage_phase() {
         use crate::sources::packed_digits::PackedSignedDigits;
         use akita_params::FlatBooleanDomain;
+        use jolt_algebra::Zero;
         type F = Prime128Offset275;
         let plan = DigitRangePlan::new(16).unwrap();
         let source = CompactDigitSource::new(
@@ -764,6 +762,7 @@ mod tests {
             0,
             vec![F::from_u64(1)],
             &[F::from_u64(7); 4],
+            F::zero(),
         )
         .unwrap();
         for round in 0..4 {
@@ -771,7 +770,7 @@ mod tests {
                 prover.final_child_claims(), Err(AkitaError::Internal(message))
                     if message == "product stage was not fully folded"
             ));
-            prover.bind_challenge(round, F::from_u64(11)).unwrap();
+            prover.ingest_challenge(round, F::from_u64(11));
         }
         assert_eq!(prover.final_child_claims().unwrap().len(), 2);
         assert!(ProductArity::new(3).is_none());
@@ -806,7 +805,6 @@ mod tests {
                     tau,
                     interpolation,
                 )
-                .unwrap()
             };
             let expected = accumulate_equality_weighted_values(
                 &first,
@@ -817,8 +815,7 @@ mod tests {
                     product_coefficients(left, right, arity, parent_weights)
                 },
                 product_coefficients(padding, padding, arity, parent_weights),
-            )
-            .unwrap();
+            );
             assert_eq!(round(E::zero(), E::one()), expected);
             let claim = expected[0] + tau * expected[1..].iter().copied().sum::<E>();
             assert_eq!(round(claim, tau), expected);

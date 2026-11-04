@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use akita_error::AkitaError;
+
 use akita_types::CoefficientPackingGroupSemantics;
 use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;

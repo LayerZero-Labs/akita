@@ -5,7 +5,6 @@ use super::stage3::product_table::{
 };
 use crate::opaque::CpuBackend;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_prover::backend::{SetupBatchBackend, SetupBatchKernel};
 use akita_sumcheck::SumcheckKernel;
 use akita_types::{
@@ -14,6 +13,7 @@ use akita_types::{
     },
     FpExtEncoding,
 };
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use jolt_algebra::{solinas::parallel::*, Zero};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};

@@ -81,9 +81,8 @@ impl<E: Field + Unreduced, const MAX_DIGIT_BASIS: usize> WideMass<E, MAX_DIGIT_B
             if let Some(wide) = (&mut self.wide as &mut dyn std::any::Any)
                 .downcast_mut::<Vec<jolt_algebra::Fp128x8i32>>()
             {
-                if neon::add_rows::<E>(&mut wide[slots.clone()], self.half, rows, digits) {
-                    return;
-                }
+                neon::add_rows::<E>(&mut wide[slots], self.half, rows, digits);
+                return;
             }
         }
         let masses = &mut self.wide[slots];
@@ -184,14 +183,12 @@ mod neon {
     /// Rows whose limbs are staged at once.
     const ROW_BATCH: usize = 64;
 
-    /// Returns `false`, having written nothing, when `E::Wide` is not
-    /// [`Fp128x8i32`]; the caller then takes the portable path.
     pub(super) fn add_rows<E: Field + Unreduced + 'static>(
         masses: &mut [Fp128x8i32],
         half: usize,
         rows: &[(E, u32)],
         digits: &[i8],
-    ) -> bool {
+    ) {
         let row_len = masses.len();
         debug_assert!(row_len.is_multiple_of(TILE));
         debug_assert!(half < 8);
@@ -200,11 +197,9 @@ mod neon {
         for batch in rows.chunks(ROW_BATCH) {
             for ((limbs, offset), &(factor, row)) in limbs.iter_mut().zip(&mut offsets).zip(batch) {
                 let wide = E::Wide::from(factor);
-                // Every factor has the same type, so only the first can miss,
-                // before any mass is written.
-                let Some(lanes) = (&wide as &dyn Any).downcast_ref::<Fp128x8i32>() else {
-                    return false;
-                };
+                let lanes = (&wide as &dyn Any)
+                    .downcast_ref::<Fp128x8i32>()
+                    .expect("wide type was matched by the caller");
                 *limbs = lanes.0.map(|lane| {
                     debug_assert!((0..=i32::from(u16::MAX)).contains(&lane));
                     lane as u16
@@ -226,7 +221,6 @@ mod neon {
                 );
             }
         }
-        true
     }
 
     /// # Safety

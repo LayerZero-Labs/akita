@@ -6,7 +6,6 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::SumcheckKernel;
 use akita_transcript::ChallengeCodec;
 use akita_types::{
-    derive_public_matrix_prefix,
     setup_claims::{SetupAccumulator, SetupBatchProof, SetupClaim},
     AkitaSetupDescriptor,
 };
@@ -17,6 +16,7 @@ use akita_types::{
 use akita_verifier::{decide_setup_accumulator, verify_setup_batch_deferred};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Zero};
 use jolt_algebra::{FpExt4, One, Prime128OffsetA7F7 as F, Prime32Offset99};
+use jolt_crypto::lattice::derive_public_matrix_prefix;
 use std::sync::Arc;
 
 fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>> {

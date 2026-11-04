@@ -183,7 +183,7 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
     assert_eq!(prover.input_claim(), claim, "input: {label}");
     for round in 0..num_vars {
         let expected = reference.round();
-        let actual = prover.round_polynomial(round, claim).unwrap();
+        let actual = prover.compute_round_univariate(round, claim);
         assert_eq!(actual, expected, "round {round}: {label}");
         assert_eq!(
             expected.evaluate(F::zero()) + expected.evaluate(F::one()),
@@ -193,7 +193,7 @@ fn check_configuration(coefficient_bits: usize, live_lanes: usize, mode: WeightM
         let challenge = F::from_u64(101 + 13 * round as u64);
         claim = expected.evaluate(challenge);
         reference.bind(challenge);
-        prover.bind_challenge(round, challenge).unwrap();
+        prover.ingest_challenge(round, challenge);
         assert_eq!(reference.claim(), claim, "fold at round {round}: {label}");
     }
     assert_eq!(
@@ -381,12 +381,12 @@ fn check_response_norm_source(basis: usize, with_trace: bool, wide_digits: bool)
     assert_eq!(prover.input_claim(), claim);
     for round in 0..coefficient_bits + lane_bits {
         let expected = reference.round();
-        let actual = prover.round_polynomial(round, claim).unwrap();
+        let actual = prover.compute_round_univariate(round, claim);
         assert_eq!(actual, expected, "round {round}");
         let challenge = F::from_u64(211 + 19 * round as u64);
         claim = expected.evaluate(challenge);
         reference.bind(challenge);
-        prover.bind_challenge(round, challenge).unwrap();
+        prover.ingest_challenge(round, challenge);
         assert_eq!(reference.claim(), claim, "fold {round}");
     }
     assert_eq!(prover.final_w_eval().unwrap(), reference.witness[0]);

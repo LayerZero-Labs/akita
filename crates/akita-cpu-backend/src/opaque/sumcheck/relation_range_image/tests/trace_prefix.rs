@@ -103,8 +103,8 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
         let mut direct_claim = direct.input_claim();
         assert_eq!(optimized_claim, direct_claim);
         for round in 0..lane_bits + coefficient_bits {
-            let optimized_poly = optimized.round_polynomial(round, optimized_claim).unwrap();
-            let direct_poly = direct.round_polynomial(round, direct_claim).unwrap();
+            let optimized_poly = optimized.compute_round_univariate(round, optimized_claim);
+            let direct_poly = direct.compute_round_univariate(round, direct_claim);
             assert_eq!(
                 optimized_poly, direct_poly,
                 "b={b}, mismatch at round {round}"
@@ -112,8 +112,8 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
             let challenge = F::from_u64(809 + 23 * round as u64);
             optimized_claim = optimized_poly.evaluate(challenge);
             direct_claim = direct_poly.evaluate(challenge);
-            optimized.bind_challenge(round, challenge).unwrap();
-            direct.bind_challenge(round, challenge).unwrap();
+            optimized.ingest_challenge(round, challenge);
+            direct.ingest_challenge(round, challenge);
         }
         assert_eq!(optimized_claim, direct_claim);
         assert_eq!(
@@ -180,8 +180,8 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
     let mut direct_claim = direct.input_claim();
     assert_eq!(prover_claim, direct_claim);
     for round in 0..(lane_bits + coefficient_bits) {
-        let prover_poly = prover.round_polynomial(round, prover_claim).unwrap();
-        let direct_poly = direct.round_polynomial(round, direct_claim).unwrap();
+        let prover_poly = prover.compute_round_univariate(round, prover_claim);
+        let direct_poly = direct.compute_round_univariate(round, direct_claim);
         assert_eq!(
             prover_poly, direct_poly,
             "trace two-round prefix mismatch at round {round}"
@@ -190,8 +190,8 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
         let challenge = F::from_u64((11 * round as u64) + 47);
         prover_claim = prover_poly.evaluate(challenge);
         direct_claim = direct_poly.evaluate(challenge);
-        prover.bind_challenge(round, challenge).unwrap();
-        direct.bind_challenge(round, challenge).unwrap();
+        prover.ingest_challenge(round, challenge);
+        direct.ingest_challenge(round, challenge);
     }
 
     assert_eq!(prover_claim, direct_claim);
@@ -261,8 +261,8 @@ fn stage2_trace_deferred_compact_prefix_matches_padded_reference() {
     let mut padded_claim = padded_prover.input_claim();
     assert_eq!(prefix_claim, padded_claim);
     for round in 0..(lane_bits + coefficient_bits) {
-        let prefix_poly = prefix_prover.round_polynomial(round, prefix_claim).unwrap();
-        let padded_poly = padded_prover.round_polynomial(round, padded_claim).unwrap();
+        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
             prefix_poly, padded_poly,
             "trace prefix/padded mismatch at round {round}"
@@ -271,8 +271,8 @@ fn stage2_trace_deferred_compact_prefix_matches_padded_reference() {
         let challenge = F::from_u64((23 * round as u64) + 73);
         prefix_claim = prefix_poly.evaluate(challenge);
         padded_claim = padded_poly.evaluate(challenge);
-        prefix_prover.bind_challenge(round, challenge).unwrap();
-        padded_prover.bind_challenge(round, challenge).unwrap();
+        prefix_prover.ingest_challenge(round, challenge);
+        padded_prover.ingest_challenge(round, challenge);
     }
 
     assert_eq!(prefix_claim, padded_claim);

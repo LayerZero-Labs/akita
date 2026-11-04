@@ -6,7 +6,7 @@ use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
 use akita_params::PhysicalL2NormProofShape;
-use akita_sumcheck::{EqFactoredSumcheckKernel, SumcheckKernel};
+use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_types::{reconstruct_l2_sq_from_gram, PhysicalResponsePlan};
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, Ring};
@@ -174,36 +174,35 @@ pub(super) struct FusedRangeNormProver<E: Field> {
     pub(super) range: ClassIndexedRangeLeafProver<E>,
     pub(super) norm: PhysicalNormTerm<E>,
     pub(super) norm_merge: E,
+    pub(super) input_claim: E,
     pub(super) range_claim: E,
     pub(super) last_range_coefficients: [E; RANGE_Q_MAX_DEGREE + 1],
     pub(super) rounds_completed: usize,
 }
 
-impl<E: Field + Ring + Fold + Unreduced> FusedRangeNormProver<E> {
-    pub(super) fn degree_bound(&self) -> usize {
-        self.range.degree_bound() + 1
-    }
-}
-
-impl<E: Field + Ring + Fold + Unreduced> SumcheckKernel<E> for FusedRangeNormProver<E> {
+impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRangeNormProver<E> {
     fn num_rounds(&self) -> usize {
-        EqFactoredSumcheckKernel::num_rounds(&self.range)
+        EqFactoredSumcheckInstanceProver::num_rounds(&self.range)
     }
 
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        _previous_claim: E,
-    ) -> Result<UnivariatePoly<E>, AkitaError> {
+    fn degree_bound(&self) -> usize {
+        EqFactoredSumcheckInstanceProver::degree_bound(&self.range) + 1
+    }
+
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UnivariatePoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
-        let q_coefficients = self.range.round_q_coefficients(round, self.range_claim)?;
+        let q_coefficients = self.range.round_q_coefficients(round, self.range_claim);
         self.last_range_coefficients = q_coefficients;
         let (factor_at_zero, factor_at_one) = self.range.current_full_eq_factor_evals();
         let factor_delta = factor_at_one - factor_at_zero;
         let mut coefficients = [E::zero(); FUSED_MAX_DEGREE + 1];
         for (degree, coefficient) in q_coefficients
             .into_iter()
-            .take(self.range.degree_bound() + 1)
+            .take(EqFactoredSumcheckInstanceProver::degree_bound(&self.range) + 1)
             .enumerate()
         {
             coefficients[degree] += factor_at_zero * coefficient;
@@ -214,23 +213,21 @@ impl<E: Field + Ring + Fold + Unreduced> SumcheckKernel<E> for FusedRangeNormPro
         {
             *destination += self.norm_merge * coefficient;
         }
-        let coefficients = coefficients.get(..=self.degree_bound()).ok_or_else(|| {
-            AkitaError::Internal("fused range-norm degree exceeds its coefficient buffer".into())
-        })?;
-        Ok(UnivariatePoly::new(coefficients.to_vec()))
+        UnivariatePoly::new(coefficients[..=self.degree_bound()].to_vec())
     }
 
-    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+    fn ingest_challenge(&mut self, round: usize, challenge: E) {
         debug_assert_eq!(round, self.rounds_completed);
         self.range_claim = self
             .last_range_coefficients
             .iter()
             .rev()
             .fold(E::zero(), |acc, &coefficient| acc * challenge + coefficient);
-        self.range.bind_challenge(round, challenge)?;
-        self.norm.bind(challenge)?;
+        self.range.ingest_challenge(round, challenge);
+        self.norm
+            .bind(challenge)
+            .expect("validated physical norm prefix can fold");
         self.rounds_completed += 1;
-        Ok(())
     }
 }
 

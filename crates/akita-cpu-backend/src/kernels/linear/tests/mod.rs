@@ -13,8 +13,10 @@ use jolt_algebra::ntt::{
     tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES},
     PrimeWidth,
 };
+use jolt_algebra::CrtNttParamSet;
+use jolt_algebra::CyclotomicCrtNtt;
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, Field, Fp64, One, Prime128Offset275, Prime64Offset59, Ring};
-use jolt_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 
 fn field_source<F: Field + CanonicalEncoding, const D: usize>(
     blocks: &[&[CyclotomicRing<F, D>]],

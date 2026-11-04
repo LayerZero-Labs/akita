@@ -9,10 +9,6 @@ mod coefficient_packing;
 mod handles_and_relation;
 mod opening_and_flat;
 mod recursive_kernels;
-#[cfg_attr(
-    not(test),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
 mod stage_sessions;
 mod tensor;
 

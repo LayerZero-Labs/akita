@@ -1,5 +1,4 @@
 use super::exact_prefix::SplitEqualitySuffixMass;
-use akita_error::AkitaError;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::Unreduced;
 use jolt_algebra::{Field, Zero};
@@ -103,19 +102,20 @@ pub(super) fn accumulate_equality_weighted_values<E: Field + Unreduced, const N:
     explicit_pair_count: usize,
     values_at: impl Fn(usize) -> [E; N] + Sync,
     default_values: [E; N],
-) -> Result<[E; N], AkitaError> {
+) -> [E; N] {
     let mut values = accumulate_equality_weighted_pair_terms(
         first,
         second,
         explicit_pair_count,
         |pair_index, weight| (values_at(pair_index), [weight; N]),
     );
-    let suffix_weight =
-        SplitEqualitySuffixMass::new(first, second)?.weight_from(explicit_pair_count)?;
+    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+        .and_then(|suffix| suffix.weight_from(explicit_pair_count))
+        .expect("split equality and exact prefix were validated at construction");
     for (value, default) in values.iter_mut().zip(default_values) {
         *value += suffix_weight * default;
     }
-    Ok(values)
+    values
 }
 
 /// Explicit entries per class below which a block-local histogram would spend
@@ -140,7 +140,7 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
     class_at: impl Fn(usize) -> usize + Sync,
     class_values: impl Fn(usize) -> [E; N],
     default_values: [E; N],
-) -> Result<[E; N], AkitaError> {
+) -> [E; N] {
     debug_assert!(explicit_count <= first.len() * second.len());
     let block_count = explicit_count.div_ceil(first.len());
     let task_count = super::super::parallel_tasks(2).min(block_count).max(1);
@@ -180,7 +180,9 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
             left
         }
     );
-    let suffix_weight = SplitEqualitySuffixMass::new(first, second)?.weight_from(explicit_count)?;
+    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+        .and_then(|suffix| suffix.weight_from(explicit_count))
+        .expect("split equality and exact prefix were validated at construction");
     let mut values = default_values.map(|default| suffix_weight * default);
     for (class, weight) in class_weights.into_iter().enumerate() {
         if weight.is_zero() {
@@ -190,7 +192,7 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
             *value += weight * class_value;
         }
     }
-    Ok(values)
+    values
 }
 
 #[cfg(test)]
@@ -231,8 +233,7 @@ mod tests {
                 explicit_pair_count,
                 |pair_index| rows[pair_index],
                 default,
-            )
-            .unwrap();
+            );
             let mut expected = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
             for pair_index in 0..rows.len() {
                 let row = if pair_index < explicit_pair_count {
@@ -260,8 +261,7 @@ mod tests {
                         class_at,
                         |class| class_rows[class],
                         default,
-                    )
-                    .unwrap(),
+                    ),
                     accumulate_equality_weighted_values(
                         &first,
                         &second,
@@ -269,7 +269,6 @@ mod tests {
                         |index| class_rows[class_at(index)],
                         default,
                     )
-                    .unwrap()
                 );
             }
         }

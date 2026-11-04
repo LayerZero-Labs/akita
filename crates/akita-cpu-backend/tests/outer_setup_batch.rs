@@ -19,7 +19,9 @@ use akita_types::{
     SetupPrefixVerifierRegistry,
 };
 use akita_verifier::{AkitaVerifier, SetupClaimAccumulator, SetupClaimAdvice, SetupPolicy};
-use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, One, PseudoMersenne, Ring};
+use jolt_algebra::{
+    CanonicalEncoding, ExtField, Field, MulBaseUnreduced, One, PseudoMersenne, Ring,
+};
 
 struct Advice<'a, F: Field, E: Field> {
     backend: &'a CpuBackend<F, E>,

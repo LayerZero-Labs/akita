@@ -2,7 +2,8 @@
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Compress, SerializationError};
 use akita_types::RingVec;
-use jolt_algebra::{checked, CanonicalEncoding, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, HashMap},

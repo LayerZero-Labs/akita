@@ -69,23 +69,21 @@ impl<E: Field> ExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: Field + Unreduced + Fold> SumcheckKernel<E> for ExtensionOpeningReductionProver<E> {
+impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
 
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        previous_claim: E,
-    ) -> Result<UnivariatePoly<E>, AkitaError> {
-        let expected_len = self
-            .num_rounds
-            .checked_sub(round)
-            .and_then(|remaining| 1usize.checked_shl(u32::try_from(remaining).ok()?))
-            .ok_or_else(|| {
-                AkitaError::Internal("extension-opening round exceeds its round count".into())
-            })?;
+    fn degree_bound(&self) -> usize {
+        EXTENSION_OPENING_REDUCTION_DEGREE
+    }
+
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UnivariatePoly<E> {
+        let expected_len = 1usize << (self.num_rounds - round);
         let mut constant = E::zero();
         let mut quadratic = E::zero();
 
@@ -95,13 +93,12 @@ impl<E: Field + Unreduced + Fold> SumcheckKernel<E> for ExtensionOpeningReductio
         }
 
         let linear = previous_claim - constant - constant - quadratic;
-        Ok(UnivariatePoly::new(vec![constant, linear, quadratic]))
+        UnivariatePoly::new(vec![constant, linear, quadratic])
     }
 
-    fn bind_challenge(&mut self, _round: usize, r_round: E) -> Result<(), AkitaError> {
+    fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         for group in &mut self.groups {
             group.ingest_challenge(r_round);
         }
-        Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use super::{LowBasisRangeCheckProver, PackedSignedDigits};
 use akita_params::DigitRangePlan;
-use akita_sumcheck::EqFactoredSumcheckKernel;
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
@@ -69,7 +69,7 @@ fn assert_independent_rounds(
     );
     let mut normalized_claim = F::zero();
     for round in 0..num_vars {
-        let message = prover.round_polynomial(round, normalized_claim).unwrap();
+        let message = prover.compute_round_eq_factored(round, normalized_claim);
         assert_eq!(prover.current_tau(), tau[round], "{shape} round={round}");
         assert_eq!(prover.degree_bound(), roots.len());
         assert_eq!(message.degree(), roots.len(), "{shape} round={round}");
@@ -114,7 +114,7 @@ fn assert_independent_rounds(
             .chunks_exact(2)
             .map(|pair| (F::one() - r) * pair[0] + r * pair[1])
             .collect();
-        prover.bind_challenge(round, r).unwrap();
+        prover.ingest_challenge(round, r);
     }
     assert_eq!(table.len(), 1);
     assert_eq!(

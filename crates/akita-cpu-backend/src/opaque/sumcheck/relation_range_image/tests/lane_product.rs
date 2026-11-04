@@ -58,7 +58,7 @@ fn stage2_rounds_reach_the_direct_final_evaluation() {
         let mut claim = prover.input_claim();
         let mut challenges = Vec::with_capacity(num_vars);
         for round in 0..num_vars {
-            let poly = prover.round_polynomial(round, claim).unwrap();
+            let poly = prover.compute_round_univariate(round, claim);
             assert_eq!(
                 poly.evaluate(F::zero()) + poly.evaluate(F::one()),
                 claim,
@@ -66,7 +66,7 @@ fn stage2_rounds_reach_the_direct_final_evaluation() {
             );
             let challenge = F::from_u64(809 + 23 * round as u64);
             claim = poly.evaluate(challenge);
-            prover.bind_challenge(round, challenge).unwrap();
+            prover.ingest_challenge(round, challenge);
             challenges.push(challenge);
         }
 

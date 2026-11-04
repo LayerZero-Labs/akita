@@ -3,7 +3,7 @@ use super::*;
 use crate::opaque::{
     Stage1FinalClaims, Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
 };
-use akita_sumcheck::{EqFactoredSumcheckKernel, SumcheckKernel};
+use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::UnivariatePolynomial;
 
@@ -32,12 +32,12 @@ impl<E: Field + Ring + Fold + Unreduced> ActiveStage<E> {
 
     fn num_rounds(&self) -> usize {
         match self {
-            Self::Low(p) => EqFactoredSumcheckKernel::num_rounds(p),
-            Self::Product2(p) => EqFactoredSumcheckKernel::num_rounds(p),
-            Self::Product4(p) => EqFactoredSumcheckKernel::num_rounds(p),
-            Self::Product8(p) => EqFactoredSumcheckKernel::num_rounds(p),
-            Self::Leaf(p) => EqFactoredSumcheckKernel::num_rounds(p),
-            Self::Fused(p) => SumcheckKernel::num_rounds(p),
+            Self::Low(p) => p.num_rounds(),
+            Self::Product2(p) => p.num_rounds(),
+            Self::Product4(p) => p.num_rounds(),
+            Self::Product8(p) => p.num_rounds(),
+            Self::Leaf(p) => p.num_rounds(),
+            Self::Fused(p) => p.num_rounds(),
         }
     }
 
@@ -52,73 +52,69 @@ impl<E: Field + Ring + Fold + Unreduced> ActiveStage<E> {
         }
     }
 
-    fn round(
-        &mut self,
-        round: usize,
-        claim: E,
-    ) -> Result<(Stage1RoundPolynomial<E>, Option<E>), AkitaError> {
-        Ok(match self {
+    fn round(&mut self, round: usize, claim: E) -> (Stage1RoundPolynomial<E>, Option<E>) {
+        match self {
             Self::Low(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.round_polynomial(round, claim)?),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Product2(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.round_polynomial(round, claim)?),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Product4(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.round_polynomial(round, claim)?),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Product8(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.round_polynomial(round, claim)?),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Leaf(p) => {
                 let tau = p.current_tau();
                 (
-                    Stage1RoundPolynomial::EqFactored(p.round_polynomial(round, claim)?),
+                    Stage1RoundPolynomial::EqFactored(p.compute_round_eq_factored(round, claim)),
                     Some(tau),
                 )
             }
             Self::Fused(p) => (
-                Stage1RoundPolynomial::Standard(p.round_polynomial(round, claim)?),
+                Stage1RoundPolynomial::Standard(p.compute_round_univariate(round, claim)),
                 None,
             ),
-        })
-    }
-
-    fn bind(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
-        match self {
-            Self::Low(p) => p.bind_challenge(round, challenge),
-            Self::Product2(p) => p.bind_challenge(round, challenge),
-            Self::Product4(p) => p.bind_challenge(round, challenge),
-            Self::Product8(p) => p.bind_challenge(round, challenge),
-            Self::Leaf(p) => p.bind_challenge(round, challenge),
-            Self::Fused(p) => p.bind_challenge(round, challenge),
         }
     }
 
-    fn finish(&mut self) -> Result<(), AkitaError> {
+    fn bind(&mut self, round: usize, challenge: E) {
         match self {
-            Self::Low(p) => EqFactoredSumcheckKernel::finish(p),
-            Self::Product2(p) => EqFactoredSumcheckKernel::finish(p),
-            Self::Product4(p) => EqFactoredSumcheckKernel::finish(p),
-            Self::Product8(p) => EqFactoredSumcheckKernel::finish(p),
-            Self::Leaf(p) => EqFactoredSumcheckKernel::finish(p),
-            Self::Fused(p) => SumcheckKernel::finish(p),
+            Self::Low(p) => p.ingest_challenge(round, challenge),
+            Self::Product2(p) => p.ingest_challenge(round, challenge),
+            Self::Product4(p) => p.ingest_challenge(round, challenge),
+            Self::Product8(p) => p.ingest_challenge(round, challenge),
+            Self::Leaf(p) => p.ingest_challenge(round, challenge),
+            Self::Fused(p) => p.ingest_challenge(round, challenge),
+        }
+    }
+
+    fn finalize(&mut self) {
+        match self {
+            Self::Low(p) => p.finalize(),
+            Self::Product2(p) => p.finalize(),
+            Self::Product4(p) => p.finalize(),
+            Self::Product8(p) => p.finalize(),
+            Self::Leaf(p) => p.finalize(),
+            Self::Fused(p) => p.finalize(),
         }
     }
 }
@@ -274,6 +270,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                 stage_index: stage,
                 parent_weights: self.weights.clone(),
                 equality_point: &self.equality_point,
+                input_claim: self.claim,
             };
             self.active = Some(
                 match self.plan.product_stage_lane_count(stage).ok_or_else(|| {
@@ -288,6 +285,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                         input.stage_index,
                         input.parent_weights,
                         input.equality_point,
+                        input.input_claim,
                     )?),
                     4 => ActiveStage::Product4(ClassIndexedProductSubcheckProver::new(
                         input.source,
@@ -296,6 +294,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                         input.stage_index,
                         input.parent_weights,
                         input.equality_point,
+                        input.input_claim,
                     )?),
                     8 => ActiveStage::Product8(ClassIndexedProductSubcheckProver::new(
                         input.source,
@@ -304,6 +303,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                         input.stage_index,
                         input.parent_weights,
                         input.equality_point,
+                        input.input_claim,
                     )?),
                     _ => {
                         return Err(AkitaError::Internal(
@@ -357,7 +357,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             ));
         }
         let degree_bound = active.degree_bound();
-        let (polynomial, tau) = active.round(round, self.claim)?;
+        let (polynomial, tau) = active.round(round, self.claim);
         let valid = match &polynomial {
             Stage1RoundPolynomial::EqFactored(poly) => poly.degree() <= degree_bound,
             Stage1RoundPolynomial::Standard(poly) => {
@@ -398,13 +398,14 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             AkitaError::InvalidInput("Stage 1 challenge arrived before its polynomial".into())
         })?;
         self.claim = match &pending.polynomial {
-            Stage1RoundPolynomial::EqFactored(poly) => poly.evaluate_from_claim(
+            Stage1RoundPolynomial::EqFactored(poly) => akita_sumcheck::advance_eq_factored_claim(
                 self.claim,
                 pending.tau.ok_or_else(|| {
                     AkitaError::Internal(
                         "stage 1 eq-factored round has no equality challenge".into(),
                     )
                 })?,
+                poly,
                 challenge,
             ),
             Stage1RoundPolynomial::Standard(poly) => poly.evaluate(challenge),
@@ -412,11 +413,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
         let active = self.active.as_mut().ok_or_else(|| {
             AkitaError::Internal("stage 1 challenge binding has no active stage".into())
         })?;
-        active.bind(round, challenge)?;
+        active.bind(round, challenge);
         self.point.push(challenge);
         self.next_round += 1;
         if self.next_round == active.num_rounds() {
-            active.finish()?;
+            active.finalize();
             self.phase = match active {
                 ActiveStage::Product2(_) | ActiveStage::Product4(_) | ActiveStage::Product8(_) => {
                     Phase::ProductPublic
@@ -612,6 +613,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             range,
             norm,
             norm_merge: merge,
+            input_claim: self.claim,
             range_claim: range_input_claim,
             last_range_coefficients: [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
             rounds_completed: 0,

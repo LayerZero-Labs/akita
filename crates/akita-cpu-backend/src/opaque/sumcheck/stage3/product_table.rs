@@ -5,8 +5,9 @@ use akita_algebra::eq_poly::EqPolynomial;
 use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
-use jolt_algebra::checked;
+
 use akita_sumcheck::SumcheckKernel;
+use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, MulBaseUnreduced, Ring, Zero};
 use std::sync::Arc;
@@ -333,50 +334,6 @@ where
 
     fn finish(&mut self) -> Result<(), AkitaError> {
         self.folded_table_value().map(|_| ())
-    }
-}
-
-impl<F, E> SumcheckKernel<E> for RectangularSetupProductTerm<F, E>
-where
-    F: Field,
-    E: Field + Ring + MulBaseUnreduced<F>,
-{
-    fn num_rounds(&self) -> usize {
-        self.total_rounds
-    }
-
-    fn round_polynomial(
-        &mut self,
-        _round: usize,
-        _claim: E,
-    ) -> Result<UnivariatePoly<E>, AkitaError> {
-        let (constant, linear, quadratic) = match &self.table {
-            SetupProductTable::Coefficient(table) => {
-                accumulate_left_round(table, &self.coefficient_factor, E::one())
-            }
-            SetupProductTable::Index(table) => {
-                accumulate_left_round(table, &self.index_factor, self.coefficient_factor[0])
-            }
-        };
-        Ok(UnivariatePoly::new(vec![constant, linear, quadratic]))
-    }
-
-    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
-        match &mut self.table {
-            SetupProductTable::Coefficient(table) => {
-                self.coefficient_challenges.push(challenge);
-                fold_dense_left_round(table, challenge);
-                fold_factor_in_place(&mut self.coefficient_factor, challenge);
-                if round + 1 == self.coefficient_rounds {
-                    self.table = SetupProductTable::Index(self.materialize_index_table()?);
-                }
-            }
-            SetupProductTable::Index(table) => {
-                fold_dense_left_round(table, challenge);
-                fold_factor_in_place(&mut self.index_factor, challenge);
-            }
-        }
-        Ok(())
     }
 }
 

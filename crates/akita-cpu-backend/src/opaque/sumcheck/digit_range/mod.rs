@@ -49,6 +49,7 @@ struct ProductSubcheckInput<'a, E: Field> {
     stage_index: usize,
     parent_weights: Vec<E>,
     equality_point: &'a [E],
+    input_claim: E,
 }
 
 fn compose_small_poly_with_affine<E: Field>(coeffs: &SmallPoly<E>, offset: E, slope: E) -> [E; 5] {

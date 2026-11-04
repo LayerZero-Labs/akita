@@ -48,7 +48,7 @@ use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_params::DigitRangePlan;
-use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckKernel};
+use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver};
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, Ring, Zero};
 use jolt_algebra::{Fold, Unreduced};
@@ -159,7 +159,7 @@ enum DirectRangePrefixState<E: Field> {
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
 ///
 /// For `basis <= 8` this is the complete stage-1 instance prover: it
-/// implements [`EqFactoredSumcheckKernel`], so callers that batch
+/// implements [`EqFactoredSumcheckInstanceProver`], so callers that batch
 /// several stage-1 instances over one shared equality point can drive its
 /// rounds directly instead of going through the single-instance
 /// `DigitRangeProver` wrapper.

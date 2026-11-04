@@ -16,7 +16,7 @@ use super::{
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
-use akita_sumcheck::EqFactoredSumcheckKernel;
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use jolt_algebra::{Field, Ring};
 use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
@@ -42,7 +42,7 @@ fn accumulate_round<E: Field + Unreduced>(
     padding_range_image: E,
     pair_at: impl Fn(usize) -> (E, E) + Sync,
     polynomial_coefficients: &SmallPoly<E>,
-) -> Result<[E; MAX_TREE_STAGE_Q_DEGREE + 1], AkitaError> {
+) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
     let padding_coefficients =
         compose_small_poly_with_affine(polynomial_coefficients, padding_range_image, E::zero());
     accumulate_equality_weighted_values(
@@ -208,7 +208,7 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<[E; MAX_TREE_STAGE_Q_DEGREE + 1], AkitaError> {
+    ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
         debug_assert_eq!(round, self.rounds_completed);
         let (equality_prefix_weights, equality_suffix_weights) =
             self.split_eq.remaining_eq_tables();
@@ -245,7 +245,7 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
                     kernel_strategy = "cached-second-round",
                 )
                 .entered();
-                Ok(*cached_second_round_coefficients)
+                *cached_second_round_coefficients
             }
             RangeImageTableState::Materialized(table) => {
                 let _span = tracing::info_span!(
@@ -298,11 +298,11 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
                                     [evaluate(left)]
                                 },
                                 [evaluate(table.default_value())],
-                            )?;
+                            );
                             debug_assert_eq!(constant, direct_constant);
                         }
                         let [q1, q2, q3, q4] = nonconstant;
-                        Ok([constant, q1, q2, q3, q4])
+                        [constant, q1, q2, q3, q4]
                     }
                     None => accumulate_round(
                         equality_prefix_weights,
@@ -337,43 +337,34 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
     }
 }
 
-impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
-    pub(crate) fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    pub(crate) fn degree_bound(&self) -> usize {
-        self.polynomial_coefficients
-            .coefficients()
-            .len()
-            .saturating_sub(1)
-    }
-
-    pub(crate) fn current_tau(&self) -> E {
-        self.split_eq.current_tau()
-    }
-}
-
-impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckKernel<E>
+impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
     for ClassIndexedRangeLeafProver<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
 
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        claim: E,
-    ) -> Result<OmittedConstantPoly<E>, AkitaError> {
-        let coefficients = self.round_q_coefficients(round, claim)?;
-        let q = coefficients.get(..=self.degree_bound()).ok_or_else(|| {
-            AkitaError::Internal("range leaf degree exceeds its coefficient buffer".into())
-        })?;
-        Ok(OmittedConstantPoly::from_q_coefficients(q.to_vec()))
+    fn degree_bound(&self) -> usize {
+        self.polynomial_coefficients
+            .coefficients()
+            .len()
+            .saturating_sub(1)
     }
 
-    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn current_tau(&self) -> E {
+        self.split_eq.current_tau()
+    }
+
+    fn compute_round_eq_factored(&mut self, round: usize, claim: E) -> OmittedConstantPoly<E> {
+        let coefficients = self.round_q_coefficients(round, claim);
+        OmittedConstantPoly::from_q_coefficients(coefficients[..=self.degree_bound()].to_vec())
+    }
+
+    fn ingest_challenge(&mut self, round: usize, challenge: E) {
         debug_assert_eq!(round, self.rounds_completed);
         self.split_eq.bind(challenge);
         if self.rounds_completed == 0 && self.num_rounds >= 2 {
@@ -419,7 +410,7 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckKernel<E>
                             )
                         },
                         quartets.coefficients_by_pair_indices(0, 0),
-                    )?;
+                    );
                     Some(RangeImageTableState::FirstChallengeFolded(
                         FirstChallengeFoldedRangeLeafState {
                             source: source.clone(),
@@ -435,7 +426,7 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckKernel<E>
             if let Some(deferred) = deferred {
                 self.range_image = deferred;
                 self.rounds_completed += 1;
-                return Ok(());
+                return;
             }
         }
 
@@ -475,7 +466,7 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckKernel<E>
             if let Some(table) = folded_after_two_rounds {
                 self.range_image = RangeImageTableState::Materialized(table);
                 self.rounds_completed += 1;
-                return Ok(());
+                return;
             }
         }
 
@@ -519,10 +510,11 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckKernel<E>
             )
             .entered();
             let fold_context = E::precompute(challenge);
-            table.fold_in_place(|left, right| E::fold_one(&fold_context, left, right))?;
+            table
+                .fold_in_place(|left, right| E::fold_one(&fold_context, left, right))
+                .expect("validated exact-prefix range-image state can fold");
         }
         self.rounds_completed += 1;
-        Ok(())
     }
 }
 
@@ -558,7 +550,7 @@ mod tests {
                         if message == "range-image leaf was not fully folded"
                 ));
             }
-            prover.bind_challenge(round, F::from_u64(11)).unwrap();
+            prover.ingest_challenge(round, F::from_u64(11));
         }
         assert_eq!(prover.final_range_image_eval().unwrap(), F::from_u64(2));
         assert_eq!(prover.final_range_claim().unwrap(), F::zero());
@@ -638,7 +630,6 @@ mod tests {
                 |pair_index| (dense[2 * pair_index], dense[2 * pair_index + 1]),
                 &SmallPoly::new(&polynomial).unwrap(),
             )
-            .unwrap()
         };
         let first_round = dense_round(&dense, &reference_eq);
         let mut claim = first_round[0]
@@ -649,7 +640,7 @@ mod tests {
 
         for round in 0..equality_point.len() {
             let expected = dense_round(&dense, &reference_eq);
-            assert_eq!(prover.round_q_coefficients(round, claim).unwrap(), expected);
+            assert_eq!(prover.round_q_coefficients(round, claim), expected);
 
             let challenge = F::from_u64(29 + round as u64 * 2);
             claim = expected
@@ -658,7 +649,7 @@ mod tests {
                 .fold(F::zero(), |value, &coefficient| {
                     value * challenge + coefficient
                 });
-            prover.bind_challenge(round, challenge).unwrap();
+            prover.ingest_challenge(round, challenge);
             reference_eq.bind(challenge);
             let fold_context = F::precompute(challenge);
             dense = dense

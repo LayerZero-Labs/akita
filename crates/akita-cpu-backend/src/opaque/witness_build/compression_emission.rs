@@ -1,11 +1,11 @@
 //! Canonical compression digit emission shared with portable witness patches.
 
+use jolt_algebra::balanced_decompose_coefficients_pow2_i8_into;
+
 use akita_error::AkitaError;
 use akita_params::{CompressionWitnessSpan, PackedNegativeBinary, WitnessQuotientRowLayout};
 use jolt_algebra::checked;
-use jolt_algebra::{
-    balanced_decompose_coefficients_pow2_i8_into, ring::cyclotomic::BalancedDecomposePow2Params,
-};
+use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(crate) fn emit_packed_negative_binary(

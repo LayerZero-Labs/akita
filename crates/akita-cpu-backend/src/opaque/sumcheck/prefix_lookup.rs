@@ -4,9 +4,9 @@
 //! stage's sumcheck can be collapsed into a single bivariate evaluation over
 //! a 4-value inner-dimension quad. The prover builds a local compressed grid
 //! and immediately reconstructs the two ordinary sumcheck round messages from
-//! it. Those reconstructed messages are then passed to the shared
-//! single-instance sumcheck driver as ordinary compressed or eq-factored
-//! rounds.
+//! it. Those reconstructed messages are then passed to the normal generic
+//! sumcheck drivers and serialized as ordinary `SumcheckProof` or
+//! `EqFactoredSumcheckProof` rounds.
 //!
 //! The prefix grids are not part of the public proof object or
 //! verifier API. They are transient backend caches used to avoid

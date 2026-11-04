@@ -389,7 +389,7 @@ fn scan_lanes<E: Field + Unreduced + 'static, const DIGIT_BITS: usize>(
     layout: &ScanLayout<'_, E>,
     first_lane: usize,
     classes: &mut [u16],
-) -> Result<ScanTotals<E>, AkitaError> {
+) -> ScanTotals<E> {
     let coeff_count = layout.coeff_count;
     let quads_per_lane = coeff_count / 4;
     let split_pairs = quads_per_lane >= 2;
@@ -417,7 +417,8 @@ fn scan_lanes<E: Field + Unreduced + 'static, const DIGIT_BITS: usize>(
         let digits = &mut digits[..lanes * coeff_count];
         layout
             .witness
-            .decode_range(chunk_first * coeff_count, digits)?;
+            .decode_range(chunk_first * coeff_count, digits)
+            .expect("compact prefix lanes are in bounds");
 
         alpha_rows.clear();
         alpha_rows.extend(
@@ -481,13 +482,13 @@ fn scan_lanes<E: Field + Unreduced + 'static, const DIGIT_BITS: usize>(
         }
     }
 
-    Ok(ScanTotals {
+    ScanTotals {
         alpha_mass: alpha_mass.finish(),
         source_mass: source_mass.finish(),
         even_histogram,
         odd_histogram,
         delta_histogram,
-    })
+    }
 }
 
 /// Accumulate the range-image inner terms of pairs `pairs` of the folded
@@ -648,20 +649,13 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             .par_chunks_mut(task_lanes * quads_per_lane)
             .enumerate()
             .map(scan)
-            .try_reduce_with(|left, right| Ok(ScanTotals::merge(left, right)))
-            .transpose()?;
+            .reduce_with(ScanTotals::merge);
         #[cfg(not(feature = "parallel"))]
         let totals = classes
             .chunks_mut(task_lanes * quads_per_lane)
             .enumerate()
             .map(scan)
-            .try_fold(None, |merged: Option<ScanTotals<E>>, totals| {
-                let totals = totals?;
-                Ok::<_, AkitaError>(Some(match merged {
-                    Some(merged) => ScanTotals::merge(merged, totals),
-                    None => totals,
-                }))
-            })?;
+            .reduce(ScanTotals::merge);
 
         let Some(totals) = totals else {
             return Ok(None);
@@ -739,15 +733,15 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         &self,
         split_eq: &GruenSplitEq<E>,
         recovery: Option<PreparedLinearQRecovery<'a, E>>,
-    ) -> Result<PrefixNormRound<'a, E>, AkitaError> {
-        Ok(match self.challenges.len() {
+    ) -> PrefixNormRound<'a, E> {
+        match self.challenges.len() {
             0 => PrefixNormRound::Polynomial(self.norm_cache.round0_norm_poly()),
             1 => PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(self.challenges[0])),
             2 if self.histogram_round2 => PrefixNormRound::Terms(self.round2_norm_terms()),
             round => {
-                PrefixNormRound::Terms(self.lookup_round_terms(round, split_eq, recovery, None)?)
+                PrefixNormRound::Terms(self.lookup_round_terms(round, split_eq, recovery, None))
             }
-        })
+        }
     }
 
     /// Materialize the witness folded by every challenge so far and return it
@@ -757,13 +751,13 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         witness: PackedSignedDigitView<'_>,
         split_eq: &GruenSplitEq<E>,
         recovery: Option<PreparedLinearQRecovery<'a, E>>,
-    ) -> Result<(Vec<E>, PrefixNormRound<'a, E>), AkitaError> {
+    ) -> (Vec<E>, PrefixNormRound<'a, E>) {
         debug_assert_eq!(self.challenges.len(), self.last_round);
-        Ok(match self.last_round {
+        match self.last_round {
             1 => {
                 let r0 = self.challenges[0];
                 let half = (self.b / 2) as i16;
-                let lut = CompactPairFoldLut::from_contiguous_range(-half, half - 1, r0)?;
+                let lut = CompactPairFoldLut::from_contiguous_range(-half, half - 1, r0);
                 (
                     RelationRoundState::<E>::materialize_compact_witness(witness, &lut),
                     PrefixNormRound::Polynomial(self.norm_cache.round1_norm_poly(r0)),
@@ -777,11 +771,10 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             ),
             round => {
                 let mut folded = vec![E::zero(); self.classes.len() >> (round - 2)];
-                let terms =
-                    self.lookup_round_terms(round, split_eq, recovery, Some(&mut folded))?;
+                let terms = self.lookup_round_terms(round, split_eq, recovery, Some(&mut folded));
                 (folded, PrefixNormRound::Terms(terms))
             }
-        })
+        }
     }
 
     /// Round-2 range-image terms from the class histograms.
@@ -850,37 +843,31 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         split_eq: &GruenSplitEq<E>,
         recovery: Option<PreparedLinearQRecovery<'a, E>>,
         out: Option<&mut [E]>,
-    ) -> Result<NormRoundTerms<'a, E>, AkitaError> {
+    ) -> NormRoundTerms<'a, E> {
         let totals = match (round, recovery.is_some()) {
-            (2, false) => self.lookup_round::<1, false>(split_eq, out)?,
-            (2, true) => self.lookup_round::<1, true>(split_eq, out)?,
-            (3, false) => self.lookup_round::<2, false>(split_eq, out)?,
-            (3, true) => self.lookup_round::<2, true>(split_eq, out)?,
-            (4, false) => self.lookup_round::<4, false>(split_eq, out)?,
-            (4, true) => self.lookup_round::<4, true>(split_eq, out)?,
-            (5, false) => self.lookup_round::<8, false>(split_eq, out)?,
-            (5, true) => self.lookup_round::<8, true>(split_eq, out)?,
-            (6, false) => self.lookup_round::<16, false>(split_eq, out)?,
-            (6, true) => self.lookup_round::<16, true>(split_eq, out)?,
-            _ => {
-                return Err(AkitaError::Internal(
-                    "compact prefix round exceeds MAX_PREFIX_ROUNDS".into(),
-                ))
-            }
+            (2, false) => self.lookup_round::<1, false>(split_eq, out),
+            (2, true) => self.lookup_round::<1, true>(split_eq, out),
+            (3, false) => self.lookup_round::<2, false>(split_eq, out),
+            (3, true) => self.lookup_round::<2, true>(split_eq, out),
+            (4, false) => self.lookup_round::<4, false>(split_eq, out),
+            (4, true) => self.lookup_round::<4, true>(split_eq, out),
+            (5, false) => self.lookup_round::<8, false>(split_eq, out),
+            (5, true) => self.lookup_round::<8, true>(split_eq, out),
+            (6, false) => self.lookup_round::<16, false>(split_eq, out),
+            (6, true) => self.lookup_round::<16, true>(split_eq, out),
+            _ => unreachable!("compact prefix rounds are capped by MAX_PREFIX_ROUNDS"),
         };
-        Ok(NormRoundTerms::from_totals(totals, recovery))
+        NormRoundTerms::from_totals(totals, recovery)
     }
 
     fn lookup_round<const G: usize, const SKIP_LINEAR: bool>(
         &self,
         split_eq: &GruenSplitEq<E>,
         out: Option<&mut [E]>,
-    ) -> Result<[E; 3], AkitaError> {
+    ) -> [E; 3] {
         let class_count = self.quad_fold.len();
-        let bound = self.challenges.get(2..).ok_or_else(|| {
-            AkitaError::Internal("compact prefix lookup round precedes its quad challenges".into())
-        })?;
-        let group_weights = EqPolynomial::evals(bound)?;
+        let group_weights = EqPolynomial::evals(&self.challenges[2..])
+            .expect("compact prefix challenge count is bounded");
         debug_assert_eq!(group_weights.len(), G);
         let lookups = group_weights
             .iter()
@@ -912,7 +899,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 .map(|task| run(task, None))
                 .collect(),
         };
-        Ok(sum_partials(E::zero(), parts))
+        sum_partials(E::zero(), parts)
     }
 }
 
@@ -967,13 +954,13 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
         &self,
         prefix: &CompactQuotientPrefix<E>,
         weights: &RelationWeightFactorization<E>,
-    ) -> Result<(RoundMessage<E>, UnivariatePoly<E>), AkitaError> {
-        let norm = prefix.norm_round(&self.split_eq, self.split_eq.prepare_linear_q_recovery())?;
+    ) -> (RoundMessage<E>, UnivariatePoly<E>) {
+        let norm = prefix.norm_round(&self.split_eq, self.split_eq.prepare_linear_q_recovery());
         let norm_poly = self.norm_poly_from_prefix(norm);
         let mut message =
             prefix.relation_message(weights.common_alpha_factor(), &self.linear_terms);
         message.add_assign(RoundMessage::from_polynomial(&norm_poly));
-        Ok((message, norm_poly))
+        (message, norm_poly)
     }
 }
 

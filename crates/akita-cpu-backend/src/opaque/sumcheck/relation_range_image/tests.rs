@@ -322,16 +322,14 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
     let mut factorized_claim = factorized.input_claim();
     let mut flattened_claim = flattened.input_claim();
     for round in 0..num_vars {
-        let factorized_poly = factorized
-            .round_polynomial(round, factorized_claim)
-            .unwrap();
-        let flattened_poly = flattened.round_polynomial(round, flattened_claim).unwrap();
+        let factorized_poly = factorized.compute_round_univariate(round, factorized_claim);
+        let flattened_poly = flattened.compute_round_univariate(round, flattened_claim);
         assert_eq!(factorized_poly, flattened_poly, "round {round}");
         let challenge = F::from_u64(41 * round as u64 + 43);
         factorized_claim = factorized_poly.evaluate(challenge);
         flattened_claim = flattened_poly.evaluate(challenge);
-        factorized.bind_challenge(round, challenge).unwrap();
-        flattened.bind_challenge(round, challenge).unwrap();
+        factorized.ingest_challenge(round, challenge);
+        flattened.ingest_challenge(round, challenge);
     }
     assert_eq!(factorized_claim, flattened_claim);
     assert_eq!(
@@ -409,8 +407,7 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
     let packed_dense = packed(&w_dense);
-    let dense_lut =
-        RelationRoundState::<F>::build_compact_w_fold_lut(packed_dense.view(), r).unwrap();
+    let dense_lut = RelationRoundState::<F>::build_compact_w_fold_lut(packed_dense.view(), r);
     assert_eq!(
         RelationRoundState::<F>::materialize_compact_witness(packed_dense.view(), &dense_lut),
         materialize_compact_witness_reference(&w_dense, r)
@@ -524,8 +521,8 @@ fn stage2_prefix_aware_rounds_match_explicit_relation_lane_table() {
             let mut padded_claim = padded_prover.input_claim();
 
             for round in 0..(lane_bits + coefficient_bits) {
-                let prefix_poly = prefix_prover.round_polynomial(round, prefix_claim).unwrap();
-                let padded_poly = padded_prover.round_polynomial(round, padded_claim).unwrap();
+                let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+                let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
                 assert_eq!(
                     prefix_poly, padded_poly,
                     "round {round} polynomial mismatch live_lane_count={live_lane_count} b={b}"
@@ -534,8 +531,8 @@ fn stage2_prefix_aware_rounds_match_explicit_relation_lane_table() {
                 let challenge = F::from_u64((round as u64) + 37);
                 prefix_claim = prefix_poly.evaluate(challenge);
                 padded_claim = padded_poly.evaluate(challenge);
-                prefix_prover.bind_challenge(round, challenge).unwrap();
-                padded_prover.bind_challenge(round, challenge).unwrap();
+                prefix_prover.ingest_challenge(round, challenge);
+                padded_prover.ingest_challenge(round, challenge);
             }
 
             assert_eq!(
@@ -640,8 +637,8 @@ fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path()
     let mut direct_claim = direct.input_claim();
 
     for round in 0..(lane_bits + coefficient_bits) {
-        let prover_poly = prover.round_polynomial(round, prover_claim).unwrap();
-        let direct_poly = direct.round_polynomial(round, direct_claim).unwrap();
+        let prover_poly = prover.compute_round_univariate(round, prover_claim);
+        let direct_poly = direct.compute_round_univariate(round, direct_claim);
         assert_eq!(
             prover_poly, direct_poly,
             "round {round} polynomial mismatch for large odd sparse boolean witness"
@@ -650,8 +647,8 @@ fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path()
         let challenge = F::from_u64((11 * round as u64) + 197);
         prover_claim = prover_poly.evaluate(challenge);
         direct_claim = direct_poly.evaluate(challenge);
-        prover.bind_challenge(round, challenge).unwrap();
-        direct.bind_challenge(round, challenge).unwrap();
+        prover.ingest_challenge(round, challenge);
+        direct.ingest_challenge(round, challenge);
     }
 
     assert_eq!(prover_claim, direct_claim);
@@ -713,8 +710,8 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
     let mut padded_claim = padded_prover.input_claim();
 
     for round in 0..(lane_bits + coefficient_bits) {
-        let prefix_poly = prefix_prover.round_polynomial(round, prefix_claim).unwrap();
-        let padded_poly = padded_prover.round_polynomial(round, padded_claim).unwrap();
+        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
             prefix_poly, padded_poly,
             "round {round} polynomial mismatch for padded large odd sparse boolean witness"
@@ -723,8 +720,8 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         let challenge = F::from_u64((13 * round as u64) + 239);
         prefix_claim = prefix_poly.evaluate(challenge);
         padded_claim = padded_poly.evaluate(challenge);
-        prefix_prover.bind_challenge(round, challenge).unwrap();
-        padded_prover.bind_challenge(round, challenge).unwrap();
+        prefix_prover.ingest_challenge(round, challenge);
+        padded_prover.ingest_challenge(round, challenge);
     }
 
     assert_eq!(prefix_claim, padded_claim);
@@ -837,8 +834,8 @@ fn compact_prefix_matches_direct_path(
     let mut direct_claim = direct.input_claim();
 
     for round in 0..(lane_bits + coefficient_bits) {
-        let prover_poly = prover.round_polynomial(round, prover_claim).unwrap();
-        let direct_poly = direct.round_polynomial(round, direct_claim).unwrap();
+        let prover_poly = prover.compute_round_univariate(round, prover_claim);
+        let direct_poly = direct.compute_round_univariate(round, direct_claim);
         assert_eq!(
             prover_poly.evaluate(F::zero()) + prover_poly.evaluate(F::one()),
             prover_claim,
@@ -857,8 +854,8 @@ fn compact_prefix_matches_direct_path(
         let challenge = F::from_u64((29 * round as u64) + 269);
         prover_claim = prover_poly.evaluate(challenge);
         direct_claim = direct_poly.evaluate(challenge);
-        prover.bind_challenge(round, challenge).unwrap();
-        direct.bind_challenge(round, challenge).unwrap();
+        prover.ingest_challenge(round, challenge);
+        direct.ingest_challenge(round, challenge);
     }
 
     assert_eq!(prover_claim, direct_claim);
@@ -921,8 +918,8 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
     let mut padded_claim = padded_prover.input_claim();
 
     for round in 0..(lane_bits + coefficient_bits) {
-        let prefix_poly = prefix_prover.round_polynomial(round, prefix_claim).unwrap();
-        let padded_poly = padded_prover.round_polynomial(round, padded_claim).unwrap();
+        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
             prefix_poly, padded_poly,
             "round {round} polynomial mismatch for padded large odd dense witness"
@@ -931,8 +928,8 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         let challenge = F::from_u64((43 * round as u64) + 293);
         prefix_claim = prefix_poly.evaluate(challenge);
         padded_claim = padded_poly.evaluate(challenge);
-        prefix_prover.bind_challenge(round, challenge).unwrap();
-        padded_prover.bind_challenge(round, challenge).unwrap();
+        prefix_prover.ingest_challenge(round, challenge);
+        padded_prover.ingest_challenge(round, challenge);
     }
 
     assert_eq!(prefix_claim, padded_claim);

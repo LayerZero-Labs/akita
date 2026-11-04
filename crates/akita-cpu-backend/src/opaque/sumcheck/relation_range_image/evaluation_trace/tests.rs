@@ -1,6 +1,7 @@
 use super::*;
 
 use akita_algebra::poly::multilinear_eval;
+
 use akita_config::proof_optimized::fp128;
 use akita_params::{
     basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,

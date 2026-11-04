@@ -17,10 +17,6 @@ mod digit_rows;
 mod exact_i16;
 #[cfg(test)]
 mod exact_i16_tests;
-#[cfg_attr(
-    not(test),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
 pub(crate) mod extension_opening_reduction;
 pub(crate) mod field_reduction;
 #[cfg(test)]

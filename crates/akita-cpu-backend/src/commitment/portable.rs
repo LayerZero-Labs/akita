@@ -9,7 +9,8 @@ use akita_serialization::{
     DEFAULT_MAX_SEQUENCE_LEN,
 };
 use akita_types::RingVec;
-use jolt_algebra::{CanonicalEncoding, Field};
+use jolt_algebra::CanonicalEncoding;
+use jolt_algebra::Field;
 use std::borrow::Cow;
 use std::io::{Read, Write};
 use zeroize::Zeroizing;

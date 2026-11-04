@@ -10,7 +10,8 @@ use crate::arithmetic::extension_opening_reduction::{
 use akita_algebra::poly::fold_evals_in_place;
 
 use akita_error::AkitaError;
-use akita_sumcheck::SumcheckKernel;
+use akita_params::EXTENSION_OPENING_REDUCTION_DEGREE;
+use akita_sumcheck::SumcheckInstanceProver;
 use jolt_algebra::{Field, Zero};
 use jolt_algebra::{Fold, Unreduced};
 #[cfg(feature = "parallel")]

@@ -49,7 +49,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         outer_image: RingVec<F>,
     ) -> Result<(CommittedGroup<F>, PortableCompressionState<F>), AkitaError>
     where
-        F: Field + CanonicalEncoding + 'static,
+        F: Field + CanonicalEncoding + Valid + AkitaSerialize + 'static,
     {
         let prepared = self.prepared()?;
         let expanded = prepared.expanded();

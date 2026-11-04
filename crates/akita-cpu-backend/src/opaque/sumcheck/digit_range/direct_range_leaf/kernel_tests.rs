@@ -33,8 +33,8 @@ fn kernel_sequences_and_lookahead_match_live_geometry() {
         for (round, &kernel) in expected.iter().enumerate() {
             assert_eq!(prover.round_kernel(round), kernel);
             let next = prover.round_kernel(round + 1);
-            prover.round_polynomial(round, F::zero()).unwrap();
-            prover.bind_challenge(round, F::from_u64(11)).unwrap();
+            prover.compute_round_eq_factored(round, F::zero());
+            prover.ingest_challenge(round, F::from_u64(11));
             assert_eq!(prover.round_kernel(round + 1), next);
         }
         assert!(matches!(

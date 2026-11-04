@@ -4,13 +4,17 @@
 use crate::sources::block_digits::LiveRings;
 use crate::sources::block_digits::{DigitRows, DigitShape, I8Rows};
 use akita_error::AkitaError;
+use jolt_algebra::cyclic_ntt_with_i16_tail_to_ring;
 use jolt_algebra::ntt::{MontCoeff, PrimeWidth, I32_LAZY_DOT_BATCH};
+use jolt_algebra::ntt_with_i16_tail_to_ring;
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::solinas::parallel::*;
-use jolt_algebra::{
-    cyclic_ntt_with_i16_tail_to_ring, ntt_with_i16_tail_to_ring, CenteredMontLut, CrtNttParamSet,
-    CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
-};
+use jolt_algebra::CenteredMontLut;
+use jolt_algebra::CrtNttParamSet;
+use jolt_algebra::CyclotomicCrtNtt;
+use jolt_algebra::CyclotomicRing;
+use jolt_algebra::DigitMontLut;
+use jolt_algebra::I16TailParams;
 use jolt_algebra::{CanonicalEncoding, Field};
 use std::array::from_fn;
 use std::mem::size_of;
@@ -47,7 +51,6 @@ pub(crate) use crt_matvec::{mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_v
 #[cfg(test)]
 pub(crate) use decompose::decompose_block_i8;
 pub(crate) use decompose::decompose_commit_blocks_into;
-pub use decompose::decompose_rows_i8_into;
 pub(crate) use digit_relation::{
     digit_relation_matrix_extent, digit_relation_rows_cached_prover_bounds,
     digit_relation_rows_streamed_prover_bounds, DigitRelationRows,

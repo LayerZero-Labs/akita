@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::{iter::FusedIterator, ops::Range};
 
 use akita_error::AkitaError;
+
 use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
