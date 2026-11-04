@@ -5,7 +5,9 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_chunks_mut, Field};
 
 use super::{
     binary_root_matrix, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan,
@@ -78,22 +80,34 @@ pub fn binary_a_setup_coefficients<F: Field>(
     let row_stride = size.row_stride;
     let matrix = binary_root_matrix(seed, manifest)?;
     let mut coefficients = field_buffer(prefix_len)?;
-    for (i, row) in matrix.iter().enumerate() {
-        for (j, entry) in row.iter().enumerate() {
-            let offset = checked::product([i, STRIDE])
-                .and_then(|offset| checked::mul_add(j, row_stride, offset))
-                .ok_or(AkitaError::InvalidProof)?;
-            let range = checked::range(offset, DEGREE).ok_or(AkitaError::InvalidProof)?;
-            for (slot, &value) in coefficients
-                .get_mut(range)
-                .ok_or(AkitaError::InvalidProof)?
-                .iter_mut()
-                .zip(entry)
-            {
-                *slot = F::from_i128(value);
-            }
-        }
+    // Entry `(i, j)` fills cells `j * row_stride + i * STRIDE ..` for its
+    // `DEGREE` coefficients, so each matrix column fills one row stride.
+    let columns = matrix.first().map_or(0, Vec::len);
+    if matrix.iter().any(|row| row.len() != columns) {
+        return Err(AkitaError::InvalidProof);
     }
+    let cells = checked::product([columns, row_stride])
+        .and_then(|len| coefficients.get_mut(..len))
+        .ok_or(AkitaError::InvalidProof)?;
+    cfg_chunks_mut!(cells, row_stride)
+        .enumerate()
+        .try_for_each(|(j, cells)| -> Result<(), AkitaError> {
+            for (i, row) in matrix.iter().enumerate() {
+                let range = checked::product([i, STRIDE])
+                    .and_then(|offset| checked::range(offset, DEGREE))
+                    .ok_or(AkitaError::InvalidProof)?;
+                let entry = row.get(j).ok_or(AkitaError::InvalidProof)?;
+                for (slot, &value) in cells
+                    .get_mut(range)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .iter_mut()
+                    .zip(entry)
+                {
+                    *slot = F::from_i128(value);
+                }
+            }
+            Ok(())
+        })?;
     Ok(coefficients)
 }
 

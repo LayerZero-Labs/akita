@@ -4,7 +4,9 @@ use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::{derive_centered_q_matrix, SetupStreamLabel, SetupStreamRole};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_chunks, cfg_iter_mut, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
@@ -41,13 +43,14 @@ pub fn binary_root_matrix(
         entries
             .try_reserve_exact(columns)
             .map_err(|_| AkitaError::InvalidProof)?;
-        for entry in row.chunks_exact(648) {
-            let mut lifted = [0i128; 648];
-            for (output, &coefficient) in lifted.iter_mut().zip(entry) {
-                *output = i128::from(coefficient);
-            }
-            entries.push(lifted);
-        }
+        entries.resize(columns, [0i128; 648]);
+        cfg_iter_mut!(entries)
+            .zip(cfg_chunks!(row, 648))
+            .for_each(|(lifted, entry)| {
+                for (output, &coefficient) in lifted.iter_mut().zip(entry) {
+                    *output = i128::from(coefficient);
+                }
+            });
         matrix.push(entries);
     }
     if matrix.len() != manifest.a_rank() {
