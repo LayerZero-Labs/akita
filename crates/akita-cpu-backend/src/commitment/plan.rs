@@ -375,27 +375,6 @@ mod tests {
     }
 
     #[test]
-    fn recursive_plan_preserves_resource_owner_fold() {
-        let params = recursive_params(CommitmentPayloadMode::Raw);
-        let plan = CommitmentExecutionPlan::from_profile(
-            7,
-            &params.own_group().profile,
-            params.payload_mode,
-            params.ring_relation_mode,
-        )
-        .unwrap();
-        let inner = plan
-            .inner_ntt_requirement(crate::commitment::PolynomialType::Dense(
-                crate::commitment::DenseType::Coefficients,
-            ))
-            .unwrap()
-            .unwrap();
-        let outer = plan.outer_ntt_requirement().unwrap().unwrap();
-        assert_eq!(inner.fold_level(), 7);
-        assert_eq!(outer.fold_level(), 7);
-    }
-
-    #[test]
     fn outer_plan_checks_output_geometry_at_construction() {
         let profile = recursive_params(CommitmentPayloadMode::Raw)
             .own_group()

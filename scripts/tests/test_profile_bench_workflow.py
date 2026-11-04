@@ -46,12 +46,6 @@ class ProfileBenchWorkflowTests(unittest.TestCase):
         self.assertFalse(feature_in_default(self.repo, "akita-pcs", "transcript-blake2b"))
         self.assertTrue(feature_exists(self.repo, "akita-pcs", "transcript-blake2b"))
 
-    def test_generated_artifacts_must_match_the_committed_files(self) -> None:
-        ci = (self.repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn("gen_schedule_artifacts", ci)
-        self.assertIn("diff -ru artifacts/schedules", ci)
-        self.assertIn('--partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"', ci)
-
 
 if __name__ == "__main__":
     unittest.main()

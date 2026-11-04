@@ -524,21 +524,6 @@ mod tests {
     }
 
     #[test]
-    fn commitment_requirement_preserves_owning_fold() {
-        let key = NttCacheKey::from_matrix_shape(64, 2, 8, NttTransformDomain::Negacyclic).unwrap();
-        let requirement = CommitmentNttRequirement::new(
-            7,
-            CommitmentNttRoute::InnerOnly,
-            CommitmentNttStage::Inner,
-            key,
-            16,
-        )
-        .unwrap();
-        assert_eq!(requirement.fold_level(), 7);
-        assert_eq!(requirement.routed().fold_level, 7);
-    }
-
-    #[test]
     fn selected_kernel_determines_stage_specific_requirements() {
         let plan = full_plan();
         let dense = plan

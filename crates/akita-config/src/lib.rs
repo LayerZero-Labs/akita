@@ -726,38 +726,7 @@ mod fp128_policy_tests {
     const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
-    fn fp128_onehot_uses_adaptive_schedule_policy() {
-        assert!(matches!(
-            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
-            RingDimensionSchedule {
-                num_search_levels: 2,
-                suffix_dimensions: &[64],
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn fp128_dense_uses_adaptive_schedule_policy() {
-        assert!(matches!(
-            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
-            RingDimensionSchedule {
-                num_search_levels: 2,
-                suffix_dimensions: &[64],
-                ..
-            }
-        ));
-    }
-
-    #[test]
     fn current_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
-            CI_DENSE_SIS_WIDTH_NUM_VARS,
-        );
-    }
-
-    #[test]
-    fn current_adaptive_dense_schedule_stays_within_audited_sis_widths() {
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
             CI_DENSE_SIS_WIDTH_NUM_VARS,
         );

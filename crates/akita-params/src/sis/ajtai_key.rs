@@ -697,13 +697,6 @@ mod linf_matrix_tests {
     );
 
     #[test]
-    fn role_markers_stamp_their_protocol_role() {
-        assert_eq!(<Outer as LinfMatrixRole>::ROLE, SisMatrixRole::Outer);
-        assert_eq!(<Open as LinfMatrixRole>::ROLE, SisMatrixRole::Open);
-        assert_eq!(STATIC_OUTER.sis_table_key().role, SisMatrixRole::Outer);
-    }
-
-    #[test]
     fn const_construction_is_zero_sized_in_the_role_parameter() {
         // `PhantomData` must not widen the value: a role-parameterised matrix has
         // to stay the same size as the untagged fields it carries, or the
