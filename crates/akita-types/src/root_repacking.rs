@@ -236,21 +236,45 @@ impl RootCoefficientRepacking {
             AkitaError::InvalidSetup("root repacking table allocation is too large".into())
         })?;
         table.resize(self.domain_len, 0);
+        // Every lane is lane zero translated by its first address, so
+        // [`Self::coefficient_address`] runs once per coefficient of lane zero
+        // and once per later lane, not once per digit.
         for (segment, (shape, digits)) in self.segments.iter().zip(natural_digits).enumerate() {
             let natural_width = checked::product([
                 shape.geometry.polynomial_modulus_dimension(),
                 shape.geometry.coordinate_plane_count(),
             ])
             .ok_or_else(|| AkitaError::InvalidSetup("root natural width overflow".into()))?;
-            for (index, &value) in digits.iter().enumerate() {
-                let lane = index / natural_width;
-                let address = self.coefficient_address(
-                    segment,
-                    lane / shape.digits,
-                    lane % shape.digits,
-                    index % natural_width,
-                )?;
-                *table.get_mut(address).ok_or(AkitaError::InvalidProof)? = value;
+            if shape.elements == 0 || shape.digits == 0 {
+                continue;
+            }
+            let lane_zero = (0..natural_width)
+                .map(|coefficient| self.coefficient_address(segment, 0, 0, coefficient))
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let first = self.coefficient_address(segment, 0, 0, 0)?;
+            let end = self
+                .ranges
+                .get(segment)
+                .ok_or(AkitaError::InvalidProof)?
+                .end;
+            let last = lane_zero
+                .iter()
+                .copied()
+                .max()
+                .ok_or(AkitaError::InvalidProof)?;
+            for (lane, lane_digits) in digits.chunks_exact(natural_width).enumerate() {
+                let shift = self
+                    .coefficient_address(segment, lane / shape.digits, lane % shape.digits, 0)?
+                    .checked_sub(first)
+                    .ok_or(AkitaError::InvalidProof)?;
+                if checked::sum([last, shift]).is_none_or(|address| address >= end) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                for (&address, &value) in lane_zero.iter().zip(lane_digits) {
+                    *table
+                        .get_mut(address + shift)
+                        .ok_or(AkitaError::InvalidProof)? = value;
+                }
             }
         }
         Ok(table)

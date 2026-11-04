@@ -43,7 +43,7 @@ where
         &source.sources,
         &source.images,
         &request.challenges,
-        akita_challenges::FoldChallengeFamily::BinaryRoot,
+        akita_challenges::FoldChallengeDistribution::BinaryRoot,
     )?
     .ok_or_else(|| {
         AkitaError::InvalidInput("accepted binary response exceeds its interval".into())

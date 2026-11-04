@@ -1,7 +1,10 @@
 //! One binary source in the canonical grouped opening and caller transcript.
 #![cfg(feature = "labinius-trinomial")]
 
+#[path = "binary_source_end_to_end/byte_contract.rs"]
+mod byte_contract;
 mod common;
+#[cfg(feature = "transcript-keccak")]
 #[path = "binary_source_end_to_end/compatibility.rs"]
 mod compatibility;
 #[path = "binary_source_end_to_end/fault_backend.rs"]
@@ -22,7 +25,7 @@ mod stage3_catalog;
 mod statement_binding;
 
 use akita_algebra::binary::{BinaryField128, BinaryField162};
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_config::{
     proof_optimized::fp128::DenseBounded, CommitmentConfig, TrustedScheduleCatalog,
 };
@@ -40,9 +43,11 @@ use akita_types::binary_source::{
     BinaryWordClaim,
 };
 use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
+use akita_verifier::SetupPolicy;
 use common::{init_rayon_pool, run_on_large_stack, selected_prover_data, selected_statement};
 use fault_backend::{Fault, FaultBackend};
 use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_transcript::BytesMsg;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -68,7 +73,7 @@ impl CommitmentConfig for BinaryTestSuffix {
         }
     }
 
-    fn ring_challenge_config(dimension: usize) -> Result<FoldChallengeFamily, AkitaError> {
+    fn ring_challenge_config(dimension: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         DenseBounded::ring_challenge_config(dimension)
     }
 
@@ -156,6 +161,15 @@ fn field_switch_narrow_source_mutations_authenticate() {
     run_on_large_stack(|| run_fixture(false, None, 8));
 }
 
+#[test]
+fn packed_bit_and_halfword_imports_preserve_commitment_and_proof_bytes() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        run_fixture(false, None, 1);
+        run_fixture(false, None, 16);
+    });
+}
+
 fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usize) {
     let catalog = test_catalog();
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
@@ -173,6 +187,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             .resolve_key(&ScheduleLookupKey {
                 final_group: PolynomialGroupLayout::singleton(18),
                 precommitteds: vec![singleton_carrier],
+                root_accumulated_setup_prefix_len: 0,
             })
             .unwrap()
             .profiles()
@@ -215,6 +230,38 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     let source = backend
         .import_binary_source(manifest.clone(), carrier, vec![logical_words.clone()])
         .unwrap();
+    assert!(backend
+        .import_packed_binary_source(
+            manifest.clone(),
+            carrier,
+            descriptor.index_map().logical_len() - 1,
+            vec![words.clone()],
+        )
+        .is_err());
+    let mut forged_profiles = descriptor.profiles().clone();
+    forged_profiles.a[0] ^= 1;
+    let forged = BinarySourceDescriptor::new(
+        descriptor.index_map().clone(),
+        descriptor.polynomials().to_vec(),
+        forged_profiles,
+    )
+    .unwrap();
+    assert!(BinaryCommittedGroupManifest::new(forged, 0, &carrier).is_err());
+    let packed = backend
+        .import_packed_binary_source(
+            manifest.clone(),
+            carrier,
+            descriptor.index_map().logical_len(),
+            vec![words.clone()],
+        )
+        .unwrap();
+    let packed = backend
+        .commit(
+            scheme.schedules(),
+            &packed,
+            GroupContext::explicit(&carrier),
+        )
+        .unwrap();
     let committed = backend
         .commit(
             scheme.schedules(),
@@ -222,6 +269,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             GroupContext::explicit(&carrier),
         )
         .unwrap();
+    assert_eq!(packed.committed_group, committed.committed_group);
     let binary_handle = committed.private_handle.clone();
     let original_commitment = if matches!(authentication_fault, Some(Fault::ForeignCommitment)) {
         let mut foreign_words = words.clone();
@@ -257,10 +305,9 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     let commitment =
         CommittedGroup::<F>::deserialize_compressed(commitment_bytes.as_slice(), &()).unwrap();
     assert_eq!(commitment, original_commitment);
-    // A binary word claim cannot be attached to an ordinary group kind, even if
-    // its payload and carrier metadata came from the same binary commitment.
-    let wrong_kind = CommittedGroup::new(carrier, commitment.commitment().clone());
-    assert!(PolynomialGroupClaims::<F, _>::new_binary(wrong_kind, claim.clone()).is_err());
+    // A binary payload cannot be relabeled as an ordinary group of its carrier:
+    // the ordinary kind fixes a different committed row width.
+    assert!(CommittedGroup::new(carrier, commitment.commitment().clone()).is_err());
     let duplicate = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim.clone()).unwrap(),
         PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim.clone()).unwrap(),
@@ -315,6 +362,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         handles.push(handle);
     }
     let claims = OpeningClaims::from_groups(groups).unwrap();
+    let mut packed_handles = handles.clone();
+    packed_handles[0] = packed.private_handle;
+    let packed_data = selected_prover_data::<BinaryTestSuffix>(
+        claims.clone(),
+        packed_handles,
+        scheme.schedules(),
+    );
     let data = selected_prover_data::<BinaryTestSuffix>(claims, handles, scheme.schedules());
     let successor_coefficients = scheme
         .schedules()
@@ -406,8 +460,8 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             vec![binary_handle.clone()],
             scheme.schedules(),
         );
-        let mut prover = new_prover_channel(b"binary-source-end-to-end-v1", b"caller").unwrap();
-        prover.public_message(b"application-prefix");
+        let mut prover = new_prover_channel(b"binary-source-end-to-end-v1");
+        prover.public_message(&BytesMsg(b"application-prefix"));
         let resolved = scheme
             .schedules()
             .resolve_selection(data.selection())
@@ -416,7 +470,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         let root = registry.register(&attacker, &prefixes).unwrap();
         let mut route =
             akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        akita_prover::batched_prove_in_session::<BinaryTestSuffix, _>(
+        akita_prover::batched_prove_embedded::<BinaryTestSuffix, _>(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
@@ -432,20 +486,23 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             malformed.len()
         );
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            let mut replay =
-                new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", &malformed)
-                    .unwrap();
-            replay.public_message(b"application-prefix");
-            verifier.batched_verify_in_session(
-                &mut replay,
-                statement(&claim, &ordinary_point, ordinary_value),
-                BasisMode::Lagrange,
-            )
+            let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &malformed);
+            replay.public_message(&BytesMsg(b"application-prefix"));
+            verifier
+                .batched_verify_embedded(
+                    &mut replay,
+                    statement(&claim, &ordinary_point, ordinary_value),
+                    BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
+                )
+                .map(|pending| pending.check_eof(replay))
         }));
         assert!(outcome.is_ok(), "{fault:?} caused a verifier panic");
         let outcome = outcome.unwrap();
         if fault.is_accepted() {
-            outcome.unwrap_or_else(|error| panic!("{fault:?} was rejected: {error}"));
+            outcome
+                .and_then(|eof| eof)
+                .unwrap_or_else(|error| panic!("{fault:?} was rejected: {error}"));
         } else {
             assert!(outcome.is_err(), "{fault:?} was accepted");
         }
@@ -455,13 +512,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         return;
     }
     akita_transcript::clear_thread_events();
-    let mut prover = new_prover_channel(b"binary-source-end-to-end-v1", b"caller").unwrap();
-    prover.public_message(b"application-prefix");
+    let mut prover = new_prover_channel(b"binary-source-end-to-end-v1");
+    prover.public_message(&BytesMsg(b"application-prefix"));
     let mut registry = akita_prover::BackendRegistry::<BinaryTestSuffix>::new().unwrap();
     let root = registry.register(backend.as_ref(), &prefixes).unwrap();
     let mut route =
         akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-    akita_prover::batched_prove_in_session::<BinaryTestSuffix, _>(
+    akita_prover::batched_prove_embedded::<BinaryTestSuffix, _>(
         setup.expanded.descriptor(),
         scheme.schedules(),
         &registry,
@@ -473,8 +530,30 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     .unwrap();
     akita_transcript::finish_proof_ranges(&prover);
     let stage3_ranges = akita_transcript::thread_proof_ranges();
+    akita_transcript::clear_thread_events();
+    let mut packed_prover = new_prover_channel(b"binary-source-end-to-end-v1");
+    packed_prover.public_message(&BytesMsg(b"application-prefix"));
+    let mut packed_route =
+        akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+    akita_prover::batched_prove_embedded::<BinaryTestSuffix, _>(
+        setup.expanded.descriptor(),
+        scheme.schedules(),
+        &registry,
+        packed_data,
+        &mut packed_prover,
+        BasisMode::Lagrange,
+        &mut packed_route,
+    )
+    .unwrap();
+    assert_eq!(packed_prover.narg_string(), prover.narg_string());
     let proof = prover.narg_string().to_vec();
-    compatibility::assert_base_bytes(&proof, mixed, word_width);
+    // The fixed digests were captured with Keccak only. Blake2b is compared
+    // with an independently executed dev baseline by the Linux gates.
+    #[cfg(feature = "transcript-keccak")]
+    if matches!(word_width, 8 | 128) {
+        compatibility::assert_base_bytes(&proof, mixed, word_width);
+    }
+    byte_contract::compare_baseline(&proof, &format!("binary-root-{mixed}-{word_width}.bin"));
     eprintln!(
         "{} ordinary grouped proof (word width {}): {} bytes",
         if mixed {
@@ -485,8 +564,27 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         descriptor.index_map().word_width(),
         proof.len()
     );
-    prover.public_message(b"application-suffix");
+    prover.public_message(&BytesMsg(b"application-suffix"));
     let continuation: [u8; 32] = prover.verifier_message();
+    // Compared against the immutable pinned dev commit by the Linux golden
+    // gate in scripts/check-binary-root-bytes.sh. The hook is applied verbatim
+    // to that archived source; candidate runs require its captured records.
+    let golden = format!(
+        "binary-golden:{mixed}:{word_width}:{}:{}:{}:{continuation:?}",
+        proof.len(),
+        common::protocol_epoch_digest::<F>(&proof),
+        common::protocol_epoch_digest::<F>(&commitment_bytes),
+    );
+    if let Some(path) = std::env::var_os("AKITA_BINARY_GOLDEN") {
+        let expected = std::fs::read_to_string(path).expect("read immutable-base binary goldens");
+        assert!(
+            expected.lines().any(|line| line == golden),
+            "binary proof/commitment/continuation drift: {golden}"
+        );
+    }
+    eprintln!("{golden}");
+    packed_prover.public_message(&BytesMsg(b"application-suffix"));
+    assert_eq!(packed_prover.verifier_message::<[u8; 32]>(), continuation);
     let verifier = scheme.verifier(verifier_setup.clone()).unwrap();
     let mismatch = catch_unwind(AssertUnwindSafe(|| {
         let mut groups = vec![PolynomialGroupClaims::new(
@@ -505,10 +603,14 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             OpeningClaims::from_groups(groups).unwrap(),
             scheme.schedules(),
         );
-        let mut replay =
-            new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", &proof).unwrap();
-        replay.public_message(b"application-prefix");
-        verifier.batched_verify_in_session(&mut replay, statement, BasisMode::Lagrange)
+        let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &proof);
+        replay.public_message(&BytesMsg(b"application-prefix"));
+        verifier.batched_verify_embedded(
+            &mut replay,
+            statement,
+            BasisMode::Lagrange,
+            SetupPolicy::Check(None),
+        )
     }));
     assert!(mismatch.is_ok(), "group-kind mismatch panicked");
     assert!(
@@ -516,13 +618,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         "ordinary claim accepted a binary commitment kind"
     );
     let unsupported_basis = catch_unwind(AssertUnwindSafe(|| {
-        let mut replay =
-            new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", &proof).unwrap();
-        replay.public_message(b"application-prefix");
-        verifier.batched_verify_in_session(
+        let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &proof);
+        replay.public_message(&BytesMsg(b"application-prefix"));
+        verifier.batched_verify_embedded(
             &mut replay,
             statement(&claim, &ordinary_point, ordinary_value),
             BasisMode::Monomial,
+            SetupPolicy::Check(None),
         )
     }));
     assert!(unsupported_basis.is_ok(), "unsupported basis panicked");
@@ -541,39 +643,39 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         ),
         "the no-A-read guard must reject an actual matrix accessor call"
     );
-    let mut replay =
-        new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", &proof).unwrap();
-    replay.public_message(b"application-prefix");
-    let ((), root_a_elapsed) = stage3::measure_root_a(|| {
+    let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &proof);
+    replay.public_message(&BytesMsg(b"application-prefix"));
+    let (pending, root_a_elapsed) = stage3::measure_root_a(|| {
         verifier
-            .batched_verify_in_session(
+            .batched_verify_embedded(
                 &mut replay,
                 statement(&claim, &ordinary_point, ordinary_value),
                 BasisMode::Lagrange,
+                SetupPolicy::Check(None),
             )
-            .unwrap();
+            .unwrap()
     });
     eprintln!(
         "stage3 root A online verifier mixed={mixed} word_width={word_width} product_and_transcript_replay_us={}",
         root_a_elapsed.as_micros(),
     );
-    replay.public_message(b"application-suffix");
-    assert_eq!(replay.verifier_message::<[u8; 32]>().unwrap(), continuation);
-    replay.check_eof().unwrap();
+    replay.public_message(&BytesMsg(b"application-suffix"));
+    assert_eq!(replay.verifier_message::<[u8; 32]>(), continuation);
+    pending.check_eof(replay).unwrap();
     drop(no_a_reads);
 
     let rejects = |bytes: &[u8], claim: &BinaryWordClaim, point: &[F], value: F| {
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            let mut replay =
-                new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", bytes).unwrap();
-            replay.public_message(b"application-prefix");
+            let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", bytes);
+            replay.public_message(&BytesMsg(b"application-prefix"));
             verifier
-                .batched_verify_in_session(
+                .batched_verify_embedded(
                     &mut replay,
                     statement(claim, point, value),
                     BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
                 )
-                .and_then(|_| replay.check_eof())
+                .and_then(|pending| pending.check_eof(replay))
         }));
         assert!(outcome.is_ok(), "malformed opening caused a verifier panic");
         assert!(outcome.unwrap().is_err(), "malformed opening was accepted");

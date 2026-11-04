@@ -11,8 +11,7 @@
 use akita_algebra::binary::{field_switch::SwitchField, BinaryField162};
 use akita_error::{checked, AkitaError};
 use akita_params::{
-    grind_bits_for_loss, multilinear_point_loss_factor, polynomial_identity_loss_factor,
-    powers_batch_loss_factor,
+    multilinear_point_loss_factor, polynomial_identity_loss_factor, powers_batch_loss_factor,
     sis::labinius::{LabiniusRootEncoding, LabiniusRootShape},
     ChallengeFieldOrder, GRINDING_NONCE_SLACK_BITS, MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
 };
@@ -137,7 +136,7 @@ fn push_run(
     order: ChallengeFieldOrder,
     multiplicity: usize,
 ) -> Result<(), AkitaError> {
-    let grind_bits = grind_bits_for_loss(loss_factor, order).map_err(|_| {
+    let grind_bits = order.grind_bits(loss_factor).map_err(|_| {
         AkitaError::InvalidSetup(
             "LaBinius challenge field is too small for the root reduction's challenges".into(),
         )

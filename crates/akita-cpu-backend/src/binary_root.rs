@@ -15,7 +15,7 @@ use akita_algebra::ring::trinomial::{
     signed::signed_trinomial_product,
 };
 use akita_algebra::{MinusTrinomial, TrinomialRing};
-use akita_challenges::{Challenges, FoldChallengeFamily};
+use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
@@ -63,7 +63,7 @@ impl BinaryRootRelation {
         sources: &[[i128; D]],
         images: &[[Q24Image; D]],
         challenges: &Challenges,
-        family: FoldChallengeFamily,
+        family: FoldChallengeDistribution,
     ) -> Result<Self, AkitaError> {
         Self::probe(descriptor, matrix, sources, images, challenges, family)?
             .ok_or_else(|| invalid("binary response exceeds its four-digit interval"))
@@ -77,7 +77,7 @@ impl BinaryRootRelation {
         sources: &[[i128; D]],
         images: &[[Q24Image; D]],
         challenges: &Challenges,
-        family: FoldChallengeFamily,
+        family: FoldChallengeDistribution,
     ) -> Result<Option<Self>, AkitaError> {
         let (polynomials, columns, rows) = dimensions(descriptor, matrix)?;
         let expected = checked::product([polynomials, columns, rows])
@@ -142,7 +142,7 @@ impl BinaryRootRelation {
         response: Vec<[i128; D]>,
         images: &[[Q24Image; D]],
         challenges: &Challenges,
-        family: FoldChallengeFamily,
+        family: FoldChallengeDistribution,
     ) -> Result<Self, AkitaError> {
         let (polynomials, columns, source_rows) = dimensions(descriptor, matrix)?;
         let rank = matrix.len();
@@ -257,36 +257,17 @@ impl BinaryRootRelation {
         })
     }
 
-    /// Repack only the bounded response and image digits into an ordinary ring.
-    /// The returned map is also the map used by the public root row compiler.
-    pub fn successor_table(
-        &self,
-        destination_ring_dimension: usize,
-    ) -> Result<(RootCoefficientRepacking, Vec<i8>), AkitaError> {
-        let geometry =
-            RelationRowGeometry::for_polynomial(RelationPolynomial::minus_trinomial(D)?, 1, 1024)?;
-        let plan = RootCoefficientRepacking::new(
-            vec![
-                RootRepackingSegment {
-                    geometry,
-                    elements: self.response.len(),
-                    digits: 4,
-                },
-                RootRepackingSegment {
-                    geometry,
-                    elements: self.images.len(),
-                    digits: 8,
-                },
-            ],
-            destination_ring_dimension,
-        )?;
-        let response_len = checked::product([self.response.len(), 4, D])
+    /// The response's natural successor digits: four balanced base-eight
+    /// digits of each coefficient's offset into the response interval, in
+    /// element, digit, coefficient order.
+    pub fn response_digits(response: &[[i128; D]]) -> Result<Vec<i8>, AkitaError> {
+        let response_len = checked::product([response.len(), 4, D])
             .ok_or_else(|| invalid("binary response digit count overflow"))?;
-        let image_len = checked::product([self.images.len(), 8, D])
-            .ok_or_else(|| invalid("binary image digit count overflow"))?;
-        let mut response_digits = Vec::with_capacity(response_len);
-        let mut image_digits = Vec::with_capacity(image_len);
-        for element in &self.response {
+        let mut response_digits = Vec::new();
+        response_digits
+            .try_reserve_exact(response_len)
+            .map_err(|_| invalid("binary response digit allocation failed"))?;
+        for element in response {
             for digit in 0..4 {
                 for &coefficient in element {
                     let word = coefficient
@@ -297,7 +278,19 @@ impl BinaryRootRelation {
                 }
             }
         }
-        for element in &self.images {
+        Ok(response_digits)
+    }
+
+    /// The image hint's natural successor digits: eight balanced base-eight
+    /// digits of each q24 coefficient, in element, digit, coefficient order.
+    pub fn image_digits(images: &[[Q24Image; D]]) -> Result<Vec<i8>, AkitaError> {
+        let image_len = checked::product([images.len(), 8, D])
+            .ok_or_else(|| invalid("binary image digit count overflow"))?;
+        let mut image_digits = Vec::new();
+        image_digits
+            .try_reserve_exact(image_len)
+            .map_err(|_| invalid("binary image digit allocation failed"))?;
+        for element in images {
             for digit in 0..8 {
                 image_digits.extend(
                     element
@@ -306,6 +299,36 @@ impl BinaryRootRelation {
                 );
             }
         }
+        Ok(image_digits)
+    }
+
+    /// Repack only the bounded response and image digits into an ordinary ring.
+    /// The returned map is also the map used by the public root row compiler.
+    /// It reads no residual row, so a probe may build it before the rows.
+    pub fn successor_table(
+        response: &[[i128; D]],
+        images: &[[Q24Image; D]],
+        destination_ring_dimension: usize,
+    ) -> Result<(RootCoefficientRepacking, Vec<i8>), AkitaError> {
+        let geometry =
+            RelationRowGeometry::for_polynomial(RelationPolynomial::minus_trinomial(D)?, 1, 1024)?;
+        let plan = RootCoefficientRepacking::new(
+            vec![
+                RootRepackingSegment {
+                    geometry,
+                    elements: response.len(),
+                    digits: 4,
+                },
+                RootRepackingSegment {
+                    geometry,
+                    elements: images.len(),
+                    digits: 8,
+                },
+            ],
+            destination_ring_dimension,
+        )?;
+        let response_digits = Self::response_digits(response)?;
+        let image_digits = Self::image_digits(images)?;
         let table = plan.repack(&[&response_digits, &image_digits])?;
         Ok((plan, table))
     }
@@ -383,9 +406,9 @@ fn dimensions(
 fn embed_challenges(
     descriptor: &BinarySourceDescriptor,
     challenges: &Challenges,
-    family: FoldChallengeFamily,
+    family: FoldChallengeDistribution,
 ) -> Result<Vec<[i128; D]>, AkitaError> {
-    if family != FoldChallengeFamily::BinaryRoot
+    if family != FoldChallengeDistribution::BinaryRoot
         || challenges.num_claims() != descriptor.polynomials().len()
         || challenges.num_live_blocks_per_claim() != descriptor.index_map().columns()
     {

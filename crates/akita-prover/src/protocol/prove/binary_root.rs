@@ -5,8 +5,8 @@ use akita_params::{
     SetupContributionMode,
 };
 use akita_types::binary_source::{
-    binary_projection_values, binary_root_challenges, binary_root_statement,
-    BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
+    binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
+    binary_root_statement, BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
@@ -19,6 +19,7 @@ pub(super) fn prove_root<Cfg, B>(
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
     claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
+    _digests: &[akita_transcript::CommitmentDigest],
     layout: &OpeningClaimsLayout,
     handles: &[B::CommitmentHandle],
     schedule: &FoldSchedule,
@@ -53,6 +54,7 @@ where
             "unsupported binary root group geometry".into(),
         ));
     }
+    let _level_span = tracing::info_span!("binary_root_level").entered();
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
     let GroupClaimKind::Binary {
         manifest,
@@ -107,6 +109,7 @@ where
         ordinary_statement,
     )?;
     let context = backend.proof_context(proof_session, 0)?;
+    let span = tracing::info_span!("binary_root_field_switch").entered();
     let terminal = if let Some(claim) = claim {
         Some({
             let (_, source) = backend.prepare_root_group(
@@ -131,6 +134,7 @@ where
     } else {
         None
     };
+    drop(span);
     let public = BinaryRootPublic::new(
         manifest,
         terminal.as_ref(),
@@ -155,12 +159,14 @@ where
             })
             .transpose()?,
     };
+    let span = tracing::info_span!("binary_root_d_commitment").entered();
     let (d_payload, preparation) = backend.prepare_root_group(
         proof_session,
         &context.for_group(0),
         handles.first().ok_or(AkitaError::InvalidProof)?,
         &request,
     )?;
+    drop(span);
     if d_payload.len() != 128 {
         return Err(AkitaError::InvalidProof);
     }
@@ -176,9 +182,11 @@ where
     let columns = manifest.descriptor().index_map().columns();
     let owners = manifest.descriptor().polynomials().len();
     let site = GrindingSite::FoldResponse { level: 0 };
+    let span = tracing::info_span!("binary_root_response_build").entered();
     let mut accepted = None;
     for nonce in 0..akita_params::FOLD_RESPONSE_ATTEMPTS {
         let mut preview = grinding.preview_fold_response(site, nonce)?;
+        let work = preview.take_work()?;
         let challenges =
             binary_root_challenges(&mut PreviewFoldDraw::new(&mut preview), columns, owners)?;
         if let Some(witness) = backend.build_root_group(
@@ -189,13 +197,14 @@ where
             logical_len,
             next.params.d_a(),
         )? {
-            accepted = Some((nonce, challenges, witness));
+            accepted = Some((work, challenges, witness));
             break;
         }
     }
-    let (nonce, preview_challenges, witness) = accepted
+    let (work, preview_challenges, witness) = accepted
         .ok_or_else(|| AkitaError::InvalidInput("binary response rejection exhausted".into()))?;
-    grinding.commit_fold_response(site, nonce)?;
+    drop(span);
+    grinding.commit_fold_response(site, work)?;
     let challenges = binary_root_challenges(
         &mut ProverFoldDraw::new(grinding.state_mut(), 0, 0),
         columns,
@@ -211,6 +220,7 @@ where
         0,
         akita_error::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
     )?;
+    let span = tracing::info_span!("binary_root_outgoing_commit").entered();
     let committed = fold::commit_next_witness::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         grinding,
@@ -220,7 +230,9 @@ where
         NextWitnessBindingPolicy::OuterPayload,
         witness,
     )?;
+    drop(span);
     let mut witness = committed.witness_handle;
+    let span = tracing::info_span!("binary_root_projections").entered();
     let bounds = public.plan().projection_bounds();
     let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
     let (_, residual) = backend.prepare_root_group(
@@ -239,9 +251,9 @@ where
         bounds,
         &projections.project(residual, bounds)?,
     )?;
-    let alpha = grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(
-        GrindingSite::RingSwitchAlpha { level: 0 },
-    )?;
+    drop(span);
+    let alpha = grinding
+        .grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let domain = FlatBooleanDomain::new(
         logical_len,
         public.plan().repacking().domain_len().trailing_zeros() as usize,
@@ -249,14 +261,11 @@ where
     if domain.domain_len() != public.plan().repacking().domain_len() {
         return Err(AkitaError::InvalidProof);
     }
-    let tau0 = grinding.grinded_ext_challenges::<Cfg::Field, Cfg::ExtField>(
+    let tau0 = grinding.grinded_ext_challenges::<Cfg::ExtField>(
         GrindingSite::Tau0Point { level: 0 },
         domain.num_vars(),
     )?;
-    let batches = grinding.grinded_ext_challenges::<Cfg::Field, Cfg::ExtField>(
-        GrindingSite::Tau1Point { level: 0 },
-        public.batch_count(),
-    )?;
+    let batches = binary_root_batch_challenges::<Cfg::ExtField, _>(grinding, public.batch_count())?;
     let payload = group
         .commitment()
         .rows()
@@ -310,22 +319,27 @@ where
         &payload,
         &d_payload,
         ordinary_claim,
-        Some(&matrix),
+        Some(akita_types::binary_source::BinaryAOperand {
+            matrix: &matrix,
+            canonical: |x: &Cfg::ExtField| {
+                x.degree_one_base().and_then(|base| base.to_u128_checked())
+            },
+        }),
     )?;
     drop(matrix);
     let authentication = public.authentication_batches(&batches)?.map(<[_]>::to_vec);
     drop(batches);
     drop(span);
     let relation_claim = relation.claim();
+    let span = tracing::info_span!("binary_root_stage1").entered();
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
     let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B>(
         backend, session, range, domain, tau0, None, grinding, 0,
     )?;
+    drop(span);
     let gamma =
-        grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(GrindingSite::Stage2Batch {
-            level: 0,
-        })?;
+        grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
     let span = tracing::info_span!("binary_root_relation_materialize").entered();
     if relation.table_len() != domain.domain_len() {
         return Err(AkitaError::InvalidProof);
@@ -333,6 +347,7 @@ where
     let weights = relation.materialize()?;
     drop(relation);
     drop(span);
+    let span = tracing::info_span!("binary_root_stage2").entered();
     let session = backend.begin_root_relation(
         &witness,
         weights,
@@ -355,6 +370,8 @@ where
         0,
         stage2.witness_evaluation,
     )?;
+    drop(span);
+    let span = tracing::info_span!("binary_root_stage3").entered();
     let prefix = next
         .params
         .setup_prefix()
@@ -400,16 +417,18 @@ where
             index_factor,
             coefficient_factor: vec![Cfg::ExtField::one()],
         })?;
+    akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
+    akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
     let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         session,
         claim,
         prefix.n_prefix()?.trailing_zeros() as usize,
-        &typed.identity(manifest, &prefix)?,
         grinding,
         0,
     )?;
     backend.advance_witness_level(&mut witness)?;
+    drop(span);
     Ok(ProveLevelOutput {
         next_state: SuffixProverState {
             witness_handle: witness,

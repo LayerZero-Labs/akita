@@ -41,10 +41,10 @@ fn scalar_preplans_deduplicate_by_exact_producer_and_layout() {
     .expect("shipped families declare a valid producer contract");
     spec.keys = vec![key];
     preplans.attach_to_spec(family, &mut spec);
-    assert_eq!(
-        spec.preplanned,
-        vec![(ScheduleLookupKey::single(key), first)]
-    );
+    assert_eq!(spec.preplanned.len(), 1);
+    assert_eq!(spec.preplanned[0].key, ScheduleLookupKey::single(key));
+    assert_eq!(spec.preplanned[0].schedule, first);
+    assert_ne!(spec.preplanned[0].planner_cost, PlannerCost::default());
 }
 
 #[test]
@@ -90,13 +90,14 @@ fn generation_uses_requested_geometry_for_preplans_and_grouped_producers() {
         emit_spec_for_family(family, &preplans, chunking, std::path::PathBuf::new()).unwrap();
     preplans.attach_to_spec(family, &mut spec);
     assert!(!spec.preplanned.is_empty());
-    for (_, schedule) in &spec.preplanned {
-        assert_eq!(schedule.root.params.witness_chunk, chunking);
+    for preplanned in &spec.preplanned {
+        assert_eq!(preplanned.schedule.root.params.witness_chunk, chunking);
     }
     let producer_group = PolynomialGroupLayout::singleton(16);
     let planned = preplans
         .scalar_for_family(family, producer_group, chunking)
-        .unwrap();
+        .unwrap()
+        .schedule;
     let producer =
         GroupCommitPhaseParams::try_from_params(producer_group, &planned.root.params).unwrap();
     let request = spec

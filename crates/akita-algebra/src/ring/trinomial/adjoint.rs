@@ -13,6 +13,8 @@ use jolt_field::Field;
 use super::TrinomialModulus;
 use crate::offset_eq::eq_eval_at_index;
 
+mod integer;
+
 /// An internal bound failure: unreachable for inputs that passed validation.
 fn internal(what: &str) -> AkitaError {
     AkitaError::Internal(format!("trinomial adjoint: {what} out of bounds"))

@@ -125,12 +125,7 @@ pub fn verify_binary_clear<H: SwitchField, const D: usize, M: TrinomialModulus, 
     let mut sampler = BinaryChallengeSampler::new(setup.profile().clone());
     // The nonce only selects the challenges; the interval check on the clear
     // response is what binds the prover.
-    let challenges = channel.fold_challenges(
-        &mut sampler,
-        b"akita/labinius/clear-fold/v1",
-        setup.columns(),
-        &mut 0,
-    )?;
+    let challenges = channel.fold_challenges(&mut sampler, setup.columns(), &mut 0)?;
     let mut response = Vec::new();
     response
         .try_reserve_exact(setup.scalar_rows())
@@ -148,7 +143,7 @@ pub fn verify_binary_clear_bytes<H: SwitchField, const D: usize, M: TrinomialMod
     value: H,
     proof: &[u8],
 ) -> Result<(), AkitaError> {
-    let mut channel = channel::new_verifier(proof)?;
+    let mut channel = channel::new_verifier(proof);
     verify_binary_clear(setup, commitment, point, value, &mut channel)?;
     channel::finish_verifier(channel)
 }

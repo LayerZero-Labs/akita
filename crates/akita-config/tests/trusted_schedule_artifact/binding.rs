@@ -31,7 +31,7 @@ impl CommitmentConfig for CountingDense {
 
     fn ring_challenge_config(
         dimension: usize,
-    ) -> Result<akita_challenges::FoldChallengeFamily, akita_error::AkitaError> {
+    ) -> Result<akita_challenges::FoldChallengeDistribution, akita_error::AkitaError> {
         RING_CHALLENGE_AUDITS.fetch_add(1, Ordering::SeqCst);
         fp128::Dense::ring_challenge_config(dimension)
     }
@@ -81,7 +81,7 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
     ));
     assert!(std::ptr::eq(
         loaded_row,
-        loaded.resolve_profiles(loaded_row.profiles()).unwrap()
+        loaded.resolve_profiles(loaded_row.profiles(), 0).unwrap()
     ));
     assert_eq!(loaded_row.schedule(), checked_in_row.schedule());
     assert!(loaded_row

@@ -31,61 +31,42 @@ fn typed_prefix_identity_bytes_are_pinned() {
         identity.len(),
         akita_params::descriptor_bytes::digest_descriptor_bytes(&identity),
     );
-    // The same in both protocol modes.
+    // The same in both protocol modes. The digest is SHA3-256 since v8; the
+    // identity bytes are unchanged.
     assert_eq!(identity.len(), 2518);
     assert_eq!(
         akita_params::descriptor_bytes::digest_descriptor_bytes(&identity),
         [
-            36, 53, 31, 41, 28, 94, 100, 7, 20, 106, 27, 160, 206, 76, 133, 226, 204, 249, 144, 61,
-            135, 71, 23, 108, 26, 90, 119, 181, 83, 156, 5, 212,
+            89, 193, 157, 175, 187, 151, 67, 188, 36, 37, 232, 116, 218, 128, 237, 88, 228, 112,
+            233, 150, 7, 19, 153, 112, 231, 8, 249, 24, 194, 204, 11, 155,
         ]
     );
 }
 
 pub(super) fn assert_base_bytes(proof: &[u8], mixed: bool, word_width: usize) {
-    // Pinned in both protocol modes, including the caller prefix. Unselected
-    // prime planes preserve every word-only proof byte.
-    let (length, digest) = match (akita_params::DEV_PROTOCOL, mixed, word_width) {
-        (false, false, 128) => (
-            86025,
+    // Pinned with the caller prefix. The dev protocol currently equals the
+    // current protocol, so both modes share these bytes. Unselected prime
+    // planes preserve every word-only proof byte.
+    let (length, digest) = match (mixed, word_width) {
+        (false, 128) => (
+            80963,
             [
-                87, 109, 149, 36, 161, 121, 123, 74, 45, 178, 81, 245, 240, 200, 116, 191, 121,
-                115, 130, 219, 58, 5, 76, 122, 92, 63, 212, 110, 183, 90, 88, 214,
+                135, 36, 30, 103, 130, 185, 182, 163, 117, 245, 90, 70, 191, 237, 71, 125, 12, 252,
+                105, 126, 189, 19, 133, 109, 85, 26, 178, 1, 204, 99, 183, 36,
             ],
         ),
-        (false, false, 8) => (
-            86083,
+        (false, 8) => (
+            80945,
             [
-                67, 221, 170, 230, 115, 16, 204, 242, 25, 109, 89, 254, 159, 137, 2, 76, 123, 232,
-                169, 255, 75, 187, 147, 177, 124, 73, 145, 221, 194, 160, 71, 122,
+                158, 199, 237, 25, 126, 94, 5, 252, 21, 127, 197, 215, 50, 162, 118, 114, 190, 157,
+                113, 82, 54, 208, 221, 98, 210, 66, 92, 72, 187, 247, 54, 130,
             ],
         ),
-        (false, true, 128) => (
-            86200,
+        (true, 128) => (
+            81132,
             [
-                75, 85, 8, 94, 168, 170, 135, 145, 191, 204, 131, 180, 158, 189, 105, 16, 48, 67,
-                237, 128, 224, 230, 233, 2, 78, 94, 86, 14, 128, 237, 240, 102,
-            ],
-        ),
-        (true, false, 8) => (
-            80981,
-            [
-                172, 48, 148, 201, 246, 232, 215, 231, 159, 59, 52, 81, 0, 155, 96, 24, 171, 73,
-                29, 240, 182, 232, 55, 66, 174, 24, 165, 12, 17, 252, 179, 112,
-            ],
-        ),
-        (true, false, 128) => (
-            81037,
-            [
-                92, 56, 231, 193, 247, 109, 7, 164, 29, 51, 170, 166, 167, 36, 52, 38, 178, 209,
-                92, 231, 104, 44, 165, 194, 174, 151, 131, 99, 31, 28, 154, 57,
-            ],
-        ),
-        (true, true, 128) => (
-            81123,
-            [
-                45, 172, 132, 152, 186, 149, 81, 168, 19, 138, 202, 37, 121, 28, 82, 51, 84, 33,
-                244, 83, 167, 128, 108, 16, 148, 127, 255, 30, 223, 24, 69, 163,
+                34, 16, 171, 182, 69, 126, 23, 14, 244, 217, 59, 12, 167, 27, 147, 124, 186, 35,
+                207, 201, 175, 204, 193, 215, 65, 201, 198, 58, 18, 74, 84, 66,
             ],
         ),
         _ => panic!("fixture has no baseline"),

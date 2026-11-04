@@ -8,10 +8,9 @@ fn sis_modulus_profile_tags_round_trip_without_moving() {
         (SisModulusProfileId::Q128OffsetA7F7, 2),
         (SisModulusProfileId::Q128Offset275, 4),
     ] {
-        let mut bytes = Vec::new();
-        encode_sis_modulus_profile(profile, &mut bytes, Compress::No).expect("encode");
-        assert_eq!(bytes, [tag]);
-        let decoded = decode_sis_modulus_profile(&bytes[..], Compress::No, Validate::Yes);
+        assert_eq!(sis_modulus_profile_tag(profile), tag);
+        let decoded =
+            decode_sis_modulus_profile(std::io::Cursor::new(u64::from(tag).to_le_bytes()));
         assert_eq!(decoded.expect("decode"), profile);
     }
 }

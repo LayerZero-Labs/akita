@@ -16,7 +16,7 @@ fn portable_fragments_match_complete_cpu_witness_in_both_modes() {
             1,
             2,
             1,
-            FoldChallengeFamily::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -297,6 +297,7 @@ fn portable_fragment_validates_relation_order_for_grouped_q128_layout() {
         .final_group;
     let resolved = catalog
         .resolve_key(&ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
         })

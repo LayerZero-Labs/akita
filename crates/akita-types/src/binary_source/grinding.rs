@@ -30,7 +30,20 @@ pub fn binary_root_grinding_plan(
     }
     let order = ChallengeFieldOrder::from_field(128, 1, BINARY_SETUP_P)?;
     let rounds = domain_len.trailing_zeros() as usize;
-    let mut runs = vec![GrindingRun::fold_response(0)];
+    let challenges = fold_coordinates
+        .iter()
+        .try_fold(0u64, |sum, &count| {
+            sum.checked_add(u64::try_from(count).ok()?)
+        })
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut runs = vec![
+        GrindingRun::fold_response(0),
+        GrindingRun::fold_challenge_work(
+            0,
+            challenges,
+            super::root_transcript::binary_root_family()?.set_bits(),
+        )?,
+    ];
     for (group, &count) in fold_coordinates.iter().enumerate() {
         runs.push(GrindingRun::fold_challenge_group(
             0,

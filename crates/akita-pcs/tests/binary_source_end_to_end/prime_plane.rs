@@ -133,6 +133,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             .resolve_key(&ScheduleLookupKey {
                 final_group: PolynomialGroupLayout::singleton(18),
                 precommitteds: vec![carrier],
+                root_accumulated_setup_prefix_len: 0,
             })
             .unwrap()
             .profiles()
@@ -165,6 +166,25 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         )
         .unwrap();
     let commitment = committed.committed_group;
+    // Width 128 stores one logical word per carrier, including every owner.
+    let packed_source = backend
+        .import_packed_binary_source(manifest.clone(), carrier, 8, words.clone())
+        .unwrap();
+    let packed = backend
+        .commit(
+            scheme.schedules(),
+            &packed_source,
+            GroupContext::explicit(&carrier),
+        )
+        .unwrap();
+    let mut logical_bytes = Vec::new();
+    let mut packed_bytes = Vec::new();
+    commitment.serialize_compressed(&mut logical_bytes).unwrap();
+    packed
+        .committed_group
+        .serialize_compressed(&mut packed_bytes)
+        .unwrap();
+    assert_eq!(packed_bytes, logical_bytes);
     let word_claim = word.then(|| honest_claim(&descriptor, &words[0]));
     let primes = (0..planes)
         .map(|plane| {
@@ -204,6 +224,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         ScheduleLookupKey {
             final_group: PolynomialGroupLayout::singleton(18),
             precommitteds: vec![carrier],
+            root_accumulated_setup_prefix_len: 0,
         }
     } else {
         ScheduleLookupKey::single(layout)
@@ -245,7 +266,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             &prefixes.get(&first_prefix).unwrap().public,
         )
         .unwrap();
-    let prove = |primes: Vec<PrimePlaneClaim>| {
+    let prove = |primes: Vec<PrimePlaneClaim>, handle| {
         let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
             commitment.clone(),
             word_claim.clone(),
@@ -253,7 +274,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         )
         .unwrap();
         let mut groups = vec![binary];
-        let mut handles = vec![committed.private_handle.clone()];
+        let mut handles = vec![handle];
         if let Some(ordinary) = &ordinary {
             groups.push(
                 PolynomialGroupClaims::new(
@@ -280,14 +301,14 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             .outer_payload_geometry()
             .unwrap()
             .transmitted_coefficients();
-        let mut prover = new_prover_channel(b"prime-plane-e2e", b"caller").unwrap();
-        prover.public_message(b"application-prefix");
+        let mut prover = new_prover_channel(b"prime-plane-e2e");
+        prover.public_message(&BytesMsg(b"application-prefix"));
         akita_transcript::clear_thread_events();
         let mut registry = akita_prover::BackendRegistry::<BinaryTestSuffix>::new().unwrap();
         let root = registry.register(backend.as_ref(), &prefixes).unwrap();
         let mut route =
             akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        akita_prover::batched_prove_in_session::<BinaryTestSuffix, _>(
+        akita_prover::batched_prove_embedded::<BinaryTestSuffix, _>(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
@@ -304,7 +325,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             first_prefix.n_prefix().unwrap().trailing_zeros() as usize,
         );
         let bytes = prover.narg_string().to_vec();
-        prover.public_message(b"application-suffix");
+        prover.public_message(&BytesMsg(b"application-suffix"));
         (
             bytes,
             prover.verifier_message::<[u8; 32]>(),
@@ -312,7 +333,15 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             ranges,
         )
     };
-    let (proof, continuation, successor_coefficients, ranges) = prove(primes.clone());
+    let (proof, continuation, successor_coefficients, ranges) =
+        prove(primes.clone(), committed.private_handle.clone());
+    let packed_proof = prove(primes.clone(), packed.private_handle);
+    assert_eq!(packed_proof.0, proof, "packed prime/projection proof drift");
+    assert_eq!(packed_proof.1, continuation, "packed continuation drift");
+    byte_contract::compare_baseline(
+        &proof,
+        &format!("binary-prime-{mixed}-{word}-{planes}-{owners}.bin"),
+    );
     eprintln!(
         "prime_plane dev={} mixed={mixed} word={word} owners={owners} planes={planes}: {} bytes",
         akita_params::DEV_PROTOCOL,
@@ -338,12 +367,13 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             OpeningClaims::from_groups(groups)?,
             scheme.schedules(),
         );
-        let mut replay = new_verifier_channel(b"prime-plane-e2e", b"caller", bytes)?;
-        replay.public_message(b"application-prefix");
-        let opening = verifier.batched_verify_readings_in_session(
+        let mut replay = new_verifier_channel(b"prime-plane-e2e", bytes);
+        replay.public_message(&BytesMsg(b"application-prefix"));
+        let (pending, opening) = verifier.batched_verify_readings_embedded(
             &mut replay,
             statement.clone(),
             BasisMode::Lagrange,
+            SetupPolicy::Check(None),
             [43; 32],
             [47; 32],
         )?;
@@ -352,15 +382,20 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         assert_eq!(opening.binding().session, [43; 32]);
         assert_eq!(opening.binding().group, [47; 32]);
         assert_eq!(opening.binding().source, descriptor);
-        replay.public_message(b"application-suffix");
-        assert_eq!(replay.verifier_message::<[u8; 32]>()?, continuation);
-        replay.check_eof()?;
-        let mut old_replay = new_verifier_channel(b"prime-plane-e2e", b"caller", bytes)?;
-        old_replay.public_message(b"application-prefix");
-        verifier.batched_verify_in_session(&mut old_replay, statement, BasisMode::Lagrange)?;
-        old_replay.public_message(b"application-suffix");
-        assert_eq!(old_replay.verifier_message::<[u8; 32]>()?, continuation);
-        old_replay.check_eof()
+        replay.public_message(&BytesMsg(b"application-suffix"));
+        assert_eq!(replay.verifier_message::<[u8; 32]>(), continuation);
+        pending.check_eof(replay)?;
+        let mut old_replay = new_verifier_channel(b"prime-plane-e2e", bytes);
+        old_replay.public_message(&BytesMsg(b"application-prefix"));
+        let pending = verifier.batched_verify_embedded(
+            &mut old_replay,
+            statement,
+            BasisMode::Lagrange,
+            SetupPolicy::Check(None),
+        )?;
+        old_replay.public_message(&BytesMsg(b"application-suffix"));
+        assert_eq!(old_replay.verifier_message::<[u8; 32]>(), continuation);
+        pending.check_eof(old_replay).map(|_| ())
     };
     let no_a_reads = akita_types::binary_source::BinaryAReadGuard::forbid();
     verify(&proof, &commitment, primes.clone()).unwrap();
@@ -368,7 +403,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     if planes == 1 {
         let mut duplicated = primes.clone();
         duplicated.push(primes[0].clone());
-        let duplicate = prove(duplicated);
+        let duplicate = prove(duplicated, committed.private_handle.clone());
         assert_eq!(
             proof, duplicate.0,
             "identical requests must share one plane and canonical statement"
@@ -456,8 +491,8 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
                 vec![committed.private_handle.clone()],
                 scheme.schedules(),
             );
-            let mut prover = new_prover_channel(b"prime-plane-e2e", b"caller").unwrap();
-            prover.public_message(b"application-prefix");
+            let mut prover = new_prover_channel(b"prime-plane-e2e");
+            prover.public_message(&BytesMsg(b"application-prefix"));
             attacker
                 .prove_prime_fault(&setup, scheme.schedules(), &prefixes, data, &mut prover)
                 .unwrap();
@@ -513,16 +548,19 @@ fn prime_plane_caps_and_owner_sharing() {
 
 struct FirstSqueeze<D> {
     inner: D,
-    first: Option<[u8; akita_transcript::FOLD_CHALLENGE_SEED_LEN]>,
+    first: Option<Vec<u8>>,
 }
 impl<D: FoldDraw> FoldDraw for FirstSqueeze<D> {
-    fn absorb_and_squeeze(
+    fn draw_message<T>(
         &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; akita_transcript::FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        let seed = self.inner.absorb_and_squeeze(payload)?;
-        self.first.get_or_insert(seed);
-        Ok(seed)
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        let first = &mut self.first;
+        self.inner.draw_message(len, |message| {
+            first.get_or_insert_with(|| message.to_vec());
+            decode(message)
+        })
     }
 }
 
@@ -540,8 +578,8 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
     let claim = claim(&WORDS, 0, 0, 0);
     let first = |claim: PrimePlaneClaim| {
         let planes = PrimePlaneManifest::new(&descriptor, &[claim]).unwrap();
-        let mut prover = new_prover_channel(b"prime-plane-binding", b"caller").unwrap();
-        let mut verifier = new_verifier_channel(b"prime-plane-binding", b"caller", &[]).unwrap();
+        let mut prover = new_prover_channel(b"prime-plane-binding");
+        let mut verifier = new_verifier_channel(b"prime-plane-binding", &[]);
         binary_root_statement::<F, F, _>(
             &mut prover,
             &manifest,

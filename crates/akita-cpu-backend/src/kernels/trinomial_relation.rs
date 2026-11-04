@@ -12,6 +12,8 @@ use akita_algebra::{
 };
 use akita_error::{checked, AkitaError};
 use akita_types::{RelationCoefficientRole, RelationPolynomial};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Reusable linear-convolution plan for a row of `A v = Y c` in a trinomial ring.
 ///
@@ -21,15 +23,15 @@ use akita_types::{RelationCoefficientRole, RelationPolynomial};
 /// inverse transform and the algebra crate's canonical polynomial division.
 /// Response and challenge transforms are cached once for the entire matrix;
 /// their storage is `(response.len() + challenges.len()) * domain_length`
-/// field elements. Scratch is reused across rows; only the returned quotient
-/// and division scratch allocate per row. This is a prover kernel, not a proof verifier.
+/// field elements. Operand transforms and their products run in parallel
+/// under the `parallel` feature; field sums are exact, so the result does not
+/// depend on the schedule. This is a prover kernel, not a proof verifier.
 pub struct TrinomialRelationQuotientBuilder<F: SmoothFftField, const D: usize, M: TrinomialModulus>
 {
     polynomial: RelationPolynomial,
     domain: SmoothDomain<F>,
     workspace: FftWorkspace<F>,
     padded: Vec<F>,
-    left: Vec<F>,
     sum: Vec<F>,
     response_transforms: Vec<Vec<F>>,
     challenge_transforms: Vec<Vec<F>>,
@@ -69,28 +71,14 @@ impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
             ));
         }
         let domain = SmoothDomain::new(primitive_nth_root::<F>(length), length);
-        let mut workspace = domain.workspace();
-        let mut padded = vec![F::zero(); length];
-        let mut transform_operands = |operands: &[TrinomialRing<F, D, M>]| {
-            operands
-                .iter()
-                .map(|operand| {
-                    padded[..D].copy_from_slice(operand.coefficients());
-                    let mut output = vec![F::zero(); length];
-                    domain.forward_into(&padded, &mut output, &mut workspace);
-                    output
-                })
-                .collect()
-        };
-        let response_transforms = transform_operands(response);
-        let challenge_transforms = transform_operands(challenges);
+        let response_transforms = transform_operands(&domain, response);
+        let challenge_transforms = transform_operands(&domain, challenges);
         Ok(Self {
             polynomial,
-            domain,
-            workspace,
-            padded,
-            left: vec![F::zero(); length],
+            workspace: domain.workspace(),
+            padded: vec![F::zero(); length],
             sum: vec![F::zero(); length],
+            domain,
             response_transforms,
             challenge_transforms,
             modulus: PhantomData,
@@ -148,26 +136,10 @@ impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
                 "trinomial relation product lengths disagree".into(),
             ));
         }
-        self.sum.fill(F::zero());
-        let products = matrix_row
-            .iter()
-            .zip(&self.response_transforms)
-            .map(|pair| (pair, false))
-            .chain(
-                images
-                    .iter()
-                    .zip(&self.challenge_transforms)
-                    .map(|pair| (pair, true)),
-            );
-        for ((left, right), subtract) in products {
-            self.padded[..D].copy_from_slice(left.coefficients());
-            self.padded[D..].fill(F::zero());
-            self.domain
-                .forward_into(&self.padded, &mut self.left, &mut self.workspace);
-            for ((sum, &left), &right) in self.sum.iter_mut().zip(&self.left).zip(right) {
-                let right = if subtract { -right } else { right };
-                *sum = left.mul_add(right, *sum);
-            }
+        let added = transform_products(&self.domain, matrix_row, &self.response_transforms);
+        let subtracted = transform_products(&self.domain, images, &self.challenge_transforms);
+        for ((sum, &added), &subtracted) in self.sum.iter_mut().zip(&added).zip(&subtracted) {
+            *sum = added - subtracted;
         }
         self.domain
             .inverse_into(&self.sum, &mut self.padded, &mut self.workspace);
@@ -179,6 +151,91 @@ impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
             .validate_coefficient_len(RelationCoefficientRole::Quotient, quotient.len())?;
         Ok((remainder, quotient))
     }
+}
+
+/// Transform scratch owned by one worker.
+struct TransformScratch<F> {
+    workspace: FftWorkspace<F>,
+    padded: Vec<F>,
+    transform: Vec<F>,
+}
+
+impl<F: SmoothFftField + Debug> TransformScratch<F> {
+    fn new(domain: &SmoothDomain<F>) -> Self {
+        Self {
+            workspace: domain.workspace(),
+            padded: vec![F::zero(); domain.n],
+            transform: vec![F::zero(); domain.n],
+        }
+    }
+
+    /// Transform one operand; the padded tail beyond `D` is never written.
+    fn forward<const D: usize, M: TrinomialModulus>(
+        &mut self,
+        domain: &SmoothDomain<F>,
+        operand: &TrinomialRing<F, D, M>,
+    ) -> &[F] {
+        self.padded[..D].copy_from_slice(operand.coefficients());
+        domain.forward_into(&self.padded, &mut self.transform, &mut self.workspace);
+        &self.transform
+    }
+}
+
+/// Forward transforms of the zero-padded operands, in operand order.
+fn transform_operands<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>(
+    domain: &SmoothDomain<F>,
+    operands: &[TrinomialRing<F, D, M>],
+) -> Vec<Vec<F>> {
+    let transform =
+        |scratch: &mut TransformScratch<F>, operand| scratch.forward(domain, operand).to_vec();
+    #[cfg(feature = "parallel")]
+    let transforms = operands
+        .par_iter()
+        .map_init(|| TransformScratch::new(domain), transform)
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let transforms = {
+        let mut scratch = TransformScratch::new(domain);
+        operands
+            .iter()
+            .map(|operand| transform(&mut scratch, operand))
+            .collect()
+    };
+    transforms
+}
+
+/// `sum_j transform(left_j) * right_j` in transform space.
+fn transform_products<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>(
+    domain: &SmoothDomain<F>,
+    lefts: &[TrinomialRing<F, D, M>],
+    rights: &[Vec<F>],
+) -> Vec<F> {
+    let accumulate = |(mut scratch, mut sum): (TransformScratch<F>, Vec<F>),
+                      (left, right): (&TrinomialRing<F, D, M>, &Vec<F>)| {
+        for ((sum, &left), &right) in sum.iter_mut().zip(scratch.forward(domain, left)).zip(right) {
+            *sum = left.mul_add(right, *sum);
+        }
+        (scratch, sum)
+    };
+    let identity = || (TransformScratch::new(domain), vec![F::zero(); domain.n]);
+    #[cfg(feature = "parallel")]
+    let sum = lefts
+        .par_iter()
+        .zip(rights)
+        .fold(identity, accumulate)
+        .map(|(_, sum)| sum)
+        .reduce(
+            || vec![F::zero(); domain.n],
+            |mut lhs, rhs| {
+                for (lhs, rhs) in lhs.iter_mut().zip(rhs) {
+                    *lhs += rhs;
+                }
+                lhs
+            },
+        );
+    #[cfg(not(feature = "parallel"))]
+    let (_, sum) = lefts.iter().zip(rights).fold(identity(), accumulate);
+    sum
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ mod tests {
     use akita_params::proof_size::*;
     use akita_params::{CommittedGroupParams, DigitRangePlan};
 
-    use akita_challenges::FoldChallengeFamily;
+    use akita_challenges::FoldChallengeDistribution;
     use akita_error::AkitaError;
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
@@ -25,9 +25,9 @@ mod tests {
     use akita_params::sis::sis_l2_table_key_for_collision_sq;
     use akita_params::InnerCommitSecurityRoute;
     use akita_params::{
-        terminal_response_bytes, OpeningClaimsLayout, PhysicalL2NormProofShape, SisL2TableDigest,
-        SisModulusProfileId, TerminalResponseShape, DEFAULT_SIS_SECURITY_POLICY,
-        SETUP_SUMCHECK_DEGREE,
+        terminal_response_max_bytes, OpeningClaimsLayout, PhysicalL2NormProofShape,
+        SisL2TableDigest, SisModulusProfileId, TerminalFoldParams, TerminalResponseShape,
+        DEFAULT_SIS_SECURITY_POLICY, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -84,21 +84,9 @@ mod tests {
 
     fn terminal_response_fixture(
         lp: &CommittedGroupParams,
-        num_claims: usize,
     ) -> (TerminalResponse<F>, TerminalResponseShape) {
-        let field_bits = F::MODULUS_BITS;
-        let shape = TerminalResponseShape::from_groups(
-            lp,
-            field_bits,
-            [(
-                lp.final_group_scalar().expect("scalar final group"),
-                num_claims,
-                num_claims,
-                1,
-                127,
-            )],
-        )
-        .expect("terminal response shape");
+        let terminal = TerminalFoldParams::from_expanded_group(lp.clone());
+        let shape = TerminalResponseShape::derive(&terminal, 127).expect("terminal response shape");
         let layout = shape.layout.clone();
         let group = layout.groups[0];
         let rice_low_bits = group.z_rice_low_bits;
@@ -256,7 +244,7 @@ mod tests {
         E: Field + ExtField<B> + AkitaSerialize,
     {
         const D: usize = 128;
-        let challenge = FoldChallengeFamily::pm1_only(3);
+        let challenge = FoldChallengeDistribution::pm1_only(3);
         let mut lp = CommittedGroupParams::params_only(profile, D, log_basis, 4, 2, 2, challenge)
             .with_decomp(256, 8, 1, 1, 1)
             .unwrap();
@@ -313,7 +301,7 @@ mod tests {
     #[test]
     fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         const D: usize = 64;
-        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+        let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -362,7 +350,7 @@ mod tests {
 
     #[test]
     fn planned_level_bytes_follow_successor_padded_relation_domain() {
-        let challenge = FoldChallengeFamily::pm1_only(3);
+        let challenge = FoldChallengeDistribution::pm1_only(3);
         let current = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
@@ -440,7 +428,7 @@ mod tests {
     #[test]
     fn planned_level_bytes_match_serialized_l2_payloads() {
         const D: usize = 64;
-        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+        let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -532,7 +520,7 @@ mod tests {
     #[test]
     fn planned_level_bytes_use_fixed_compressed_d_and_successor_b_payloads() {
         const D_A: usize = 128;
-        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+        let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
         let mut lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D_A,
@@ -617,7 +605,7 @@ mod tests {
     #[test]
     fn terminal_inner_binding_removes_exactly_the_outer_commitment_bytes() {
         const D: usize = 64;
-        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+        let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
         let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -685,7 +673,7 @@ mod tests {
             2,
             2,
             2,
-            FoldChallengeFamily::pm1_only(3),
+            FoldChallengeDistribution::pm1_only(3),
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
@@ -724,7 +712,7 @@ mod tests {
         // serialize to exactly the direct level layout plus
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
-        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
+        let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
@@ -792,8 +780,7 @@ mod tests {
     #[test]
     fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         const D: usize = 64;
-        let fold_challenge_config = FoldChallengeFamily::pm1_only(3);
-        let num_claims = 3;
+        let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
 
         for log_basis in 2..=6 {
             let mut lp = CommittedGroupParams::params_only(
@@ -822,7 +809,7 @@ mod tests {
                     inner.ring_dimension(),
                 );
 
-            let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
+            let (terminal_response, witness_shape) = terminal_response_fixture(&lp);
             let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
@@ -839,7 +826,8 @@ mod tests {
                  (less terminal_response) at log_basis={log_basis}"
             );
 
-            let scheduled_bytes = terminal_response_bytes(128, &witness_shape);
+            let scheduled_bytes =
+                terminal_response_max_bytes(128, &witness_shape).expect("terminal bound");
             assert!(
                 scheduled_bytes >= terminal_response_bytes_runtime,
                 "scheduled direct witness budget must cover serialized terminal response \

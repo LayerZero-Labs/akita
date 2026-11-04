@@ -32,9 +32,13 @@ policy and the checker use the same live set in
 | [`sis-nist-level3-policy`](../../../specs/sis-nist-level3-policy.md) | active | Current 169-bit (NIST category 3) SIS target and compression ladder. |
 | [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | SIS estimator, certificate, and table design; its 128-bit target is superseded. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
-| [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Defines packing relations, indexed fold challenges, and planner contracts. Its review record reports all three blockers repaired. |
+| [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Defines packing relations, fold challenges, and planner contracts. Its review record reports all three blockers repaired. |
 | [`transcript-grinding`](../../../specs/transcript-grinding.md) | implemented | Defines the current proof-of-work and fold-response grinding policy. |
+| [`sparse-challenge-stream`](../../../specs/sparse-challenge-stream.md) | implemented | One challenge message per sparse fold group, its decoder, and the fold proof of work. |
+| [`positional-word-aligned-transcript`](../../../specs/positional-word-aligned-transcript.md) | active | Positional, word-aligned absorbs and squeezes; the version-6 descriptor; fold draws that absorb nothing. |
 | [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains current inline-LEB128 nonces and compares them with the historical packed representation. |
+| [`jolt-transcript-adoption`](../../../specs/jolt-transcript-adoption.md) | active | Akita's adoption of `jolt-transcript`: the session, codec, poisoning and proof-of-work check of protocol v8. |
+| [`akita-embedded-transcript`](../../../specs/akita-embedded-transcript.md) | implemented | Running Akita inside a caller's transcript: the protocol tag, the embedded entries, and the caller contract. |
 
 ## Archived records
 

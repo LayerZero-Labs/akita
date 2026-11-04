@@ -13,6 +13,7 @@ import re
 import sys
 from pathlib import Path
 
+from scripts.profile_bench_merge_base_policy import read_matrix_cases, resolve_baseline
 from scripts.profile_ci_features import (
     load_feature_graph,
     resolve_feature,
@@ -47,18 +48,18 @@ MODE_NUM_POLYS = {
     "onehot_fp128_multi_chunk_w4r2": {1},
 }
 MODE_NUM_VARS = {
-    "onehot_fp32": {34},
+    "onehot_fp32": {31},
     "dense_fp32": {30},
-    "onehot_fp64": {35},
+    "onehot_fp64": {32},
     "dense_fp64": {29},
     "dense_fp128": {28},
-    "onehot_fp128": {36},
-    "onehot_fp128_multi_group": {34},
-    "onehot_fp128_multi_group_recursive": {34},
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {32},
-    "onehot_fp128_multi_chunk_w8r2": {32},
-    "onehot_fp128_multi_chunk_w2r2": {32},
-    "onehot_fp128_multi_chunk_w4r2": {32},
+    "onehot_fp128": {33},
+    "onehot_fp128_multi_group": {31},
+    "onehot_fp128_multi_group_recursive": {31},
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {29},
+    "onehot_fp128_multi_chunk_w8r2": {29},
+    "onehot_fp128_multi_chunk_w2r2": {29},
+    "onehot_fp128_multi_chunk_w4r2": {29},
 }
 MODE_SETUP = {mode: {"direct"} for mode in MODES}
 MODE_SETUP["onehot_fp128"] = {"direct", "recursive"}
@@ -78,57 +79,22 @@ if not selected_match:
     raise SystemExit(1)
 selected_modes = set(re.findall(r'name:\s*"([^"]+)"', selected_match.group(1)))
 
-wf = workflow.read_text(encoding="utf-8")
-case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
-
-
-def cases_after_pipe(start: int) -> list[str]:
-    cases: list[str] = []
-    for line in wf[start:].splitlines():
-        if not line.strip():
-            continue
-        if not line.startswith(" "):
-            break
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            continue
-        m = case_line.match(stripped)
-        if m:
-            cases.append(m.group(1))
-        else:
-            break
-    return cases
-
-case_anchors = list(re.finditer(r"^\s+cases:\s*\|\s*\n", wf, flags=re.MULTILINE))
-group_pattern = re.compile(
-    r"^\s+- name:\s*(\S+)\s*\n"
-    r"\s+profile_feature:\s*(\S+)\s*\n"
-    r"\s+cases:\s*\|\s*\n",
-    flags=re.MULTILINE,
-)
-groups = list(group_pattern.finditer(wf))
-if len(groups) != len(case_anchors):
-    print("every benchmark matrix group must declare profile_feature before cases", file=sys.stderr)
-    raise SystemExit(1)
-
-bench_cases: list[tuple[str, str, str]] = []
-for group in groups:
-    group_name, profile_feature = group.group(1, 2)
-    for case_spec in cases_after_pipe(group.end()):
-        bench_cases.append((group_name, profile_feature, case_spec))
-
-if not bench_cases:
-    print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
-    raise SystemExit(1)
+bench_cases = read_matrix_cases(workflow)
 case_specs = [case_spec for _, _, case_spec in bench_cases]
-fp128_direct = "onehot_fp128:36:1:direct"
-fp128_recursive = "onehot_fp128:36:1:recursive"
+head_policy = resolve_baseline("HEAD", case_specs)
+unsupported = [item for item in head_policy["cases"] if not item["supported"]]
+if unsupported:
+    for item in unsupported:
+        print(f"head benchmark case {item['case']} is unsupported: {item['reason']}", file=sys.stderr)
+    raise SystemExit(1)
+fp128_direct = "onehot_fp128:33:1:direct"
+fp128_recursive = "onehot_fp128:33:1:recursive"
 if fp128_direct not in case_specs or case_specs.index(fp128_direct) + 1 >= len(case_specs):
-    print("fp128 nv36 direct benchmark case is missing", file=sys.stderr)
+    print("fp128 nv33 direct benchmark case is missing", file=sys.stderr)
     raise SystemExit(1)
 if case_specs[case_specs.index(fp128_direct) + 1] != fp128_recursive:
     print(
-        "fp128 nv36 recursive benchmark must immediately follow the direct case",
+        "fp128 nv33 recursive benchmark must immediately follow the direct case",
         file=sys.stderr,
     )
     raise SystemExit(1)

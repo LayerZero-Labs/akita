@@ -12,7 +12,7 @@ use akita_algebra::{binary::field_switch::SwitchField, TrinomialModulus};
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
     channel::{
-        finish_prover, new_root_prover, FoldSearchChannel, RootChallengeChannel,
+        bind_root_context, finish_prover, new_root_prover, FoldSearchChannel, RootChallengeChannel,
         RootSumcheckProverChannel,
     },
     codec::{exchange_binary, exchange_extension},
@@ -28,6 +28,7 @@ use akita_labinius_verifier::{
 };
 use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
 use akita_sumcheck::SumcheckProverChannel;
+use akita_transcript::ChallengeCodec;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use tracing::info_span;
 
@@ -80,7 +81,7 @@ pub fn prove_root_reduction<H, F, E, const D: usize, M, O, S>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootProverOracle<E>,
     S: RootChallengeChannel<E> + FoldSearchChannel + SumcheckProverChannel<E>,
@@ -124,20 +125,15 @@ where
         None => None,
     };
     let (fold, response) = info_span!("root_fold").in_scope(|| {
-        crate::search_fold_response(
-            setup,
-            b"akita/labinius/root-fold/v1",
-            channel,
-            |challenges| {
-                fold_integer::<H>(
-                    source,
-                    setup.scalar_rows(),
-                    setup.columns(),
-                    challenges,
-                    setup.profile(),
-                )
-            },
-        )
+        crate::search_fold_response(setup, channel, |challenges| {
+            fold_integer::<H>(
+                source,
+                setup.scalar_rows(),
+                setup.columns(),
+                challenges,
+                setup.profile(),
+            )
+        })
     })?;
     let digits =
         info_span!("root_encode_witness").in_scope(|| encode_witness(&layout, &response))?;
@@ -331,11 +327,11 @@ pub fn prove_root_reduction_bytes<H, F, E, const D: usize, M, O>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootProverOracle<E>,
 {
-    let mut state = new_root_prover()?;
+    let mut state = new_root_prover();
     let mut channel = RootSumcheckProverChannel::<F>::new(&mut state);
     let claims = prove_root_reduction::<H, F, E, D, M, O, _>(
         admitted,
@@ -350,10 +346,6 @@ where
 
 /// Prove one root reduction on a borrowed native session, leaving it open.
 ///
-/// Applications must create the session with Akita's `new_prover_channel` or
-/// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
-/// spongefish states cannot be adopted.
-///
 /// The protocol version and admitted setup/profile identity are absorbed as
 /// public data before any reduction challenge. The oracle must authenticate
 /// every returned table evaluation on this same session.
@@ -363,21 +355,16 @@ pub fn prove_root_reduction_in_session<H, F, E, const D: usize, M, O>(
     commitment: &BinaryClearCommitment,
     statement: &RootStatement<'_, H, E>,
     oracle: &mut O,
-    session: &mut akita_transcript::ProverSession,
+    session: &mut akita_transcript::ProverChannel,
 ) -> Result<RootEvaluationClaims<E>, AkitaError>
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootProverOracle<E>,
 {
-    akita_transcript::absorb_subprotocol_context(
-        session,
-        b"akita/labinius/root-reduction",
-        1,
-        &admitted.identity_bytes::<H>()?,
-    )?;
+    bind_root_context(session, &admitted.identity_bytes::<H>()?)?;
     prove_root_reduction::<H, F, E, D, M, O, _>(
         admitted,
         source,

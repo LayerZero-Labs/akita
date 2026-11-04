@@ -25,6 +25,7 @@ use akita_algebra::{
 use akita_challenges::BinaryChallengeSampler;
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckVerifierChannel;
+use akita_transcript::ChallengeCodec;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Replay one root reduction and discharge the committed-table evaluations.
@@ -60,7 +61,7 @@ pub fn verify_root_reduction<'proof, H, F, E, const D: usize, M, O, S>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootVerifierOracle<E>,
     S: RootChallengeChannel<E> + SumcheckVerifierChannel<'proof, E>,
@@ -98,12 +99,7 @@ where
     let mut sampler = BinaryChallengeSampler::new(setup.profile().clone());
     // The nonce only selects the challenges; the digit alphabet check on the
     // committed response is what binds the prover.
-    let fold = channel.fold_challenges(
-        &mut sampler,
-        b"akita/labinius/root-fold/v1",
-        setup.columns(),
-        &mut 0,
-    )?;
+    let fold = channel.fold_challenges(&mut sampler, setup.columns(), &mut 0)?;
     oracle.bind_response(&layout, channel)?;
     let mut ka = zero_vec(layout.encoding().a_carry_len())?;
     exchange_root_auxiliary(
@@ -225,11 +221,11 @@ pub fn verify_root_reduction_bytes<H, F, E, const D: usize, M, O>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootVerifierOracle<E>,
 {
-    let mut state = channel::new_root_verifier(proof)?;
+    let mut state = channel::new_root_verifier(proof);
     let claims = verify_root_reduction::<H, F, E, D, M, O, _>(
         admitted,
         statement,
@@ -245,29 +241,21 @@ where
 /// The same public protocol/version/setup identity precedes all its challenges.
 /// A failed opening permanently invalidates the caller's verifier session.
 ///
-/// Applications must create the session with Akita's `new_prover_channel` or
-/// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
-/// spongefish states cannot be adopted.
 pub fn verify_root_reduction_in_session<H, F, E, const D: usize, M, O>(
     admitted: &AdmittedRootSetup<D, M>,
     statement: &RootStatement<'_, H, E>,
     oracle: &mut O,
-    session: &mut akita_transcript::VerifierSession<'_>,
+    session: &mut akita_transcript::VerifierChannel<'_>,
 ) -> Result<RootEvaluationClaims<E>, AkitaError>
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootVerifierOracle<E>,
 {
     let result = (|| {
-        akita_transcript::absorb_subprotocol_context(
-            session,
-            b"akita/labinius/root-reduction",
-            1,
-            &admitted.identity_bytes::<H>()?,
-        )?;
+        channel::bind_root_context(session, &admitted.identity_bytes::<H>()?)?;
         verify_root_reduction::<H, F, E, D, M, O, _>(
             admitted,
             statement,
@@ -275,8 +263,5 @@ where
             &mut RootSumcheckVerifierChannel::<F>::new(session),
         )
     })();
-    if result.is_err() {
-        session.invalidate();
-    }
-    result
+    akita_transcript::ProofChannel::guard(session, result)
 }

@@ -16,18 +16,21 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
-akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false, features = [
+akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false, features = [
+  "prover",
+] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
 
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 
 [dev-dependencies]
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
@@ -52,7 +55,7 @@ harness = false
 required-features = ["labinius"]
 
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",

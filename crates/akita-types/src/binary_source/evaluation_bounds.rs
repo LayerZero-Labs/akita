@@ -1,6 +1,6 @@
 //! Integer lift admission for the committed binary parity and value carries.
 
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};
 use akita_params::sis::checked_balanced_digit_representable_bounds;
 
@@ -40,7 +40,8 @@ impl BinaryEvaluationBounds {
         let hpar = (scalar_rows as u128)
             .checked_mul(162 * 4)
             .zip(
-                (columns as u128).checked_mul(FoldChallengeFamily::BinaryRoot.weight() as u128 * 4),
+                (columns as u128)
+                    .checked_mul(FoldChallengeDistribution::BinaryRoot.weight() as u128 * 4),
             )
             .and_then(|(a, b)| a.checked_add(b))
             .ok_or_else(bad)?;

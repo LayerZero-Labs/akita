@@ -81,10 +81,14 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
             );
             let verifier = scheme.verifier(verifier_setup).unwrap();
             let result = catch_unwind(AssertUnwindSafe(|| {
-                let mut replay =
-                    new_verifier_channel(b"binary-source-end-to-end-v1", b"caller", &[]).unwrap();
-                replay.public_message(b"application-prefix");
-                verifier.batched_verify_in_session(&mut replay, statement, BasisMode::Lagrange)
+                let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &[]);
+                replay.public_message(&BytesMsg(b"application-prefix"));
+                verifier.batched_verify_embedded(
+                    &mut replay,
+                    statement,
+                    BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
+                )
             }));
             assert!(result.is_ok(), "{name} caused a verifier panic");
             assert!(

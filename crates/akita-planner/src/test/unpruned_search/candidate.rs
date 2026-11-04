@@ -134,10 +134,9 @@ pub(super) fn terminal(
             Err(AkitaError::InvalidSetup(_)) => return Ok(None),
             Err(error) => return Err(error),
         };
-    let mut sparse_challenge_config = params.fold_challenge_config();
     if let Some(l2_challenge) =
         akita_challenges::selective_l2_challenge_config(terminal_params.d_a())
-            .map(akita_challenges::FoldChallengeFamily::SignedSparse)
+            .map(akita_challenges::FoldChallengeDistribution::SignedSparse)
     {
         let fold_basis = 1usize
             .checked_shl(params.open().digits.log_basis)
@@ -172,7 +171,7 @@ pub(super) fn terminal(
         )? {
             if l2_matrix.output_rank() < terminal_params.inner.matrix.output_rank() {
                 terminal_params.inner.matrix = l2_matrix;
-                sparse_challenge_config = l2_challenge;
+                terminal_params.fold_challenge_config = l2_challenge;
             }
         }
     }
@@ -184,7 +183,7 @@ pub(super) fn terminal(
         })?;
     let modeled_encoding_scale = state.source_moment.and_then(|moment| {
         moment.response_linf_cap(
-            sparse_challenge_config.challenge_l2_sq_max(),
+            terminal_params.fold_challenge_config.challenge_l2_sq_max(),
             terminal_params.blocks.live_blocks,
             1,
             num_fold_coeffs,
@@ -224,8 +223,8 @@ pub(super) fn terminal(
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
         terminal: Arc::new(CandidateTerminalResponse {
+            fold_cost: akita_params::FoldChallengeCost::terminal(&terminal_params)?,
             params: terminal_params,
-            sparse_challenge_config,
             input_witness_len,
             estimated_direct_payload_bytes: opening_reduction_bytes,
             response_shape,
@@ -295,9 +294,11 @@ pub(in crate::schedule_params) fn prepend_fold(
     )?;
     let edge_grinding_cost = akita_params::transcript_grinding_cost_for_planner_edge(
         params,
+        akita_params::FoldChallengeCost::new(params, &opening_layout)?,
         relation_geometry,
         &opening_layout,
         successor,
+        child.folds.is_empty().then_some(child.terminal.fold_cost),
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         u32::try_from(level)
@@ -388,9 +389,11 @@ pub(in crate::schedule_params) fn prepend_root(
     )?;
     let root_grinding_cost = akita_params::transcript_grinding_cost_for_planner_edge(
         root_params,
+        akita_params::FoldChallengeCost::new(root_params, &opening_layout)?,
         relation_geometry,
         &opening_layout,
         successor,
+        suffix.folds.is_empty().then_some(suffix.terminal.fold_cost),
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         0,
@@ -437,12 +440,12 @@ pub(in crate::schedule_params) fn prepend_root(
             output_witness_len: fold.output_witness_len,
         });
     let schedule = akita_params::FoldSchedule {
+        root_accumulated_setup_prefix_len: 0,
         root: folds.next().ok_or_else(|| {
             AkitaError::UnsupportedSchedule("oracle candidate has no root fold".into())
         })?,
         recursive_folds: folds.collect(),
         terminal: akita_params::TerminalFoldParams {
-            fold_challenge_config: candidate.terminal.sparse_challenge_config,
             response_shape: candidate.terminal.response_shape.clone(),
             input_witness_len: candidate.terminal.input_witness_len,
             ..candidate.terminal.params.clone()
@@ -453,6 +456,7 @@ pub(in crate::schedule_params) fn prepend_root(
         &opening_layout,
         policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
+        None,
     )?;
     let edge_wise_cost = candidate.cost.grinding_cost();
     if edge_wise_cost.total_nonce_bits != plan.total_nonce_bits()

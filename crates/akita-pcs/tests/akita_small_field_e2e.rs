@@ -196,7 +196,7 @@ macro_rules! small_field_test {
                     )
                     .expect("final dense poly");
                     let precommitteds =
-                        PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty precommitted groups");
+                        PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()]).expect("nonempty precommitted groups");
                     let akita_cpu_backend::CommitOutput {
                         committed_group: final_commitment,
                         private_handle: final_hint,
@@ -363,7 +363,7 @@ scheme.schedules());
                     )
                     .expect("final onehot poly");
                     let precommitteds =
-                        PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty precommitted groups");
+                        PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()]).expect("nonempty precommitted groups");
                     let akita_cpu_backend::CommitOutput {
                         committed_group: final_commitment,
                         private_handle: final_hint,
@@ -559,8 +559,9 @@ fn fp32_onehot_multi_group() {
         let multi_schedule = scheme
             .schedules()
             .resolve_key(&ScheduleLookupKey {
+                root_accumulated_setup_prefix_len: 0,
                 final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
-                precommitteds: vec![pre_commitment.profile],
+                precommitteds: vec![*pre_commitment.profile()],
             })
             .expect("multi-group schedule")
             .schedule()
@@ -575,8 +576,9 @@ fn fp32_onehot_multi_group() {
             .expect("validated precommit transfer");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
-            .expect("nonempty precommitted groups");
+        let precommitteds =
+            PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
+                .expect("nonempty precommitted groups");
         let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
             private_handle: final_hint,
@@ -641,6 +643,7 @@ fn fp32_onehot_multi_group() {
                     session,
                     GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                     BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
                 )
             })
             .expect("fp32 multi-group verify");

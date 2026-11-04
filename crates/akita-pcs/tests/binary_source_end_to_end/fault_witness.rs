@@ -4,7 +4,7 @@ use super::*;
 use akita_algebra::ring::trinomial::image::Q24Image;
 use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
-use akita_challenges::{Challenges, FoldChallengeFamily};
+use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_cpu_backend::binary_root::{
     binary_row_partials, BinaryEvaluationWitness, BinaryRootRelation,
 };
@@ -50,10 +50,13 @@ pub(super) fn reconstruct(
         &sources,
         &images,
         challenges,
-        FoldChallengeFamily::BinaryRoot,
+        FoldChallengeDistribution::BinaryRoot,
     )?;
-    let (response_plan, response_digits) =
-        response.successor_table(plan.repacking().destination_ring_dimension())?;
+    let (response_plan, response_digits) = BinaryRootRelation::successor_table(
+        &response.response,
+        &response.images,
+        plan.repacking().destination_ring_dimension(),
+    )?;
     let mut native: Vec<Vec<i8>> = (0..2)
         .map(|segment| extract(&response_plan, &response_digits, segment))
         .collect();
@@ -131,6 +134,7 @@ pub(super) fn foreign_partial_payload(
             role: akita_params::binary_setup::SetupStreamRole::WitnessCommitment,
             ..manifest.b_label()
         },
+        0,
         &partials,
     )
 }

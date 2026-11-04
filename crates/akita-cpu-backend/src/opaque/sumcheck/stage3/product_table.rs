@@ -2,15 +2,15 @@ use super::utils::{accumulate_left_round, fold_dense_left_round, fold_factor_in_
 #[cfg(test)]
 use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, product_claim};
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use jolt_poly::UnivariatePoly;
 
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
+use akita_sumcheck::SumcheckKernel;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, MulBaseUnreduced, Ring, Zero};
 use std::sync::Arc;
 
-pub(super) enum SetupProductSource<F: Field> {
+pub(in crate::opaque::sumcheck) enum SetupProductSource<F: Field> {
     Expanded(Arc<akita_types::AkitaExpandedSetup<F>>),
     /// Extension seam: retain an alternate authenticated coefficient source.
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
@@ -33,7 +33,7 @@ impl<F: Field> SetupProductSource<F> {
 /// One dense factored setup-product term
 /// `sum_{left,right} table[left,right] * left_factor[left] * right_factor[right]`.
 #[cfg(test)]
-pub(super) struct FactoredProductTerm<E: Field> {
+pub(in crate::opaque::sumcheck) struct FactoredProductTerm<E: Field> {
     table: Vec<E>,
     left_factor: Vec<E>,
     right_factor: Vec<E>,
@@ -42,74 +42,73 @@ pub(super) struct FactoredProductTerm<E: Field> {
     total_rounds: usize,
 }
 
-enum SetupProductTable<E> {
-    Coefficient(Vec<E>),
-    /// Index state of a one-coefficient view before its first index fold:
-    /// every entry is read from the setup source, which is not copied.
-    Source,
-    Index(Vec<E>),
+/// One coefficient contraction and its factor, folded at the common challenges.
+pub(in crate::opaque::sumcheck) struct CoefficientTerm<E> {
+    pub(in crate::opaque::sumcheck) table: Vec<E>,
+    pub(in crate::opaque::sumcheck) factor: Vec<E>,
 }
 
-/// Two-pass setup-product term over the canonical flat setup layout.
+/// Index factors retained until all coefficient factors have become scalars.
+pub(in crate::opaque::sumcheck) enum SetupProductWeights<E: Field> {
+    Dense(Vec<E>),
+    Retained(Vec<akita_types::setup_claims::SetupWeightTerm<E>>),
+    Regenerate {
+        polynomial: akita_types::setup_claims::SetupPolynomialId,
+        query: akita_types::setup_claims::SetupQuery<E>,
+    },
+}
+
+/// Degree-two product sumcheck over one shared, base-field setup source.
 ///
-/// The setup source stays in the base field with row-major layout
-/// `setup[setup_index * coefficient_len + coefficient]`. Akita's committed
-/// setup MLE binds coefficient variables first, so this term first proves the
-/// common-coefficient rounds and then the setup-index rounds. This preserves
-/// the Stage-3 suffix-opening projection while storing only one contracted
-/// coefficient vector and one contracted setup-index vector in the extension
-/// field.
-pub(super) struct RectangularSetupProductTerm<F: Field, E: Field> {
+/// Ordinary Stage 3 supplies one term. Accumulation supplies several weighted
+/// terms, sharing coefficient challenges and merging into one index product.
+/// Both cases retain only contracted coefficient and index tables.
+pub struct SetupProductSumcheck<F: Field, E: Field> {
     /// Released once the index table is materialized; no later round reads it.
     setup: Option<SetupProductSource<F>>,
-    required_rows: usize,
     row_capacity: usize,
     coefficient_len: usize,
-    coefficient_rounds: usize,
     total_rounds: usize,
     coefficient_challenges: Vec<E>,
-    table: SetupProductTable<E>,
-    coefficient_factor: Vec<E>,
+    terms: Vec<CoefficientTerm<E>>,
+    weights: Vec<SetupProductWeights<E>>,
+    index_table: Vec<E>,
+    /// The index table of a one-coefficient view before its first index
+    /// fold: every entry is read from the setup source, which is not copied.
+    index_from_source: bool,
     index_factor: Vec<E>,
     input_claim: E,
+    claim: E,
+    round: usize,
+    pending: Option<UnivariatePoly<E>>,
 }
 
-impl<F, E> RectangularSetupProductTerm<F, E>
+impl<F, E> SetupProductSumcheck<F, E>
 where
     F: Field,
     E: Field + Ring + MulBaseUnreduced<F>,
 {
-    pub(super) fn new(
+    pub(in crate::opaque::sumcheck) fn new(
         source: SetupProductSource<F>,
         required_rows: usize,
         index_factor: Vec<E>,
         coefficient_factor: Vec<E>,
     ) -> Result<Self, AkitaError> {
-        let setup = source.coefficients();
+        let row_capacity = index_factor.len();
+        let coefficient_len = coefficient_factor.len();
+        let source_len = checked::product([row_capacity, coefficient_len])
+            .ok_or_else(|| AkitaError::Internal("setup source length overflow".into()))?;
         if required_rows == 0
-            || index_factor.is_empty()
-            || coefficient_factor.is_empty()
-            || !index_factor.len().is_power_of_two()
-            || !coefficient_factor.len().is_power_of_two()
-            || required_rows > index_factor.len()
+            || !row_capacity.is_power_of_two()
+            || !coefficient_len.is_power_of_two()
+            || required_rows > row_capacity
+            || source.coefficients().len() < source_len
         {
             return Err(AkitaError::Internal(
                 "rectangular setup-product dimensions are invalid".into(),
             ));
         }
-        let source_len = index_factor
-            .len()
-            .checked_mul(coefficient_factor.len())
-            .ok_or_else(|| AkitaError::Internal("setup source length overflow".into()))?;
-        if setup.len() < source_len {
-            return Err(AkitaError::Internal(format!(
-                "rectangular setup-product source length: expected {source_len}, actual {}",
-                setup.len(),
-            )));
-        }
-
-        let coefficient_len = coefficient_factor.len();
-        let coefficient_table = {
+        let table = {
             let _span = tracing::info_span!(
                 "stage3_setup_coefficient_pass",
                 kernel = "rectangular_base_field",
@@ -117,184 +116,286 @@ where
                 source_rows = required_rows as u64,
                 coefficient_len = coefficient_len as u64,
                 base_to_extension_lifts = 0u64,
-                setup_table_state_elements = (coefficient_len + index_factor.len()) as u64,
+                setup_table_state_elements = (coefficient_len + row_capacity) as u64,
             )
             .entered();
-            let accumulators = cfg_fold_reduce!(
-                0..required_rows,
-                || (0..coefficient_len)
-                    .map(|_| { <E as jolt_field::Unreduced>::Product::zero() })
-                    .collect::<Vec<_>>(),
-                |mut accumulators, setup_index| {
-                    let row_start = setup_index * coefficient_len;
-                    let factor = index_factor[setup_index];
-                    for (accumulator, &coefficient) in accumulators
-                        .iter_mut()
-                        .zip(&setup[row_start..row_start + coefficient_len])
-                    {
-                        *accumulator += factor.mul_base_unreduced(coefficient);
-                    }
-                    accumulators
-                },
-                |mut left, right| {
-                    for (left, right) in left.iter_mut().zip(right) {
-                        *left += right;
-                    }
-                    left
-                }
-            );
-            accumulators
-                .into_iter()
-                .map(E::reduce_product)
-                .collect::<Vec<_>>()
+            contract_setup_coefficients(
+                source.coefficients(),
+                coefficient_len,
+                required_rows,
+                |index| index_factor[index],
+            )
         };
-        let input_claim = coefficient_table
-            .iter()
-            .zip(&coefficient_factor)
-            .fold(E::zero(), |acc, (&value, &factor)| acc + value * factor);
-        let coefficient_rounds = coefficient_len.trailing_zeros() as usize;
-        let total_rounds = coefficient_rounds + index_factor.len().trailing_zeros() as usize;
-
-        let mut term = Self {
-            setup: Some(source),
-            required_rows,
-            row_capacity: index_factor.len(),
+        Self::from_prepared(
+            source,
+            row_capacity,
             coefficient_len,
-            coefficient_rounds,
-            total_rounds,
-            coefficient_challenges: Vec::with_capacity(coefficient_rounds),
-            table: SetupProductTable::Coefficient(coefficient_table),
-            coefficient_factor,
-            index_factor,
+            vec![CoefficientTerm {
+                table,
+                factor: coefficient_factor,
+            }],
+            vec![SetupProductWeights::Dense(index_factor)],
+        )
+    }
+
+    pub(in crate::opaque::sumcheck) fn from_prepared(
+        setup: SetupProductSource<F>,
+        row_capacity: usize,
+        coefficient_len: usize,
+        terms: Vec<CoefficientTerm<E>>,
+        weights: Vec<SetupProductWeights<E>>,
+    ) -> Result<Self, AkitaError> {
+        let source_len =
+            checked::product([row_capacity, coefficient_len]).ok_or(AkitaError::InvalidProof)?;
+        if !row_capacity.is_power_of_two()
+            || !coefficient_len.is_power_of_two()
+            || setup.coefficients().len() < source_len
+            || terms.iter().any(|term| {
+                term.table.len() != coefficient_len || term.factor.len() != coefficient_len
+            })
+        {
+            return Err(AkitaError::InvalidInput(
+                "invalid prepared setup product".into(),
+            ));
+        }
+        let input_claim = terms
+            .iter()
+            .flat_map(|term| term.table.iter().zip(&term.factor))
+            .fold(E::zero(), |sum, (&value, &factor)| sum + value * factor);
+        let mut product = Self {
+            setup: Some(setup),
+            row_capacity,
+            coefficient_len,
+            total_rounds: coefficient_len.trailing_zeros() as usize
+                + row_capacity.trailing_zeros() as usize,
+            coefficient_challenges: Vec::new(),
+            terms,
+            weights,
+            index_table: Vec::new(),
+            index_from_source: false,
+            index_factor: Vec::new(),
             input_claim,
+            claim: input_claim,
+            round: 0,
+            pending: None,
         };
-        // A one-coefficient setup view has no coefficient-round challenge to
+        // A one-coefficient view has no coefficient-round challenge to
         // trigger the normal phase transition. Its index table is the source
         // itself: the first index round reads it in place and the first
-        // challenge folds it into a half-length table, so the term never holds
-        // a full-length copy beside the source. A zero-round view materializes
-        // its single final value now.
-        if coefficient_rounds == 0 {
-            if total_rounds == 0 {
-                term.enter_index_phase();
+        // challenge folds it into a half-length table, so the product never
+        // holds a full-length copy beside the source. A zero-round view
+        // materializes its single final value now.
+        if coefficient_len == 1 {
+            if product.total_rounds == 0 {
+                product.materialize_index_table()?;
             } else {
-                term.table = SetupProductTable::Source;
+                product.index_factor = product.combine_index_weights()?;
+                product.index_from_source = true;
             }
         }
-        Ok(term)
+        Ok(product)
     }
 
-    pub(super) const fn num_rounds(&self) -> usize {
-        self.total_rounds
+    fn source(&self) -> Result<&[F], AkitaError> {
+        self.setup
+            .as_ref()
+            .map(SetupProductSource::coefficients)
+            .ok_or_else(|| AkitaError::Internal("setup source already released".into()))
     }
 
-    pub(super) const fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    pub(super) fn compute_round_univariate(&self) -> UnivariatePoly<E> {
-        let (constant, linear, quadratic) = match &self.table {
-            SetupProductTable::Coefficient(table) => {
-                accumulate_left_round(|index| table[index], &self.coefficient_factor, E::one())
-            }
-            SetupProductTable::Source => {
-                let coefficient_eq = self.coefficient_eq();
-                accumulate_left_round(
-                    |setup_index| self.index_entry(&coefficient_eq, setup_index),
-                    &self.index_factor,
-                    self.coefficient_factor[0],
-                )
-            }
-            SetupProductTable::Index(table) => accumulate_left_round(
-                |index| table[index],
+    fn compute_round_univariate(&self) -> Result<UnivariatePoly<E>, AkitaError> {
+        let (constant, linear, quadratic) = if self.index_from_source {
+            let source = self.source()?;
+            let one = [E::one()];
+            accumulate_left_round(
+                |index| E::dot_base(&one, &source[index..index + 1]),
                 &self.index_factor,
-                self.coefficient_factor[0],
-            ),
+                E::one(),
+            )
+        } else if self.index_table.is_empty() {
+            self.terms
+                .iter()
+                .fold((E::zero(), E::zero(), E::zero()), |sum, term| {
+                    let p =
+                        accumulate_left_round(|index| term.table[index], &term.factor, E::one());
+                    (sum.0 + p.0, sum.1 + p.1, sum.2 + p.2)
+                })
+        } else {
+            accumulate_left_round(
+                |index| self.index_table[index],
+                &self.index_factor,
+                E::one(),
+            )
         };
-        UnivariatePoly::new(vec![constant, linear, quadratic])
+        Ok(UnivariatePoly::new(vec![constant, linear, quadratic]))
     }
 
-    pub(super) fn ingest_challenge(&mut self, round: usize, challenge: E) {
-        match &mut self.table {
-            SetupProductTable::Coefficient(table) => {
-                self.coefficient_challenges.push(challenge);
-                *table = fold_dense_left_round(table.len(), |index| table[index], challenge);
-                fold_factor_in_place(&mut self.coefficient_factor, challenge);
-                if round + 1 == self.coefficient_rounds {
-                    self.enter_index_phase();
+    fn ingest_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        if round < self.coefficient_len.trailing_zeros() as usize {
+            self.coefficient_challenges.push(challenge);
+            for term in &mut self.terms {
+                term.table =
+                    fold_dense_left_round(term.table.len(), |index| term.table[index], challenge);
+                fold_factor_in_place(&mut term.factor, challenge);
+            }
+            if round + 1 == self.coefficient_len.trailing_zeros() as usize {
+                self.materialize_index_table()?;
+            }
+        } else if self.index_from_source {
+            let source = self.source()?;
+            let one = [E::one()];
+            self.index_table = fold_dense_left_round(
+                self.row_capacity,
+                |index| E::dot_base(&one, &source[index..index + 1]),
+                challenge,
+            );
+            self.index_from_source = false;
+            self.setup = None;
+            fold_factor_in_place(&mut self.index_factor, challenge);
+        } else {
+            self.index_table = fold_dense_left_round(
+                self.index_table.len(),
+                |index| self.index_table[index],
+                challenge,
+            );
+            fold_factor_in_place(&mut self.index_factor, challenge);
+        }
+        Ok(())
+    }
+
+    /// Combine every term's index weights at its bound coefficient scale.
+    fn combine_index_weights(&mut self) -> Result<Vec<E>, AkitaError> {
+        let mut combined = vec![E::zero(); self.row_capacity];
+        let mut terms = self.terms.iter();
+        for weights in std::mem::take(&mut self.weights) {
+            match weights {
+                SetupProductWeights::Dense(index) => {
+                    let scale = *terms
+                        .next()
+                        .and_then(|term| term.factor.first())
+                        .ok_or(AkitaError::InvalidProof)?;
+                    if index.len() != combined.len() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    for (output, weight) in combined.iter_mut().zip(index) {
+                        *output += scale * weight;
+                    }
+                }
+                weights => {
+                    let factors = match weights {
+                        SetupProductWeights::Retained(factors) => factors,
+                        SetupProductWeights::Regenerate { polynomial, query } => {
+                            query.compile(&polynomial, self.coefficient_len, None)?
+                        }
+                        SetupProductWeights::Dense(_) => return Err(AkitaError::InvalidProof),
+                    };
+                    for factor in factors {
+                        let scale = *terms
+                            .next()
+                            .and_then(|term| term.factor.first())
+                            .ok_or(AkitaError::InvalidProof)?;
+                        if !scale.is_zero() {
+                            factor.add_scaled_index(scale, &mut combined)?;
+                        }
+                    }
                 }
             }
-            SetupProductTable::Source => {
-                let coefficient_eq = self.coefficient_eq();
-                let folded = fold_dense_left_round(
-                    self.row_capacity,
-                    |setup_index| self.index_entry(&coefficient_eq, setup_index),
-                    challenge,
-                );
-                self.table = SetupProductTable::Index(folded);
-                self.setup = None;
-                fold_factor_in_place(&mut self.index_factor, challenge);
-            }
-            SetupProductTable::Index(table) => {
-                *table = fold_dense_left_round(table.len(), |index| table[index], challenge);
-                fold_factor_in_place(&mut self.index_factor, challenge);
-            }
         }
-    }
-
-    fn coefficient_eq(&self) -> Vec<E> {
-        let coefficient_eq = EqPolynomial::evals(&self.coefficient_challenges)
-            .expect("validated power-of-two setup coefficient domain");
-        debug_assert_eq!(coefficient_eq.len(), self.coefficient_len);
-        coefficient_eq
-    }
-
-    /// Index-table entry of setup row `setup_index`: its coefficients
-    /// contracted with the bound coefficient challenges.
-    fn index_entry(&self, coefficient_eq: &[E], setup_index: usize) -> E {
-        let start = setup_index * self.coefficient_len;
-        let source = self
-            .setup
-            .as_ref()
-            .expect("the setup source is retained until the index table exists")
-            .coefficients();
-        eval_flat_ring_at_pows_fast(&source[start..start + self.coefficient_len], coefficient_eq)
+        if terms.next().is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.terms.clear();
+        Ok(combined)
     }
 
     /// Materialize the index table and release the setup source.
-    fn enter_index_phase(&mut self) {
-        let coefficient_eq = self.coefficient_eq();
+    fn materialize_index_table(&mut self) -> Result<(), AkitaError> {
+        let combined = self.combine_index_weights()?;
+        let equality = EqPolynomial::evals(&self.coefficient_challenges)?;
         let _span = tracing::info_span!(
             "stage3_setup_index_pass",
             kernel = "rectangular_base_field",
             source_pass = 2u64,
             source_rows = self.row_capacity as u64,
-            active_weight_rows = self.required_rows as u64,
             coefficient_len = self.coefficient_len as u64,
             base_to_extension_lifts = 0u64,
             setup_table_state_elements = (self.row_capacity + self.coefficient_len) as u64,
         )
         .entered();
-        let table = cfg_into_iter!(0..self.row_capacity)
-            .map(|setup_index| self.index_entry(&coefficient_eq, setup_index))
-            .collect::<Vec<_>>();
-        self.table = SetupProductTable::Index(table);
+        self.index_table = contract_setup_indices(
+            self.source()?,
+            self.coefficient_len,
+            self.row_capacity,
+            &equality,
+        );
         self.setup = None;
+        self.index_factor = combined;
+        Ok(())
     }
 
-    pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
-        let SetupProductTable::Index(table) = &self.table else {
-            return Err(AkitaError::Internal(
-                "fully folded setup product has no index table".into(),
-            ));
-        };
-        if table.len() != 1 {
-            return Err(AkitaError::Internal(format!(
-                "folded setup-product table length: expected 1, actual {}",
-                table.len(),
-            )));
+    pub(in crate::opaque::sumcheck) fn folded_table_value(&self) -> Result<E, AkitaError> {
+        if self.round != self.total_rounds
+            || self.pending.is_some()
+            || self.index_table.len() != 1
+            || self.index_factor.len() != 1
+        {
+            return Err(AkitaError::InvalidInput("incomplete setup product".into()));
         }
-        Ok(table[0])
+        Ok(self.index_table[0])
+    }
+}
+
+impl<F, E> SumcheckKernel<E> for SetupProductSumcheck<F, E>
+where
+    F: Field,
+    E: Field + Ring + MulBaseUnreduced<F>,
+{
+    fn num_rounds(&self) -> usize {
+        self.total_rounds
+    }
+    fn degree_bound(&self) -> usize {
+        2
+    }
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        claim: E,
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
+        if round != self.round
+            || round >= self.total_rounds
+            || self.pending.is_some()
+            || claim != self.claim
+        {
+            return Err(AkitaError::InvalidInput(
+                "invalid setup product round progression".into(),
+            ));
+        }
+        let polynomial = self.compute_round_univariate()?;
+        self.pending = Some(polynomial.clone());
+        Ok(polynomial)
+    }
+
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        if round != self.round || round >= self.total_rounds {
+            return Err(AkitaError::InvalidInput(
+                "invalid setup product challenge progression".into(),
+            ));
+        }
+        let polynomial = self.pending.take().ok_or_else(|| {
+            AkitaError::InvalidInput("setup challenge without round polynomial".into())
+        })?;
+        self.claim = polynomial.evaluate(challenge);
+        self.ingest_challenge(round, challenge)?;
+        self.round += 1;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), AkitaError> {
+        self.folded_table_value().map(|_| ())
     }
 }
 
@@ -304,7 +405,7 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
     ///
     /// Returns an error if factor lengths are not powers of two, are empty, or
     /// if `table.len() != left_factor.len() * right_factor.len()`.
-    pub(super) fn new_dense(
+    pub(in crate::opaque::sumcheck) fn new_dense(
         table: Vec<E>,
         left_factor: Vec<E>,
         right_factor: Vec<E>,
@@ -342,15 +443,15 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
         })
     }
 
-    pub(super) const fn num_rounds(&self) -> usize {
+    pub(in crate::opaque::sumcheck) const fn num_rounds(&self) -> usize {
         self.total_rounds
     }
 
-    pub(super) const fn input_claim(&self) -> E {
+    pub(in crate::opaque::sumcheck) const fn input_claim(&self) -> E {
         self.input_claim
     }
 
-    pub(super) fn compute_round_univariate(
+    pub(in crate::opaque::sumcheck) fn compute_round_univariate(
         &self,
         round: usize,
         _previous_claim: E,
@@ -367,7 +468,7 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
         UnivariatePoly::new(vec![constant, linear, quadratic])
     }
 
-    pub(super) fn ingest_challenge(&mut self, round: usize, challenge: E) {
+    pub(in crate::opaque::sumcheck) fn ingest_challenge(&mut self, round: usize, challenge: E) {
         if round < self.right_rounds {
             fold_right_round(&mut self.table, &mut self.right_factor, challenge);
         } else {
@@ -375,7 +476,7 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
         }
     }
 
-    pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
+    pub(in crate::opaque::sumcheck) fn folded_table_value(&self) -> Result<E, AkitaError> {
         if self.table.len() != 1 {
             return Err(AkitaError::InvalidSize {
                 expected: 1,
@@ -384,6 +485,68 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
         }
         Ok(self.table[0])
     }
+}
+
+/// First rectangular pass, preserving base-by-extension products and delayed reduction.
+pub(in crate::opaque::sumcheck) fn contract_setup_coefficients<F, E>(
+    setup: &[F],
+    coefficient_len: usize,
+    required_rows: usize,
+    index_weight: impl Fn(usize) -> E + Sync,
+) -> Vec<E>
+where
+    F: Field,
+    E: Field + Ring + MulBaseUnreduced<F>,
+{
+    let accumulators = cfg_fold_reduce!(
+        0..required_rows,
+        || (0..coefficient_len)
+            .map(|_| { <E as jolt_field::Unreduced>::Product::zero() })
+            .collect::<Vec<_>>(),
+        |mut accumulators, setup_index| {
+            let row_start = setup_index * coefficient_len;
+            let factor = index_weight(setup_index);
+            if factor.is_zero() {
+                return accumulators;
+            }
+            for (accumulator, &coefficient) in accumulators
+                .iter_mut()
+                .zip(&setup[row_start..row_start + coefficient_len])
+            {
+                *accumulator += factor.mul_base_unreduced(coefficient);
+            }
+            accumulators
+        },
+        |mut left, right| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
+        }
+    );
+    accumulators
+        .into_iter()
+        .map(E::reduce_product)
+        .collect::<Vec<_>>()
+}
+
+/// Shared second pass: read the actual full prefix once at the common coefficient point.
+pub(in crate::opaque::sumcheck) fn contract_setup_indices<F, E>(
+    setup: &[F],
+    coefficient_len: usize,
+    rows: usize,
+    coefficient_eq: &[E],
+) -> Vec<E>
+where
+    F: Field,
+    E: Field + Ring + MulBaseUnreduced<F>,
+{
+    cfg_into_iter!(0..rows)
+        .map(|index| {
+            let start = index * coefficient_len;
+            E::dot_base(coefficient_eq, &setup[start..start + coefficient_len])
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -431,7 +594,7 @@ mod tests {
             index_factor.clone(),
             coefficient_factor.clone(),
         );
-        let mut rectangular = RectangularSetupProductTerm::new(
+        let mut rectangular = SetupProductSumcheck::new(
             SetupProductSource::Table(setup),
             required_rows,
             index_factor,
@@ -441,13 +604,15 @@ mod tests {
         assert_eq!(dense.input_claim(), rectangular.input_claim());
         assert_eq!(dense.num_rounds(), rectangular.num_rounds());
 
+        let mut claim = rectangular.input_claim();
         for round in 0..dense.num_rounds() {
             let dense_poly = dense.compute_round_univariate(round, dense.input_claim());
-            let rectangular_poly = rectangular.compute_round_univariate();
+            let rectangular_poly = rectangular.round_polynomial(round, claim).unwrap();
             assert_eq!(dense_poly, rectangular_poly, "round {round}");
             let challenge = scalar((round * 19 + 11) as u64);
             dense.ingest_challenge(round, challenge);
-            rectangular.ingest_challenge(round, challenge);
+            rectangular.bind_challenge(round, challenge).unwrap();
+            claim = rectangular_poly.evaluate(challenge);
         }
         assert_eq!(
             dense.folded_table_value().expect("dense folded setup"),

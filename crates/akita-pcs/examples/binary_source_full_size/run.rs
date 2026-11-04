@@ -23,8 +23,10 @@ use akita_types::binary_source::{
 use akita_types::{
     AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
+use akita_verifier::SetupPolicy;
 use config::{FullSize, F};
 use jolt_field::Ring;
+use jolt_transcript::BytesMsg;
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -96,6 +98,10 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
             catalog.catalog().to_artifact_bytes()?,
         )?;
     }
+    println!(
+        "catalog_digest={}",
+        metrics::hex(&catalog.catalog().catalog_digest())
+    );
     let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
     let selected = scheme.schedules().resolve_key(&key)?;
     let schedule = selected.schedule();
@@ -264,15 +270,15 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         handles,
         scheme.schedules(),
     )?;
-    let mut prover = new_prover_channel(PROTOCOL, b"caller")?;
-    prover.public_message(b"application-prefix");
+    let mut prover = new_prover_channel(PROTOCOL);
+    prover.public_message(&BytesMsg(b"application-prefix"));
     akita_transcript::clear_thread_events();
     {
         let _span = tracing::info_span!("prove_complete_opening").entered();
         let mut registry = akita_prover::BackendRegistry::<FullSize>::new()?;
         let root = registry.register(backend.as_ref(), &prefixes)?;
         let mut route = akita_prover::FixedFoldRoute::new(vec![root; schedule.num_fold_levels()]);
-        akita_prover::batched_prove_in_session::<FullSize, _>(
+        akita_prover::batched_prove_embedded::<FullSize, _>(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
@@ -285,7 +291,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     akita_transcript::finish_proof_ranges(&prover);
     metrics::proof(prover.narg_string(), log, shape != "prime5")?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
-    prover.public_message(b"application-suffix");
+    prover.public_message(&BytesMsg(b"application-suffix"));
     let fixture = Fixture {
         claims,
         continuation: prover.verifier_message(),
@@ -321,7 +327,7 @@ fn groups(
     Ok(groups)
 }
 
-fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
+fn verify(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
     let catalog = if log == 10 {
         TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
@@ -329,7 +335,7 @@ fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
             ChunkedWitnessCfg::default_non_chunked(),
         )?
     } else {
-        native_catalog::load(directory)?
+        native_catalog::load(log, shape, directory)?
     };
     let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
     let mut setup = {
@@ -366,23 +372,31 @@ fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
             .map(|g| *g.commitment().profile())
             .collect(),
     };
-    let selection = scheme.schedules().resolve_profiles(&profiles)?.selection();
+    let selection = scheme
+        .schedules()
+        .resolve_profiles(&profiles, 0)?
+        .selection();
     let statement = GroupBatchStatement::new(selection, claims)?;
     let proof = std::fs::read(directory.join("proof.bin"))?;
-    let mut replay = new_verifier_channel(PROTOCOL, b"caller", &proof)?;
-    replay.public_message(b"application-prefix");
+    let mut replay = new_verifier_channel(PROTOCOL, &proof);
+    replay.public_message(&BytesMsg(b"application-prefix"));
     let guard = BinaryAReadGuard::forbid();
-    {
+    let pending = {
         let _span = tracing::info_span!("verify_complete_opening").entered();
-        verifier.batched_verify_in_session(&mut replay, statement, BasisMode::Lagrange)?;
-    }
+        verifier.batched_verify_embedded(
+            &mut replay,
+            statement,
+            BasisMode::Lagrange,
+            SetupPolicy::Check(None),
+        )?
+    };
     drop(guard);
-    replay.public_message(b"application-suffix");
-    let continuation: [u8; 32] = replay.verifier_message()?;
+    replay.public_message(&BytesMsg(b"application-suffix"));
+    let continuation: [u8; 32] = replay.verifier_message();
     if continuation != fixture.continuation {
         return Err("caller transcript continuation mismatch".into());
     }
-    replay.check_eof()?;
+    pending.check_eof(replay)?;
     println!("verification passed=true caller_transcript_continuation_matches=true online_a_reads=forbidden");
     Ok(())
 }

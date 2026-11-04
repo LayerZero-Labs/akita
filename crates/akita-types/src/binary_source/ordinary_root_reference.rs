@@ -22,13 +22,14 @@ impl OrdinaryNativeRootPlan {
         repacking: &RootCoefficientRepacking,
         setup: &AkitaSetupDescriptor,
         point: &[E],
-        evaluation: E,
+        evaluations: &[E],
         payload: &[E],
         alpha: E,
         batches: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError> {
         self.validate_repacking(repacking)?;
-        if point.len() != self.profile.group.num_vars()
+        if evaluations.len() != self.profile.group.num_polynomials()
+            || point.len() != self.profile.group.num_vars()
             || batches.len() != self.linear_batch_count
             || payload.len() != self.compression.terminal_coefficients()
             || E::from_u128(BINARY_SETUP_P) != E::zero()
@@ -73,6 +74,7 @@ impl OrdinaryNativeRootPlan {
                 .ok_or(AkitaError::InvalidProof)?
                 .elements,
             a.ring_dimension(),
+            self.profile.inner.digits.num_digits,
         ])
         .ok_or(AkitaError::InvalidProof)?;
         let t_coefficients = checked::product([
@@ -87,6 +89,7 @@ impl OrdinaryNativeRootPlan {
         let term_capacity = [
             checked::product([source_coefficients, a.output_rank()]),
             checked::product([
+                self.profile.group.num_polynomials(),
                 self.profile.blocks.live_blocks,
                 a.output_rank(),
                 a.ring_dimension(),
@@ -98,6 +101,16 @@ impl OrdinaryNativeRootPlan {
             Some(second.real_digit_count()),
             Some(second.padded_digit_count()),
             Some(source_coefficients),
+            checked::product([
+                self.segments
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .elements,
+                a.ring_dimension(),
+                self.source_width.map_or(0, |width| {
+                    width.bits() as usize + self.profile.inner.digits.num_digits
+                }),
+            ]),
         ]
         .into_iter()
         .collect::<Option<Vec<_>>>()
@@ -131,36 +144,56 @@ impl OrdinaryNativeRootPlan {
             b.ring_dimension(),
             alpha,
         )?;
-        for block in 0..self.profile.blocks.live_blocks {
-            for a_row in 0..a.output_rank() {
-                let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
-                row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-                for position in 0..self.profile.blocks.positions_per_block {
-                    let kernel = a_kernels.get(a_row, position)?;
-                    let element =
-                        checked::mul_add(block, self.profile.blocks.positions_per_block, position)
+        let owners = self.profile.group.num_polynomials();
+        let blocks = self.profile.blocks.live_blocks;
+        let positions = self.profile.blocks.positions_per_block;
+        let digits = self.profile.inner.digits.num_digits;
+        for owner in 0..owners {
+            for block in 0..blocks {
+                for a_row in 0..a.output_rank() {
+                    let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
+                    row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
+                    let owner_block =
+                        checked::mul_add(owner, blocks, block).ok_or(AkitaError::InvalidProof)?;
+                    for position in 0..positions {
+                        let element = checked::mul_add(owner_block, positions, position)
                             .ok_or(AkitaError::InvalidProof)?;
-                    for (coefficient, &weight) in kernel.iter().enumerate() {
-                        terms.push((
-                            repacking.coefficient_address(s_segment, element, 0, coefficient)?,
-                            batch * weight,
-                        ));
+                        for digit in 0..digits {
+                            let column = checked::mul_add(position, digits, digit)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let kernel = a_kernels.get(a_row, column)?;
+                            for (coefficient, &weight) in kernel.iter().enumerate() {
+                                terms.push((
+                                    repacking.coefficient_address(
+                                        s_segment,
+                                        element,
+                                        digit,
+                                        coefficient,
+                                    )?,
+                                    batch * weight,
+                                ));
+                            }
+                        }
                     }
-                }
-                let mut power = batch;
-                for coefficient in 0..a.ring_dimension() {
-                    let image_row = checked::mul_add(block, a.output_rank(), a_row)
-                        .and_then(|image| {
-                            checked::mul_add(image, subcolumns, coefficient / b.ring_dimension())
-                        })
-                        .ok_or(AkitaError::InvalidProof)?;
-                    terms.extend(repacking.coefficient_weights(
-                        t_segment,
-                        image_row,
-                        coefficient % b.ring_dimension(),
-                        -power,
-                    )?);
-                    power *= alpha;
+                    let mut power = batch;
+                    for coefficient in 0..a.ring_dimension() {
+                        let image_row = checked::mul_add(owner_block, a.output_rank(), a_row)
+                            .and_then(|image| {
+                                checked::mul_add(
+                                    image,
+                                    subcolumns,
+                                    coefficient / b.ring_dimension(),
+                                )
+                            })
+                            .ok_or(AkitaError::InvalidProof)?;
+                        terms.extend(repacking.coefficient_weights(
+                            t_segment,
+                            image_row,
+                            coefficient % b.ring_dimension(),
+                            -power,
+                        )?);
+                        power *= alpha;
+                    }
                 }
             }
         }
@@ -169,14 +202,28 @@ impl OrdinaryNativeRootPlan {
             for b_row in 0..b.output_rank() {
                 let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
                 row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-                for (local_block, block) in block_range.clone().enumerate() {
-                    for a_row in 0..a.output_rank() {
-                        for subcolumn in 0..subcolumns {
-                            let element = checked::mul_add(block, a.output_rank(), a_row)
-                                .and_then(|image| checked::mul_add(image, subcolumns, subcolumn))
-                                .ok_or(AkitaError::InvalidProof)?;
-                            for digit in 0..self.profile.outer.digits.num_digits {
-                                let column = checked::mul_add(local_block, a.output_rank(), a_row)
+                for owner in 0..owners {
+                    for (local_block, block) in block_range.clone().enumerate() {
+                        for a_row in 0..a.output_rank() {
+                            for subcolumn in 0..subcolumns {
+                                let element = checked::mul_add(owner, blocks, block)
+                                    .and_then(|block| {
+                                        checked::mul_add(block, a.output_rank(), a_row)
+                                    })
+                                    .and_then(|image| {
+                                        checked::mul_add(image, subcolumns, subcolumn)
+                                    })
+                                    .ok_or(AkitaError::InvalidProof)?;
+                                for digit in 0..self.profile.outer.digits.num_digits {
+                                    // B pads each owner's slice to max_blocks, not range.len().
+                                    let column = checked::mul_add(
+                                        owner,
+                                        geometry.max_blocks_per_slice(),
+                                        local_block,
+                                    )
+                                    .and_then(|block| {
+                                        checked::mul_add(block, a.output_rank(), a_row)
+                                    })
                                     .and_then(|image| {
                                         checked::mul_add(image, subcolumns, subcolumn)
                                     })
@@ -188,17 +235,18 @@ impl OrdinaryNativeRootPlan {
                                         )
                                     })
                                     .ok_or(AkitaError::InvalidProof)?;
-                                let kernel = b_kernels.get(b_row, column)?;
-                                for (coefficient, &weight) in kernel.iter().enumerate() {
-                                    terms.push((
-                                        repacking.coefficient_address(
-                                            t_segment,
-                                            element,
-                                            digit,
-                                            coefficient,
-                                        )?,
-                                        batch * weight,
-                                    ));
+                                    let kernel = b_kernels.get(b_row, column)?;
+                                    for (coefficient, &weight) in kernel.iter().enumerate() {
+                                        terms.push((
+                                            repacking.coefficient_address(
+                                                t_segment,
+                                                element,
+                                                digit,
+                                                coefficient,
+                                            )?,
+                                            batch * weight,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -207,7 +255,7 @@ impl OrdinaryNativeRootPlan {
                 // B rows are stacked in slice/row/coefficient order.
                 let b_image_row = row
                     .checked_sub(
-                        checked::product([self.profile.blocks.live_blocks, a.output_rank()])
+                        checked::product([owners, blocks, a.output_rank()])
                             .ok_or(AkitaError::InvalidProof)?,
                     )
                     .and_then(|index| index.checked_sub(1))
@@ -269,21 +317,64 @@ impl OrdinaryNativeRootPlan {
                         .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
             }
         }
-        let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
         let equality = akita_algebra::offset_eq::OffsetEqWindow::new(point)?;
         let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
-        for coefficient in 0..source_len {
-            terms.push((
-                repacking.coefficient_address(
+        let elements_per_owner =
+            checked::product([blocks, positions]).ok_or(AkitaError::InvalidProof)?;
+        for (owner, &evaluation) in evaluations.iter().enumerate() {
+            let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
+            row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
+            for coefficient in 0..source_len {
+                let element =
+                    checked::mul_add(owner, elements_per_owner, coefficient / a.ring_dimension())
+                        .ok_or(AkitaError::InvalidProof)?;
+                terms.extend(repacking.coefficient_weights(
                     s_segment,
-                    coefficient / a.ring_dimension(),
-                    0,
+                    element,
                     coefficient % a.ring_dimension(),
-                )?,
-                batch * equality.eval(coefficient),
-            ));
+                    batch * equality.eval(coefficient),
+                )?);
+            }
+            claim += batch * evaluation;
         }
-        claim += batch * evaluation;
+        if let Some(width) = self.source_width {
+            let bit_segment =
+                checked::sum([self.first_segment, 4]).ok_or(AkitaError::InvalidProof)?;
+            let elements =
+                checked::product([owners, elements_per_owner]).ok_or(AkitaError::InvalidProof)?;
+            for element in 0..elements {
+                let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
+                row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
+                let mut power = batch;
+                for coefficient in 0..a.ring_dimension() {
+                    // S + sum_j 2^j (-bit_j) = -2^(width-1).
+                    terms.extend(repacking.coefficient_weights(
+                        s_segment,
+                        element,
+                        coefficient,
+                        power,
+                    )?);
+                    let mut bit_power = power;
+                    for bit in 0..width.bits() as usize {
+                        terms.push((
+                            repacking.coefficient_address(
+                                bit_segment,
+                                element,
+                                bit,
+                                coefficient,
+                            )?,
+                            bit_power,
+                        ));
+                        bit_power += bit_power;
+                    }
+                    claim -= power * E::from_u128(width.offset());
+                    power *= alpha;
+                }
+            }
+        }
+        if row != batches.len() {
+            return Err(AkitaError::InvalidProof);
+        }
         NativeRootWeights::new(repacking.domain_len(), terms, claim)
     }
 }
@@ -385,9 +476,11 @@ fn scatter_negative_recomposition<E: Field>(
 mod tests {
     use super::*;
     use crate::root_repacking::RootRepackingSegment;
+    use akita_params::ordinary_source::OrdinarySourceWidth;
     use akita_params::sis::{
-        sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams,
-        SisMatrixRole, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+        inner_coeff_linf_bounds, num_digits_inner, num_digits_open, sis_table_key_for_linf_bound,
+        InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableDigest,
+        SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
     };
     use akita_params::{
         BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits,
@@ -433,13 +526,64 @@ mod tests {
         profile
     }
 
+    /// A signed `bits`-wide group with `slots` polynomials and multi-digit
+    /// sources where `bits` needs them.
+    fn signed_profile(
+        bits: u32,
+        slots: usize,
+        slices: CommitmentSliceCount,
+    ) -> GroupCommitPhaseParams {
+        let width = OrdinarySourceWidth::new(bits).unwrap();
+        let inner_digits = num_digits_inner(width.decomposition(), true);
+        let outer_digits = num_digits_open(width.decomposition());
+        let key = SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q128Offset275,
+            role: SisMatrixRole::Inner,
+            ring_dimension: 64,
+            coeff_linf_bound: inner_coeff_linf_bounds(SisModulusProfileId::Q128Offset275, 64)[0],
+        };
+        let inner = InnerCommitMatrixParams::try_new_with_min_rank(key, inner_digits).unwrap();
+        let geometry = CommitmentSliceGeometry::try_new(
+            slices,
+            2,
+            slots,
+            inner.output_rank(),
+            outer_digits,
+            64,
+            64,
+        )
+        .unwrap();
+        let outer = OuterCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                role: SisMatrixRole::Outer,
+                coeff_linf_bound: 7,
+                ..key
+            },
+            geometry.physical_input_width(),
+        )
+        .unwrap();
+        let profile = GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
+            group: PolynomialGroupLayout::new(7, slots),
+            blocks: BlockGeometry::new(2, 1, 2),
+            outer_slice_count: slices,
+            inner: RoleParams::new(GadgetDigits::new(3, inner_digits), inner),
+            outer: RoleParams::new(GadgetDigits::new(3, outer_digits), outer),
+        };
+        width.validate_profile(&profile).unwrap();
+        profile
+    }
+
     fn field(rng: &mut StdRng) -> F {
         F::from_u128(rng.gen::<u128>() >> 1)
     }
 
-    /// One and two B slices, with the ordinary segments first in the table and
-    /// behind a 192-address prefix that misaligns every segment start against
-    /// the 1024-address equality blocks.
+    /// The single-polynomial mixed root with one and two B slices, and signed
+    /// plans with several polynomials and multi-digit sources. Each sits
+    /// first in the table and behind a 192-address prefix that misaligns
+    /// every segment start against the 1024-address equality blocks.
     #[test]
     fn structured_ordinary_rows_match_the_flat_reference() {
         let setup = AkitaSetupDescriptor {
@@ -449,11 +593,29 @@ mod tests {
             setup_seed: [41u8; 32].into(),
         };
         let mut rng = StdRng::seed_from_u64(5);
+        let mut cases = Vec::new();
         for slices in [CommitmentSliceCount::ONE, CommitmentSliceCount::TWO] {
+            cases.push((profile(slices), None));
+            for (bits, slots) in [(2, 3), (9, 3), (33, 1)] {
+                cases.push((
+                    signed_profile(bits, slots, slices),
+                    Some(OrdinarySourceWidth::new(bits).unwrap()),
+                ));
+            }
+        }
+        for (profile, width) in cases {
             for prefix in [0, 3] {
-                let profile = profile(slices);
                 let first = usize::from(prefix > 0);
-                let plan = OrdinaryNativeRootPlan::new(profile, first).unwrap();
+                let plan = match width {
+                    None => OrdinaryNativeRootPlan::new(profile, first),
+                    Some(width) => OrdinaryNativeRootPlan::new_signed(profile, first, width),
+                }
+                .unwrap();
+                let label = format!(
+                    "{:?} {width:?} {} {prefix}",
+                    profile.outer_slice_count,
+                    profile.group.num_polynomials()
+                );
                 let mut segments = Vec::new();
                 if prefix > 0 {
                     segments.push(RootRepackingSegment {
@@ -464,7 +626,12 @@ mod tests {
                 }
                 segments.extend_from_slice(plan.segments());
                 let repacking = RootCoefficientRepacking::new(segments, 64).unwrap();
-                let point = (0..10).map(|_| field(&mut rng)).collect::<Vec<_>>();
+                let point = (0..profile.group.num_vars())
+                    .map(|_| field(&mut rng))
+                    .collect::<Vec<_>>();
+                let evaluations = (0..profile.group.num_polynomials())
+                    .map(|_| field(&mut rng))
+                    .collect::<Vec<_>>();
                 let payload = (0..profile
                     .outer_compression_plan()
                     .unwrap()
@@ -474,35 +641,48 @@ mod tests {
                 let batches = (0..plan.linear_batch_count())
                     .map(|_| field(&mut rng))
                     .collect::<Vec<_>>();
-                let (alpha, evaluation) = (field(&mut rng), field(&mut rng));
+                let alpha = field(&mut rng);
 
                 let structured = plan
                     .linear_weights(
-                        &repacking, &setup, &point, evaluation, &payload, alpha, &batches,
+                        &repacking,
+                        &setup,
+                        &point,
+                        &evaluations,
+                        &payload,
+                        alpha,
+                        &batches,
                     )
                     .unwrap();
                 let flat = plan
                     .reference_linear_weights(
-                        &repacking, &setup, &point, evaluation, &payload, alpha, &batches,
+                        &repacking,
+                        &setup,
+                        &point,
+                        &evaluations,
+                        &payload,
+                        alpha,
+                        &batches,
                     )
                     .unwrap();
-                assert_eq!(structured.claim(), flat.claim());
-                assert!(structured.terms().is_empty());
+                assert_eq!(structured.claim(), flat.claim(), "{label}");
+                assert_eq!(
+                    structured.terms().is_empty(),
+                    profile.inner.digits.num_digits == 1,
+                    "{label}"
+                );
                 let mut dense = vec![F::zero(); repacking.domain_len()];
                 for &(address, weight) in flat.terms() {
                     dense[address] += weight;
                 }
-                assert!(
-                    structured.materialize().unwrap() == dense,
-                    "{slices:?} {prefix}"
-                );
+                assert!(structured.materialize().unwrap() == dense, "{label}");
                 let num_vars = repacking.domain_len().trailing_zeros() as usize;
                 for _ in 0..3 {
                     let r = (0..num_vars).map(|_| field(&mut rng)).collect::<Vec<_>>();
                     assert_eq!(
                         structured.evaluate(&r).unwrap(),
                         flat.evaluate(&r).unwrap(),
-                        "{slices:?} {prefix}"
+                        "{label}"
                     );
                 }
             }

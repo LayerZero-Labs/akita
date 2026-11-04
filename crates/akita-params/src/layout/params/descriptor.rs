@@ -2,9 +2,9 @@ use super::*;
 
 pub(crate) fn append_sparse_challenge_descriptor_bytes(
     bytes: &mut Vec<u8>,
-    config: &FoldChallengeFamily,
+    config: &FoldChallengeDistribution,
 ) {
-    bytes.extend_from_slice(&config.domain_separator_bytes());
+    bytes.extend_from_slice(&config.ordering_descriptor_bytes());
 }
 
 impl CommittedGroupParams {

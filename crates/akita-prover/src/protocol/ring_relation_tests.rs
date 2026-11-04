@@ -1,5 +1,5 @@
 use super::*;
-use akita_challenges::{FoldChallengeFamily, SparseChallenge};
+use akita_challenges::{FoldChallengeDistribution, SparseChallenge};
 use akita_params::{
     BasisMode, CommitmentPayloadMode, OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
     RelationWitnessGeometry, SisModulusProfileId, SubringCoefficientPackingGeometry,
@@ -20,7 +20,7 @@ fn fixture() -> (
 ) {
     let s = 64;
     let d_a = 256;
-    let config = FoldChallengeFamily::production_for_ring_dim(s).unwrap();
+    let config = FoldChallengeDistribution::production_for_ring_dim(s).unwrap();
     let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q64Offset59,
         d_a,

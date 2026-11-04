@@ -1,16 +1,16 @@
 //! Runtime selection of the fold challenge distribution.
 
-use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
-use akita_error::AkitaError;
+use crate::{OperatorNormRejection, SparseChallengeConfig};
 
 /// Extension seam: challenge selection for binary source groups
 /// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
 ///
-/// The selected family owns its identity, validation and indexed sampling.
+/// The selected distribution owns its identity and validation;
+/// [`crate::FoldChallengeFamily`] owns its message layout and decoding.
 /// Serialization preserves the existing signed-sparse configuration representation.
-/// Selecting a family is independent of enabling Cargo features.
+/// Selecting a distribution is independent of enabling Cargo features.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FoldChallengeFamily {
+pub enum FoldChallengeDistribution {
     /// Existing fixed-weight signed-sparse distribution.
     SignedSparse(SparseChallengeConfig),
     /// Bounded-weight 46 supports in Phi243, with deterministic Shake256V1 signs.
@@ -18,7 +18,7 @@ pub enum FoldChallengeFamily {
     BinaryRoot,
 }
 
-impl serde::Serialize for FoldChallengeFamily {
+impl serde::Serialize for FoldChallengeDistribution {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::SignedSparse(config) => {
@@ -40,7 +40,7 @@ impl serde::Serialize for FoldChallengeFamily {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for FoldChallengeFamily {
+impl<'de> serde::Deserialize<'de> for FoldChallengeDistribution {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let config = SparseChallengeConfig::deserialize(deserializer)?;
         // Reserve an impossible supported sparse weight, preserving ordinary
@@ -53,13 +53,13 @@ impl<'de> serde::Deserialize<'de> for FoldChallengeFamily {
     }
 }
 
-impl From<SparseChallengeConfig> for FoldChallengeFamily {
+impl From<SparseChallengeConfig> for FoldChallengeDistribution {
     fn from(config: SparseChallengeConfig) -> Self {
         Self::SignedSparse(config)
     }
 }
 
-impl FoldChallengeFamily {
+impl FoldChallengeDistribution {
     /// Select the ordinary ±1-only family.
     pub const fn pm1_only(weight: usize) -> Self {
         Self::SignedSparse(SparseChallengeConfig::pm1_only(weight))
@@ -126,12 +126,21 @@ impl FoldChallengeFamily {
         }
     }
 
-    /// Canonical family identity bound into the draw context.
-    pub fn domain_separator_bytes(&self) -> Vec<u8> {
+    /// Canonical bytes that order semantically distinct distributions.
+    ///
+    /// This is a schedule-ordering descriptor, not a transcript binding; the
+    /// draw context binds the family through `FamilyShell`.
+    pub fn ordering_descriptor_bytes(&self) -> Vec<u8> {
         match self {
             #[cfg(feature = "labinius-challenges")]
             Self::BinaryRoot => crate::binary::root_family::IDENTITY.to_vec(),
-            Self::SignedSparse(config) => config.domain_separator_bytes(),
+            Self::SignedSparse(config) => {
+                let mut out = Vec::with_capacity(17);
+                out.push(0);
+                out.extend_from_slice(&(config.count_pm1 as u64).to_le_bytes());
+                out.extend_from_slice(&(config.count_pm2 as u64).to_le_bytes());
+                out
+            }
         }
     }
 
@@ -193,54 +202,6 @@ impl FoldChallengeFamily {
             #[cfg(feature = "labinius-challenges")]
             Self::BinaryRoot => crate::binary::root_family::validate(D, required_bits),
             Self::SignedSparse(config) => config.validate_min_entropy::<D>(required_bits),
-        }
-    }
-
-    pub(crate) fn validate_draw(
-        &self,
-        ring_d: usize,
-        rejection: Option<OperatorNormRejection>,
-    ) -> Result<(), AkitaError> {
-        self.validate_dyn(ring_d)
-            .map_err(|error| AkitaError::InvalidInput(error.into()))?;
-        match self {
-            #[cfg(feature = "labinius-challenges")]
-            Self::BinaryRoot => {
-                if rejection.is_some() {
-                    return Err(AkitaError::InvalidInput(
-                        "binary root family has no operator-norm rejection policy".into(),
-                    ));
-                }
-            }
-            Self::SignedSparse(config) => {
-                if ring_d > crate::sampler::MAX_STACK_RING_DIM {
-                    return Err(AkitaError::InvalidInput(
-                        "ring dimension exceeds supported stack sampler limit".into(),
-                    ));
-                }
-                if let Some(policy) = rejection {
-                    policy
-                        .validate(ring_d, config)
-                        .map_err(|error| AkitaError::InvalidInput(error.into()))?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn sample_indexed(
-        &self,
-        seed: &[u8; 32],
-        ring_d: usize,
-        count: usize,
-        rejection: Option<OperatorNormRejection>,
-    ) -> Result<Vec<SparseChallenge>, AkitaError> {
-        match self {
-            #[cfg(feature = "labinius-challenges")]
-            Self::BinaryRoot => crate::binary::root_family::sample(seed, count),
-            Self::SignedSparse(config) => crate::sampler::sample_indexed_challenges_from_seed(
-                seed, ring_d, count, config, rejection,
-            ),
         }
     }
 }

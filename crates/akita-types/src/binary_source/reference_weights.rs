@@ -617,7 +617,7 @@ pub(crate) fn root_relation<E: Field>(
                 public.plan.repacking(),
                 &public.setup,
                 point,
-                evaluation,
+                core::slice::from_ref(&evaluation),
                 payload,
                 alpha,
                 batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,

@@ -4,7 +4,8 @@ use super::*;
 fn projection_successor_contains_only_response_and_image_segments() {
     let input = fixture();
     let relation = build(&input).unwrap();
-    let (plan, digits) = relation.successor_table(256).unwrap();
+    let (plan, digits) =
+        BinaryRootRelation::successor_table(&relation.response, &relation.images, 256).unwrap();
     assert_eq!(plan.segments().len(), 2);
     assert_eq!(plan.segments()[0].elements, relation.response.len());
     assert_eq!(plan.segments()[0].digits, 4);
@@ -15,7 +16,9 @@ fn projection_successor_contains_only_response_and_image_segments() {
         .map(|&digit| Prime128Offset275::from_i64(i64::from(digit)))
         .collect::<Vec<_>>();
     plan.validate_digit_table(&table).unwrap();
-    assert!(relation.successor_table(648).is_err());
+    assert!(
+        BinaryRootRelation::successor_table(&relation.response, &relation.images, 648).is_err()
+    );
     // Every residual remains an integer construction witness. Its coefficients
     // are neither another successor segment nor an unauthenticated P-zero row.
     assert!(relation
@@ -80,7 +83,7 @@ fn projection_replay_rejects_malformed_challenges_and_nondivisible_images() {
             original.response.clone(),
             &input.images,
             challenges,
-            FoldChallengeFamily::BinaryRoot,
+            FoldChallengeDistribution::BinaryRoot,
         )
     };
     for coefficient in [0, D / 2, D - 1] {

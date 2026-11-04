@@ -3,7 +3,7 @@ use crate::commitment::PortableStatePolicy;
 use crate::opaque::CpuBackend;
 use crate::opaque::{ComputeBackendSetup, OperationCtx};
 use crate::{AkitaProverSetup, DensePoly};
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_params::sis::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
@@ -38,7 +38,7 @@ fn audited_commit_params(
         1,
         1,
         1,
-        FoldChallengeFamily::production_for_ring_dim(D)
+        FoldChallengeDistribution::production_for_ring_dim(D)
             .expect("D has a production challenge configuration"),
     );
     params.own_group_mut().profile.outer_slice_count = slice_count;
@@ -153,7 +153,7 @@ fn commit_level_params_reject_log_basis_above_i8_range() {
         1,
         1,
         1,
-        FoldChallengeFamily::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(2, 4, 2, 2, 2)
     .unwrap();
@@ -474,7 +474,8 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
             );
         source_digits.extend(planes);
     }
-    let rows = raw.1.inner_rows()[0].as_ring_slice::<D>().unwrap();
+    let hint_rows = raw.1.inner_rows().unwrap();
+    let rows = hint_rows[0].as_ring_slice::<D>().unwrap();
     assert_eq!(
         rows.len(),
         canonical.inner().matrix.output_rank() * canonical.blocks().live_blocks
@@ -543,7 +544,7 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
             .execute_full(&execution, &sources)
             .unwrap()
             .into_parts();
-        let normal_group = CommittedGroup::new(profile, Commitment::new(normal_payload));
+        let normal_group = CommittedGroup::new(profile, Commitment::new(normal_payload)).unwrap();
         let (_, outer_image) = executor
             .execute_uncompressed_stages(&execution, &sources, None)
             .unwrap()

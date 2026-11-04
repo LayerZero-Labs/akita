@@ -3,6 +3,7 @@
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BINARY_SETUP_P;
+use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
 };
@@ -13,17 +14,21 @@ use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, T
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
 
-/// Four ordinary preimage families sharing the native root's outgoing table.
+/// Ordinary preimage families sharing the native root's outgoing table.
 ///
 /// S is the original small coefficient table; T is the ordinary A image in
 /// balanced base-eight digits; the remaining two families are the existing
 /// commitment compression's negative-binary digits. Their `{-1,0}` predicates
 /// are compression constraints, independent of the binary source agreement.
+/// Explicit signed plans append negative offset bits and link them to S. With
+/// widths at most 64 and canonical base-eight depth, both sides of this link
+/// have absolute value below 2^67, so equality modulo P has no integer wrap.
 #[derive(Clone, Debug)]
 pub struct OrdinaryNativeRootPlan {
     profile: GroupCommitPhaseParams,
     pub(super) first_segment: usize,
-    segments: [RootRepackingSegment; 4],
+    segments: Vec<RootRepackingSegment>,
+    source_width: Option<OrdinarySourceWidth>,
     compression: CompressionChainPlan,
     linear_batch_count: usize,
 }
@@ -41,15 +46,40 @@ impl OrdinaryNativeRootPlan {
                 "mixed root requires one ordinary small coefficient source and base-eight image digits".into(),
             ));
         }
+        Self::compile(profile, first_segment, None)
+    }
+
+    /// Select exact signed bounds and all polynomial slots explicitly.
+    ///
+    /// This compiles arithmetic only. The existing root driver continues to
+    /// select `new`; a production driver needs separate schedule/extraction
+    /// admission before selecting this wider relation.
+    pub fn new_signed(
+        profile: GroupCommitPhaseParams,
+        first_segment: usize,
+        width: OrdinarySourceWidth,
+    ) -> Result<Self, AkitaError> {
+        width.validate_profile(&profile)?;
+        Self::compile(profile, first_segment, Some(width))
+    }
+
+    fn compile(
+        profile: GroupCommitPhaseParams,
+        first_segment: usize,
+        source_width: Option<OrdinarySourceWidth>,
+    ) -> Result<Self, AkitaError> {
         let a_degree = profile.inner.matrix.ring_dimension();
         let b_degree = profile.outer.matrix.ring_dimension();
         let subcolumns = checked::exact_div(a_degree, b_degree).ok_or(AkitaError::InvalidProof)?;
+        let owners = profile.group.num_polynomials();
         let source_elements = checked::product([
+            owners,
             profile.blocks.live_blocks,
             profile.blocks.positions_per_block,
         ])
         .ok_or(AkitaError::InvalidProof)?;
         let image_elements = checked::product([
+            owners,
             profile.blocks.live_blocks,
             profile.inner.matrix.output_rank(),
             subcolumns,
@@ -78,11 +108,11 @@ impl OrdinaryNativeRootPlan {
                 "mixed root native degree exceeds the root grinding budget".into(),
             ));
         }
-        let segments = [
+        let mut segments = vec![
             RootRepackingSegment {
                 geometry: RelationRowGeometry::native(a_degree)?,
                 elements: source_elements,
-                digits: 1,
+                digits: profile.inner.digits.num_digits,
             },
             RootRepackingSegment {
                 geometry: RelationRowGeometry::native(b_degree)?,
@@ -100,7 +130,26 @@ impl OrdinaryNativeRootPlan {
                 digits: 1,
             },
         ];
+        if let Some(width) = source_width {
+            // Only the explicitly signed selection requires complete cubes.
+            // Preserve the legacy constructor's partial-block relation grammar.
+            let source_len =
+                checked::pow2(profile.group.num_vars()).ok_or(AkitaError::InvalidProof)?;
+            if checked::product([source_elements, a_degree])
+                != checked::product([owners, source_len])
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "ordinary native source requires complete coefficient cubes".into(),
+                ));
+            }
+            segments.push(RootRepackingSegment {
+                geometry: RelationRowGeometry::native(a_degree)?,
+                elements: source_elements,
+                digits: width.bits() as usize,
+            });
+        }
         let linear_batch_count = checked::product([
+            owners,
             profile.blocks.live_blocks,
             profile.inner.matrix.output_rank(),
         ])
@@ -109,7 +158,15 @@ impl OrdinaryNativeRootPlan {
                 .outer_slice_count
                 .logical_output_rows(profile.outer.matrix.output_rank())
                 .ok()
-                .and_then(|b_rows| checked::sum([a_rows, b_rows, 3]))
+                .and_then(|b_rows| {
+                    checked::sum([
+                        a_rows,
+                        b_rows,
+                        2,
+                        owners,
+                        source_width.map_or(0, |_| source_elements),
+                    ])
+                })
         })
         .ok_or(AkitaError::InvalidProof)?;
         checked::sum([first_segment, segments.len()]).ok_or(AkitaError::InvalidProof)?;
@@ -117,9 +174,18 @@ impl OrdinaryNativeRootPlan {
             profile,
             first_segment,
             segments,
+            source_width,
             compression,
             linear_batch_count,
         })
+    }
+
+    pub fn profile(&self) -> &GroupCommitPhaseParams {
+        &self.profile
+    }
+
+    pub fn source_width(&self) -> Option<OrdinarySourceWidth> {
+        self.source_width
     }
 
     pub fn segments(&self) -> &[RootRepackingSegment] {
@@ -138,19 +204,20 @@ impl OrdinaryNativeRootPlan {
         Ok(())
     }
 
-    /// Addresses of the existing compression digits requiring `w(w+1)=0`.
+    /// Addresses of compression digits and signed offset bits requiring `w(w+1)=0`.
     pub fn negative_binary_addresses(
         &self,
         repacking: &RootCoefficientRepacking,
     ) -> Result<Vec<usize>, AkitaError> {
         self.validate_repacking(repacking)?;
         let mut addresses = Vec::new();
-        for offset in [2, 3] {
+        for offset in 2..self.segments.len() {
             let segment =
                 checked::sum([self.first_segment, offset]).ok_or(AkitaError::InvalidProof)?;
             let shape = self.segments.get(offset).ok_or(AkitaError::InvalidProof)?;
             let count = checked::product([
                 shape.elements,
+                shape.digits,
                 shape.geometry.polynomial_modulus_dimension(),
             ])
             .ok_or(AkitaError::InvalidProof)?;
@@ -158,13 +225,15 @@ impl OrdinaryNativeRootPlan {
                 .try_reserve_exact(count)
                 .map_err(|_| AkitaError::InvalidProof)?;
             for element in 0..shape.elements {
-                for coefficient in 0..shape.geometry.polynomial_modulus_dimension() {
-                    addresses.push(repacking.coefficient_address(
-                        segment,
-                        element,
-                        0,
-                        coefficient,
-                    )?);
+                for digit in 0..shape.digits {
+                    for coefficient in 0..shape.geometry.polynomial_modulus_dimension() {
+                        addresses.push(repacking.coefficient_address(
+                            segment,
+                            element,
+                            digit,
+                            coefficient,
+                        )?);
+                    }
                 }
             }
         }
@@ -173,30 +242,33 @@ impl OrdinaryNativeRootPlan {
 
     /// Direct public A/B/compression and source-evaluation identities.
     ///
-    /// Rows are A in block/row order, B in slice/row order, the two compression
-    /// maps, then the scalar evaluation. The public matrix is the canonical
-    /// ordinary setup prefix, reused with each role's own dimensions.
+    /// Rows are A in owner/block/row order, B in slice/row order, the two
+    /// compression maps, all slot evaluations, then signed-bound rows. The
+    /// public matrix is the canonical ordinary setup prefix, reused with each
+    /// role's own dimensions.
     ///
     /// Each identity repeats one public pattern: an A row reads the same
-    /// kernels in every block, a B row the same kernels in every slice of one
-    /// width, and a recomposition the same coefficients at every bit. The
-    /// weights keep each pattern once as `TranslatedLanes`, and the scalar
-    /// evaluation as an offset equality. The verifier evaluates them at the
-    /// Stage 2 point without one term per table address; the prover
-    /// materializes the same field elements.
+    /// kernels in every owner and block, a B row the same kernels in every
+    /// slice of one width, a recomposition the same coefficients at every bit,
+    /// and a signed-bound row the same powers at every source element. The
+    /// weights keep each pattern once as `TranslatedLanes`, and each
+    /// single-digit slot evaluation as an offset equality. The verifier
+    /// evaluates them at the Stage 2 point without one term per table address;
+    /// the prover materializes the same field elements.
     #[allow(clippy::too_many_arguments)]
     pub fn linear_weights<E: Field>(
         &self,
         repacking: &RootCoefficientRepacking,
         setup: &AkitaSetupDescriptor,
         point: &[E],
-        evaluation: E,
+        evaluations: &[E],
         payload: &[E],
         alpha: E,
         batches: &[E],
     ) -> Result<NativeRootWeights<E>, AkitaError> {
         self.validate_repacking(repacking)?;
-        if point.len() != self.profile.group.num_vars()
+        if evaluations.len() != self.profile.group.num_polynomials()
+            || point.len() != self.profile.group.num_vars()
             || batches.len() != self.linear_batch_count
             || payload.len() != self.compression.terminal_coefficients()
             || E::from_u128(BINARY_SETUP_P) != E::zero()
@@ -235,19 +307,37 @@ impl OrdinaryNativeRootPlan {
         let [s_lanes, t_lanes, f_lanes, h_lanes] = [lanes(0)?, lanes(1)?, lanes(2)?, lanes(3)?];
         let subcolumns = checked::exact_div(a.ring_dimension(), b.ring_dimension())
             .ok_or(AkitaError::InvalidProof)?;
+        let owners = self.profile.group.num_polynomials();
+        let positions = self.profile.blocks.positions_per_block;
+        let source_digits = self.profile.inner.digits.num_digits;
         let digits = self.profile.outer.digits.num_digits;
-        let a_rows = checked::product([self.profile.blocks.live_blocks, a.output_rank()])
+        let owner_blocks = checked::product([owners, self.profile.blocks.live_blocks])
             .ok_or(AkitaError::InvalidProof)?;
+        let source_elements =
+            checked::product([owner_blocks, positions]).ok_or(AkitaError::InvalidProof)?;
+        let a_rows =
+            checked::product([owner_blocks, a.output_rank()]).ok_or(AkitaError::InvalidProof)?;
+        let signed_rows = self.source_width.map_or(0, |_| source_elements);
         let (a_batches, rest) = batches
             .split_at_checked(a_rows)
             .ok_or(AkitaError::InvalidProof)?;
-        let b_rows = rest.len().checked_sub(3).ok_or(AkitaError::InvalidProof)?;
-        let (b_batches, map_batches) = rest
+        let b_rows = checked::sum([2, owners, signed_rows])
+            .and_then(|tail| rest.len().checked_sub(tail))
+            .ok_or(AkitaError::InvalidProof)?;
+        let (b_batches, rest) = rest
             .split_at_checked(b_rows)
             .ok_or(AkitaError::InvalidProof)?;
-        let &[first_batch, second_batch, evaluation_batch] = map_batches else {
+        let (map_batches, rest) = rest.split_at_checked(2).ok_or(AkitaError::InvalidProof)?;
+        let &[first_batch, second_batch] = map_batches else {
             return Err(AkitaError::InvalidProof);
         };
+        let (evaluation_batches, signed_batches) = rest
+            .split_at_checked(owners)
+            .ok_or(AkitaError::InvalidProof)?;
+        let geometry = self.profile.derive_slice_geometry()?;
+        if Some(b_rows) != checked::product([geometry.block_ranges().len(), b.output_rank()]) {
+            return Err(AkitaError::InvalidProof);
+        }
         let mut families = Vec::new();
         let mut translated = |copies, lanes, residue| {
             families.push(RootWeightFamily::Translated(TranslatedLanes::new(
@@ -255,28 +345,31 @@ impl OrdinaryNativeRootPlan {
             )?));
             Ok::<_, AkitaError>(())
         };
-        // A rows read their residue kernels against the source in every block.
+        // A rows read their residue kernels against the source digits in
+        // every owner and block.
         let a_rings = role_rings(matrix, a.output_rank(), a.input_width(), a.ring_dimension())?;
-        let positions = self.profile.blocks.positions_per_block;
         for a_row in 0..a.output_rank() {
-            let copies = (0..self.profile.blocks.live_blocks)
-                .map(|block| {
-                    let batch = checked::mul_add(block, a.output_rank(), a_row)
+            let copies = (0..owner_blocks)
+                .map(|owner_block| {
+                    let batch = checked::mul_add(owner_block, a.output_rank(), a_row)
                         .and_then(|row| a_batches.get(row))
                         .ok_or(AkitaError::InvalidProof)?;
-                    let element =
-                        checked::product([block, positions]).ok_or(AkitaError::InvalidProof)?;
+                    let element = checked::product([owner_block, positions])
+                        .ok_or(AkitaError::InvalidProof)?;
                     Ok((s_lanes.base(element, 0)?, *batch))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            let kernels = (0..positions)
-                .map(|position| {
-                    Ok((
-                        s_lanes.offset(position, 0)?,
-                        ring(&a_rings, a.input_width(), a_row, position)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let mut kernels = Vec::new();
+            for position in 0..positions {
+                for digit in 0..source_digits {
+                    let column = checked::mul_add(position, source_digits, digit)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    kernels.push((
+                        s_lanes.offset(position, digit)?,
+                        ring(&a_rings, a.input_width(), a_row, column)?,
+                    ));
+                }
+            }
             translated(copies, kernels, Some(alpha))?;
         }
         // Every A image subtracts its recomposed T digits, scaled by its row.
@@ -310,11 +403,15 @@ impl OrdinaryNativeRootPlan {
         }
         translated(image_copies, recomposition, None)?;
         // B rows read their residue kernels against the T digits of every
-        // slice; slices of one width share one pattern.
+        // owner in every slice; slices of one width share one pattern. Each
+        // owner's B columns are padded to the widest slice.
         let b_rings = role_rings(matrix, b.output_rank(), b.input_width(), b.ring_dimension())?;
         let block_elements =
             checked::product([a.output_rank(), subcolumns]).ok_or(AkitaError::InvalidProof)?;
-        let geometry = self.profile.derive_slice_geometry()?;
+        let owner_elements = checked::product([self.profile.blocks.live_blocks, block_elements])
+            .ok_or(AkitaError::InvalidProof)?;
+        let owner_columns = checked::product([geometry.max_blocks_per_slice(), block_elements])
+            .ok_or(AkitaError::InvalidProof)?;
         let mut widths = geometry
             .block_ranges()
             .iter()
@@ -341,14 +438,19 @@ impl OrdinaryNativeRootPlan {
                 let columns =
                     checked::product([width, block_elements]).ok_or(AkitaError::InvalidProof)?;
                 let mut kernels = Vec::new();
-                for element in 0..columns {
-                    for digit in 0..digits {
-                        let column = checked::mul_add(element, digits, digit)
+                for owner in 0..owners {
+                    for element in 0..columns {
+                        let lane = checked::mul_add(owner, owner_elements, element)
                             .ok_or(AkitaError::InvalidProof)?;
-                        kernels.push((
-                            t_lanes.offset(element, digit)?,
-                            ring(&b_rings, b.input_width(), b_row, column)?,
-                        ));
+                        for digit in 0..digits {
+                            let column = checked::mul_add(owner, owner_columns, element)
+                                .and_then(|column| checked::mul_add(column, digits, digit))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            kernels.push((
+                                t_lanes.offset(lane, digit)?,
+                                ring(&b_rings, b.input_width(), b_row, column)?,
+                            ));
+                        }
                     }
                 }
                 translated(copies, kernels, Some(alpha))?;
@@ -402,22 +504,96 @@ impl OrdinaryNativeRootPlan {
             vec![(0, output)],
             None,
         )?;
+        // Within one owner, a power of `alpha` per coefficient.
+        let coefficient_powers = |scale: E| {
+            let mut power = scale;
+            (0..a.ring_dimension())
+                .map(|_| {
+                    let value = power;
+                    power *= alpha;
+                    value
+                })
+                .collect::<Vec<_>>()
+        };
+        if let Some(width) = self.source_width {
+            // S + sum_j 2^j (-bit_j) = -2^(width-1) for every source element.
+            let bit_lanes = lanes(4)?;
+            let mut s_copies = Vec::new();
+            let mut bit_copies = Vec::new();
+            for (element, &batch) in signed_batches.iter().enumerate() {
+                s_copies.push((s_lanes.base(element, 0)?, batch));
+                bit_copies.push((bit_lanes.base(element, 0)?, batch));
+            }
+            let mut s_pattern = Vec::new();
+            let mut digit_scale = E::one();
+            for digit in 0..source_digits {
+                s_pattern.push((s_lanes.offset(0, digit)?, coefficient_powers(digit_scale)));
+                digit_scale *= E::from_u64(8);
+            }
+            let mut bit_pattern = Vec::new();
+            let mut bit_scale = E::one();
+            for bit in 0..width.bits() as usize {
+                bit_pattern.push((bit_lanes.offset(0, bit)?, coefficient_powers(bit_scale)));
+                bit_scale += bit_scale;
+            }
+            translated(s_copies, s_pattern, None)?;
+            translated(bit_copies, bit_pattern, None)?;
+        }
+        let mut terms = Vec::new();
         let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
-        families.push(RootWeightFamily::SourceEvaluation(
-            SourceEvaluationWeights::new(
-                table_len,
-                s_lanes.contiguous(0, source_len)?,
-                point,
-                evaluation_batch,
-            )?,
-        ));
-        let claim = second_batch
+        let owner_coefficients = checked::product([
+            self.profile.blocks.live_blocks,
+            positions,
+            a.ring_dimension(),
+        ])
+        .ok_or(AkitaError::InvalidProof)?;
+        for (owner, &batch) in evaluation_batches.iter().enumerate() {
+            let start =
+                checked::product([owner, owner_coefficients]).ok_or(AkitaError::InvalidProof)?;
+            if source_digits == 1 {
+                families.push(RootWeightFamily::SourceEvaluation(
+                    SourceEvaluationWeights::new(
+                        table_len,
+                        s_lanes.contiguous(start, source_len)?,
+                        point,
+                        batch,
+                    )?,
+                ));
+            } else {
+                // Multi-digit sources interleave digits, so the slot's
+                // evaluation is not one address interval; keep its terms.
+                let equality = OffsetEqWindow::new(point)?;
+                for coefficient in 0..source_len {
+                    let element = checked::sum([start, coefficient])
+                        .map(|flat| flat / a.ring_dimension())
+                        .ok_or(AkitaError::InvalidProof)?;
+                    terms.extend(repacking.coefficient_weights(
+                        self.first_segment,
+                        element,
+                        coefficient % a.ring_dimension(),
+                        batch * equality.eval(coefficient),
+                    )?);
+                }
+            }
+        }
+        let mut claim = second_batch
             * payload
                 .iter()
                 .rev()
-                .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient)
-            + evaluation_batch * evaluation;
-        NativeRootWeights::structured(table_len, Vec::new(), families, claim)
+                .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
+        for (&batch, &evaluation) in evaluation_batches.iter().zip(evaluations) {
+            claim += batch * evaluation;
+        }
+        if let Some(width) = self.source_width {
+            let powers = coefficient_powers(E::one())
+                .into_iter()
+                .fold(E::zero(), |sum, power| sum + power);
+            let offset = E::from_u128(width.offset());
+            for &batch in signed_batches {
+                claim -= batch * powers * offset;
+            }
+        }
+        NativeRootWeights::structured(table_len, terms, families, claim)
     }
 
     fn maps(&self) -> Result<[CompressionMapPlan; 2], AkitaError> {

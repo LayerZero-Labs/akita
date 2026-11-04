@@ -9,7 +9,9 @@ use jolt_field::Field;
 use super::{
     binary_scalar_challenges, BinarySourceDescriptor, PrimePlaneManifest, PRIME_PLANE_DIGITS,
 };
-use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
+use crate::native_root_relation::{
+    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes,
+};
 use crate::root_repacking::RootCoefficientRepacking;
 
 /// Compile each plane's ring identity and scalar reading into Stage 2.
@@ -340,7 +342,8 @@ impl<E: Field> PrimePlaneWeights<E> {
                     power *= self.alpha;
                 }
             }
-            for (column, &column_weight) in plane.column_weights.iter().enumerate() {
+            let columns = plane.column_weights.len();
+            let weigh = |column: usize| -> Result<[E; 162], AkitaError> {
                 let mut multiplier = [E::zero(); 162];
                 for &(s, negative) in self.support(plane.polynomial, column)? {
                     *multiplier.get_mut(s).ok_or(AkitaError::InvalidProof)? =
@@ -353,6 +356,12 @@ impl<E: Field> PrimePlaneWeights<E> {
                     &mut kernel,
                 )
                 .map_err(|error| AkitaError::Internal(error.to_string()))?;
+                Ok(kernel)
+            };
+            let kernels = weigh_units(0..columns, weigh)?;
+            for ((column, &column_weight), kernel) in
+                plane.column_weights.iter().enumerate().zip(kernels)
+            {
                 let element = checked::mul_add(plane_index, self.columns, column)
                     .ok_or(AkitaError::InvalidProof)?;
                 for (coefficient, (&relation, &omega)) in
