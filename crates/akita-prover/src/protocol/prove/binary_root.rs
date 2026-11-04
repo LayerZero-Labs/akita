@@ -307,8 +307,10 @@ where
         .try_into()
         .map_err(|_| AkitaError::InvalidProof)?;
     let rho = projections.batch(&mu)?;
+    let span = tracing::info_span!("binary_root_a_matrix").entered();
     let matrix =
         akita_types::binary_source::binary_root_matrix(&expanded.setup_seed.seed, manifest)?;
+    drop(span);
     let span = tracing::info_span!("binary_root_relation_compile").entered();
     let (relation, negative_binary_weights) = public.relation(
         &challenges,
@@ -388,11 +390,13 @@ where
         prefix.n_prefix()?,
     )?;
     let (index_factor, coefficient_factor) = product.factors()?;
+    let coefficients_span = tracing::info_span!("binary_root_stage3_a_coefficients").entered();
     let coefficients = akita_types::binary_source::binary_a_setup_coefficients(
         &expanded.setup_seed.seed,
         manifest,
         prefix.n_prefix()?,
     )?;
+    drop(coefficients_span);
     let (claim, session) =
         backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
             session: proof_session,

@@ -198,6 +198,7 @@ impl BinaryRootRelation {
         rows.try_reserve_exact(row_count)
             .map_err(|_| invalid("binary residual allocation failed"))?;
         for (polynomial, response) in response.chunks_exact(source_rows).enumerate() {
+            let span = tracing::info_span!("binary_root_residual_operands").entered();
             let response = response
                 .iter()
                 .map(auxiliary_ring)
@@ -214,7 +215,9 @@ impl BinaryRootRelation {
                 .map(auxiliary_ring)
                 .collect::<Result<Vec<_>, _>>()?;
             let mut builder = TrinomialRelationQuotientBuilder::new(&response, &common)?;
+            drop(span);
             for (row_index, matrix_row) in matrix.iter().enumerate() {
+                let span = tracing::info_span!("binary_root_residual_row_operands").entered();
                 let matrix_row = matrix_row
                     .iter()
                     .map(auxiliary_ring)
@@ -227,7 +230,10 @@ impl BinaryRootRelation {
                     let image = images.get(offset).ok_or(AkitaError::InvalidProof)?;
                     image_row.push(auxiliary_ring(&image.map(|x| i128::from(x.centered())))?);
                 }
+                drop(span);
+                let span = tracing::info_span!("binary_root_residual_row_products").entered();
                 let (remainder, quotient) = builder.decompose(&matrix_row, &image_row)?;
+                drop(span);
                 let mut lifted_remainder = [0; D];
                 for (destination, &coefficient) in
                     lifted_remainder.iter_mut().zip(remainder.coefficients())

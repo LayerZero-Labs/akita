@@ -543,6 +543,7 @@ where
             "field-switch source owner mismatch".into(),
         ));
     }
+    let _span = tracing::info_span!("binary_field_switch_source").entered();
     let descriptor = request.manifest.descriptor();
     let owner = descriptor
         .polynomials()

@@ -1496,6 +1496,89 @@ kernel, and the image hint uses its prepared limb commitment. Scaled to this
 geometry, each spends about 20–30% more CPU time than that crate's own
 single-threaded benchmark.
 
+### Second prover pass
+
+A second byte-preserving pass targets the binary root spans outside weight
+materialization and Stage 2, and profiles the ordinary suffix folds. Its
+profile executable adds sub-spans to `f92e959ee`: the A matrix derived in
+proving (`binary_root_a_matrix`), the Stage 3 A coefficients, the three phases
+of the residual rows, the direct A adjoint, and the field switch's source
+extraction, partial evaluations and rounds. The profile is three isolated
+proving runs at N=2^22 `word-prime` with `BINARY_SOURCE_CATALOG_CACHE`. Every
+run reproduced its pin. The host was shared and the one-minute load was
+27.2–37.5, so these spans run 20–40% above the post-merge figures above. The
+third run was disturbed (complete proving 8.5 s) and is excluded by the
+median. Logs are `$CARGO_TARGET_DIR/p2/logs/s<run>-22-word-prime.txt`.
+
+| Span (ms, median of 3) | Wall | Process CPU |
+| --- | ---: | ---: |
+| Complete proving | 2,431.9 | 12,185.5 |
+| › binary root level | 2,013.7 | 9,668.0 |
+| ›› projections | 390.1 | 2,481.8 |
+| ››› response fold (replayed) | 116.5 | 840.2 |
+| ››› residual rows | 289.6 | 1,713.4 |
+| ›››› response and challenge operands | 80.7 | 409.1 |
+| ›››› A row operands (3 calls) | 43.2 | 46.2 |
+| ›››› transform products (3 calls) | 168.9 | 1,231.8 |
+| ›› A matrix derivation before relation compile | 97.6 | 87.6 |
+| ›› relation compile | 257.5 | 1,912.1 |
+| ››› direct A adjoint | 250.1 | 1,904.7 |
+| ›› D commitment | 143.8 | 1,011.2 |
+| ››› D payload | 98.7 | 813.4 |
+| ››› prime digits | 30.7 | 177.8 |
+| ››› row partials | 16.4 | 16.4 |
+| ›› field switch | 64.2 | 251.6 |
+| ››› source extraction | 18.1 | 18.0 |
+| ››› partial evaluations | 17.8 | 100.7 |
+| ››› rounds | 28.9 | 133.2 |
+| ›› Stage 3 | 131.5 | 245.1 |
+| ››› A coefficients | 106.4 | 106.4 |
+| ››› coefficient and index passes | 17.2 | 116.5 |
+| › ordinary suffix (complete minus root) | 418.2 | 2,517.5 |
+
+The response fold span runs twice, once in the response build and once in the
+projection replay; the row gives half the two-call total.
+
+What these spans spend their time on:
+
+- **Residual rows.** Each row multiplies the bounded response by every A
+  entry in the 128-bit auxiliary field, through 4,096 response, 768 image,
+  256 challenge and 12,288 A transforms of length 1,296. The response, A and
+  image operands are converted serially. The quotients are computed but never
+  read: the projections read only the remainders.
+- **Duplicate setup derivation.** The commitment derives A from the seed and
+  keeps it in the private source handle. Proving derives it again before the
+  relation compile (98 ms, serial) and a third time inside the Stage 3 A
+  coefficients (106 ms, serial, including filling the 2^24-cell table).
+- **Response fold.** The projections replay the fold that the accepted
+  response build already computed.
+- **Direct A adjoint.** Each of 4,096 source rows runs three forward and two
+  inverse auxiliary transforms of length 1,944. The output needs only the
+  middle D coefficients of each linear product, which a length-1,296 cyclic
+  transform already gives without wrap-around.
+- **D payload.** Each setup column multiplies a 64-coefficient setup entry by
+  64 balanced digits with full field products.
+
+Candidate changes, with the expected gain at N=2^22 `word-prime` scaled to the
+post-merge figures:
+
+| Candidate | Spans removed or reduced | Expected gain (ms) |
+| --- | --- | ---: |
+| Residual remainders over limb primes by CRT, without quotients | residual rows | 150–170 |
+| Reuse the commitment's A in the relation compile and Stage 3 | A derivation, Stage 3 A coefficients | 140–170 |
+| Reuse the accepted response in the projections | replayed response fold | 60–75 |
+| Length-1,296 middle products in the direct A adjoint | relation compile | 30–50 |
+| Small-digit accumulation in the B and D digit commitments | D payload; B payload in the commitment | 30–40 |
+| Parallel A derivation and field-switch source extraction | binary commitment, field switch | 10–20 in proving |
+
+The ordinary suffix folds take about 420 ms in this profile (about 260 ms at
+the post-merge load). Their largest spans are Stage 2 (130 ms over six
+folds), `RingRelationProver::prepare` (119 ms, 86 ms in the first fold),
+the fold grinding (92 ms, of which the sampling is 61 ms), Stage 1 (76 ms)
+and the six successor commitments (about 43 ms). The first suffix fold,
+with a 21.3M-cell input, takes about 60% of the suffix. None of these spans
+lives in binary-source code.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
