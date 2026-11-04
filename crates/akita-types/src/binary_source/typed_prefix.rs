@@ -46,6 +46,11 @@ use crate::native_root_relation::{RootEq, SegmentLanes};
 
 const SLOTS: usize = BINARY_DIGIT_COMMITMENT_DEGREE;
 const SLOT_BITS: usize = SLOTS.trailing_zeros() as usize;
+/// Width of a prefix address in the identity, on every target: the tail
+/// region zeroes no address bit below it.
+const ADDRESS_BITS: usize = u64::BITS as usize;
+/// Identity word in place of the tail region's free-bit count.
+const TAIL_FREE_BITS: u64 = u64::MAX;
 
 /// One authenticated digit segment and its period geometry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,7 +96,8 @@ impl DigitSegment {
 /// An address subcube. Hole regions lie in the zero padding of the A tensor:
 /// the listed bits are fixed, every bit at or above `top` is zero, and the
 /// `free` bits carry the local index in increasing order. The tail region
-/// (`free: None`) maps every local index to itself.
+/// (`free: None`, no fixed bit, `top = ADDRESS_BITS`) maps every local index
+/// to itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Region {
     fixed: Vec<(usize, bool)>,
@@ -273,7 +279,7 @@ impl BinaryTypedPrefix {
         regions.push(Region {
             fixed: Vec::new(),
             free: None,
-            top: usize::BITS as usize,
+            top: ADDRESS_BITS,
         });
         let mut cursors = vec![0usize; tail];
         let mut tail_cursor = None;
@@ -341,15 +347,14 @@ impl BinaryTypedPrefix {
         manifest.validate()?;
         let mut bytes = b"akita/binary-source/typed-prefix/a-then-digit-pieces/v3".to_vec();
         bytes.extend(manifest.canonical_bytes());
-        let mut push = |value: usize| -> Result<(), AkitaError> {
-            let value = u64::try_from(value).map_err(|_| AkitaError::InvalidProof)?;
-            bytes.extend_from_slice(&value.to_le_bytes());
-            Ok(())
-        };
-        push(self.a.rows)?;
-        push(self.a.row_stride)?;
-        push(self.rows)?;
-        push(self.segments.len())?;
+        // Every word is a little-endian u64, independent of the target's
+        // pointer width.
+        let word = |value: usize| u64::try_from(value).map_err(|_| AkitaError::InvalidProof);
+        let mut push = |value: u64| bytes.extend_from_slice(&value.to_le_bytes());
+        push(word(self.a.rows)?);
+        push(word(self.a.row_stride)?);
+        push(word(self.rows)?);
+        push(word(self.segments.len())?);
         for segment in &self.segments {
             for value in [
                 segment.role,
@@ -360,28 +365,28 @@ impl BinaryTypedPrefix {
                 segment.lanes.elements(),
                 segment.offset,
             ] {
-                push(value)?;
+                push(word(value)?);
             }
         }
-        push(self.regions.len())?;
+        push(word(self.regions.len())?);
         for region in &self.regions {
-            push(region.top)?;
-            push(region.fixed.len())?;
+            push(word(region.top)?);
+            push(word(region.fixed.len())?);
             for &(bit, value) in &region.fixed {
-                push(bit)?;
-                push(usize::from(value))?;
+                push(word(bit)?);
+                push(u64::from(value));
             }
             match &region.free {
                 Some(free) => {
-                    push(free.len())?;
+                    push(word(free.len())?);
                     for &bit in free {
-                        push(bit)?;
+                        push(word(bit)?);
                     }
                 }
-                None => push(usize::MAX)?,
+                None => push(TAIL_FREE_BITS),
             }
         }
-        push(self.pieces.len())?;
+        push(word(self.pieces.len())?);
         for piece in &self.pieces {
             for value in [
                 piece.segment,
@@ -393,10 +398,10 @@ impl BinaryTypedPrefix {
                 piece.region,
                 piece.base,
             ] {
-                push(value)?;
+                push(word(value)?);
             }
         }
-        push(self.natural_len)?;
+        push(word(self.natural_len)?);
         slot.serialize_compressed(&mut bytes)
             .map_err(|_| AkitaError::InvalidProof)?;
         Ok(bytes)

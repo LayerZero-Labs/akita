@@ -1,5 +1,47 @@
 //! Word-only proofs pin the merged projection and typed Stage 3 protocol.
 
+use super::*;
+
+/// Stage 3 absorbs the typed-prefix identity. Every word in it is a
+/// little-endian `u64`, so the bytes do not depend on the pointer width; the
+/// tail region encodes `top = 64`, no fixed bit and the free-bit marker
+/// `u64::MAX`.
+#[test]
+fn typed_prefix_identity_bytes_are_pinned() {
+    let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(test_catalog());
+    let row = scheme
+        .schedules()
+        .resolve_key(&ScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(18),
+        ))
+        .unwrap();
+    let next = &row.schedule().recursive_folds[0].params;
+    let slot = next.setup_prefix().unwrap().slot_id().unwrap();
+    let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
+    let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0).unwrap();
+    let descriptor = BinarySourceDescriptor::new(index, vec![[29; 32]], profiles).unwrap();
+    let manifest =
+        BinaryCommittedGroupManifest::new(descriptor, 0, &row.profiles().final_group).unwrap();
+    let typed = BinaryTypedPrefix::new(&manifest, true, 0, next.d_a()).unwrap();
+    let identity = typed.identity(&manifest, &slot).unwrap();
+    let tail = [64u64, 0, u64::MAX].map(u64::to_le_bytes).concat();
+    assert!(identity.windows(tail.len()).any(|word| word == tail));
+    eprintln!(
+        "typed prefix identity length={} digest={:?}",
+        identity.len(),
+        akita_params::descriptor_bytes::digest_descriptor_bytes(&identity),
+    );
+    // The same in both protocol modes.
+    assert_eq!(identity.len(), 2518);
+    assert_eq!(
+        akita_params::descriptor_bytes::digest_descriptor_bytes(&identity),
+        [
+            36, 53, 31, 41, 28, 94, 100, 7, 20, 106, 27, 160, 206, 76, 133, 226, 204, 249, 144, 61,
+            135, 71, 23, 108, 26, 90, 119, 181, 83, 156, 5, 212,
+        ]
+    );
+}
+
 pub(super) fn assert_base_bytes(proof: &[u8], mixed: bool, word_width: usize) {
     // Pinned in both protocol modes, including the caller prefix. Unselected
     // prime planes preserve every word-only proof byte.
