@@ -6,7 +6,8 @@ use akita_params::{
 };
 use akita_types::binary_source::{
     binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
-    binary_root_statement, BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
+    binary_root_statement, BinaryProjectionRequest, BinaryProjectionRows, BinaryProjectionWitness,
+    BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
@@ -243,13 +244,13 @@ where
             challenges: challenges.clone(),
         },
     )?;
-    let residual = residual
-        .downcast_ref::<Vec<[i128; 648]>>()
-        .ok_or_else(|| AkitaError::Internal("backend projection residual type mismatch".into()))?;
+    let witness_a = residual
+        .downcast::<BinaryProjectionWitness>()
+        .map_err(|_| AkitaError::Internal("backend projection residual type mismatch".into()))?;
     let projected_values = binary_projection_values(
         grinding.state_mut(),
         bounds,
-        &projections.project(residual, bounds)?,
+        &projections.project(&witness_a.residuals, bounds)?,
     )?;
     drop(span);
     let alpha = grinding
@@ -307,10 +308,6 @@ where
         .try_into()
         .map_err(|_| AkitaError::InvalidProof)?;
     let rho = projections.batch(&mu)?;
-    let span = tracing::info_span!("binary_root_a_matrix").entered();
-    let matrix =
-        akita_types::binary_source::binary_root_matrix(&expanded.setup_seed.seed, manifest)?;
-    drop(span);
     let span = tracing::info_span!("binary_root_relation_compile").entered();
     let (relation, negative_binary_weights) = public.relation(
         &challenges,
@@ -322,13 +319,12 @@ where
         &d_payload,
         ordinary_claim,
         Some(akita_types::binary_source::BinaryAOperand {
-            matrix: &matrix,
+            matrix: &witness_a.matrix,
             canonical: |x: &Cfg::ExtField| {
                 x.degree_one_base().and_then(|base| base.to_u128_checked())
             },
         }),
     )?;
-    drop(matrix);
     drop(batches);
     drop(span);
     let relation_claim = relation.claim();
@@ -392,10 +388,11 @@ where
     let (index_factor, coefficient_factor) = product.factors()?;
     let coefficients_span = tracing::info_span!("binary_root_stage3_a_coefficients").entered();
     let coefficients = akita_types::binary_source::binary_a_setup_coefficients(
-        &expanded.setup_seed.seed,
+        &witness_a.matrix,
         manifest,
         prefix.n_prefix()?,
     )?;
+    drop(witness_a);
     drop(coefficients_span);
     let (claim, session) =
         backend.begin_factored_stage3(crate::backend::FactoredStage3Request {

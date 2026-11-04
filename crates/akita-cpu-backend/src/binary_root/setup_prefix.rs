@@ -6,7 +6,8 @@ use akita_params::SetupPrefixSlotId;
 use akita_prover::SetupPrefixProverRegistry;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::binary_source::{
-    binary_a_prefix_identity, binary_a_setup_coefficients, BinaryCommittedGroupManifest,
+    binary_a_prefix_identity, binary_a_setup_coefficients, binary_root_matrix,
+    BinaryCommittedGroupManifest,
 };
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
@@ -53,11 +54,8 @@ where
             ));
         }
         let prepared = self.prepared()?;
-        let coefficients = binary_a_setup_coefficients(
-            &prepared.expanded.descriptor().setup_seed.seed,
-            manifest,
-            first.n_prefix()?,
-        )?;
+        let matrix = binary_root_matrix(&prepared.expanded.descriptor().setup_seed.seed, manifest)?;
+        let coefficients = binary_a_setup_coefficients(&matrix, manifest, first.n_prefix()?)?;
         let mut registry = SetupPrefixProverRegistry::default();
         registry.insert(self.prepare_setup_prefix_from_coefficients(first, coefficients)?)?;
         for id in remaining {

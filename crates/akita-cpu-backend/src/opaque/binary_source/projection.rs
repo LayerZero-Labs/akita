@@ -1,7 +1,7 @@
 //! Private exact residual replay after the outgoing witness is fixed.
 
 use super::*;
-use akita_types::binary_source::BinaryProjectionRequest;
+use akita_types::binary_source::{BinaryProjectionRequest, BinaryProjectionWitness};
 
 pub(super) fn prepare<F, E>(
     backend: &CpuBackend<F, E>,
@@ -60,5 +60,11 @@ where
     binding
         .scope_lease()
         .admit_commitment(context, handle.committed.commitment_id)?;
-    Ok((Vec::new(), Box::new(residuals)))
+    Ok((
+        Vec::new(),
+        Box::new(BinaryProjectionWitness {
+            residuals,
+            matrix: Arc::clone(&source.matrix),
+        }),
+    ))
 }

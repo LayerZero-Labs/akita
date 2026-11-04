@@ -162,12 +162,17 @@ pub(super) fn reject_foreign_prefixes(
             &ordinary.public
         )
         .is_err());
-    let mut foreign = akita_types::binary_source::binary_a_setup_coefficients::<F>(
+    let matrix = akita_types::binary_source::binary_root_matrix(
         &ordinary_verifier_setup
             .expanded()
             .descriptor()
             .setup_seed
             .seed,
+        manifest,
+    )
+    .unwrap();
+    let mut foreign = akita_types::binary_source::binary_a_setup_coefficients::<F>(
+        &matrix,
         manifest,
         first_prefix.n_prefix().unwrap(),
     )

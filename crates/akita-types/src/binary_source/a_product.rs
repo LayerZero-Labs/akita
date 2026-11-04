@@ -7,11 +7,11 @@ use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_error::{checked, AkitaError};
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::AkitaSerialize;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
-use super::{
-    binary_root_matrix, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan,
-};
+use super::{BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan};
 
 const DEGREE: usize = 648;
 const STRIDE: usize = 1024;
@@ -67,34 +67,42 @@ impl BinaryAPrefixLen {
 
 /// Canonical typed prefix: source row, padded rank row, padded coefficient.
 /// All padding is zero, including any extra capacity of the selected prefix.
-/// This function is for setup preparation and proving, never online verification.
+/// `matrix` is [`binary_root_matrix`](super::binary_root_matrix) for the same manifest; a caller that
+/// already holds it does not derive it again. This function is for setup
+/// preparation and proving, never online verification.
 pub fn binary_a_setup_coefficients<F: Field>(
-    seed: &[u8; 32],
+    matrix: &[Vec<[i128; DEGREE]>],
     manifest: &BinaryCommittedGroupManifest,
     prefix_len: usize,
 ) -> Result<Vec<F>, AkitaError> {
     manifest.validate()?;
     let size = BinaryAPrefixLen::new(manifest.descriptor().index_map(), manifest.a_rank())?;
     size.validate_prefix(prefix_len)?;
-    let row_stride = size.row_stride;
-    let matrix = binary_root_matrix(seed, manifest)?;
-    let mut coefficients = field_buffer(prefix_len)?;
-    for (i, row) in matrix.iter().enumerate() {
-        for (j, entry) in row.iter().enumerate() {
-            let offset = checked::product([i, STRIDE])
-                .and_then(|offset| checked::mul_add(j, row_stride, offset))
-                .ok_or(AkitaError::InvalidProof)?;
-            let range = checked::range(offset, DEGREE).ok_or(AkitaError::InvalidProof)?;
-            for (slot, &value) in coefficients
-                .get_mut(range)
-                .ok_or(AkitaError::InvalidProof)?
-                .iter_mut()
-                .zip(entry)
-            {
-                *slot = F::from_i128(value);
-            }
-        }
+    if matrix.len() != manifest.a_rank() || matrix.iter().any(|row| row.len() != size.rows) {
+        return Err(AkitaError::InvalidInput(
+            "typed A matrix does not match its manifest".into(),
+        ));
     }
+    let row_stride = size.row_stride;
+    // Every cell is a pure function of its offset, so the buffer fills in
+    // parallel without a serial zeroing pass.
+    let cell = |offset: usize| {
+        let (j, within) = (offset / row_stride, offset % row_stride);
+        let (i, k) = (within / STRIDE, within % STRIDE);
+        matrix
+            .get(i)
+            .and_then(|row| row.get(j))
+            .and_then(|entry| entry.get(k))
+            .map_or_else(F::zero, |&value| F::from_i128(value))
+    };
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(prefix_len)
+        .map_err(|_| AkitaError::InvalidInput("typed A allocation failed".into()))?;
+    #[cfg(feature = "parallel")]
+    coefficients.par_extend((0..prefix_len).into_par_iter().map(cell));
+    #[cfg(not(feature = "parallel"))]
+    coefficients.extend((0..prefix_len).map(cell));
     Ok(coefficients)
 }
 

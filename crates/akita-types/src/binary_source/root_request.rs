@@ -28,3 +28,12 @@ pub struct BinaryFieldSwitchSourceRequest {
 pub struct BinaryProjectionRequest {
     pub challenges: akita_challenges::Challenges,
 }
+
+/// Private result of a [`BinaryProjectionRequest`].
+///
+/// `matrix` is the source handle's A, shared rather than copied, so the
+/// prover compiles the relation and its typed prefix without deriving A again.
+pub struct BinaryProjectionWitness {
+    pub residuals: Vec<[i128; 648]>,
+    pub matrix: std::sync::Arc<Vec<Vec<[i128; 648]>>>,
+}
