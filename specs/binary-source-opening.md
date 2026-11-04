@@ -1347,19 +1347,36 @@ Final executable, N=2^23:
 | Prover peak RSS bytes | 8,075,493,376 | 8,051,064,832 | 8,649,621,504 | 8,057,487,360 |
 
 The baseline tables are in the appendix. The commits and their measured
-effects on N=2^22 `word-prime` are listed below. Each figure is a median of
-three runs, under the load recorded in the commit message.
+effects on N=2^22 `word-prime` are listed below. Each commit's executable
+proved three times in isolated processes with the catalog cache, and each
+figure is the median of those runs. A commit's before figure is the median of
+the previous executable, so `3cf7db7bf` starts from the span baseline
+`f5e9ad551`, whose runs are the baseline tables' word-prime 2^22 runs.
 
-| Commit | Change | Span before → after (ms) | Complete proving before → after (ms) |
-| --- | --- | --- | --- |
-| `3cf7db7bf` | Direct A weights by exact integer adjoints in a smooth auxiliary field | relation compile 7,496.0 → 135.7 | 13,153.3 → 5,359.2 |
-| `e8950959c` | Skip the residual rows the response build never reads | response build 1,594.5 → 306.4 | 5,359.2 → 3,908.9 |
-| `5c5068822` | Transform the quotient operands in parallel | residual rows 1,244.8 → 161.1 | 3,908.9 → 2,908.3 |
-| `337760b99` | Commit column-aligned B and D digit pieces in parallel | B payload 1,454.2 → 128.6; D payload 657.1 → 59.8 | 2,908.3 → 2,285.5 |
-| `8321a72b3` | Weigh the structured root families in parallel batches | weight materialization 636.3 → 215.9 | 2,285.5 → 1,817.9 |
-| `06b8435eb` | Repack the root witness from natural digits | response build 308.3 → 108.4 | 1,817.9 → 1,640.9 |
+The logs are `$CARGO_TARGET_DIR/r3/m-c<k>-22-word-prime-<run>.txt`. Executable
+`c1` is `f5e9ad551`, and `c2` through `c7` are the six commits in table order.
+Each log records the `uptime` load triple before and after its run. The last
+column gives the range of one-minute loads in those records for the commit's
+own runs; the baseline runs ranged over 5.94–8.67.
 
-Loads differed from commit to commit, between about 5 and 12. The per-commit
+| Commit | Change | Span before → after (ms) | Complete proving before → after (ms) | One-minute load |
+| --- | --- | --- | --- | --- |
+| `3cf7db7bf` | Direct A weights by exact integer adjoints in a smooth auxiliary field | relation compile 7,171.4 → 135.7 | 12,286.0 → 5,359.2 | 9.32–11.88 |
+| `e8950959c` | Skip the residual rows the response build never reads | response build 1,594.5 → 306.4 | 5,359.2 → 3,908.9 | 5.80–6.13 |
+| `5c5068822` | Transform the quotient operands in parallel | residual rows 1,244.8 → 161.1 | 3,908.9 → 2,908.3 | 6.56–8.92 |
+| `337760b99` | Commit column-aligned B and D digit pieces in parallel | B payload 1,454.2 → 128.6; D payload 657.1 → 59.8 | 2,908.3 → 2,285.5 | 5.62–7.03 |
+| `8321a72b3` | Weigh the structured root families in parallel batches | weight materialization 636.3 → 215.9 | 2,285.5 → 1,817.9 | 5.23–5.62 |
+| `06b8435eb` | Repack the root witness from natural digits | response build 308.3 → 108.4 | 1,817.9 → 1,640.9 | 6.70–7.61 |
+
+These logs, not the commit messages, are the source. The commit messages
+transcribe some of these figures and loads, but not uniformly: `3cf7db7bf`
+records neither, and `337760b99` gives a D-payload before figure of 665.6 ms,
+which is the `3cf7db7bf` executable's median. The `5c5068822` runs that
+precede `337760b99` give 657.1 ms. An earlier version of this table started
+`3cf7db7bf` from an earlier profiling run (relation compile 7,496.0 ms,
+complete proving 13,153.3 ms) whose log was not retained.
+
+Loads differed from commit to commit, between 5.23 and 11.88. The per-commit
 columns are therefore not an exact decomposition of the end-to-end gain; the
 interleaved tables are the comparison.
 
