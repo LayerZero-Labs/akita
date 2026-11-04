@@ -61,6 +61,8 @@ fn ordinary_profile() -> GroupCommitPhaseParams {
 #[derive(Clone, Copy, Debug)]
 struct Shape {
     word_width: usize,
+    carriers: usize,
+    columns: usize,
     owners: usize,
     word_claim: bool,
     prime_planes: usize,
@@ -79,7 +81,13 @@ fn binary_field_bytes(rng: &mut StdRng) -> [u8; 21] {
 }
 
 fn public(shape: Shape, rng: &mut StdRng) -> BinaryRootPublic {
-    let index = BinaryIndexMap::new(shape.word_width, 8 * (128 / shape.word_width), 8, 2).unwrap();
+    let index = BinaryIndexMap::new(
+        shape.word_width,
+        shape.carriers * (128 / shape.word_width),
+        shape.carriers,
+        shape.columns,
+    )
+    .unwrap();
     let profiles =
         BinaryCommittedGroupManifest::commitment_profiles(&index, shape.owners, 0).unwrap();
     let polynomials = (0..shape.owners)
@@ -263,15 +271,37 @@ fn check(shape: Shape, seed: u64) {
     }
 }
 
+/// Compare both sides on sixteen root shapes.
+///
+/// The first eight use the end-to-end geometry: 8 padded carriers and 2
+/// columns, hence 4 scalar rows and one response quad. Without the mixed
+/// group they cover the word claim at width 128 with zero or one plane, at
+/// width 8 with zero planes, and with two owners and five planes; and prime-only
+/// two planes over two owners and three planes with five extra zero rings.
+/// With the mixed group they cover the word claim alone, and at width 8 with
+/// one plane and three extra rings. The next five, in the same geometry, add
+/// the remaining mixed configurations of the prime-plane end-to-end tests: one,
+/// two and five prime-only planes, and two and five planes beside the word
+/// claim. The last three use 32 carriers and 2 columns, or 64 carriers and 4
+/// columns, hence 16 scalar rows and four response quads: one owner with the
+/// word claim alone; two owners with two planes and the claim on the second
+/// owner; and the mixed group at width 8 with the word claim, five planes and
+/// two extra rings. No shape reaches a production-size geometry.
 #[test]
-fn structured_root_weights_match_the_flat_reference_on_every_end_to_end_shape() {
+fn structured_root_weights_match_the_flat_reference() {
     let base = Shape {
         word_width: 128,
+        carriers: 8,
+        columns: 2,
         owners: 1,
         word_claim: true,
         prime_planes: 0,
         extra_rings: 0,
         mixed: false,
+    };
+    let mixed = Shape {
+        mixed: true,
+        ..base
     };
     let shapes = [
         base,
@@ -300,16 +330,53 @@ fn structured_root_weights_match_the_flat_reference_on_every_end_to_end_shape() 
             extra_rings: 5,
             ..base
         },
+        mixed,
         Shape {
-            mixed: true,
-            ..base
-        },
-        Shape {
-            mixed: true,
             word_width: 8,
             prime_planes: 1,
             extra_rings: 3,
+            ..mixed
+        },
+        Shape {
+            word_claim: false,
+            prime_planes: 1,
+            ..mixed
+        },
+        Shape {
+            word_claim: false,
+            prime_planes: 2,
+            ..mixed
+        },
+        Shape {
+            word_claim: false,
+            prime_planes: 5,
+            ..mixed
+        },
+        Shape {
+            prime_planes: 2,
+            ..mixed
+        },
+        Shape {
+            prime_planes: 5,
+            ..mixed
+        },
+        Shape {
+            carriers: 32,
             ..base
+        },
+        Shape {
+            carriers: 64,
+            columns: 4,
+            owners: 2,
+            prime_planes: 2,
+            ..base
+        },
+        Shape {
+            word_width: 8,
+            carriers: 32,
+            prime_planes: 5,
+            extra_rings: 2,
+            ..mixed
         },
     ];
     for (seed, shape) in shapes.into_iter().enumerate() {
