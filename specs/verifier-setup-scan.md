@@ -145,8 +145,80 @@ Not pursued here; see [What remains](#what-remains):
 
 ## Results
 
-To be filled in after the implementation commits.
+Candidates 1 and 2 landed; candidate 3 did not. Every figure is the median of
+three interleaved runs of the base binary (`84c2176e8`) and the final binary,
+with the one-minute load range over those runs. Single-threaded figures
+repeat within about 0.2 ms. Parallel figures on this shared machine vary by
+up to 2× between runs at loads above about 7, so treat their differences as
+indicative only.
+
+| Configuration | Parallel (ms) | One thread (ms) | Load |
+| --- | --- | --- | --- |
+| binary source 2^22 `word-prime` | 2.53 → 2.09 | 10.03 → 8.59 | 6.7–7.9 |
+| binary source 2^22 `word` | 2.76 → 2.48 | 9.96 → 8.73 | 7.6–8.1 |
+| binary source 2^23 `word` | 8.77 → 5.29 | 16.99 → 14.76 | 11.8–13.2 |
+| binary source 2^23 `word-prime` | 3.10 → 2.82 | 16.58 → 14.52 | 6.2–8.1 |
+| ordinary `onehot_fp128`, nv 32 | 3.60 → 2.18 | 10.94 → 9.23 | 11.7–17.1 |
+
+The single-threaded scan is 13–16% faster across all five configurations.
+Per commit, at binary source 2^22 `word-prime`, one thread:
+
+| Commit | Before (ms) | After (ms) | Load |
+| --- | ---: | ---: | --- |
+| slice-wise weight assembly | 10.16 | 9.57 | 8.0–13.1 |
+| column-first contraction | 9.49 | 8.69 | 7.1–7.4 |
+
+The column-first contraction stages rings in tiles. Tiles of 4, 8, and 16
+rings measured 8.87, 9.10, and 10.34 ms in one interleaved run at load
+10–13; the code uses 4.
+
+Smaller jobs (candidate 3) gave no parallel gain distinguishable from noise.
+In nine interleaved parallel runs at 2^22 `word-prime` (load 8–11), jobs of
+2048, 256, and a fold-dependent size (about 64 jobs per fold, clamped to
+256–2048) measured 2.27, 2.46, and 2.26 ms. One earlier run at load 6.5 had
+favored 256-ring jobs, 1.91 against 2.27 ms. The column-first contraction
+also changes the trade-off. Each job now ends with 64 reductions and 64
+`E × E` multiplications, so 256-ring jobs cost 0.3 ms single-threaded (8.64
+against 8.96 ms). Choosing the size from the Rayon pool's thread count would
+avoid that cost. The verifier reaches Rayon only through
+`jolt_field::solinas::parallel`, and in the workspace-wide
+`--no-default-features` build Cargo enables the verifier's `parallel`
+feature without linking `rayon`, so the thread count is not available.
+Carrying the unreduced column sums through the Rayon fold, one finish per
+split, measured slower in both modes. The job size stays 2048.
 
 ## What remains
 
-To be filled in after the implementation commits.
+After these changes the single-threaded scan at 2^22 takes 8.6 ms, near the
+8.2 ms per-ring dot floor in the fold table above. Further byte-preserving
+gains need a different kernel or a different scan structure:
+
+- **A faster widening fp128 dot kernel.** The `E × F` product dominates. A
+  lazier carry layout in `Fp128ProductAccum`, or a NEON kernel, belongs in
+  `jolt-field`; every caller of `mul_base_unreduced` would benefit.
+- **Tensor-structured B contraction.** On the ordinary quotient-lift folds
+  every physical B ring sums eight logical-slice terms. Contracting those
+  terms through the tensor structure of `t` would remove most of that weight
+  work. It does not remove any coefficient product.
+- **Fusing the folds' scans.** The folds read overlapping prefixes of one
+  matrix: 97,688 ring reads over 52,632 distinct rings at 2^22. One pass that
+  serves every fold would save memory traffic and scheduling but no
+  multiplications. It needs every fold's weights and functional before the
+  first fold's check, which changes the verifier's control flow.
+- **Parallel balance.** The parallel scan reaches about four times the
+  single-threaded speed on 16 cores, because the folds run in sequence and
+  the small folds have one or two jobs. A balance fix needs either fold
+  fusion or a job size chosen from the thread pool (see Results).
+- **Weight preparation.** `DirectScan::new` (span `relation_setup_weights`)
+  is now a visible share of the per-fold setup cost. It is outside the scan.
+- **The binary root.** `binary_direct_a_weights` dominates binary-source
+  verification and is outside this note.
+
+A protocol change could cut further. Each fold now evaluates its own linear
+functional of the setup. If the folds' setup claims were deferred and batched
+with a random linear combination into one claim, the verifier would scan the
+largest prefix once, 52,632 rings instead of 97,688 at 2^22. Each scan's
+`d` products per ring would also become shared. Alternatively, the verifier
+could check the claims against a commitment to the setup with an opening
+proof, and stop scanning the setup. Both change the transcript and what the
+verifier checks, so neither is implemented here.
