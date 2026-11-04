@@ -601,6 +601,16 @@ pub(crate) fn root_relation<E: Field>(
         alpha,
         batches.get(d).ok_or(AkitaError::InvalidProof)?,
     )?;
+    // Without A the relation is the verifier's: the typed prefix carries B/D.
+    let (b_weights, d_weights) = if matrix.is_some() {
+        (b_weights, d_weights)
+    } else {
+        let domain_len = public.plan.repacking().domain_len();
+        (
+            NativeRootWeights::new(domain_len, Vec::new(), b_weights.claim())?,
+            NativeRootWeights::new(domain_len, Vec::new(), d_weights.claim())?,
+        )
+    };
     let ordinary_weights = match (&public.ordinary, ordinary_claim) {
         (Some(ordinary), Some((point, evaluation, payload))) => Some(ordinary.linear_weights(
             public.plan.repacking(),
