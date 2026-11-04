@@ -78,8 +78,8 @@ impl<C: ProofChannel> GrindingReplay for CountingGrinding<'_, C> {
 
 impl<C: ProofChannel> FoldResponseReplay for CountingGrinding<'_, C> {
     fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
-        let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)
-            .and_then(|_| {
+        let entry =
+            next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse).and_then(|_| {
                 next_entry(
                     &mut self.cursor,
                     GrindingSite::FoldChallengeWork {

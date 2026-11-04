@@ -239,11 +239,11 @@ required-features = ["test-support"]
 
 [[test]]
 name = "zk_end_to_end"
-required-features = ["test-support", "logging"]
+required-features = ["test-support", "logging-transcript"]
 
 [[example]]
 name = "zk_distinguisher"
-required-features = ["test-support", "logging"]
+required-features = ["test-support", "logging-transcript"]
 
 [[example]]
 name = "zk_response"

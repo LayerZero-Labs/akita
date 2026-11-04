@@ -14,10 +14,10 @@ use akita_algebra::{
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily, EqPairTensorWeights},
     poly::multilinear_eval,
 };
-use jolt_algebra::ring::{evaluate_power_sequence_mle, scalar_powers};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_serialization::AkitaSerialize;
+use jolt_algebra::checked;
+use jolt_algebra::ring::{evaluate_power_sequence_mle, scalar_powers};
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;

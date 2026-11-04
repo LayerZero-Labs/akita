@@ -2,9 +2,9 @@
 use super::{query::NativeTerm, SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery};
 use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::dispatch::{ntt_max_ring_d, protocol_dispatch_tier};
 use akita_serialization::AkitaDeserialize;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 fn invalid() -> AkitaError {

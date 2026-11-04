@@ -219,9 +219,7 @@ impl TerminalFoldParams {
     ///
     /// A calibrated L2 route draws under its operator-norm rejection; an
     /// L-infinity route draws the unfiltered family.
-    pub fn fold_challenge_family(
-        &self,
-    ) -> Result<crate::FoldChallengeFamily, AkitaError> {
+    pub fn fold_challenge_family(&self) -> Result<crate::FoldChallengeFamily, AkitaError> {
         let rejection = match self.response_l2_sq_cap() {
             Some(_) => Some(
                 jolt_crypto::challenge::selective_l2_operator_norm_rejection(

@@ -509,7 +509,9 @@ impl GroupOpenPhaseParams {
                 let rejection =
                     matches!(matrix.security_route(), InnerCommitSecurityRoute::L2 { .. })
                         .then(|| {
-                            jolt_crypto::challenge::selective_l2_operator_norm_rejection(d_a, &config)
+                            jolt_crypto::challenge::selective_l2_operator_norm_rejection(
+                                d_a, &config,
+                            )
                         })
                         .flatten();
                 FoldChallengeFamily::new(

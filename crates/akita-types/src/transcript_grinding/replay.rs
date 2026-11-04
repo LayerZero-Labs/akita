@@ -7,8 +7,9 @@ use akita_sumcheck::SumcheckProverChannel;
 use akita_sumcheck::{SumcheckRole, SumcheckVerifierChannel};
 use akita_transcript::{
     ext_challenges, nonce_max_bytes, receive_nonce, reject, verifier_context, ChallengeCodec,
-    PrivateProofChannel, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, VerifierChannel,
-    VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS, SITE_FAMILY_SUMCHECK,
+    PrivateProofChannel, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
+    VerifierChannel, VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS,
+    SITE_FAMILY_SUMCHECK,
 };
 #[cfg(feature = "prover")]
 use akita_transcript::{
@@ -321,7 +322,9 @@ impl<C: ProverGrindingChannel> GrindingReplay for ProverGrinding<'_, C> {
     }
 }
 
-impl<'proof, C: VerifierGrindingChannel<'proof>> GrindingReplay for VerifierGrinding<'proof, '_, C> {
+impl<'proof, C: VerifierGrindingChannel<'proof>> GrindingReplay
+    for VerifierGrinding<'proof, '_, C>
+{
     type State = C;
 
     fn state_mut(&mut self) -> &mut C {
@@ -475,7 +478,10 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
     ///
     /// Returns [`AkitaError::InvalidInput`] when `site` is not the next plan
     /// entry or not a fold response.
-    pub fn fold_response_search(&self, site: GrindingSite) -> Result<FoldResponseSearch, AkitaError> {
+    pub fn fold_response_search(
+        &self,
+        site: GrindingSite,
+    ) -> Result<FoldResponseSearch, AkitaError> {
         let entry = self.cursor.peek().ok_or_else(|| {
             AkitaError::InvalidInput("fold-response search has no remaining plan entry".into())
         })?;
@@ -838,7 +844,14 @@ pub fn grinding_sumcheck_body_site(
     invocation: u32,
     round: u32,
 ) -> ProtocolSiteId {
-    grinding_sumcheck_site(protocol, level, stage, invocation, round, SumcheckRole::RoundBody)
+    grinding_sumcheck_site(
+        protocol,
+        level,
+        stage,
+        invocation,
+        round,
+        SumcheckRole::RoundBody,
+    )
 }
 
 /// Whether a sumcheck's rounds are witness-dependent (masked on a masked

@@ -2,9 +2,9 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{PrivateProofChannel, 
-    exchange_extension_group, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
-    ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2,
+use akita_transcript::{
+    exchange_extension_group, PrivateProofChannel, ProofChannel, ProtocolContextRecord,
+    ProtocolMessageKind, ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 

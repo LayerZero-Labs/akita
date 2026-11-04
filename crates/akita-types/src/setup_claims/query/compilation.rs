@@ -169,7 +169,9 @@ mod tests {
                 num_field_elements: 64,
                 setup_seed: [19; 32].into(),
             },
-            akita_params::FlatMatrix::from_flat_data(jolt_crypto::lattice::derive_public_matrix_prefix(64, &[19; 32].into()).unwrap()),
+            akita_params::FlatMatrix::from_flat_data(
+                jolt_crypto::lattice::derive_public_matrix_prefix(64, &[19; 32].into()).unwrap(),
+            ),
         );
         let polynomial = SetupPolynomialId::new::<F, F>(&setup, 1 << 24).unwrap();
         let query = SetupQuery::evaluation(vec![F::from_u64(3); 24]).unwrap();

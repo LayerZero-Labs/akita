@@ -6,13 +6,13 @@ pub mod config;
 pub mod descriptor_bytes;
 pub mod dispatch;
 mod fold_family;
-pub use fold_family::{FoldChallengeDrawDomain, FoldChallengeFamily};
 pub use dispatch::{
     compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
     ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
     outer_opening_min_ring_d, protocol_dispatch_tier, protocol_dispatch_tier_for_sis_profile,
     validate_role_dims_for_field, ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
+pub use fold_family::{FoldChallengeDrawDomain, FoldChallengeFamily};
 pub mod golomb_rice;
 pub mod layout;
 pub mod proof_size;
@@ -66,11 +66,10 @@ pub use layout::{
     RelationRowGeometry, RelationWitnessGeometry, RingMatrixView, RingOpeningPoint, RingRole,
     RoleParams, SetupMatrixCapacity, SetupPrefixSlotId, SetupProjectionGeometry, Stage1StageShape,
     SubringCoefficientPackingGeometry, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponseShape, DEV_PROTOCOL, EXTENSION_OPENING_REDUCTION_DEGREE,
-    MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SCHEDULE_ARTIFACT_SET,
-    SCHEDULE_CATALOG_SNAPSHOT, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
-    STAGE2_SUMCHECK_DEGREE, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
-    TERMINAL_BLOCK_DIGEST_BYTES,
+    TerminalResponseShape, DEV_PROTOCOL, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SCHEDULE_ARTIFACT_SET, SCHEDULE_CATALOG_SNAPSHOT,
+    SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE, STAGE2_SUMCHECK_DEGREE,
+    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS, TERMINAL_BLOCK_DIGEST_BYTES,
 };
 pub use proof_size::{nonterminal_level_layout, NonterminalLevelLayout};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
@@ -96,14 +95,14 @@ pub use sis::{
 };
 pub use tail_golomb_rice_low_bits::{rice_low_bits_for_cap, wire_rice_low_bits};
 pub use transcript_grinding::{
-    independent_batch_loss_factor, multilinear_point_loss_factor,
-    polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
-    ChallengeFieldOrder, FoldChallengeCost, FoldResponseSearch, GrindingPlan, GrindingQueryKind,
-    GrindingRun, GrindingSite, SumcheckProtocol, TranscriptGrindingCost,
-    FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
-    GRINDING_CHECK_BYTES, GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER,
-    GRINDING_NONCE_SLACK_BITS, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
-    MAX_SETUP_BATCH_CLAIMS, TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
+    independent_batch_loss_factor, multilinear_point_loss_factor, polynomial_identity_loss_factor,
+    powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
+    FoldChallengeCost, FoldResponseSearch, GrindingPlan, GrindingQueryKind, GrindingRun,
+    GrindingSite, SumcheckProtocol, TranscriptGrindingCost, FOLD_COORDINATE_ORACLE_REVISION,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_CHECK_BYTES,
+    GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, MAX_SETUP_BATCH_CLAIMS,
+    TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
     derive_digit_range_grinding_plan_from_public_shape, derive_setup_batch_grinding_plan,

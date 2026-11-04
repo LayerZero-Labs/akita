@@ -8,8 +8,9 @@
 use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_transcript::{
-    public_extensions, PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
-    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_TERMINAL,
+    public_extensions, PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_FOLD_BINDING,
+    SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT,
+    SITE_FAMILY_TERMINAL,
 };
 use jolt_algebra::narrowing::usize_to_u32;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};

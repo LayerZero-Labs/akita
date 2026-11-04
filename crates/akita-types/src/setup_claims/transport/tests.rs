@@ -12,7 +12,9 @@ fn fixture() -> (SetupPolynomialId, Vec<u8>) {
             num_field_elements: 64,
             setup_seed: [19; 32].into(),
         },
-        akita_params::FlatMatrix::from_flat_data(jolt_crypto::lattice::derive_public_matrix_prefix(64, &[19; 32].into()).unwrap()),
+        akita_params::FlatMatrix::from_flat_data(
+            jolt_crypto::lattice::derive_public_matrix_prefix(64, &[19; 32].into()).unwrap(),
+        ),
     );
     let poly = SetupPolynomialId::new::<F, F>(&setup, 64).unwrap();
     let q = SetupQuery::evaluation(vec![F::from_u64(3); 6]).unwrap();

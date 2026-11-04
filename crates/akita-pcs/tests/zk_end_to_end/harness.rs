@@ -12,19 +12,22 @@ use akita_config::{
 };
 use akita_error::AkitaError;
 use akita_params::zk::AdmittedZkSchedule;
-use akita_params::{ChunkedWitnessCfg, CompressionChainPlan, ProtocolSiteId};
+use akita_params::{ChunkedWitnessCfg, CompressionChainPlan};
 use akita_pcs::zk::{
     AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualOpening, ResidualShape,
     UncheckedResponseProver,
 };
 use akita_pcs::AkitaCommitmentScheme;
+use akita_transcript::{
+    clear_thread_events, finish_proof_ranges, new_prover_channel, new_verifier_channel,
+    receive_field_group, send_field_group, thread_proof_ranges, ProofMessageRange, ProtocolSiteId,
+    VerifierChannel,
+};
 use akita_types::{
-    AkitaSponge, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, RingVec, PROOF_STREAM_PROTOCOL,
+    Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
 use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{derive_public_matrix_prefix, sample_box_digits, PublicMatrixSeed};
-use jolt_transcript::{Channel, ProverTranscript, SiteId, TranscriptEvent, VerifierTranscript};
 use jolt_zk::masking::{
     CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ResidualRows, ZkError,
 };
@@ -158,13 +161,14 @@ pub(crate) fn row_response_num_vars<C: CommitmentConfig<Field = F, ExtField = F>
                 *profile,
                 Commitment::new(RingVec::from_coeffs(vec![F::zero(); payload])),
             )
+            .unwrap()
         })
         .collect();
     let claims = OpeningClaims::from_groups(
         groups
             .iter()
             .map(|group| {
-                let layout = group.profile.group;
+                let layout = group.profile().group;
                 PolynomialGroupClaims::new(
                     vec![F::zero(); layout.num_vars()],
                     vec![F::zero(); layout.num_polynomials()],
@@ -177,12 +181,12 @@ pub(crate) fn row_response_num_vars<C: CommitmentConfig<Field = F, ExtField = F>
     .unwrap();
     let max_num_vars = groups
         .iter()
-        .map(|group| group.profile.group.num_vars())
+        .map(|group| group.profile().group.num_vars())
         .max()
         .unwrap();
     let max_num_polys = groups
         .iter()
-        .map(|group| group.profile.group.num_polynomials())
+        .map(|group| group.profile().group.num_polynomials())
         .sum();
     let setup = scheme.setup_prover(max_num_vars, max_num_polys).unwrap();
     let verifier = scheme
@@ -230,9 +234,11 @@ pub(crate) const V_RANK: usize = 1;
 /// The pad commitment's randomness alphabet (jolt-zk's radix 16).
 pub(crate) const PAD_RANDOMNESS_LOG_BASIS: u32 = 4;
 
-/// Diagnostic sites of the harness's own messages.
-pub(crate) const PAD_SITE: SiteId = SiteId::label("harness/pad-commitment");
-pub(crate) const SIGMA_SITE: SiteId = SiteId::label("whiteout/sigma");
+/// Diagnostic site of the harness's pad commitment.
+pub(crate) const PAD_SITE: ProtocolSiteId = ProtocolSiteId {
+    detail: 3,
+    ..CLAIMS_SITE
+};
 
 /// Why a run failed, by layer.
 #[derive(Debug)]
@@ -276,9 +282,20 @@ pub(crate) struct Harness<C: CommitmentConfig<Field = F, ExtField = F>> {
     pub(crate) response: Option<AkitaResponseProver<ResponseCfg>>,
 }
 
+/// The prover's log of one proof: Akita's proof-message groups, each with
+/// the pads that masked it, and where the Σ-protocol starts. Every byte
+/// before `sigma_start` is in one group; after it, the Σ-protocol's own
+/// messages and the response proof's groups.
+#[derive(Clone)]
+pub(crate) struct Recorded {
+    pub(crate) ranges: Vec<ProofMessageRange>,
+    pub(crate) sigma_start: usize,
+}
+
 /// What a proof's prover drew and computed, kept for the freshness checks.
 pub(crate) struct ZkProof {
     pub(crate) proof: Vec<u8>,
+    pub(crate) recorded: Recorded,
     pub(crate) pads: Vec<F>,
     pub(crate) residual: ResidualOpening<F, F>,
     pub(crate) pad_randomness: Vec<i8>,
@@ -372,6 +389,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         derive_transcript_grinding_plan::<C>(
             resolved.schedule(),
             self.instance.opening_data().opening_layout(),
+            None,
         )
         .unwrap()
         .runs()
@@ -422,17 +440,16 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
     /// and the auxiliary block, and the residual rows they lower to.
     pub(crate) fn replay(
         &self,
-        transcript: &mut VerifierTranscript<'_, AkitaSponge>,
+        transcript: &mut VerifierChannel<'_>,
         pad_image_len: usize,
     ) -> Result<Replayed, Failure> {
-        transcript.site(PAD_SITE);
-        let pad_payload = transcript
-            .receive_n::<F>(
-                self.response()
-                    .payload_len(pad_image_len)
-                    .map_err(ZkError::from)?,
-            )
-            .map_err(AkitaError::from)?;
+        let pad_payload = receive_field_group::<F>(
+            transcript,
+            PAD_SITE,
+            self.response()
+                .payload_len(pad_image_len)
+                .map_err(ZkError::from)?,
+        )?;
         let mut view = CommittedPadsView::counting();
         let (prefix, masked_auxiliary) = self.instance.verify_on(
             transcript,
@@ -500,9 +517,9 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             .compress(&pad_image)
             .map_err(ZkError::from)?;
 
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        transcript.site(PAD_SITE);
-        transcript.send_all(&compressed.payload);
+        clear_thread_events();
+        let mut transcript = new_prover_channel(SESSION);
+        send_field_group(&mut transcript, PAD_SITE, &compressed.payload)?;
         let mut masking = CommittedPads::uncommitted(self.layout.clone(), pads)?;
         let shifted = ShiftedImage(self.response());
         let bumped = BumpedTail {
@@ -528,13 +545,9 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         let auxiliary = match cheat.shifted_slot {
             None => auxiliary,
             Some(_) => {
-                let bytes = transcript.narg().to_vec();
-                let mut replay =
-                    VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, &bytes);
-                replay.site(PAD_SITE);
-                replay
-                    .receive_n::<F>(compressed.payload.len())
-                    .map_err(AkitaError::from)?;
+                let bytes = transcript.narg_string().to_vec();
+                let mut replay = new_verifier_channel(SESSION, &bytes);
+                receive_field_group::<F>(&mut replay, PAD_SITE, compressed.payload.len())?;
                 let prefix = self.instance.verify_prefix_on(
                     &mut replay,
                     &mut CommittedPadsView::counting(),
@@ -548,9 +561,10 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
 
         // The prover's residual rows: the verifier's own lowering of the
         // prefix, replayed over the prover's bytes.
-        let bytes = transcript.narg().to_vec();
-        let mut replay =
-            VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, &bytes);
+        finish_proof_ranges(&transcript);
+        let sigma_start = transcript.narg_string().len();
+        let bytes = transcript.narg_string().to_vec();
+        let mut replay = new_verifier_channel(SESSION, &bytes);
         let Replayed { relation, .. } = self.replay(&mut replay, pad_image.len())?;
         let sigma = self.sigma::<D>(
             &residual.residual_payload,
@@ -563,7 +577,6 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         )?;
         let lifted = sigma.lift(&relation, &self.shape.claims(&residual.point)?)?;
         let s = self.shape.residual(&residual)?;
-        transcript.site(SIGMA_SITE);
         if !cheat.unchecked_sigma {
             prove_sigma(
                 &sigma,
@@ -602,8 +615,13 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
                 ),
             )?;
         }
+        finish_proof_ranges(&transcript);
         Ok(ZkProof {
-            proof: transcript.finish(),
+            proof: transcript.narg_string().to_vec(),
+            recorded: Recorded {
+                ranges: thread_proof_ranges(),
+                sigma_start,
+            },
             pads: committed,
             residual,
             pad_randomness,
@@ -611,17 +629,13 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         })
     }
 
-    /// Verifies `proof`, returning the verifier's event log.
-    pub(crate) fn verify(&self, proof: &[u8]) -> Result<Vec<TranscriptEvent>, Failure> {
+    /// Verifies `proof`.
+    pub(crate) fn verify(&self, proof: &[u8]) -> Result<(), Failure> {
         with_ring_dim!(self.shape.ring_dim(), D, self.verify_at::<D>(proof))
     }
 
-    pub(crate) fn verify_at<const D: usize>(
-        &self,
-        proof: &[u8],
-    ) -> Result<Vec<TranscriptEvent>, Failure> {
-        let mut transcript =
-            VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, proof);
+    pub(crate) fn verify_at<const D: usize>(&self, proof: &[u8]) -> Result<(), Failure> {
+        let mut transcript = new_verifier_channel(SESSION, proof);
         let Replayed {
             pad_payload,
             prefix,
@@ -644,37 +658,11 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
             },
         )?;
         let lifted = sigma.lift(&relation, &self.shape.claims(claim.point())?)?;
-        transcript.site(SIGMA_SITE);
         verify_sigma(&sigma, &lifted, &mut transcript, self.response())?;
-        let events = transcript.events().to_vec();
-        transcript.finish().map_err(AkitaError::from)?;
-        Ok(events)
-    }
-
-    /// The verifier's event log with the statement claims routed through
-    /// the clear transcript instead of the masked channel, through the
-    /// masked prefix: HT1's positive control.
-    pub(crate) fn verify_with_clear_claims(&self, proof: &[u8]) -> Vec<TranscriptEvent> {
-        let mut transcript =
-            VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, proof);
-        transcript.site(PAD_SITE);
-        let payload_len = self
-            .response()
-            .payload_len(PAD_RANK * self.shape.ring_dim())
-            .unwrap();
-        transcript.receive_n::<F>(payload_len).unwrap();
-        transcript.site(CLAIMS_SITE);
-        let claims: Vec<F> = transcript.receive_n(self.instance.groups.len()).unwrap();
-        // The replay's outcome does not matter, only the sites it reads.
-        let _ = self.instance.verifier.verify_masked_prefix(
-            &mut transcript,
-            &mut CommittedPadsView::counting(),
-            self.instance.statement(),
-            own_pads(claims),
-            &CompressionShape::<C>::default(),
-            BASIS,
-        );
-        transcript.events().to_vec()
+        transcript
+            .check_eof()
+            .map_err(|_| Failure::Akita(AkitaError::InvalidProof))?;
+        Ok(())
     }
 }
 

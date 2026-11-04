@@ -7,8 +7,9 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{PrivateProofChannel, 
-    exchange_public_extension_group, public_bytes, ProtocolSiteId, SITE_FAMILY_STAGE3,
+use akita_transcript::{
+    exchange_public_extension_group, public_bytes, PrivateProofChannel, ProtocolSiteId,
+    SITE_FAMILY_STAGE3,
 };
 use core::slice;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
@@ -73,7 +74,11 @@ where
     E: ExtField<F>,
     G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    exchange_public_extension_group::<F, E, _>(grinding.state_mut(), site, slice::from_mut(&mut value))?;
+    exchange_public_extension_group::<F, E, _>(
+        grinding.state_mut(),
+        site,
+        slice::from_mut(&mut value),
+    )?;
     Ok(value)
 }
 

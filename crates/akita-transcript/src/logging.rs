@@ -6,7 +6,7 @@ use std::cell::RefCell;
 thread_local! {
     static THREAD_EVENTS: RefCell<Vec<TranscriptEvent>> = const { RefCell::new(Vec::new()) };
     static THREAD_PROOF_RANGES: RefCell<Vec<ProofMessageRange>> = const { RefCell::new(Vec::new()) };
-    static PENDING_PROOF_RANGE: RefCell<Option<(ProtocolContextRecord, usize)>> = const { RefCell::new(None) };
+    static PENDING_PROOF_RANGE: RefCell<Option<(ProtocolContextRecord, usize, Option<(usize, usize)>)>> = const { RefCell::new(None) };
 }
 
 /// One proof channel event recorded for structural diagnostics.
@@ -25,6 +25,9 @@ pub struct ProofMessageRange {
     pub start: usize,
     /// Actual number of argument bytes emitted for the group.
     pub len: usize,
+    /// The pad slots `(first, count)` that masked the group, when it went
+    /// out on a masked channel.
+    pub pads: Option<(usize, usize)>,
 }
 
 pub(crate) fn record_context(record: ProtocolContextRecord) {
@@ -33,7 +36,7 @@ pub(crate) fn record_context(record: ProtocolContextRecord) {
 
 fn finish_pending(end: usize) {
     let pending = PENDING_PROOF_RANGE.with(|pending| pending.borrow_mut().take());
-    let Some((context, start)) = pending else {
+    let Some((context, start, pads)) = pending else {
         return;
     };
     let Some(len) = end.checked_sub(start) else {
@@ -44,6 +47,7 @@ fn finish_pending(end: usize) {
             context,
             start,
             len,
+            pads,
         });
     });
 }
@@ -57,8 +61,18 @@ pub(crate) fn record_proof_boundary(record: ProtocolContextRecord, start: usize)
             || kind == crate::ProtocolMessageKind::GrindingNonce as u32
             || kind == crate::ProtocolMessageKind::FoldResponseNonce as u32
     ) {
-        PENDING_PROOF_RANGE.with(|pending| *pending.borrow_mut() = Some((record, start)));
+        PENDING_PROOF_RANGE.with(|pending| *pending.borrow_mut() = Some((record, start, None)));
     }
+}
+
+/// Marks the proof group just emitted as masked by the pads `first..first +
+/// count`. A masked channel calls this after each private message.
+pub fn mark_masked(first: usize, count: usize) {
+    PENDING_PROOF_RANGE.with(|pending| {
+        if let Some((_, _, pads)) = pending.borrow_mut().as_mut() {
+            *pads = Some((first, count));
+        }
+    });
 }
 
 pub(crate) fn finish_proof_ranges(end: usize) {

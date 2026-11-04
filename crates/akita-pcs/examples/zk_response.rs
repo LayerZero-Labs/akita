@@ -54,7 +54,8 @@ impl ResponseProver<F, D> for Measured<'_> {
         let before = transcript.narg_string().len();
         let started = Instant::now();
         self.inner.prove_response(statement, witness, transcript)?;
-        *self.prove.lock().unwrap() = Some((started.elapsed(), transcript.narg_string().len() - before));
+        *self.prove.lock().unwrap() =
+            Some((started.elapsed(), transcript.narg_string().len() - before));
         Ok(())
     }
 

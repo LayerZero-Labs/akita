@@ -20,10 +20,10 @@ use akita_transcript::{
     ProtocolContextRecord, ProtocolSiteId, VerifierChannel,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::PadSlots;
 #[cfg(feature = "prover")]
 use jolt_zk::masking::CommittedPads;
 use jolt_zk::masking::CommittedPadsView;
-use jolt_transcript::PadSlots;
 use spongefish::{Encoding, FromNarg};
 
 fn clear_message_refused() -> AkitaError {
@@ -122,6 +122,8 @@ where
             .map(|chunk| E::from_base_fn(|index| chunk[index]))
             .collect();
         exchange_extension_group::<F, E, _>(self.state, site, &mut masked)?;
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::mark_masked(slots.start, slots.len);
         Ok(slots)
     }
 

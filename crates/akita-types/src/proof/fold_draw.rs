@@ -5,9 +5,9 @@
 //! the family, and the group's position in the transcript fixes its index and
 //! counts, so the message continues the squeeze run before it.
 
-use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
 use akita_transcript::ProofChannel;
+use jolt_crypto::challenge::Challenges;
 
 pub use akita_params::{FoldChallengeDrawDomain, FoldChallengeFamily};
 

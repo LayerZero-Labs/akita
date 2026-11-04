@@ -4,12 +4,12 @@ pub mod transcript;
 mod transport;
 
 use crate::{AkitaExpandedSetup, FpExtEncoding};
-use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use akita_error::AkitaError;
+use akita_serialization::{AkitaSerialize, Valid};
 use jolt_algebra::checked;
 use jolt_algebra::field_modulus_be_bytes;
-use akita_serialization::{AkitaSerialize, Valid};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 pub use query::{SetupQuery, SetupWeightTerm};
 
 /// Exact flat setup polynomial; the rectangular split is intentionally not its identity.

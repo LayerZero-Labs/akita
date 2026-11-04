@@ -20,15 +20,14 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     prove_masked_prefix, ResidualOpening, SelectedProverOpeningData, SetupPrefixProverRegistry,
 };
-use akita_types::{
-    AkitaSponge, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-    PROOF_STREAM_PROTOCOL,
+use akita_transcript::{
+    new_prover_channel, new_verifier_channel, receive_field_group, send_field_group,
+    ProtocolSiteId, ProverChannel, VerifierChannel,
 };
+use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::{AkitaVerifier, MaskedPrefix};
 use jolt_algebra::{Ring, Zero};
-use jolt_transcript::{
-    Channel, ClaimDomain, PrivateChannel, ProverTranscript, SiteId, VerifierTranscript,
-};
+use jolt_transcript::ClaimDomain;
 use jolt_zk::masking::{
     AffineRow, CommittedPads, CommittedPadsView, OperandShapeDomain, PadIndex, PadLayout, ZkError,
 };
@@ -52,8 +51,21 @@ pub(crate) type Proved = (Vec<u8>, ResidualOpening<F, F>, Vec<F>);
 /// Diagnostic sites of the statement's masked claims and of the auxiliary
 /// block, which the caller sends around Akita's prefix. Sites never reach
 /// the sponge.
-pub(crate) const CLAIMS_SITE: SiteId = SiteId::label("harness/masked-claims");
-pub(crate) const AUXILIARY_SITE: SiteId = SiteId::label("harness/auxiliary");
+pub(crate) const CLAIMS_SITE: ProtocolSiteId = harness_site(1);
+pub(crate) const AUXILIARY_SITE: ProtocolSiteId = harness_site(2);
+
+const fn harness_site(detail: u32) -> ProtocolSiteId {
+    ProtocolSiteId {
+        family: u32::MAX,
+        invocation: 0,
+        level: 0,
+        stage: 0,
+        round: 0,
+        group: 0,
+        limb: 0,
+        detail,
+    }
+}
 
 /// Generous room for every message of the prefix, for the counting replay.
 pub(crate) const COUNTING_BYTES: usize = 1 << 22;
@@ -299,9 +311,9 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         pads: &mut CommittedPads<F, ()>,
         claims: impl FnOnce(Vec<F>) -> Vec<AffineRow<F>>,
     ) -> Result<Proved, AkitaError> {
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        let (residual, auxiliary) = self.prove_on(pads, claims, &mut transcript)?;
-        Ok((transcript.finish(), residual, auxiliary))
+        let mut state = new_prover_channel(SESSION);
+        let (residual, auxiliary) = self.prove_on(pads, claims, &mut state)?;
+        Ok((state.narg_string().to_vec(), residual, auxiliary))
     }
 
     /// [`prove`](Self::prove) on `transcript`, which the caller continues.
@@ -309,7 +321,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         &self,
         pads: &mut CommittedPads<F, ()>,
         claims: impl FnOnce(Vec<F>) -> Vec<AffineRow<F>>,
-        transcript: &mut ProverTranscript<AkitaSponge>,
+        transcript: &mut ProverChannel,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
         let (residual, auxiliary) = self.prove_prefix_on(
             pads,
@@ -328,12 +340,16 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         &self,
         pads: &mut CommittedPads<F, ()>,
         claims: impl FnOnce(Vec<F>) -> Vec<AffineRow<F>>,
-        transcript: &mut ProverTranscript<AkitaSponge>,
+        transcript: &mut ProverChannel,
         compression: &dyn ImageCompression<F>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
-        transcript.site(CLAIMS_SITE);
-        let masked_claims = pads.send(&self.openings(), transcript)?;
-        prove_masked_prefix::<C, _, _, _>(
+        let (slots, masked_claims) = pads.mask(&self.openings())?;
+        send_field_group(transcript, CLAIMS_SITE, &masked_claims)?;
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::mark_masked(slots.start, slots.len);
+        #[cfg(not(feature = "logging-transcript"))]
+        let _ = slots;
+        prove_masked_prefix::<C, _, _>(
             self.setup.expanded.descriptor(),
             self.scheme.schedules(),
             &self.backend,
@@ -353,10 +369,14 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         &self,
         pads: &mut CommittedPads<F, ()>,
         auxiliary: &[F],
-        transcript: &mut ProverTranscript<AkitaSponge>,
+        transcript: &mut ProverChannel,
     ) -> Result<(), AkitaError> {
-        transcript.site(AUXILIARY_SITE);
-        pads.send(auxiliary, transcript)?;
+        let (slots, masked) = pads.mask(auxiliary)?;
+        send_field_group(transcript, AUXILIARY_SITE, &masked)?;
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::mark_masked(slots.start, slots.len);
+        #[cfg(not(feature = "logging-transcript"))]
+        let _ = slots;
         pads.finish()?;
         Ok(())
     }
@@ -379,11 +399,10 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
         layout: &PadLayout,
         statement: GroupBatchStatement<'_, F, F>,
     ) -> Result<(MaskedPrefix<F, F>, Vec<F>), AkitaError> {
-        let mut transcript =
-            VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, proof);
+        let mut state = new_verifier_channel(SESSION, proof);
         let mut view = CommittedPadsView::counting();
-        let verified = self.verify_on(&mut transcript, &mut view, layout, statement)?;
-        transcript.finish()?;
+        let verified = self.verify_on(&mut state, &mut view, layout, statement)?;
+        state.check_eof().map_err(|_| AkitaError::InvalidProof)?;
         assert_eq!(view.used(), layout.num_pads);
         Ok(verified)
     }
@@ -392,31 +411,26 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
     /// caller continues and finishes.
     pub(crate) fn verify_on(
         &self,
-        transcript: &mut VerifierTranscript<'_, AkitaSponge>,
+        transcript: &mut VerifierChannel<'_>,
         view: &mut CommittedPadsView<()>,
         layout: &PadLayout,
         statement: GroupBatchStatement<'_, F, F>,
     ) -> Result<(MaskedPrefix<F, F>, Vec<F>), AkitaError> {
         let prefix = self.verify_prefix_on(transcript, view, statement)?;
-        let mut auxiliary = vec![F::zero(); layout.auxiliary.len()];
-        transcript.site(AUXILIARY_SITE);
-        view.channel(transcript)
-            .exchange_private_base(&mut auxiliary)?;
+        let auxiliary = receive_field_group(transcript, AUXILIARY_SITE, layout.auxiliary.len())?;
+        view.take(auxiliary.len())?;
         Ok((prefix, auxiliary))
     }
 
     /// The masked claims and the masked prefix, without the auxiliary block.
     pub(crate) fn verify_prefix_on(
         &self,
-        transcript: &mut VerifierTranscript<'_, AkitaSponge>,
+        transcript: &mut VerifierChannel<'_>,
         view: &mut CommittedPadsView<()>,
         statement: GroupBatchStatement<'_, F, F>,
     ) -> Result<MaskedPrefix<F, F>, AkitaError> {
-        let mut claims = vec![F::zero(); self.groups.len()];
-        transcript.site(CLAIMS_SITE);
-        let slots = view
-            .channel(transcript)
-            .exchange_private_base(&mut claims)?;
+        let claims: Vec<F> = receive_field_group(transcript, CLAIMS_SITE, self.groups.len())?;
+        let slots = view.take(claims.len())?;
         self.verifier.verify_masked_prefix(
             transcript,
             view,
@@ -441,13 +455,11 @@ pub(crate) fn counting_layout<C: CommitmentConfig<Field = F, ExtField = F>>(
     statement: GroupBatchStatement<'_, F, F>,
     bytes: &[u8],
 ) -> PadLayout {
-    let mut transcript =
-        VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, bytes);
+    let mut transcript = new_verifier_channel(SESSION, bytes);
     let mut view = CommittedPadsView::counting();
-    let claims = view
-        .channel(&mut transcript)
-        .exchange_private_base(&mut vec![F::zero(); statement.claims().num_groups()])
-        .unwrap();
+    let count = statement.claims().num_groups();
+    receive_field_group::<F>(&mut transcript, CLAIMS_SITE, count).unwrap();
+    let claims = view.take(count).unwrap();
     let prefix = verifier
         .count_masked_prefix(
             &mut transcript,
@@ -519,6 +531,7 @@ impl Instance<RecCfg> {
     pub(crate) fn multi_group_seeded(seed: u64) -> Self {
         let precommitted = dense_zk_row().0.final_group;
         let key = ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: PolynomialGroupLayout::singleton(MULTI_NV),
             precommitteds: vec![precommitted],
         };

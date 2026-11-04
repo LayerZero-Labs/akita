@@ -4,11 +4,11 @@ use crate::{advance_eq_factored_claim, SumcheckInstanceVerifier, SumcheckKernel}
 #[cfg(test)]
 use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_transcript::{
     exchange_extension_group, extension_slots, public_extensions, ProtocolSiteId, ProverChannel,
     VerifierChannel,
 };
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 use std::slice;

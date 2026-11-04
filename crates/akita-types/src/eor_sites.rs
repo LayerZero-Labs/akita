@@ -2,12 +2,12 @@
 
 use crate::{tensor_opening_split, GrindingReplay};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::{GrindingSite, OpeningClaimsLayout};
-use akita_transcript::{PrivateProofChannel, 
-    exchange_extension_group, public_extensions, ChallengeCodec, ProtocolSiteId,
-    SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
+use akita_transcript::{
+    exchange_extension_group, public_extensions, ChallengeCodec, PrivateProofChannel,
+    ProtocolSiteId, SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
 };
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const STAGE_OPENINGS: u32 = 1;

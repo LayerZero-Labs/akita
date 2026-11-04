@@ -169,9 +169,13 @@ fn child_requests(
 ) -> Result<Option<ChildRequests>, AkitaError> {
     let state = search.state;
     let params = &candidate.params;
-    let Some(query) = search
-        .query_search
-        .child(ctx, state, search.opening_layout, params, candidate.fold_cost)?
+    let Some(query) = search.query_search.child(
+        ctx,
+        state,
+        search.opening_layout,
+        params,
+        candidate.fold_cost,
+    )?
     else {
         return Ok(None);
     };

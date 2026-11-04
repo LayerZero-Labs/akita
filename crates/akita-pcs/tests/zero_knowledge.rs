@@ -26,12 +26,12 @@ use akita_params::{
 };
 use akita_pcs::{AkitaCommitmentScheme, BackendRegistry, FixedFoldRoute};
 use akita_prover::SelectedProverOpeningData;
+use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::{
-    AkitaSponge, Commitment, FoldDrawRecord, GrindingReplay, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, ProverGrinding, VerifierGrinding, PROOF_STREAM_PROTOCOL,
+    Commitment, FoldResponseReplay, GrindingReplay, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims, ProverGrinding, VerifierGrinding,
 };
 use jolt_algebra::{Ring, Zero};
-use jolt_transcript::{ProverTranscript, VerifierTranscript};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -157,8 +157,8 @@ fn planner_masks_every_level_up_to_the_cut() {
         let layout = key().opening_layout().unwrap();
         let mut clear = schedule.clone();
         clear.zk = None;
-        let clear_plan = derive_transcript_grinding_plan::<Cfg>(&clear, &layout).unwrap();
-        let zk_plan = derive_transcript_grinding_plan::<Cfg>(&schedule, &layout).unwrap();
+        let clear_plan = derive_transcript_grinding_plan::<Cfg>(&clear, &layout, None).unwrap();
+        let zk_plan = derive_transcript_grinding_plan::<Cfg>(&schedule, &layout, None).unwrap();
         assert_eq!(clear_plan.runs().len(), zk_plan.runs().len());
         for (clear_run, zk_run) in clear_plan.runs().iter().zip(zk_plan.runs()) {
             assert_eq!(clear_run.site(), zk_run.site());
@@ -830,8 +830,8 @@ fn clear_entry_points_refuse_a_zero_knowledge_configuration() {
             .unwrap();
         let mut registry = BackendRegistry::<Cfg>::new().unwrap();
         let id = registry.register(&backend, &prefixes).unwrap();
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        refused(akita_pcs::batched_prove(
+        let mut transcript = new_prover_channel(SESSION);
+        refused(akita_pcs::batched_prove_embedded(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
@@ -841,7 +841,7 @@ fn clear_entry_points_refuse_a_zero_knowledge_configuration() {
             &mut FixedFoldRoute::new(vec![id; resolved.schedule().num_fold_levels()]),
         ));
         assert!(
-            transcript.finish().is_empty(),
+            transcript.narg_string().is_empty(),
             "the prover wrote before refusing"
         );
 
@@ -859,7 +859,13 @@ fn clear_entry_points_refuse_a_zero_knowledge_configuration() {
             .unwrap(),
         )
         .unwrap();
-        refused(verifier.verify_standalone(&[], SESSION, statement, BasisMode::Lagrange));
+        refused(verifier.batched_verify(
+            &[],
+            SESSION,
+            statement,
+            BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
+        ));
     });
 }
 
@@ -884,6 +890,7 @@ fn the_descriptor_binds_the_configuration_mode() {
                     row.selection(),
                     row.schedule(),
                     BasisMode::Lagrange,
+                    None,
                 )
             } else {
                 akita_config::transcript_instance_descriptor::<F, Clear>(
@@ -892,6 +899,7 @@ fn the_descriptor_binds_the_configuration_mode() {
                     row.selection(),
                     row.schedule(),
                     BasisMode::Lagrange,
+                    None,
                 )
             };
             bytes.unwrap().1
@@ -913,14 +921,14 @@ fn the_descriptor_binds_the_configuration_mode() {
     });
 }
 
-/// A one-shot fold response sends no nonce and forks at counter 0, and the
-/// verifier rejects a nonce in its place.
+/// A one-shot fold response sends no nonce and previews only counter 0, and
+/// the verifier rejects a nonce in its place.
 #[test]
 fn one_shot_fold_response_replays_without_a_nonce() {
     on_large_stack(|| {
         let (_, schedule) = zk_row();
         let layout = key().opening_layout().unwrap();
-        let plan = derive_transcript_grinding_plan::<Cfg>(&schedule, &layout).unwrap();
+        let plan = derive_transcript_grinding_plan::<Cfg>(&schedule, &layout, None).unwrap();
         let site = GrindingSite::FoldResponse { level: 0 };
         let start = plan
             .runs()
@@ -932,63 +940,52 @@ fn one_shot_fold_response_replays_without_a_nonce() {
         assert!(earlier
             .iter()
             .all(|run| run.kind() == GrindingQueryKind::ProofOfWork));
-        let [group, next, ..] = &plan.runs()[start + 1..] else {
+        let [work, group, next, ..] = &plan.runs()[start + 1..] else {
             panic!("plan too short");
         };
+        assert_eq!(work.site(), GrindingSite::FoldChallengeWork { level: 0 });
         let coordinates = usize::try_from(group.fold_coordinate_count().unwrap()).unwrap();
 
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        let mut prover = ProverGrinding::<AkitaSponge>::new(&mut transcript, &plan);
+        let mut transcript = new_prover_channel(SESSION);
+        let mut prover = ProverGrinding::new(&mut transcript, &plan);
         for run in earlier {
-            prover.grinded_ext_challenge::<F, E>(run.site()).unwrap();
+            prover.grinded_ext_challenge::<E>(run.site()).unwrap();
         }
         assert_eq!(
-            prover.begin_fold_response(site).unwrap(),
+            prover.fold_response_search(site).unwrap(),
             FoldResponseSearch::OneShot
         );
-        assert!(prover.fold_response_fork(site, 1).is_err());
-        let at_response = prover.state_mut().narg().len();
-        let mut prover_fork = prover.commit_fold_response(site, 0).unwrap();
-        assert_eq!(
-            prover.state_mut().narg().len(),
-            at_response,
-            "no nonce is sent"
-        );
+        assert!(matches!(
+            prover.preview_fold_response(site, 1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        let at_response = prover.state_mut().narg_string().len();
+        let mut preview = prover.preview_fold_response(site, 0).unwrap();
         prover
-            .record_fold_challenges(0, 0, coordinates, &FoldDrawRecord::default())
+            .commit_fold_response(site, preview.take_work().unwrap())
             .unwrap();
-        prover.grinded_ext_challenge::<F, E>(next.site()).unwrap();
-        let proof = transcript.finish();
+        prover.record_fold_challenges(0, 0, coordinates).unwrap();
+        let challenge = prover.grinded_ext_challenge::<E>(next.site()).unwrap();
+        prover.finish().unwrap();
+        let proof = transcript.narg_string().to_vec();
 
-        let verify = |proof: &[u8]| -> Result<[u8; 32], AkitaError> {
-            let mut transcript =
-                VerifierTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION, proof);
-            let mut verifier = VerifierGrinding::<AkitaSponge>::new(&mut transcript, &plan);
+        let verify = |proof: &[u8]| -> Result<(u32, E), AkitaError> {
+            let mut state = new_verifier_channel(SESSION, proof);
+            let mut verifier = VerifierGrinding::new(&mut state, &plan);
             for run in earlier {
-                verifier.grinded_ext_challenge::<F, E>(run.site())?;
+                verifier.grinded_ext_challenge::<E>(run.site())?;
             }
-            let mut fork = verifier.read_fold_response(site)?;
-            verifier.record_fold_challenges(0, 0, coordinates, &FoldDrawRecord::default())?;
-            verifier.grinded_ext_challenge::<F, E>(next.site())?;
-            transcript.finish()?;
-            Ok(fork.squeeze::<32>())
+            let counter = verifier.read_fold_response(site)?;
+            verifier.record_fold_challenges(0, 0, coordinates)?;
+            let challenge = verifier.grinded_ext_challenge::<E>(next.site())?;
+            verifier.finish()?.check_eof(state)?;
+            Ok((counter, challenge))
         };
-        assert_eq!(verify(&proof), Ok(prover_fork.squeeze::<32>()));
+        assert_eq!(verify(&proof), Ok((0, challenge)));
         // A clear prover's nonce for counter 0 where the response sits.
         let mut with_nonce = proof;
         with_nonce.insert(at_response, 0);
         assert!(verify(&with_nonce).is_err());
-
-        let mut transcript = ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-        let mut prover = ProverGrinding::<AkitaSponge>::new(&mut transcript, &plan);
-        for run in earlier {
-            prover.grinded_ext_challenge::<F, E>(run.site()).unwrap();
-        }
-        prover.begin_fold_response(site).unwrap();
-        assert!(matches!(
-            prover.commit_fold_response(site, 1),
-            Err(AkitaError::InvalidInput(_))
-        ));
     });
 }
 
@@ -1007,6 +1004,7 @@ const MULTI_NV: usize = 37;
 fn multi_group_zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
     let precommitted = zk_row().0.final_group;
     let key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: PolynomialGroupLayout::singleton(MULTI_NV),
         precommitteds: vec![precommitted],
     };

@@ -5,8 +5,8 @@
 
 use super::root::verify_root;
 use super::suffix::{verify_suffix_level, SuffixVerifierState};
-use super::NextWitness;
 use super::verify::OpeningPlan;
+use super::NextWitness;
 use crate::masked::{CompressedCut, MaskedPrefix, MaskedReplay, ResidualClaim};
 use crate::AkitaVerifier;
 use akita_config::CommitmentConfig;

@@ -31,16 +31,13 @@ mod private_cpu;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::zk::ZK_CUT_LEVEL;
-use akita_params::ProtocolSiteId;
-use akita_pcs::zk::RESPONSE_SITE;
-use akita_types::{AkitaSponge, PROOF_STREAM_PROTOCOL};
+use akita_transcript::{
+    clear_thread_events, finish_proof_ranges, new_prover_channel, new_verifier_channel,
+    send_field_group, thread_proof_ranges, ProofMessageRange, ProtocolSiteId,
+};
 use harness::*;
 use instance::*;
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, Field, One};
-use jolt_transcript::{
-    Channel, ProverTranscript, SiteId, TranscriptEvent, TranscriptOp, VerifierTranscript,
-    ATTEMPT_NONCE_LEN,
-};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, Field, One};
 use jolt_zk::masking::{CommittedPads, ZkError};
 use jolt_zk::whiteout::WhiteoutError;
 use rand::rngs::StdRng;
@@ -76,13 +73,15 @@ enum MaskedKind {
     Auxiliary,
 }
 
-/// Where the verifier is in the proof, from the harness's site labels.
+/// Where a message sits in the proof.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    Start,
-    PadCommitment,
+    /// The pad commitment, the masked statement, Akita's prefix and the
+    /// auxiliary block.
     Statement,
+    /// The Σ-protocol, before the response proof.
     Sigma,
+    /// The response proof, the Σ-protocol's last message.
     Response,
 }
 
@@ -94,51 +93,65 @@ struct Received {
     pads: Option<Range<usize>>,
 }
 
-/// The allowlist: the class every site of an honest zero-knowledge proof
-/// may carry, and whether it must arrive masked. A site outside it, a masked
-/// message at a clear site, or a private message without its masking is an
-/// error naming the message.
+/// The Σ-protocol's attempt nonce: 256 bits, its last message before the
+/// response proof.
+const ATTEMPT_NONCE_LEN: usize = 32;
+
+/// The site a context record names (`ProtocolSiteId::to_bytes`' words).
+fn site_of(bytes: [u8; 32]) -> ProtocolSiteId {
+    let word =
+        |index: usize| u32::from_le_bytes(bytes[4 * index..4 * index + 4].try_into().unwrap());
+    ProtocolSiteId {
+        family: word(0),
+        invocation: word(1),
+        level: word(2),
+        stage: word(3),
+        round: word(4),
+        group: word(5),
+        limb: word(6),
+        detail: word(7),
+    }
+}
+
+/// The allowlist: the class every Akita proof group of an honest
+/// zero-knowledge proof may carry, and whether it must arrive masked. A site
+/// outside it, a masked message at a clear site, or a private message
+/// without its masking is an error naming the message.
 fn class_of(
     phase: Phase,
-    site: SiteId,
+    site: ProtocolSiteId,
     masked: bool,
     grinding: &[ProtocolSiteId],
 ) -> Result<Class, String> {
-    use akita_params::transcript_site::*;
     use akita_params::SumcheckProtocol;
+    use akita_transcript::*;
     let class = match phase {
-        Phase::Start => return Err("a message before the pad commitment".into()),
-        Phase::PadCommitment => Class::RandomizedCommitment,
-        Phase::Sigma => Class::Sigma,
+        Phase::Sigma => return Err(format!("site {site:?} inside the Σ-protocol")),
         Phase::Response => Class::Response,
+        Phase::Statement if site == PAD_SITE => Class::RandomizedCommitment,
         Phase::Statement if site == CLAIMS_SITE => Class::Masked(MaskedKind::Claim),
         Phase::Statement if site == AUXILIARY_SITE => Class::Masked(MaskedKind::Auxiliary),
-        Phase::Statement => {
-            let id = ProtocolSiteId::from_bytes(site.0);
-            match id.family {
-                SITE_FAMILY_SUMCHECK if id.invocation == SumcheckProtocol::Stage1.tag() => {
-                    Class::Masked(MaskedKind::Stage1Round)
-                }
-                SITE_FAMILY_SUMCHECK if id.invocation == SumcheckProtocol::Stage2.tag() => {
-                    Class::Masked(MaskedKind::Stage2Round)
-                }
-                SITE_FAMILY_SUMCHECK if id.invocation == SumcheckProtocol::Stage3.tag() => {
-                    Class::PublicChallengeDerived
-                }
-                SITE_FAMILY_STAGE1 => Class::Masked(MaskedKind::RangeImage),
-                SITE_FAMILY_STAGE2 => Class::Masked(MaskedKind::WitnessEval),
-                SITE_FAMILY_STAGE3 => Class::PublicChallengeDerived,
-                SITE_FAMILY_OPENING_PAYLOAD | SITE_FAMILY_NEXT_WITNESS => {
-                    Class::RandomizedCommitment
-                }
-                // Proof-of-work nonces: exactly the schedule's grinding
-                // sites (`GrindingSite::site_id`; the detail carries widths).
-                _ if grinding.contains(&ProtocolSiteId { detail: 0, ..id }) => {
-                    Class::PublicChallengeDerived
-                }
-                _ => return Err(format!("site {id:?} is outside the allowlist")),
+        Phase::Statement => match site.family {
+            SITE_FAMILY_SUMCHECK if site.invocation == SumcheckProtocol::Stage1.tag() => {
+                Class::Masked(MaskedKind::Stage1Round)
             }
-        }
+            SITE_FAMILY_SUMCHECK if site.invocation == SumcheckProtocol::Stage2.tag() => {
+                Class::Masked(MaskedKind::Stage2Round)
+            }
+            SITE_FAMILY_SUMCHECK if site.invocation == SumcheckProtocol::Stage3.tag() => {
+                Class::PublicChallengeDerived
+            }
+            SITE_FAMILY_STAGE1 => Class::Masked(MaskedKind::RangeImage),
+            SITE_FAMILY_STAGE2 => Class::Masked(MaskedKind::WitnessEval),
+            SITE_FAMILY_STAGE3 => Class::PublicChallengeDerived,
+            SITE_FAMILY_OPENING_PAYLOAD | SITE_FAMILY_NEXT_WITNESS => Class::RandomizedCommitment,
+            // Proof-of-work nonces: exactly the schedule's grinding sites
+            // (`GrindingSite::site_id`; the detail carries widths).
+            _ if grinding.contains(&ProtocolSiteId { detail: 0, ..site }) => {
+                Class::PublicChallengeDerived
+            }
+            _ => return Err(format!("site {site:?} is outside the allowlist")),
+        },
     };
     match (class, masked) {
         (Class::Masked(_), true) => Ok(class),
@@ -148,28 +161,41 @@ fn class_of(
     }
 }
 
-/// HT1's classifier: every received byte of `proof_len` in exactly one
-/// class, in order, from the verifier's event log.
+/// HT1's classifier: every byte of a `proof_len`-byte proof in exactly one
+/// class, in order, from the prover's log. Before the Σ-protocol every byte
+/// is in one of Akita's proof groups; the Σ-protocol's own messages fill
+/// the bytes up to the response proof, whose groups run to the end.
 fn classify(
-    events: &[TranscriptEvent],
+    recorded: &Recorded,
     proof_len: usize,
     grinding: &[ProtocolSiteId],
 ) -> Result<Vec<Received>, String> {
-    let mut phase = Phase::Start;
+    let mut phase = Phase::Statement;
     let mut received = Vec::new();
     let mut cursor = 0;
-    for (index, event) in events.iter().enumerate() {
-        phase = match event.site {
-            site if site == PAD_SITE => Phase::PadCommitment,
-            site if site == CLAIMS_SITE && phase == Phase::PadCommitment => Phase::Statement,
-            site if site == SIGMA_SITE => Phase::Sigma,
-            site if site == RESPONSE_SITE => Phase::Response,
-            _ => phase,
-        };
-        if event.op != TranscriptOp::Message {
-            continue;
+    for range in &recorded.ranges {
+        let bytes = range.start..range.start + range.len;
+        let site = site_of(range.context.site_id);
+        if bytes.start >= recorded.sigma_start && phase == Phase::Statement {
+            if cursor != recorded.sigma_start {
+                return Err(format!(
+                    "bytes {cursor}..{} belong to no message",
+                    recorded.sigma_start
+                ));
+            }
+            phase = Phase::Sigma;
         }
-        let bytes = event.narg.clone().ok_or("a message without bytes")?;
+        if phase == Phase::Sigma && site.family == akita_transcript::SITE_FAMILY_RESPONSE {
+            if bytes.start > cursor {
+                received.push(Received {
+                    bytes: cursor..bytes.start,
+                    class: Class::Sigma,
+                    pads: None,
+                });
+                cursor = bytes.start;
+            }
+            phase = Phase::Response;
+        }
         if bytes.start != cursor {
             return Err(format!(
                 "bytes {cursor}..{} belong to no message",
@@ -177,17 +203,13 @@ fn classify(
             ));
         }
         cursor = bytes.end;
-        let pads = match events.get(index + 1) {
-            Some(TranscriptEvent {
-                op: TranscriptOp::Masked { first_pad },
-                len,
-                ..
-            }) => Some(*first_pad..first_pad + len),
-            _ => None,
-        };
-        let class = class_of(phase, event.site, pads.is_some(), grinding)
+        let pads = range.pads.map(|(first, count)| first..first + count);
+        let class = class_of(phase, site, pads.is_some(), grinding)
             .map_err(|error| format!("bytes {bytes:?}: {error}"))?;
         received.push(Received { bytes, class, pads });
+    }
+    if phase != Phase::Response {
+        return Err("no response proof".into());
     }
     if cursor != proof_len {
         return Err(format!("bytes {cursor}..{proof_len} belong to no message"));
@@ -234,9 +256,13 @@ fn honest_proofs_verify_end_to_end() {
     on_large_stack(|| {
         fn check<C: CommitmentConfig<Field = F, ExtField = F>>(harness: &Harness<C>, seed: u64) {
             let proved = harness.prove(seed, Cheat::default()).unwrap();
-            let events = harness.verify(&proved.proof).unwrap();
-            let received =
-                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap();
+            harness.verify(&proved.proof).unwrap();
+            let received = classify(
+                &proved.recorded,
+                proved.proof.len(),
+                &harness.grinding_sites(),
+            )
+            .unwrap();
             for class in [Class::Sigma, Class::Response] {
                 let message = received.iter().find(|m| m.class == class).unwrap();
                 let mut proof = proved.proof.clone();
@@ -293,9 +319,13 @@ fn every_received_byte_is_in_one_public_class() {
     on_large_stack(|| {
         fn check<C: CommitmentConfig<Field = F, ExtField = F>>(harness: &Harness<C>, seed: u64) {
             let proved = harness.prove(seed, Cheat::default()).unwrap();
-            let events = harness.verify(&proved.proof).unwrap();
-            let received =
-                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap();
+            harness.verify(&proved.proof).unwrap();
+            let received = classify(
+                &proved.recorded,
+                proved.proof.len(),
+                &harness.grinding_sites(),
+            )
+            .unwrap();
             let kinds = received
                 .iter()
                 .filter_map(|message| match message.class {
@@ -326,9 +356,14 @@ fn every_received_byte_is_in_one_public_class() {
             }
 
             // Positive control: one private site routed clear.
-            let events = harness.verify_with_clear_claims(&proved.proof);
+            let mut clear_claims = proved.recorded.clone();
+            for range in &mut clear_claims.ranges {
+                if site_of(range.context.site_id) == CLAIMS_SITE {
+                    range.pads = None;
+                }
+            }
             let error =
-                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap_err();
+                classify(&clear_claims, proved.proof.len(), &harness.grinding_sites()).unwrap_err();
             assert!(
                 error.contains("Claim message reached a clear channel"),
                 "{error}"
@@ -338,13 +373,14 @@ fn every_received_byte_is_in_one_public_class() {
         let multi = multi();
         check(&multi, 4);
         let proved = multi.prove(5, Cheat::default()).unwrap();
-        let events = multi.verify(&proved.proof).unwrap();
-        let stage3 = events
+        multi.verify(&proved.proof).unwrap();
+        let stage3 = proved
+            .recorded
+            .ranges
             .iter()
-            .filter(|event| {
-                event.op == TranscriptOp::Message
-                    && akita_params::ProtocolSiteId::from_bytes(event.site.0).family
-                        == akita_params::transcript_site::SITE_FAMILY_STAGE3
+            .filter(|range| {
+                range.start < proved.recorded.sigma_start
+                    && site_of(range.context.site_id).family == akita_transcript::SITE_FAMILY_STAGE3
             })
             .count();
         assert!(stage3 > 0, "the multi-group row runs no Stage 3");
@@ -360,11 +396,7 @@ fn shifting_any_slot_breaks_a_row() {
     on_large_stack(|| {
         fn check<C: CommitmentConfig<Field = F, ExtField = F>>(harness: &Harness<C>, seed: u64) {
             let proved = harness.prove(seed, Cheat::default()).unwrap();
-            let mut transcript = VerifierTranscript::<AkitaSponge>::new(
-                &PROOF_STREAM_PROTOCOL,
-                SESSION,
-                &proved.proof,
-            );
+            let mut transcript = new_verifier_channel(SESSION, &proved.proof);
             let Replayed {
                 prefix,
                 masked_auxiliary,
@@ -419,9 +451,13 @@ fn pads_are_used_once_and_never_reused() {
         ];
         let mut seen = Vec::new();
         for (harness, proved) in &proofs {
-            let events = harness.verify(&proved.proof).unwrap();
-            let received =
-                classify(&events, proved.proof.len(), &harness.grinding_sites()).unwrap();
+            harness.verify(&proved.proof).unwrap();
+            let received = classify(
+                &proved.recorded,
+                proved.proof.len(),
+                &harness.grinding_sites(),
+            )
+            .unwrap();
             let mut next = 0;
             for pads in masked_pads(&received) {
                 assert_eq!(pads.start, next, "pads {pads:?} out of order");
@@ -457,12 +493,11 @@ fn pads_are_used_once_and_never_reused() {
         assert_ne!(a.residual.r_a, b.residual.r_a, "r_a reused");
         assert_ne!(a.pad_randomness, b.pad_randomness, "r_p reused");
         let nonce = |proved: &ZkProof, received: &[Received]| {
-            received
+            let sigma = received
                 .iter()
-                .filter(|message| message.class == Class::Sigma)
-                .find(|message| message.bytes.len() == ATTEMPT_NONCE_LEN)
-                .map(|message| proved.proof[message.bytes.clone()].to_vec())
-                .unwrap()
+                .find(|message| message.class == Class::Sigma)
+                .unwrap();
+            proved.proof[sigma.bytes.end - ATTEMPT_NONCE_LEN..sigma.bytes.end].to_vec()
         };
         assert_ne!(nonce(a, &seen[0]), nonce(b, &seen[1]), "Σ nonce reused");
         assert_ne!(
@@ -537,16 +572,16 @@ fn a_fold_overflow_rerun_reuses_nothing() {
                 .collect();
             let mut masking =
                 CommittedPads::uncommitted(harness.layout.clone(), pads.clone()).unwrap();
-            let mut transcript =
-                ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-            transcript.site(PAD_SITE);
-            transcript.site(CLAIMS_SITE);
-            let claims = masking.send(&[group.opening], &mut transcript).unwrap();
+            clear_thread_events();
+            let mut transcript = new_prover_channel(SESSION);
+            let (slots, claims) = masking.mask(&[group.opening]).unwrap();
+            send_field_group(&mut transcript, CLAIMS_SITE, &claims).unwrap();
+            akita_transcript::mark_masked(slots.start, slots.len);
             let first_probe = private.fold_probes.get();
             private
                 .reject_fold_probe
                 .set(reject.map(|level| first_probe + level));
-            let result = prove_masked_prefix::<Cfg, _, _, _>(
+            let result = prove_masked_prefix::<Cfg, _, _>(
                 instance.setup.expanded.descriptor(),
                 instance.scheme.schedules(),
                 &private,
@@ -559,12 +594,13 @@ fn a_fold_overflow_rerun_reuses_nothing() {
                 BASIS,
             );
             private.reject_fold_probe.set(None);
+            finish_proof_ranges(&transcript);
             (
                 result.map(|_| ()),
                 private.fold_probes.get() - first_probe,
                 pads,
-                transcript.narg().to_vec(),
-                transcript.events().to_vec(),
+                transcript.narg_string().to_vec(),
+                thread_proof_ranges(),
             )
         };
         for level in 0..=ZK_CUT_LEVEL {
@@ -576,20 +612,11 @@ fn a_fold_overflow_rerun_reuses_nothing() {
             assert_eq!(probes, level as usize + 1);
             let (rerun, _, rerun_pads, rerun_bytes, rerun_events) = attempt(None);
             rerun.unwrap();
-            let values = |bytes: &[u8], events: &[TranscriptEvent], masked: bool| {
-                events
+            let values = |bytes: &[u8], ranges: &[ProofMessageRange], masked: bool| {
+                ranges
                     .iter()
-                    .enumerate()
-                    .filter(|(_, event)| event.op == TranscriptOp::Message)
-                    .filter(|(index, _)| {
-                        matches!(
-                            events.get(index + 1).map(|event| event.op),
-                            Some(TranscriptOp::Masked { .. })
-                        ) == masked
-                    })
-                    .filter_map(|(_, event)| event.narg.clone())
-                    .filter(|range| range.len() >= 16)
-                    .flat_map(|range| field_elements(&bytes[range]))
+                    .filter(|range| range.pads.is_some() == masked && range.len >= 16)
+                    .flat_map(|range| field_elements(&bytes[range.start..range.start + range.len]))
                     .collect::<HashSet<_>>()
             };
             let reused = |a: &HashSet<F>, b: &HashSet<F>, what: &str| {
@@ -633,8 +660,13 @@ fn a_consistent_cheat_fails_at_every_layer() {
     on_large_stack(|| {
         let harness = single();
         let honest = harness.prove(14, Cheat::default()).unwrap();
-        let events = harness.verify(&honest.proof).unwrap();
-        let received = classify(&events, honest.proof.len(), &harness.grinding_sites()).unwrap();
+        harness.verify(&honest.proof).unwrap();
+        let received = classify(
+            &honest.recorded,
+            honest.proof.len(),
+            &harness.grinding_sites(),
+        )
+        .unwrap();
         for kind in [
             MaskedKind::Claim,
             MaskedKind::Stage1Round,

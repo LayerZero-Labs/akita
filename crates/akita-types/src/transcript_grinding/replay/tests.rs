@@ -3,12 +3,12 @@ use crate::{
     FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, PreviewFoldDraw, ProverFoldDraw,
     VerifierFoldDraw,
 };
-use jolt_crypto::challenge::SparseChallengeConfig;
 use akita_params::{ChallengeFieldOrder, GrindingRun};
 use akita_transcript::{
     new_prover_channel, new_verifier_channel, FoldPreview, NonceAtom, ProverTranscript,
 };
 use jolt_algebra::Prime128Offset275 as F;
+use jolt_crypto::challenge::SparseChallengeConfig;
 
 /// The fold proof of work at `level`, priced for `loss` challenges against a
 /// `2^128` set.

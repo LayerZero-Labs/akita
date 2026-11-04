@@ -2,10 +2,12 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{PrivateProofChannel, exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE1};
+use akita_transcript::{
+    exchange_extension_group, PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_STAGE1,
+};
 use core::slice;
-use jolt_transcript::PadSlots;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::PadSlots;
 
 const ROLE_CHILD_CLAIMS: u32 = 1;
 const ROLE_RANGE_IMAGE: u32 = 2;

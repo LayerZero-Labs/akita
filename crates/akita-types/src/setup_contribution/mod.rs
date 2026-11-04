@@ -16,9 +16,9 @@ use jolt_algebra::{CanonicalEncoding, Field};
 mod coefficient_functional;
 mod geometry;
 mod plan;
+pub(crate) mod setup_index_weight;
 #[cfg(feature = "labinius-trinomial")]
 mod trinomial;
-pub(crate) mod setup_index_weight;
 
 #[cfg(test)]
 mod tests;

@@ -25,13 +25,11 @@ use akita_params::ChunkedWitnessCfg;
 use akita_pcs::zk::{BackendCompression, CompressionShape};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{prove_masked_prefix, ResidualOpening, SelectedProverOpeningData};
-use akita_types::{
-    AkitaSponge, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, PROOF_STREAM_PROTOCOL,
-};
+use akita_transcript::{new_prover_channel, new_verifier_channel, send_field_group};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::MaskedPrefix;
 use instance::*;
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, One, Ring, Zero};
-use jolt_transcript::{ProverTranscript, VerifierTranscript};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, One, Ring, Zero};
 use jolt_zk::masking::{
     AffineRow, CommittedPads, CommittedPadsView, PadIndex, PadLayout, ResidualRelation,
     ResidualRows,
@@ -307,11 +305,8 @@ fn masked_entries_reject_wrong_claims_and_clear_schedules() {
             matches!(error, AkitaError::UnsupportedSchedule(_)),
             "{error}"
         );
-        let mut transcript = VerifierTranscript::<AkitaSponge>::new(
-            &PROOF_STREAM_PROTOCOL,
-            SESSION,
-            &[0; COUNTING_BYTES],
-        );
+        let zeros = vec![0; COUNTING_BYTES];
+        let mut transcript = new_verifier_channel(SESSION, &zeros);
         let error = clear
             .verifier
             .count_masked_prefix(
@@ -586,6 +581,7 @@ fn the_masked_levels_grind() {
         let plan = akita_config::derive_transcript_grinding_plan::<Cfg>(
             resolved.schedule(),
             instance.opening_data().opening_layout(),
+            None,
         )
         .unwrap();
         for level in 0..=ZK_CUT_LEVEL {
@@ -702,10 +698,10 @@ fn a_stage3_output_miss_is_rejected_at_a_masked_level() {
         let pads = random_pads(&layout, 13);
         let prove = || {
             let mut pads = CommittedPads::uncommitted(layout.clone(), pads.clone()).unwrap();
-            let mut transcript =
-                ProverTranscript::<AkitaSponge>::new(&PROOF_STREAM_PROTOCOL, SESSION);
-            let masked = pads.send(&openings, &mut transcript).unwrap();
-            let (_, auxiliary) = prove_masked_prefix::<RecCfg, _, _, _>(
+            let mut transcript = new_prover_channel(SESSION);
+            let (_, masked) = pads.mask(&openings).unwrap();
+            send_field_group(&mut transcript, CLAIMS_SITE, &masked).unwrap();
+            let (_, auxiliary) = prove_masked_prefix::<RecCfg, _, _>(
                 instance.setup.expanded.descriptor(),
                 instance.scheme.schedules(),
                 &private,
@@ -718,9 +714,10 @@ fn a_stage3_output_miss_is_rejected_at_a_masked_level() {
                 BASIS,
             )
             .unwrap();
-            pads.send(&auxiliary, &mut transcript).unwrap();
+            let (_, masked) = pads.mask(&auxiliary).unwrap();
+            send_field_group(&mut transcript, AUXILIARY_SITE, &masked).unwrap();
             pads.finish().unwrap();
-            transcript.finish()
+            transcript.narg_string().to_vec()
         };
 
         let honest = prove();

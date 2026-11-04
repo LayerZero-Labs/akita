@@ -23,22 +23,25 @@ pub use grinding::{
 pub use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
 #[cfg(feature = "logging-transcript")]
 pub use logging::{
-    clear_thread_events, thread_events, thread_proof_ranges, ProofMessageRange, TranscriptEvent,
+    clear_thread_events, mark_masked, thread_events, thread_proof_ranges, ProofMessageRange,
+    TranscriptEvent,
 };
 #[cfg(feature = "logging-transcript")]
 pub use proof_stream::finish_proof_ranges;
 pub use proof_stream::{
-    bind_instance, exchange_extension_group, exchange_public_extension_group, exchange_public_field_group, exchange_field_group, ext_challenge, ext_challenges, extension_slots,
+    bind_instance, exchange_extension_group, exchange_field_group, exchange_public_extension_group,
+    exchange_public_field_group, ext_challenge, ext_challenges, extension_slots,
     new_prover_channel, new_verifier_channel, nonce_encoded_len, nonce_max_bytes, prover_context,
     public_bytes, public_extensions, public_fields, receive_bounded_bytes, receive_byte_group,
     receive_field_group, receive_nonce, reject, send_bounded_bytes, send_byte_group,
     send_field_group, send_nonce, verifier_context, CommitmentDigest, ExtensionAtom, FieldAtom,
-    NonceAtom, PrivateProofChannel, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
-    COMMITMENT_DIGEST_LEN, COMMITMENT_DIGEST_TAG, CONTEXT_DOMAIN, PROTOCOL_TAG, PROTOCOL_VERSION,
-    SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE,
-    SITE_FAMILY_INSTANCE, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
-    SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_RESPONSE, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
-    SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL, STANDALONE_SESSION_TAG,
+    NonceAtom, PrivateProofChannel, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
+    ProtocolSiteId, COMMITMENT_DIGEST_LEN, COMMITMENT_DIGEST_TAG, CONTEXT_DOMAIN, PROTOCOL_TAG,
+    PROTOCOL_VERSION, SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING,
+    SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_INSTANCE, SITE_FAMILY_NEXT_WITNESS,
+    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_RESPONSE,
+    SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3,
+    SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL, STANDALONE_SESSION_TAG,
 };
 pub use proof_stream::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 #[cfg(feature = "prover")]

@@ -19,12 +19,14 @@ mod stage_checks;
 mod subring_coefficient_packing;
 pub mod trace_weight;
 mod transcript_grinding;
+pub use akita_transcript::{
+    field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES,
+};
 pub use eor_sites::{eor_final_claims, eor_prefix, EorPrefix, EOR_SUMCHECK_INVOCATION};
 pub use extension_opening_reduction::{
     derive_tensor_extension_opening_claim_from_partials, tensor_equality_factor_eval_at_point,
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
-pub use akita_transcript::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
@@ -48,6 +50,8 @@ pub use ntt_cache::{
     PreparedNttTailPairView, PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
     ProtocolCrtNttParams, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
+#[cfg(feature = "prover")]
+pub use proof::PreviewFoldDraw;
 pub use proof::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, build_compression_relation_weights,
     build_reduced_compression_relation_weights, build_terminal_response_from_payload,
@@ -81,16 +85,14 @@ pub use proof::{
     coefficient_packing_fixture, coefficient_packing_multigroup_fixture, CoefficientPackingFixture,
     CoefficientPackingMultigroupFixture,
 };
-#[cfg(feature = "prover")]
-pub use proof::PreviewFoldDraw;
-pub use proof::{
-    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
-};
 #[cfg(test)]
 pub(crate) use proof::{
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
     FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof, SetupSumcheckProof,
     TerminalLevelProof,
+};
+pub use proof::{
+    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
 };
 #[cfg(feature = "labinius-trinomial")]
 pub use relation_bridge::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
@@ -154,8 +156,8 @@ pub fn residual_point<F: jolt_algebra::Field>(
     )
 }
 pub use transcript_grinding::{
-    grinding_sumcheck_body_site, FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance,
-    VerifierGrinding, VerifierGrindingChannel,
+    grinding_sumcheck_body_site, FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier,
+    PendingEof, ProofAcceptance, VerifierGrinding, VerifierGrindingChannel,
 };
 #[cfg(feature = "prover")]
 pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding, ProverGrindingChannel};
