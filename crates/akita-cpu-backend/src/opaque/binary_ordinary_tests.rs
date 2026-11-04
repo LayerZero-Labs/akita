@@ -491,21 +491,32 @@ fn ordered_batch_rejects_omitted_reordered_and_wrong_width_groups() {
 mod legacy_weights;
 
 #[test]
-fn legacy_preimage_retains_one_slice_per_block_requirement() {
+fn legacy_and_signed_preimages_accept_multi_block_slices() {
+    // One B slice carries both live blocks. The legacy relation shares the
+    // signed relation's canonical T order, so both emit the same segments.
     let profile = profile(3, 1, CommitmentSliceCount::ONE);
+    assert!(
+        profile
+            .derive_slice_geometry()
+            .unwrap()
+            .max_blocks_per_slice()
+            > 1
+    );
     let plan = OrdinaryNativeRootPlan::new(profile, 0).unwrap();
     let input = fixture(profile, 3);
-    assert!(matches!(
-        input.backend.ordinary_root_preimage(&input.handle, &plan),
-        Err(AkitaError::InvalidInput(_))
-    ));
+    let legacy = input
+        .backend
+        .ordinary_root_preimage(&input.handle, &plan)
+        .unwrap();
     let signed =
         OrdinaryNativeRootPlan::new_signed(profile, 0, OrdinarySourceWidth::new(3).unwrap())
             .unwrap();
-    input
+    let signed = input
         .backend
         .ordinary_root_preimage(&input.handle, &signed)
         .unwrap();
+    assert_eq!(legacy.len(), 4);
+    assert_eq!(legacy[..], signed[..4]);
 }
 
 #[test]

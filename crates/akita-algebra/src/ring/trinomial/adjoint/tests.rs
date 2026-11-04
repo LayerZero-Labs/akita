@@ -2,7 +2,7 @@
 
 use core::fmt::Debug;
 
-use jolt_field::{Field, Prime128Offset275, Prime31Offset19, Zero};
+use jolt_field::{Field, Prime128Offset275, Prime31Offset19, Ring, Zero};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::{exact_convolution, SetupAdjointWeight, TrinomialAdjoint};
@@ -160,6 +160,31 @@ fn convolution_checks<F: Field + Debug>(seed: u64) {
 fn exact_convolution_matches_schoolbook_for_unit_even_and_odd_lengths() {
     convolution_checks::<Prime128Offset275>(0x275);
     convolution_checks::<Prime31Offset19>(0x019);
+}
+
+#[test]
+fn recursive_scratch_is_reusable_bounded_and_matches_schoolbook() {
+    type F = Prime128Offset275;
+    let mut rng = StdRng::seed_from_u64(0x5c4a_7c48);
+    for length in [17, 33, 81, DEGREE] {
+        let fields = super::karatsuba_scratch_len(length).unwrap();
+        if length == DEGREE {
+            assert_eq!(fields, 5_096);
+        }
+        let sentinel = F::from_u64(0x1234);
+        let mut scratch = vec![sentinel; fields + 2];
+        for _ in 0..2 {
+            let lhs: Vec<F> = (0..length).map(|_| random(&mut rng)).collect();
+            let rhs: Vec<F> = (0..length).map(|_| random(&mut rng)).collect();
+            let mut output = vec![sentinel; 2 * length - 1];
+            super::karatsuba(&lhs, &rhs, &mut output, &mut scratch[1..fields + 1]).unwrap();
+            assert_eq!(output, schoolbook(&lhs, &rhs));
+            assert_eq!(scratch[0], sentinel);
+            assert_eq!(scratch[fields + 1], sentinel);
+            assert!(super::karatsuba(&lhs, &rhs, &mut output, &mut scratch[1..fields]).is_err());
+        }
+    }
+    assert!(super::karatsuba_scratch_len(usize::MAX).is_err());
 }
 
 fn block_identity<F: Field + Debug, M: TrinomialModulus>(seed: u64) {

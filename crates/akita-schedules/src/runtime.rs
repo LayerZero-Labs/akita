@@ -743,7 +743,12 @@ pub fn materialize_candidate_schedule(
             ..terminal_response.params.clone()
         },
     };
-    crate::resolve::validate_canonical_transition_lengths(root_layout, &schedule, policy)?;
+    crate::resolve::validate_canonical_transition_lengths(
+        root_layout,
+        &schedule,
+        policy,
+        &crate::resolve::OrdinaryRootTransition,
+    )?;
     let mut estimate = FoldScheduleEstimate {
         nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,

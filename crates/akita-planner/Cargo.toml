@@ -45,6 +45,7 @@ labinius-trinomial = [
   "dep:akita-types",
   "akita-types/labinius-trinomial",
   "akita-params/labinius-trinomial",
+  "akita-schedules/labinius-trinomial",
 ]
 dev-protocol = ["akita-params/dev-protocol"]
 

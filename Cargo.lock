@@ -79,6 +79,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-labinius-prover",
  "akita-params",
  "akita-prover",
  "akita-serialization",

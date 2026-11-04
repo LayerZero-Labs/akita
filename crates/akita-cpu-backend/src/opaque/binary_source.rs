@@ -3,8 +3,7 @@
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, PrivateSource, SourceHandle};
 use super::owned_kind::SourceGroupKind;
 use super::*;
-use akita_algebra::ring::trinomial::{image::Q24Image, signed::signed_trinomial_product};
-use akita_algebra::MinusTrinomial;
+use akita_algebra::ring::trinomial::image::Q24Image;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::checked;
 use akita_serialization::{AkitaSerialize, Valid};
@@ -15,11 +14,13 @@ use akita_types::binary_source::{
 use akita_types::{Commitment, CommittedGroup, RingVec};
 use std::sync::Arc;
 
+mod packed;
 mod projection;
+use packed::{image_hint, probe_packed};
 
 #[path = "binary_import.rs"]
 mod import;
-use import::{BinarySourceCoefficients, BinarySourceInput};
+use import::BinarySourceInput;
 
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
@@ -30,10 +31,10 @@ pub(super) struct BinarySourceStorage {
     manifest: BinaryCommittedGroupManifest,
     carrier_profile: akita_params::GroupCommitPhaseParams,
     setup_seed: [u8; 32],
-    sources: BinarySourceCoefficients,
-    matrix: Vec<Vec<[i128; SOURCE_RING_DEGREE]>>,
-    images: Vec<[Q24Image; SOURCE_RING_DEGREE]>,
-    image_digits: Vec<i8>,
+    sources: Arc<Vec<u128>>,
+    matrix: Arc<Vec<Vec<[i128; SOURCE_RING_DEGREE]>>>,
+    images: Arc<Vec<[Q24Image; SOURCE_RING_DEGREE]>>,
+    image_digits: Arc<Vec<i8>>,
 }
 
 impl<F, E> CpuBackend<F, E>
@@ -61,8 +62,8 @@ where
     /// Each polynomial supplies `ceil(logical_len / (128 / word_width))` u128
     /// carriers, with zero unused high bits in its last carrier. Committed
     /// padding carriers and coordinates 128..161 are constructed as zeros.
-    /// The logical length is checked against the manifest before any expansion.
-    /// Compact storage is retained; existing kernels expand it only as needed.
+    /// The logical length is checked against the manifest before allocation.
+    /// Carriers are stored in the packed kernel order, never as expanded rings.
     pub fn import_packed_binary_source(
         &self,
         manifest: BinaryCommittedGroupManifest,
@@ -99,11 +100,7 @@ where
         let setup_seed = prepared.expanded.descriptor.setup_seed.seed;
         let sources = input.prepare(manifest.descriptor())?;
         let matrix = binary_root_matrix(&setup_seed, &manifest)?;
-        let images = image_hint(
-            &manifest,
-            &matrix,
-            &sources.expanded(manifest.descriptor())?,
-        )?;
+        let images = image_hint(manifest.descriptor(), manifest.a_rank(), &matrix, &sources)?;
         let image_digit_count = checked::product([images.len(), 8, SOURCE_RING_DEGREE])
             .ok_or(AkitaError::InvalidProof)?;
         let mut image_digits = Vec::new();
@@ -129,10 +126,10 @@ where
                 manifest,
                 carrier_profile,
                 setup_seed,
-                sources,
-                matrix,
-                images,
-                image_digits,
+                sources: Arc::new(sources),
+                matrix: Arc::new(matrix),
+                images: Arc::new(images),
+                image_digits: Arc::new(image_digits),
             }),
             metadata,
         })
@@ -188,50 +185,6 @@ where
         committed_group,
         private_handle,
     })
-}
-
-fn image_hint(
-    manifest: &BinaryCommittedGroupManifest,
-    matrix: &[Vec<[i128; SOURCE_RING_DEGREE]>],
-    sources: &[[i128; SOURCE_RING_DEGREE]],
-) -> Result<Vec<[Q24Image; SOURCE_RING_DEGREE]>, AkitaError> {
-    let index = manifest.descriptor().index_map();
-    let rows = checked::product([4, index.columns()])
-        .and_then(|block| checked::exact_div(index.padded_carriers(), block))
-        .ok_or(AkitaError::InvalidProof)?;
-    let count = checked::product([
-        manifest.descriptor().polynomials().len(),
-        index.columns(),
-        manifest.a_rank(),
-    ])
-    .ok_or(AkitaError::InvalidProof)?;
-    let mut images = Vec::new();
-    images
-        .try_reserve_exact(count)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    for column in sources.chunks_exact(rows) {
-        for matrix_row in matrix {
-            let mut image = [0i128; SOURCE_RING_DEGREE];
-            for (source, multiplier) in column.iter().zip(matrix_row) {
-                let product = signed_trinomial_product::<SOURCE_RING_DEGREE, MinusTrinomial>(
-                    source, multiplier,
-                )?;
-                for (destination, value) in image.iter_mut().zip(product) {
-                    *destination = destination
-                        .checked_add(value)
-                        .ok_or(AkitaError::InvalidProof)?;
-                }
-            }
-            let mut encoded = [Q24Image::from_residue(0)?; SOURCE_RING_DEGREE];
-            for (destination, value) in encoded.iter_mut().zip(image) {
-                let residue = u32::try_from(value.rem_euclid(i128::from(BINARY_SOURCE_Q)))
-                    .map_err(|_| AkitaError::InvalidProof)?;
-                *destination = Q24Image::from_residue(residue)?;
-            }
-            images.push(encoded);
-        }
-    }
-    Ok(images)
 }
 
 impl<F: Field + CanonicalEncoding, E: Field> PrivateSource<F, E> for BinarySourceStorage {
@@ -407,18 +360,21 @@ where
             "native root request has a different coefficient map".into(),
         ));
     }
-    let expanded = source.sources.expanded(manifest.descriptor())?;
     let partials = claim
         .as_ref()
         .map(|claim| {
-            crate::binary_root::binary_row_partials(manifest.descriptor(), claim, &expanded)
+            crate::binary_root::evaluation::packed_row_partials(
+                manifest.descriptor(),
+                claim,
+                &source.sources,
+            )
         })
         .transpose()?
         .unwrap_or_default();
-    let prime_digits = crate::binary_root::prime_plane_digits::<F>(
+    let prime_digits = crate::binary_root::prime::packed_prime_plane_digits::<F>(
         manifest.descriptor(),
         &request.prime,
-        &expanded,
+        &source.sources,
     )?;
     let mut d_digits = partials.clone();
     d_digits
@@ -483,10 +439,10 @@ where
         ));
     }
     let source = &preparation.source;
-    let Some(response) = crate::binary_root::BinaryRootRelation::probe(
+    let Some(response) = probe_packed(
         source.manifest.descriptor(),
         &source.matrix,
-        &source.sources.expanded(source.manifest.descriptor())?,
+        &source.sources,
         &source.images,
         challenges,
         akita_challenges::FoldChallengeDistribution::BinaryRoot,
@@ -617,7 +573,23 @@ where
         .iter()
         .position(|id| id == &request.polynomial)
         .ok_or_else(|| AkitaError::InvalidInput("unknown binary polynomial".into()))?;
-    let carriers = source.sources.canonical_carriers(descriptor, owner)?;
+    let index = descriptor.index_map();
+    let owner_start =
+        checked::product([owner, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
+    let mut carriers = Vec::new();
+    carriers
+        .try_reserve_exact(index.padded_carriers())
+        .map_err(|_| AkitaError::InvalidInput("carrier allocation failed".into()))?;
+    for carrier in 0..index.padded_carriers() {
+        let address = checked::sum([owner_start, index.kernel_carrier_index(carrier)?])
+            .ok_or(AkitaError::InvalidProof)?;
+        carriers.push(
+            *source
+                .sources
+                .get(address)
+                .ok_or(AkitaError::InvalidProof)?,
+        );
+    }
     binding
         .scope_lease()
         .admit_commitment(context, handle.committed.commitment_id)?;

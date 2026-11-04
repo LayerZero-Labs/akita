@@ -34,8 +34,6 @@ where
             )
             || profile.outer.digits.log_basis != 3
             || profile.outer.matrix.ring_dimension() != 64
-            || (plan.source_width().is_none()
-                && profile.outer_slice_count.get() != profile.blocks.live_blocks)
             || !profile
                 .inner
                 .matrix
@@ -99,6 +97,9 @@ where
             profile.inner.matrix.output_rank(),
         ])
         .ok_or(AkitaError::InvalidProof)?;
+        // T keeps global block/A-row/subcolumn/digit/coefficient order. B slices
+        // select canonical contiguous block ranges from that table; a slice need
+        // not contain exactly one block.
         let mut t = Vec::new();
         for image in inner_rows.iter() {
             if checked::product([image_elements, a_degree]) != Some(image.coeff_len()) {
@@ -236,3 +237,7 @@ fn source_digits<F: Field + CanonicalEncoding>(
 #[cfg(test)]
 #[path = "binary_ordinary_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "binary_ordinary_slice_tests.rs"]
+mod slice_tests;

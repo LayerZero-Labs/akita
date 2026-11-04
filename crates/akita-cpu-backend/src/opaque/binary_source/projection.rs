@@ -37,14 +37,17 @@ where
     }
     // Rebuild from authenticated private source material and the accepted fold.
     // No retained public residual or projected value is trusted by this boundary.
-    let relation = crate::binary_root::BinaryRootRelation::build(
+    let relation = probe_packed(
         source.manifest.descriptor(),
         &source.matrix,
-        &source.sources.expanded(source.manifest.descriptor())?,
+        &source.sources,
         &source.images,
         &request.challenges,
         akita_challenges::FoldChallengeDistribution::BinaryRoot,
-    )?;
+    )?
+    .ok_or_else(|| {
+        AkitaError::InvalidInput("accepted binary response exceeds its interval".into())
+    })?;
     let residuals = relation
         .rows
         .into_iter()

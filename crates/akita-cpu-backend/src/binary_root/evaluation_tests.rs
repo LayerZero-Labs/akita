@@ -54,6 +54,44 @@ fn terminal_carries_authenticate_response_partials_and_value() {
         modulus,
     )
     .unwrap();
+    // Independent previous construction: reduce each dense integer product
+    // before summing. This pins low-digit signs and the final carry encoding
+    // against the shared unreduced convolution and single final reduction.
+    let (row_weights, _) = claim.equality_weights(&input.descriptor).unwrap();
+    let scalar_challenges =
+        akita_types::binary_source::binary_scalar_challenges(&input.descriptor, &input.challenges)
+            .unwrap();
+    let mut parity = [0i128; 162];
+    for (row, weight) in row_weights.into_iter().enumerate() {
+        let low = response.response[row / 4].map(|coefficient| (coefficient + 2340) % 8 - 4);
+        let components =
+            akita_algebra::ring::trinomial::module_map::unpack_signed_components(&low).unwrap();
+        let product = akita_algebra::ring::trinomial::signed::signed_trinomial_product::<
+            162,
+            akita_algebra::PlusTrinomial,
+        >(&binary_scalar_lift(weight), &components[row % 4])
+        .unwrap();
+        for (sum, value) in parity.iter_mut().zip(product) {
+            *sum += value;
+        }
+    }
+    for (column, challenge) in scalar_challenges.iter().take(2).enumerate() {
+        let product = akita_algebra::ring::trinomial::signed::signed_trinomial_product::<
+            162,
+            akita_algebra::PlusTrinomial,
+        >(&partials[column * 162..(column + 1) * 162], challenge)
+        .unwrap();
+        for (sum, value) in parity.iter_mut().zip(product) {
+            *sum -= value;
+        }
+    }
+    for (coefficient, integer) in parity.into_iter().enumerate() {
+        assert_eq!(integer % 2, 0);
+        let offset = (integer / 2 + carry.bounds.parity_carry_bound as i128) as u128;
+        for (digit, row) in carry.parity_digits.chunks_exact(162).take(9).enumerate() {
+            assert_eq!(row[coefficient], ((offset >> (digit * 3)) & 7) as i8 - 4);
+        }
+    }
     assert_eq!(carry.bounds.parity_carry_bound, 76_695_844);
     assert_eq!(carry.bounds.value_carry_bound, 149_796);
     let (base, base_digits) = response.successor_table(256).unwrap();

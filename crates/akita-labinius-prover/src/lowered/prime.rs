@@ -39,9 +39,49 @@ pub fn prime_left_opening<H: SwitchField, E: Field>(
         return Err(invalid());
     }
     let weights = EqPolynomial::evals_serial(ring_point, None)?;
-    let group_size = layout.m().min(8);
+    let mut negated = 0u128;
+    for s in 0..(u128::BITS as usize).min(degree / k) {
+        let coefficient = checked::product([s, k]).ok_or_else(invalid)?;
+        if layout.sigma(coefficient)? != 1 {
+            negated |= 1 << s;
+        }
+    }
+    weighted_source_bits::<H, E>(source, &weights, k, layout.columns(), padded, negated)
+}
+
+/// Weighted packed-source bits, with shared eight-row subset sums.
+///
+/// Columns store `weights.len() * components` packed carriers contiguously.
+/// Each output column has `padded_coefficients` entries, with bit `s` of
+/// component `a` at `s * components + a`; all remaining entries are zero.
+/// `negated_bits` selects bit coordinates whose integer packing sign is -1.
+/// This arithmetic boundary accepts explicit weights, independently of any
+/// proof layout, transcript, or application claim.
+pub fn weighted_source_bits<H: SwitchField, E: Field>(
+    source: &[H::Source],
+    weights: &[E],
+    components: usize,
+    columns: usize,
+    padded_coefficients: usize,
+    negated_bits: u128,
+) -> Result<Vec<E>, AkitaError> {
+    let invalid = || AkitaError::InvalidInput("weighted source bit geometry mismatch".into());
+    let k = components;
+    let m = weights.len();
+    let rows = checked::product([m, k]).ok_or_else(invalid)?;
+    let padded = padded_coefficients;
+    let degree = checked::product([128, k]).ok_or_else(invalid)?;
+    if !m.is_power_of_two()
+        || k == 0
+        || columns == 0
+        || padded < degree
+        || checked::product([rows, columns]) != Some(source.len())
+    {
+        return Err(invalid());
+    }
+    let group_size = m.min(8);
     let sums_per_group = checked::pow2(group_size).ok_or_else(invalid)?;
-    let groups = checked::exact_div(layout.m(), group_size).ok_or_else(invalid)?;
+    let groups = checked::exact_div(m, group_size).ok_or_else(invalid)?;
     let subset_len = checked::product([groups, sums_per_group]).ok_or_else(invalid)?;
     let group_rows = checked::product([group_size, k]).ok_or_else(invalid)?;
     let byte_coefficients = checked::product([8, k]).ok_or_else(invalid)?;
@@ -64,19 +104,15 @@ pub fn prime_left_opening<H: SwitchField, E: Field>(
             }
         }
     }
-    // Bit `s` of the mask is set where coordinate `s` is packed negated.
-    let mut negated = 0u128;
-    for s in 0..(u128::BITS as usize).min(degree / k) {
-        let coefficient = checked::product([s, k]).ok_or_else(invalid)?;
-        if layout.sigma(coefficient)? != 1 {
-            negated |= 1 << s;
-        }
-    }
+    let negated = negated_bits;
     let mut table = Vec::new();
     table
-        .try_reserve_exact(layout.prime_len())
+        .try_reserve_exact(checked::product([columns, padded]).ok_or_else(invalid)?)
         .map_err(|_| allocation())?;
-    table.resize(layout.prime_len(), E::zero());
+    table.resize(
+        checked::product([columns, padded]).ok_or_else(invalid)?,
+        E::zero(),
+    );
     let fill = |(column, words): (&mut [E], &[H::Source])| -> Result<(), AkitaError> {
         let live = column.get_mut(..degree).ok_or_else(invalid)?;
         let live = live.get_mut(..source_coefficients).ok_or_else(invalid)?;

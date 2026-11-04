@@ -15,6 +15,7 @@ pub struct ResolvedScheduleRow {
     selection: OpeningScheduleSelection,
     profiles: CommittedGroupBatchProfile,
     schedule: FoldSchedule,
+    canonical_root_transition: bool,
 }
 
 impl ResolvedScheduleRow {
@@ -35,26 +36,26 @@ impl ResolvedScheduleRow {
         schedule: FoldSchedule,
         policy: &PlannerPolicy,
     ) -> Result<Self, AkitaError> {
+        Self::with_root_transition(profiles, schedule, policy, &OrdinaryRootTransition)
+    }
+
+    /// Extension seam: audit a selected root transition while sharing every
+    /// suffix invariant; <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub(crate) fn with_root_transition(
+        profiles: CommittedGroupBatchProfile,
+        schedule: FoldSchedule,
+        policy: &PlannerPolicy,
+        transition: &impl RootTransitionValidation,
+    ) -> Result<Self, AkitaError> {
         schedule.validate_nonterminal_opening_execution(policy.claim_ext_degree)?;
         audit_resolved_schedule(&profiles, &schedule, policy)?;
         validate_schedule_ring_dims(&schedule)?;
-        validate_canonical_transition_lengths(&profiles.opening_layout()?, &schedule, policy)?;
-        if let Some(prefix) = schedule
-            .recursive_folds
-            .first()
-            .and_then(|fold| fold.params.setup_prefix())
-        {
-            let expected = akita_params::active_setup_field_len(
-                &schedule.root.params,
-                &profiles.opening_layout()?,
-            )?
-            .max(schedule.root_accumulated_setup_prefix_len);
-            if prefix.setup_natural_len != Some(expected) {
-                return Err(AkitaError::InvalidSetup(
-                    "root setup prefix does not match the combined setup footprint".into(),
-                ));
-            }
-        }
+        validate_canonical_transition_lengths(
+            &profiles.opening_layout()?,
+            &schedule,
+            policy,
+            transition,
+        )?;
         let selection = OpeningScheduleSelection {
             row_digest: schedule_row_digest(&profiles, &schedule)?,
         };
@@ -62,7 +63,19 @@ impl ResolvedScheduleRow {
             selection,
             profiles,
             schedule,
+            canonical_root_transition: transition.is_ordinary(),
         })
+    }
+
+    /// Extension seam: extension rows require explicit admission and cannot be
+    /// encoded as ordinary artifacts; <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub(crate) fn require_ordinary_artifact(&self) -> Result<(), AkitaError> {
+        if !self.canonical_root_transition {
+            return Err(AkitaError::InvalidSetup(
+                "selected root transition requires explicit catalog admission".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Batch-level public schedule selection.
@@ -94,10 +107,101 @@ impl ResolvedScheduleRow {
     }
 }
 
+/// Extension seam: a root producer supplies its transition contract while the
+/// recursive suffix stays canonical; <https://github.com/LayerZero-Labs/akita/issues/285>.
+pub(crate) trait RootTransitionValidation {
+    fn validate_root(
+        &self,
+        root_layout: &akita_params::OpeningClaimsLayout,
+        schedule: &FoldSchedule,
+        policy: &PlannerPolicy,
+    ) -> Result<usize, AkitaError>;
+
+    fn validate_first_successor(
+        &self,
+        producer: &akita_params::FoldParams,
+        producer_opening: &akita_params::OpeningClaimsLayout,
+        step: &akita_params::FoldParams,
+        expected_input: usize,
+        policy: &PlannerPolicy,
+    ) -> Result<(), AkitaError>;
+
+    fn is_ordinary(&self) -> bool;
+}
+
+pub(crate) struct OrdinaryRootTransition;
+
+impl RootTransitionValidation for OrdinaryRootTransition {
+    fn validate_root(
+        &self,
+        root_layout: &akita_params::OpeningClaimsLayout,
+        schedule: &FoldSchedule,
+        policy: &PlannerPolicy,
+    ) -> Result<usize, AkitaError> {
+        let root_params = &schedule.root.params;
+        if !root_params.witness_chunk_ends.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "root witness ownership must be proportional".into(),
+            ));
+        }
+        let expected_root_input = root_input_witness_len(root_params);
+        if schedule.root.input_witness_len != expected_root_input {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root input witness length {} is not canonical; expected {expected_root_input}",
+                schedule.root.input_witness_len
+            )));
+        }
+        let expected_root_output = root_params.output_witness_len_for_field_bits(
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            root_layout,
+        )?;
+        if schedule.root.output_witness_len != expected_root_output {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root output witness length {} is not canonical; expected {expected_root_output}",
+                schedule.root.output_witness_len
+            )));
+        }
+        if let Some(prefix) = schedule
+            .recursive_folds
+            .first()
+            .and_then(|fold| fold.params.setup_prefix())
+        {
+            let expected = akita_params::active_setup_field_len(root_params, root_layout)?
+                .max(schedule.root_accumulated_setup_prefix_len);
+            if prefix.setup_natural_len != Some(expected) {
+                return Err(AkitaError::InvalidSetup(
+                    "root setup prefix does not match the combined setup footprint".into(),
+                ));
+            }
+        }
+
+        Ok(expected_root_output)
+    }
+
+    fn validate_first_successor(
+        &self,
+        producer: &akita_params::FoldParams,
+        producer_opening: &akita_params::OpeningClaimsLayout,
+        step: &akita_params::FoldParams,
+        expected_input: usize,
+        policy: &PlannerPolicy,
+    ) -> Result<(), AkitaError> {
+        validate_inherited_chunks(producer, producer_opening, step, expected_input, policy)
+    }
+
+    fn is_ordinary(&self) -> bool {
+        true
+    }
+}
+
+/// Extension seam: share canonical suffix validation with an explicitly selected
+/// root transition; <https://github.com/LayerZero-Labs/akita/issues/285>.
 pub(crate) fn validate_canonical_transition_lengths(
     root_layout: &akita_params::OpeningClaimsLayout,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
+    transition: &impl RootTransitionValidation,
 ) -> Result<(), AkitaError> {
     for (index, producer) in std::iter::once(&schedule.root)
         .chain(&schedule.recursive_folds)
@@ -117,55 +221,22 @@ pub(crate) fn validate_canonical_transition_lengths(
         }
     }
     let field_bits = policy.decomposition.field_bits();
-    let root_params = &schedule.root.params;
-    if !root_params.witness_chunk_ends.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "root witness ownership must be proportional".into(),
-        ));
-    }
-    let expected_root_input = root_input_witness_len(root_params);
-    if schedule.root.input_witness_len != expected_root_input {
-        return Err(AkitaError::InvalidSetup(format!(
-            "root input witness length {} is not canonical; expected {expected_root_input}",
-            schedule.root.input_witness_len
-        )));
-    }
-    let expected_root_output = root_params.output_witness_len_for_field_bits(
-        field_bits,
-        policy.claim_ext_degree,
-        root_layout,
-    )?;
-    if schedule.root.output_witness_len != expected_root_output {
-        return Err(AkitaError::InvalidSetup(format!(
-            "root output witness length {} is not canonical; expected {expected_root_output}",
-            schedule.root.output_witness_len
-        )));
-    }
+    let expected_root_output = transition.validate_root(root_layout, schedule, policy)?;
 
     let mut expected_input = expected_root_output;
     let mut producer = &schedule.root;
     let mut producer_opening = root_layout.clone();
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        let geometry = akita_params::RelationWitnessGeometry::for_level(
-            &producer.params,
-            &producer_opening,
-            policy.claim_ext_degree,
-        )?;
-        let layout = akita_params::WitnessLayout::new(
-            &producer.params,
-            &producer_opening,
-            &geometry,
-            producer.params.witness_chunk.num_chunks,
-            akita_params::RelationQuotientPlan::for_field_bits(&producer.params, field_bits)?,
-        )?;
-        let (len, ends) = layout.chunk_shape()?.align(
-            akita_params::FoldSuccessor::Recursive(&step.params).source_block_len()?,
-            step.params.witness_chunk.num_chunks,
-        )?;
-        if len != expected_input || ends != step.params.witness_chunk_ends {
-            return Err(AkitaError::InvalidSetup(
-                "recursive witness ownership is not inherited from its producer".into(),
-            ));
+        if index == 0 {
+            transition.validate_first_successor(
+                producer,
+                &producer_opening,
+                step,
+                expected_input,
+                policy,
+            )?;
+        } else {
+            validate_inherited_chunks(producer, &producer_opening, step, expected_input, policy)?;
         }
         if step.input_witness_len != expected_input {
             return Err(AkitaError::InvalidSetup(format!(
@@ -205,6 +276,38 @@ pub(crate) fn validate_canonical_transition_lengths(
             "terminal input witness length {} is not canonical; expected {expected_input}",
             schedule.terminal.input_witness_len
         )));
+    }
+    Ok(())
+}
+
+fn validate_inherited_chunks(
+    producer: &akita_params::FoldParams,
+    producer_opening: &akita_params::OpeningClaimsLayout,
+    step: &akita_params::FoldParams,
+    expected_input: usize,
+    policy: &PlannerPolicy,
+) -> Result<(), AkitaError> {
+    let field_bits = policy.decomposition.field_bits();
+    let geometry = akita_params::RelationWitnessGeometry::for_level(
+        &producer.params,
+        producer_opening,
+        policy.claim_ext_degree,
+    )?;
+    let layout = akita_params::WitnessLayout::new(
+        &producer.params,
+        producer_opening,
+        &geometry,
+        producer.params.witness_chunk.num_chunks,
+        akita_params::RelationQuotientPlan::for_field_bits(&producer.params, field_bits)?,
+    )?;
+    let (len, ends) = layout.chunk_shape()?.align(
+        akita_params::FoldSuccessor::Recursive(&step.params).source_block_len()?,
+        step.params.witness_chunk.num_chunks,
+    )?;
+    if len != expected_input || ends != step.params.witness_chunk_ends {
+        return Err(AkitaError::InvalidSetup(
+            "recursive witness ownership is not inherited from its producer".into(),
+        ));
     }
     Ok(())
 }

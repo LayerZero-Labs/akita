@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, BinaryPositionClass};
+use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 
 fn descriptor(width: usize, logical_len: usize) -> BinarySourceDescriptor {
     BinarySourceDescriptor::new(
@@ -46,41 +46,22 @@ fn packed_storage_matches_logical_words_including_partial_carriers_and_all_paddi
                 .unwrap();
             let packed = BinarySourceInput::Packed {
                 logical_len: len,
-                carriers,
+                carriers: carriers.clone(),
             }
             .prepare(&descriptor)
             .unwrap();
-            // Import retains the compact variant, not the transient i128 rings.
-            let BinarySourceCoefficients::Packed(storage) = &packed else {
-                panic!("compact import retained an expanded source");
-            };
-            assert_eq!(
-                storage.iter().map(Vec::len).sum::<usize>(),
-                2 * len.div_ceil(per_carrier)
-            );
-            assert_eq!(
-                logical.expanded(&descriptor).unwrap(),
-                packed.expanded(&descriptor).unwrap()
-            );
-            for owner in 0..2 {
-                assert_eq!(
-                    logical.canonical_carriers(&descriptor, owner).unwrap(),
-                    packed.canonical_carriers(&descriptor, owner).unwrap()
-                );
-            }
-            let expanded = packed.expanded(&descriptor).unwrap();
+            assert_eq!(logical, packed);
+            // Every padded carrier is materialized once, in kernel order, and
+            // committed padding carriers are zero.
             let index = descriptor.index_map();
-            for owner in 0..2 {
-                for carrier in 0..8 {
-                    for coordinate in 0..162 {
-                        if index.classify_scalar(carrier, coordinate).unwrap()
-                            == BinaryPositionClass::CommittedPadding
-                        {
-                            let position = index.scalar_to_ring(carrier, coordinate).unwrap();
-                            let element = owner * 2 + position.column;
-                            assert_eq!(expanded[element][position.coefficient], 0);
-                        }
-                    }
+            assert_eq!(packed.len(), 2 * index.padded_carriers());
+            for (owner, carriers) in carriers.iter().enumerate() {
+                for carrier in 0..index.padded_carriers() {
+                    let kernel = index.kernel_carrier_index(carrier).unwrap();
+                    assert_eq!(
+                        packed[owner * index.padded_carriers() + kernel],
+                        carriers.get(carrier).copied().unwrap_or(0)
+                    );
                 }
             }
         }
@@ -117,12 +98,13 @@ fn compact_import_rejects_wrong_lengths_owners_and_nonzero_tail_bits() {
 }
 
 #[test]
-fn compact_import_enforces_expanded_budget_before_retaining_tiny_payloads() {
+fn compact_import_enforces_carrier_budget_before_allocation() {
+    // The budget counts one u128 per padded carrier: 2^23 carriers in total.
     for (owners, padded_carriers, permitted) in [
-        (1, 1 << 16, false),
-        (2, 1 << 15, false),
-        (1, 1 << 15, true),
-        (2, 1 << 14, true),
+        (1, 1 << 24, false),
+        (2, 1 << 23, false),
+        (1, 1 << 23, true),
+        (2, 1 << 22, true),
     ] {
         let descriptor = BinarySourceDescriptor::new(
             BinaryIndexMap::new(128, 1, padded_carriers, 2).unwrap(),
@@ -133,8 +115,7 @@ fn compact_import_enforces_expanded_budget_before_retaining_tiny_payloads() {
             },
         )
         .unwrap();
-        // Each owner supplies one carrier, but committed padding still costs
-        // 162 MiB in the rejected cases and 81 MiB in the permitted cases.
+        // Each owner supplies one carrier; committed padding fills the rest.
         let carriers = vec![vec![1]; owners];
         let packed = BinarySourceInput::Packed {
             logical_len: 1,
@@ -142,10 +123,16 @@ fn compact_import_enforces_expanded_budget_before_retaining_tiny_payloads() {
         }
         .prepare(&descriptor);
         if permitted {
-            let BinarySourceCoefficients::Packed(storage) = packed.unwrap() else {
-                panic!("compact import retained an expanded source");
-            };
-            assert_eq!(storage.as_ref(), carriers.as_slice());
+            let storage = packed.unwrap();
+            let kernel = descriptor.index_map().kernel_carrier_index(0).unwrap();
+            assert_eq!(storage.len(), owners * padded_carriers);
+            for owner in 0..owners {
+                assert_eq!(storage[owner * padded_carriers + kernel], 1);
+            }
+            assert_eq!(
+                storage.iter().filter(|&&carrier| carrier != 0).count(),
+                owners
+            );
         } else {
             assert!(matches!(
                 packed,

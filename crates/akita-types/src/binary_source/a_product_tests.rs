@@ -326,3 +326,54 @@ fn stage3_a_product_rejects_malformed_rho_point_and_prefix_without_panic() {
         assert!(product.evaluate(&bad_point).is_err());
     }
 }
+
+#[test]
+fn full_size_typed_prefix_requires_padded_rank_and_coefficient_axes() {
+    // (carriers, columns, rank, rows, padded rank * 1024, domain)
+    for (carriers, columns, rank, rows, row_stride, domain) in [
+        (1usize << 22, 256, 3, 4096, 4096, 1usize << 24),
+        (1 << 23, 256, 3, 8192, 4096, 1 << 25),
+        (1 << 10, 2, 3, 128, 4096, 1 << 19),
+        (1 << 10, 2, 1, 128, 1024, 1 << 17),
+        (1 << 10, 2, 5, 128, 8192, 1 << 20),
+    ] {
+        let descriptor = BinarySourceDescriptor::new(
+            BinaryIndexMap::new(128, carriers, carriers, columns).unwrap(),
+            vec![[1; 32]],
+            BinaryCommitmentProfiles {
+                a: [2; 32],
+                b: [3; 32],
+            },
+        )
+        .unwrap();
+        let size = BinaryAPrefixLen::new(descriptor.index_map(), rank).unwrap();
+        assert_eq!(
+            size,
+            BinaryAPrefixLen {
+                rows,
+                row_stride,
+                natural_len: rows * row_stride,
+                domain_len: domain,
+            }
+        );
+        let plan = BinaryRootWitnessPlan::new(&descriptor, rank, 64)
+            .unwrap()
+            .with_prime_planes(true, 1)
+            .unwrap();
+        let point = vec![F::zero(); plan.repacking().domain_len().trailing_zeros() as usize];
+        let rho = vec![[F::zero(); 648]; rank];
+        // Rounding rank*m*648 as a flat array loses the padding on both
+        // independently addressed axes of the canonical typed A layout.
+        assert!(BinaryAProduct::new(&plan, &rho, &point, domain / 2).is_err());
+        assert!(size.validate_prefix(domain / 2).is_err());
+        assert!(size.validate_prefix(domain + 1).is_err());
+        size.validate_prefix(domain).unwrap();
+        size.validate_prefix(2 * domain).unwrap();
+        let product = BinaryAProduct::new(&plan, &rho, &point, domain).unwrap();
+        let terminal = vec![F::zero(); domain.trailing_zeros() as usize];
+        assert_eq!(product.evaluate(&terminal).unwrap(), F::zero());
+    }
+    let index = BinaryIndexMap::new(128, 1 << 10, 1 << 10, 2).unwrap();
+    assert!(BinaryAPrefixLen::new(&index, 0).is_err());
+    assert!(BinaryAPrefixLen::new(&index, usize::MAX).is_err());
+}

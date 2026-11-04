@@ -3,7 +3,7 @@
 use akita_algebra::binary::BinaryField162;
 use akita_algebra::ring::trinomial::{
     module_map::{scalar_to_binary, unpack_signed_components},
-    signed::signed_trinomial_product,
+    signed::{signed_trinomial_product, signed_trinomial_remainder},
 };
 use akita_algebra::PlusTrinomial;
 use akita_challenges::Challenges;
@@ -81,6 +81,69 @@ pub fn binary_row_partials(
     Ok(partials)
 }
 
+/// Construct the binary row partials directly from packed source carriers.
+/// This uses one F162 product per carrier and no signed-ring expansion.
+pub(crate) fn packed_row_partials(
+    descriptor: &BinarySourceDescriptor,
+    claim: &BinaryTerminalClaim,
+    sources: &[u128],
+) -> Result<Vec<i8>, AkitaError> {
+    let (weights, _) = claim.equality_weights(descriptor)?;
+    let index = descriptor.index_map();
+    let columns = index.columns();
+    let rows =
+        checked::exact_div(index.padded_carriers(), columns).ok_or(AkitaError::InvalidProof)?;
+    let expected = checked::product([descriptor.polynomials().len(), index.padded_carriers()])
+        .ok_or(AkitaError::InvalidProof)?;
+    if sources.len() != expected || weights.len() != rows {
+        return Err(AkitaError::InvalidInput(
+            "packed binary row geometry mismatch".into(),
+        ));
+    }
+    let owner = descriptor
+        .polynomials()
+        .iter()
+        .position(|id| id == claim.polynomial())
+        .ok_or(AkitaError::InvalidProof)?;
+    let output_len = checked::product([descriptor.polynomials().len(), columns, 162])
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut partials = Vec::new();
+    partials
+        .try_reserve_exact(output_len)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    partials.resize(output_len, 0);
+    let owner_start =
+        checked::product([owner, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
+    let range =
+        checked::range(owner_start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
+    for (column, words) in sources
+        .get(range)
+        .ok_or(AkitaError::InvalidProof)?
+        .chunks_exact(rows)
+        .enumerate()
+    {
+        let mut value = BinaryField162::ZERO;
+        for (&word, &weight) in words.iter().zip(&weights) {
+            let embedded = BinaryField162::from_words([word as u64, (word >> 64) as u64, 0])
+                .ok_or(AkitaError::InvalidProof)?;
+            value += weight * embedded;
+        }
+        let start = checked::mul_add(owner, columns, column)
+            .and_then(|x| checked::product([x, 162]))
+            .ok_or(AkitaError::InvalidProof)?;
+        let range = checked::range(start, 162).ok_or(AkitaError::InvalidProof)?;
+        for (target, bit) in partials
+            .get_mut(range)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter_mut()
+            .zip(binary_scalar_lift(value))
+        {
+            *target = bit as i8;
+        }
+    }
+    Ok(partials)
+}
+
 impl BinaryEvaluationWitness {
     /// Construct K and K_val after the response, before Stage-2 batching.
     /// U is the already committed order-three view; every supplied digit may
@@ -118,22 +181,30 @@ impl BinaryEvaluationWitness {
             .position(|id| id == claim.polynomial())
             .ok_or(AkitaError::InvalidProof)?;
         let scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
-        let mut parity = [0i128; 162];
-        let mut value = [0i128; 162];
-        for (row, weight) in row_weights.into_iter().enumerate() {
-            let element =
-                checked::mul_add(owner, ring_rows, row / 4).ok_or(AkitaError::InvalidProof)?;
-            let low = response
-                .get(element)
-                .ok_or(AkitaError::InvalidProof)?
-                .map(|coefficient| (coefficient + 2340) % 8 - 4);
-            let components = unpack_signed_components(&low)?;
-            let product = signed_trinomial_product::<162, PlusTrinomial>(
-                &binary_scalar_lift(weight),
-                components.get(row % 4).ok_or(AkitaError::InvalidProof)?,
+        let mut parity = tracing::info_span!("binary_parity_row_convolution").in_scope(|| {
+            let mut scalar_rows = Vec::new();
+            scalar_rows
+                .try_reserve_exact(row_weights.len())
+                .map_err(|_| AkitaError::InvalidProof)?;
+            let start = checked::product([owner, ring_rows]).ok_or(AkitaError::InvalidProof)?;
+            let range = checked::range(start, ring_rows).ok_or(AkitaError::InvalidProof)?;
+            for element in response.get(range).ok_or(AkitaError::InvalidProof)? {
+                let low = element.map(|coefficient| (coefficient + 2340) % 8 - 4);
+                for component in unpack_signed_components(&low)? {
+                    let mut values = [0i8; 162];
+                    for (destination, value) in values.iter_mut().zip(component) {
+                        *destination = i8::try_from(value).map_err(|_| AkitaError::InvalidProof)?;
+                    }
+                    scalar_rows.push(values);
+                }
+            }
+            let product = akita_labinius_prover::lowered::binary_weighted_integer_convolution(
+                &row_weights,
+                &scalar_rows,
             )?;
-            accumulate(&mut parity, &product, false)?;
-        }
+            signed_trinomial_remainder::<162, PlusTrinomial>(&product)
+        })?;
+        let mut value = [0i128; 162];
         for (column, weight) in column_weights.into_iter().enumerate() {
             let element =
                 checked::mul_add(owner, columns, column).ok_or(AkitaError::InvalidProof)?;
