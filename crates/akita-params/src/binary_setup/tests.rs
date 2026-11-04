@@ -169,3 +169,21 @@ fn matrix_entries_use_their_indexed_streams_and_preserve_width_extensions() {
     assert!(derive_centered_q_matrix(&[3; 32], base, 0).is_err());
     assert!(TypedSetupStream::new(&[3; 32], SetupStreamLabel { row: 3, ..base }).is_err());
 }
+
+#[test]
+fn block_p_draws_match_single_draws_and_stream_position() {
+    let p_label = label(SetupStreamModulus::Prime128Offset275);
+    for len in [0, 1, 63, 64, 65, 200] {
+        let mut single = TypedSetupStream::new(&[5; 32], p_label).unwrap();
+        let expected = (0..=len)
+            .map(|_| single.sample_p().unwrap())
+            .collect::<Vec<_>>();
+        let mut block = TypedSetupStream::new(&[5; 32], p_label).unwrap();
+        let mut actual = vec![0u128; len];
+        block.fill_p(&mut actual).unwrap();
+        actual.push(block.sample_p().unwrap());
+        assert_eq!(actual, expected, "length {len}");
+    }
+    let mut q = TypedSetupStream::new(&[5; 32], label(SetupStreamModulus::Q(5))).unwrap();
+    assert!(q.fill_p(&mut [0u128; 3]).is_err());
+}

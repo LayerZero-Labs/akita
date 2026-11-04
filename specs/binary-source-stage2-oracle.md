@@ -198,7 +198,9 @@ ordinary caller.
   - The fault-injection test backend materializes, perturbs and rebuilds an
     explicit oracle.
   - `CompiledNativeRoot` (the ordinary native root) keeps the dense path.
-- The root digit copy and range check run in parallel.
+- The root witness reuses the packed digit storage: an aligned prefix is
+  cloned, the digits are repacked only when the domain needs padding, and the
+  range check reads the cached digit bounds.
 
 ## Cost model
 
@@ -208,7 +210,7 @@ number of own entries.
 | Step | Dense today | Structured |
 | --- | --- | --- |
 | Weight build | zero `N`; visit `sum_family digits * naturals` | zero `S + O`; visit `naturals / digits` for recomposed families, `naturals` for per-address families |
-| Witness setup | serial copy, check and E conversion of `N` | parallel copy and check; no conversion |
+| Witness setup | serial copy, check and E conversion of `N` | packed clone (repack only when padding); cached bounds; no conversion |
 | Rounds `0..T` | `N` pairs and folds of `N` dense weights | `N` pairs, folds of `S + O` pool entries, compact round 0 |
 | Rounds `T..n` | dense on `N / B` | dense on `N / B` |
 | Peak weight memory | `N` (q) plus `N` (E witness at round 0) | `S + O` plus `N / 2` (folded witness after round 0) |
@@ -256,8 +258,67 @@ follow below. All four shapes have `n = 25` at 2^22 except `prime5` (`n = 26`).
 
 ## Measurements
 
-The baseline executable is `f92e959ee`; the structured executable is
-`2e59907c9`, whose code is that of this note's final commit. Both were built
+### On `dev` with the B/D setup offload
+
+The base is `dev` at `ff2297aae`, which moves the B and D setup columns into
+the typed Stage 3 prefix. The baseline executable is `ff2297aae` (SHA-256
+`bd317aab58ffe3901163b1d0c68a48c9776026570e8f36ccd03ab2c04a6918ac`); the
+structured executable is `537beafa2` (SHA-256
+`88bd6f0c7419bcf3c15b13fa863effe080bf8f9fc418f06619acf36d6e44bd53`), the merge
+of that base into this work, whose code is that of this note's final commit.
+Both were built with
+`--features parallel,binary-source-measurements,transcript-blake2b,logging-transcript`.
+The procedure is the one below: three interleaved runs per configuration in
+isolated processes, one catalog in `BINARY_SOURCE_CATALOG_CACHE`, one discarded
+warm-up per shape, and each run started only once no other full-size run or
+build was active. All 35 runs, warm-ups included, reproduced their digest pins
+and verified. The figures are medians in milliseconds. The one-minute load
+ranged over 4.91–15.77, higher than in the earlier campaign; differences of
+tens of milliseconds are noise. Logs are
+`$CARGO_TARGET_DIR/logs/m-{base,new}-<log>-<shape>-<run>.txt`.
+
+| N | Shape | Weights + Stage 2, base → structured | › profile build | Complete proving, base → structured | Prover peak RSS bytes, base → structured |
+| --- | --- | --- | ---: | --- | --- |
+| 2^22 | `word` | 421.6 → 178.5 | 97.2 | 1,583.4 → 1,494.0 (−89) | 4,445,175,808 → 2,996,060,160 (−33%) |
+| 2^22 | `word-prime` | 588.5 → 250.9 | 152.6 | 2,391.3 → 2,105.5 (−286) | 5,238,603,776 → 5,181,784,064 (−1%) |
+| 2^22 | `word-prime-ordinary` | 583.3 → 271.3 | 168.8 | 2,560.5 → 2,226.9 (−334) | 5,584,814,080 → 5,495,062,528 (−2%) |
+| 2^22 | `prime5` | 1,167.8 → 395.0 | 279.2 | 3,471.4 → 2,818.0 (−653) | 9,370,451,968 → 8,814,641,152 (−6%) |
+| 2^23 | `word-prime` | 1,027.1 → 345.7 | 208.6 | 3,513.2 → 2,900.1 (−613) | 8,610,463,744 → 5,448,220,672 (−37%) |
+
+The live-heap peaks of the counting allocator, median GB, show where the
+process peak now sits:
+
+| N | Shape | Stage 2 peak, base → structured | Stage 3 peak, both |
+| --- | --- | --- | ---: |
+| 2^22 | `word` | 2.86 → 1.52 | 1.77 |
+| 2^22 | `word-prime` | 3.58 → 2.28 | 3.30 |
+| 2^22 | `word-prime-ordinary` | 3.66 → 2.71 | 3.37 |
+| 2^22 | `prime5` | 6.56 → 3.81 | 6.00 |
+| 2^23 | `word-prime` | 5.67 → 2.94 | 3.50 |
+
+What changes on this base:
+
+- **Stage 2 is unaffected by the offload.** The prover's Stage 2 relation
+  still carries the B and D authentication families; only the verifier drops
+  them and reads their contribution through the typed prefix. Weights plus
+  Stage 2 fall by 53–66%, as before.
+- **Memory.** Stage 3 now builds a dense weight over the typed A/B/D prefix.
+  For the 2^22 shapes with prime planes it sets the process peak, so the
+  structured Stage 2 no longer lowers peak RSS there. At 2^22 `word` and 2^23
+  `word-prime`, Stage 3 stays below the old Stage 2 peak and peak RSS falls by
+  a third. The 5% ceiling holds everywhere.
+- **Stage 3 timing.** Stage 3 runs the same code in both executables, but took
+  40–90 ms longer in the structured runs for every configuration except
+  `word-prime-ordinary`. This has not been investigated. One possible cause
+  is page faults: the baseline's larger Stage 2 leaves freed pages that Stage 3
+  can reuse. It accounts for part of the gap between the Stage 2 saving and
+  the complete-proving saving, most visibly at `word`, together with load noise.
+
+### Before the B/D setup offload
+
+The base was `f92e959ee`, before the B/D setup offload. The baseline
+executable is `f92e959ee`; the structured executable is `2e59907c9`, whose
+code was this work's code at the time. Both were built
 with `--features parallel,binary-source-measurements,transcript-blake2b,logging-transcript`.
 Each configuration proved three times in isolated processes, interleaving
 the two executables, with `BINARY_SOURCE_CATALOG_CACHE` set to one catalog.
@@ -280,10 +341,10 @@ was shared, so differences of a few tens of milliseconds are noise. Logs are
 materialization span; its `binary_root_stage2` includes the profile build
 (`binary_root_weight_profiles`).
 
-What the measurements show:
+What these measurements showed:
 
-- **Stage 2 rounds.** Excluding the profile build, the root's Stage 2 now
-  takes about 80–130 ms at 2^22, against 310–590 ms. The baseline's root
+- **Stage 2 rounds.** Excluding the profile build, the root's Stage 2
+  took about 80–130 ms at 2^22, against 310–590 ms. The baseline's root
   `RelationRangeImageProver::new` took about 123 ms at 2^22 `word-prime`
   building its dense field-element state; the structured one takes
   under 0.1 ms, because round 0 reads the packed digits.
@@ -302,8 +363,9 @@ What the measurements show:
   `word-prime` and `prime5`. The weight build is slower than estimated:
   authentication costs what it did in the dense build, and the cost model
   undercounted it.
-- **The 0.4–0.8 s target.** Complete proving at 2^22 `word-prime` is now about
-  1.42 s. Even with no weight build and no Stage 2 at all, it would be about
+- **The 0.4–0.8 s target.** Complete proving at 2^22 `word-prime` was about
+  1.42 s on that base (about 2.11 s on the current base, under heavier load
+  and with B and D in Stage 3). Even with no weight build and no Stage 2 at all, it would be about
   1.19 s. The rest belongs to the projections, relation compile, the D
   commitment, the root commitment, Stage 3 and the ordinary suffix folds.
 

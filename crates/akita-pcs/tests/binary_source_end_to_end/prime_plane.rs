@@ -247,13 +247,21 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
                 .and_then(|prefix| prefix.slot_id())
         })
         .collect::<Vec<_>>();
+    let typed = BinaryTypedPrefix::new(
+        &manifest,
+        word,
+        planes,
+        resolved.schedule().recursive_folds[0].params.d_a(),
+    )
+    .unwrap();
     let prefixes = backend
-        .prepare_binary_a_prefixes(&manifest, &first_prefix, &later_prefixes)
+        .prepare_binary_a_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
         .unwrap();
     let verifier_setup = backend
         .prepare_binary_a_verifier_setup(
             &scheme.setup_verifier(&setup).unwrap(),
             &manifest,
+            &typed,
             &first_prefix,
             &prefixes.get(&first_prefix).unwrap().public,
         )

@@ -48,6 +48,8 @@ pub use plans::{
     ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan, WitnessCommitmentParameters,
 };
 pub use scope::{ProofScope, ProofScopeConsumer, ProofScopeId};
+#[cfg(feature = "labinius-trinomial")]
+pub use stage3::TypedStage3Request;
 pub use stage3::{FactoredStage3Request, OpaqueStage3Kernel, Stage3Request};
 pub use traits::{
     OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel, OpaqueRelationWitnessKernel,

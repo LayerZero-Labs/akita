@@ -24,6 +24,7 @@ mod root_public;
 mod root_request;
 mod root_transcript;
 mod terminal;
+mod typed_prefix;
 mod word_claim;
 pub use a_product::*;
 pub use agreement::*;
@@ -46,6 +47,7 @@ pub use root_public::*;
 pub use root_request::*;
 pub use root_transcript::*;
 pub use terminal::*;
+pub use typed_prefix::*;
 pub use word_claim::*;
 
 /// Squeeze one 32-byte challenge block for a binary-source rejection sampler.
@@ -69,4 +71,6 @@ mod root_weight_fixtures;
 #[cfg(feature = "test-support")]
 pub use matrix_access::BinaryAReadGuard;
 #[cfg(any(test, feature = "test-support"))]
-pub use root_weight_fixtures::{root_weight_fixtures, RootFixtureField, RootWeightFixture};
+pub use root_weight_fixtures::{
+    root_weight_fixtures, RootFixtureField, RootWeightFixture, Stage3Fixture,
+};

@@ -1,6 +1,7 @@
 //! CPU sessions for a native root on the ordinary successor digit table.
 
 use crate::opaque::sumcheck::relation_range_image::StructuredRelationWeights;
+use crate::opaque::sumcheck::stage3::structured::StructuredSetupWeights;
 use crate::opaque::{
     CpuBackend, CpuProofSessionHandle, CpuStage1SessionHandle, CpuStage2SessionHandle,
     CpuWitnessHandle, OperationBinding, ProofContext, RecursiveWitnessFlat, WitnessPhase,
@@ -8,6 +9,7 @@ use crate::opaque::{
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
 use akita_params::{DigitRangePlan, FlatBooleanDomain};
+use akita_types::binary_source::TypedPrefixWeights;
 use akita_types::native_root_relation::{NativeRootWeights, RootWeightProfiles};
 use akita_types::DigitRangeEqualityPoint;
 use jolt_field::{Field, Fold, Ring, Unreduced};
@@ -111,8 +113,11 @@ where
     })
 }
 
-/// Every root lane spans at least 256 addresses and starts on a multiple of
-/// its stride, so the first eight Stage 2 rounds bind only in-lane bits.
+/// Every lane of a recomposed binary family (direct A, image, prime) spans at
+/// least 256 addresses and starts on a multiple of its stride, so the first
+/// eight Stage 2 rounds bind only in-lane bits for those families. Narrower
+/// lanes, such as mixed ordinary segments, carry their weights in per-block
+/// rows, which may span lane boundaries.
 const ROOT_PROFILE_BLOCK_BITS: usize = 8;
 
 impl<E: Field + Fold> StructuredRelationWeights<E> for RootWeightProfiles<E> {
@@ -130,6 +135,28 @@ impl<E: Field + Fold> StructuredRelationWeights<E> for RootWeightProfiles<E> {
 
     fn take_dense(&mut self) -> Vec<E> {
         RootWeightProfiles::take_dense(self)
+    }
+}
+
+impl<E: Field> StructuredSetupWeights<E> for TypedPrefixWeights<E> {
+    fn len(&self) -> usize {
+        self.domain_len()
+    }
+
+    fn width(&self) -> usize {
+        TypedPrefixWeights::width(self)
+    }
+
+    fn blocks(&self) -> &[usize] {
+        TypedPrefixWeights::blocks(self)
+    }
+
+    fn block_terms(&self, live: usize) -> Result<[(E, &[E]); 2], AkitaError> {
+        TypedPrefixWeights::block_terms(self, live)
+    }
+
+    fn bind(&mut self, challenge: E) -> Result<(), AkitaError> {
+        TypedPrefixWeights::bind(self, challenge)
     }
 }
 

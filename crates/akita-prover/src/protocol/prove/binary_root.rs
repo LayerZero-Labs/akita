@@ -325,6 +325,8 @@ where
             },
         }),
     )?;
+    drop(witness_a);
+    let authentication = public.authentication_batches(&batches)?.map(<[_]>::to_vec);
     drop(batches);
     drop(span);
     let relation_claim = relation.claim();
@@ -370,40 +372,47 @@ where
         .setup_prefix()
         .and_then(|p| p.slot_id())
         .ok_or_else(|| AkitaError::InvalidInput("binary root has no typed prefix slot".into()))?;
-    if prefix_slots.get(&prefix).is_none() {
-        return Err(AkitaError::InvalidInput(
-            "binary root typed prefix was not prepared".into(),
-        ));
-    }
+    let prepared_prefix = prefix_slots.get(&prefix).ok_or_else(|| {
+        AkitaError::InvalidInput("binary root typed prefix was not prepared".into())
+    })?;
+    let phase = tracing::info_span!("binary_root_stage3_layout").entered();
+    let typed = akita_types::binary_source::BinaryTypedPrefix::new(
+        manifest,
+        claim.is_some(),
+        prime.planes().len(),
+        next.params.d_a(),
+    )?;
     let product = akita_types::binary_source::BinaryAProduct::new(
         public.plan(),
         &rho,
         &stage2.challenges,
         prefix.n_prefix()?,
     )?;
-    let (index_factor, coefficient_factor) = product.factors()?;
-    let coefficients_span = tracing::info_span!("binary_root_stage3_a_coefficients").entered();
-    let coefficients = akita_types::binary_source::binary_a_setup_coefficients(
-        &witness_a.matrix,
-        manifest,
+    drop(phase);
+    // A, B and D share one weight over the typed prefix. It stays in live
+    // 64-cell blocks: the six in-block rounds read only those blocks, and the
+    // remaining rounds run on the one-cell block values.
+    let phase = tracing::info_span!("binary_root_stage3_weights").entered();
+    let weights = typed.prover_weight_blocks(
+        &product,
+        &stage2.challenges,
+        alpha,
+        [&authentication[0], &authentication[1]],
         prefix.n_prefix()?,
     )?;
-    drop(witness_a);
-    drop(coefficients_span);
-    let (claim, session) =
-        backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
-            session: proof_session,
-            level: 0,
-            coefficients: coefficients.into(),
-            index_factor,
-            coefficient_factor,
-        })?;
-    akita_types::stage3_public_slot(
-        grinding,
-        0,
-        &akita_types::binary_source::binary_a_prefix_identity(manifest, &prefix)?,
-    )?;
+    drop(phase);
+    let phase = tracing::info_span!("binary_root_stage3_begin").entered();
+    // The table is the one the prefix preparation committed.
+    let (claim, session) = backend.begin_typed_stage3(crate::backend::TypedStage3Request {
+        session: proof_session,
+        level: 0,
+        prefix: &prepared_prefix.commitment_handle,
+        weights,
+    })?;
+    drop(phase);
+    akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
     akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
+    let phase = tracing::info_span!("binary_root_stage3_rounds").entered();
     let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         session,
@@ -412,6 +421,7 @@ where
         grinding,
         0,
     )?;
+    drop(phase);
     backend.advance_witness_level(&mut witness)?;
     drop(span);
     Ok(ProveLevelOutput {
