@@ -340,17 +340,13 @@ where
     drop(span);
     let gamma =
         grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
-    let span = tracing::info_span!("binary_root_relation_materialize").entered();
+    let span = tracing::info_span!("binary_root_stage2").entered();
     if relation.table_len() != domain.domain_len() {
         return Err(AkitaError::InvalidProof);
     }
-    let weights = relation.materialize()?;
-    drop(relation);
-    drop(span);
-    let span = tracing::info_span!("binary_root_stage2").entered();
     let session = backend.begin_root_relation(
         &witness,
-        weights,
+        relation,
         negative_binary_weights,
         relation_claim,
         &stage1.point,

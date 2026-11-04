@@ -160,18 +160,14 @@ impl<E: Field> DirectAWeights<E> {
         Ok(sum)
     }
 
-    pub(crate) fn visit(
+    /// Stream each element's profile `h[t]`; digit `d` weighs `8^d * h[t]`.
+    pub(crate) fn profiles(
         &self,
-        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+        mut profile: impl FnMut(&SegmentLanes, usize, usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         for (element, h) in self.columns.iter().enumerate() {
-            let mut power = E::one();
-            for digit in 0..self.lanes.digits() {
-                let base = self.lanes.base(element, digit)?;
-                for (t, &weight) in h.iter().enumerate() {
-                    visit(base + t, weight * power)?;
-                }
-                power *= E::from_u64(8);
+            for (t, &weight) in h.iter().enumerate() {
+                profile(&self.lanes, element, t, weight)?;
             }
         }
         Ok(())
@@ -284,10 +280,11 @@ impl<E: Field> ImageWeights<E> {
     }
 
     /// Expand each (A row, column) pair by its support, in batches through
-    /// [`weigh_units`], and stream the digit weights.
-    pub(crate) fn visit(
+    /// [`weigh_units`], and stream the element profiles `-h[t]`; digit `d`
+    /// weighs `-8^d * h[t]`.
+    pub(crate) fn profiles(
         &self,
-        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+        mut profile: impl FnMut(&SegmentLanes, usize, usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
         let extended = self
@@ -313,13 +310,8 @@ impl<E: Field> ImageWeights<E> {
         for start in (0..units).step_by(WEIGH_BATCH) {
             let end = units.min(start + WEIGH_BATCH);
             for (element, h) in weigh_units(start..end, weigh)? {
-                let mut power = -E::one();
-                for digit in 0..self.lanes.digits() {
-                    let base = self.lanes.base(element, digit)?;
-                    for (t, &weight) in h.iter().enumerate() {
-                        visit(base + t, weight * power)?;
-                    }
-                    power *= E::from_u64(8);
+                for (t, &weight) in h.iter().enumerate() {
+                    profile(&self.lanes, element, t, -weight)?;
                 }
             }
         }

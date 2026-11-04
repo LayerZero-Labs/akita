@@ -598,7 +598,7 @@ where
     fn begin_root_relation(
         &self,
         witness: &Self::WitnessHandle,
-        weights: Vec<E>,
+        weights: akita_types::native_root_relation::NativeRootWeights<E>,
         negative_binary_weights: Vec<(usize, E)>,
         claim: E,
         stage1_point: &[E],

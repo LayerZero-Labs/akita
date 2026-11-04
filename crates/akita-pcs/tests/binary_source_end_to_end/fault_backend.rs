@@ -10,6 +10,7 @@ use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryRootWitnessRequest,
     BinaryTerminalClaim, PrimePlaneManifest,
 };
+use akita_types::native_root_relation::NativeRootWeights;
 use akita_types::{AkitaSetupDescriptor, Commitment};
 use jolt_field::{Field, Ring, Zero};
 use jolt_poly::UnivariatePoly;
@@ -238,7 +239,7 @@ impl FaultBackend {
     fn begin_fault_root_relation(
         &self,
         witness: &W,
-        mut weights: Vec<F>,
+        weights: NativeRootWeights<F>,
         negative_binary_weights: Vec<(usize, F)>,
         claim: F,
         stage1_point: &[F],
@@ -249,9 +250,10 @@ impl FaultBackend {
         // its own sumcheck consistent so it emits a complete proof; the real
         // verifier must detect the wrong relation at its final oracle check.
         assert!(negative_binary_weights.is_empty());
+        let mut table = weights.materialize()?;
         let state = self.digits.lock().unwrap();
         let digits = state.as_ref().unwrap();
-        let actual = weights
+        let actual = table
             .iter()
             .zip(digits)
             .fold(F::zero(), |sum, (&weight, &digit)| {
@@ -270,7 +272,13 @@ impl FaultBackend {
         }
         let anchor = digits.iter().position(|&digit| digit != 0).unwrap();
         let value = F::from_i64(i64::from(digits[anchor]));
-        weights[anchor] += (claim - actual) * value.inverse().unwrap();
+        table[anchor] += (claim - actual) * value.inverse().unwrap();
+        let terms = table
+            .into_iter()
+            .enumerate()
+            .filter(|(_, weight)| !weight.is_zero())
+            .collect();
+        let weights = NativeRootWeights::new(weights.table_len(), terms, weights.claim())?;
         self.inner.begin_root_relation(
             witness,
             weights,
