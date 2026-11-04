@@ -1579,6 +1579,98 @@ and the six successor commitments (about 43 ms). The first suffix fold,
 with a 21.3M-cell input, takes about 60% of the suffix. None of these spans
 lives in binary-source code.
 
+The direct A adjoint cannot use length 1,296: the auxiliary field's smooth
+subgroup has order 17,496 = 2^3 * 3^7, so no transform length has four factors
+of two. The change below uses 1,458 = 2 * 3^6, the smallest admissible length
+of at least 2D-1.
+
+Second-pass changes, in commit order. Each row is an interleaved comparison
+against the previous commit: median of 3, `BINARY_SOURCE_CATALOG_CACHE`, every
+pin reproduced. Rows were measured at different loads, so read each row's
+before and after together, not down a column.
+
+| Change | Shape | Span: before → after (ms) | Complete proving (ms) | Load |
+| --- | --- | --- | ---: | --- |
+| Residual remainders over limb primes by CRT | `word-prime` | residual rows 217.1 → 28.0; projections 281.7 → 104.2 | 2,164.6 → 1,720.9 | 35.4–44.0 |
+| Reuse the commitment's A | `word-prime` | A derivation 78.8 → 0; Stage 3 A coefficients 111.0 → 10.5 | 1,842.8 → 1,632.6 | 8.0–13.0 |
+| Reuse the accepted response in the projections | `word-prime` | projections 85.7 → 25.8 | 1,422.5 → 1,349.2 | 9.2–11.2 |
+| Length-1,458 middle products in the integer adjoint | `word-prime` | direct A 209.0 → 157.9 (CPU 1,938 → 1,469) | within noise | 13.4–15.3 |
+| Small-digit accumulation in digit commitments | `word-prime` | D payload 70.4 → 29.9; commitment B payload 160.7 → 63.7 | 1,498.6 → 1,436.0 | 11.8–16.0 |
+| Parallel ordinary root weights, allocation-free recomposition | `word-prime-ordinary` | ordinary weights 217.8 → 74.4; relation compile 366.9 → 211.7 | 1,871.4 → 1,686.3 | 9.8–11.0 |
+| Parallel field-switch source gather | `word-prime` | field-switch source 17.0 → 6.0 | 1,314.8 → 1,304.0 | 7.4–10.5 |
+| Parallel q setup matrix derivation | `word-prime` | commitment A 82.9 → 19.1; cold typed-prefix preparation 140.0 → 75.1 | not in proving | 7.4–10.5 |
+
+Final comparison of `f92e959ee` against the last commit, interleaved, median
+of 3 isolated proving runs per side with `BINARY_SOURCE_CATALOG_CACHE`. All
+thirty runs reproduced their pins. Logs are
+`$CARGO_TARGET_DIR/p2/logs/ab-base-c7-{B,A}<run>-<log>-<shape>.txt` and, for
+the repeated N=2^23 comparison, `r23-{B,A}<run>-23-word-prime.txt`.
+
+| Shape | Complete proving (ms) | Binary root level (ms) | Prover peak RSS (GB) | Load |
+| --- | ---: | ---: | ---: | --- |
+| `word`, N=2^22 | 1,564.0 → 1,140.1 | 1,293.0 → 858.2 | 4.19 → 3.95 | 9.7–11.9 |
+| `word-prime`, N=2^22 | 1,828.4 → 1,308.2 | 1,545.7 → 1,016.5 | 4.20 → 3.96 | 11.9–17.7 |
+| `word-prime-ordinary`, N=2^22 | 2,009.6 → 1,421.0 | 1,726.2 → 1,129.7 | 4.76 → 4.31 | 15.1–16.7 |
+| `prime5`, N=2^22 | 2,706.8 → 2,158.2 | 2,420.1 → 1,867.0 | 6.97 → 6.64 | 11.0–15.6 |
+| `word-prime`, N=2^23 | 3,685.5 → 2,495.5 | 3,127.9 → 2,000.7 | 8.08 → 7.54 | 14.3–26.9 |
+
+The first N=2^23 comparison gave 3,228.0 → 2,716.7 ms at load 11.6–16.9. Two
+of its three final-side runs were disturbed: their untouched spans, Stage 2,
+the range-image fold and the suffix relation preparation, ran up to twice their
+base time. The repeated comparison in the table has no such outlier.
+
+Root spans at N=2^22 `word-prime`, from the same final runs:
+
+| Span (ms) | `f92e959ee` | Final |
+| --- | ---: | ---: |
+| Projections | 265.1 | 27.8 |
+| Relation compile, A derivation excluded | 159.0 | 127.6 |
+| Weight materialization (out of scope) | 242.8 | 245.5 |
+| Stage 2 (out of scope) | 335.6 | 336.6 |
+| Stage 3 | 127.6 | 27.0 |
+| D commitment | 101.6 | 62.0 |
+| Field switch | 53.2 | 36.2 |
+| Ordinary suffix (complete minus root) | 282.3 | 291.8 |
+
+At `f92e959ee` the A derivation before the relation compile had no span. It is
+part of the root level, not of the relation compile row. Peak RSS falls in
+every shape. This is consistent with proving no longer building its own copies
+of A or the residual transforms; the attribution was not measured.
+
+Setup derivation is now outside proving. The source commitment derives A once
+(19 ms at N=2^22 after the parallel derivation), and proving reads that copy
+through the projection witness. Typed-prefix preparation derives A again for
+its own prefix commitment. Moving the commitment's derivation into setup
+preparation would save those 19 ms per commitment, and the preparation already
+pays for the derivation. It would also make the prepared setup hold A,
+3 * 4,096 * 648 coefficients (about 127 MB as `i128`), for the lifetime of
+the setup instead of the source handle. This pass does not make that move.
+
+What remains at N=2^22 `word-prime`, about 1.3 s against the 0.4–0.8 s target:
+
+- **Out of scope.** Weight materialization (245 ms) and Stage 2 (337 ms)
+  together are about 45% of complete proving. The target is out of reach
+  without them.
+- **Ordinary suffix, about 290 ms.** It is unchanged and none of it is
+  binary-source code. The breakdown above still holds. The first fold takes
+  about 60%. The largest candidates are ordinary-protocol work, not
+  evaluated here: the first fold's `RingRelationProver::prepare` (86 ms), the
+  fold-grinding sampler (61 ms), and Stage 2 over the six folds (130 ms).
+- **Direct A adjoint, 121 ms (1,445 ms CPU).** 4,096 columns times five
+  128-bit transforms. Caching A's transforms would remove three of the five,
+  but it costs 3 * 4,096 * 1,458 auxiliary elements (about 290 MB) of
+  resident memory, which is outside the RSS budget.
+- **Response fold, 67 ms (843 ms CPU).** This is already a bit-sliced
+  carry-save kernel and runs in parallel across rows.
+- **D commitment, 62 ms.** The D payload (25 ms) costs about 5.9 µs of CPU
+  per setup entry. Its SHAKE256 setup streams probably dominate it; that is
+  inferred from the per-entry cost, not profiled. The prime digits take 20 ms and the row partials
+  take 17 ms serially. At `prime5` the D commitment is 243 ms, of which the D
+  payload is 140 ms and the prime digits 101 ms. The prime-plane weight visit
+  takes 362 ms serially there but is part of weight materialization.
+- **Smaller serial spans.** Evaluation witness (20 ms), repacking (12 ms),
+  witness import (11 ms) and response digits (9 ms).
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
