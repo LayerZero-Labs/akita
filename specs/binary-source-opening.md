@@ -1706,8 +1706,11 @@ mixed verification and 18% and 9% of parallel.
 **Change.** Draw the negative-bit range as an equality tensor
 `eq(τ_neg, i)` over `ceil(log2(rows))` = 17 or 16 fresh coordinates, or as
 powers of one challenge, instead of one coefficient per row. The rest of τ₁
-is unchanged. Proof bytes stay the same length, but every later challenge
-moves, so the proof bytes, the transcript state and the digest pins change.
+is unchanged. The field-message count stays the same, but every later
+challenge moves, so the proof bytes, the transcript state and the digest pins
+change. Serialized grinding nonces are variable-length, so the proof length
+can change by a few bytes, and repricing the batch can change the grinding
+schedule.
 The negative-bit weight is already evaluated through its support's
 multilinear extension (`negative_binary_support_mle`, 0.02 ms); with tensor
 coefficients it has a closed form.
