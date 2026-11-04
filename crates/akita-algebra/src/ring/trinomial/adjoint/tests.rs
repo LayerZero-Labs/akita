@@ -354,6 +354,8 @@ fn integer_rows_match_field_adjoint_sums_and_reject_unliftable_bounds() {
     integer_rows::<MinusTrinomial, 8>(11, 7, 5);
     integer_rows::<PlusTrinomial, 8>(12, 1 << 20, 3);
     integer_rows::<MinusTrinomial, DEGREE>(13, 7_126_704, 2);
+    // Length 24 < 3D - 2: the wrapped tail must miss the middle coefficients.
+    integer_rows::<MinusTrinomial, 10>(14, 7, 3);
     let adjoint = TrinomialAdjoint::<8, MinusTrinomial>::new().unwrap();
     let rho = vec![[Prime128Offset275::one(); 8]];
     let canonical: fn(&Prime128Offset275) -> Option<u128> =
@@ -367,11 +369,13 @@ fn integer_rows_match_field_adjoint_sums_and_reject_unliftable_bounds() {
     assert!(adjoint
         .apply_integer_rows(&rho, &[vec![[1; 8]], vec![[1; 8]]], 4, canonical)
         .is_err());
-    assert!(TrinomialAdjoint::<10, MinusTrinomial>::new()
+    // 2D - 1 exceeds the auxiliary smooth subgroup order.
+    const UNREPRESENTABLE: usize = 8_750;
+    assert!(TrinomialAdjoint::<UNREPRESENTABLE, MinusTrinomial>::new()
         .unwrap()
         .apply_integer_rows(
-            &[[Prime128Offset275::one(); 10]],
-            &[vec![[1; 10]]],
+            &vec![[Prime128Offset275::one(); UNREPRESENTABLE]],
+            &[vec![[1; UNREPRESENTABLE]]],
             4,
             canonical
         )

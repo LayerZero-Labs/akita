@@ -3,8 +3,10 @@
 //! The proof field need not have smooth roots of unity. Each extended row is
 //! split into two 64-bit limbs of its canonical integers, and every Hankel
 //! product is computed exactly over the integers in the smooth auxiliary
-//! field: a linear product of length `3D-2` fits a length-`3D` transform with
-//! no wrap-around. The checked bound below makes the centered lift unique,
+//! field. Only the middle coefficients `D-1..=2D-2` of the length-`3D-2`
+//! linear product are read, so the cyclic transform needs length `n >= 2D-1`
+//! only: the wrapped tail lands on coefficients below `3D-2-n < D-1`. The
+//! smallest such smooth length is used. The checked bound below makes the centered lift unique,
 //! after which the limbs recombine in the proof field. The result equals the
 //! field-native [`TrinomialAdjoint::apply`] sum exactly.
 
@@ -61,8 +63,11 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
                 "integer adjoint rows differ from their functionals".into(),
             ));
         }
-        let length = checked::product([3, D])
-            .filter(|&n| Auxiliary::SMOOTH_SUBGROUP_ORDER.is_multiple_of(n))
+        let minimum = checked::product([2, D])
+            .and_then(|n| n.checked_sub(1))
+            .ok_or_else(|| internal("integer adjoint length"))?;
+        let length = (minimum..=Auxiliary::SMOOTH_SUBGROUP_ORDER)
+            .find(|&n| Auxiliary::SMOOTH_SUBGROUP_ORDER.is_multiple_of(n))
             .ok_or_else(|| {
                 AkitaError::InvalidInput("integer adjoint degree has no auxiliary domain".into())
             })?;
