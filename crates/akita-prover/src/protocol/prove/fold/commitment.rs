@@ -87,33 +87,19 @@ where
                     "terminal inner state bound for a recursive successor".into(),
                 ));
             };
-            // Under `dev-protocol` the scheduled prefix stops before
-            // the last block, which travels as a digest. Otherwise the prefix
-            // is the whole state.
-            let (sent, last_block) = message
-                .fields()
-                .split_at_checked(terminal.response_shape.layout.t_field_elems())
-                .ok_or_else(|| {
-                    AkitaError::Internal(
-                        "terminal inner state is shorter than its scheduled prefix".into(),
-                    )
-                })?;
+            // The scheduled prefix stops before the last block, which travels
+            // as a digest.
+            let (sent, last_block) = terminal.split_last_t_block(message.fields())?;
             akita_transcript::send_field_group(
                 grinding.state_mut(),
                 akita_types::FoldSite::NextWitnessInnerState { level }.id()?,
                 sent,
             )?;
-            if akita_params::RECOMPUTE_LAST_BLOCK {
-                akita_transcript::send_field_digest(
-                    grinding.state_mut(),
-                    akita_types::FoldSite::NextWitnessInnerStateDigest { level }.id()?,
-                    last_block,
-                )?;
-            } else if !last_block.is_empty() {
-                return Err(AkitaError::Internal(
-                    "terminal inner state is longer than its scheduled length".into(),
-                ));
-            }
+            akita_transcript::send_field_digest(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessInnerStateDigest { level }.id()?,
+                last_block,
+            )?;
             NextWitnessState::TerminalInnerState(message)
         }
         _ => {

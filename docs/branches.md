@@ -147,7 +147,7 @@ branches share its code.
 
 | Change | Constant | Description |
 | --- | --- | --- |
-| Recompute the last block | `RECOMPUTE_LAST_BLOCK` | The terminal response omits the last live block of `e` and of `t`. The verifier recomputes it and checks it against a digest. |
+| *(none)* | | `main` adopted the former `RECOMPUTE_LAST_BLOCK` change unconditionally in #293, so the dev protocol currently equals the current protocol. |
 
 ## Keep `dev` close to `main`
 

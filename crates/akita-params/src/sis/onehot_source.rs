@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 
 /// Number of nonzero canonical coefficients in one source ring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -83,7 +83,7 @@ fn compute_canonical_source_classes(
 /// the product of their two population means.
 pub(super) fn log_mgf_upper(
     class: SourceClass,
-    challenge: &FoldChallengeFamily,
+    challenge: &FoldChallengeDistribution,
     ring_dimension: usize,
     lambda: f64,
 ) -> Option<f64> {
@@ -102,7 +102,7 @@ pub(super) fn max_log_mgf_upper(
     ring_dimension: usize,
     chunk_size: usize,
     challenge_dimension: usize,
-    challenge: &FoldChallengeFamily,
+    challenge: &FoldChallengeDistribution,
     lambda_exponent: i32,
 ) -> Option<f64> {
     let sparse = challenge.signed_sparse()?;
@@ -129,7 +129,7 @@ pub(super) fn max_log_mgf_upper(
 pub(super) fn deterministic_convolution_cap(
     ring_dimension: usize,
     chunk_size: usize,
-    challenge: &FoldChallengeFamily,
+    challenge: &FoldChallengeDistribution,
 ) -> Option<u128> {
     let sparse = challenge.signed_sparse()?;
     let key = (
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn replacement_mgf_dominates_exact_disjoint_fixed_weight_support() {
         let challenge =
-            FoldChallengeFamily::SignedSparse(akita_challenges::SparseChallengeConfig {
+            FoldChallengeDistribution::SignedSparse(akita_challenges::SparseChallengeConfig {
                 count_pm1: 2,
                 count_pm2: 1,
             });
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn packing_mgf_uses_the_embedded_residue_class_population() {
-        let challenge = FoldChallengeFamily::pm1_only(1);
+        let challenge = FoldChallengeDistribution::pm1_only(1);
         let class = SourceClass { nonzero_count: 4 };
         let lambda = 0.5f64;
         let exact = lambda.cosh();

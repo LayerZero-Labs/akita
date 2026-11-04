@@ -2,10 +2,10 @@
 
 use crate::schedule_params::{
     derive_selected_suffix_schedule, select_complete_candidate, QuerySearch, RelationModeFilter,
-    RelationTraversalOrder, ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology,
+    RelationTraversalOrder, ScheduleMemo, SetupFieldBudget, SuffixCtx, SuffixState, SuffixTopology,
 };
 use crate::PlannerPolicy;
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{FoldParams, FoldSchedule, PolynomialGroupLayout, TerminalFoldParams};
 pub use akita_schedules::native_root::NativeRootTransition;
@@ -21,7 +21,7 @@ pub fn find_native_root_schedule(
     seed: &ResolvedScheduleRow,
     transition: NativeRootTransition,
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
 ) -> Result<FoldSchedule, AkitaError> {
     akita_schedules::validate_policy(policy)?;
     if !policy.recursive_setup_planning || policy.chunks_at_level(1) != 1 {
@@ -31,13 +31,14 @@ pub fn find_native_root_schedule(
     }
     // Re-audit the seed against the chosen policy before retaining its profile.
     ResolvedScheduleRow::try_new(seed.profiles().clone(), seed.schedule().clone(), policy)?;
+    let setup_field_budget = policy.setup_field_budget.map(SetupFieldBudget::new);
     let ctx = SuffixCtx {
         policy,
         challenge_order: policy.transcript_grinding_order()?,
         diagnostics: None,
         ring_challenge_config: &ring_challenge_config,
         key: PolynomialGroupLayout::singleton(0),
-        setup_field_budget: policy.setup_field_budget,
+        setup_field_budget: setup_field_budget.as_ref(),
         root_lookup_key: None,
         root_main_constraint: None,
         adaptation_guide: None,
@@ -85,6 +86,8 @@ pub fn find_native_root_schedule(
     let mut root = seed.schedule().root.clone();
     root.output_witness_len = transition.physical_cells();
     let schedule = FoldSchedule {
+        // The native root has its own typed A prefix and never batches setup.
+        root_accumulated_setup_prefix_len: 0,
         root,
         recursive_folds: best
             .folds
@@ -97,7 +100,6 @@ pub fn find_native_root_schedule(
             })
             .collect(),
         terminal: TerminalFoldParams {
-            fold_challenge_config: best.terminal.sparse_challenge_config,
             response_shape: best.terminal.response_shape.clone(),
             input_witness_len: best.terminal.input_witness_len,
             ..best.terminal.params.clone()

@@ -162,6 +162,19 @@ impl RootTransitionValidation for OrdinaryRootTransition {
                 schedule.root.output_witness_len
             )));
         }
+        if let Some(prefix) = schedule
+            .recursive_folds
+            .first()
+            .and_then(|fold| fold.params.setup_prefix())
+        {
+            let expected = akita_params::active_setup_field_len(root_params, root_layout)?
+                .max(schedule.root_accumulated_setup_prefix_len);
+            if prefix.setup_natural_len != Some(expected) {
+                return Err(AkitaError::InvalidSetup(
+                    "root setup prefix does not match the combined setup footprint".into(),
+                ));
+            }
+        }
 
         Ok(expected_root_output)
     }

@@ -99,6 +99,9 @@ impl FoldSchedule {
             );
         }
         self.terminal.append_descriptor_bytes(bytes);
+        if self.root_accumulated_setup_prefix_len != 0 {
+            push_usize(bytes, self.root_accumulated_setup_prefix_len);
+        }
     }
 }
 
@@ -119,7 +122,7 @@ fn append_root_fold_descriptor_bytes<'a>(
         Item = (&'a GroupCommitPhaseParams, &'a crate::GroupOpenPhaseParams),
     >,
     open_commit_matrix: &crate::OpenCommitMatrixParams,
-    sparse_challenge_config: &akita_challenges::FoldChallengeFamily,
+    sparse_challenge_config: &akita_challenges::FoldChallengeDistribution,
     witness_partition: WitnessChunkDescriptor,
     input_witness_len: usize,
     output_witness_len: usize,
@@ -143,7 +146,7 @@ fn append_recursive_fold_descriptor_bytes(
     witness: &CommittedGroupParams,
     payload_mode: crate::CommitmentPayloadMode,
     open_commit_matrix: &crate::OpenCommitMatrixParams,
-    sparse_challenge_config: &akita_challenges::FoldChallengeFamily,
+    sparse_challenge_config: &akita_challenges::FoldChallengeDistribution,
     incoming_setup_prefix: Option<&crate::GroupOpenPhaseParams>,
     witness_partition: WitnessChunkDescriptor,
     input_witness_len: usize,

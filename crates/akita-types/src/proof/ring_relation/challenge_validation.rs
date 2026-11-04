@@ -1,11 +1,11 @@
-use akita_challenges::{Challenges, FoldChallengeFamily, SparseChallenge};
+use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 
 pub(super) fn validate_packing_challenge_weights(
     challenges: &Challenges,
-    config: &FoldChallengeFamily,
+    config: &FoldChallengeDistribution,
 ) -> Result<(), AkitaError> {
     let config = config.signed_sparse().ok_or_else(|| {
         AkitaError::InvalidInput(

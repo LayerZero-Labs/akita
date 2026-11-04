@@ -129,6 +129,7 @@ pub(super) fn build(
             ScheduleLookupKey {
                 final_group: ordinary.group,
                 precommitteds: vec![carrier],
+                root_accumulated_setup_prefix_len: 0,
             }
         } else {
             singleton

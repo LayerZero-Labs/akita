@@ -6,6 +6,7 @@ use super::*;
 use akita_algebra::ring::trinomial::image::Q24Image;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::checked;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::binary_source::{
     binary_public_digit_commitment, binary_root_matrix, BinaryCommittedGroupManifest,
     BINARY_DIGIT_COMMITMENT_DEGREE, BINARY_SOURCE_Q,
@@ -15,7 +16,11 @@ use std::sync::Arc;
 
 mod packed;
 mod projection;
-use packed::{fold_packed, image_hint, pack_logical_words, probe_packed};
+use packed::{fold_packed, image_hint, probe_packed};
+
+#[path = "binary_import.rs"]
+mod import;
+use import::BinarySourceInput;
 
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
@@ -49,6 +54,39 @@ where
         carrier_profile: akita_params::GroupCommitPhaseParams,
         words: Vec<Vec<u128>>,
     ) -> Result<SourceHandle<F, E>, AkitaError> {
+        self.import_binary_material(manifest, carrier_profile, BinarySourceInput::Logical(words))
+    }
+
+    /// Import compact low-bit-first carriers under the exact source descriptor.
+    ///
+    /// Each polynomial supplies `ceil(logical_len / (128 / word_width))` u128
+    /// carriers, with zero unused high bits in its last carrier. Committed
+    /// padding carriers and coordinates 128..161 are constructed as zeros.
+    /// The logical length is checked against the manifest before allocation.
+    /// Carriers are stored in the packed kernel order, never as expanded rings.
+    pub fn import_packed_binary_source(
+        &self,
+        manifest: BinaryCommittedGroupManifest,
+        carrier_profile: akita_params::GroupCommitPhaseParams,
+        logical_len: usize,
+        carriers: Vec<Vec<u128>>,
+    ) -> Result<SourceHandle<F, E>, AkitaError> {
+        self.import_binary_material(
+            manifest,
+            carrier_profile,
+            BinarySourceInput::Packed {
+                logical_len,
+                carriers,
+            },
+        )
+    }
+
+    fn import_binary_material(
+        &self,
+        manifest: BinaryCommittedGroupManifest,
+        carrier_profile: akita_params::GroupCommitPhaseParams,
+        input: BinarySourceInput,
+    ) -> Result<SourceHandle<F, E>, AkitaError> {
         manifest.validate_carrier(&carrier_profile)?;
         if akita_params::field_modulus::<F>()? != akita_params::binary_setup::BINARY_SETUP_P
             || carrier_profile.group.num_polynomials() != manifest.descriptor().polynomials().len()
@@ -61,7 +99,7 @@ where
         let prepared = self.prepared()?;
         let setup_seed = prepared.expanded.descriptor.setup_seed.seed;
         let span = tracing::info_span!("binary_commit_pack_words").entered();
-        let sources = pack_logical_words(manifest.descriptor(), &words)?;
+        let sources = input.prepare(manifest.descriptor())?;
         drop(span);
         let span = tracing::info_span!("binary_commit_a_matrix").entered();
         let matrix = binary_root_matrix(&setup_seed, &manifest)?;
@@ -100,7 +138,7 @@ pub(super) fn commit_binary_source<Cfg, F, E>(
 ) -> Result<CommitOutput<F, E>, AkitaError>
 where
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    F: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding + Valid + AkitaSerialize,
     E: Field,
 {
     let binary = source.storage.binary_source().ok_or_else(|| {
@@ -299,8 +337,7 @@ where
         expected_plan = expected_plan.with_ordinary(&ordinary_plan)?;
         let ordinary_context = context.for_group(1);
         backend.validate_context(session, &ordinary_context)?;
-        let segments =
-            super::binary_ordinary::prepare_ordinary_source(backend, ordinary_handle, profile)?;
+        let segments = backend.ordinary_root_preimage(ordinary_handle, &ordinary_plan)?;
         binding
             .scope_lease()
             .admit_commitment(&ordinary_context, ordinary_handle.committed.commitment_id)?;
@@ -409,7 +446,7 @@ where
         source.manifest.descriptor(),
         &source.sources,
         challenges,
-        akita_challenges::FoldChallengeFamily::BinaryRoot,
+        akita_challenges::FoldChallengeDistribution::BinaryRoot,
     )?
     else {
         return Ok(None);

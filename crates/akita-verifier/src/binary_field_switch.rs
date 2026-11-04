@@ -14,7 +14,7 @@ use akita_types::binary_source::{
 pub fn verify_field_switch(
     descriptor: &BinarySourceDescriptor,
     claim: &BinaryWordClaim,
-    channel: &mut (impl ProofChannel + ?Sized),
+    channel: &mut impl ProofChannel,
 ) -> Result<BinaryTerminalClaim, AkitaError> {
     claim.validate(descriptor)?;
     let point = claim.carrier_point(descriptor)?;

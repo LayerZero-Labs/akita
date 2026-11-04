@@ -3,7 +3,8 @@
 use super::*;
 use akita_algebra::{binary::BinaryField128, ring::trinomial::module_map::pack_signed_components};
 use akita_challenges::{
-    BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing, Challenges, FoldChallengeFamily,
+    BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing, Challenges,
+    FoldChallengeDistribution,
 };
 use akita_labinius_prover::{
     commit_binary_clear_limb_prepared, fold_kernel::fold_integer, PreparedLimbCommitMatrix,
@@ -21,19 +22,7 @@ pub(super) fn pack_logical_words(
             "binary logical word table differs from its descriptor".into(),
         ));
     }
-    let count =
-        checked::product([owners, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
-    let bytes = checked::product([count, size_of::<u128>()]).ok_or(AkitaError::InvalidProof)?;
-    if bytes > MAX_BINARY_SOURCE_MATERIAL_BYTES {
-        return Err(AkitaError::InvalidInput(
-            "binary source allocation exceeds its budget".into(),
-        ));
-    }
-    let mut sources = Vec::new();
-    sources
-        .try_reserve_exact(count)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    sources.resize(count, 0);
+    let mut sources = super::import::allocate_kernel_carriers(descriptor)?;
     let words_per_carrier = 128 / index.word_width();
     for (owner, polynomial) in words.iter().enumerate() {
         let owner_start =
@@ -110,7 +99,7 @@ pub(super) fn probe_packed(
     sources: &[u128],
     images: &[[Q24Image; SOURCE_RING_DEGREE]],
     challenges: &Challenges,
-    family: FoldChallengeFamily,
+    family: FoldChallengeDistribution,
 ) -> Result<Option<crate::binary_root::BinaryRootRelation>, AkitaError> {
     let Some(response) = fold_packed(descriptor, sources, challenges, family)? else {
         return Ok(None);
@@ -137,7 +126,7 @@ pub(super) fn fold_packed(
     let ring_rows = checked::exact_div(scalar_rows, 4).ok_or(AkitaError::InvalidProof)?;
     let count =
         checked::product([polynomials, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
-    if family != FoldChallengeFamily::BinaryRoot
+    if family != FoldChallengeDistribution::BinaryRoot
         || sources.len() != count
         || challenges.num_claims() != polynomials
         || challenges.num_live_blocks_per_claim() != index.columns()

@@ -201,7 +201,7 @@ recursion. Runtime verification never invokes this search.
 The planner uses the same byte formulas that runtime schedule expansion uses:
 
 - `nonterminal_level_layout` for a fold level's fixed messages.
-- `terminal_response_bytes` for the terminal witness.
+- `terminal_response_planner_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
 - the canonical grinding plan for additive per-message nonce maxima.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
@@ -212,7 +212,8 @@ ordinary recursive edges and zero outgoing-commitment bytes for the
 `TerminalInnerState` handoff. Level bodies contain no nonce field. The exact
 stream byte count is rounded once across the complete plan. Terminal proof
 bodies contain only any extension-opening reduction; their clear witness is
-priced by `terminal_response_bytes`.
+priced by `terminal_response_planner_bytes`, which is bounded by the
+wire cap `terminal_response_max_bytes`.
 
 The planner materializes this accounting directly into the expanded
 `FoldSchedule` stored in each external artifact row.
@@ -324,6 +325,25 @@ The command writes the complete report, including intentional removals. This
 repository permits catalog-breaking revisions, so baseline/current policy is
 reviewed from the checked evidence. Same-head drift remains an automatic
 failure under `--check-catalog`.
+
+Planner search size is guarded the same way. `--planner-cost-snapshot <path>`
+writes one row per regenerated row with four deterministic search-work
+counters: suffix calls, completed states, generated fold candidates, and
+descriptor builds. A reused preplanned row reports the work of the search that
+produced it. The counts do not depend on timing or worker count. They measure
+how large the search is, not how expensive each candidate is to price. A change
+that makes edge, terminal, or grinding pricing slower without visiting more
+states or building more candidates passes this check; the regeneration step's
+CI timeout is the only backstop for that kind of slowdown. The tracked
+baseline is `artifacts/schedule-planner-cost.tsv`; CI passes it through
+`--planner-cost-baseline <snapshot>`, which fails when a row is added or
+removed or when any counter grows by more than a quarter. When a planner change
+intentionally moves rows or costs, regenerate the baseline with the complete
+family set:
+
+```bash
+scripts/generate-schedule-artifacts.sh --planner-cost-snapshot artifacts/schedule-planner-cost.tsv
+```
 
 Targeted generation leaves the shared `mod.rs` wiring complete. Before a
 planner change is committed, run the unfiltered command above so every tracked

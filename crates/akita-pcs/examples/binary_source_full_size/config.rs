@@ -1,4 +1,4 @@
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_config::{proof_optimized::fp128::DenseBounded, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_params::{sis::CommittedSourceClass, DecompositionParams, SisModulusProfileId};
@@ -22,7 +22,7 @@ impl CommitmentConfig for FullSize {
             log_open_bound: Some(128),
         }
     }
-    fn ring_challenge_config(dimension: usize) -> Result<FoldChallengeFamily, AkitaError> {
+    fn ring_challenge_config(dimension: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         DenseBounded::ring_challenge_config(dimension)
     }
     fn sis_modulus_profile() -> SisModulusProfileId {

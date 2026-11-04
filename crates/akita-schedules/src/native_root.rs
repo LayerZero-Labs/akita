@@ -7,7 +7,7 @@
 use crate::artifact::validate_schedule_challenge_hooks;
 use crate::resolve::RootTransitionValidation;
 use crate::{PlannerPolicy, ResolvedScheduleRow, ValidatedScheduleCatalog};
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};
 use akita_params::{CommittedGroupBatchProfile, FoldParams, FoldSchedule, OpeningClaimsLayout};
 
@@ -87,6 +87,7 @@ impl RootTransitionValidation for NativeRootTransition {
             != akita_params::root_input_witness_len(&schedule.root.params)
             || !schedule.root.params.witness_chunk_ends.is_empty()
             || schedule.root.output_witness_len != self.physical_cells
+            || schedule.root_accumulated_setup_prefix_len != 0
             || schedule.recursive_folds.is_empty()
         {
             return Err(AkitaError::InvalidSetup(
@@ -145,7 +146,7 @@ impl ValidatedScheduleCatalog {
             ),
         >,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<Self, AkitaError> {
         let mut resolved = Vec::new();
         for (profiles, schedule) in ordinary_rows

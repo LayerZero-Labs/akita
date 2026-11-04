@@ -22,6 +22,7 @@ use akita_labinius_verifier::{
 use akita_params::sis::labinius::{
     LabiniusCommitmentModulus, LabiniusRingDegree, LabiniusRootProfile,
 };
+use akita_transcript::ChallengeCodec;
 use akita_types::proof::AkitaSetupSeed;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Prime128Offset275};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -61,8 +62,12 @@ impl TestHost for BinaryField192 {
 
 pub(crate) struct FixedDraw;
 impl FoldDraw for FixedDraw {
-    fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-        Ok([0x53; 32])
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![0x53; len])
     }
 }
 
@@ -191,7 +196,7 @@ pub(crate) struct RootCase<T: TestHost, F, E> {
     base: PhantomData<F>,
 }
 
-impl<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F>> RootCase<T, F, E> {
+impl<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> RootCase<T, F, E> {
     pub(crate) fn new(admitted: Admitted, mode: RootOpeningMode) -> Self {
         let setup = admitted.setup();
         let (source, point, value) = data::<T>(setup.source_len(), setup.num_vars());

@@ -177,10 +177,6 @@ impl<P: FieldFamily> Prover<P> {
     /// Open on the caller's native session, then leave it ready for the next
     /// subprotocol. The grouped PCS discharge uses that same spongefish state.
     ///
-    /// Applications must create the session with Akita's `new_prover_channel` or
-    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
-    /// spongefish states cannot be adopted.
-    ///
     /// # Errors
     /// Returns an error for an invalid statement, source, commitment or proof.
     pub fn open_in_session<H: SwitchField>(
@@ -188,7 +184,7 @@ impl<P: FieldFamily> Prover<P> {
         source: &[H::Source],
         committed: &Committed<P>,
         statement: &RootStatement<'_, H, P::Challenge>,
-        session: &mut akita_transcript::ProverSession,
+        session: &mut akita_transcript::ProverChannel,
     ) -> Result<(), AkitaError> {
         prove_root_reduction_in_session::<H, P::Base, P::Challenge, _, _, _>(
             &self.root,
@@ -418,7 +414,7 @@ impl<P: FieldFamily> RootProverOracle<P::Challenge> for ProverOracle<'_, P> {
         )?;
         if self.same_session {
             return channel.with_prover_session(|session| {
-                self.owner.scheme.batched_prove_in_session(
+                self.owner.scheme.batched_prove_embedded(
                     &self.owner.setup,
                     opening,
                     &self.owner.backend,

@@ -104,14 +104,14 @@ impl FaultBackend {
         schedules: &TrustedScheduleCatalog<super::BinaryTestSuffix>,
         prefixes: &akita_prover::SetupPrefixProverRegistry<F, C>,
         data: akita_prover::SelectedProverOpeningData<'_, F, C, F>,
-        prover: &mut akita_transcript::ProverSession,
+        prover: &mut akita_transcript::ProverChannel,
     ) -> Result<(), AkitaError> {
         let resolved = schedules.resolve_selection(data.selection())?;
         let mut registry = akita_prover::BackendRegistry::<super::BinaryTestSuffix>::new()?;
         let root = registry.register(self, prefixes)?;
         let mut route =
             akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        akita_prover::batched_prove_in_session::<super::BinaryTestSuffix, _>(
+        akita_prover::batched_prove_embedded::<super::BinaryTestSuffix, _>(
             setup.expanded.descriptor(),
             schedules,
             &registry,

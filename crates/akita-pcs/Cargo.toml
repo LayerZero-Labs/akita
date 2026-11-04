@@ -22,7 +22,7 @@ include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
 no-default-features = true
-features = ["parallel", "transcript-blake2b"]
+features = ["parallel", "transcript-keccak"]
 
 [package.metadata.cargo-machete]
 ignored = ["akita-setup"]
@@ -43,7 +43,7 @@ labinius-trinomial = [
   "akita-types/labinius-trinomial",
   "akita-verifier/labinius-trinomial",
 ]
-default = ["parallel", "transcript-blake2b"]
+default = ["parallel", "transcript-keccak"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -68,6 +68,13 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
   "akita-verifier/transcript-keccak",
 ]
+# Optional (default off): sums of products at the structured
+# sites of the verifier's setup scan (same field values).
+setup-sop-structured = ["akita-verifier/setup-sop-structured"]
+# Keccak-256 instead of SHA3-256 digests; see `akita-transcript`.
+keccak256-digests = ["akita-transcript/keccak256-digests"]
+# 64-point NTT and pointwise-dot inlines for a RISC-V guest verifier.
+ntt-inline = ["akita-algebra/ntt-inline"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -111,7 +118,8 @@ logging-transcript = [
   "akita-cpu-backend/logging-transcript",
 ]
 response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
-# Dev-only terminal wire variant; see `akita-params`.
+compression-weights-crosscheck = ["akita-types/compression-weights-crosscheck"]
+# Dev protocol (`docs/branches.md`); see `akita-params`.
 dev-protocol = ["akita-params/dev-protocol"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
@@ -119,7 +127,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -142,7 +150,9 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false, features = [
   "logging-transcript",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f5c1947b15305e469d1602e8e92ff07c33d778e3", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+spongefish = { version = "=0.8.0", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [

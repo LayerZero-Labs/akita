@@ -3,6 +3,7 @@
 mod catalog_policy_report;
 mod catalog_snapshot;
 mod generation_output_path;
+mod planner_cost_snapshot;
 
 use catalog_policy_report::catalog_policy_signature;
 use generation_output_path::validate_explicit_output_isolation;
@@ -40,6 +41,8 @@ struct ParsedArgs {
     catalog_snapshot: Option<PathBuf>,
     catalog_baseline: Option<PathBuf>,
     require_catalog_baseline_match: bool,
+    planner_cost_snapshot: Option<PathBuf>,
+    planner_cost_baseline: Option<PathBuf>,
     row_progress: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
@@ -63,6 +66,7 @@ fn usage() -> &'static str {
      --bin gen_schedule_artifacts -- <output-dir> [--check-catalog] \
      [--catalog-report <path>] [--catalog-snapshot <path>] \
      [--catalog-baseline <snapshot>] [--require-catalog-baseline-match] \
+     [--planner-cost-snapshot <path>] [--planner-cost-baseline <snapshot>] \
      [--row-progress] \
      [family_name ...]\n\
      positional family names select only those generated families; omit them \
@@ -136,6 +140,8 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     let mut catalog_snapshot = None;
     let mut catalog_baseline = None;
     let mut require_catalog_baseline_match = false;
+    let mut planner_cost_snapshot = None;
+    let mut planner_cost_baseline = None;
     let mut row_progress = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
@@ -183,6 +189,26 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
             "--require-catalog-baseline-match" => {
                 require_catalog_baseline_match = true;
                 i += 1;
+            }
+            "--planner-cost-snapshot" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--planner-cost-snapshot requires a path".to_string())?;
+                if planner_cost_snapshot.is_some() {
+                    return Err("--planner-cost-snapshot may be supplied only once".to_string());
+                }
+                planner_cost_snapshot = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--planner-cost-baseline" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--planner-cost-baseline requires a path".to_string())?;
+                if planner_cost_baseline.is_some() {
+                    return Err("--planner-cost-baseline may be supplied only once".to_string());
+                }
+                planner_cost_baseline = Some(PathBuf::from(value));
+                i += 2;
             }
             "--final-group" => {
                 let value = raw_args
@@ -235,8 +261,11 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     } else {
         Some(family_args)
     };
-    let catalog_rows_requested =
-        check_catalog || catalog_snapshot.is_some() || catalog_baseline.is_some();
+    let catalog_rows_requested = check_catalog
+        || catalog_snapshot.is_some()
+        || catalog_baseline.is_some()
+        || planner_cost_snapshot.is_some()
+        || planner_cost_baseline.is_some();
     if catalog_rows_requested && explicit_rows.final_group.is_some() {
         return Err("catalog checks and snapshots require the standard artifact rows".to_string());
     }
@@ -252,6 +281,11 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if require_catalog_baseline_match && catalog_baseline.is_none() {
         return Err("--require-catalog-baseline-match requires --catalog-baseline".to_string());
     }
+    if planner_cost_baseline.is_some() && family_filter.is_some() {
+        return Err(
+            "--planner-cost-baseline requires the complete generated family set".to_string(),
+        );
+    }
     Ok(ParsedArgs {
         base_dir,
         check_catalog,
@@ -259,6 +293,8 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
         catalog_snapshot,
         catalog_baseline,
         require_catalog_baseline_match,
+        planner_cost_snapshot,
+        planner_cost_baseline,
         row_progress,
         family_filter,
         explicit_rows,
@@ -485,6 +521,31 @@ fn materialized_snapshot_rows(
         .collect()
 }
 
+fn planner_cost_rows(
+    spec: &EmitSpec,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<Vec<planner_cost_snapshot::PlannerCostRow>, String> {
+    entries
+        .iter()
+        .map(|entry| {
+            let key = entry.key();
+            let cost = entry.planner_cost().ok_or_else(|| {
+                format!(
+                    "{}: {} has no planner cost",
+                    spec.family_name,
+                    catalog_logical_key(&key)
+                )
+            })?;
+            Ok(planner_cost_snapshot::PlannerCostRow {
+                family: spec.family_name.to_string(),
+                logical_key: catalog_logical_key(&key),
+                lookup_key_digest: catalog_lookup_key_digest(&key),
+                cost,
+            })
+        })
+        .collect()
+}
+
 impl ExplicitRows {
     fn has_family(&self, family: &GeneratedFamily) -> bool {
         self.final_group
@@ -679,10 +740,14 @@ fn main() -> Result<(), String> {
     };
     let mut changed_catalog_rows = 0usize;
     let mut current_catalog_rows = Vec::new();
+    let collect_planner_cost =
+        args.planner_cost_snapshot.is_some() || args.planner_cost_baseline.is_some();
+    let mut current_planner_cost_rows = Vec::new();
     let outputs = render_schedule_artifact_outputs_with_validation(
         &specs,
         MaterializationDiagnostics {
             row_progress: args.row_progress,
+            planner_cost: collect_planner_cost,
         },
         |spec, entries| {
             if check_catalog {
@@ -694,6 +759,9 @@ fn main() -> Result<(), String> {
             }
             if collect_catalog_snapshot {
                 current_catalog_rows.extend(materialized_snapshot_rows(spec, entries)?);
+            }
+            if collect_planner_cost {
+                current_planner_cost_rows.extend(planner_cost_rows(spec, entries)?);
             }
             Ok(())
         },
@@ -751,6 +819,37 @@ fn main() -> Result<(), String> {
             return Err(format!(
                 "generated catalog differs from the required baseline: {} added, {} removed, {} changed",
                 comparison.added_rows, comparison.removed_rows, comparison.changed_rows,
+            ));
+        }
+    }
+    if let Some(path) = &args.planner_cost_snapshot {
+        let snapshot = planner_cost_snapshot::write_snapshot(current_planner_cost_rows.clone())?;
+        fs::write(path, snapshot).map_err(|error| format!("write {}: {error}", path.display()))?;
+        eprintln!("wrote planner cost snapshot {}", path.display());
+    }
+    if let Some(path) = &args.planner_cost_baseline {
+        let baseline = fs::read_to_string(path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let comparison = planner_cost_snapshot::compare_snapshots(
+            planner_cost_snapshot::parse_snapshot(&baseline)?,
+            current_planner_cost_rows,
+        )?;
+        eprint!("{}", comparison.report);
+        for ((name, baseline_total), current_total) in planner_cost_snapshot::COUNTER_NAMES
+            .into_iter()
+            .zip(comparison.baseline_totals)
+            .zip(comparison.current_totals)
+        {
+            eprintln!(
+                "planner cost total {name}: baseline {baseline_total}, current {current_total}"
+            );
+        }
+        if comparison.failures != 0 {
+            return Err(format!(
+                "planner search work differs from {} in {} places; \
+                 regenerate it with --planner-cost-snapshot if the change is intended",
+                path.display(),
+                comparison.failures,
             ));
         }
     }

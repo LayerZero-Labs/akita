@@ -9,6 +9,7 @@ use akita_labinius_verifier::root_sumcheck::{
 use akita_sumcheck::{
     prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
 };
+use akita_transcript::ChallengeCodec;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 
@@ -218,7 +219,7 @@ pub(crate) fn prove_combined_rounds<F, E, C>(
 ) -> Result<(Vec<E>, E), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + ChallengeCodec,
     C: SumcheckProverChannel<E> + ClearChannel,
 {
     let num_vars = instance.num_rounds();

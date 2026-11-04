@@ -25,7 +25,7 @@ use akita_labinius_verifier::{
 use akita_params::BasisMode;
 use akita_serialization::Valid;
 use akita_types::{AkitaVerifierSetup, CommittedGroup};
-use akita_verifier::AkitaVerifier;
+use akita_verifier::{AkitaVerifier, SetupPolicy};
 
 /// The verifier of one root geometry over one proof-field family.
 pub struct Verifier<P: FieldFamily> {
@@ -105,17 +105,13 @@ impl<P: FieldFamily> Verifier<P> {
     /// Verify one complete root opening from the caller's session. Later
     /// messages are left for the caller, which owns the final EOF check.
     ///
-    /// Applications must create the session with Akita's `new_prover_channel` or
-    /// `new_verifier_channel`, binding their application instance bytes; arbitrary raw
-    /// spongefish states cannot be adopted.
-    ///
     /// # Errors
     /// Returns an error for an invalid statement or rejected opening.
     pub fn verify_in_session<H: SwitchField>(
         &self,
         commitment: &CommittedGroup<P::Base>,
         statement: &RootStatement<'_, H, P::Challenge>,
-        session: &mut akita_transcript::VerifierSession<'_>,
+        session: &mut akita_transcript::VerifierChannel<'_>,
     ) -> Result<(), AkitaError> {
         let result = (|| {
             verify_root_reduction_in_session::<H, P::Base, P::Challenge, _, _, _>(
@@ -126,10 +122,7 @@ impl<P: FieldFamily> Verifier<P> {
             )?;
             Ok(())
         })();
-        if result.is_err() {
-            session.invalidate();
-        }
-        result
+        akita_transcript::ProofChannel::guard(session, result)
     }
 
     /// A single-use oracle for a root reduction of `commitment` over
@@ -269,9 +262,17 @@ impl<P: FieldFamily> RootVerifierOracle<P::Challenge> for VerifierOracle<'_, P> 
         )?;
         if self.same_session {
             return channel.with_verifier_session(|session| {
+                // The caller owns `session` and checks its end after its own
+                // last message, so Akita's pending EOF is discharged there.
                 self.owner
                     .nested
-                    .batched_verify_in_session(session, statement, BasisMode::Lagrange)
+                    .batched_verify_embedded(
+                        session,
+                        statement,
+                        BasisMode::Lagrange,
+                        SetupPolicy::Check(None),
+                    )
+                    .map(|_pending| ())
             });
         }
         let session = bind_opening::<P, S>(
@@ -281,9 +282,13 @@ impl<P: FieldFamily> RootVerifierOracle<P::Challenge> for VerifierOracle<'_, P> 
             channel,
         )?;
         session.verify(channel, |proof, session| {
-            self.owner
-                .nested
-                .batched_verify(proof, session, statement, BasisMode::Lagrange)
+            self.owner.nested.batched_verify(
+                proof,
+                session,
+                statement,
+                BasisMode::Lagrange,
+                SetupPolicy::Check(None),
+            )
         })
     }
 }

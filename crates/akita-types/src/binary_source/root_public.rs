@@ -262,7 +262,7 @@ impl BinaryRootPublic {
                 self.plan.repacking(),
                 &self.setup,
                 point,
-                evaluation,
+                core::slice::from_ref(&evaluation),
                 payload,
                 alpha,
                 batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,

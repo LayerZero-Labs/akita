@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use akita_challenges::FoldChallengeFamily;
+use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
 use akita_params::ScheduleLookupKey;
@@ -18,6 +18,7 @@ mod materialize;
 mod publish;
 mod render;
 
+pub use crate::diagnostics::PlannerCost;
 pub(super) use materialize::materialized_entries_for_specs;
 pub use materialize::MaterializedEntry;
 pub use publish::publish_artifact_outputs;
@@ -27,6 +28,17 @@ pub use render::{render_schedule_artifact_outputs_with_validation, ArtifactOutpu
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MaterializationDiagnostics {
     pub row_progress: bool,
+    /// Record [`PlannerCost`] counters on every planned row.
+    pub planner_cost: bool,
+}
+
+/// One exact schedule planned by the caller before row materialization.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreplannedSchedule {
+    pub key: ScheduleLookupKey,
+    pub schedule: FoldSchedule,
+    /// The search work spent when the caller planned this schedule.
+    pub planner_cost: PlannerCost,
 }
 
 /// One frozen precommit descriptor with its canonical producer facts.
@@ -81,6 +93,8 @@ impl PrecommittedProducer {
 /// One grouped generation request whose lookup key is derived from its producers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupedGenerationRequest {
+    /// Largest inherited setup-prefix domain aggregated by the offloaded root; zero is empty.
+    pub root_accumulated_setup_prefix_len: usize,
     final_group: PolynomialGroupLayout,
     precommitted_producers: Vec<PrecommittedProducer>,
 }
@@ -92,6 +106,7 @@ impl GroupedGenerationRequest {
         precommitted_producers: Vec<PrecommittedProducer>,
     ) -> Self {
         Self {
+            root_accumulated_setup_prefix_len: 0,
             final_group,
             precommitted_producers,
         }
@@ -100,6 +115,7 @@ impl GroupedGenerationRequest {
     #[must_use]
     pub fn key(&self) -> ScheduleLookupKey {
         ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: self.root_accumulated_setup_prefix_len,
             final_group: self.final_group,
             precommitteds: self
                 .precommitted_producers
@@ -135,9 +151,9 @@ pub struct EmitSpec {
     pub keys: Vec<PolynomialGroupLayout>,
     pub grouped_requests: Vec<GroupedGenerationRequest>,
     /// Exact schedules already planned by the caller, audited against `policy` on emission.
-    pub preplanned: Vec<(ScheduleLookupKey, FoldSchedule)>,
+    pub preplanned: Vec<PreplannedSchedule>,
     pub output_path: PathBuf,
-    pub ring_challenge_config: fn(usize) -> Result<FoldChallengeFamily, AkitaError>,
+    pub ring_challenge_config: fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
 }
 
 // Schedule search is memory bound. Keep the default below host-wide

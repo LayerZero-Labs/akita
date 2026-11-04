@@ -656,7 +656,7 @@ mod tests {
 
     fn l2_terminal(policy: &PlannerPolicy) -> TerminalFoldParams {
         let sparse = akita_challenges::selective_l2_challenge_config(64)
-            .map(akita_challenges::FoldChallengeFamily::SignedSparse)
+            .map(akita_challenges::FoldChallengeDistribution::SignedSparse)
             .expect("certified D64 L2 challenge");
         let expected = selective_l2_inner_matrix(
             policy,

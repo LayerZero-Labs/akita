@@ -15,7 +15,7 @@ use akita_algebra::ring::trinomial::{
     signed::signed_trinomial_product,
 };
 use akita_algebra::{MinusTrinomial, TrinomialRing};
-use akita_challenges::{Challenges, FoldChallengeFamily};
+use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
@@ -63,7 +63,7 @@ impl BinaryRootRelation {
         sources: &[[i128; D]],
         images: &[[Q24Image; D]],
         challenges: &Challenges,
-        family: FoldChallengeFamily,
+        family: FoldChallengeDistribution,
     ) -> Result<Self, AkitaError> {
         Self::probe(descriptor, matrix, sources, images, challenges, family)?
             .ok_or_else(|| invalid("binary response exceeds its four-digit interval"))
@@ -77,7 +77,7 @@ impl BinaryRootRelation {
         sources: &[[i128; D]],
         images: &[[Q24Image; D]],
         challenges: &Challenges,
-        family: FoldChallengeFamily,
+        family: FoldChallengeDistribution,
     ) -> Result<Option<Self>, AkitaError> {
         let (polynomials, columns, rows) = dimensions(descriptor, matrix)?;
         let expected = checked::product([polynomials, columns, rows])
@@ -142,7 +142,7 @@ impl BinaryRootRelation {
         response: Vec<[i128; D]>,
         images: &[[Q24Image; D]],
         challenges: &Challenges,
-        family: FoldChallengeFamily,
+        family: FoldChallengeDistribution,
     ) -> Result<Self, AkitaError> {
         let (polynomials, columns, source_rows) = dimensions(descriptor, matrix)?;
         let rank = matrix.len();
@@ -406,9 +406,9 @@ fn dimensions(
 fn embed_challenges(
     descriptor: &BinarySourceDescriptor,
     challenges: &Challenges,
-    family: FoldChallengeFamily,
+    family: FoldChallengeDistribution,
 ) -> Result<Vec<[i128; D]>, AkitaError> {
-    if family != FoldChallengeFamily::BinaryRoot
+    if family != FoldChallengeDistribution::BinaryRoot
         || challenges.num_claims() != descriptor.polynomials().len()
         || challenges.num_live_blocks_per_claim() != descriptor.index_map().columns()
     {

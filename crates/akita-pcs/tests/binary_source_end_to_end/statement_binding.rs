@@ -7,17 +7,20 @@ use akita_types::binary_source::{binary_root_challenges, binary_root_statement};
 /// squeezed seed rather than inferring binding from later relation rejection.
 struct FirstSqueeze<D> {
     inner: D,
-    first: Option<[u8; akita_transcript::FOLD_CHALLENGE_SEED_LEN]>,
+    first: Option<Vec<u8>>,
 }
 
 impl<D: FoldDraw> FoldDraw for FirstSqueeze<D> {
-    fn absorb_and_squeeze(
+    fn draw_message<T>(
         &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; akita_transcript::FOLD_CHALLENGE_SEED_LEN], AkitaError> {
-        let seed = self.inner.absorb_and_squeeze(payload)?;
-        self.first.get_or_insert(seed);
-        Ok(seed)
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        let first = &mut self.first;
+        self.inner.draw_message(len, |message| {
+            first.get_or_insert_with(|| message.to_vec());
+            decode(message)
+        })
     }
 }
 
@@ -60,9 +63,8 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
                  ordinary: &[F],
                  point: &[F],
                  values: &[F]| {
-        let mut prover = new_prover_channel(b"binary-root-binding-test", b"caller").unwrap();
-        let mut verifier =
-            new_verifier_channel(b"binary-root-binding-test", b"caller", &[]).unwrap();
+        let mut prover = new_prover_channel(b"binary-root-binding-test");
+        let mut verifier = new_verifier_channel(b"binary-root-binding-test", &[]);
         binary_root_statement::<F, F, _>(
             &mut prover,
             manifest,

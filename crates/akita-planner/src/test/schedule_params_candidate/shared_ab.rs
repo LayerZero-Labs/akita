@@ -16,7 +16,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
 
     let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let candidate = |dimensions: CommitmentRingDims, outer_slice_count, width_s| {
-        let challenge = FoldChallengeFamily::production_for_ring_dim(dimensions.d_a())
+        let challenge = FoldChallengeDistribution::production_for_ring_dim(dimensions.d_a())
             .expect("production challenge for candidate A dimension");
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
@@ -61,7 +61,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
     .is_none());
 
     let d64_challenge =
-        FoldChallengeFamily::production_for_ring_dim(64).expect("production D64 challenge");
+        FoldChallengeDistribution::production_for_ring_dim(64).expect("production D64 challenge");
     assert!(
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
