@@ -70,21 +70,7 @@ where
         let images = image_hint(manifest.descriptor(), manifest.a_rank(), &matrix, &sources)?;
         drop(span);
         let span = tracing::info_span!("binary_commit_image_digits").entered();
-        let image_digit_count = checked::product([images.len(), 8, SOURCE_RING_DEGREE])
-            .ok_or(AkitaError::InvalidProof)?;
-        let mut image_digits = Vec::new();
-        image_digits
-            .try_reserve_exact(image_digit_count)
-            .map_err(|_| AkitaError::InvalidInput("binary image digit allocation failed".into()))?;
-        for element in &images {
-            for digit in 0..8 {
-                image_digits.extend(
-                    element
-                        .iter()
-                        .map(|coefficient| coefficient.digits()[digit]),
-                );
-            }
-        }
+        let image_digits = crate::binary_root::BinaryRootRelation::image_digits(&images)?;
         drop(span);
         let metadata = SourceMetadata::try_new(
             carrier_profile.group.num_polynomials(),
@@ -429,12 +415,8 @@ where
         return Ok(None);
     };
     drop(span);
-    let span = tracing::info_span!("binary_root_successor_table").entered();
-    let (response_map, response_table) = crate::binary_root::BinaryRootRelation::successor_table(
-        &response,
-        &source.images,
-        destination_ring_dimension,
-    )?;
+    let span = tracing::info_span!("binary_root_response_digits").entered();
+    let response_digits = crate::binary_root::BinaryRootRelation::response_digits(&response)?;
     drop(span);
     let span = tracing::info_span!("binary_root_evaluation_witness").entered();
     let evaluation = preparation
@@ -453,9 +435,7 @@ where
         .transpose()?;
     drop(span);
     let span = tracing::info_span!("binary_root_repack").entered();
-    let response_digits = natural_segment_digits(&response_map, &response_table, 0)?;
-    let image_digits = natural_segment_digits(&response_map, &response_table, 1)?;
-    let mut natural: Vec<&[i8]> = vec![&response_digits, &image_digits];
+    let mut natural: Vec<&[i8]> = vec![&response_digits, &source.image_digits];
     if let Some(evaluation) = &evaluation {
         natural.extend([
             preparation.partials.as_slice(),
@@ -490,37 +470,6 @@ where
         destination_ring_dimension,
     )
     .map(Some)
-}
-
-fn natural_segment_digits(
-    plan: &akita_types::root_repacking::RootCoefficientRepacking,
-    table: &[i8],
-    segment: usize,
-) -> Result<Vec<i8>, AkitaError> {
-    let shape = plan
-        .segments()
-        .get(segment)
-        .ok_or(AkitaError::InvalidProof)?;
-    let width = checked::product([
-        shape.geometry.polynomial_modulus_dimension(),
-        shape.geometry.coordinate_plane_count(),
-    ])
-    .ok_or(AkitaError::InvalidProof)?;
-    let count =
-        checked::product([shape.elements, shape.digits, width]).ok_or(AkitaError::InvalidProof)?;
-    let mut natural = Vec::new();
-    natural
-        .try_reserve_exact(count)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    for element in 0..shape.elements {
-        for digit in 0..shape.digits {
-            for coefficient in 0..width {
-                let address = plan.coefficient_address(segment, element, digit, coefficient)?;
-                natural.push(*table.get(address).ok_or(AkitaError::InvalidProof)?);
-            }
-        }
-    }
-    Ok(natural)
 }
 
 /// Extract the authenticated owner's carriers in canonical low-column-bit order.
