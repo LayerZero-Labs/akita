@@ -1014,33 +1014,34 @@ each owner an independent security budget.
 The eight-carrier, C=2 fixtures retain their existing source and suffix geometry.
 The following complete grouped proofs were measured from the 28 end-to-end
 tests after the merge of protocol v8 (Akita on `jolt-transcript` inside the
-caller's transcript). The dev protocol currently equals the current protocol,
-so both modes produce these bytes. Each plane in these measurements has a
+caller's transcript) and the deletion of the root's padding rows. The dev
+protocol currently equals the current protocol, so both modes produce these
+bytes. Each plane in these measurements has a
 distinct prime point. Every binary group uses one Stage 3 inside the caller's
 transcript.
 
 | Reading | Planes | Proof bytes |
 | --- | ---: | ---: |
-| Prime only | 1 | 78,804 |
-| Prime only | 2 | 78,846 |
-| Prime only | 5 | 78,811 |
-| Word and prime | 1 | 80,991 |
-| Word and prime | 2 | 80,993 |
-| Word and prime | 5 | 81,016 |
-| Prime only, mixed ordinary | 1 | 78,943 |
-| Prime only, mixed ordinary | 2 | 78,937 |
-| Prime only, mixed ordinary | 5 | 78,894 |
-| Word and prime, mixed ordinary | 1 | 81,140 |
-| Word and prime, mixed ordinary | 2 | 81,108 |
-| Word and prime, mixed ordinary | 5 | 81,145 |
+| Prime only | 1 | 78,803 |
+| Prime only | 2 | 78,785 |
+| Prime only | 5 | 78,794 |
+| Word and prime | 1 | 80,993 |
+| Word and prime | 2 | 80,974 |
+| Word and prime | 5 | 81,011 |
+| Prime only, mixed ordinary | 1 | 78,953 |
+| Prime only, mixed ordinary | 2 | 78,933 |
+| Prime only, mixed ordinary | 5 | 78,926 |
+| Word and prime, mixed ordinary | 1 | 81,149 |
+| Word and prime, mixed ordinary | 2 | 81,136 |
+| Word and prime, mixed ordinary | 5 | 81,115 |
 
 The word-only fixtures use the same typed Stage 3 root without prime planes:
 
 | Fixture | Proof bytes |
 | --- | ---: |
-| Binary word, width 128 | 81,005 |
-| Binary word, width 8 | 80,973 |
-| Binary word and ordinary group | 81,133 |
+| Binary word, width 128 | 81,002 |
+| Binary word, width 8 | 81,030 |
+| Binary word and ordinary group | 81,092 |
 
 The separate ordinary regression is 65,567 bytes, with the extension feature
 both disabled and enabled.
@@ -1052,10 +1053,10 @@ projection set, one A prefix, and one Stage 3:
 
 | Two-polynomial reading | Planes | Proof bytes |
 | --- | ---: | ---: |
-| Word only | 0 | 80,182 |
-| Prime only, projection mutation fixture | 1 | 77,991 |
-| Prime only | 2 | 78,037 |
-| Word and prime | 2 | 80,191 |
+| Word only | 0 | 80,223 |
+| Prime only, projection mutation fixture | 1 | 78,012 |
+| Prime only | 2 | 77,999 |
+| Word and prime | 2 | 80,245 |
 
 ## Full-size measurements
 
@@ -1097,7 +1098,7 @@ artifact, and loads that artifact for verification with ordinary prover setup.
 Explicit native-root admission (`ValidatedScheduleCatalog::try_new_native_root`)
 and explicit setup-prefix preparation run only at N=2^22 and N=2^23. The
 prover and verifier kernels are shared, so the smoke run checks the opening
-but not those two full-size harness paths. Its proof is 82,288 bytes and is
+but not those two full-size harness paths. Its proof is 82,298 bytes and is
 pinned. Before the v8 merge it was 87,337 bytes in the current protocol and
 82,308 bytes in the dev protocol.
 
@@ -1108,34 +1109,40 @@ pins the proof size and Blake2b-256 digest of every full-size and smoke shape.
 The driver fails when a proof differs from its row. The dev protocol now equals
 the current protocol, so the file has one row per `(log_carriers, shape)` and
 `--dev-protocol` checks the same row. The `--dev-protocol` smoke reproduces the
-82,288-byte pin.
+82,298-byte pin.
 
 The pins were re-captured from driver runs after merging `dev` at protocol v8.
 That merge ports the transcript to protocol v8 and adds one fold-challenge
 work nonce to each fold level after the binary root. Grinding nonces and the
 Rice-coded terminal payload depend on challenge values, so every digest and
 most lengths change. The pre-v8 dev-protocol proofs already omitted the last
-live e and t blocks. They are the comparable baseline:
+live e and t blocks. They are the comparable baseline. The pre-v8 columns are
+this branch's pins after the padding-row deletion:
 
 | N | Shape | Pre-v8 current bytes | Pre-v8 dev bytes | v8 bytes |
 | --- | --- | ---: | ---: | ---: |
-| 2^10 | word-prime-ordinary | 87,341 | 82,314 | 82,288 |
-| 2^22 | word | 87,811 | 82,784 | 82,746 |
-| 2^22 | word-prime | 87,786 | 82,731 | 82,752 |
-| 2^22 | word-prime-ordinary | 87,790 | 82,743 | 82,724 |
-| 2^22 | prime5 | 84,936 | 79,851 | 79,876 |
-| 2^23 | word | 89,586 | 84,578 | 84,599 |
-| 2^23 | word-prime | 89,661 | 84,574 | 84,563 |
-| 2^23 | word-prime-ordinary | 89,664 | 84,621 | 84,577 |
-| 2^23 | prime5 | 86,548 | 81,554 | 81,604 |
+| 2^10 | word-prime-ordinary | 87,337 | 82,308 | 82,298 |
+| 2^22 | word | 87,804 | 82,739 | 82,773 |
+| 2^22 | word-prime | 87,805 | 82,788 | 82,743 |
+| 2^22 | word-prime-ordinary | 87,786 | 82,747 | 82,762 |
+| 2^22 | prime5 | 84,879 | 79,860 | 79,899 |
+| 2^23 | word | 89,641 | 84,544 | 84,583 |
+| 2^23 | word-prime | 89,603 | 84,554 | 84,594 |
+| 2^23 | word-prime-ordinary | 89,638 | 84,598 | 84,569 |
+| 2^23 | prime5 | 86,595 | 81,534 | 81,562 |
 
 At every full-size row, the field switch, projections, Stage 1–3 and physical
 L2 categories have the same bytes and atoms as the pre-v8 dev-protocol
-partition. Only the remaining payload, framing and work category changes. At
-the smoke size, the binary root level has identical message ranges and lengths.
-Each of the seven later levels gains one fold-challenge work nonce. Ring-switch
-nonce widths change by at most one byte, and the terminal payload shrinks from
-21,209 to 21,176 bytes.
+partition. Only the remaining payload, framing and work category changes.
+
+The v8 pins also differ from those of the structured-weight branch below this
+one (for example 82,743 rather than 82,752 bytes at N=2^22 `word-prime`). The
+padding-row deletion changes the root's batching challenges, so every later
+challenge, nonce and the terminal payload change. The message grammar does
+not: at the smoke size both branches emit the same 955 message ranges in the
+same order. Six ring-switch and fold-challenge nonces differ by one byte, and
+the terminal payload is 21,188 rather than 21,176 bytes. At full size the six
+named categories are equal on both branches.
 
 Before the v8 merge, all eighteen pre-v8 rows were regenerated after the
 padding-row deletion, which changed every transcript-dependent digest. The
@@ -1145,29 +1152,30 @@ established, is in the appendix.
 ### Results after the v8 merge
 
 All eight full-size runs and the smoke run reproduce the pins above. Each
-reports `proof_digest_pin matched=True` and `verification passed=true`, matches
-the caller's transcript continuation and keeps online A reads forbidden. The
-logs are `$CARGO_TARGET_DIR/v8-logs/315-<log>-<shape>.txt`, measured with the
-structured root weights. Timings were not re-measured.
+reports `verification passed=true`, matches the caller's transcript
+continuation and keeps online A reads forbidden. The logs are
+`$CARGO_TARGET_DIR/v8-logs/316-<log>-<shape>.txt`, measured after the
+padding-row deletion; their proofs supplied the pins. Timings were not
+re-measured.
 
 | N | Shape | Proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 82,746 | 25,570 | 5,485,903,872 | 687,947,776 |
-| 2^22 | word-prime | 82,752 | 25,579 | 5,463,867,392 | 631,193,600 |
-| 2^22 | word-prime-ordinary | 82,724 | 25,550 | 5,657,493,504 | 956,940,288 |
-| 2^22 | prime5 | 79,876 | 25,419 | 8,829,763,584 | 1,483,948,032 |
-| 2^23 | word | 84,599 | 25,763 | 10,746,789,888 | 1,501,184,000 |
-| 2^23 | word-prime | 84,563 | 25,726 | 10,721,607,680 | 1,445,691,392 |
-| 2^23 | word-prime-ordinary | 84,577 | 25,742 | 9,882,910,720 | 2,033,008,640 |
-| 2^23 | prime5 | 81,604 | 25,629 | 10,098,294,784 | 1,218,478,080 |
+| 2^22 | word | 82,773 | 25,597 | 5,123,981,312 | 75,563,008 |
+| 2^22 | word-prime | 82,743 | 25,567 | 5,139,398,656 | 76,136,448 |
+| 2^22 | word-prime-ordinary | 82,762 | 25,589 | 5,200,101,376 | 562,003,968 |
+| 2^22 | prime5 | 79,899 | 25,440 | 7,694,123,008 | 79,511,552 |
+| 2^23 | word | 84,583 | 25,749 | 9,741,746,176 | 156,172,288 |
+| 2^23 | word-prime | 84,594 | 25,760 | 9,986,932,736 | 157,810,688 |
+| 2^23 | word-prime-ordinary | 84,569 | 25,733 | 9,939,501,056 | 1,039,564,800 |
+| 2^23 | prime5 | 81,562 | 25,588 | 9,576,710,144 | 160,710,656 |
 
 The partition's first six categories equal the pre-v8 tables below. The
 remaining payload, framing and work category is, in bytes/atoms:
 
 | N | word | word-prime | word-prime-ordinary | prime5 |
 | --- | ---: | ---: | ---: | ---: |
-| 2^22 | 56,292/23,553 | 56,298/23,562 | 56,270/23,533 | 56,301/23,566 |
-| 2^23 | 56,279/23,570 | 56,243/23,533 | 56,257/23,549 | 56,319/23,611 |
+| 2^22 | 56,319/23,580 | 56,289/23,550 | 56,308/23,572 | 56,324/23,587 |
+| 2^23 | 56,263/23,556 | 56,274/23,567 | 56,249/23,540 | 56,277/23,570 |
 
 Each run selects six recursive folds and eight fold levels, and reports
 `canonical_plan_matches=true`. Its root output and six recursive output lengths
@@ -1497,8 +1505,8 @@ this sizing. Setup coefficients, the factored Stage 3 product,
 ### Reconciliation with the design's cost budgets
 
 Section 12.3's serialized `word-prime` estimates were 89,033 and 89,525 bytes.
-The measured v8 proofs are 82,752 and 84,563 bytes, differences of **-6,281**
-and **-4,962** bytes. Before the v8 merge, the current-protocol proofs were
+The measured v8 proofs are 82,743 and 84,594 bytes, differences of **-6,290**
+and **-4,931** bytes. Before the v8 merge, the current-protocol proofs were
 87,805 and 89,603 bytes, differences of **-1,228** and **+78** bytes. The
 estimates used the smaller proposed A-prefix domains and planner-estimated
 ordinary suffix bytes; the measured
@@ -1620,7 +1628,7 @@ rather than once per carrier column. The prover expands each column by at most
 
 ### Memory
 
-The N=2^23 `word-prime` prover peak is 10,721,607,680 bytes after the v8
+The N=2^23 `word-prime` prover peak is 9,986,932,736 bytes after the v8
 merge. Before it, the peak was 9,698,836,480 bytes in the current protocol and
 9,917,906,944 bytes in the dev protocol. All three are below one sixth of the
 68,719,476,736-byte host. Peak RSS includes cold preparation in each

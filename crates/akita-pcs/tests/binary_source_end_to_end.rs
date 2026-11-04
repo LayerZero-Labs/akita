@@ -478,13 +478,14 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &malformed);
             replay.public_message(&BytesMsg(b"application-prefix"));
-            verifier.batched_verify_embedded(
-                &mut replay,
-                statement(&claim, &ordinary_point, ordinary_value),
-                BasisMode::Lagrange,
-                SetupPolicy::Check(None),
-            )
-            .map(|pending| pending.check_eof(replay))
+            verifier
+                .batched_verify_embedded(
+                    &mut replay,
+                    statement(&claim, &ordinary_point, ordinary_value),
+                    BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
+                )
+                .map(|pending| pending.check_eof(replay))
         }));
         assert!(outcome.is_ok(), "{fault:?} caused a verifier panic");
         let outcome = outcome.unwrap();
