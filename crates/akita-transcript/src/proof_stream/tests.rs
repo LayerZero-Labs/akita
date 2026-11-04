@@ -480,17 +480,51 @@ fn transcript_has_a_known_answer() {
     let root = prover.verifier_message::<[u8; 32]>();
     let rendered = format!("{challenges:?} {root:?}");
     // The protocol tag names the digest hash, so it changes every output.
+    #[cfg(feature = "l2-terminal-quotient")]
+    {
+        // The terminal-quotient grammar has its own tag. Only the SHA3-256
+        // digest answers were recorded; the Keccak-256 digest arm checks that
+        // the tag still changes the output.
+        let default_answer = default_transcript_answer();
+        #[cfg(feature = "transcript-blake2b")]
+        let expected = match DIGEST_HASH {
+            DigestHash::Sha3_256 => Some(
+                "[FpExt4 { coeffs: [Fp32(212206215), Fp32(2839981227), Fp32(674132088), Fp32(960614403)] }, FpExt4 { coeffs: [Fp32(564056074), Fp32(96728808), Fp32(1564003092), Fp32(25753996)] }] [162, 182, 201, 6, 235, 249, 219, 192, 70, 36, 54, 249, 54, 159, 189, 53, 168, 30, 242, 50, 141, 201, 74, 217, 194, 87, 78, 229, 244, 92, 15, 11]",
+            ),
+            DigestHash::Keccak256 => None,
+        };
+        #[cfg(feature = "transcript-keccak")]
+        let expected = match DIGEST_HASH {
+            DigestHash::Sha3_256 => Some(
+                "[FpExt4 { coeffs: [Fp32(3567071800), Fp32(366857615), Fp32(341146017), Fp32(584677099)] }, FpExt4 { coeffs: [Fp32(3617840643), Fp32(2301567949), Fp32(1139485804), Fp32(2497068706)] }] [85, 169, 227, 234, 133, 23, 64, 160, 101, 38, 71, 180, 240, 235, 197, 174, 64, 31, 180, 187, 89, 4, 82, 6, 249, 88, 197, 166, 151, 233, 13, 184]",
+            ),
+            DigestHash::Keccak256 => None,
+        };
+        match expected {
+            Some(expected) => assert_eq!(rendered, expected),
+            None => assert_ne!(rendered, default_answer),
+        }
+    }
+    #[cfg(not(feature = "l2-terminal-quotient"))]
+    assert_eq!(rendered, default_transcript_answer());
+}
+
+/// Known answer of `transcript_has_a_known_answer` under the default v8 tag.
+fn default_transcript_answer() -> &'static str {
     #[cfg(feature = "transcript-blake2b")]
-    let expected = match DIGEST_HASH {
-        DigestHash::Sha3_256 => "[FpExt4 { coeffs: [Fp32(2078537693), Fp32(3820402426), Fp32(718280182), Fp32(1765994312)] }, FpExt4 { coeffs: [Fp32(1910168669), Fp32(3377925487), Fp32(3968304959), Fp32(357759526)] }] [250, 104, 138, 7, 199, 56, 28, 85, 254, 234, 61, 62, 140, 134, 28, 240, 47, 181, 8, 185, 61, 226, 128, 237, 214, 108, 14, 174, 68, 103, 47, 171]",
-        DigestHash::Keccak256 => "[FpExt4 { coeffs: [Fp32(811873273), Fp32(2718273516), Fp32(3402320926), Fp32(3699840647)] }, FpExt4 { coeffs: [Fp32(827200401), Fp32(1290266527), Fp32(1624312049), Fp32(220072360)] }] [155, 151, 11, 84, 153, 41, 114, 44, 164, 119, 49, 142, 183, 246, 0, 119, 141, 191, 96, 92, 161, 158, 138, 244, 233, 39, 69, 137, 95, 126, 156, 209]",
-    };
+    let answers = (
+        "[FpExt4 { coeffs: [Fp32(2078537693), Fp32(3820402426), Fp32(718280182), Fp32(1765994312)] }, FpExt4 { coeffs: [Fp32(1910168669), Fp32(3377925487), Fp32(3968304959), Fp32(357759526)] }] [250, 104, 138, 7, 199, 56, 28, 85, 254, 234, 61, 62, 140, 134, 28, 240, 47, 181, 8, 185, 61, 226, 128, 237, 214, 108, 14, 174, 68, 103, 47, 171]",
+        "[FpExt4 { coeffs: [Fp32(811873273), Fp32(2718273516), Fp32(3402320926), Fp32(3699840647)] }, FpExt4 { coeffs: [Fp32(827200401), Fp32(1290266527), Fp32(1624312049), Fp32(220072360)] }] [155, 151, 11, 84, 153, 41, 114, 44, 164, 119, 49, 142, 183, 246, 0, 119, 141, 191, 96, 92, 161, 158, 138, 244, 233, 39, 69, 137, 95, 126, 156, 209]",
+    );
     #[cfg(feature = "transcript-keccak")]
-    let expected = match DIGEST_HASH {
-        DigestHash::Sha3_256 => "[FpExt4 { coeffs: [Fp32(1538086018), Fp32(2356685772), Fp32(939000672), Fp32(3159938612)] }, FpExt4 { coeffs: [Fp32(1640874697), Fp32(1035798056), Fp32(3581879581), Fp32(891095212)] }] [54, 72, 90, 56, 239, 211, 128, 30, 12, 80, 158, 176, 19, 198, 95, 96, 222, 120, 215, 81, 16, 223, 98, 231, 87, 39, 214, 184, 63, 131, 16, 17]",
-        DigestHash::Keccak256 => "[FpExt4 { coeffs: [Fp32(219517373), Fp32(1460299387), Fp32(770638488), Fp32(354388703)] }, FpExt4 { coeffs: [Fp32(2315217163), Fp32(3996746789), Fp32(1649955996), Fp32(903286857)] }] [45, 189, 119, 79, 141, 42, 244, 166, 109, 51, 121, 195, 225, 65, 69, 175, 160, 233, 76, 180, 209, 158, 20, 150, 31, 42, 189, 172, 221, 107, 54, 59]",
-    };
-    assert_eq!(rendered, expected);
+    let answers = (
+        "[FpExt4 { coeffs: [Fp32(1538086018), Fp32(2356685772), Fp32(939000672), Fp32(3159938612)] }, FpExt4 { coeffs: [Fp32(1640874697), Fp32(1035798056), Fp32(3581879581), Fp32(891095212)] }] [54, 72, 90, 56, 239, 211, 128, 30, 12, 80, 158, 176, 19, 198, 95, 96, 222, 120, 215, 81, 16, 223, 98, 231, 87, 39, 214, 184, 63, 131, 16, 17]",
+        "[FpExt4 { coeffs: [Fp32(219517373), Fp32(1460299387), Fp32(770638488), Fp32(354388703)] }, FpExt4 { coeffs: [Fp32(2315217163), Fp32(3996746789), Fp32(1649955996), Fp32(903286857)] }] [45, 189, 119, 79, 141, 42, 244, 166, 109, 51, 121, 195, 225, 65, 69, 175, 160, 233, 76, 180, 209, 158, 20, 150, 31, 42, 189, 172, 221, 107, 54, 59]",
+    );
+    match DIGEST_HASH {
+        DigestHash::Sha3_256 => answers.0,
+        DigestHash::Keccak256 => answers.1,
+    }
 }
 
 #[test]
