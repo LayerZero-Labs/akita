@@ -196,6 +196,11 @@ pub(super) fn peak_rss() -> Result<u64, Box<dyn std::error::Error>> {
     Err("peak RSS requires a Unix host".into())
 }
 
+/// Lowercase hexadecimal of a digest.
+pub(super) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub(super) fn proof(
     proof: &[u8],
     log_carriers: usize,
@@ -207,10 +212,7 @@ pub(super) fn proof(
     println!(
         "proof bytes={} digest_algorithm=blake2b256 digest={}",
         proof.len(),
-        digest
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
+        hex(&digest)
     );
     let mut totals = BTreeMap::<(u32, u32, u32, u32), (u64, usize)>::new();
     let mut accounted = 0usize;

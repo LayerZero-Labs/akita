@@ -94,6 +94,10 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
             catalog.catalog().to_artifact_bytes()?,
         )?;
     }
+    println!(
+        "catalog_digest={}",
+        metrics::hex(&catalog.catalog().catalog_digest())
+    );
     let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
     let selected = scheme.schedules().resolve_key(&key)?;
     let schedule = selected.schedule();
@@ -312,7 +316,7 @@ fn groups(
     Ok(groups)
 }
 
-fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
+fn verify(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
     let catalog = if log == 10 {
         TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
@@ -320,7 +324,7 @@ fn verify(log: usize, _shape: &str, directory: &Path) -> Result<()> {
             ChunkedWitnessCfg::default_non_chunked(),
         )?
     } else {
-        native_catalog::load(directory)?
+        native_catalog::load(log, shape, directory)?
     };
     let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
     let mut setup = {

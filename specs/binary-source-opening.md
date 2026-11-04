@@ -1265,6 +1265,11 @@ baseline executable (`f5e9ad551`) with the final executable (`06b8435eb`).
 All runs set `BINARY_SOURCE_CATALOG_CACHE` to one catalog that was planned once,
 so planning is excluded from both executables. This also lowers peak RSS
 relative to the earlier single runs, which planned inside the proving process.
+These sweep executables chose a cache entry by its filename. The driver now
+stores the protocol, size, shape, schedule family and planner-policy digests
+in each entry and re-prices the binary root from the cached rows. It rejects
+an entry that disagrees with the request, and prints the admitted
+`catalog_digest` in every proving run.
 The tables give medians in milliseconds, except where a row says otherwise.
 A row marked with `›` is a sub-span of the nearest row above it with one mark
 fewer; inclusive times overlap and must not be summed.
