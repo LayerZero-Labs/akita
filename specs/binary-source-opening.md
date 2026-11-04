@@ -632,7 +632,8 @@ D authentication row batches.
 
 **Digit segments.** Role B has one segment, root segment 1 (the image). Role D
 has the segments of `plan.opening_segments()` in plan order: U when the word is
-opened, then one EP segment per prime plane. `SegmentLanes` gives each
+opened, then, when there are prime planes, one EP segment that holds every
+plane, with `elements = planes * columns`. `SegmentLanes` gives each
 segment's `start`, `stride`, degree `n`, `digits` and `elements`. The segment
 has `L = elements * digits` lanes. Lane `l` holds `n` digits, at root
 addresses `start + l * stride + c` for `c < n`. These digits are the role's
@@ -1726,8 +1727,9 @@ offload (appendix), the prover peak rose in every shape. Where the prefix
 domain does not grow, it rose by 0.14 GB (N=2^22 `word`) to 0.69 GB (N=2^23
 `word-prime-ordinary`, from 9,517,465,600 to 10,211,393,536 bytes). The
 offload adds a dense `16 * 2^k'`-byte Stage 3 weight in every shape. Removing
-Stage 3's redundant full-length index table left the process peak unchanged,
-so that weight does not set the peak. The setup offload note, §8, separates
+Stage 3's redundant full-length index table left the process peak nearly
+unchanged. Whole-process peak RSS does not say which phase sets the peak, so
+that attribution is unmeasured. The setup offload note, §8, separates
 prefix growth, dense weights and backend state. Peak RSS includes cold preparation in each
 isolated process. These values establish memory fit for this fixture; they do
 not certify another source count, shape or parameter choice.
