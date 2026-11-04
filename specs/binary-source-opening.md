@@ -2229,6 +2229,53 @@ What remains at N=2^22 `word-prime`, about 1.3 s against the 0.4–0.8 s target:
 - **Smaller serial spans.** Evaluation witness (20 ms), repacking (12 ms),
   witness import (11 ms) and response digits (9 ms).
 
+#### Second pass on the Stage 3 weight base
+
+This pass was merged (`a35eed1be`) onto `0ff6a96f7`. That base is `dev` at
+`36a4e9bd5`, with the B/D setup offload (#318), the closed-form verifier
+weights (#320) and structured Stage 2 (#321), plus a Stage 3 that runs on
+block-structured weights and reads the committed prefix table. The base
+supersedes two of this pass's changes:
+
+- Stage 3 builds no A coefficients. It reads the table that prefix
+  preparation committed, so the reused commitment A now serves only the
+  relation compile.
+- The closed-form weight families replace the ordinary root's term
+  enumeration, so this pass's parallel ordinary weighing is gone. The base's
+  families are faster: the relation compile at `word-prime-ordinary` is
+  below.
+
+Both sides parallelized the q setup matrix and the typed A scatter. The merge
+keeps the base's q matrix and this pass's scatter, which fills every prefix
+cell in one parallel pass without first zeroing the prefix serially. The
+public digit commitments keep the small-digit accumulation and draw each
+setup entry through the base's batched `fill_p`. Setup, commitment and proof
+bytes are unchanged.
+
+Base `0ff6a96f7` and head `a35eed1be` were proved alternately in isolated
+processes with `BINARY_SOURCE_CATALOG_CACHE`. Each round ran the base, this
+head and the third-pass head `8f575025c`, after one warm-up round. Each figure
+is the median of three. All 60 runs, warm-ups included, reproduced their pins
+and verified. 2^23 ran last. Verification is the online
+`verify_complete_opening` span; it excludes setup deserialization. The host
+was shared and loaded, so only figures from the same rounds are compared.
+
+| N | Shape | Complete proving (ms) | Root level (ms) | Verification (ms) | Prover peak RSS (bytes) | Loads |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 2^22 | `word` | 1,194.0 → 1,055.3 | 918.7 → 713.6 | 10.1 → 10.2 | 2,221,703,168 → 2,039,644,160 | 9.29–11.99 |
+| 2^22 | `word-prime` | 2,269.4 → 1,769.5 | 1,612.5 → 1,080.9 | 14.3 → 17.9 | 3,095,003,136 → 3,036,069,888 | 14.50–22.84 |
+| 2^22 | `word-prime-ordinary` | 1,769.0 → 1,350.3 | 1,251.5 → 897.7 | 17.9 → 17.0 | 3,297,558,528 → 3,141,369,856 | 15.46–19.54 |
+| 2^22 | `prime5` | 2,270.8 → 1,746.0 | 1,559.5 → 1,028.5 | 11.2 → 11.2 | 5,414,666,240 → 5,118,984,192 | 10.29–16.40 |
+| 2^23 | `word-prime` | 2,439.7 → 1,617.9 | 1,997.7 → 1,211.3 | 13.8 → 12.8 | 3,984,883,712 → 3,805,167,616 | 13.99–20.40 |
+
+The gain comes from the spans this pass targeted. At 2^22 `word-prime` the
+relation compile falls from 255.5 to 161.3 ms and the D commitment from 151.0
+to 86.4 ms. At `prime5` the D commitment falls from 415.0 to 216.3 ms. At
+`word-prime-ordinary` the relation compile falls from 167.5 to 140.3 ms.
+Stage 2 and Stage 3 run the base's code in both executables. Stage 3 CPU
+time agrees within 2.5%. Stage 2 uses 2.5–6.3% more CPU time in this head at
+every shape. The cause is not measured. Verification time is within noise.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
