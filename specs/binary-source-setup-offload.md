@@ -411,7 +411,9 @@ tables before the offload, which those speedups do not change. Where `k'`
 equals `k`, the proof changes by at most 55 bytes. Where it grows, the
 successor schedule changes with the larger prefix, which adds 1,659 to 1,677
 bytes at 2^25 and 7,666 to 9,363 bytes at 2^26. The verifier's B/D work is
-gone in every shape.
+gone in every shape. These rows predate protocol v8. After the v8 merge the
+offload changes the v8 proofs by the same stages; the opening spec's proof
+digest pins section compares both changes row by row.
 
 `begin_factored_stage3` receives the dense table as its index factor with a
 one-element coefficient factor. The rectangular product then binds the same

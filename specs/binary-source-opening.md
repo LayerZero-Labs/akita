@@ -1171,51 +1171,55 @@ each owner an independent security budget.
 ## Measured proof sizes
 
 The eight-carrier, C=2 fixtures retain their existing source and suffix geometry.
-The following complete grouped proofs were measured from the 28 end-to-end
+The following complete grouped proofs were measured from the 29 end-to-end
 tests after the merge of protocol v8 (Akita on `jolt-transcript` inside the
-caller's transcript) and the deletion of the root's padding rows. The dev
-protocol currently equals the current protocol, so both modes produce these
-bytes. Each plane in these measurements has a
+caller's transcript), the deletion of the root's padding rows and the B/D
+setup offload. The dev protocol currently equals the current protocol, so
+both modes produce these bytes. Each plane in these measurements has a
 distinct prime point. Every binary group uses one Stage 3 inside the caller's
-transcript.
+transcript, which also covers the B and D authentication rows.
 
 | Reading | Planes | Proof bytes |
 | --- | ---: | ---: |
-| Prime only | 1 | 78,803 |
-| Prime only | 2 | 78,785 |
-| Prime only | 5 | 78,794 |
-| Word and prime | 1 | 80,993 |
-| Word and prime | 2 | 80,974 |
-| Word and prime | 5 | 81,011 |
-| Prime only, mixed ordinary | 1 | 78,953 |
-| Prime only, mixed ordinary | 2 | 78,933 |
-| Prime only, mixed ordinary | 5 | 78,926 |
+| Prime only | 1 | 78,804 |
+| Prime only | 2 | 78,771 |
+| Prime only | 5 | 78,782 |
+| Word and prime | 1 | 81,011 |
+| Word and prime | 2 | 80,973 |
+| Word and prime | 5 | 81,025 |
+| Prime only, mixed ordinary | 1 | 78,881 |
+| Prime only, mixed ordinary | 2 | 78,888 |
+| Prime only, mixed ordinary | 5 | 78,948 |
 | Word and prime, mixed ordinary | 1 | 81,149 |
-| Word and prime, mixed ordinary | 2 | 81,136 |
-| Word and prime, mixed ordinary | 5 | 81,115 |
+| Word and prime, mixed ordinary | 2 | 81,081 |
+| Word and prime, mixed ordinary | 5 | 81,068 |
 
 The word-only fixtures use the same typed Stage 3 root without prime planes:
 
 | Fixture | Proof bytes |
 | --- | ---: |
-| Binary word, width 128 | 81,002 |
-| Binary word, width 8 | 81,030 |
-| Binary word and ordinary group | 81,092 |
+| Binary word, width 128 | 80,963 |
+| Binary word, width 8 | 80,945 |
+| Binary word and ordinary group | 81,132 |
 
 The separate ordinary regression is 65,567 bytes, with the extension feature
 both disabled and enabled.
 The compatibility fixture pins these three binary word-only proof lengths and
-their full digests. Duplicate prime requests also produce identical proof bytes.
+their full digests. Before the offload, after the v8 merge, they were 81,002,
+81,030 and 81,092 bytes. The fixture also pins the 2,518 typed-prefix identity
+bytes and their digest. The identity bytes did not change in the v8 merge; the
+digest did, because v8 hashes instance descriptors with SHA3-256 rather than
+Blake2b-256. Duplicate prime requests also produce identical proof bytes.
 
 Several-polynomial measurements use two source polynomials, still sharing one
 projection set, one typed prefix, and one Stage 3:
 
 | Two-polynomial reading | Planes | Proof bytes |
 | --- | ---: | ---: |
-| Word only | 0 | 80,223 |
-| Prime only, projection mutation fixture | 1 | 78,012 |
-| Prime only | 2 | 77,999 |
-| Word and prime | 2 | 80,245 |
+| Word only | 0 | 80,232 |
+| Prime only, projection mutation fixture | 1 | 78,032 |
+| Prime only | 2 | 78,025 |
+| Word and prime | 2 | 80,228 |
 
 ## Full-size measurements
 
@@ -1257,9 +1261,10 @@ artifact, and loads that artifact for verification with ordinary prover setup.
 Explicit native-root admission (`ValidatedScheduleCatalog::try_new_native_root`)
 and explicit setup-prefix preparation run only at N=2^22 and N=2^23. The
 prover and verifier kernels are shared, so the smoke run checks the opening
-but not those two full-size harness paths. Its proof is 82,298 bytes and is
-pinned. Before the v8 merge it was 87,337 bytes in the current protocol and
-82,308 bytes in the dev protocol.
+but not those two full-size harness paths. Its proof is 82,308 bytes and is
+pinned. After the v8 merge and before the B/D setup offload it was 82,298
+bytes. Before the v8 merge, with the offload, it was 87,366 bytes in the
+current protocol and 82,285 bytes in the dev protocol.
 
 ### Proof digest pins
 
@@ -1268,17 +1273,49 @@ pins the proof size and Blake2b-256 digest of every full-size and smoke shape.
 The driver fails when a proof differs from its row. The dev protocol now equals
 the current protocol, so the file has one row per `(log_carriers, shape)` and
 `--dev-protocol` checks the same row. The `--dev-protocol` smoke reproduces the
-82,298-byte pin.
+82,308-byte pin.
 
-The pins were re-captured from driver runs after merging `dev` at protocol v8.
+The current pins were re-captured from driver runs at `237eb5a13`. That commit
+merges the v8 port of the prover-speed pass into the B/D setup offload. Before
+re-pinning, each new proof was compared with the v8 pin it replaces, which has
+no offload. The offload had to change it the way it changed the pre-v8
+dev-protocol proofs. For every full-size shape, the per-stage difference
+between the two v8 proofs equals the per-stage difference that the offload
+made before v8. The comparison excludes one-atom nonces, whose varint width
+depends on their value, and the Rice-coded terminal payload. Compared directly
+with the offload's pre-v8 dev-protocol proof, each new proof has the same stage
+grammar plus v8's one fold-challenge nonce per fold level. The field switch,
+projections, Stage 1–3 and physical L2 categories equal the pre-v8 offload
+partition below in bytes and atoms. The lengths and their changes:
+
+| N | Shape | Pre-v8 dev before → with offload | Change | v8 before → with offload | Change |
+| --- | --- | --- | ---: | --- | ---: |
+| 2^10 | word-prime-ordinary | 82,308 → 82,285 | −23 | 82,298 → 82,308 | +10 |
+| 2^22 | word | 82,739 → 82,786 | +47 | 82,773 → 82,764 | −9 |
+| 2^22 | word-prime | 82,788 → 84,423 | +1,635 | 82,743 → 84,392 | +1,649 |
+| 2^22 | word-prime-ordinary | 82,747 → 84,394 | +1,647 | 82,762 → 84,406 | +1,644 |
+| 2^22 | prime5 | 79,860 → 89,212 | +9,352 | 79,899 → 89,195 | +9,296 |
+| 2^23 | word | 84,544 → 84,580 | +36 | 84,583 → 84,590 | +7 |
+| 2^23 | word-prime | 84,554 → 84,576 | +22 | 84,594 → 84,590 | −4 |
+| 2^23 | word-prime-ordinary | 84,598 → 84,535 | −63 | 84,569 → 84,553 | −16 |
+| 2^23 | prime5 | 81,534 → 89,248 | +7,714 | 81,562 → 89,212 | +7,650 |
+
+Where the prefix domain grows, both changes are the added Stage 3 rounds and
+the larger successor schedule. Elsewhere both are a few tens of bytes of
+value-dependent payload. The smoke run's offload adds no stage, so its
+comparison is direct: the new proof differs from the pre-offload v8 proof
+only in value-dependent widths.
+
+The v8 pins before the offload were re-captured from driver runs after merging
+`dev` at protocol v8.
 That merge ports the transcript to protocol v8 and adds one fold-challenge
 work nonce to each fold level after the binary root. Grinding nonces and the
 Rice-coded terminal payload depend on challenge values, so every digest and
 most lengths change. The pre-v8 dev-protocol proofs already omitted the last
 live e and t blocks. They are the comparable baseline. The pre-v8 columns are
-this branch's pins after the padding-row deletion:
+the pins after the padding-row deletion and before the offload:
 
-| N | Shape | Pre-v8 current bytes | Pre-v8 dev bytes | v8 bytes |
+| N | Shape | Pre-v8 current bytes | Pre-v8 dev bytes | v8 bytes before the offload |
 | --- | --- | ---: | ---: | ---: |
 | 2^10 | word-prime-ordinary | 87,337 | 82,308 | 82,298 |
 | 2^22 | word | 87,804 | 82,739 | 82,773 |
@@ -1307,6 +1344,55 @@ Before the v8 merge, all eighteen pre-v8 rows were regenerated after the
 padding-row deletion, which changed every transcript-dependent digest. The
 chronology of the pins superseded by that deletion, and what they
 established, is in the appendix.
+
+### Results after the v8 merge
+
+These rows measure `237eb5a13`: the B/D setup offload, the prover-speed pass
+and protocol v8 together. One executable (SHA-256
+`71f17c7eb0c73c19298578523ee2d7f9afd88e1bc897f67b16cb780c077d468a`)
+served two campaigns, both with the catalog cache. Each shape proved once and
+`word-prime` three times, and every proof verified three times in isolated
+processes. All 25 proofs reproduce their pins. All 49 verifications report
+`verification passed=true`, match the caller's transcript continuation and
+keep online A reads forbidden.
+
+The first campaign supplied the pins. It ran at one-minute loads of 28 to 58
+on the 16-core host, and its wall times are not reported. The second, below,
+ran at loads of 9.76 to 15.14. Each cell is the median of three, with the
+peak RSS of that median run. The logs are
+`$CARGO_TARGET_DIR/318-logs/{m,q}-<log>-<shape>.{prove<i>,verify<i>}.txt`.
+The last column is the offload's pre-v8 current-protocol median, measured at
+loads of 5.69 to 7.49.
+
+| N | Shape | Proof bytes | Atoms | Verification (ms) | Verifier peak RSS bytes | One-minute load | Pre-v8 (ms) |
+| --- | --- | ---: | ---: | ---: | ---: | --- | ---: |
+| 2^22 | word | 82,764 | 25,591 | 14.9 | 76,709,888 | 9.91 | 14.9 |
+| 2^22 | word-prime | 84,392 | 25,701 | 16.5 | 156,352,512 | 10.25 | 16.1 |
+| 2^22 | word-prime-ordinary | 84,406 | 25,717 | 178.0 | 644,055,040 | 9.76 | 124.8 |
+| 2^22 | prime5 | 89,195 | 26,128 | 15.4 | 129,482,752 | 9.86 | 15.2 |
+| 2^23 | word | 84,590 | 25,755 | 16.7 | 156,811,264 | 12.28 | 16.2 |
+| 2^23 | word-prime | 84,590 | 25,756 | 18.3 | 159,465,472 | 11.17 | 17.5 |
+| 2^23 | word-prime-ordinary | 84,553 | 25,718 | 351.5 | 1,048,330,240 | 13.77 | 215.2 |
+| 2^23 | prime5 | 89,212 | 26,147 | 20.9 | 136,249,344 | 15.13–15.14 | 16.5 |
+
+The binary-only shapes verify in 14.9–20.9 ms, as before v8. The mixed shape
+is slower: its ordinary-root flat terms (`binary_root_weights_ordinary`)
+took 141.7 ms at N=2^22 and 299.4 ms at N=2^23, against 85.9 and 160.7 ms
+before v8. The v8 merge without the offload was not timed, so this rise is
+not attributed.
+
+Complete `word-prime` proving, with the prover-speed pass's v8 medians
+before the offload:
+
+| N | Proving (ms) | Three runs (ms) | Prover peak RSS bytes | One-minute loads | Before the offload (ms) |
+| --- | ---: | --- | ---: | --- | ---: |
+| 2^22 | 2,018.4 | 1,972.1, 2,217.5, 2,018.4 | 5,221,335,040 | 10.76, 11.47, 10.71 | 1,783.7 |
+| 2^23 | 3,500.0 | 3,203.5, 3,500.0, 3,587.5 | 8,595,046,400 | 9.86, 11.18, 10.17 | 3,012.9 |
+
+The process CPU time of the median runs rose from 11.7 to 15.6 seconds at
+N=2^22 and from 20.7 to 23.4 seconds at N=2^23. At N=2^22 the prefix domain
+grows from 2^24 to 2^25, and at both sizes the prover also builds the
+dense `16 * 2^k'`-byte Stage 3 weight.
 
 ### B/D setup offload: verification before and after
 
@@ -1375,14 +1461,15 @@ with it. Against the speedups build, RSS rises by 42 MB (`prime5`) to 80 MB
 except `prime5`), RSS is within 2 MB of the speedups build. N=2^23 `prime5` drops by
 31 MB under its different successor schedule.
 
-### Results after the v8 merge
+### Results after the v8 merge, before the offload
 
-All eight full-size runs and the smoke run reproduce the pins above. Each
-reports `verification passed=true`, matches the caller's transcript
-continuation and keeps online A reads forbidden. The logs are
+These runs predate the offload. All eight full-size runs and the smoke run
+reproduced the v8 pins before the offload, in the second table above. Each
+reported `verification passed=true`, matched the caller's transcript
+continuation and kept online A reads forbidden. The logs are
 `$CARGO_TARGET_DIR/v8-logs/316-<log>-<shape>.txt`, measured after the
-padding-row deletion; their proofs supplied the pins. Timings were not
-re-measured.
+padding-row deletion; their proofs supplied those pins. Timings were not
+measured.
 
 | N | Shape | Proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -1545,12 +1632,13 @@ No layout, schedule, transcript or proof byte changed. All 48 runs below
 reproduced their digest pins.
 
 The tables below predate the v8 merge. After merging the v8 port of the
-padding-row deletion (`53b25df19`, measured at `85d0d17b3`), `word-prime`
-was proved three more times per size with the catalog cache. Every run
+padding-row deletion (`53b25df19`, measured at `85d0d17b3`) and before the
+offload, `word-prime` was proved three more times per size with the catalog
+cache. Every run
 reproduced its v8 pin. The one-minute loads were higher than in the pre-v8
 sweep, so the small increase is within the host's noise:
 
-| N | Complete proving after the v8 merge (ms) | Pre-v8 final (ms) | Prover peak RSS bytes | One-minute load |
+| N | Complete proving after the v8 merge, before the offload (ms) | Pre-v8 final (ms) | Prover peak RSS bytes | One-minute load |
 | --- | ---: | ---: | ---: | --- |
 | 2^22 | 1,783.7 | 1,737.8 | 4,193,042,432 | 9.48–11.76 |
 | 2^23 | 3,012.9 | 2,927.9 | 8,056,356,864 | 8.90–10.26 |
@@ -1867,6 +1955,7 @@ That dev protocol omitted the last live e and t blocks through terminal
 recomputation. This is a grammar distinction, not an optimization that
 preserves proof bytes. The v8 protocol includes it, so the v8 proofs are
 comparable with the pre-v8 dev-protocol proofs, not the pre-v8 current ones.
+After the v8 merge, the `word-prime` proofs are 84,392 and 84,590 bytes.
 
 The timings in this subsection predate the v8 merge.
 Section 12.4's prover targets of 0.4–0.8 seconds at N=2^22 and 0.8–1.6 seconds
@@ -1998,7 +2087,10 @@ The prover-speed pass was measured without the offload. Its N=2^23
 baseline executable under the same conditions. After the v8 merge and before
 the offload, the median was 8,056,356,864 bytes; the v8 merge's single run
 without the prover-speed pass, which planned its catalog in the proving
-process, peaked at 9,986,932,736 bytes. All are below one sixth of the
+process, peaked at 9,986,932,736 bytes. With the offload after the v8 merge, the
+median was 8,595,046,400 bytes. The largest peak after the v8 merge was
+10,705,600,512 bytes, at N=2^23 `prime5` in the first campaign, which
+planned its catalog in the proving process. All are below one sixth of the
 68,719,476,736-byte host. Peak RSS includes cold preparation in each isolated
 process. These values establish memory fit for this fixture; they do
 not certify another source count, shape or parameter choice.
