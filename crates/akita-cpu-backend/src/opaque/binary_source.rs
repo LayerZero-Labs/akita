@@ -60,9 +60,16 @@ where
         }
         let prepared = self.prepared()?;
         let setup_seed = prepared.expanded.descriptor.setup_seed.seed;
+        let span = tracing::info_span!("binary_commit_pack_words").entered();
         let sources = pack_logical_words(manifest.descriptor(), &words)?;
+        drop(span);
+        let span = tracing::info_span!("binary_commit_a_matrix").entered();
         let matrix = binary_root_matrix(&setup_seed, &manifest)?;
+        drop(span);
+        let span = tracing::info_span!("binary_commit_image_hint").entered();
         let images = image_hint(manifest.descriptor(), manifest.a_rank(), &matrix, &sources)?;
+        drop(span);
+        let span = tracing::info_span!("binary_commit_image_digits").entered();
         let image_digit_count = checked::product([images.len(), 8, SOURCE_RING_DEGREE])
             .ok_or(AkitaError::InvalidProof)?;
         let mut image_digits = Vec::new();
@@ -78,6 +85,7 @@ where
                 );
             }
         }
+        drop(span);
         let metadata = SourceMetadata::try_new(
             carrier_profile.group.num_polynomials(),
             carrier_profile.group.num_vars(),
@@ -124,11 +132,13 @@ where
         ));
     }
     binary.manifest.validate_carrier(profile)?;
+    let span = tracing::info_span!("binary_commit_b_payload").entered();
     let public = Commitment::new(RingVec::from_coeffs(binary_public_digit_commitment::<F>(
         &binary.setup_seed,
         binary.manifest.b_label(),
         &binary.image_digits,
     )?));
+    drop(span);
     let committed_group =
         CommittedGroup::new_binary(*profile, public.clone(), binary.manifest.clone())?;
     let private_handle = CommitmentHandle {
@@ -323,6 +333,7 @@ where
             "native root request has a different coefficient map".into(),
         ));
     }
+    let span = tracing::info_span!("binary_root_row_partials").entered();
     let partials = claim
         .as_ref()
         .map(|claim| {
@@ -334,11 +345,15 @@ where
         })
         .transpose()?
         .unwrap_or_default();
+    drop(span);
+    let span = tracing::info_span!("binary_root_prime_digits").entered();
     let prime_digits = crate::binary_root::prime::packed_prime_plane_digits::<F>(
         manifest.descriptor(),
         &request.prime,
         &source.sources,
     )?;
+    drop(span);
+    let span = tracing::info_span!("binary_root_d_payload").entered();
     let mut d_digits = partials.clone();
     d_digits
         .try_reserve_exact(prime_digits.len())
@@ -352,6 +367,7 @@ where
         },
         &d_digits,
     )?;
+    drop(span);
     binding
         .scope_lease()
         .admit_commitment(context, handle.committed.commitment_id)?;
@@ -402,6 +418,7 @@ where
         ));
     }
     let source = &preparation.source;
+    let span = tracing::info_span!("binary_root_probe_response").entered();
     let Some(response) = probe_packed(
         source.manifest.descriptor(),
         &source.matrix,
@@ -413,7 +430,11 @@ where
     else {
         return Ok(None);
     };
+    drop(span);
+    let span = tracing::info_span!("binary_root_successor_table").entered();
     let (response_map, response_table) = response.successor_table(destination_ring_dimension)?;
+    drop(span);
+    let span = tracing::info_span!("binary_root_evaluation_witness").entered();
     let evaluation = preparation
         .claim
         .as_ref()
@@ -428,6 +449,8 @@ where
             )
         })
         .transpose()?;
+    drop(span);
+    let span = tracing::info_span!("binary_root_repack").entered();
     let response_digits = natural_segment_digits(&response_map, &response_table, 0)?;
     let image_digits = natural_segment_digits(&response_map, &response_table, 1)?;
     let mut natural: Vec<&[i8]> = vec![&response_digits, &image_digits];
@@ -455,6 +478,8 @@ where
         ));
     }
     digits.truncate(logical_len);
+    drop(span);
+    let _span = tracing::info_span!("binary_root_import_witness").entered();
     super::binary_root_sessions::import_root_witness(
         backend,
         session,

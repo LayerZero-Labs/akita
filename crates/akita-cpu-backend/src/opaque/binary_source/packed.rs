@@ -134,6 +134,7 @@ pub(super) fn probe_packed(
         .iter()
         .map(|challenge| BinaryChallenge::try_from_sparse(challenge, &profile))
         .collect::<Result<Vec<_>, _>>()?;
+    let span = tracing::info_span!("binary_root_fold_integer").entered();
     let mut response = Vec::new();
     response
         .try_reserve_exact(
@@ -168,6 +169,8 @@ pub(super) fn probe_packed(
             response.push(packed);
         }
     }
+    drop(span);
+    let _span = tracing::info_span!("binary_root_residual_rows").entered();
     crate::binary_root::BinaryRootRelation::from_response(
         descriptor, matrix, response, images, challenges, family,
     )

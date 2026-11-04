@@ -53,6 +53,7 @@ where
             "unsupported binary root group geometry".into(),
         ));
     }
+    let _level_span = tracing::info_span!("binary_root_level").entered();
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
     let GroupClaimKind::Binary {
         manifest,
@@ -107,6 +108,7 @@ where
         ordinary_statement,
     )?;
     let context = backend.proof_context(proof_session, 0)?;
+    let span = tracing::info_span!("binary_root_field_switch").entered();
     let terminal = if let Some(claim) = claim {
         Some({
             let (_, source) = backend.prepare_root_group(
@@ -131,6 +133,7 @@ where
     } else {
         None
     };
+    drop(span);
     let public = BinaryRootPublic::new(
         manifest,
         terminal.as_ref(),
@@ -155,12 +158,14 @@ where
             })
             .transpose()?,
     };
+    let span = tracing::info_span!("binary_root_d_commitment").entered();
     let (d_payload, preparation) = backend.prepare_root_group(
         proof_session,
         &context.for_group(0),
         handles.first().ok_or(AkitaError::InvalidProof)?,
         &request,
     )?;
+    drop(span);
     if d_payload.len() != 128 {
         return Err(AkitaError::InvalidProof);
     }
@@ -176,6 +181,7 @@ where
     let columns = manifest.descriptor().index_map().columns();
     let owners = manifest.descriptor().polynomials().len();
     let site = GrindingSite::FoldResponse { level: 0 };
+    let span = tracing::info_span!("binary_root_response_build").entered();
     let mut accepted = None;
     for nonce in 0..akita_params::FOLD_RESPONSE_ATTEMPTS {
         let mut preview = grinding.preview_fold_response(site, nonce)?;
@@ -195,6 +201,7 @@ where
     }
     let (nonce, preview_challenges, witness) = accepted
         .ok_or_else(|| AkitaError::InvalidInput("binary response rejection exhausted".into()))?;
+    drop(span);
     grinding.commit_fold_response(site, nonce)?;
     let challenges = binary_root_challenges(
         &mut ProverFoldDraw::new(grinding.state_mut(), 0, 0),
@@ -211,6 +218,7 @@ where
         0,
         akita_error::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
     )?;
+    let span = tracing::info_span!("binary_root_outgoing_commit").entered();
     let committed = fold::commit_next_witness::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         grinding,
@@ -220,7 +228,9 @@ where
         NextWitnessBindingPolicy::OuterPayload,
         witness,
     )?;
+    drop(span);
     let mut witness = committed.witness_handle;
+    let span = tracing::info_span!("binary_root_projections").entered();
     let bounds = public.plan().projection_bounds();
     let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
     let (_, residual) = backend.prepare_root_group(
@@ -239,6 +249,7 @@ where
         bounds,
         &projections.project(residual, bounds)?,
     )?;
+    drop(span);
     let alpha = grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(
         GrindingSite::RingSwitchAlpha { level: 0 },
     )?;
@@ -316,11 +327,13 @@ where
     drop(batches);
     drop(span);
     let relation_claim = relation.claim();
+    let span = tracing::info_span!("binary_root_stage1").entered();
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
     let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B>(
         backend, session, range, domain, tau0, None, grinding, 0,
     )?;
+    drop(span);
     let gamma =
         grinding.grinded_ext_challenge::<Cfg::Field, Cfg::ExtField>(GrindingSite::Stage2Batch {
             level: 0,
@@ -332,6 +345,7 @@ where
     let weights = relation.materialize()?;
     drop(relation);
     drop(span);
+    let span = tracing::info_span!("binary_root_stage2").entered();
     let session = backend.begin_root_relation(
         &witness,
         weights,
@@ -354,6 +368,8 @@ where
         0,
         stage2.witness_evaluation,
     )?;
+    drop(span);
+    let span = tracing::info_span!("binary_root_stage3").entered();
     let prefix = next
         .params
         .setup_prefix()
@@ -394,6 +410,7 @@ where
         0,
     )?;
     backend.advance_witness_level(&mut witness)?;
+    drop(span);
     Ok(ProveLevelOutput {
         next_state: SuffixProverState {
             witness_handle: witness,
