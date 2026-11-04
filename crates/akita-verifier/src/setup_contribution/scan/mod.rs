@@ -357,13 +357,7 @@ where
                     let slots = slots
                         .get_mut(overlap.start - lo..overlap.end - lo)
                         .ok_or(AkitaError::InvalidProof)?;
-                    add_segment_weights(
-                        slots,
-                        overlap,
-                        segment,
-                        group.weights,
-                        group.projections,
-                    )?;
+                    add_segment_weights(slots, overlap, segment, group.weights, group.projections)?;
                 }
             }
             // Rings with a zero weight contribute nothing.
