@@ -1,65 +1,146 @@
 //! Deterministic terminal checks over the revealed terminal response.
 
+use akita_algebra::row_batch::ROW_BATCH;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
+use akita_transcript::{field_digest, FIELD_DIGEST_BYTES};
 use akita_types::{
     decode_terminal_z_golomb_payload, recover_ring_subfield_inner_product, FpExtEncoding,
-    PreparedOpeningPoint, RingMultiplierOpeningPoint, TerminalResponse,
+    PreparedOpeningPoint, RingMultiplierOpeningPoint, RingVec, TerminalResponse,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use std::iter::repeat_n;
 
 use crate::prepared_cache::TerminalNttCache;
 
-fn sparse_challenge_mul_accumulate<F, const D: usize>(
-    challenge: &SparseChallenge,
-    value: &CyclotomicRing<F, D>,
-    destination: &mut CyclotomicRing<F, D>,
-) -> Result<(), AkitaError>
-where
-    F: Field + Ring,
-{
-    challenge.validate::<D>()?;
-    for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-        let position = usize::try_from(position).map_err(|_| AkitaError::InvalidProof)?;
-        match coefficient {
-            1 => value.shift_accumulate_into(destination, position),
-            -1 => value.shift_sub_into(destination, position),
-            2 => {
-                value.shift_accumulate_into(destination, position);
-                value.shift_accumulate_into(destination, position);
-            }
-            -2 => {
-                value.shift_sub_into(destination, position);
-                value.shift_sub_into(destination, position);
-            }
-            _ => value.shift_scale_accumulate_into(
-                destination,
-                position,
-                F::from_i64(i64::from(coefficient)),
-            ),
-        }
-    }
-    Ok(())
-}
-
-fn sparse_challenge_dot<F, const D: usize>(
-    row: &Challenges,
-    input: &[CyclotomicRing<F, D>],
+/// `Σ_b challenges[b] · values[b]` in `Z_q[X]/(X^D + 1)`, one signed sum of
+/// ring coefficients per output coefficient.
+///
+/// `X^position · v` contributes `v[k − position]` at coefficient `k ≥ position`
+/// and `−v[k + D − position]` below it. A challenge coefficient `c` enters as
+/// `|c|` unit terms with the sign of `c`. The terms are generated lazily from
+/// the validated challenges, so no per-term storage is allocated.
+fn sparse_challenge_dot<'a, F, const D: usize>(
+    challenges: &[SparseChallenge],
+    values: impl Iterator<Item = &'a CyclotomicRing<F, D>> + Clone,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: Field + Ring,
+    F: Field + Ring + 'a,
 {
-    if row.as_slice().len() != input.len() {
+    if values.clone().count() != challenges.len() {
         return Err(AkitaError::InvalidProof);
     }
-    let mut sum = CyclotomicRing::zero();
-    for (challenge, value) in row.as_slice().iter().zip(input) {
-        sparse_challenge_mul_accumulate(challenge, value, &mut sum)?;
+    for challenge in challenges {
+        challenge.validate::<D>()?;
     }
-    Ok(sum)
+    Ok(CyclotomicRing::from_coefficients(std::array::from_fn(
+        |k| {
+            F::signed_sum(
+                challenges
+                    .iter()
+                    .zip(values.clone())
+                    .flat_map(|(challenge, value)| {
+                        let value = value.coefficients();
+                        challenge.positions.iter().zip(&challenge.coeffs).flat_map(
+                            move |(&position, &coefficient)| {
+                                // `validate` pinned `position < D`.
+                                let position = position as usize;
+                                let negative = coefficient < 0;
+                                let term = if k >= position {
+                                    (&value[k - position], negative)
+                                } else {
+                                    (&value[k + D - position], !negative)
+                                };
+                                repeat_n(term, usize::from(coefficient.unsigned_abs()))
+                            },
+                        )
+                    }),
+            )
+        },
+    )))
+}
+
+/// Digests of the last live `e` and `t` block, which the prover sends in
+/// place of the blocks.
+pub(crate) struct LastBlockDigests {
+    pub(crate) e: [u8; FIELD_DIGEST_BYTES],
+    pub(crate) t: [u8; FIELD_DIGEST_BYTES],
+}
+
+/// Recovers the last live block of `e` or `t`, which the prover omits, from
+/// the fold relation that the block completes.
+struct LastBlockRecovery<'a, F: Field, const D: usize> {
+    challenge: &'a SparseChallenge,
+    inverse: CyclotomicRing<F, D>,
+}
+
+impl<'a, F, const D: usize> LastBlockRecovery<'a, F, D>
+where
+    F: Field + Ring,
+{
+    /// Invert the last block's fold challenge, rejecting a challenge that is
+    /// not a unit.
+    fn new(challenge: &'a SparseChallenge) -> Result<Self, AkitaError> {
+        let dense = sparse_challenge_dot(
+            std::slice::from_ref(challenge),
+            [&CyclotomicRing::one()].into_iter(),
+        )?;
+        let inverse = dense.inverse().ok_or(AkitaError::InvalidProof)?;
+        Ok(Self { challenge, inverse })
+    }
+
+    /// Solve `partial + challenge * block == target` for `block`.
+    ///
+    /// The quotient by the inverse is only a candidate. The sparse product
+    /// checks it against the relation, so acceptance never relies on the
+    /// inversion or on the dense product.
+    fn solve(
+        &self,
+        partial: CyclotomicRing<F, D>,
+        target: &CyclotomicRing<F, D>,
+    ) -> Result<CyclotomicRing<F, D>, AkitaError> {
+        let block = self.inverse * (*target - partial);
+        let folded = partial
+            + sparse_challenge_dot(std::slice::from_ref(self.challenge), [&block].into_iter())?;
+        if folded != *target {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(block)
+    }
+
+    /// Recover the omitted last `e` block and the omitted last `t` block, and
+    /// return the `e` block once both match their digests.
+    ///
+    /// Each relation holds for its recovered block by construction, so the
+    /// digest comparison is the only check that binds the recovered blocks to
+    /// the prover's earlier messages.
+    fn recover_last_blocks(
+        &self,
+        e_partial: CyclotomicRing<F, D>,
+        e_target: &CyclotomicRing<F, D>,
+        a_rows: ARowSides<F, D>,
+        digests: &LastBlockDigests,
+    ) -> Result<CyclotomicRing<F, D>, AkitaError>
+    where
+        F: CanonicalEncoding,
+    {
+        let e_last = self.solve(e_partial, e_target)?;
+        let t_last = a_rows
+            .t_partials
+            .into_iter()
+            .zip(&a_rows.a_z)
+            .map(|(partial, target)| self.solve(partial, target))
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        if field_digest(e_last.coefficients()) != digests.e
+            || field_digest(RingVec::from_ring_elems(&t_last).coeffs()) != digests.t
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(e_last)
+    }
 }
 
 #[inline]
@@ -72,21 +153,69 @@ where
     }))
 }
 
+/// `Σ_{p,d} w_p·g_d·z[p·digits + d]` for base-field position weights `w` and
+/// gadget scalars `g`: the consistency fold of the decoded `z`, computed per
+/// ring coefficient as dot products over [`ROW_BATCH`]-term batches.
+fn base_reduced_z<F, const D: usize>(
+    position_weights: &[F],
+    gadget: &[F],
+    z: &[[i16; D]],
+    num_positions: usize,
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: Field + Ring,
+{
+    let terms = num_positions
+        .checked_mul(gadget.len())
+        .ok_or(AkitaError::InvalidProof)?;
+    let position_weights = position_weights.get(..num_positions).ok_or_else(|| {
+        AkitaError::InvalidInput("base multiplier product index out of range".into())
+    })?;
+    let z = z.get(..terms).ok_or(AkitaError::InvalidProof)?;
+    let mut products = position_weights
+        .iter()
+        .flat_map(|&weight| gadget.iter().map(move |&scalar| weight * scalar));
+    let mut weights = [F::zero(); ROW_BATCH];
+    let mut column = [F::zero(); ROW_BATCH];
+    let mut sum = [F::zero(); D];
+    for z_batch in z.chunks(ROW_BATCH) {
+        let weights = &mut weights[..z_batch.len()];
+        for (slot, product) in weights.iter_mut().zip(products.by_ref()) {
+            *slot = product;
+        }
+        let column = &mut column[..z_batch.len()];
+        for (coefficient, sum) in sum.iter_mut().enumerate() {
+            for (slot, ring) in column.iter_mut().zip(z_batch) {
+                *slot = F::from_i64(i64::from(ring[coefficient]));
+            }
+            *sum += F::dot_product(weights, column);
+        }
+    }
+    Ok(CyclotomicRing::from_coefficients(sum))
+}
+
+/// Both sides of the A rows `sum_b c_b * t_b == A * z`, one entry per row.
+struct ARowSides<F: Field, const D: usize> {
+    /// The left side, folded over the transmitted `t` blocks only.
+    t_partials: Vec<CyclotomicRing<F, D>>,
+    /// `A * z`.
+    a_z: Vec<CyclotomicRing<F, D>>,
+}
+
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
-fn check_a_rows<F, const D: usize>(
+fn a_row_sides<F, const D: usize>(
     terminal_ntt: &TerminalNttCache,
     t: &[CyclotomicRing<F, D>],
     z: &[[i16; D]],
-    challenges: &Challenges,
+    challenges: &[SparseChallenge],
     n_a: usize,
     n_a_cols: usize,
-) -> Result<(), AkitaError>
+) -> Result<ARowSides<F, D>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
     if t.len()
         != challenges
-            .as_slice()
             .len()
             .checked_mul(n_a)
             .ok_or(AkitaError::InvalidProof)?
@@ -98,35 +227,32 @@ where
         let _span = tracing::info_span!(
             "terminal_direct_a_lhs",
             rows = n_a,
-            challenges = challenges.as_slice().len()
+            challenges = challenges.len()
         )
         .entered();
         (0..n_a)
             .map(|row_index| {
-                challenges
-                    .as_slice()
-                    .iter()
-                    .zip(t.chunks_exact(n_a))
-                    .try_fold(CyclotomicRing::zero(), |mut sum, (challenge, rows)| {
-                        let row = rows.get(row_index).ok_or(AkitaError::InvalidProof)?;
-                        sparse_challenge_mul_accumulate(challenge, row, &mut sum)?;
-                        Ok::<_, AkitaError>(sum)
-                    })
+                sparse_challenge_dot(challenges, t.iter().skip(row_index).step_by(n_a))
             })
             .collect::<Result<Vec<_>, AkitaError>>()
     });
     let rhs = rhs?;
     let lhs = lhs?;
-    let _span = tracing::info_span!("terminal_direct_a_compare", rows = n_a).entered();
-    for (actual, expected) in lhs.iter().zip(&rhs) {
-        if actual != expected {
-            return Err(AkitaError::InvalidProof);
-        }
+    if lhs.len() != rhs.len() {
+        return Err(AkitaError::InvalidProof);
     }
-    Ok(())
+    Ok(ARowSides {
+        t_partials: lhs,
+        a_z: rhs,
+    })
 }
 
 /// Check reduced consistency and A rows for a quotient-free terminal witness.
+///
+/// The response omits the last live block of `e` and of `t`. Each relation is
+/// linear in its omitted block with an invertible fold challenge, so the block
+/// is recovered from the relation and compared with the digest the prover sent
+/// before that challenge was drawn. Returns the complete `e`.
 #[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
 pub(crate) fn verify_terminal_ring_relations<F>(
     terminal_ntt: &TerminalNttCache,
@@ -134,7 +260,8 @@ pub(crate) fn verify_terminal_ring_relations<F>(
     multiplier: &RingMultiplierOpeningPoint<F>,
     params: &TerminalFoldParams,
     terminal_response: &TerminalResponse<F>,
-) -> Result<(), AkitaError>
+    last_block_digests: &LastBlockDigests,
+) -> Result<RingVec<F>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
@@ -208,12 +335,16 @@ where
                     challenge.validate::<D_A>()?;
                 }
             }
-            let expected_t_len = params
-                .blocks
-                .live_blocks
+            let (last_challenge, sent_challenges) = challenges
+                .as_slice()
+                .split_last()
+                .ok_or(AkitaError::InvalidProof)?;
+            let last_block = LastBlockRecovery::<F, D_A>::new(last_challenge)?;
+            let expected_t_len = sent_challenges
+                .len()
                 .checked_mul(params.inner.matrix.output_rank())
                 .ok_or(AkitaError::InvalidProof)?;
-            if e.len() != params.blocks.live_blocks || t.len() != expected_t_len {
+            if e.len() != sent_challenges.len() || t.len() != expected_t_len {
                 return Err(AkitaError::InvalidProof);
             }
             let n_a = params.inner.matrix.output_rank();
@@ -233,10 +364,10 @@ where
                     let folded = {
                         let _span = tracing::info_span!(
                             "terminal_direct_consistency_fold_e",
-                            blocks = challenges.as_slice().len()
+                            blocks = sent_challenges.len()
                         )
                         .entered();
-                        sparse_challenge_dot(challenges, e)?
+                        sparse_challenge_dot(sent_challenges, e.iter())?
                     };
                     let reduced = {
                         let _span = tracing::info_span!(
@@ -249,52 +380,68 @@ where
                             num_digits_inner,
                             log_basis_inner,
                         );
-                        let mut reduced = CyclotomicRing::zero();
-                        for position in 0..num_positions {
-                            let start = position
-                                .checked_mul(num_digits_inner)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let mut z_value = CyclotomicRing::zero();
-                            for digit in 0..num_digits_inner {
-                                let index =
-                                    start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
-                                z_value += centered_ring::<F, D_A>(
-                                    z_centered.get(index).ok_or(AkitaError::InvalidProof)?,
-                                )
-                                .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
+                        if let Some(point) = multiplier.as_base() {
+                            base_reduced_z(
+                                &point.position_weights,
+                                &gadget,
+                                z_centered,
+                                num_positions,
+                            )?
+                        } else {
+                            let mut reduced = CyclotomicRing::zero();
+                            for position in 0..num_positions {
+                                let start = position
+                                    .checked_mul(num_digits_inner)
+                                    .ok_or(AkitaError::InvalidProof)?;
+                                let mut z_value = CyclotomicRing::zero();
+                                for digit in 0..num_digits_inner {
+                                    let index =
+                                        start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
+                                    z_value += centered_ring::<F, D_A>(
+                                        z_centered.get(index).ok_or(AkitaError::InvalidProof)?,
+                                    )
+                                    .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
+                                }
+                                multiplier.accumulate_position_product(
+                                    position,
+                                    &z_value,
+                                    &mut reduced,
+                                )?;
                             }
-                            multiplier.accumulate_position_product(
-                                position,
-                                &z_value,
-                                &mut reduced,
-                            )?;
+                            reduced
                         }
-                        reduced
                     };
                     Ok::<_, AkitaError>((folded, reduced))
                 },
                 || {
-                    check_a_rows::<F, D_A>(terminal_ntt, t, z_centered, challenges, n_a, n_a_cols)
+                    a_row_sides::<F, D_A>(
+                        terminal_ntt,
+                        t,
+                        z_centered,
+                        sent_challenges,
+                        n_a,
+                        n_a_cols,
+                    )
                 }
             );
             let (folded, reduced) = consistency?;
-            a_rows?;
-            if folded != reduced {
-                return Err(AkitaError::InvalidProof);
-            }
-            Ok::<(), AkitaError>(())
+            let _span = tracing::info_span!("terminal_direct_a_recover", rows = n_a).entered();
+            let e_last =
+                last_block.recover_last_blocks(folded, &reduced, a_rows?, last_block_digests)?;
+            let mut e_fields = witness.e_fields.coeffs().to_vec();
+            e_fields.extend_from_slice(e_last.coefficients());
+            Ok::<_, AkitaError>(RingVec::from_coeffs(e_fields))
         }
-    )?;
-    Ok(())
+    )
 }
 
-/// Check the public opening directly against the revealed folded `e` segment.
+/// Check the public opening directly against the complete folded `e` segment.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "terminal_direct_trace")]
 pub(crate) fn verify_terminal_trace<F, E>(
     multiplier: &RingMultiplierOpeningPoint<F>,
     params: &TerminalFoldParams,
-    terminal_response: &TerminalResponse<F>,
+    e_fields: &RingVec<F>,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -305,7 +452,6 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let witness = terminal_response;
     if row_coefficients.len() != 1 || claim_scales.is_some_and(|scales| scales.len() != 1) {
         return Err(AkitaError::InvalidProof);
     }
@@ -315,7 +461,7 @@ where
         F,
         params.d_a(),
         |D| {
-            let e_rings = witness.e_fields.as_ring_slice::<D>()?;
+            let e_rings = e_fields.as_ring_slice::<D>()?;
             let e = e_rings;
             let packed_inner = prepared_point.packed_inner_trusted::<D>()?;
             let claim_e = e;
@@ -503,8 +649,8 @@ mod tests {
 
     fn assert_sparse_challenge_product<const D: usize>() {
         let challenge = SparseChallenge {
-            positions: vec![0, 3, (D - 1) as u32].into(),
-            coeffs: vec![2, -1, -2].into(),
+            positions: vec![0, 3, 5, (D - 1) as u32].into(),
+            coeffs: vec![2, -1, 5, -2].into(),
         };
         let value = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
             F::from_i64(index as i64 - 9)
@@ -518,15 +664,177 @@ mod tests {
                     F::from_i64(i64::from(challenge.coeffs[position]))
                 })
         }));
-        let mut actual = CyclotomicRing::zero();
-        sparse_challenge_mul_accumulate(&challenge, &value, &mut actual)
-            .expect("valid sparse challenge");
-        assert_eq!(actual, dense * value);
+        let actual = sparse_challenge_dot(
+            &[challenge.clone(), challenge],
+            [&value, &value].into_iter(),
+        )
+        .expect("valid sparse challenge");
+        assert_eq!(actual, (dense * value).scale(&F::from_i64(2)));
     }
 
     #[test]
     fn sparse_challenge_product_matches_schoolbook() {
         assert_sparse_challenge_product::<64>();
         assert_sparse_challenge_product::<128>();
+    }
+
+    fn assert_last_block_recovery<const D: usize>() {
+        let challenge = SparseChallenge {
+            positions: vec![1, 5, (D - 2) as u32].into(),
+            coeffs: vec![1, -2, 1].into(),
+        };
+        let ramp = |step: i64| {
+            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+                F::from_i64(index as i64 * step - 7)
+            }))
+        };
+        let (block, partial) = (ramp(3), ramp(-5));
+        let target = partial
+            + sparse_challenge_dot(std::slice::from_ref(&challenge), [&block].into_iter())
+                .expect("valid sparse challenge");
+
+        let recovery = LastBlockRecovery::<F, D>::new(&challenge).expect("challenge is a unit");
+        assert_eq!(recovery.solve(partial, &target), Ok(block));
+
+        // The relation, not the inversion, decides acceptance.
+        let wrong_inverse = LastBlockRecovery {
+            challenge: &challenge,
+            inverse: recovery.inverse + CyclotomicRing::one(),
+        };
+        assert_eq!(
+            wrong_inverse.solve(partial, &target),
+            Err(AkitaError::InvalidProof)
+        );
+    }
+
+    #[test]
+    fn last_block_recovery_solves_the_fold_relation() {
+        assert_last_block_recovery::<64>();
+        assert_last_block_recovery::<128>();
+    }
+
+    #[test]
+    fn last_block_recovery_rejects_a_non_unit_challenge() {
+        let zero = SparseChallenge {
+            positions: Vec::new().into(),
+            coeffs: Vec::new().into(),
+        };
+        assert!(matches!(
+            LastBlockRecovery::<F, 64>::new(&zero),
+            Err(AkitaError::InvalidProof)
+        ));
+    }
+
+    /// Recovery succeeds on any relation-consistent input, so only the digests
+    /// can reject a wrong block; each wrongly bound digest must reject.
+    #[test]
+    fn recover_last_blocks_binds_both_blocks_to_their_digests() {
+        const D: usize = 64;
+        let challenge = SparseChallenge {
+            positions: vec![1, 5, (D - 2) as u32].into(),
+            coeffs: vec![1, -2, 1].into(),
+        };
+        let ramp = |step: i64| {
+            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+                F::from_i64(index as i64 * step - 7)
+            }))
+        };
+        let complete = |partial: CyclotomicRing<F, D>, block: &CyclotomicRing<F, D>| {
+            partial
+                + sparse_challenge_dot(std::slice::from_ref(&challenge), [block].into_iter())
+                    .expect("valid sparse challenge")
+        };
+        let (e_partial, e_block) = (ramp(-5), ramp(3));
+        let e_target = complete(e_partial, &e_block);
+        let t_partials = vec![ramp(2), ramp(-11)];
+        let t_blocks = [ramp(7), ramp(13)];
+        let a_z: Vec<_> = t_partials
+            .iter()
+            .zip(&t_blocks)
+            .map(|(partial, block)| complete(*partial, block))
+            .collect();
+
+        let recovery = LastBlockRecovery::<F, D>::new(&challenge).expect("challenge is a unit");
+        let recover = |digests: LastBlockDigests| {
+            recovery.recover_last_blocks(
+                e_partial,
+                &e_target,
+                ARowSides {
+                    t_partials: t_partials.clone(),
+                    a_z: a_z.clone(),
+                },
+                &digests,
+            )
+        };
+        let e = field_digest(e_block.coefficients());
+        let t = field_digest(RingVec::from_ring_elems(&t_blocks).coeffs());
+        assert_eq!(recover(LastBlockDigests { e, t }), Ok(e_block));
+
+        let flip = |mut digest: [u8; FIELD_DIGEST_BYTES]| {
+            digest[0] ^= 1;
+            digest
+        };
+        let first_t_row_only = field_digest(t_blocks[0].coefficients());
+        for digests in [
+            LastBlockDigests { e: flip(e), t },
+            LastBlockDigests { e, t: flip(t) },
+            LastBlockDigests { e: t, t: e },
+            LastBlockDigests { e, t: e },
+            LastBlockDigests {
+                e,
+                t: first_t_row_only,
+            },
+        ] {
+            assert_eq!(recover(digests), Err(AkitaError::InvalidProof));
+        }
+    }
+
+    #[test]
+    fn sparse_challenge_dot_rejects_value_count_mismatch() {
+        let challenge = SparseChallenge {
+            positions: vec![1].into(),
+            coeffs: vec![1].into(),
+        };
+        let value = CyclotomicRing::<F, 64>::zero();
+        assert!(sparse_challenge_dot(
+            &[challenge.clone(), challenge.clone()],
+            [&value].into_iter()
+        )
+        .is_err());
+        assert!(sparse_challenge_dot(&[challenge], [&value, &value].into_iter()).is_err());
+    }
+
+    /// `Σ_p w_p · Σ_d g_d · z[p·digits + d]`, evaluated with ring scaling.
+    #[test]
+    fn base_reduced_z_matches_definition() {
+        // 6, 32, and 34 terms: below, at, and across the batch boundary.
+        for positions in [3, ROW_BATCH / 2, ROW_BATCH / 2 + 1] {
+            assert_base_reduced_z_matches_definition(positions, 2);
+        }
+    }
+
+    fn assert_base_reduced_z_matches_definition(positions: usize, digits: usize) {
+        const D: usize = 64;
+        let weights: Vec<F> = (0..positions)
+            .map(|p| F::from_i64(3 * p as i64 + 2))
+            .collect();
+        let gadget: Vec<F> = (0..digits).map(|d| F::from_i64(1 << (4 * d))).collect();
+        let z: Vec<[i16; D]> = (0..positions * digits + 1)
+            .map(|ring| std::array::from_fn(|k| ((ring * 37 + k * 11) % 41) as i16 - 20))
+            .collect();
+        let mut expected = CyclotomicRing::<F, D>::zero();
+        for (p, weight) in weights.iter().enumerate() {
+            for (d, scalar) in gadget.iter().enumerate() {
+                expected += centered_ring::<F, D>(&z[p * digits + d]).scale(&(*weight * *scalar));
+            }
+        }
+        assert_eq!(
+            base_reduced_z(&weights, &gadget, &z, positions).unwrap(),
+            expected
+        );
+        assert!(
+            base_reduced_z(&weights, &gadget, &z[..positions * digits - 1], positions).is_err()
+        );
+        assert!(base_reduced_z(&weights[..positions - 1], &gadget, &z, positions).is_err());
     }
 }

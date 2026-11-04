@@ -165,6 +165,11 @@ def collect(github, event):
     if any(c["own"] and previous_state([c], number)["request"] == event["comment"]["id"]
            for c in comments):
         return None  # Idempotent re-run of this exact command, even after newer reviews.
+    # The review state is sized for 60 findings, three attempts of up to 20 new ones. An admin's
+    # further attempts stop here, before the model runs, once another review could pass that.
+    if prior and len(prior["findings"]) > 40:
+        raise ReviewError(f"Finding history is full: {len(prior['findings'])} findings retained, and another review "
+                          "could pass the 60 the review state is sized for; this attempt is consumed")
     revisions = revision(pr)
     for commit in {revisions["head"], revisions["base"]} | ({prior["head"]} if prior else set()):
         git("fetch", "--no-tags", "--no-recurse-submodules",

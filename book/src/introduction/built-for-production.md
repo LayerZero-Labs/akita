@@ -120,7 +120,7 @@ bounded chunks instead of retaining complete transformed matrices.
 
 The current 128-bit dense benchmark makes this concrete. Its $2^{28}$ field
 elements occupy a 4.0 GiB source table. The first fold reduces that table to
-55,332,544 field elements, about one fifth as many. The complete benchmark
+61,859,776 field elements, under a quarter as many. The complete benchmark
 process peaks at about 5.1 GiB while it constructs setup, commits, proves, and
 verifies.
 
@@ -145,7 +145,7 @@ proof bytes, peak resident memory, selected schedule geometry, and separate
 phase timings.
 
 Representative dense, one-hot, and grouped profiles across the supported field
-sizes currently produce Akita proof payloads of roughly 65 to 80 KB. The
+sizes currently produce Akita proof payloads of roughly 70 to 85 KB. The
 profile records the exact statement and configuration behind each result. This
 keeps a proof size attached to the workload that produced it.
 

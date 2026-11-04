@@ -1,10 +1,70 @@
-//! Point-bound coefficient functionals and column weights for reduced roles.
+//! Coefficient functionals shared by setup scans and external accumulation.
+use crate::{factor_aligned_role_tensors, role_tensors_are_aligned, SetupContributionPlan};
+use akita_error::AkitaError;
+use akita_params::RelationAddressGeometry;
+use jolt_field::Field;
+use std::sync::Arc;
+/// Coefficient functional shared by direct setup scans and external accumulation.
+///
+/// Lifted evaluation preserves the existing alpha-power factorization.
+/// Reduced evaluation instead contracts each native setup ring against the
+/// terminal residue kernel prepared from the exact Stage-2 coefficient point.
+/// The point contains only the common low coefficient coordinates; role-lane
+/// coordinates remain owned by the setup plan's checked relation tensors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreparedCoefficientFunctional<E: Field> {
+    LiftedPower {
+        alpha: E,
+    },
+    ReducedEvaluation {
+        alpha: E,
+        coefficient_point: Arc<[E]>,
+    },
+}
 
-use super::*;
+impl<E: Field> PreparedCoefficientFunctional<E> {
+    #[must_use]
+    pub const fn lifted_power(alpha: E) -> Self {
+        Self::LiftedPower { alpha }
+    }
+
+    pub fn reduced_evaluation(
+        alpha: E,
+        coefficient_point: &[E],
+        geometry: RelationAddressGeometry,
+    ) -> Result<Self, AkitaError> {
+        let expected = geometry.relation_coefficient_variable_count();
+        if coefficient_point.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: coefficient_point.len(),
+            });
+        }
+        Ok(Self::ReducedEvaluation {
+            alpha,
+            coefficient_point: coefficient_point.to_vec().into(),
+        })
+    }
+
+    #[must_use]
+    pub const fn alpha(&self) -> E {
+        match self {
+            Self::LiftedPower { alpha } | Self::ReducedEvaluation { alpha, .. } => *alpha,
+        }
+    }
+}
+
+/// Exact native-ring functional and equality weights shared by direct and batched evaluation.
+#[derive(Clone)]
+pub struct ReducedRoleCoefficientState<E> {
+    pub functional: Arc<[E]>,
+    pub equality: Arc<[E]>,
+}
+
 use akita_algebra::offset_eq::{materialize_eq_tensor_left, EqPairTensorFamily, OffsetEqWindow};
 use akita_algebra::ring::terminal_residue_kernel;
 
-pub(super) fn materialize_reduced_role_tensor_weights<E: Field>(
+pub fn materialize_reduced_role_tensor_weights<E: Field>(
     plan: &SetupContributionPlan<E>,
     ratio: usize,
     role_dimension: usize,
@@ -51,7 +111,7 @@ pub(super) fn materialize_reduced_role_tensor_weights<E: Field>(
     materialize_eq_tensor_left(&high_equality, &factored, output_len)
 }
 
-pub(super) fn prepare_reduced_role_coefficient_state<E: Field>(
+pub fn prepare_reduced_role_coefficient_state<E: Field>(
     plan: &SetupContributionPlan<E>,
     role_dimension: usize,
     alpha: E,

@@ -5,6 +5,8 @@ use std::mem::size_of;
 use crate::ntt::avx;
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
 use crate::ntt::field_limbs::{field_residues, FieldModulusLimbs, FIELD_CHUNK};
+#[cfg(all(feature = "ntt-inline", any(target_arch = "riscv64", test)))]
+use crate::ntt::jolt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, PrimeWidth};
@@ -25,6 +27,8 @@ enum CenteredI16NttStrategy<W: PrimeWidth, const K: usize> {
     NeonI16,
     #[cfg(target_arch = "aarch64")]
     NeonI32,
+    #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+    Inline,
 }
 
 /// Prepared conversion policy for repeated centered-i16 NTT inputs.
@@ -35,6 +39,13 @@ pub(super) struct CenteredI16NttConverter<'a, W: PrimeWidth, const K: usize, con
 
 impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<'a, W, K, D> {
     pub(super) fn new(params: &'a CrtNttParamSet<W, K, D>, rhs: &[[i16; D]]) -> Self {
+        #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+        if jolt::selected::<W, D>(params.kernel_plan) {
+            return Self {
+                params,
+                strategy: CenteredI16NttStrategy::Inline,
+            };
+        }
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if crate::ntt::butterfly::use_x86_transform_ntt::<D>(params.kernel_plan) {
             return Self {
@@ -90,6 +101,8 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
             CenteredI16NttStrategy::NeonI16 => self.transform_neon_i16(coefficients, out),
             #[cfg(target_arch = "aarch64")]
             CenteredI16NttStrategy::NeonI32 => self.transform_neon_i32(coefficients, out),
+            #[cfg(all(feature = "ntt-inline", target_arch = "riscv64"))]
+            CenteredI16NttStrategy::Inline => self.transform_inline(coefficients, out),
         }
     }
 
@@ -124,6 +137,23 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
                     );
                 }
             }
+        }
+    }
+
+    #[cfg(all(feature = "ntt-inline", any(target_arch = "riscv64", test)))]
+    pub(super) fn transform_inline(
+        &self,
+        coefficients: &[i16; D],
+        out: &mut CyclotomicCrtNtt<W, K, D>,
+    ) {
+        let digits = jolt::CenteredI16Digits::new(coefficients);
+        for ((limb, &prime), twiddles) in out
+            .limbs
+            .iter_mut()
+            .zip(self.params.primes.iter())
+            .zip(self.params.twiddles.iter())
+        {
+            jolt::forward_ntt_centered_i16(limb, &digits, prime, twiddles);
         }
     }
 

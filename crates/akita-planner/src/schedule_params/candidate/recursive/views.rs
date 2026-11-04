@@ -51,7 +51,7 @@ pub(crate) fn derive_recursive_candidate_views(
     };
     let mut terminal_pairs = Vec::new();
     let mut folds = Vec::new();
-    let mut terminal_best_modeled = None;
+    let mut terminal_best_modeled = Vec::new();
     let mut fold_best_modeled = Vec::new();
     let search_domain = relation_domain.including_terminal_quotient();
 
@@ -65,114 +65,118 @@ pub(crate) fn derive_recursive_candidate_views(
             source_moment: candidate_source_moment,
             ..base_context
         };
-        let terminal_best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
-        let fold_best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
-        let mut terminal_best = None;
-        let mut fold_best = std::collections::BTreeMap::<
+        let terminal_best = std::cell::RefCell::new(SplitFrontier::default());
+        let fold_best = std::cell::RefCell::new(std::collections::BTreeMap::<
             akita_params::RingRelationMode,
-            (LayoutCandidateScore, usize, CommittedGroupParams, usize),
-        >::new();
+            SplitFrontier,
+        >::new());
         context.walk_splits(
             search_domain,
             |_, bounds| {
                 if !split_bounds.is_enabled() {
                     return true;
                 }
-                let terminal_admits = terminal_best_score
-                    .get()
-                    .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0));
+                let terminal_admits = terminal_best.borrow().admits(bounds);
+                let fold_best_admits = || {
+                    fold_best
+                        .borrow()
+                        .values()
+                        .all(|frontier| frontier.admits(bounds))
+                };
                 let fold_admits = if relation_domain.has_multiple_modes() {
                     true
                 } else if retain_split_frontier {
                     let frontier_admits = bounds
                         .witness_body
                         .is_none_or(|bound| bound < request.current_witness_len);
-                    frontier_admits
-                        || (source_index == 0
-                            && fold_best_score.get().is_none_or(|score| {
-                                bounds.score.is_none_or(|bound| bound <= score.0)
-                            }))
+                    frontier_admits || (source_index == 0 && fold_best_admits())
                 } else {
-                    fold_best_score
-                        .get()
-                        .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
+                    fold_best_admits()
                 };
                 terminal_admits || fold_admits
             },
             |score, split, candidate, next_witness_len| {
                 let mode = candidate.ring_relation_mode;
-                if mode == akita_params::RingRelationMode::QuotientLift
-                    && terminal_best
-                        .as_ref()
-                        .is_none_or(|(best_score, best_split, _, _)| {
-                            recursive_candidate_order_key(score, split)
-                                < recursive_candidate_order_key(*best_score, *best_split)
-                        })
-                {
-                    terminal_best_score.set(Some(score));
-                    terminal_best = Some((score, split, candidate.clone(), next_witness_len));
+                let is_terminal = mode == akita_params::RingRelationMode::QuotientLift;
+                let is_fold = relation_domain.admits(candidate.ring_relation_mode)
+                    && next_witness_len < request.current_witness_len;
+                if !is_terminal && !is_fold {
+                    return Ok(());
                 }
-                if !relation_domain.admits(candidate.ring_relation_mode)
-                    || next_witness_len >= request.current_witness_len
-                {
-                    return;
+                let nonce_bytes = fold_nonce_bytes(&candidate)?;
+                if let (true, Some(nonce_bytes)) = (is_terminal, nonce_bytes) {
+                    terminal_best.borrow_mut().offer(
+                        score,
+                        split,
+                        candidate.clone(),
+                        next_witness_len,
+                        nonce_bytes,
+                    )?;
                 }
-                if fold_best
-                    .get(&mode)
-                    .is_none_or(|(best_score, best_split, _, _)| {
-                        recursive_candidate_order_key(score, split)
-                            < recursive_candidate_order_key(*best_score, *best_split)
-                    })
-                {
-                    if !relation_domain.has_multiple_modes() {
-                        fold_best_score.set(Some(score));
-                    }
-                    fold_best.insert(mode, (score, split, candidate.clone(), next_witness_len));
+                if !is_fold {
+                    return Ok(());
                 }
-                if retain_split_frontier && !folds.contains(&(candidate.clone(), next_witness_len))
+                if retain_split_frontier
+                    && !folds
+                        .iter()
+                        .any(|(existing, next)| existing == &candidate && *next == next_witness_len)
                 {
-                    folds.push((candidate, next_witness_len));
+                    folds.push((candidate.clone(), next_witness_len));
                 }
+                let Some(nonce_bytes) = nonce_bytes else {
+                    return Ok(());
+                };
+                fold_best.borrow_mut().entry(mode).or_default().offer(
+                    score,
+                    split,
+                    candidate,
+                    next_witness_len,
+                    nonce_bytes,
+                )
             },
         )?;
 
-        if let Some((_, split, relation_candidate, next)) = terminal_best {
+        for (split, relation_candidate, next) in terminal_best.into_inner().into_candidates() {
             let candidate = (relation_candidate, next);
             if !terminal_pairs.contains(&candidate) {
                 terminal_pairs.push(candidate.clone());
             }
             if source_index == 0 {
-                terminal_best_modeled = Some((split, candidate.0, candidate.1));
+                terminal_best_modeled.push((split, candidate.0, candidate.1));
             }
         }
-        for (_, split, candidate, next) in fold_best.into_values() {
+        for (split, candidate, next) in fold_best
+            .into_inner()
+            .into_values()
+            .flat_map(SplitFrontier::into_candidates)
+        {
             if source_index == 0 {
                 fold_best_modeled.push((split, candidate.clone(), next));
             }
-            if !retain_split_frontier && !folds.contains(&(candidate.clone(), next)) {
+            if !retain_split_frontier
+                && !folds.iter().any(|(existing, existing_next)| {
+                    existing == &candidate && *existing_next == next
+                })
+            {
                 folds.push((candidate, next));
             }
         }
     }
 
-    if let Some(best) = terminal_best_modeled.as_ref() {
-        append_selective_l2_candidates(
-            &mut terminal_pairs,
-            Some(best),
-            &request,
-            &search,
-            SuccessorPolicy::AllowNonContracting,
-        )?;
-    }
-    for best in &fold_best_modeled {
-        append_selective_l2_candidates(
-            &mut folds,
-            Some(best),
-            &request,
-            &search,
-            SuccessorPolicy::RequireContraction,
-        )?;
-    }
+    append_selective_l2_candidates(
+        &mut terminal_pairs,
+        &terminal_best_modeled,
+        &request,
+        &search,
+        SuccessorPolicy::AllowNonContracting,
+    )?;
+    append_selective_l2_candidates(
+        &mut folds,
+        &fold_best_modeled,
+        &request,
+        &search,
+        SuccessorPolicy::RequireContraction,
+    )?;
     Ok(RecursiveCandidateViews {
         terminal: terminal_pairs
             .into_iter()

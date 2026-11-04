@@ -26,11 +26,20 @@ use crate::stages::stage3::verify_stage3;
 use akita_error::AkitaError;
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
+use akita_transcript::FIELD_DIGEST_BYTES;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, RingVec};
 use challenges::derive_multi_group_stage1_challenges;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use relation_instance::{assemble_relation_instance, validate_fold_payloads};
+
+/// Setup behavior selected once after this fold's Stage 2 rounds.
+pub(crate) enum FoldSetup<'a, 'b, E: Field> {
+    Ordinary,
+    Deferred(&'a mut crate::SetupClaimAccumulator<'b, E>),
+    Offloaded(crate::setup_batch::PreparedOuterSetup<E>),
+}
 
 pub(crate) type SetupPrefixOpening<E> = (Vec<E>, E);
 
@@ -56,10 +65,22 @@ pub(crate) enum NextWitnessPlan {
     TerminalT { coefficient_count: usize },
 }
 
+/// Witness a fold hands to its successor, in the shape [`NextWitnessPlan`] fixed.
+pub(crate) enum NextWitness<F: Field> {
+    /// Outer payload carried into the next recursive fold.
+    OuterPayload(RingVec<F>),
+    /// Terminal `t` state without its last block, which the terminal
+    /// recomputes and checks against `last_block_digest`.
+    TerminalT {
+        sent: RingVec<F>,
+        last_block_digest: [u8; FIELD_DIGEST_BYTES],
+    },
+}
+
 pub(crate) struct FoldVerifyOutput<F: Field, E: Field> {
     pub(crate) challenges: Vec<E>,
     pub(crate) setup_prefix_opening: Option<SetupPrefixOpening<E>>,
-    pub(crate) next_witness: RingVec<F>,
+    pub(crate) next_witness: NextWitness<F>,
     pub(crate) opening: E,
 }
 
@@ -73,10 +94,16 @@ pub(crate) fn verify_fold<F, E>(
     setup: &AkitaVerifierSetup<F>,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: PreparedFoldReplay<'_, F, E>,
+    setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     let level = prepared.level;
     let relation_geometry = validate_fold_payloads(&prepared)?;
@@ -144,17 +171,70 @@ where
         &opening_semantics,
         prepared.level_layout.stage2_sumcheck(),
     )?;
-    let stage3 = match prepared.stage3 {
-        Some(next_params) => Some(verify_stage3::<F, E>(
-            setup,
-            &rs,
-            &stage2_rounds.challenges,
-            next_params,
-            grinding,
-            level,
-        )?),
-        None => None,
+    let defer = matches!(setup_policy, crate::SetupPolicy::Defer(_));
+    let fold_setup = if let Some(accumulator) = setup_policy.accumulator() {
+        let inherited = accumulator
+            .batch
+            .as_ref()
+            .filter(|(target, _)| *target == level)
+            .map(|(_, statement)| statement);
+        match (prepared.stage3, inherited) {
+            (Some(successor), Some(inherited)) => {
+                FoldSetup::Offloaded(crate::setup_batch::prepare_outer_setup::<F, E>(
+                    setup,
+                    &rs,
+                    &stage2_rounds.challenges,
+                    successor,
+                    grinding,
+                    level,
+                    inherited,
+                )?)
+            }
+            (Some(_), None) => FoldSetup::Ordinary,
+            (None, inherited) => {
+                if let Some(inherited) = inherited {
+                    let coefficients =
+                        akita_types::setup_claims::transcript::batch_coefficients::<F, E, _>(
+                            grinding,
+                            level,
+                            inherited.claims().len(),
+                        )?;
+                    if defer {
+                        accumulator
+                            .pending
+                            .extend(inherited.claims().iter().cloned());
+                    } else {
+                        crate::setup_batch::decide_setup_batch(
+                            setup.expanded(),
+                            inherited,
+                            &coefficients,
+                        )?;
+                    }
+                }
+                if defer {
+                    FoldSetup::Deferred(accumulator)
+                } else {
+                    FoldSetup::Ordinary
+                }
+            }
+        }
+    } else {
+        FoldSetup::Ordinary
     };
+    let stage3 = prepared
+        .stage3
+        .map(|next_params| {
+            verify_stage3::<F, E>(
+                setup,
+                &rs,
+                &stage2_rounds.challenges,
+                next_params,
+                grinding,
+                level,
+                &fold_setup,
+            )
+        })
+        .transpose()?;
     let stage2 = validate_stage2_replay(
         setup,
         stage1,
@@ -162,6 +242,7 @@ where
         stage3.as_ref().map(|replay| replay.claim),
         opening_semantics,
         stage2_rounds,
+        fold_setup,
     )?;
     drop(stage2_span);
     Ok(FoldVerifyOutput {
@@ -173,15 +254,18 @@ where
 }
 
 /// Receive the successor witness payload for the next fold or the terminal.
+///
+/// The terminal recomputes the last block of its `t` state, so that block
+/// arrives as a digest.
 fn receive_next_witness<F, E>(
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     prepared: &PreparedFoldReplay<'_, F, E>,
-) -> Result<RingVec<F>, AkitaError>
+) -> Result<NextWitness<F>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: Field,
 {
-    let next_witness = match prepared.next_witness {
+    let witness = match prepared.next_witness {
         NextWitnessPlan::OuterPayload { coefficient_count } => {
             if coefficient_count != prepared.level_layout.next_outer_payload_coeffs() {
                 return Err(AkitaError::InvalidSetup(
@@ -209,11 +293,26 @@ where
         }
     }
     .map(RingVec::from_coeffs)?;
-    if prepared.next_witness_ring_dim == 0
-        || matches!(prepared.next_witness, NextWitnessPlan::TerminalT { .. })
-            && !next_witness.can_decode_vec(prepared.next_witness_ring_dim)
-    {
+    if prepared.next_witness_ring_dim == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(next_witness)
+    match prepared.next_witness {
+        NextWitnessPlan::OuterPayload { .. } => Ok(NextWitness::OuterPayload(witness)),
+        NextWitnessPlan::TerminalT { .. } => {
+            if !witness.can_decode_vec(prepared.next_witness_ring_dim) {
+                return Err(AkitaError::InvalidProof);
+            }
+            let last_block_digest = akita_transcript::receive_field_digest(
+                grinding.state_mut(),
+                akita_types::FoldSite::NextWitnessInnerStateDigest {
+                    level: prepared.level,
+                }
+                .id()?,
+            )?;
+            Ok(NextWitness::TerminalT {
+                sent: witness,
+                last_block_digest,
+            })
+        }
+    }
 }

@@ -112,7 +112,7 @@ impl OpNormTable {
             )));
         }
 
-        let (base_cos, base_sin, eps_root) = build_tables(d, q);
+        let (base_cos, base_sin, eps_root) = base_tables(d, q);
 
         let max_l1 = i128::from(max_l1);
         let max_t = i128::from(max_t);
@@ -609,6 +609,83 @@ fn arctan_inv(x: i128) -> (i128, i128) {
     }
     let slack = count + 1;
     (sum - slack, sum + slack)
+}
+
+// Static operator-norm base tables (feature `ont-static-base`, default off). The
+// base tables are a pure function of `(d, q)`; with the feature, the D64
+// selective-L2 table (`d = 64`, `q = 48`) reads them from generated static
+// data instead of evaluating the interval Taylor series, and every other
+// `(d, q)` still builds them. The transposed `freq_*_at` rows are still built
+// at run time. Without the feature `base_tables` is `build_tables` itself.
+#[cfg(not(feature = "ont-static-base"))]
+use self::build_tables as base_tables;
+
+#[cfg(feature = "ont-static-base")]
+mod static_base;
+
+#[cfg(feature = "ont-static-base")]
+fn base_tables(d: usize, q: u32) -> (Vec<i128>, Vec<i128>, i128) {
+    if d == static_base::D && q == static_base::Q {
+        let widen = |table: &[i64]| -> Vec<i128> { table.iter().map(|&v| i128::from(v)).collect() };
+        return (
+            widen(static_base::BASE_COS.as_slice()),
+            widen(static_base::BASE_SIN.as_slice()),
+            static_base::EPS_ROOT,
+        );
+    }
+    build_tables(d, q)
+}
+
+#[cfg(all(test, feature = "ont-static-base"))]
+mod static_base_tests {
+    use super::*;
+
+    /// The generated tables equal `build_tables` entry for entry, and the
+    /// table built through them equals the one built from `build_tables`.
+    #[test]
+    fn static_base_equals_build_tables() {
+        let (cos, sin, eps_root) = build_tables(static_base::D, static_base::Q);
+        assert_eq!(eps_root, static_base::EPS_ROOT);
+        assert_eq!(cos.len(), static_base::BASE_COS.len());
+        assert_eq!(sin.len(), static_base::BASE_SIN.len());
+        for (built, embedded) in cos.iter().zip(static_base::BASE_COS.iter()) {
+            assert_eq!(*built, i128::from(*embedded));
+        }
+        for (built, embedded) in sin.iter().zip(static_base::BASE_SIN.iter()) {
+            assert_eq!(*built, i128::from(*embedded));
+        }
+        assert_eq!(
+            base_tables(static_base::D, static_base::Q),
+            (cos.clone(), sin.clone(), eps_root)
+        );
+
+        let narrow = |table: &[i128]| -> Vec<i64> {
+            table.iter().map(|&v| i64::try_from(v).unwrap()).collect()
+        };
+        let (freq_cos, freq_sin) =
+            op_norm_accumulate::build_freq_at_tables(static_base::D, &narrow(&cos), &narrow(&sin));
+        let table = OpNormTable::new(static_base::D, static_base::Q, 53, 18).unwrap();
+        assert_eq!(table.freq_cos_at, freq_cos);
+        assert_eq!(table.freq_sin_at, freq_sin);
+        assert_eq!(table.eps_root, eps_root);
+        assert!(table.strict_threshold_contains_shrunken_subset(48, 4, 18, 600));
+    }
+
+    #[test]
+    fn static_base_still_validates_admitted_bounds() {
+        assert!(OpNormTable::new(64, 48, 53, 18).is_ok());
+        assert!(OpNormTable::new(64, 48, u64::MAX, 18).is_err());
+        assert!(OpNormTable::new(64, 48, 53, u64::MAX).is_err());
+        assert!(OpNormTable::new(0, 48, 53, 18).is_err());
+        assert!(OpNormTable::new(64, 0, 53, 18).is_err());
+    }
+
+    /// Every other `(d, q)` still builds its tables.
+    #[test]
+    fn static_base_falls_back_elsewhere() {
+        assert_eq!(base_tables(128, 48), build_tables(128, 48));
+        assert_eq!(base_tables(64, 40), build_tables(64, 40));
+    }
 }
 
 #[cfg(test)]

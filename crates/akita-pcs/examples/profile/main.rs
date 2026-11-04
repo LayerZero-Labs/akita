@@ -14,6 +14,7 @@
 ))]
 compile_error!("profile-bench-selected is internal; enable one profile-ci-* group instead");
 
+mod contract;
 mod modes;
 mod monitor;
 mod parallel;
