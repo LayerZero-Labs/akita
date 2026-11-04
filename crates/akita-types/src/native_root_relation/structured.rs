@@ -6,8 +6,6 @@
 //! field elements into its dense Stage 2 table. Both read one construction,
 //! so the two sides cannot disagree about a weight.
 
-use core::ops::Range;
-
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
@@ -65,31 +63,6 @@ impl<E: Field> RootEq<E> {
             .get(address >> self.low_bits)
             .copied()
             .ok_or(AkitaError::InvalidProof)
-    }
-
-    /// `sum_i weights[i] * eq(r, start + i)` over consecutive addresses.
-    pub(crate) fn run_dot(&self, start: usize, weights: &[E]) -> Result<E, AkitaError> {
-        let mut sum = E::zero();
-        let mut done = 0;
-        while done < weights.len() {
-            let address = checked::sum([start, done]).ok_or(AkitaError::InvalidProof)?;
-            let offset = self.low_offset(address);
-            let take = (self.low.len() - offset).min(weights.len() - done);
-            let lows = self
-                .low
-                .get(offset..offset + take)
-                .ok_or(AkitaError::InvalidProof)?;
-            let values = weights
-                .get(done..done + take)
-                .ok_or(AkitaError::InvalidProof)?;
-            let partial = values
-                .iter()
-                .zip(lows)
-                .fold(E::zero(), |acc, (&weight, &eq)| acc + weight * eq);
-            sum += self.high(address)? * partial;
-            done += take;
-        }
-        Ok(sum)
     }
 }
 
@@ -185,66 +158,9 @@ impl SegmentLanes {
     }
 }
 
-/// One independently batched public weight per zero-padding address.
-///
-/// The padding runs are computed from the repacking geometry in increasing
-/// address order, and `weights` are consumed in that order. No address list
-/// is stored and no address is tested against every segment.
-#[derive(Clone, Debug)]
-pub(crate) struct PaddingWeights<E: Field> {
-    repacking: RootCoefficientRepacking,
-    weights: Vec<E>,
-}
-
-impl<E: Field> PaddingWeights<E> {
-    pub(crate) fn new(
-        repacking: &RootCoefficientRepacking,
-        weights: &[E],
-    ) -> Result<Self, AkitaError> {
-        let count = repacking.padding_count()?;
-        if weights.len() != count {
-            return Err(AkitaError::InvalidInput(if weights.len() < count {
-                "missing padding weight".into()
-            } else {
-                "excess padding weights".into()
-            }));
-        }
-        let mut owned = Vec::new();
-        owned
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        owned.extend_from_slice(weights);
-        Ok(Self {
-            repacking: repacking.clone(),
-            weights: owned,
-        })
-    }
-
-    fn runs(
-        &self,
-        mut consume: impl FnMut(Range<usize>, &[E]) -> Result<(), AkitaError>,
-    ) -> Result<(), AkitaError> {
-        let mut used = 0usize;
-        self.repacking.for_each_padding_run(|run| {
-            let next = checked::sum([used, run.len()]).ok_or(AkitaError::InvalidProof)?;
-            let weights = self
-                .weights
-                .get(used..next)
-                .ok_or(AkitaError::InvalidProof)?;
-            used = next;
-            consume(run, weights)
-        })?;
-        if used != self.weights.len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
-    }
-}
-
 /// The structured public weight families of a binary root.
 #[derive(Clone, Debug)]
 pub(crate) enum RootWeightFamily<E: Field> {
-    Padding(PaddingWeights<E>),
     Image(ImageWeights<E>),
     Prime(PrimePlaneWeights<E>),
     ParityRows(ParityRowWeights<E>),
@@ -254,7 +170,6 @@ pub(crate) enum RootWeightFamily<E: Field> {
 impl<E: Field> RootWeightFamily<E> {
     pub(crate) fn table_len(&self) -> usize {
         match self {
-            Self::Padding(padding) => padding.repacking.domain_len(),
             Self::Image(image) => image.table_len(),
             Self::Prime(prime) => prime.table_len(),
             Self::ParityRows(rows) => rows.table_len(),
@@ -264,15 +179,6 @@ impl<E: Field> RootWeightFamily<E> {
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         match self {
-            Self::Padding(padding) => {
-                let _span = tracing::info_span!("root_weights_evaluate_padding").entered();
-                let mut sum = E::zero();
-                padding.runs(|run, weights| {
-                    sum += eq.run_dot(run.start, weights)?;
-                    Ok(())
-                })?;
-                Ok(sum)
-            }
             Self::Image(image) => {
                 let _span = tracing::info_span!("root_weights_evaluate_image").entered();
                 image.evaluate(eq)
@@ -295,15 +201,9 @@ impl<E: Field> RootWeightFamily<E> {
     /// Stream every `(address, weight)` term; addresses may repeat.
     pub(crate) fn visit(
         &self,
-        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+        visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         match self {
-            Self::Padding(padding) => padding.runs(|run, weights| {
-                for (address, &weight) in run.zip(weights) {
-                    visit(address, weight)?;
-                }
-                Ok(())
-            }),
             Self::Image(image) => image.visit(visit),
             Self::Prime(prime) => prime.visit(visit),
             Self::ParityRows(rows) => rows.visit(visit),

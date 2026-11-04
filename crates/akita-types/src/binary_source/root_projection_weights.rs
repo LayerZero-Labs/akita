@@ -10,22 +10,20 @@ use jolt_field::Field;
 use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,
 };
-use crate::native_root_relation::{
-    NativeRootWeights, PaddingWeights, RootEq, RootWeightFamily, SegmentLanes,
-};
+use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes};
 
 /// Compile the A identity's coefficient weights. Proving supplies A; online
 /// verification omits it and authenticates its contribution through Stage 3.
 /// `rho[polynomial * rank + row][coefficient]` batches all seven public
 /// projections over the joined residual. This compiles the signed remainder
 /// `sum_i <rho_i, rem_Psi(A*z-sum c*T)_i>`; the caller supplies its projection
-/// target. The T terms and every padding equation remain in the root oracle.
+/// target. The T terms remain in the root oracle. No term reads a padding
+/// address.
 pub fn binary_direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
     matrix: Option<&[Vec<[i128; 648]>]>,
     challenges: &Challenges,
     rho: &[[E; 648]],
-    padding_weights: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
     let descriptor = plan.descriptor();
     let columns = descriptor.index_map().columns();
@@ -69,7 +67,6 @@ pub fn binary_direct_a_weights<E: Field>(
     } else {
         0
     };
-    let padding = PaddingWeights::new(plan.repacking(), padding_weights)?;
     let mut terms = Vec::new();
     terms
         .try_reserve_exact(response_terms)
@@ -103,10 +100,7 @@ pub fn binary_direct_a_weights<E: Field>(
     NativeRootWeights::structured(
         plan.repacking().domain_len(),
         terms,
-        vec![
-            RootWeightFamily::Image(image),
-            RootWeightFamily::Padding(padding),
-        ],
+        vec![RootWeightFamily::Image(image)],
         E::zero(),
     )
 }

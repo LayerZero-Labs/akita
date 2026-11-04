@@ -151,7 +151,17 @@ fn public(shape: Shape, rng: &mut StdRng) -> BinaryRootPublic {
     build(natural_end + shape.extra_rings * 64).unwrap()
 }
 
-fn check(shape: Shape, seed: u64) {
+/// One structured and one flat compilation of a root relation.
+struct Compiled {
+    structured: NativeRootWeights<F>,
+    negative: Vec<(usize, F)>,
+    flat: NativeRootWeights<F>,
+    flat_negative: Vec<(usize, F)>,
+}
+
+/// Compile one shape's root relation both ways, without and with A, and draw
+/// two evaluation points on its domain.
+fn compile(shape: Shape, seed: u64) -> (BinaryRootPublic, Vec<Compiled>, Vec<Vec<F>>) {
     let mut rng = StdRng::seed_from_u64(seed);
     let public = public(shape, &mut rng);
     let descriptor = public.plan().descriptor().clone();
@@ -223,9 +233,24 @@ fn check(shape: Shape, seed: u64) {
     let points = (0..2)
         .map(|_| (0..num_vars).map(|_| field(&mut rng)).collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    for matrix in [None, Some(&matrix[..])] {
-        let (structured, negative) = public
-            .relation(
+    let compiled = [None, Some(&matrix[..])]
+        .into_iter()
+        .map(|matrix| {
+            let (structured, negative) = public
+                .relation(
+                    &challenges,
+                    alpha,
+                    &batches,
+                    &rho,
+                    &projected,
+                    &commitment,
+                    &d_payload,
+                    ordinary_claim,
+                    matrix,
+                )
+                .unwrap();
+            let (flat, flat_negative) = root_relation(
+                &public,
                 &challenges,
                 alpha,
                 &batches,
@@ -237,19 +262,27 @@ fn check(shape: Shape, seed: u64) {
                 matrix,
             )
             .unwrap();
-        let (flat, flat_negative) = root_relation(
-            &public,
-            &challenges,
-            alpha,
-            &batches,
-            &rho,
-            &projected,
-            &commitment,
-            &d_payload,
-            ordinary_claim,
-            matrix,
-        )
-        .unwrap();
+            Compiled {
+                structured,
+                negative,
+                flat,
+                flat_negative,
+            }
+        })
+        .collect();
+    (public, compiled, points)
+}
+
+fn check(shape: Shape, seed: u64) {
+    let (public, compiled, points) = compile(shape, seed);
+    let domain_len = public.plan().repacking().domain_len();
+    for Compiled {
+        structured,
+        negative,
+        flat,
+        flat_negative,
+    } in compiled
+    {
         assert_eq!(negative, flat_negative, "{shape:?}");
         assert_eq!(structured.claim(), flat.claim(), "{shape:?}");
         assert_eq!(structured.table_len(), domain_len);
@@ -271,24 +304,23 @@ fn check(shape: Shape, seed: u64) {
     }
 }
 
-/// Compare both sides on sixteen root shapes.
+/// Nineteen root shapes, shared by the differential test and the padding
+/// regression. They include every claim, plane and owner combination of the
+/// prime-plane end-to-end tests.
 ///
-/// The first eight use the end-to-end geometry: 8 padded carriers and 2
-/// columns, hence 4 scalar rows and one response quad. Without the mixed
-/// group they cover the word claim at width 128 with zero or one plane, at
-/// width 8 with zero planes, and with two owners and five planes; and prime-only
-/// two planes over two owners and three planes with five extra zero rings.
-/// With the mixed group they cover the word claim alone, and at width 8 with
-/// one plane and three extra rings. The next five, in the same geometry, add
-/// the remaining mixed configurations of the prime-plane end-to-end tests: one,
-/// two and five prime-only planes, and two and five planes beside the word
-/// claim. The last three use 32 carriers and 2 columns, or 64 carriers and 4
-/// columns, hence 16 scalar rows and four response quads: one owner with the
-/// word claim alone; two owners with two planes and the claim on the second
-/// owner; and the mixed group at width 8 with the word claim, five planes and
-/// two extra rings. No shape reaches a production-size geometry.
-#[test]
-fn structured_root_weights_match_the_flat_reference() {
+/// Sixteen use the end-to-end geometry: 8 padded carriers and 2 columns, hence
+/// 4 scalar rows and one response quad. Without the mixed group: the word claim
+/// at width 128 with zero, one, two or five planes and at width 8 with zero
+/// planes; two owners with the word claim and zero or five planes; and
+/// prime-only claims with two planes over two owners and with three planes and
+/// five extra zero rings. With the mixed group: the word claim with zero, two
+/// or five planes, and at width 8 with one plane and three extra rings; and one,
+/// two or five prime-only planes. The last three use 32 carriers and 2 columns,
+/// or 64 carriers and 4 columns, hence 16 scalar rows and four response quads:
+/// one owner with the word claim alone; two owners with two planes and the claim
+/// on the second owner; and the mixed group at width 8 with the word claim, five
+/// planes and two extra rings. No shape reaches a production-size geometry.
+fn shapes() -> Vec<Shape> {
     let base = Shape {
         word_width: 128,
         carriers: 8,
@@ -303,7 +335,7 @@ fn structured_root_weights_match_the_flat_reference() {
         mixed: true,
         ..base
     };
-    let shapes = [
+    vec![
         base,
         Shape {
             word_width: 8,
@@ -330,6 +362,15 @@ fn structured_root_weights_match_the_flat_reference() {
             extra_rings: 5,
             ..base
         },
+        Shape {
+            prime_planes: 2,
+            ..base
+        },
+        Shape {
+            prime_planes: 5,
+            ..base
+        },
+        Shape { owners: 2, ..base },
         mixed,
         Shape {
             word_width: 8,
@@ -378,8 +419,49 @@ fn structured_root_weights_match_the_flat_reference() {
             extra_rings: 2,
             ..mixed
         },
-    ];
-    for (seed, shape) in shapes.into_iter().enumerate() {
+    ]
+}
+
+/// Compare both sides on every shape in [`shapes`].
+#[test]
+fn structured_root_weights_match_the_flat_reference() {
+    for (seed, shape) in shapes().into_iter().enumerate() {
         check(shape, seed as u64);
+    }
+}
+
+/// The deletion rule's support lemma: every compiled root row, including the
+/// negative-bit rows, is zero on every padding address.
+#[test]
+fn compiled_root_weights_vanish_on_every_padding_address() {
+    for (seed, shape) in shapes().into_iter().enumerate() {
+        let (public, compiled, _) = compile(shape, seed as u64);
+        let repacking = public.plan().repacking();
+        let padding = (0..repacking.domain_len())
+            .filter(|&address| repacking.is_padding_address(address).unwrap())
+            .collect::<Vec<_>>();
+        assert!(!padding.is_empty(), "{shape:?}");
+        for Compiled {
+            structured,
+            negative,
+            flat,
+            ..
+        } in compiled
+        {
+            let table = structured.materialize().unwrap();
+            let mut reference = vec![F::zero(); repacking.domain_len()];
+            for &(address, weight) in flat.terms() {
+                reference[address] += weight;
+            }
+            for &address in &padding {
+                assert!(
+                    table[address].is_zero() && reference[address].is_zero(),
+                    "{shape:?}: weight on padding address {address}"
+                );
+            }
+            for &(address, _) in &negative {
+                assert!(!repacking.is_padding_address(address).unwrap(), "{shape:?}");
+            }
+        }
     }
 }

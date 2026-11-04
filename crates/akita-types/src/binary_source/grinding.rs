@@ -60,7 +60,14 @@ pub fn binary_root_grinding_plan(
             GrindingSite::Tau0Point { level: 0 },
             multilinear_point_loss_factor(rounds)?,
         ),
-        // Independent row coefficients, including parity/value and padding.
+        // Independent row coefficients: projections, parity/value, B/D,
+        // ordinary rows, negative bits and prime planes. No padding row is
+        // batched. Loss 1 rests on the checkpoint's candidate-comparison
+        // premise (specs/binary-source-checkpoint.md, section 8): two differing
+        // candidates under one checkpoint input yield a collision, so the
+        // residual vector is fixed before these draws. A coordinate-wise tree
+        // extractor would price the vector at its length instead; see
+        // specs/binary-source-zero-padding.md, section 3.5.
         (GrindingSite::Tau1Point { level: 0 }, 1),
     ] {
         runs.push(GrindingRun::proof_of_work(site, loss, order)?);
