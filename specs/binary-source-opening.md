@@ -1946,6 +1946,49 @@ table has `2^(k'-6)` entries, 8 MB at `2^k' = 2^25`.
    after a smaller Stage 2, the serial A derivation in the cold preparation,
    and the B/D copies into the A padding.
 
+**Results.** Items 1–3 landed in `90e6de4d7`, `c1a6ab234` and `4f1719168`.
+Item 4 landed as `75000a98e`: the A derivation, its i128 lift and its prefix
+scatter now run in parallel. Each matrix entry already had its own setup
+stream. With the structured weight and the reused table, Stage 3 allocates no
+prefix-sized table before its rounds, so the page faults after Stage 2 are
+gone with them. Setup, commitment and proof bytes are unchanged.
+
+The table compares `fab398c16` plus spans (the profile executable above) with
+`75000a98e`. Each figure is the median of three interleaved runs after a
+warm-up, with the catalog cache. All 40 runs reproduced their digest pins and
+verified. One-minute loads were 5.77–11.70 at N=2^22 and 6.99–8.80 at
+N=2^23. Times are in milliseconds.
+
+| N | Shape | Complete proving | Stage 3 | Stage 3 heap peak (GB) | Prover peak RSS bytes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 2^22 | `word` | 1,375.8 → 1,052.7 | 294.3 → 39.9 | 1.77 → 1.18 | 2,985,230,336 → 2,221,113,344 |
+| 2^22 | `word-prime` | 1,806.3 → 1,279.3 | 490.4 → 47.7 | 3.30 → 1.95 | 5,177,180,160 → 3,106,586,624 |
+| 2^22 | `word-prime-ordinary` | 2,095.4 → 1,536.8 | 496.8 → 51.2 | 3.37 → 2.03 | 5,491,441,664 → 3,690,053,632 |
+| 2^22 | `prime5` | 2,818.5 → 2,108.9 | 863.4 → 73.6 | 6.00 → 3.24 | 8,806,416,384 → 5,414,109,184 |
+| 2^23 | `word-prime` | 2,627.6 → 1,950.5 | 580.6 → 61.1 | 3.50 → 2.26 | 5,435,490,304 → 3,981,492,224 |
+
+Outside complete proving, the A derivation also shortens the cold prefix
+preparation and the cold verifier setup. At N=2^22 `word-prime` they go from
+430.9 to 339.2 ms and from 453.0 to 328.5 ms. At `word` they nearly halve,
+from 204.7 to 112.0 ms and from 188.5 to 97.2 ms.
+
+**What remains.**
+
+- Stage 3 is now its rounds: 40–74 ms at N=2^22. They read the committed
+  table in place, which costs 6–9 ms over a freshly written copy. Rounds 6
+  and later run on the dense index state of `2^(k'-6)` entries.
+- Stage 3 no longer sets the live-heap peak of complete proving. The peak is
+  now Stage 2's `RelationRangeImageProver::fold_round`: 1.52, 2.28 and
+  3.81 GB at N=2^22 for `word`, `word-prime` and `prime5`. At `word-prime`
+  and `prime5` the cold verifier setup peaks slightly higher, at 2.34 and
+  3.93 GB.
+- The cold prefix preparation and verifier setup still take 250–350 ms at
+  N=2^22 for the prime shapes. They already use about twelve cores. They
+  have no inner spans, so the split between deriving and committing the
+  typed prefix is not yet measured. The B/D copies into the A padding
+  (17 ms) derive one setup entry per copy. Deriving each entry once would
+  save part of that, but only in the cold path.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
