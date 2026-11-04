@@ -111,10 +111,10 @@ overflow-checks = true
 # Local Whiteout integration only: build against the local jolt `whiteout/dev`
 # worktree. Never extracted into an upstream PR; extraction pins upstream revs.
 [patch."https://github.com/a16z/jolt"]
-jolt-algebra = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-algebra" }
-jolt-poly = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-poly" }
-jolt-transcript = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-transcript" }
-jolt-sumcheck = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-sumcheck" }
-jolt-crypto = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-crypto" }
-jolt-metal = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-metal" }
-jolt-zk = { path = "../jolt/.claude/worktrees/whiteout-dev/crates/jolt-zk" }
+jolt-algebra = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-algebra" }
+jolt-poly = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-poly" }
+jolt-transcript = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-transcript" }
+jolt-sumcheck = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-sumcheck" }
+jolt-crypto = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-crypto" }
+jolt-metal = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-metal" }
+jolt-zk = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-zk" }
