@@ -59,9 +59,7 @@ where
     )?;
     let value = akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
     let weight = statement.evaluate_weight(coefficients, &challenges)?;
-    if output_claim != value * weight {
-        return Err(AkitaError::InvalidProof);
-    }
+    grinding.check_public(output_claim == value * weight)?;
     Ok(SetupSumcheckReplay {
         claim,
         setup_prefix_eval: value,

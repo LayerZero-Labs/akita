@@ -255,6 +255,21 @@ pub trait GrindingReplay {
     /// Mark this replay as failed.
     fn poison(&mut self);
 
+    /// A verifier check on public values read from the proof: rejects when
+    /// it fails. The counting replay, which reads no proof, never rejects.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidProof`] when `holds` is false.
+    fn check_public(&mut self, holds: bool) -> Result<(), AkitaError> {
+        if holds {
+            Ok(())
+        } else {
+            self.poison();
+            Err(AkitaError::InvalidProof)
+        }
+    }
+
     /// Apply one scheduled proof-of-work query: the prover searches and emits
     /// the nonce, the verifier receives and checks it.
     ///

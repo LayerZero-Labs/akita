@@ -70,6 +70,12 @@ impl<C: ProofChannel> GrindingReplay for CountingGrinding<'_, C> {
         self.invalid = true;
     }
 
+    /// The counting replay runs over no proof, so a public check gives no
+    /// verdict.
+    fn check_public(&mut self, _holds: bool) -> Result<(), AkitaError> {
+        Ok(())
+    }
+
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
         let result = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork).map(|_| ());
         self.checked(result)

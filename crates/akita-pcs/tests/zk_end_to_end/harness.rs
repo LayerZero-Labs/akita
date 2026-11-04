@@ -23,6 +23,7 @@ use akita_transcript::{
     receive_field_group, send_field_group, thread_proof_ranges, ProofMessageRange, ProtocolSiteId,
     VerifierChannel,
 };
+use akita_transcript::{ProverChannel, TranscriptSponge};
 use akita_types::{
     Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
@@ -33,11 +34,12 @@ use jolt_zk::masking::{
 };
 use jolt_zk::whiteout::{
     prove_sigma, prove_sigma_unchecked, sample_zero_constant_term, verify_sigma, BlockTarget,
-    CompressedImage, ImageCompression, LatticePadCommitment, PadPlacement, SigmaSetup,
-    WhiteoutError,
+    CompressedImage, ImageCompression, LatticePadCommitment, PadPlacement, ResponseProver,
+    ResponseStatement, ResponseWitness, SigmaSetup, WhiteoutError,
 };
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
+use std::sync::Mutex;
 
 /// The public stream `A_p` is cut from.
 pub(crate) fn pad_stream() -> Vec<F> {
@@ -577,6 +579,9 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         )?;
         let lifted = sigma.lift(&relation, &self.shape.claims(&residual.point)?)?;
         let s = self.shape.residual(&residual)?;
+        // The Σ-protocol proves the response on jolt-zk's DIT pool, whose
+        // thread keeps its own log.
+        let response_ranges = Mutex::new(Vec::new());
         if !cheat.unchecked_sigma {
             prove_sigma(
                 &sigma,
@@ -585,7 +590,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
                 &pad_opening,
                 &mut transcript,
                 &mut rng,
-                self.response(),
+                &Logged::new(self.response(), &response_ranges),
             )?;
         } else if !cheat.unchecked_response {
             prove_sigma_unchecked(
@@ -595,9 +600,17 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
                 &pad_opening,
                 &mut transcript,
                 &mut rng,
-                self.response(),
+                &Logged::new(self.response(), &response_ranges),
             )?;
         } else {
+            let unchecked = UncheckedResponseProver(
+                self.response(),
+                if cheat.forged_residual_chain {
+                    &bumped
+                } else {
+                    self.response()
+                },
+            );
             prove_sigma_unchecked(
                 &sigma,
                 &lifted,
@@ -605,21 +618,15 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
                 &pad_opening,
                 &mut transcript,
                 &mut rng,
-                &UncheckedResponseProver(
-                    self.response(),
-                    if cheat.forged_residual_chain {
-                        &bumped
-                    } else {
-                        self.response()
-                    },
-                ),
+                &Logged::new(&unchecked, &response_ranges),
             )?;
         }
-        finish_proof_ranges(&transcript);
+        let mut ranges = thread_proof_ranges();
+        ranges.extend(response_ranges.into_inner().unwrap());
         Ok(ZkProof {
             proof: transcript.narg_string().to_vec(),
             recorded: Recorded {
-                ranges: thread_proof_ranges(),
+                ranges,
                 sigma_start,
             },
             pads: committed,
@@ -815,4 +822,49 @@ pub(crate) fn single_seeded(seed: u64) -> Harness<Cfg> {
 
 pub(crate) fn multi() -> Harness<RecCfg> {
     Harness::new(Instance::multi_group_seeded(7))
+}
+
+/// A response prover that logs the response proof's groups from the thread
+/// it runs on into `ranges`.
+pub(crate) struct Logged<'a, P> {
+    inner: &'a P,
+    ranges: &'a Mutex<Vec<ProofMessageRange>>,
+}
+
+impl<'a, P> Logged<'a, P> {
+    pub(crate) fn new(inner: &'a P, ranges: &'a Mutex<Vec<ProofMessageRange>>) -> Self {
+        Self { inner, ranges }
+    }
+}
+
+impl<P, const D: usize> ResponseProver<F, D> for Logged<'_, P>
+where
+    P: ResponseProver<F, D, Sponge = TranscriptSponge>,
+{
+    type Sponge = TranscriptSponge;
+
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.inner.compression()
+    }
+
+    fn prove_response(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        witness: &ResponseWitness,
+        transcript: &mut ProverChannel,
+    ) -> Result<(), ZkError> {
+        clear_thread_events();
+        let result = self.inner.prove_response(statement, witness, transcript);
+        finish_proof_ranges(transcript);
+        self.ranges.lock().unwrap().extend(thread_proof_ranges());
+        result
+    }
+
+    fn verify_response(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        transcript: &mut VerifierChannel<'_>,
+    ) -> Result<(), ZkError> {
+        self.inner.verify_response(statement, transcript)
+    }
 }

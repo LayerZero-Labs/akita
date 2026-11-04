@@ -102,6 +102,10 @@ impl<G: GrindingReplay, F> GrindingReplay for MaskedReplay<'_, G, F> {
         self.grinding.poison();
     }
 
+    fn check_public(&mut self, holds: bool) -> Result<(), AkitaError> {
+        self.grinding.check_public(holds)
+    }
+
     fn grind_query(&mut self, site: akita_params::GrindingSite) -> Result<(), AkitaError> {
         self.grinding.grind_query(site)
     }
