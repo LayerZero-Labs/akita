@@ -172,6 +172,7 @@ pub(super) fn build(
             Some((profiles, _)) => ScheduleLookupKey {
                 final_group: profiles.final_group.group,
                 precommitteds: vec![profiles.final_group],
+                root_accumulated_setup_prefix_len: 0,
             },
             None => ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log)),
         };
