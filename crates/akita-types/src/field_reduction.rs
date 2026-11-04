@@ -8,7 +8,7 @@ use akita_error::AkitaError;
 use akita_serialization::Valid;
 use jolt_algebra::checked;
 use jolt_algebra::CyclotomicRing;
-use jolt_algebra::{CanonicalDecode, Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
+use jolt_algebra::{Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].

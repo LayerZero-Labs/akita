@@ -27,17 +27,9 @@ pub const fn terminal_sent_blocks(live_blocks: usize) -> Option<usize> {
 /// Whether this build speaks the dev protocol instead of the current one.
 ///
 /// The `dev-protocol` feature turns on every wire-format change that `dev`
-/// carries and `main` does not. Each change has its own constant below, set
-/// from this one, so code names the change it depends on. The two protocols
-/// are incompatible, so each has its own schedule set.
+/// carries and `main` does not. The two protocols are incompatible, so each
+/// has its own schedule set.
 pub const DEV_PROTOCOL: bool = cfg!(feature = "dev-protocol");
-
-/// Whether the terminal response omits the last live block of `e` and of `t`.
-///
-/// When set, the prover sends a digest of each omitted block and the verifier
-/// recomputes the block from the relation it completes. Otherwise every live
-/// block is sent.
-pub const RECOMPUTE_LAST_BLOCK: bool = DEV_PROTOCOL;
 
 /// Directory under the workspace `artifacts/` whose schedules are priced for
 /// this build's protocol.
@@ -54,28 +46,6 @@ pub const SCHEDULE_CATALOG_SNAPSHOT: &str = if DEV_PROTOCOL {
 } else {
     "schedule-catalog.tsv"
 };
-
-/// Byte length of the digest that binds one omitted terminal block.
-pub const FIELD_DIGEST_BYTES: usize = 32;
-
-/// Digest bytes each terminal group sends in place of omitted blocks.
-pub const TERMINAL_BLOCK_DIGEST_BYTES: usize = if RECOMPUTE_LAST_BLOCK {
-    2 * FIELD_DIGEST_BYTES
-} else {
-    0
-};
-
-/// Live terminal blocks whose `e` and `t` rings travel on the wire.
-///
-/// Returns `None` when the terminal has no live block to recompute.
-#[must_use]
-pub const fn terminal_sent_blocks(live_blocks: usize) -> Option<usize> {
-    if RECOMPUTE_LAST_BLOCK {
-        live_blocks.checked_sub(1)
-    } else {
-        Some(live_blocks)
-    }
-}
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -6,7 +6,7 @@ use crate::backend::{
     FoldProbeDiagnostics, FoldProbeGeometry, FoldProbeOutcome, ValidatedFoldAcceptancePlan,
     ValidatedFoldProbePlan, ValidatedTerminalFoldProbePlan,
 };
-use akita_challenges::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
+use akita_types::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
 use akita_error::AkitaError;
 use akita_params::FoldResponseSearch;
 #[cfg(test)]
@@ -20,7 +20,6 @@ use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
-use akita_types::{FoldDraw, ForkFoldDraw};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
 
@@ -62,7 +61,6 @@ pub(crate) struct TerminalFoldGrindOutput {
 /// cap. The returned witness retains centered `z` coefficients only; terminal
 /// `e` and `t` are never gadget decomposed.
 #[allow(clippy::too_many_arguments)]
-// T0-PORT(private): dev used ProverGrinding<'_, S, C> here; re-express on v8.
 pub(crate) fn sample_terminal_fold_response<F, E, H, B, const D: usize>(
     backend: &B,
     grinding: &mut akita_types::ProverGrinding<'_>,
@@ -228,10 +226,9 @@ fn accepted_fold_response<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
-fn replay_multi_group_fold_decompose_witnesses<F, E, B>(
+fn replay_multi_group_fold_decompose_witnesses<F, E, B, C>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, B::PreparedOpeningHandle>],
@@ -244,6 +241,7 @@ where
         + jolt_algebra::ExtField<F>
         + akita_serialization::AkitaSerialize,
     B: crate::backend::OpaqueOpeningKernel<F, E>,
+    C: akita_types::ProverGrindingChannel,
 {
     if groups.is_empty() {
         return Err(AkitaError::Internal(
@@ -251,8 +249,9 @@ where
         ));
     }
     let site = akita_params::GrindingSite::FoldResponse { level };
+    let search = grinding.fold_response_search(site)?;
     let (nonce, (work, mut candidate_outputs)) =
-        first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
+        accepted_fold_response(search, level, max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
             let work = {
                 let mut preview_state = grinding.preview_fold_response(site, nonce)?;
@@ -331,7 +330,7 @@ where
             let challenges = {
                 let group_index = u32::try_from(group.group_index)
                     .map_err(|_| AkitaError::Internal("fold group index exceeds u32".into()))?;
-                let mut live = ProverFoldDraw::new(grinding.state_mut(), level, group_index);
+                let mut live = ProverFoldDraw::new(grinding.state_mut().clear_state(), level, group_index);
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
@@ -412,10 +411,9 @@ where
 /// When `tail_t_vectors` is set, the terminal response must fit the exact cap
 /// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B, C>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -429,6 +427,7 @@ where
         + jolt_algebra::ExtField<F>
         + akita_serialization::AkitaSerialize,
     B: crate::backend::OpaqueOpeningKernel<F, E>,
+    C: akita_types::ProverGrindingChannel,
 {
     if groups.len() != opening_batch.num_groups() {
         return Err(AkitaError::Internal(
@@ -476,7 +475,7 @@ where
             ),
         });
     }
-    replay_multi_group_fold_decompose_witnesses::<F, E, B>(
+    replay_multi_group_fold_decompose_witnesses::<F, E, B, C>(
         opening_ctx,
         grinding,
         level,
@@ -489,8 +488,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_params::SisModulusProfileId;
     use jolt_crypto::challenge::SparseChallengeConfig;
+    use akita_params::SisModulusProfileId;
 
     type F = jolt_algebra::Prime128Offset275;
 
@@ -506,8 +505,8 @@ mod tests {
             decode: impl FnOnce(
                 &[u8],
             )
-                -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError>,
-        ) -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError> {
+                -> Result<Option<Vec<jolt_crypto::challenge::SparseChallenge>>, AkitaError>,
+        ) -> Result<Option<Vec<jolt_crypto::challenge::SparseChallenge>>, AkitaError> {
             self.draws += 1;
             decode(&vec![11; len])
         }

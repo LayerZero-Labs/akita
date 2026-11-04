@@ -48,7 +48,7 @@ pub struct NonterminalLevelLayout {
     challenge_field_bytes: usize,
     opening_payload_coeffs: usize,
     stage1_shape: DigitRangeRouteShape,
-    stage2_rounds: usize,
+    stage2_sumcheck: akita_sumcheck::SumcheckShape,
     next_outer_payload_coeffs: usize,
     next_witness_evaluations: usize,
 }
@@ -77,10 +77,10 @@ impl NonterminalLevelLayout {
             })
     }
 
-    /// Stage-2 sumcheck round count; its degree is [`crate::STAGE2_SUMCHECK_DEGREE`].
+    /// Fixed Stage-2 sumcheck shape.
     #[must_use]
-    pub const fn stage2_rounds(&self) -> usize {
-        self.stage2_rounds
+    pub const fn stage2_sumcheck(&self) -> akita_sumcheck::SumcheckShape {
+        self.stage2_sumcheck
     }
 
     /// Fixed base-field atom count in an ordinary recursive successor payload.
@@ -96,8 +96,8 @@ impl NonterminalLevelLayout {
                 .ok_or_else(|| AkitaError::InvalidSetup("opening payload size overflow".into()))?;
         let stage1_bytes = stage1_proof_bytes(self.stage1_shape, self.challenge_field_bytes)?;
         let stage2_bytes = sumcheck_bytes(
-            self.stage2_rounds,
-            crate::STAGE2_SUMCHECK_DEGREE,
+            self.stage2_sumcheck.num_rounds(),
+            self.stage2_sumcheck.degree_bound(),
             self.challenge_field_bytes,
         );
         let next_witness_bytes =
@@ -188,7 +188,7 @@ pub fn nonterminal_level_layout(
         challenge_field_bytes,
         opening_payload_coeffs: lp.opening_payload_geometry()?.transmitted_coefficients(),
         stage1_shape,
-        stage2_rounds: rounds,
+        stage2_sumcheck: akita_sumcheck::SumcheckShape::new(rounds, 3)?,
         next_outer_payload_coeffs,
         next_witness_evaluations: 1,
     })

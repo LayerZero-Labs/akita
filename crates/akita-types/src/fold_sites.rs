@@ -8,12 +8,11 @@
 use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_transcript::{
-    ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
+    public_extensions, PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
     SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_TERMINAL,
 };
 use jolt_algebra::narrowing::usize_to_u32;
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{Channel, PrivateChannel};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// One fold-owned proof-stream site.
 ///
@@ -107,14 +106,14 @@ impl FoldSite {
 /// Binds a fold level's scalar openings, in group order, at its
 /// [`FoldSite::Openings`] site.
 ///
-/// `prefix` is the setup-prefix evaluation, present when the level consumes
-/// a setup prefix: the evaluation of a public setup slot at a public point,
-/// so it stays public. `derived` holds every other opening, the statement
-/// claims (level 0) or the predecessor's witness evaluation, which the
-/// verifier derives from earlier messages, so each goes through
-/// [`PrivateChannel::bind_derived`]. Clear mode absorbs both kinds as public
-/// values, so the sponge input equals one `public_all` of the group-ordered
-/// openings.
+/// `prefix` is the setup-prefix evaluation (group 0), present when the level
+/// consumes a setup prefix: the evaluation of a public setup slot at a public
+/// point, so it stays public. `derived` holds every other opening, the
+/// statement claims (level 0) or the predecessor's witness evaluation, which
+/// the verifier derives from earlier messages. A clear channel absorbs all of
+/// them as one public message, in group order; a masked channel absorbs only
+/// the prefix, since the masked messages the derived claims come from already
+/// bind them (`specs/whiteout-paper-deltas.md` D25).
 ///
 /// # Errors
 ///
@@ -127,20 +126,15 @@ pub fn bind_fold_openings<F, E, G>(
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    G: GrindingReplay,
+    E: ExtField<F>,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     let state = grinding.state_mut();
-    state.site(FoldSite::Openings { level }.id()?.into());
-    if let Some(prefix) = prefix {
-        state.public(prefix);
+    let mut openings: Vec<E> = prefix.into_iter().copied().collect();
+    if !state.is_masked() {
+        openings.extend_from_slice(derived);
     }
-    for claim in derived {
-        state
-            .bind_derived::<F, E>(claim)
-            .map_err(Into::<AkitaError>::into)?;
-    }
-    Ok(())
+    public_extensions::<F, E, _>(state, FoldSite::Openings { level }.id()?, &openings)
 }
 
 #[cfg(test)]

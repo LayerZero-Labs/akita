@@ -49,11 +49,10 @@ pub(crate) struct RingSwitchFinalization<'a, E: Field, RelationHandle> {
 /// Sample the relation challenges and prepare its opaque witness state.
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
-// T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
-pub(crate) fn ring_switch_finalize<'a, F, E, B>(
+pub(crate) fn ring_switch_finalize<'a, F, E, B, C>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     instance: &RingRelationInstance<F>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     witness_handle: &B::WitnessHandle,
     lp: &CommittedGroupParams,
@@ -67,6 +66,7 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
     B: crate::backend::OpaqueRelationWitnessKernel<F, E>,
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
 {
     use crate::backend::RecursiveWitnessHandle;
 
@@ -77,9 +77,8 @@ where
         opening_batch,
         instance,
     )?;
-    let opening_capacity =
-        jolt_algebra::checked::product([opening_source_len, opening_ring_dim])
-            .ok_or_else(|| AkitaError::Internal("opening capacity overflow".into()))?;
+    let opening_capacity = jolt_algebra::checked::product([opening_source_len, opening_ring_dim])
+        .ok_or_else(|| AkitaError::Internal("opening capacity overflow".into()))?;
     if opening_ring_dim == 0
         || !opening_ring_dim.is_power_of_two()
         || witness_handle.manifest().logical_len() > opening_capacity

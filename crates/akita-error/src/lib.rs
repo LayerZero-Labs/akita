@@ -73,101 +73,19 @@ pub enum AkitaError {
     Internal(String),
 }
 
-/// A transcript failure on the verifier side rejects the proof: a verifier
-/// transcript fails only on malformed, missing, or out-of-range proof bytes.
-/// A clear message on a masked channel is a schedule that sends one at a
-/// masked level, on either side.
-///
-/// Prover-only transcript failures (grinding exhaustion, an over-bound
-/// message) are classified at their call sites instead, since they are input
-/// or setup errors rather than rejections.
-// T0-PORT(private): main's jolt-transcript has no `TranscriptError`; the masked channels'
-// errors need a v8 classification (spongefish `VerificationError` rejects the proof).
-impl From<jolt_transcript::TranscriptError> for AkitaError {
-    fn from(error: jolt_transcript::TranscriptError) -> Self {
-        use jolt_transcript::TranscriptError;
-        match error {
-            TranscriptError::ClearMessageOnMaskedChannel => {
-                Self::UnsupportedSchedule(error.to_string())
-            }
-            TranscriptError::Truncated
-            | TranscriptError::NonCanonical
-            | TranscriptError::OutOfBounds
-            | TranscriptError::TrailingBytes
-            | TranscriptError::CursorMismatch
-            | TranscriptError::GrindingRejected
-            | TranscriptError::UnsupportedGrinding
-            | TranscriptError::GrindingExhausted
-            | TranscriptError::Poisoned => Self::InvalidProof,
-        }
-    }
-}
-
-/// A failure of the shared single-instance sumcheck driver.
-///
-/// Transcript failures reject the proof as [`jolt_transcript::TranscriptError`]
-/// does. A malformed public shape is a setup error. Every other variant,
-/// including a failed prover self-check (a kernel bug), is a failed internal
-/// invariant.
-impl<F: jolt_algebra::Field> From<jolt_sumcheck::SumcheckError<F>> for AkitaError {
-    fn from(error: jolt_sumcheck::SumcheckError<F>) -> Self {
-        use jolt_sumcheck::SumcheckError;
-        match error {
-            SumcheckError::Transcript(error) => error.into(),
-            // A masked channel's error crosses the driver boxed; it keeps the
-            // masked channel's classification, so a truncated or malformed
-            // masked round rejects the proof.
-            #[cfg(feature = "zk")]
-            SumcheckError::PrivateChannel(source) => {
-                match source.downcast::<jolt_zk::masking::ZkError>() {
-                    Ok(error) => (*error).into(),
-                    Err(source) => Self::Internal(source.to_string()),
-                }
-            }
-            SumcheckError::ZeroDegreeBound
-            | SumcheckError::ShapeOverflow { .. }
-            | SumcheckError::EqFactoredZeroRounds
-            | SumcheckError::EqualityPointLengthMismatch { .. }
-            | SumcheckError::RoundCountMismatch { .. } => Self::InvalidSetup(error.to_string()),
-            SumcheckError::RoundCheckFailed { .. }
-            | SumcheckError::DegreeBoundExceeded { .. }
-            | SumcheckError::ZeroBatchDegree { .. }
-            | SumcheckError::BatchMemberRoundsOutOfRange { .. }
-            | SumcheckError::BatchPaddingExponentOutOfRange { .. }
-            | SumcheckError::BatchMemberWindowOverflow { .. }
-            | SumcheckError::DegreeOverflow { .. }
-            | SumcheckError::RoundSumCoefficientCountMismatch { .. }
-            | SumcheckError::InvalidIntegerDomain { .. }
-            | SumcheckError::EmptyRoundCoefficients
-            | SumcheckError::MissingEvaluationSource { .. }
-            | SumcheckError::ZeroCommitmentCapacity
-            | SumcheckError::RoundExceedsCommitmentCapacity { .. }
-            | SumcheckError::BatchMemberCountMismatch { .. }
-            | SumcheckError::BatchMemberRoundsMismatch { .. }
-            | SumcheckError::BatchMemberWindowOutOfRange { .. }
-            | SumcheckError::MissingRoundMessage { .. }
-            | SumcheckError::RoundMemberIndexOutOfRange { .. }
-            | SumcheckError::BatchedPointRangeOverflow { .. }
-            | SumcheckError::BatchedPointOutOfRange { .. }
-            | SumcheckError::IntegerDomainNotDistinct { .. }
-            | SumcheckError::WrongNumberOfChallenges { .. } => Self::Internal(error.to_string()),
-            // `SumcheckError` is `#[non_exhaustive]`. A variant added upstream
-            // must be classified above when Akita bumps jolt-sumcheck.
-            _ => Self::Internal(error.to_string()),
-        }
-    }
-}
-
 /// A masked channel's failure (`specs/whiteout-akita.md` §4.5). A transcript
-/// failure rejects the proof as [`jolt_transcript::TranscriptError`] does; a
-/// pad schedule or message field that disagrees with the schedule is a setup
-/// error; a decoded value failing its check is a failed prover invariant.
+/// or tape failure rejects the proof; a pad schedule or message field that
+/// disagrees with the schedule is a setup error; a decoded value failing its
+/// check is a failed prover invariant.
 #[cfg(feature = "zk")]
 impl From<jolt_zk::masking::ZkError> for AkitaError {
     fn from(error: jolt_zk::masking::ZkError) -> Self {
         use jolt_zk::masking::ZkError;
         match error {
-            ZkError::Transcript(error) => error.into(),
+            ZkError::TranscriptRejected
+            | ZkError::ChallengeRejected
+            | ZkError::MaskedTapeExhausted
+            | ZkError::MaskedTapeTrailing => Self::InvalidProof,
             ZkError::PadsExhausted { .. }
             | ZkError::PadCountMismatch { .. }
             | ZkError::InvalidLayout { .. }

@@ -3,11 +3,8 @@
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use jolt_algebra::ring::{eval_ring_at, scalar_powers};
 use akita_algebra::row_batch::WeightedRowBatch;
-use jolt_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::dispatch_for_field;
 use akita_params::layout::relation_layout::{RelationRhsLayout, RelationRowFamily};
 use jolt_algebra::checked;

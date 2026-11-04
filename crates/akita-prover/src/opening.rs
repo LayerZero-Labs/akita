@@ -201,14 +201,13 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             .map(PolynomialGroupClaims::commitment)
             .collect()
     }
-    // T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
     /// Bind the root statement: each group's commitment digest, then each
     /// group's opening point.
-    pub(crate) fn append_to(
+    pub(crate) fn append_to<C: akita_types::ProverGrindingChannel>(
         &self,
         root_params: &CommittedGroupParams,
         digests: &[CommitmentDigest],
-        grinding: &mut akita_types::ProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_, C>,
     ) -> Result<(), AkitaError>
     where
         CommitF: CanonicalEncoding,

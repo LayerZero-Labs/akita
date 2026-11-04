@@ -5,7 +5,7 @@
 //! the family, and the group's position in the transcript fixes its index and
 //! counts, so the message continues the squeeze run before it.
 
-use jolt_crypto::challenge::{Challenges, SparseChallenge};
+use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
 use akita_transcript::ProofChannel;
 
@@ -15,11 +15,11 @@ pub trait FoldDraw {
     /// Squeeze one group's challenge message of exactly `len` bytes and
     /// decode it. `decode` returns `None` when an operator-norm pool runs out;
     /// the verifier adapter rejects then.
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError>;
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError>;
 
     /// Draw one group's challenges: squeeze and decode one message of the
     /// family's fixed length.
@@ -42,19 +42,11 @@ pub trait FoldDraw {
             AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
         })?;
         let stream = family.stream(total)?;
-        let challenges =
-            self.draw_message(stream.message_len(), |message| stream.decode(message))?;
-        challenges
-            .map(|challenges| {
-                Challenges::from_sampled(
-                    challenges,
-                    num_live_blocks,
-                    num_claims,
-                    family.ring_d(),
-                    family.config(),
-                )
-            })
-            .transpose()
+        self.draw_message(stream.message_len(), |message| {
+            stream
+                .decode_challenges(message, num_live_blocks, num_claims)
+                .map_err(AkitaError::from)
+        })
     }
 }
 
@@ -95,11 +87,11 @@ impl<'a> PreviewFoldDraw<'a> {
 
 #[cfg(feature = "prover")]
 impl FoldDraw for PreviewFoldDraw<'_> {
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
         self.preview.challenge_message(len, decode)
     }
 }
@@ -128,11 +120,11 @@ impl<'a> ProverFoldDraw<'a> {
 }
 
 impl FoldDraw for ProverFoldDraw<'_> {
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
         self.state.context(fold_record(self.level, self.group, len));
         self.state.challenge_message(len, decode)
     }
@@ -162,11 +154,11 @@ impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
 }
 
 impl FoldDraw for VerifierFoldDraw<'_, '_> {
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
         self.state.context(fold_record(self.level, self.group, len));
         self.state.challenge_message(len, |message| {
             decode(message)?.map(Some).ok_or(AkitaError::InvalidProof)

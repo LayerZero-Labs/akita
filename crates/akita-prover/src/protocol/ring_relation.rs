@@ -3,6 +3,8 @@
 //! Coordinates public relation messages while private witness storage stays in the backend.
 use crate::backend::OperationCtx;
 use crate::ProverOpeningData;
+#[cfg(test)]
+use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_params::{CommittedGroupParams, SignedDigitKernel, MAX_I8_LOG_BASIS};
@@ -134,7 +136,7 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::prepare")]
     #[inline(never)]
-    pub(in crate::protocol) fn prepare<'claims, 'source, F, PointF, B>(
+    pub(in crate::protocol) fn prepare<'claims, 'source, F, PointF, B, C>(
         opening_ctx: &OperationCtx<'_, F, B>,
         prepared_group_openings: Vec<PreparedGroupOpening<PointF, B::PreparedOpeningHandle>>,
         commitment_material: Vec<B::CommitmentMaterialHandle>,
@@ -145,8 +147,7 @@ impl RingRelationProver {
             F,
         >,
         lp: CommittedGroupParams,
-        // T0-PORT(private): dev used ProverGrinding<'_, H, C> here; re-express on v8.
-        grinding: &mut akita_types::ProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_, C>,
         level: u32,
         reduction: &Option<crate::protocol::prove::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
@@ -166,6 +167,7 @@ impl RingRelationProver {
             + ChallengeCodec
             + jolt_algebra::ExtField<F>
             + akita_serialization::AkitaSerialize,
+        C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
         B: crate::backend::ProverBackend<F, PointF>,
     {
         let consumer = opening_ctx.backend();
@@ -234,7 +236,7 @@ impl RingRelationProver {
             )?;
         let (
             prepared_relation_groups,
-            mut opening_payload,
+            opening_payload,
             opening_payload_ring_dimension,
             build_handle,
         ) = build_start.into_parts();
@@ -254,13 +256,14 @@ impl RingRelationProver {
                     .into(),
             ));
         }
+        // The payload is public in both modes: in zero-knowledge mode its own
+        // commitment randomness hides it, not pads.
         akita_transcript::send_field_group(
-            grinding.state_mut(),
+            grinding.state_mut().clear_state(),
             akita_types::FoldSite::OpeningPayload {
                 level,
                 ring_dimension: opening_payload_ring_dimension,
             }
-            // T0-PORT(private): dev used exchange_public_all, randomness here; re-express on v8.
             .id()?,
             opening_payload.coeffs(),
         )?;
@@ -271,7 +274,7 @@ impl RingRelationProver {
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.
         let (trace_claim, row_coefficients) =
-            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF>(
+            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF, C>(
                 reduction,
                 scalar_openings,
                 trace_opening_batch,
@@ -327,7 +330,7 @@ impl RingRelationProver {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
-        let grind_outputs = fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B>(
+        let grind_outputs = fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B, C>(
             opening_ctx,
             grinding,
             level,

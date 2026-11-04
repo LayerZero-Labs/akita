@@ -21,8 +21,10 @@ use crate::{ProverChannel, VerifierChannel};
 mod channel;
 mod digest;
 mod nonce;
+mod private;
 mod site;
 pub use channel::ProofChannel;
+pub use private::{exchange_public_extension_group, PrivateProofChannel};
 pub use digest::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, NonceAtom};
 
@@ -778,6 +780,23 @@ where
     E: ExtField<F>,
     S: ProofChannel,
 {
+    exchange_extension_atoms::<F, E, S>(state, site, values, |state, atoms| state.exchange(atoms))
+}
+
+/// One group of extension atoms, exchanged by `exchange`: the shared body of
+/// [`exchange_extension_group`] and
+/// [`exchange_public_extension_group`](private::exchange_public_extension_group).
+fn exchange_extension_atoms<F, E, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [E],
+    exchange: impl FnOnce(&mut S, &mut [ExtensionAtom<F, E>]) -> Result<(), AkitaError>,
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    S: ProofChannel,
+{
     let record = group_record(
         site,
         ProtocolMessageKind::ProofAtoms,
@@ -790,7 +809,7 @@ where
         .iter()
         .map(|&value| ExtensionAtom::new(value))
         .collect();
-    state.exchange(&mut atoms)?;
+    exchange(state, &mut atoms)?;
     for (value, atom) in values.iter_mut().zip(atoms) {
         *value = atom.into_inner();
     }
@@ -819,7 +838,7 @@ where
 {
     let challenge_bytes = E::challenge_bytes(count).unwrap_or(0);
     let challenge_bytes = usize_to_u64(challenge_bytes, "challenge message byte count");
-    let challenge_bytes = state.guard(challenge_bytes)?;
+    let challenge_bytes = state.guard(challenge_bytes.map_err(AkitaError::from))?;
     state.context(ProtocolContextRecord::new(
         site.to_bytes(),
         ProtocolMessageKind::Challenge as u32,
@@ -957,6 +976,22 @@ impl FoldPreview {
     /// live channel will when it sends the nonce.
     #[must_use]
     pub fn new(state: &ProverChannel, nonce: u32) -> Self {
+        let mut preview = Self::detached(state, nonce);
+        preview
+            .state
+            .public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
+        preview
+    }
+
+    /// Copy the public state for a one-shot fold response, which sends no
+    /// nonce (`specs/whiteout-akita.md` §2, W2): its counter is 0 and nothing
+    /// is absorbed before the proof of work.
+    #[must_use]
+    pub fn one_shot(state: &ProverChannel) -> Self {
+        Self::detached(state, 0)
+    }
+
+    fn detached(state: &ProverChannel, nonce: u32) -> Self {
         // The preview draws no private randomness and its sponge is replaced
         // by the live one, so it takes a fixed seed instead of OS entropy and
         // derives the session identifier once.
@@ -964,10 +999,8 @@ impl FoldPreview {
         let mut detached =
             ProverChannel::new_with_seed(&PREVIEW_SESSION, &BytesMsg(Vec::new()), [0; 32]);
         detached.duplex_sponge_state = state.duplex_sponge_state.clone();
-        let mut state = detached;
-        state.public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
         Self {
-            state,
+            state: detached,
             nonce,
             work: None,
         }

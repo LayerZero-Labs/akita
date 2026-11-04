@@ -77,7 +77,7 @@ pub use setup_projection::SetupProjectionGeometry;
 pub use subring_packing_geometry::SubringCoefficientPackingGeometry;
 pub use tail_segments::{
     terminal_sent_blocks, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
-    DEV_PROTOCOL, FIELD_DIGEST_BYTES, RECOMPUTE_LAST_BLOCK, SCHEDULE_ARTIFACT_SET,
+    DEV_PROTOCOL, SCHEDULE_ARTIFACT_SET,
     SCHEDULE_CATALOG_SNAPSHOT,
     TERMINAL_BLOCK_DIGEST_BYTES,
 };

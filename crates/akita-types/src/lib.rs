@@ -2,7 +2,6 @@
 
 mod eor_sites;
 pub mod extension_opening_reduction;
-mod field_digest;
 pub mod field_reduction;
 mod fold_sites;
 pub mod instance_descriptor;
@@ -25,7 +24,7 @@ pub use extension_opening_reduction::{
     derive_tensor_extension_opening_claim_from_partials, tensor_equality_factor_eval_at_point,
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
-pub use field_digest::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
+pub use akita_transcript::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
@@ -118,8 +117,10 @@ pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
+#[cfg(all(feature = "zk", feature = "prover"))]
+pub use transcript_grinding::MaskedProverChannel;
 #[cfg(feature = "zk")]
-pub use transcript_grinding::CountingGrinding;
+pub use transcript_grinding::{CountingGrinding, MaskedVerifierChannel};
 
 /// The statement claims of a zero-knowledge opening's masked root, in group
 /// order: each an affine form over the committed pads, built by the caller
@@ -154,10 +155,10 @@ pub fn residual_point<F: jolt_algebra::Field>(
 }
 pub use transcript_grinding::{
     FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance,
-    PublicGrindingSumcheck, VerifierGrinding, VerifierGrindingChannel,
+    VerifierGrinding, VerifierGrindingChannel,
 };
 #[cfg(feature = "prover")]
-pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding};
+pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding, ProverGrindingChannel};
 
 #[cfg(test)]
 mod schedule_tests;

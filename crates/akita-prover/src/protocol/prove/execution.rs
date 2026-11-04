@@ -1,5 +1,4 @@
 //! Per-fold instance selection; typed executors retain all kernel state.
-use super::fold::RawPayload;
 use super::registry::*;
 pub use super::registry::{BackendId, BackendRegistry, FixedFoldRoute, FoldExecutionPolicy};
 use super::{root, suffix, FoldPublicState, SuffixProverState};
@@ -184,9 +183,7 @@ where
                 .session(),
             index,
             handoff,
-            &mut RawPayload,
-        )?
-        .next_state;
+        )?;
         handoff.complete(self.backend, state)
     }
     fn terminal(
@@ -276,9 +273,12 @@ where
 /// Prove inside the caller's transcript, with route-selected registry
 /// entries for every fold.
 ///
-// T0-PORT(private): dev used catch_prover_panic, require_clear_opening here; re-express on v8.
 /// The proof bytes are appended to `channel`'s proof string. The caller must
 /// have bound every commitment it opens, through its digest, before this call.
+///
+/// A panic anywhere in the prover, including a backend kernel, is returned as
+/// [`AkitaError::Internal`] through [`catch_prover_panic`]. A zero-knowledge
+/// configuration is refused ([`akita_config::require_clear_opening`]).
 pub fn batched_prove_embedded<'a, Cfg, H>(
     expanded: &AkitaSetupDescriptor,
     schedules: &TrustedScheduleCatalog<Cfg>,
@@ -302,110 +302,98 @@ where
         + 'static,
     H: CommitmentHandleMetadata + 'static,
 {
-    // T0-PORT(private): dev used catch_prover_panic, require_clear_opening here; re-express on v8.
-    let setup_batch = opening.setup_batch;
-    let (resolved, digests, claims, grinding_plan, descriptor_bytes) = root::resolve_root::<Cfg, H>(
-        expanded,
-        schedules,
-        opening,
-        basis,
-        setup_batch.map(|(level, _)| level),
-    )?;
-    if setup_batch
-        .is_some_and(|(level, _)| level as usize >= resolved.schedule().num_fold_levels() - 1)
-    {
-        return Err(AkitaError::InvalidInput(
-            "setup batch target must be a nonterminal fold".into(),
-        ));
-    }
-    if registry.active.replace(true) {
-        return Err(AkitaError::InvalidInput(
-            "backend registry already has an active proof".into(),
-        ));
-    }
-    let _guard = RegistryProofGuard(registry);
-    let mut owners = Vec::with_capacity(resolved.schedule().num_fold_levels());
-    let mut selected = vec![false; registry.slots.len()];
-    for level in 0..resolved.schedule().num_fold_levels() {
-        let requirements =
-            FoldExecutionRequirements::new(resolved.schedule(), claims.opening_layout(), level)?;
-        let current = owners.last().copied();
-        let owner = policy.choose_backend(current, &requirements)?;
-        registry.slot(owner)?;
-        if let Some(previous) = current.filter(|previous| *previous != owner) {
-            registry.bridge(previous, owner)?;
-        }
-        selected[owner.slot] = true;
-        owners.push(owner);
-    }
-    let root_id = *owners
-        .first()
-        .ok_or_else(|| AkitaError::Internal("proof schedule has no fold levels".into()))?;
-    let root_executor = registry.slot(root_id)?;
-    let identity = NEXT_PROOF
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-        .map_err(|_| AkitaError::Internal("proof identity exhausted".into()))?;
-    let request = ProofRequest {
-        setup: expanded,
-        schedules,
-        schedule: resolved.schedule(),
-        layout: claims.opening_layout(),
-        identity,
-        setup_batch,
-    };
-    for (executor, selected) in registry.slots.iter().zip(&selected) {
-        if *selected {
-            executor.prepare_executor(&request)?;
-        }
-    }
-    for (level, owner) in owners.iter().enumerate() {
-        registry.slot(*owner)?.begin_fold(&request, level)?;
-    }
-    let mut handoff = FoldHandoff {
-        registry,
-        request: &request,
-        current: root_id,
-        next: *owners
-            .get(1)
-            .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
-        adopted: None,
-    };
-    akita_transcript::bind_instance(channel, &descriptor_bytes)?;
-    let mut grinding = ProverGrinding::new(channel, &grinding_plan);
-    if let Some((level, statement)) = setup_batch {
-        akita_types::setup_claims::transcript::bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
-            akita_types::GrindingReplay::state_mut(&mut grinding),
-            level,
-            statement,
+    akita_config::require_clear_opening::<Cfg>()?;
+    catch_prover_panic(move || {
+        let setup_batch = opening.setup_batch;
+        let (resolved, digests, claims, grinding_plan, descriptor_bytes) = root::resolve_root::<Cfg, H>(
+            expanded,
+            schedules,
+            opening,
+            basis,
+            setup_batch.map(|(level, _)| level),
         )?;
-    }
-    let (mut public, mut resident) = root_executor.root(
-        &mut handoff,
-        &mut grinding,
-        claims.opening_claims(),
-        &digests,
-        &claims.groups,
-        basis,
-    )?;
-    for index in 0..request.schedule.recursive_folds.len() {
-        let owner = resident.owner;
-        handoff.current = owner;
-        handoff.next = *owners
-            .get(index + 2)
-            .ok_or_else(|| AkitaError::Internal("resolved route has no successor fold".into()))?;
-        (public, resident) = registry.slot(owner)?.recursive(
+        if setup_batch
+            .is_some_and(|(level, _)| level as usize >= resolved.schedule().num_fold_levels() - 1)
+        {
+            return Err(AkitaError::InvalidInput(
+                "setup batch target must be a nonterminal fold".into(),
+            ));
+        }
+        if registry.active.replace(true) {
+            return Err(AkitaError::InvalidInput(
+                "backend registry already has an active proof".into(),
+            ));
+        }
+        let _guard = RegistryProofGuard(registry);
+        let mut owners = Vec::with_capacity(resolved.schedule().num_fold_levels());
+        let mut selected = vec![false; registry.slots.len()];
+        for level in 0..resolved.schedule().num_fold_levels() {
+            let requirements =
+                FoldExecutionRequirements::new(resolved.schedule(), claims.opening_layout(), level)?;
+            let current = owners.last().copied();
+            let owner = policy.choose_backend(current, &requirements)?;
+            registry.slot(owner)?;
+            if let Some(previous) = current.filter(|previous| *previous != owner) {
+                registry.bridge(previous, owner)?;
+            }
+            selected[owner.slot] = true;
+            owners.push(owner);
+        }
+        let root_id = *owners
+            .first()
+            .ok_or_else(|| AkitaError::Internal("proof schedule has no fold levels".into()))?;
+        let root_executor = registry.slot(root_id)?;
+        let identity = NEXT_PROOF
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| AkitaError::Internal("proof identity exhausted".into()))?;
+        let request = ProofRequest {
+            setup: expanded,
+            schedules,
+            schedule: resolved.schedule(),
+            layout: claims.opening_layout(),
+            identity,
+            setup_batch,
+        };
+        for (executor, selected) in registry.slots.iter().zip(&selected) {
+            if *selected {
+                executor.prepare_executor(&request)?;
+            }
+        }
+        for (level, owner) in owners.iter().enumerate() {
+            registry.slot(*owner)?.begin_fold(&request, level)?;
+        }
+        let mut handoff = FoldHandoff {
+            registry,
+            request: &request,
+            current: root_id,
+            next: *owners
+                .get(1)
+                .ok_or_else(|| AkitaError::Internal("proof schedule has no successor fold".into()))?,
+            adopted: None,
+        };
+        akita_transcript::bind_instance(channel, &descriptor_bytes)?;
+        let mut grinding = ProverGrinding::new(channel, &grinding_plan);
+        if let Some((level, statement)) = setup_batch {
+            akita_types::setup_claims::transcript::bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
+                akita_types::GrindingReplay::state_mut(&mut grinding),
+                level,
+                statement,
+            )?;
+        }
+        let (mut public, mut resident) = root_executor.root(
             &mut handoff,
             &mut grinding,
             claims.opening_claims(),
+            &digests,
             &claims.groups,
             basis,
         )?;
         for index in 0..request.schedule.recursive_folds.len() {
             let owner = resident.owner;
             handoff.current = owner;
-            handoff.next = *owners.get(index + 2).ok_or_else(|| {
-                AkitaError::Internal("resolved route has no successor fold".into())
-            })?;
+            handoff.next = *owners
+                .get(index + 2)
+                .ok_or_else(|| AkitaError::Internal("resolved route has no successor fold".into()))?;
             (public, resident) = registry.slot(owner)?.recursive(
                 &mut handoff,
                 &mut grinding,
@@ -433,6 +421,7 @@ where
         Ok(())
     })
 }
+
 
 /// Runs `prove`, returning a panic inside it as [`AkitaError::Internal`]
 /// instead of unwinding into the caller. This relies on `panic = "unwind"`,

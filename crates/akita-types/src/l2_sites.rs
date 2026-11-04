@@ -2,7 +2,7 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{
+use akita_transcript::{PrivateProofChannel, 
     exchange_extension_group, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
     ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2,
 };
@@ -34,10 +34,12 @@ pub fn l2_prefix<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     let state = grinding.state_mut();
-    // T0-PORT(private): dev used exchange_private, masked here; re-express on v8.
+    // The integer is a clear message: the L2 route is never scheduled at a
+    // masked level (`specs/whiteout-akita.md` §2.5.0, Q8), whose channel
+    // refuses a plain exchange.
     state.context(ProtocolContextRecord::new(
         site(level, ROLE_INTEGER).to_bytes(),
         ProtocolMessageKind::ProofAtoms as u32,
@@ -47,7 +49,7 @@ where
     ));
     let mut integer = response_l2_sq;
     state.exchange(std::slice::from_mut(&mut integer))?;
-    exchange_extension_group::<F, E, _>(state, site(level, ROLE_SUBCLAIMS), subclaims)?;
+    state.exchange_private_extension_group(site(level, ROLE_SUBCLAIMS), subclaims)?;
     Ok(integer)
 }
 
@@ -60,14 +62,12 @@ pub fn l2_virtual_evaluations<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    // T0-PORT(private): dev used exchange_private here; re-express on v8.
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        site(level, ROLE_VIRTUAL_EVALUATIONS),
-        evaluations,
-    )
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(site(level, ROLE_VIRTUAL_EVALUATIONS), evaluations)?;
+    Ok(())
 }
 
 #[cfg(all(test, feature = "prover"))]

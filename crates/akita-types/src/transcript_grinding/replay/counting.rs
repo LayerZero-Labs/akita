@@ -1,22 +1,19 @@
 //! Pad-layout replay: the masked verifier run over a counting view of the pad
 //! schedule (`specs/whiteout-akita.md` §4.5, N8).
 
-use super::{
-    fold_response_site, next_entry, FoldResponseReplay, GrindingPlanCursor, GrindingReplay,
-};
-use crate::{FoldDrawRecord, FoldSite};
+use super::{next_entry, FoldResponseReplay, GrindingPlanCursor, GrindingReplay};
 use akita_error::AkitaError;
 use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
-use jolt_transcript::{Channel, Fork, PrivateChannel, FORK_SEED_LEN};
+use akita_transcript::ProofChannel;
 
 /// The third [`GrindingReplay`]: it replays the masked verifier over the
 /// counting view's channel (`CommittedPadsView::counting()`), so the pads and
 /// product operands the replay takes are the honest schedule's.
 ///
-/// Its proof-of-work queries consume their plan entry and read no nonce: the
-/// replay runs over zero or arbitrary message bytes, which no nonce predicate
-/// accepts. Its fold responses draw the fork at counter 0, the one-shot
-/// counter of every masked level. It produces a pad count and an operand list
+/// Its proof-of-work queries and fold responses consume their plan entries and
+/// read nothing: the replay runs over zero message bytes, which no nonce
+/// predicate accepts. Every masked level's fold response is one-shot, so its
+/// counter is 0 either way. It produces a pad count and an operand list
 /// through its channel, never a verdict on a proof.
 ///
 /// Run it over zero bytes, or a reader that never fails, and never over proof
@@ -29,7 +26,7 @@ pub struct CountingGrinding<'a, C> {
     invalid: bool,
 }
 
-impl<'a, C: Channel + PrivateChannel<Error: Into<AkitaError>>> CountingGrinding<'a, C> {
+impl<'a, C: ProofChannel> CountingGrinding<'a, C> {
     /// Attach the counting channel to the schedule's public grinding plan.
     #[must_use]
     pub fn new(state: &'a mut C, plan: &'a GrindingPlan) -> Self {
@@ -62,9 +59,7 @@ impl<'a, C: Channel + PrivateChannel<Error: Into<AkitaError>>> CountingGrinding<
     }
 }
 
-impl<C: Channel + PrivateChannel<Error: Into<AkitaError>>> GrindingReplay
-    for CountingGrinding<'_, C>
-{
+impl<C: ProofChannel> GrindingReplay for CountingGrinding<'_, C> {
     type State = C;
 
     fn state_mut(&mut self) -> &mut C {
@@ -79,23 +74,22 @@ impl<C: Channel + PrivateChannel<Error: Into<AkitaError>>> GrindingReplay
         let result = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork).map(|_| ());
         self.checked(result)
     }
-
-    fn check_public(&mut self, _holds: bool) -> Result<(), AkitaError> {
-        Ok(())
-    }
 }
 
-impl<C: Channel + PrivateChannel<Error: Into<AkitaError>>> FoldResponseReplay
-    for CountingGrinding<'_, C>
-{
-    type Sponge = C::Sponge;
-
-    fn read_fold_response(&mut self, site: GrindingSite) -> Result<Fork<C::Sponge>, AkitaError> {
-        let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse);
-        let entry = self.checked(entry)?;
-        self.state.site(fold_response_site(site, entry.nonce_bits));
-        let seed: [u8; FORK_SEED_LEN] = self.state.challenge_bytes();
-        Ok(Fork::new(&seed, 0))
+impl<C: ProofChannel> FoldResponseReplay for CountingGrinding<'_, C> {
+    fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
+        let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)
+            .and_then(|_| {
+                next_entry(
+                    &mut self.cursor,
+                    GrindingSite::FoldChallengeWork {
+                        level: site.level(),
+                    },
+                    GrindingQueryKind::FoldChallengeWork,
+                )
+            });
+        self.checked(entry)?;
+        Ok(0)
     }
 
     fn record_fold_challenges(
@@ -103,12 +97,7 @@ impl<C: Channel + PrivateChannel<Error: Into<AkitaError>>> FoldResponseReplay
         level: u32,
         group: u32,
         coordinate_count: usize,
-        draws: &FoldDrawRecord,
     ) -> Result<(), AkitaError> {
-        let site = FoldSite::FoldChallenge { level, group }.id();
-        let site = self.checked(site)?;
-        self.state.site(site.into());
-        draws.log_into(&mut *self.state);
         let result = coordinate_count
             .checked_add(1)
             .ok_or(AkitaError::InvalidProof)

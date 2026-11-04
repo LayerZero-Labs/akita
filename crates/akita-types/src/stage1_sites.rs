@@ -2,7 +2,7 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE1};
+use akita_transcript::{PrivateProofChannel, exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE1};
 use core::slice;
 use jolt_transcript::PadSlots;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
@@ -33,14 +33,12 @@ pub fn stage1_child_claims<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    // T0-PORT(private): dev used exchange_private here; re-express on v8.
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        stage1_site(level, stage, ROLE_CHILD_CLAIMS),
-        claims,
-    )
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(stage1_site(level, stage, ROLE_CHILD_CLAIMS), claims)?;
+    Ok(())
 }
 
 /// Exchange the final range-image evaluation after leaf sumcheck challenges.
@@ -55,15 +53,13 @@ pub fn stage1_range_image<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    // T0-PORT(private): dev used exchange_private here; re-express on v8.
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
+    let slots = grinding.state_mut().exchange_private_extension_group(
         stage1_site(level, stage, ROLE_RANGE_IMAGE),
         slice::from_mut(&mut evaluation),
     )?;
-    Ok((evaluation, PadSlots::default()))
+    Ok((evaluation, slots))
 }
 
 #[cfg(all(test, feature = "prover"))]

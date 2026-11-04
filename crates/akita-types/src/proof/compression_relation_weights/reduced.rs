@@ -431,6 +431,7 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
             alpha_powers: scalar_powers(alpha, maximum_dimension),
             coefficient_block_len: 1,
             physical_field_len,
+            groups: super::factored::Groups::default(),
         };
         let mut maps = Vec::with_capacity(row_weights.len());
         let mut row_index = 0;

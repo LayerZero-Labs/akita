@@ -11,7 +11,8 @@ use akita_error::AkitaError;
 use jolt_algebra::checked;
 
 use super::{AffineWeight, AffineWeightSource, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
-use crate::{eq_poly::EqPolynomial, Field};
+use crate::eq_poly::EqPolynomial;
+use jolt_algebra::Field;
 
 /// Widest prepared row; wider rows keep the general affine contraction.
 pub const MAX_PREPARED_STRIDE: usize = 512;

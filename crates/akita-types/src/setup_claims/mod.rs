@@ -3,10 +3,11 @@ mod query;
 pub mod transcript;
 mod transport;
 
-use crate::{AkitaExpandedSetup, AkitaSetupSeed, FpExtEncoding};
+use crate::{AkitaExpandedSetup, FpExtEncoding};
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
-use akita_params::dispatch::field_modulus_be_bytes;
+use jolt_algebra::field_modulus_be_bytes;
 use akita_serialization::{AkitaSerialize, Valid};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 pub use query::{SetupQuery, SetupWeightTerm};
