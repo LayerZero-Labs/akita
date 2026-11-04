@@ -51,6 +51,7 @@ pub(crate) use crt_matvec::{mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_v
 #[cfg(test)]
 pub(crate) use decompose::decompose_block_i8;
 pub(crate) use decompose::decompose_commit_blocks_into;
+pub use decompose::decompose_rows_i8_into;
 pub(crate) use digit_relation::{
     digit_relation_matrix_extent, digit_relation_rows_cached_prover_bounds,
     digit_relation_rows_streamed_prover_bounds, DigitRelationRows,

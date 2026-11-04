@@ -207,7 +207,7 @@ impl<F: Field + CanonicalEncoding, C> PrivateProofChannel<F> for MaskedVerifierC
     ) -> Result<PadSlots, AkitaError> {
         exchange_extension_group::<F, E, _>(self.state, site, values)?;
         let slots = self.view.take_ext(values.len(), E::DEGREE);
-        Ok(self.state.guard(slots.map_err(AkitaError::from))?)
+        self.state.guard(slots.map_err(AkitaError::from))
     }
 
     fn exchange_public<T: Encoding + FromNarg + Copy>(

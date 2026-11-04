@@ -301,7 +301,7 @@ mod high_half_tests;
 mod tests {
     use super::*;
 
-    use jolt_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
+    use jolt_algebra::ring::scalar_powers;
 
     use jolt_algebra::{Ext2, ExtField, Fp32, FpExt4, FpExt8, MulBaseUnreduced, Ring, Zero};
 

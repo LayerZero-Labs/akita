@@ -529,7 +529,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     search.recorded_split_visits(request.opening, r, relation_domain, &core)
                 {
                     for (score, params, next_witness_len) in visits {
-                        visit(score, r, params, next_witness_len);
+                        visit(score, r, params, next_witness_len)?;
                     }
                     continue;
                 }

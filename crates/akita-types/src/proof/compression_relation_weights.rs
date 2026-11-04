@@ -15,7 +15,7 @@ use akita_algebra::poly::multilinear_eval;
 use akita_algebra::row_batch::dot_base_rows_batched;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
-use jolt_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
+use jolt_algebra::ring::scalar_powers;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;

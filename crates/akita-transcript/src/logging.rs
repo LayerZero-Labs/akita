@@ -6,7 +6,8 @@ use std::cell::RefCell;
 thread_local! {
     static THREAD_EVENTS: RefCell<Vec<TranscriptEvent>> = const { RefCell::new(Vec::new()) };
     static THREAD_PROOF_RANGES: RefCell<Vec<ProofMessageRange>> = const { RefCell::new(Vec::new()) };
-    static PENDING_PROOF_RANGE: RefCell<Option<(ProtocolContextRecord, usize, Option<(usize, usize)>)>> = const { RefCell::new(None) };
+    /// The open proof group, its length not yet known.
+    static PENDING_PROOF_RANGE: RefCell<Option<ProofMessageRange>> = const { RefCell::new(None) };
 }
 
 /// One proof channel event recorded for structural diagnostics.
@@ -36,20 +37,14 @@ pub(crate) fn record_context(record: ProtocolContextRecord) {
 
 fn finish_pending(end: usize) {
     let pending = PENDING_PROOF_RANGE.with(|pending| pending.borrow_mut().take());
-    let Some((context, start, pads)) = pending else {
+    let Some(mut range) = pending else {
         return;
     };
-    let Some(len) = end.checked_sub(start) else {
+    let Some(len) = end.checked_sub(range.start) else {
         return;
     };
-    THREAD_PROOF_RANGES.with(|ranges| {
-        ranges.borrow_mut().push(ProofMessageRange {
-            context,
-            start,
-            len,
-            pads,
-        });
-    });
+    range.len = len;
+    THREAD_PROOF_RANGES.with(|ranges| ranges.borrow_mut().push(range));
 }
 
 pub(crate) fn record_proof_boundary(record: ProtocolContextRecord, start: usize) {
@@ -61,7 +56,14 @@ pub(crate) fn record_proof_boundary(record: ProtocolContextRecord, start: usize)
             || kind == crate::ProtocolMessageKind::GrindingNonce as u32
             || kind == crate::ProtocolMessageKind::FoldResponseNonce as u32
     ) {
-        PENDING_PROOF_RANGE.with(|pending| *pending.borrow_mut() = Some((record, start, None)));
+        PENDING_PROOF_RANGE.with(|pending| {
+            *pending.borrow_mut() = Some(ProofMessageRange {
+                context: record,
+                start,
+                len: 0,
+                pads: None,
+            });
+        });
     }
 }
 
@@ -69,8 +71,8 @@ pub(crate) fn record_proof_boundary(record: ProtocolContextRecord, start: usize)
 /// count`. A masked channel calls this after each private message.
 pub fn mark_masked(first: usize, count: usize) {
     PENDING_PROOF_RANGE.with(|pending| {
-        if let Some((_, _, pads)) = pending.borrow_mut().as_mut() {
-            *pads = Some((first, count));
+        if let Some(range) = pending.borrow_mut().as_mut() {
+            range.pads = Some((first, count));
         }
     });
 }

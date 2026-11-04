@@ -8,9 +8,7 @@ use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_params::layout::relation_layout::{RelationRhsLayout, RelationRowFamily};
 use jolt_algebra::checked;
-use jolt_algebra::ring::{
-    eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, scalar_powers,
-};
+use jolt_algebra::ring::{eval_ring_at, scalar_powers};
 use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, Field, MulBaseUnreduced};
 use std::iter::repeat_n;

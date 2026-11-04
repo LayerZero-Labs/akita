@@ -467,7 +467,7 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Com
 #[cfg(test)]
 mod committed_group_tests {
     use super::*;
-    use jolt_algebra::{Fp32, Ring, Zero};
+    use jolt_algebra::{Fp32, Ring};
 
     type F = Fp32<4294967197>;
 

@@ -544,7 +544,7 @@ where
 }
 
 /// Fused multi-polynomial column sweep over one hot source views.
-pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
+pub fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
     a_view: &RingMatrixView<'_, F, D>,
     sources: &[OneHotSource<'_, I>],
     n_a: usize,
