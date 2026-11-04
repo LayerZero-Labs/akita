@@ -11,7 +11,9 @@ use akita_algebra::ring::{
 use akita_challenges::FoldChallengeFamily;
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationPolynomialKind, TrinomialSign};
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_chunks, Field};
 
 use crate::binary_source::{BinarySourceDescriptor, BINARY_SOURCE_Q};
 use crate::root_repacking::RootCoefficientRepacking;
@@ -340,9 +342,16 @@ impl<E: Field> NativeRootWeights<E> {
             });
         }
         let equality = akita_algebra::offset_eq::OffsetEqWindow::new(point)?;
-        let mut value = self.terms.iter().fold(E::zero(), |acc, &(index, weight)| {
-            acc + weight * equality.eval(index)
-        });
+        // Field addition is exact, so chunked partial sums give the same value.
+        let mut value = cfg_chunks!(self.terms, 1 << 14)
+            .map(|chunk| {
+                chunk.iter().fold(E::zero(), |acc, &(index, weight)| {
+                    acc + weight * equality.eval(index)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .fold(E::zero(), |acc, partial| acc + partial);
         if !self.families.is_empty() {
             let equality = RootEq::new(point)?;
             for family in &self.families {
