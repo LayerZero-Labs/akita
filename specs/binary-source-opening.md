@@ -1334,6 +1334,19 @@ output was unused.
 No layout, schedule, transcript or proof byte changed. All 48 runs below
 reproduced their digest pins.
 
+The tables below predate the v8 merge. After merging the v8 port of the
+padding-row deletion (`53b25df19`, measured at `85d0d17b3`), `word-prime`
+was proved three more times per size with the catalog cache. Every run
+reproduced its v8 pin. The one-minute loads were higher than in the pre-v8
+sweep, so the small increase is within the host's noise:
+
+| N | Complete proving after the v8 merge (ms) | Pre-v8 final (ms) | Prover peak RSS bytes | One-minute load |
+| --- | ---: | ---: | ---: | --- |
+| 2^22 | 1,783.7 | 1,737.8 | 4,193,042,432 | 9.48–11.76 |
+| 2^23 | 3,012.9 | 2,927.9 | 8,056,356,864 | 8.90–10.26 |
+
+Those logs are `$CARGO_TARGET_DIR/v8-logs/317-q-<log>-word-prime-<run>.txt`.
+
 The driver records each prover span's call count, inclusive wall time and
 process CPU time (`getrusage` user plus system). It also records live and
 peak heap through a counting global allocator. Prover peak RSS is the
@@ -1799,9 +1812,10 @@ rather than once per carrier column. The prover expands each column by at most
 
 ### Memory
 
-The v8 merge's single N=2^23 `word-prime` run without the prover-speed pass,
-which planned its catalog in the proving process, peaked at 9,986,932,736
-bytes. Before the v8 merge, the prover-speed
+The N=2^23 `word-prime` prover peak is 8,056,356,864 bytes after the v8
+merge, the median of the post-merge runs in the prover span profile. The v8
+merge's single run without the prover-speed pass, which planned its catalog in
+the proving process, peaked at 9,986,932,736 bytes. Before the v8 merge, the prover-speed
 pass's medians were 8,051,064,832 bytes in the current protocol and
 8,057,176,064 bytes in the dev protocol, against 8,462,876,672 bytes for the
 baseline executable under the same conditions. All are below one sixth of the
