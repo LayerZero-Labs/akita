@@ -94,12 +94,14 @@ pub(crate) const fn state_allows_terminal_seed(
 ///
 /// The bound applies to the Cartesian product over distinct interchangeable
 /// classes. Class multiplicity does not count toward it, so any number of
-/// identical producers fits; three to eight distinct classes do, depending on
+/// identical producers fits; four to twelve distinct classes do, depending on
 /// the per-class domain sizes. A larger product removes coefficient-packing
 /// root openings for that dimension, as an unsupported dimension does. A multi-chunk root
 /// only folds by coefficient packing, so that dimension then offers no root
-/// candidate; other dimensions are unaffected.
-pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
+/// candidate; other dimensions are unaffected. The budget covers all opening
+/// combinations for five distinct fp128 dense producers, whose A dimensions
+/// reach 1024 and give at most five packing choices per producer.
+pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 4096;
 
 /// Enumerate the root precommit openings for one shared opening dimension.
 ///
@@ -872,3 +874,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "../../test/grouped_root_openings.rs"]
+mod grouped_root_opening_tests;
