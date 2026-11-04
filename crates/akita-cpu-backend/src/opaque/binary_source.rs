@@ -572,21 +572,39 @@ where
     carriers
         .try_reserve_exact(index.padded_carriers())
         .map_err(|_| AkitaError::InvalidInput("carrier allocation failed".into()))?;
-    for carrier in 0..index.padded_carriers() {
-        let address = checked::sum([owner_start, index.kernel_carrier_index(carrier)?])
-            .ok_or(AkitaError::InvalidProof)?;
-        carriers.push(
-            *source
+    carriers.resize(index.padded_carriers(), 0u128);
+    let gather = |(first, chunk): (usize, &mut [u128])| {
+        for (carrier, slot) in (first * FIELD_SWITCH_GATHER_CHUNK..).zip(chunk) {
+            let address = checked::sum([owner_start, index.kernel_carrier_index(carrier)?])
+                .ok_or(AkitaError::InvalidProof)?;
+            *slot = *source
                 .sources
                 .get(address)
-                .ok_or(AkitaError::InvalidProof)?,
-        );
+                .ok_or(AkitaError::InvalidProof)?;
+        }
+        Ok::<_, AkitaError>(())
+    };
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        carriers
+            .par_chunks_mut(FIELD_SWITCH_GATHER_CHUNK)
+            .enumerate()
+            .try_for_each(gather)?;
     }
+    #[cfg(not(feature = "parallel"))]
+    carriers
+        .chunks_mut(FIELD_SWITCH_GATHER_CHUNK)
+        .enumerate()
+        .try_for_each(gather)?;
     binding
         .scope_lease()
         .admit_commitment(context, handle.committed.commitment_id)?;
     Ok((Vec::new(), Box::new(carriers)))
 }
+
+/// Carriers gathered by one parallel task of the field-switch source.
+const FIELD_SWITCH_GATHER_CHUNK: usize = 1 << 14;
 
 /// Setup columns in one parallel piece of a public digit commitment.
 const DIGIT_COMMITMENT_PIECE_COLUMNS: usize = 256;
