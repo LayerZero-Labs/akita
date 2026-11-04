@@ -4,15 +4,16 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-11-04 |
-| Status | accepted |
+| Status | implemented |
 | PR | |
 | Supersedes | None |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
-> **Accepted: interleaved lane runs.** Section 1 measures the layout before the
-> change, with code citations at commit `02bd154b1`. Sections 2-6 compare the
-> candidate layouts and choose one. Section 7 is the implementation plan.
+> **Implemented: interleaved lane runs** (`ce98d817c`). Section 1 measures the
+> layout before the change, with code citations at commit `02bd154b1`.
+> Sections 2-6 compare the candidate layouts and choose one. Section 7 is the
+> implementation plan, and Section 8 measures the result.
 
 ## Summary
 
@@ -592,6 +593,54 @@ so no extension seam is added. Ordinary bytes cannot change, and
    three response runs of one owner each.
 6. **Re-pins.** All eighteen rows of `scripts/binary-source-full-size-digests.tsv`
    and the six `assert_base_bytes` pins are regenerated from runs.
+
+## 8. Measured result
+
+The opening spec's prover span profile records the measurement: three
+isolated proving runs and three isolated verifications per configuration of
+`ce98d817c`, interleaved with three of `06b8435eb`, with a catalog planned
+once per executable. Every run reproduced its pin and verified. The host was
+heavily shared: one-minute loads were 11.7 to 28.6, against 4.2 to 10.7 in
+Section 1.3's runs. Times are medians in milliseconds; *after root* is complete
+proving minus the binary root level, and *proving CPU* is the process CPU time
+of complete proving.
+
+| N | Shape | Stage 2 | Weight materialization | After root | Complete proving | Proving CPU | Verification | Prover peak RSS GB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2^22 | word | 362.5 → 208.2 | 182.3 → 185.7 | 357.5 → 483.7 | 1,917.3 → 1,859.3 (-3%) | 10,918 → 11,919 (+9%) | 261.2 → 267.8 | 4.20 → 2.89 |
+| 2^22 | word-prime | 369.5 → 203.4 | 247.6 → 291.3 | 346.9 → 486.0 | 2,033.5 → 2,039.9 (+0%) | 12,231 → 13,204 (+8%) | 356.6 → 377.2 | 4.20 → 2.91 |
+| 2^22 | word-prime-ordinary | 469.7 → 407.4 | 435.5 → 390.4 | 696.4 → 469.1 | 3,230.5 → 2,637.6 (-18%) | 12,523 → 12,290 (-2%) | 620.5 → 650.4 | 4.76 → 4.80 |
+| 2^22 | prime5 | 652.6 → 438.8 | 639.9 → 759.6 | 326.8 → 500.1 | 3,018.3 → 2,972.1 (-2%) | 17,847 → 15,787 (-12%) | 776.1 → 827.6 | 6.97 → 4.21 |
+| 2^23 | word | 722.0 → 382.5 | 265.6 → 287.3 | 517.7 → 469.5 | 3,259.4 → 2,869.2 (-12%) | 19,851 → 18,295 (-8%) | 260.1 → 269.4 | 8.05 → 5.33 |
+| 2^23 | word-prime | 771.5 → 440.7 | 499.6 → 546.7 | 725.7 → 665.1 | 4,537.8 → 4,142.3 (-9%) | 21,421 → 19,448 (-9%) | 374.0 → 383.2 | 8.05 → 5.32 |
+| 2^23 | word-prime-ordinary | 717.2 → 682.8 | 441.4 → 607.7 | 690.1 → 590.1 | 4,411.2 → 4,827.9 (+9%) | 21,671 → 21,862 (+1%) | 835.6 → 849.0 | 8.63 → 8.64 |
+| 2^23 | prime5 | 751.1 → 705.3 | 1,043.6 → 1,256.1 | 510.3 → 548.6 | 4,522.6 → 5,502.3 (+22%) | 26,450 → 26,238 (-1%) | 784.3 → 818.1 | 8.06 → 8.05 |
+
+- **The predicted gain arrived.** Stage 2 plus the table part of
+  materialization fell by 170 to 182 ms where 2^25 became 2^24, against
+  Section 6's 175 ms. Where 2^26 became 2^25 it fell by 244 ms at N=2^22
+  `prime5` and by 364 to 373 ms at N=2^23, against 330 ms.
+- **Other prover work grew.** Family visits and repacking cost more with
+  interleaved runs, which returns part of the gain (opening spec, prover span
+  profile). At N=2^22 `word` and `word-prime`, the basis-2^6 suffix of Section
+  5.2 adds about 130 ms after the root level and 8% to 9% proving CPU, which
+  cancels the gain in those two shapes.
+- **Memory fell.** Prover peak RSS fell by 31% to 40% in the five shapes whose
+  domain halved.
+- **Verification grew by 1.6% to 6.6%.** Image evaluation grew by about 3.3
+  ms, as Section 4 predicts for three to nine adjoints. The rest is in
+  authentication evaluation, whose arithmetic is unchanged (Section 7, item
+  3); its cause was not isolated.
+- **Wall-time totals are inconclusive.** Under these loads, spans the layout
+  does not touch varied as much as the totals. Proving CPU fell by 8% to 12%
+  at N=2^22 `prime5` and N=2^23 `word` and `word-prime`, and moved by 2% or
+  less in the three shapes whose domain did not shrink.
+
+Two follow-ups remain open. Ordering T row-major would restore three image
+adjoints (Section 4). Writing the family visits run-contiguously, or a
+structured Stage 2 oracle, would recover the visit cost. Whether the planner
+should prefer the basis-2^3 suffix at N=2^22 is a question for its objective,
+which this change does not touch.
 
 ## Verification record
 
