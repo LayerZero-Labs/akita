@@ -227,23 +227,38 @@ pub fn derive_centered_q_matrix(
     matrix
         .try_reserve_exact(count)
         .map_err(|_| AkitaError::InvalidSetup("q setup matrix allocation failed".into()))?;
-    for row in 0..label.rank {
-        for column in 0..columns {
-            let column = u64::try_from(column)
-                .map_err(|_| AkitaError::InvalidSetup("setup column exceeds u64".into()))?;
-            let mut stream = TypedSetupStream::new(
-                seed,
-                SetupStreamLabel {
-                    row,
-                    column,
-                    ..label
-                },
-            )?;
-            for _ in 0..degree {
-                matrix.push(stream.sample_q_centered()?);
-            }
-        }
+    if count == 0 {
+        return Ok(matrix);
     }
+    matrix.resize(count, 0);
+    // Every entry has its own stream, so entries fill independently.
+    let fill = |(entry, coefficients): (usize, &mut [i64])| {
+        let (row, column) = (entry / columns, entry % columns);
+        let mut stream = TypedSetupStream::new(
+            seed,
+            SetupStreamLabel {
+                row: u32::try_from(row)
+                    .map_err(|_| AkitaError::InvalidSetup("setup row exceeds u32".into()))?,
+                column: u64::try_from(column)
+                    .map_err(|_| AkitaError::InvalidSetup("setup column exceeds u64".into()))?,
+                ..label
+            },
+        )?;
+        for coefficient in coefficients {
+            *coefficient = stream.sample_q_centered()?;
+        }
+        Ok::<_, AkitaError>(())
+    };
+    #[cfg(feature = "parallel")]
+    {
+        use jolt_field::solinas::parallel::*;
+        matrix
+            .par_chunks_mut(degree)
+            .enumerate()
+            .try_for_each(fill)?;
+    }
+    #[cfg(not(feature = "parallel"))]
+    matrix.chunks_mut(degree).enumerate().try_for_each(fill)?;
     Ok(matrix)
 }
 
