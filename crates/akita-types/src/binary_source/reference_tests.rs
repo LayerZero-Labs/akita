@@ -304,23 +304,22 @@ fn check(shape: Shape, seed: u64) {
     }
 }
 
-/// Sixteen root shapes, shared by the differential test and the padding
-/// regression.
+/// Nineteen root shapes, shared by the differential test and the padding
+/// regression. They include every claim, plane and owner combination of the
+/// prime-plane end-to-end tests.
 ///
-/// The first eight use the end-to-end geometry: 8 padded carriers and 2
-/// columns, hence 4 scalar rows and one response quad. Without the mixed
-/// group they cover the word claim at width 128 with zero or one plane, at
-/// width 8 with zero planes, and with two owners and five planes; and prime-only
-/// two planes over two owners and three planes with five extra zero rings.
-/// With the mixed group they cover the word claim alone, and at width 8 with
-/// one plane and three extra rings. The next five, in the same geometry, add
-/// the remaining mixed configurations of the prime-plane end-to-end tests: one,
-/// two and five prime-only planes, and two and five planes beside the word
-/// claim. The last three use 32 carriers and 2 columns, or 64 carriers and 4
-/// columns, hence 16 scalar rows and four response quads: one owner with the
-/// word claim alone; two owners with two planes and the claim on the second
-/// owner; and the mixed group at width 8 with the word claim, five planes and
-/// two extra rings. No shape reaches a production-size geometry.
+/// Sixteen use the end-to-end geometry: 8 padded carriers and 2 columns, hence
+/// 4 scalar rows and one response quad. Without the mixed group: the word claim
+/// at width 128 with zero, one, two or five planes and at width 8 with zero
+/// planes; two owners with the word claim and zero or five planes; and
+/// prime-only claims with two planes over two owners and with three planes and
+/// five extra zero rings. With the mixed group: the word claim with zero, two
+/// or five planes, and at width 8 with one plane and three extra rings; and one,
+/// two or five prime-only planes. The last three use 32 carriers and 2 columns,
+/// or 64 carriers and 4 columns, hence 16 scalar rows and four response quads:
+/// one owner with the word claim alone; two owners with two planes and the claim
+/// on the second owner; and the mixed group at width 8 with the word claim, five
+/// planes and two extra rings. No shape reaches a production-size geometry.
 fn shapes() -> Vec<Shape> {
     let base = Shape {
         word_width: 128,
@@ -363,6 +362,15 @@ fn shapes() -> Vec<Shape> {
             extra_rings: 5,
             ..base
         },
+        Shape {
+            prime_planes: 2,
+            ..base
+        },
+        Shape {
+            prime_planes: 5,
+            ..base
+        },
+        Shape { owners: 2, ..base },
         mixed,
         Shape {
             word_width: 8,

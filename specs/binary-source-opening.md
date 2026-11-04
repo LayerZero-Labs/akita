@@ -1468,10 +1468,10 @@ serves both sides: the verifier evaluates the family's multilinear extension
 at the Stage 2 point, and the prover streams the same field elements into its
 dense table. No family stores one term per address or scans the outgoing
 domain. A test-only copy of the previous flat construction checks the
-evaluation and the dense table on sixteen small shapes. Thirteen use the
+evaluation and the dense table on nineteen small shapes. Sixteen use the
 end-to-end geometry of 8 padded carriers and 2 columns, which has one response
 quad. Without the mixed ordinary group they cover the word claim with zero,
-one or five prime planes, prime-only claims with two or three planes, word
+one, two or five prime planes, prime-only claims with two or three planes, word
 widths 128 and 8, one and two owners, and extra zero rings. With the mixed
 group they cover zero, one, two or five planes beside the word claim, and one,
 two or five prime-only planes. Three more use 32 carriers and 2 columns, or 64

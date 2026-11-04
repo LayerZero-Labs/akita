@@ -85,9 +85,11 @@ impl RootCoefficientRepacking {
 
     /// Enlarge the authenticated table to a scheduled ordinary witness domain.
     ///
-    /// Every added address is zero padding and is covered by the same public
-    /// padding weights as the minimal domain. Live coefficient addresses never
-    /// move. The domain must remain a power of two and contain the complete
+    /// Every added address is padding, like the tail of the minimal domain, and
+    /// an honest prover fills it with zeros. A binary root places no constraint
+    /// on padding values (`specs/binary-source-zero-padding.md`); only the
+    /// generic `NativeRootRelation::ring_switch` compiler gives padding public
+    /// weights. Live coefficient addresses never move. The domain must remain a power of two and contain the complete
     /// natural table and at least one ordinary destination ring element.
     pub fn with_domain_len(mut self, domain_len: usize) -> Result<Self, AkitaError> {
         if !domain_len.is_power_of_two() || domain_len < self.domain_len {
