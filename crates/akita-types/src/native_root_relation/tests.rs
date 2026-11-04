@@ -341,7 +341,9 @@ fn each_source_image_response_and_repacked_padding_mutation_rejects() {
         relation.repacking().validate_digit_table(&changed).unwrap();
         assert!(weights.check_table(&changed).is_err(), "segment {segment}");
     }
-    for address in [648, 1023, relation.repacking().domain_len() - 1] {
+    let natural_end = relation.repacking().natural_end().unwrap();
+    let domain_len = relation.repacking().domain_len();
+    for address in [natural_end, (natural_end + domain_len) / 2, domain_len - 1] {
         assert!(relation.repacking().is_padding_address(address).unwrap());
         let mut changed = table.clone();
         changed[address] = F::one();

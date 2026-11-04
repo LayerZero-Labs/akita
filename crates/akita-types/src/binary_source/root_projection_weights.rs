@@ -11,7 +11,8 @@ use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,
 };
 use crate::native_root_relation::{
-    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH,
+    digit_powers, weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes,
+    WEIGH_BATCH,
 };
 
 /// The prover's A operand for [`binary_direct_a_weights`].
@@ -148,33 +149,38 @@ impl<E: Field> DirectAWeights<E> {
     }
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
-        let low = eq.low().get(..648).ok_or(AkitaError::InvalidProof)?;
+        let lanes = eq.segment(&self.lanes)?;
         let mut sum = E::zero();
         for (element, h) in self.columns.iter().enumerate() {
-            let dot = h
-                .iter()
-                .zip(low)
-                .fold(E::zero(), |dot, (&weight, &eq)| dot + weight * eq);
-            sum += self.lanes.block_digit_weight(eq, element)? * dot;
+            lanes.digit_weights(element, |run, weight| {
+                let dot = h
+                    .iter()
+                    .zip(lanes.coefficients(run)?)
+                    .fold(E::zero(), |dot, (&h, &z)| dot + h * z);
+                sum += weight * dot;
+                Ok(())
+            })?;
         }
         Ok(sum)
     }
 
     pub(crate) fn visit(
         &self,
-        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+        visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
-        for (element, h) in self.columns.iter().enumerate() {
-            let mut power = E::one();
-            for digit in 0..self.lanes.digits() {
-                let base = self.lanes.base(element, digit)?;
-                for (t, &weight) in h.iter().enumerate() {
-                    visit(base + t, weight * power)?;
-                }
-                power *= E::from_u64(8);
-            }
-        }
-        Ok(())
+        let powers = digit_powers(self.lanes.digits(), E::one());
+        self.lanes.visit_elements(
+            0..self.columns.len(),
+            648,
+            |element, digit, coefficient| {
+                let weight = self.columns.get(element).and_then(|h| h.get(coefficient));
+                let (&weight, &power) = weight
+                    .zip(powers.get(digit))
+                    .ok_or(AkitaError::InvalidProof)?;
+                Ok(weight * power)
+            },
+            visit,
+        )
     }
 }
 
@@ -185,10 +191,10 @@ type ChallengeSupport<E> = Vec<(usize, E)>;
 ///
 /// It keeps rho and the sparse embedded challenges instead of one term per
 /// image digit. By the Hankel symmetry of the adjoint,
-/// `<adj(rho, c), z> = <c, adj(rho, z)>`. Every image lane starts an equality
-/// block, so its digits share the low factors `z = low[..648]`. The verifier
-/// therefore applies one adjoint per A row and then reads each column's
-/// challenge support. The prover expands each column by the same support,
+/// `<adj(rho, c), z> = <c, adj(rho, z)>`. Every image lane of one run shares
+/// the coefficient factors `z_run` of [`SegmentEq`](crate::native_root_relation::SegmentEq).
+/// The verifier therefore applies one adjoint per A row and run, and then
+/// reads each column's challenge support. The prover expands each column by the same support,
 /// as signed shifts of the extended row.
 #[derive(Clone, Debug)]
 pub(crate) struct ImageWeights<E: Field> {
@@ -264,26 +270,50 @@ impl<E: Field> ImageWeights<E> {
         Ok((element, support))
     }
 
+    /// The A row and column that meet at image `element`.
+    fn element_row_column(&self, element: usize) -> Result<(usize, usize), AkitaError> {
+        let index = element / self.rank;
+        let row_index = checked::mul_add(index / self.columns, self.rank, element % self.rank)
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok((row_index, index % self.columns))
+    }
+
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
-        let low = eq.low().get(..648).ok_or(AkitaError::InvalidProof)?;
+        let lanes = eq.segment(&self.lanes)?;
+        let mut adjoints: Vec<Option<Vec<E>>> = Vec::new();
+        adjoints
+            .try_reserve_exact(lanes.runs())
+            .map_err(|_| AkitaError::InvalidProof)?;
         let mut sum = E::zero();
         for (row_index, rho) in self.rho.iter().enumerate() {
-            let adjoint_low = adjoint.apply(rho, low)?;
+            adjoints.clear();
+            adjoints.resize(lanes.runs(), None);
             for column in 0..self.columns {
                 let (element, support) = self.row_column(row_index, column)?;
-                let mut dot = E::zero();
-                for &(k, value) in support {
-                    dot += value * *adjoint_low.get(k).ok_or(AkitaError::InvalidProof)?;
-                }
-                sum += self.lanes.block_digit_weight(eq, element)? * dot;
+                lanes.digit_weights(element, |run, weight| {
+                    let slot = adjoints.get_mut(run).ok_or(AkitaError::InvalidProof)?;
+                    let adjoint_z = match slot {
+                        Some(adjoint_z) => adjoint_z,
+                        None => {
+                            let z = lanes.coefficients(run)?;
+                            slot.insert(adjoint.apply(rho, z)?)
+                        }
+                    };
+                    let mut dot = E::zero();
+                    for &(k, value) in support {
+                        dot += value * *adjoint_z.get(k).ok_or(AkitaError::InvalidProof)?;
+                    }
+                    sum += weight * dot;
+                    Ok(())
+                })?;
             }
         }
         Ok(-sum)
     }
 
-    /// Expand each (A row, column) pair by its support, in batches through
-    /// [`weigh_units`], and stream the digit weights.
+    /// Expand each image element's (A row, column) pair by its support, in
+    /// batches through [`weigh_units`], and stream the digit weights.
     pub(crate) fn visit(
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
@@ -294,9 +324,9 @@ impl<E: Field> ImageWeights<E> {
             .iter()
             .map(|rho| adjoint.extend_row(rho))
             .collect::<Result<Vec<_>, _>>()?;
-        let weigh = |unit: usize| -> Result<(usize, [E; 648]), AkitaError> {
-            let row_index = unit / self.columns;
-            let (element, support) = self.row_column(row_index, unit % self.columns)?;
+        let weigh = |element: usize| -> Result<[E; 648], AkitaError> {
+            let (row_index, column) = self.element_row_column(element)?;
+            let (_, support) = self.row_column(row_index, column)?;
             let extended = extended.get(row_index).ok_or(AkitaError::InvalidProof)?;
             let mut h = [E::zero(); 648];
             for &(k, value) in support {
@@ -305,22 +335,27 @@ impl<E: Field> ImageWeights<E> {
                     *slot += value * g;
                 }
             }
-            Ok((element, h))
+            Ok(h)
         };
-        let units =
-            checked::product([self.rho.len(), self.columns]).ok_or(AkitaError::InvalidProof)?;
+        let powers = digit_powers(self.lanes.digits(), -E::one());
+        let units = self.lanes.elements();
         for start in (0..units).step_by(WEIGH_BATCH) {
             let end = units.min(start + WEIGH_BATCH);
-            for (element, h) in weigh_units(start..end, weigh)? {
-                let mut power = -E::one();
-                for digit in 0..self.lanes.digits() {
-                    let base = self.lanes.base(element, digit)?;
-                    for (t, &weight) in h.iter().enumerate() {
-                        visit(base + t, weight * power)?;
-                    }
-                    power *= E::from_u64(8);
-                }
-            }
+            let weights = weigh_units(start..end, weigh)?;
+            self.lanes.visit_elements(
+                start..end,
+                648,
+                |element, digit, coefficient| {
+                    let weight = weights
+                        .get(element - start)
+                        .and_then(|h| h.get(coefficient));
+                    let (&weight, &power) = weight
+                        .zip(powers.get(digit))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    Ok(weight * power)
+                },
+                &mut visit,
+            )?;
         }
         Ok(())
     }

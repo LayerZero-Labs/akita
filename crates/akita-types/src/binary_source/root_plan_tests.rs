@@ -21,7 +21,7 @@ fn descriptor() -> BinarySourceDescriptor {
 fn five_segments_share_addresses_when_scheduled_domain_grows() {
     let descriptor = descriptor();
     let plan = BinaryRootWitnessPlan::new(&descriptor, 2, 256).unwrap();
-    assert_eq!(plan.repacking().domain_len(), 65536);
+    assert_eq!(plan.repacking().domain_len(), 32768);
     assert_eq!(
         plan.repacking()
             .segments()
@@ -30,16 +30,16 @@ fn five_segments_share_addresses_when_scheduled_domain_grows() {
             .collect::<Vec<_>>(),
         vec![(1, 4), (4, 8), (2, 1), (1, 9), (1, 6)]
     );
-    let larger = plan.clone().with_domain_len(131072).unwrap();
+    let larger = plan.clone().with_domain_len(65536).unwrap();
     for segment in 0..5 {
         assert_eq!(
             plan.repacking().segment_range(segment).unwrap(),
             larger.repacking().segment_range(segment).unwrap()
         );
     }
-    assert!(larger.repacking().is_padding_address(131071).unwrap());
-    assert!(plan.clone().with_domain_len(32768).is_err());
-    assert!(plan.with_domain_len(65537).is_err());
+    assert!(larger.repacking().is_padding_address(65535).unwrap());
+    assert!(plan.clone().with_domain_len(16384).is_err());
+    assert!(plan.with_domain_len(32769).is_err());
     assert!(BinaryRootWitnessPlan::new(&descriptor, 0, 256).is_err());
 }
 

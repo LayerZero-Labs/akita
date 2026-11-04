@@ -10,7 +10,7 @@ use super::{
     binary_scalar_challenges, BinarySourceDescriptor, PrimePlaneManifest, PRIME_PLANE_DIGITS,
 };
 use crate::native_root_relation::{
-    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes,
+    digit_powers, weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes,
 };
 use crate::root_repacking::RootCoefficientRepacking;
 
@@ -144,13 +144,14 @@ struct PlaneInputs<E: Field> {
 /// Every prime plane's ring identity and scalar reading, kept factored.
 ///
 /// The relation batch weighs response row `r` at packed coefficient
-/// `4c + r mod 4` by `(-1)^c alpha^c`. Response lanes start equality blocks,
-/// so the verifier sums `L_k = sum_c (-1)^c alpha^c low[4c+k]` once and
-/// weighs each row by its element's recomposed high factors. A plane lane of
-/// 162 coefficients starts at one of the low-block offsets. At each offset
-/// the verifier reads `<omega, low>` and, by the Hankel symmetry of the
-/// shifted remainders, `<SRE(c, alpha), low> = <c, SRE(low, alpha)>` through
-/// each column's challenge support. The prover streams the same weights.
+/// `4c + r mod 4` by `(-1)^c alpha^c`. The response lanes of one run share
+/// coefficient factors `z_run`, so the verifier sums
+/// `L_k = sum_c (-1)^c alpha^c z_run[4c+k]` once per run and weighs each row
+/// by its element's recomposed lane factors. Plane lanes likewise share one
+/// coefficient vector per run. For each plane run the verifier reads
+/// `<omega, z_run>` and, by the Hankel symmetry of the shifted remainders,
+/// `<SRE(c, alpha), z_run> = <c, SRE(z_run, alpha)>` through each column's
+/// challenge support. The prover streams the same weights.
 #[derive(Clone, Debug)]
 pub(crate) struct PrimePlaneWeights<E: Field> {
     response: SegmentLanes,
@@ -181,30 +182,33 @@ impl<E: Field> PrimePlaneWeights<E> {
     }
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
-        let low = eq.low();
-        let stride = self.plane_lanes.stride();
-        if low.len() < 648 || !low.len().is_multiple_of(stride) || stride < 162 {
-            return Err(AkitaError::InvalidSetup(
-                "prime plane lanes differ from the equality blocks".into(),
-            ));
-        }
-        let mut signed = [E::zero(); 4];
-        let mut power = E::one();
-        for c in 0..162 {
-            let sign = if c % 2 == 0 { power } else { -power };
-            for (k, slot) in signed.iter_mut().enumerate() {
-                *slot += sign * *low.get(4 * c + k).ok_or(AkitaError::InvalidProof)?;
+        let response_eq = eq.segment(&self.response)?;
+        let plane_eq = eq.segment(&self.plane_lanes)?;
+        let mut signed = Vec::new();
+        signed
+            .try_reserve_exact(response_eq.runs())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for run in 0..response_eq.runs() {
+            let z = response_eq.coefficients(run)?;
+            let mut sums = [E::zero(); 4];
+            let mut power = E::one();
+            for c in 0..162 {
+                let sign = if c % 2 == 0 { power } else { -power };
+                for (k, slot) in sums.iter_mut().enumerate() {
+                    *slot += sign * *z.get(4 * c + k).ok_or(AkitaError::InvalidProof)?;
+                }
+                power *= self.alpha;
             }
-            power *= self.alpha;
+            signed.push(sums);
         }
-        let slots = low.len() / stride;
         let mut kernels = Vec::new();
         kernels
-            .try_reserve_exact(slots)
+            .try_reserve_exact(plane_eq.runs())
             .map_err(|_| AkitaError::InvalidProof)?;
-        for slot in 0..slots {
-            let window = low
-                .get(slot * stride..slot * stride + 162)
+        for run in 0..plane_eq.runs() {
+            let window = plane_eq
+                .coefficients(run)?
+                .get(..162)
                 .ok_or(AkitaError::InvalidProof)?;
             let mut kernel = [E::zero(); 162];
             shifted_remainder_evaluations::<E, PlusTrinomial>(window, self.alpha, &mut kernel)
@@ -216,53 +220,40 @@ impl<E: Field> PrimePlaneWeights<E> {
             let mut response = E::zero();
             for (quad, rows) in plane.rows.chunks(4).enumerate() {
                 let element = self.row_element(plane, 4 * quad)?;
-                let lanes = rows
-                    .iter()
-                    .zip(&signed)
-                    .fold(E::zero(), |acc, (&row, &l)| acc + row * l);
-                response += self.response.block_digit_weight(eq, element)? * lanes;
+                response_eq.digit_weights(element, |run, weight| {
+                    let lanes = rows
+                        .iter()
+                        .zip(signed.get(run).ok_or(AkitaError::InvalidProof)?)
+                        .fold(E::zero(), |acc, (&row, &l)| acc + row * l);
+                    response += weight * lanes;
+                    Ok(())
+                })?;
             }
             sum += plane.relation * response;
-            let omega = (0..slots)
-                .map(|slot| {
-                    let window = low
-                        .get(slot * stride..slot * stride + 162)
-                        .ok_or(AkitaError::InvalidProof)?;
+            let omega = (0..plane_eq.runs())
+                .map(|run| {
                     Ok(plane
                         .omega
                         .iter()
-                        .zip(window)
-                        .fold(E::zero(), |acc, (&w, &l)| acc + w * l))
+                        .zip(plane_eq.coefficients(run)?)
+                        .fold(E::zero(), |acc, (&w, &z)| acc + w * z))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
             for (column, &column_weight) in plane.column_weights.iter().enumerate() {
                 let support = self.support(plane.polynomial, column)?;
                 let element = checked::mul_add(plane_index, self.columns, column)
                     .ok_or(AkitaError::InvalidProof)?;
-                let mut lane = vec![None; slots];
-                let mut power = E::one();
-                for digit in 0..self.plane_lanes.digits() {
-                    let base = self.plane_lanes.base(element, digit)?;
-                    let slot = eq.low_offset(base) / stride;
-                    let value = match lane.get(slot).copied().flatten() {
-                        Some(value) => value,
-                        None => {
-                            let kernel = kernels.get(slot).ok_or(AkitaError::InvalidProof)?;
-                            let mut dot = E::zero();
-                            for &(s, value) in support {
-                                dot += value * *kernel.get(s).ok_or(AkitaError::InvalidProof)?;
-                            }
-                            let value = plane.reading
-                                * column_weight
-                                * *omega.get(slot).ok_or(AkitaError::InvalidProof)?
-                                - plane.relation * dot;
-                            *lane.get_mut(slot).ok_or(AkitaError::InvalidProof)? = Some(value);
-                            value
-                        }
-                    };
-                    sum += power * eq.high(base)? * value;
-                    power *= E::from_u64(8);
-                }
+                plane_eq.digit_weights(element, |run, weight| {
+                    let kernel = kernels.get(run).ok_or(AkitaError::InvalidProof)?;
+                    let mut dot = E::zero();
+                    for &(s, value) in support {
+                        dot += value * *kernel.get(s).ok_or(AkitaError::InvalidProof)?;
+                    }
+                    let reading = *omega.get(run).ok_or(AkitaError::InvalidProof)?;
+                    sum +=
+                        weight * (plane.reading * column_weight * reading - plane.relation * dot);
+                    Ok(())
+                })?;
             }
         }
         Ok(sum)
@@ -272,24 +263,30 @@ impl<E: Field> PrimePlaneWeights<E> {
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
+        let response_powers = digit_powers(self.response.digits(), E::one());
+        let plane_powers = digit_powers(self.plane_lanes.digits(), E::one());
         for (plane_index, plane) in self.planes.iter().enumerate() {
-            for (row, &row_weight) in plane.rows.iter().enumerate() {
-                if row_weight == E::zero() {
-                    continue;
-                }
-                let element = self.row_element(plane, row)?;
-                let mut power = plane.relation * row_weight;
-                for coefficient in 0..162 {
-                    let signed = if coefficient % 2 == 0 { power } else { -power };
-                    let packed = 4 * coefficient + row % 4;
-                    let mut scale = signed;
-                    for digit in 0..self.response.digits() {
-                        visit(self.response.base(element, digit)? + packed, scale)?;
-                        scale *= E::from_u64(8);
-                    }
-                    power *= self.alpha;
-                }
-            }
+            let alternating =
+                std::iter::successors(Some(plane.relation), |&power| Some(-power * self.alpha))
+                    .take(162)
+                    .collect::<Vec<_>>();
+            let first = self.row_element(plane, 0)?;
+            let elements =
+                checked::exact_div(plane.rows.len(), 4).ok_or(AkitaError::InvalidProof)?;
+            self.response.visit_elements(
+                first..checked::sum([first, elements]).ok_or(AkitaError::InvalidProof)?,
+                648,
+                |element, digit, packed| {
+                    let row = plane
+                        .rows
+                        .get(4 * (element - first) + packed % 4)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let power = alternating.get(packed / 4).zip(response_powers.get(digit));
+                    let (&power, &digit_power) = power.ok_or(AkitaError::InvalidProof)?;
+                    Ok(*row * power * digit_power)
+                },
+                &mut visit,
+            )?;
             let columns = plane.column_weights.len();
             let weigh = |column: usize| -> Result<[E; 162], AkitaError> {
                 let mut multiplier = [E::zero(); 162];
@@ -303,25 +300,31 @@ impl<E: Field> PrimePlaneWeights<E> {
                     &mut kernel,
                 )
                 .map_err(|error| AkitaError::Internal(error.to_string()))?;
+                let column_weight = *plane
+                    .column_weights
+                    .get(column)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (slot, &omega) in kernel.iter_mut().zip(&plane.omega) {
+                    *slot = plane.reading * column_weight * omega - plane.relation * *slot;
+                }
                 Ok(kernel)
             };
-            let kernels = weigh_units(0..columns, weigh)?;
-            for ((column, &column_weight), kernel) in
-                plane.column_weights.iter().enumerate().zip(kernels)
-            {
-                let element = checked::mul_add(plane_index, self.columns, column)
-                    .ok_or(AkitaError::InvalidProof)?;
-                for (coefficient, (&relation, &omega)) in
-                    kernel.iter().zip(&plane.omega).enumerate()
-                {
-                    let mut scale =
-                        plane.reading * column_weight * omega - plane.relation * relation;
-                    for digit in 0..self.plane_lanes.digits() {
-                        visit(self.plane_lanes.base(element, digit)? + coefficient, scale)?;
-                        scale *= E::from_u64(8);
-                    }
-                }
-            }
+            let scales = weigh_units(0..columns, weigh)?;
+            let first =
+                checked::product([plane_index, self.columns]).ok_or(AkitaError::InvalidProof)?;
+            self.plane_lanes.visit_elements(
+                first..checked::sum([first, columns]).ok_or(AkitaError::InvalidProof)?,
+                162,
+                |element, digit, coefficient| {
+                    let scale = scales
+                        .get(element - first)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let weight = scale.get(coefficient).zip(plane_powers.get(digit));
+                    let (&weight, &power) = weight.ok_or(AkitaError::InvalidProof)?;
+                    Ok(weight * power)
+                },
+                &mut visit,
+            )?;
         }
         Ok(())
     }

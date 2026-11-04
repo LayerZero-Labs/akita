@@ -12,7 +12,16 @@ use core::ops::Range;
 
 use akita_error::{checked, AkitaError};
 use akita_params::RelationRowGeometry;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
+
+/// Alignment of the committed live table length.
+///
+/// The padded-stride layout always ended on a multiple of the 256-cell scalar
+/// stride. Keeping that alignment admits every successor coefficient block it
+/// admitted.
+pub const LIVE_ALIGNMENT: usize = 256;
 
 /// One bounded coefficient family in the root witness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,8 +34,17 @@ pub struct RootRepackingSegment {
 
 /// Checked, source-independent addresses for one ordinary successor digit table.
 ///
-/// Segment order is followed by element, digit, coordinate plane, and natural
-/// polynomial coefficient. Each plane uses the row geometry's padded stride.
+/// Segments follow one another in order. A lane is one digit of one element,
+/// numbered `element * digits + digit`, and holds the element's natural
+/// coefficients, coordinate plane first. A segment whose row geometry pads its
+/// coefficients is *interleaved*: its lanes form runs of `W`, the largest power
+/// of two dividing the lane count, and coefficient `c` of lane `l` lives at
+/// `start + (l / W) * W * N + c * W + l mod W`, where `N` is the natural lane
+/// width. The segment start is a multiple of `W`. The table therefore holds no
+/// padded coefficient, and the equality weight of an interleaved address
+/// factors into a low factor of `l mod W` and a high factor of
+/// `start / W + (l / W) * N + c` (`specs/binary-source-dense-lanes.md`). A
+/// segment without padding keeps each lane contiguous at `start + l * N + c`.
 /// Destination ring elements are consecutive chunks of the resulting table;
 /// their boundaries have no effect on any root polynomial identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,17 +78,20 @@ impl RootCoefficientRepacking {
                     "root repacking segments require nonzero elements and digits".into(),
                 ));
             }
-            let width = checked::product([
-                segment.elements,
-                segment.digits,
-                segment.geometry.physical_coefficient_width(),
-            ])
-            .ok_or_else(|| AkitaError::InvalidSetup("root repacking width overflow".into()))?;
-            let range = checked::range(live_len, width)
+            let width =
+                checked::product([segment.elements, segment.digits, natural_width(segment)?])
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root repacking width overflow".into())
+                    })?;
+            let start = checked::align_up(live_len, run_lanes(segment)?)
+                .ok_or_else(|| AkitaError::InvalidSetup("root repacking range overflow".into()))?;
+            let range = checked::range(start, width)
                 .ok_or_else(|| AkitaError::InvalidSetup("root repacking range overflow".into()))?;
             live_len = range.end;
             ranges.push(range);
         }
+        let live_len = checked::align_up(live_len, LIVE_ALIGNMENT)
+            .ok_or_else(|| AkitaError::InvalidSetup("root repacking range overflow".into()))?;
         let domain_len = checked::ceil_log2(live_len.max(destination_ring_dimension))
             .and_then(checked::pow2)
             .ok_or_else(|| AkitaError::InvalidSetup("root repacking domain overflow".into()))?;
@@ -109,6 +130,17 @@ impl RootCoefficientRepacking {
         self.destination_ring_dimension
     }
 
+    /// Committed live table length: the natural end rounded up to
+    /// [`LIVE_ALIGNMENT`].
+    ///
+    /// The successor's relation reads the live witness in coefficient blocks
+    /// of its smallest role dimension. An interleaved table can end at any
+    /// cell, so the live witness keeps the padding up to the next aligned end.
+    /// The length does not depend on the destination ring dimension.
+    pub const fn live_len(&self) -> usize {
+        self.live_len
+    }
+
     /// Full digit table length, including plane tails and final ordinary padding.
     pub const fn domain_len(&self) -> usize {
         self.domain_len
@@ -136,32 +168,41 @@ impl RootCoefficientRepacking {
         let shape = self.segments.get(segment).ok_or_else(|| {
             AkitaError::InvalidInput("root repacking segment index is invalid".into())
         })?;
-        let degree = shape.geometry.polynomial_modulus_dimension();
-        let natural_width = checked::product([degree, shape.geometry.coordinate_plane_count()])
-            .ok_or_else(|| AkitaError::InvalidSetup("root natural width overflow".into()))?;
+        let natural_width = natural_width(shape)?;
         if element >= shape.elements || digit >= shape.digits || coefficient >= natural_width {
             return Err(AkitaError::InvalidInput(
                 "root repacking coefficient index is invalid".into(),
             ));
         }
-        let physical = shape
-            .geometry
-            .physical_coefficient_index(coefficient / degree, coefficient % degree)?;
         let lane = checked::mul_add(element, shape.digits, digit)
             .ok_or_else(|| AkitaError::InvalidSetup("root repacking lane overflow".into()))?;
-        let offset = checked::mul_add(lane, shape.geometry.physical_coefficient_width(), physical)
-            .ok_or_else(|| AkitaError::InvalidSetup("root coefficient offset overflow".into()))?;
         let range = self.ranges.get(segment).ok_or(AkitaError::InvalidProof)?;
-        checked::sum([range.start, offset])
+        let run = run_lanes(shape)?;
+        checked::product([lane / run, run, natural_width])
+            .and_then(|offset| checked::mul_add(coefficient, run, offset))
+            .and_then(|offset| checked::sum([range.start, offset, lane % run]))
             .filter(|&address| address < range.end)
             .ok_or_else(|| AkitaError::InvalidSetup("root coefficient address overflow".into()))
     }
 
+    /// Lanes per interleaved run of one segment: the largest power of two
+    /// dividing its lane count, or one for a segment that keeps lanes contiguous.
+    pub fn run_lanes(&self, segment: usize) -> Result<usize, AkitaError> {
+        self.segments
+            .get(segment)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("root repacking segment index is invalid".into())
+            })
+            .and_then(run_lanes)
+    }
+
     /// Whether a table address holds no natural coefficient.
     ///
-    /// Honest construction writes zero at these addresses. The binary root
-    /// compiles no row on them; [`NativeRootRelation::ring_switch`] adds one
-    /// zero row per address, including the final ordinary-ring padding.
+    /// Segments hold natural coefficients only, so padding is the alignment
+    /// gap before an interleaved segment and the domain tail. Honest
+    /// construction writes zero at these addresses. The binary root compiles
+    /// no row on them; [`NativeRootRelation::ring_switch`] adds one zero row
+    /// per address, including the final ordinary-ring padding.
     ///
     /// [`NativeRootRelation::ring_switch`]: crate::native_root_relation::NativeRootRelation::ring_switch
     pub fn is_padding_address(&self, address: usize) -> Result<bool, AkitaError> {
@@ -170,33 +211,16 @@ impl RootCoefficientRepacking {
                 "root repacking table address is invalid".into(),
             ));
         }
-        if address >= self.live_len {
-            return Ok(true);
-        }
-        for (shape, range) in self.segments.iter().zip(&self.ranges) {
-            if range.contains(&address) {
-                return Ok(
-                    (address - range.start) % shape.geometry.padded_coefficient_count()
-                        >= shape.geometry.polynomial_modulus_dimension(),
-                );
-            }
-        }
-        Err(AkitaError::InvalidProof)
+        Ok(!self.ranges.iter().any(|range| range.contains(&address)))
     }
 
     /// One past the largest natural coefficient address.
     ///
     /// Every address at or beyond this bound is a padding address.
     pub fn natural_end(&self) -> Result<usize, AkitaError> {
-        let (shape, range) = self
-            .segments
+        self.ranges
             .last()
-            .zip(self.ranges.last())
-            .ok_or(AkitaError::InvalidProof)?;
-        range
-            .end
-            .checked_sub(shape.geometry.padded_coefficient_count())
-            .and_then(|start| checked::sum([start, shape.geometry.polynomial_modulus_dimension()]))
+            .map(|range| range.end)
             .ok_or(AkitaError::InvalidProof)
     }
 
@@ -212,12 +236,7 @@ impl RootCoefficientRepacking {
             });
         }
         for (shape, digits) in self.segments.iter().zip(natural_digits) {
-            let natural_width = checked::product([
-                shape.geometry.polynomial_modulus_dimension(),
-                shape.geometry.coordinate_plane_count(),
-            ])
-            .ok_or_else(|| AkitaError::InvalidSetup("root natural width overflow".into()))?;
-            let expected = checked::product([shape.elements, shape.digits, natural_width])
+            let expected = checked::product([shape.elements, shape.digits, natural_width(shape)?])
                 .ok_or_else(|| AkitaError::InvalidSetup("root digit count overflow".into()))?;
             if digits.len() != expected {
                 return Err(AkitaError::InvalidSize {
@@ -236,45 +255,24 @@ impl RootCoefficientRepacking {
             AkitaError::InvalidSetup("root repacking table allocation is too large".into())
         })?;
         table.resize(self.domain_len, 0);
-        // Every lane is lane zero translated by its first address, so
-        // [`Self::coefficient_address`] runs once per coefficient of lane zero
-        // and once per later lane, not once per digit.
         for (segment, (shape, digits)) in self.segments.iter().zip(natural_digits).enumerate() {
-            let natural_width = checked::product([
-                shape.geometry.polynomial_modulus_dimension(),
-                shape.geometry.coordinate_plane_count(),
-            ])
-            .ok_or_else(|| AkitaError::InvalidSetup("root natural width overflow".into()))?;
-            if shape.elements == 0 || shape.digits == 0 {
-                continue;
-            }
-            let lane_zero = (0..natural_width)
-                .map(|coefficient| self.coefficient_address(segment, 0, 0, coefficient))
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            let first = self.coefficient_address(segment, 0, 0, 0)?;
-            let end = self
+            let width = natural_width(shape)?;
+            let run = run_lanes(shape)?;
+            let region = self
                 .ranges
                 .get(segment)
-                .ok_or(AkitaError::InvalidProof)?
-                .end;
-            let last = lane_zero
-                .iter()
-                .copied()
-                .max()
+                .and_then(|range| table.get_mut(range.clone()))
                 .ok_or(AkitaError::InvalidProof)?;
-            for (lane, lane_digits) in digits.chunks_exact(natural_width).enumerate() {
-                let shift = self
-                    .coefficient_address(segment, lane / shape.digits, lane % shape.digits, 0)?
-                    .checked_sub(first)
-                    .ok_or(AkitaError::InvalidProof)?;
-                if checked::sum([last, shift]).is_none_or(|address| address >= end) {
-                    return Err(AkitaError::InvalidProof);
-                }
-                for (&address, &value) in lane_zero.iter().zip(lane_digits) {
-                    *table
-                        .get_mut(address + shift)
-                        .ok_or(AkitaError::InvalidProof)? = value;
-                }
+            if run == 1 {
+                region.copy_from_slice(digits);
+                continue;
+            }
+            let run_len = checked::product([run, width]).ok_or(AkitaError::InvalidProof)?;
+            for (run_table, run_digits) in region
+                .chunks_exact_mut(run_len)
+                .zip(digits.chunks_exact(run_len))
+            {
+                transpose_run(run_table, run_digits, run, width)?;
             }
         }
         Ok(table)
@@ -361,6 +359,64 @@ impl RootCoefficientRepacking {
     }
 }
 
+/// Natural coefficients of one lane: every coordinate plane's degree.
+fn natural_width(shape: &RootRepackingSegment) -> Result<usize, AkitaError> {
+    checked::product([
+        shape.geometry.polynomial_modulus_dimension(),
+        shape.geometry.coordinate_plane_count(),
+    ])
+    .ok_or_else(|| AkitaError::InvalidSetup("root natural width overflow".into()))
+}
+
+/// Lanes per run: one when the geometry has no padding, so lanes stay
+/// contiguous, and otherwise the largest power of two dividing the lane count.
+fn run_lanes(shape: &RootRepackingSegment) -> Result<usize, AkitaError> {
+    if shape.geometry.padded_coefficient_count() == shape.geometry.polynomial_modulus_dimension() {
+        return Ok(1);
+    }
+    let lanes = checked::product([shape.elements, shape.digits])
+        .filter(|&lanes| lanes > 0)
+        .ok_or_else(|| AkitaError::InvalidSetup("root repacking lane overflow".into()))?;
+    checked::pow2(lanes.trailing_zeros() as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("root repacking lane overflow".into()))
+}
+
+/// Coefficient rows one transpose task writes; 64 one-byte digits of a lane
+/// share a cache line.
+const TRANSPOSE_ROWS: usize = 64;
+
+/// Write one run's lane-major digits coefficient-major: lane `j`, coefficient
+/// `c` moves from `digits[j * width + c]` to `table[c * run + j]`.
+fn transpose_run(
+    table: &mut [i8],
+    digits: &[i8],
+    run: usize,
+    width: usize,
+) -> Result<(), AkitaError> {
+    let rows = checked::product([TRANSPOSE_ROWS, run]).ok_or(AkitaError::InvalidProof)?;
+    let transpose = |(chunk, block): (usize, &mut [i8])| -> Result<(), AkitaError> {
+        let first = checked::product([chunk, TRANSPOSE_ROWS]).ok_or(AkitaError::InvalidProof)?;
+        let count = block.len() / run;
+        for lane in 0..run {
+            let source = checked::mul_add(lane, width, first)
+                .and_then(|start| digits.get(start..start.checked_add(count)?))
+                .ok_or(AkitaError::InvalidProof)?;
+            for (row, &value) in block.chunks_exact_mut(run).zip(source) {
+                *row.get_mut(lane).ok_or(AkitaError::InvalidProof)? = value;
+            }
+        }
+        Ok(())
+    };
+    #[cfg(feature = "parallel")]
+    let result = table
+        .par_chunks_mut(rows)
+        .enumerate()
+        .try_for_each(transpose);
+    #[cfg(not(feature = "parallel"))]
+    let result = table.chunks_mut(rows).enumerate().try_for_each(transpose);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,9 +494,15 @@ mod tests {
                 }
             }
         }
-        assert_eq!(plan.segment_range(0).unwrap(), 0..8192);
-        assert_eq!(plan.segment_range(1).unwrap(), 8192..8224);
-        assert_eq!(plan.domain_len(), 16384);
+        // Eight binary lanes interleave coefficient-major; the ordinary
+        // segment has no padding and stays lane-major.
+        assert_eq!(plan.run_lanes(0).unwrap(), 8);
+        assert_eq!(plan.run_lanes(1).unwrap(), 1);
+        assert_eq!(plan.coefficient_address(0, 1, 2, 13).unwrap(), 13 * 8 + 6);
+        assert_eq!(plan.coefficient_address(1, 0, 1, 3).unwrap(), 5184 + 16 + 3);
+        assert_eq!(plan.segment_range(0).unwrap(), 0..5184);
+        assert_eq!(plan.segment_range(1).unwrap(), 5184..5216);
+        assert_eq!(plan.domain_len(), 8192);
         for (address, &value) in table.iter().enumerate() {
             if !addresses.contains(&address) {
                 assert!(plan.is_padding_address(address).unwrap());
@@ -460,7 +522,7 @@ mod tests {
             .iter()
             .map(|&value| F::from_i64(i64::from(value)))
             .collect::<Vec<_>>();
-        for address in [648, 8191, 8224, plan.domain_len() - 1] {
+        for address in [5216, 6000, plan.domain_len() - 1] {
             assert!(plan.is_padding_address(address).unwrap());
             table[address] = F::from_u64(1);
             assert!(plan.validate_digit_table(&table).is_err());
@@ -486,6 +548,69 @@ mod tests {
     }
 
     #[test]
+    fn interleaved_runs_align_and_their_gaps_are_padding() {
+        let scalar = RelationRowGeometry::for_polynomial(
+            RelationPolynomial::plus_trinomial(162).unwrap(),
+            1,
+            256,
+        )
+        .unwrap();
+        let plan = RootCoefficientRepacking::new(
+            vec![
+                RootRepackingSegment {
+                    geometry: scalar,
+                    elements: 1,
+                    digits: 1,
+                },
+                RootRepackingSegment {
+                    geometry: scalar,
+                    elements: 6,
+                    digits: 2,
+                },
+            ],
+            256,
+        )
+        .unwrap();
+        // Twelve lanes form three runs of four, aligned past the first lane.
+        assert_eq!(plan.run_lanes(1).unwrap(), 4);
+        assert_eq!(plan.segment_range(0).unwrap(), 0..162);
+        assert_eq!(plan.segment_range(1).unwrap(), 164..164 + 12 * 162);
+        assert_eq!(
+            plan.coefficient_address(1, 5, 1, 161).unwrap(),
+            164 + 2 * 4 * 162 + 161 * 4 + 3
+        );
+        let natural = [
+            vec![1i8; 162],
+            (0..12 * 162).map(|i| (i % 7) as i8 - 3).collect(),
+        ];
+        let table = plan
+            .repack(&[&natural[0], &natural[1]])
+            .unwrap()
+            .iter()
+            .map(|&value| F::from_i64(i64::from(value)))
+            .collect::<Vec<_>>();
+        plan.validate_digit_table(&table).unwrap();
+        for element in 0..6 {
+            for coefficient in [0, 77, 161] {
+                let expected = (0..2).rev().fold(0i64, |acc, digit| {
+                    8 * acc + i64::from(natural[1][(element * 2 + digit) * 162 + coefficient])
+                });
+                assert_eq!(
+                    plan.recompose_coefficient(&table, 1, element, coefficient)
+                        .unwrap(),
+                    F::from_i64(expected)
+                );
+            }
+        }
+        for address in [162, 163] {
+            assert!(plan.is_padding_address(address).unwrap());
+            let mut changed = table.clone();
+            changed[address] = F::from_u64(1);
+            assert!(plan.validate_digit_table(&changed).is_err());
+        }
+    }
+
+    #[test]
     fn natural_end_matches_the_address_predicate() {
         let plan = plan();
         let natural_end = (0..plan.domain_len())
@@ -494,7 +619,7 @@ mod tests {
             .unwrap()
             + 1;
         assert_eq!(plan.natural_end().unwrap(), natural_end);
-        assert_eq!(natural_end, 8224);
+        assert_eq!(natural_end, 5216);
     }
 
     #[test]

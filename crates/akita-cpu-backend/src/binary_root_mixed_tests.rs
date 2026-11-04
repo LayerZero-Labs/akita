@@ -106,7 +106,7 @@ fn mixed_root() -> (NativeRootRelation<E>, Vec<i8>) {
         .unwrap();
     let relation = NativeRootRelation::new(plan, vec![binary_group, ordinary_group]).unwrap();
     assert_eq!(relation.row_count(), 2);
-    assert_eq!(relation.repacking().domain_len(), 16384);
+    assert_eq!(relation.repacking().domain_len(), 8192);
     (relation, digits)
 }
 
@@ -240,7 +240,9 @@ fn mixed_root_scalar_relation_rejects_each_segment_and_padding_mutation() {
         relation.repacking().validate_digit_table(&changed).unwrap();
         assert!(weights.check_table(&changed).is_err(), "segment {segment}");
     }
-    for address in [648, 1023, relation.repacking().domain_len() - 1] {
+    let natural_end = relation.repacking().natural_end().unwrap();
+    let domain_len = relation.repacking().domain_len();
+    for address in [natural_end, (natural_end + domain_len) / 2, domain_len - 1] {
         assert!(relation.repacking().is_padding_address(address).unwrap());
         let mut changed = table.clone();
         changed[address] += E::one();

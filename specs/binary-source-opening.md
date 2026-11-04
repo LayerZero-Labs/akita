@@ -355,8 +355,10 @@ identities to its one witness opening. The
 every native coefficient its ordinary witness address. This coefficient
 repacking is not a ring homomorphism.
 
-The root compiles no row on a *padding address*: a stride tail of a segment
-lane or an address at or beyond the last segment. Every root row, the typed A
+The root compiles no row on a *padding address*: an alignment gap before an
+interleaved segment or an address at or beyond the last segment's end. Lanes
+hold natural coefficients only
+([binary-source-dense-lanes.md](binary-source-dense-lanes.md)). Every root row, the typed A
 product and every source reading reads natural addresses only, so the decoded
 root equations and readings are the same for any two tables that agree on the
 natural cells. The honest prover writes zero padding. A prover that commits
@@ -520,22 +522,26 @@ in the same schedule. Ordinary prefix caches remain unchanged.
 Write `Psi = Y^648 - Y^324 + 1`. Projection rows cover the joined residual
 in polynomial-major order, so
 `rho[p][i][t] = sum_l mu_l J_l[p][i][t]`. The same A matrix is used by every
-polynomial. Let R be the power-of-two source-row count per polynomial. The
-response segment starts at address zero and orders cells by polynomial,
-source row, four response digits and a 1,024-coefficient stride. Split its
-Stage 2 point into coefficient coordinates `r_t`, two digit coordinates `r_d`,
-`log2(R)` row coordinates `r_j`, and the remaining owner/padding coordinates
-`r_p`. Define
+polynomial. Let R be the power-of-two source-row count per polynomial and
+`2^v` the largest power of two dividing the polynomial count. The response
+segment starts at address zero. Its lanes are numbered by polynomial, source
+row and response digit, and they interleave in runs of `W = 4 * R * 2^v`
+lanes: coefficient `t` of lane `l` lies at
+`floor(l/W) * W * 648 + t * W + (l mod W)`. Split the Stage 2 point into two
+digit coordinates `r_d`, `log2(R)` row coordinates `r_j`, `v` owner coordinates
+`r_p`, and the remaining coordinates `r_t`. Run `q` holds the polynomials
+`p` with `floor(p / 2^v) = q`, and its coefficient vector is
+`z_q[t] = eq(r_t, q*648 + t)`. Define
 
 ```text
 d = sum_(a=0..3) 8^a eq(r_d,a)
-bar_rho[i][t] = sum_p eq(r_p,p) rho[p][i][t]
-g_i(k) = <bar_rho[i], rem_Psi(Y^k)>
-h_i(s) = d * sum_(t=0..647) eq(r_t,t) g_i(s+t)
+bar_rho_q[i][t] = sum_(p in run q) eq(r_p, p mod 2^v) rho[p][i][t]
+g_(q,i)(k) = <bar_rho_q[i], rem_Psi(Y^k)>
+h_i(s) = d * sum_q sum_(t=0..647) z_q[t] g_(q,i)(s+t)
 W_A(r) = sum_(j,i,s) A[i][j][s] eq(r_j,j) h_i(s).
 ```
 
-The owner contraction uses the entire remaining Stage 2 point, including
+The coefficient vectors use the entire remaining Stage 2 point, including
 coordinates selecting the response segment against later witness segments.
 Only live owners, rows, rank entries and coefficients contribute; all typed
 prefix padding is zero. This yields one rectangular public weight on the
@@ -545,7 +551,7 @@ A-prefix evaluation for the entire group, also when an ordinary group joins.
 No quotient segment or `-q rho` term remains.
 
 The signed reduction kernel is Hankel. The existing trinomial adjoint computes
-each h_i with two exact products of length `2D-1 = 1,295`, without roots of
+each run's contribution to h_i with two exact products of length `2D-1 = 1,295`, without roots of
 unity. Multiplying a full length-1,295 kernel by a length-648 reversed input
 would have length `3D-2 = 1,942`; it is not a single length-1,295 product.
 The implementation splits the products and retains their required windows.
@@ -870,7 +876,7 @@ concatenation of U, if selected, followed by all EP planes in first-occurrence
 order. Within EP the order is plane, column, digit, natural coefficient. There
 is no inter-plane degree-64 padding: only the final D chunk is padded. D is
 fixed before the order-4 nonce and indexed column challenges. At order 5, those
-same EP digits occupy the outgoing witness with 256-coefficient scalar strides.
+same EP digits occupy the outgoing witness in interleaved runs of 256 lanes.
 D authentication addresses this exact compact-to-padded map. Order 9 proves
 the equations above in the same Stage 2 as the ordinary root obligations.
 No new proof messages or challenges are inserted after the suffix.

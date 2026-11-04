@@ -23,7 +23,8 @@ pub struct BinaryPrimePlanePrice {
     /// Minimum rank found in the existing generated scalar SIS table, if any.
     /// This lookup does not certify the binary root or its ordinary suffix.
     pub d_table_min_rank: Option<usize>,
-    /// Physical cells through the last live segment, including virtual tails.
+    /// Physical cells through the last live segment, including the alignment
+    /// gaps between interleaved segments, rounded up to the live alignment.
     pub outgoing_physical_cells: usize,
     /// Next power-of-two ordinary witness domain.
     pub outgoing_domain_len: usize,
@@ -98,8 +99,7 @@ pub fn price_binary_root_planes(
     let segment_physical_cells = (0..repacking.segments().len())
         .map(|segment| repacking.segment_range(segment).map(|range| range.len()))
         .collect::<Result<Vec<_>, _>>()?;
-    let outgoing_physical_cells =
-        checked::sum(segment_physical_cells.iter().copied()).ok_or(AkitaError::InvalidProof)?;
+    let outgoing_physical_cells = repacking.live_len();
     Ok(BinaryPrimePlanePrice {
         planes: prime.planes().len(),
         d_live_digits,
@@ -183,14 +183,14 @@ mod tests {
     fn prime_plane_small_fixture_prices_every_plane() {
         let manifest = manifest(3, 2, 1);
         for (planes, expected_cells, expected_d) in
-            [(1, 79616, 223), (2, 101632, 441), (5, 167680, 1094)]
+            [(1, 50432, 223), (2, 64512, 441), (5, 106240, 1094)]
         {
             let price =
                 price_binary_root_planes(&manifest, true, &prime(&manifest, planes), 64, None)
                     .unwrap();
             assert_eq!(price.outgoing_physical_cells, expected_cells);
             assert_eq!(price.d_columns, expected_d);
-            assert_eq!(price.segment_physical_cells.last(), Some(&(planes * 22016)));
+            assert_eq!(price.segment_physical_cells.last(), Some(&(planes * 13932)));
             println!("prime_plane small planes={planes}: {price:?}");
         }
     }
@@ -209,8 +209,14 @@ mod tests {
                         None,
                     )
                     .unwrap();
-                    let base = if bits == 22 { 23138048 } else { 39915264 };
-                    let expected = base + planes * 2818048 - if word { 0 } else { 69376 };
+                    // Planes start after T, or after K_val aligned to a run of 256 lanes.
+                    let base = match (bits, word) {
+                        (22, true) => 14642176,
+                        (22, false) => 14598144,
+                        (_, true) => 25259008,
+                        (_, false) => 25214976,
+                    };
+                    let expected = base + planes * 1783296;
                     assert_eq!(price.outgoing_physical_cells, expected);
                     assert_eq!(price.d_columns, planes * 27864 + if word { 648 } else { 0 });
                     assert_eq!(price.outgoing_domain_len, expected.next_power_of_two());
@@ -227,7 +233,7 @@ mod tests {
         let price =
             price_binary_root_planes(&manifest, false, &prime(&manifest, 5), 64, None).unwrap();
         assert_eq!(price.planes, 5);
-        assert_eq!(price.segment_physical_cells.last(), Some(&110080));
+        assert_eq!(price.segment_physical_cells.last(), Some(&69660));
         assert_eq!(price.d_columns, 1089);
     }
 }

@@ -146,7 +146,8 @@ fn stage3_rho_boundary_matches_coefficient_functional() {
 #[test]
 fn stage3_a_product_matches_independent_signed_remainder_and_response_digits() {
     let mut rng = StdRng::seed_from_u64(0xa753_0239);
-    for owners in [1, 2] {
+    // Three owners split the response lanes into three runs.
+    for owners in [1, 2, 3] {
         for rows in [1usize, 2, 3, 5] {
             for rank in [1usize, 3] {
                 // Public descriptors currently require power-of-two source rows.

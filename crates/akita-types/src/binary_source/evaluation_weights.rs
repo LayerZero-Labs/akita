@@ -176,12 +176,13 @@ const PARITY_CHUNKS: usize = 162usize.div_ceil(PARITY_CHUNK_BITS);
 /// against its response element's low digit.
 ///
 /// Row `r` weighs packed coefficient `4c + r mod 4` by
-/// `batch * (-1)^c * SRE(bits_r, alpha)[c]`. Response lanes start equality
-/// blocks, and by the Hankel symmetry of the shifted remainders the row reads
-/// `high * sum_{s in bits_r} P_k[s]`, where
-/// `P_k = SRE(((-1)^c low[4c+k])_c, alpha)` and `k = r mod 4`. The verifier
-/// answers these subset sums with Four Russians tables: 21 lookups per row
-/// after `4 * 21 * 256` table additions. The prover needs each row's full
+/// `batch * (-1)^c * SRE(bits_r, alpha)[c]`. The response lanes of one run
+/// share coefficient factors `z_run`, and by the Hankel symmetry of the
+/// shifted remainders the row reads `lane * sum_{s in bits_r} P_k[s]`, where
+/// `P_k = SRE(((-1)^c z_run[4c+k])_c, alpha)`, `k = r mod 4` and `lane` is the
+/// low digit's lane factor. The verifier answers these subset sums with Four
+/// Russians tables: 21 lookups per row after `4 * 21 * 256` table additions
+/// per run the owner's rows touch. The prover needs each row's full
 /// kernel, which one shifted-remainder pass gives in fewer operations than
 /// 21 table vectors of 162 entries, so it keeps that pass.
 #[derive(Clone, Debug)]
@@ -204,8 +205,8 @@ impl<E: Field> ParityRowWeights<E> {
         checked::sum([self.first_element, row / 4]).ok_or(AkitaError::InvalidProof)
     }
 
-    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
-        let low = eq.low();
+    /// Four Russians subset-sum tables of one run's coefficient factors.
+    fn tables(&self, z: &[E]) -> Result<Vec<E>, AkitaError> {
         let mut tables = Vec::new();
         tables
             .try_reserve_exact((4 * PARITY_CHUNKS) << PARITY_CHUNK_BITS)
@@ -213,7 +214,7 @@ impl<E: Field> ParityRowWeights<E> {
         for k in 0..4 {
             let mut signed = [E::zero(); 162];
             for (c, slot) in signed.iter_mut().enumerate() {
-                let value = *low.get(4 * c + k).ok_or(AkitaError::InvalidProof)?;
+                let value = *z.get(4 * c + k).ok_or(AkitaError::InvalidProof)?;
                 *slot = if c % 2 == 0 { value } else { -value };
             }
             let mut sums = [E::zero(); 162];
@@ -234,8 +235,24 @@ impl<E: Field> ParityRowWeights<E> {
                 }
             }
         }
+        Ok(tables)
+    }
+
+    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+        let lanes_eq = eq.segment(&self.response)?;
+        let mut run_tables: Vec<Option<Vec<E>>> = Vec::new();
+        run_tables
+            .try_reserve_exact(lanes_eq.runs())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        run_tables.resize(lanes_eq.runs(), None);
         let mut sum = E::zero();
         for (quad, rows) in self.rows.chunks(4).enumerate() {
+            let (run, lane) = lanes_eq.lane(self.element(4 * quad)?, 0)?;
+            let slot = run_tables.get_mut(run).ok_or(AkitaError::InvalidProof)?;
+            let tables = match slot {
+                Some(tables) => tables,
+                None => slot.insert(self.tables(lanes_eq.coefficients(run)?)?),
+            };
             let mut lanes = E::zero();
             for (k, words) in rows.iter().enumerate() {
                 let table = (k * PARITY_CHUNKS) << PARITY_CHUNK_BITS;
@@ -248,19 +265,14 @@ impl<E: Field> ParityRowWeights<E> {
                         .ok_or(AkitaError::InvalidProof)?;
                 }
             }
-            let base = self.response.base(self.element(4 * quad)?, 0)?;
-            if eq.low_offset(base) != 0 {
-                return Err(AkitaError::InvalidSetup(
-                    "root lane does not start an equality block".into(),
-                ));
-            }
-            sum += eq.high(base)? * lanes;
+            sum += lane * lanes;
         }
         Ok(self.batch * sum)
     }
 
     /// Each row's shifted-remainder kernel is computed in batches through
-    /// [`weigh_units`]; the weights are then streamed in row order.
+    /// [`weigh_units`]; the weights are then streamed coefficient by
+    /// coefficient over the batch, so writes into one run stay close.
     pub(crate) fn visit(
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
@@ -276,17 +288,25 @@ impl<E: Field> ParityRowWeights<E> {
                 .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
             Ok(kernel)
         };
+        let step = self.response.step();
         for start in (0..self.rows.len()).step_by(WEIGH_BATCH) {
             let end = self.rows.len().min(start + WEIGH_BATCH);
-            for (row, kernel) in (start..end).zip(weigh_units(start..end, weigh)?) {
-                let base = self.response.base(self.element(row)?, 0)?;
-                for (coefficient, weight) in kernel.into_iter().enumerate() {
-                    let signed = if coefficient % 2 == 0 {
-                        weight
-                    } else {
-                        -weight
-                    };
-                    visit(base + 4 * coefficient + row % 4, self.batch * signed)?;
+            let kernels = weigh_units(start..end, weigh)?;
+            let bases = (start..end)
+                .map(|row| self.response.address(self.element(row)?, 0, row % 4))
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            for coefficient in 0..162 {
+                let offset = 4 * coefficient * step;
+                let sign = if coefficient % 2 == 0 {
+                    self.batch
+                } else {
+                    -self.batch
+                };
+                for k in 0..4 {
+                    for (kernel, base) in kernels.iter().zip(&bases).skip(k).step_by(4) {
+                        let weight = kernel.get(coefficient).ok_or(AkitaError::InvalidProof)?;
+                        visit(base + offset, sign * *weight)?;
+                    }
                 }
             }
         }

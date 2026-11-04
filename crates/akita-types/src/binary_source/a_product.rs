@@ -12,6 +12,7 @@ use jolt_field::Field;
 use super::{
     binary_root_matrix, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan,
 };
+use crate::native_root_relation::{SegmentEq, SegmentLanes};
 
 const DEGREE: usize = 648;
 const STRIDE: usize = 1024;
@@ -114,12 +115,17 @@ pub fn binary_a_prefix_identity(
 
 /// Factored setup weights at the root Stage 2 point, with no A coefficients.
 ///
-/// The response occupies the first segment, with four digits and coefficient
-/// stride 1024. Its digit contraction is included in `h`; the remaining point
-/// addresses source rows and owners. The owner equality is contracted into one
-/// coefficient factor, so every polynomial in the group shares one product.
-/// Owner rows are combined before the adjoint, which uses two exact length
-/// 1295 convolutions per rank row, independently of the matrix width.
+/// The response occupies the first segment, with four digit lanes per
+/// element. Its lanes interleave in runs of `W = 4 * rows * a` lanes, where
+/// `a` is the largest power of two dividing the owner count, so the lowest
+/// point coordinates address the digit, then the source row, then the owner
+/// within its run; the rest address the coefficient of the run
+/// ([`RootCoefficientRepacking`](crate::root_repacking::RootCoefficientRepacking)).
+/// The digit contraction is included in `h`. The owner equality is contracted
+/// into one coefficient factor, so every polynomial in the group shares one
+/// product. Owner rows are combined per run before the adjoint, which uses two
+/// exact length 1295 convolutions per rank row and run, independently of the
+/// matrix width.
 #[derive(Clone, Debug)]
 pub struct BinaryAProduct<E: Field> {
     coefficient_factor: Vec<E>,
@@ -135,19 +141,17 @@ impl<E: Field> BinaryAProduct<E> {
         stage2_point: &[E],
         prefix_len: usize,
     ) -> Result<Self, AkitaError> {
-        let response = plan
-            .repacking()
-            .segments()
-            .first()
-            .ok_or(AkitaError::InvalidProof)?;
+        let lanes = SegmentLanes::new(plan.repacking(), 0)?;
         let owners = plan.descriptor().polynomials().len();
         let size = BinaryAPrefixLen::new(plan.descriptor().index_map(), plan.rank())?;
         let rows = size.rows;
+        let row_lanes = checked::product([4, rows]).ok_or(AkitaError::InvalidProof)?;
         if rho.len() != checked::product([owners, plan.rank()]).ok_or(AkitaError::InvalidProof)?
-            || checked::product([owners, rows]) != Some(response.elements)
+            || checked::product([owners, rows]) != Some(lanes.elements())
             || !rows.is_power_of_two()
-            || response.digits != 4
-            || response.geometry.physical_coefficient_width() != STRIDE
+            || lanes.digits() != 4
+            || lanes.degree() != DEGREE
+            || !lanes.step().is_multiple_of(row_lanes)
             || stage2_point.len() != plan.repacking().domain_len().trailing_zeros() as usize
             || plan.repacking().segment_range(0)?.start != 0
         {
@@ -157,21 +161,21 @@ impl<E: Field> BinaryAProduct<E> {
         }
         size.validate_prefix(prefix_len)?;
         let row_stride = size.row_stride;
-        let coefficient_point = stage2_point.get(..10).ok_or(AkitaError::InvalidProof)?;
-        let digit_point = stage2_point.get(10..12).ok_or(AkitaError::InvalidProof)?;
+        // Owners of one run: the lane run divided by the lanes of one owner.
+        let run_owners = lanes.step() / row_lanes;
+        let digit_point = stage2_point.get(..2).ok_or(AkitaError::InvalidProof)?;
         let row_end =
-            checked::sum([12, rows.trailing_zeros() as usize]).ok_or(AkitaError::InvalidProof)?;
+            checked::sum([2, rows.trailing_zeros() as usize]).ok_or(AkitaError::InvalidProof)?;
         let row_point = stage2_point
-            .get(12..row_end)
+            .get(2..row_end)
             .ok_or(AkitaError::InvalidProof)?
             .to_vec();
-        let owner_point = stage2_point
-            .get(row_end..)
+        let owner_end = checked::sum([row_end, run_owners.trailing_zeros() as usize])
             .ok_or(AkitaError::InvalidProof)?;
-        if owners > checked::pow2(owner_point.len()).ok_or(AkitaError::InvalidProof)? {
-            return Err(AkitaError::InvalidProof);
-        }
-        let v = EqPolynomial::evals_prefix(coefficient_point, DEGREE)?;
+        let owner_point = stage2_point
+            .get(row_end..owner_end)
+            .ok_or(AkitaError::InvalidProof)?;
+        let coefficients = SegmentEq::new(stage2_point, &lanes)?;
         let digits = EqPolynomial::evals(digit_point)?;
         let mut power = E::one();
         let mut digit_weight = E::zero();
@@ -181,25 +185,33 @@ impl<E: Field> BinaryAProduct<E> {
         }
         let adjoint = TrinomialAdjoint::<DEGREE, MinusTrinomial>::new()?;
         let mut coefficient_factor = field_buffer(row_stride)?;
-        // All owners share A. Fold owner equality into rho first, so the
-        // one rectangular product needs only one adjoint per matrix rank row.
+        // All owners share A. Fold the owner equality of each run into rho
+        // first, so the one rectangular product needs only one adjoint per
+        // matrix rank row and run.
         let combined_len =
             checked::product([plan.rank(), DEGREE]).ok_or(AkitaError::InvalidProof)?;
         let mut combined = field_buffer(combined_len)?;
-        for (owner, owner_rho) in rho.chunks_exact(plan.rank()).enumerate() {
-            let owner_weight = eq_eval_at_index(owner_point, owner);
-            for (target, row) in combined.chunks_exact_mut(DEGREE).zip(owner_rho) {
-                for (target, &weight) in target.iter_mut().zip(row) {
-                    *target += owner_weight * weight;
+        for (run, run_rho) in rho
+            .chunks(checked::product([run_owners, plan.rank()]).ok_or(AkitaError::InvalidProof)?)
+            .enumerate()
+        {
+            combined.fill(E::zero());
+            for (owner, owner_rho) in run_rho.chunks_exact(plan.rank()).enumerate() {
+                let owner_weight = eq_eval_at_index(owner_point, owner);
+                for (target, row) in combined.chunks_exact_mut(DEGREE).zip(owner_rho) {
+                    for (target, &weight) in target.iter_mut().zip(row) {
+                        *target += owner_weight * weight;
+                    }
                 }
             }
-        }
-        for (target, row) in coefficient_factor
-            .chunks_exact_mut(STRIDE)
-            .zip(combined.chunks_exact(DEGREE))
-        {
-            for (slot, weight) in target.iter_mut().zip(adjoint.apply(row, &v)?) {
-                *slot = digit_weight * weight;
+            let z = coefficients.coefficients(run)?;
+            for (target, row) in coefficient_factor
+                .chunks_exact_mut(STRIDE)
+                .zip(combined.chunks_exact(DEGREE))
+            {
+                for (slot, weight) in target.iter_mut().zip(adjoint.apply(row, z)?) {
+                    *slot += digit_weight * weight;
+                }
             }
         }
         Ok(Self {

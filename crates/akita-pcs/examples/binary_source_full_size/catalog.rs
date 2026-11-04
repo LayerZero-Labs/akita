@@ -51,7 +51,6 @@ pub(super) fn plan(
         canonical = canonical.with_ordinary(&ordinary)?;
     }
     let mut live = 0usize;
-    let mut physical = 0usize;
     for (index, segment) in canonical.repacking().segments().iter().enumerate() {
         let natural = checked::product([
             segment.elements,
@@ -61,13 +60,17 @@ pub(super) fn plan(
         ])
         .ok_or(AkitaError::InvalidProof)?;
         live = checked::sum([live, natural]).ok_or(AkitaError::InvalidProof)?;
-        physical = checked::sum([physical, canonical.repacking().segment_range(index)?.len()])
-            .ok_or(AkitaError::InvalidProof)?;
+        let range = canonical.repacking().segment_range(index)?;
         println!(
-            "witness_segment index={index} natural_cells={natural} physical_cells={}",
-            canonical.repacking().segment_range(index)?.len()
+            "witness_segment index={index} natural_cells={natural} start={} physical_cells={} run_lanes={}",
+            range.start,
+            range.len(),
+            canonical.repacking().run_lanes(index)?
         );
     }
+    // Cells through the last segment, with the alignment gaps between runs,
+    // rounded up to the live alignment.
+    let physical = canonical.repacking().live_len();
     println!("witness natural_cells={live} physical_cells={physical} minimal_domain={} destination_dimension={dimension}",
         canonical.repacking().domain_len());
     if price.outgoing_domain_len != canonical.repacking().domain_len()
