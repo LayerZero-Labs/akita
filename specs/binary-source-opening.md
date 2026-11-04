@@ -1588,9 +1588,9 @@ and **33,554,432 (2^25)** cells, twice the proposed 2^23 and 2^24. The regressio
 the canonical product accepts these sizes and rejects the smaller domains
 without allocating the full prefix. `BinaryAPrefixLen` is the only owner of
 the A tensor's sizing. `BinaryTypedPrefix` places the B/D setup around it and
-owns the prefix length: 2^24 or 2^25 at N=2^22 and 2^25 or 2^26 at N=2^23,
-depending on the shape ([Typed prefix layout](#typed-prefix-layout) and the
-setup offload note, §4). Setup coefficients, the
+owns the prefix length: 2^24, 2^25 or 2^26 at N=2^22 and 2^25 or 2^26 at
+N=2^23, depending on the shape ([Typed prefix layout](#typed-prefix-layout)
+and the setup offload note, §4). Setup coefficients, the
 Stage 3 weights, `price_binary_root_planes` and the harness's native
 transition all read it.
 

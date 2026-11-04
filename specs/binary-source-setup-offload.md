@@ -266,7 +266,7 @@ on cells, and
 Each copy of column `c` stores `M_{row,c}` and carries `beta_role[row] * K(e_c^q)`,
 where `e_c^q` keeps only period `q`'s digits. Because `K` is linear, the copies
 sum to `K(e_c)`. The test `typed_prefix_offloads_the_digit_authentication_rows`
-checks this identity on all 22 reference shapes. It computes
+checks this identity on all 19 reference shapes. It computes
 `<S, W> - <S_A, W_A>` from `setup_coefficients`, `prover_weights`,
 `binary_a_setup_coefficients` and the A-only weights, and compares the result
 with `binary_digit_authentication_weights(...).evaluate(r)`. It also checks
@@ -499,7 +499,7 @@ Rejected in favour of Section 4.
 
 ## Verification record
 
-- `typed_prefix_offloads_the_digit_authentication_rows` (22 shapes): stored
+- `typed_prefix_offloads_the_digit_authentication_rows` (19 shapes): stored
   setup against dense weights equals the direct B/D weight at `r`; the
   terminal weight `BinaryAProduct::evaluate + digit_weight` equals the dense
   weights' extension; `new` agrees with `from_plan`. Each of these mutations
