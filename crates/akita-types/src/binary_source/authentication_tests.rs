@@ -213,3 +213,28 @@ fn column_aligned_pieces_sum_to_the_digit_commitment() {
     );
     assert!(binary_public_digit_commitment::<F>(&[8; 32], setup, usize::MAX, &digits).is_err());
 }
+
+#[test]
+fn digit_commitment_equals_setup_ring_products() {
+    let setup = label(SetupStreamRole::WitnessCommitment);
+    // Three full columns and a partial one, every digit value, both extremes.
+    let mut digits: Vec<i8> = (0..220).map(|i| ((i * 37 + 5) % 8) as i8 - 4).collect();
+    digits[..64].fill(-4);
+    digits[64..128].fill(3);
+    let payload = binary_public_digit_commitment::<F>(&[8; 32], setup, 5, &digits).unwrap();
+    let mut expected = Vec::new();
+    for row in 0..setup.rank {
+        let mut image = CyclotomicRing::<F, BINARY_DIGIT_COMMITMENT_DEGREE>::zero();
+        for (column, chunk) in digits.chunks(BINARY_DIGIT_COMMITMENT_DEGREE).enumerate() {
+            let mut coefficients = [F::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+            for (output, &digit) in coefficients.iter_mut().zip(chunk) {
+                *output = F::from_i64(i64::from(digit));
+            }
+            setup_entry::<F>(&[8; 32], setup, row, 5 + column)
+                .unwrap()
+                .mul_accumulate_into(&CyclotomicRing::from_coefficients(coefficients), &mut image);
+        }
+        expected.extend_from_slice(image.coefficients());
+    }
+    assert_eq!(payload, expected);
+}
