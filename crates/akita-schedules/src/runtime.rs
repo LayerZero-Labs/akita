@@ -694,7 +694,9 @@ pub fn expanded_schedule_proof_bound(
 ) -> Result<usize, AkitaError> {
     let components = expanded_schedule_proof_components(key, schedule, policy)?;
     #[cfg(feature = "l2-terminal-quotient")]
-    let extra = schedule.terminal.terminal_quotient_bytes(policy.decomposition.field_bits())?;
+    let extra = schedule
+        .terminal
+        .terminal_quotient_bytes(policy.decomposition.field_bits())?;
     #[cfg(not(feature = "l2-terminal-quotient"))]
     let extra = 0;
     components

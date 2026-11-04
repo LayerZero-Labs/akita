@@ -28,88 +28,153 @@ where
     let quotient_len = akita_types::terminal_quotient_len(d)?;
     // A modulus with b bits is at least 2^(b-1). Require at least
     // 65 bits per polynomial check, conservatively rounding its degree up.
-    let degree = quotient_len.checked_mul(2).ok_or(AkitaError::InvalidProof)?;
+    let degree = quotient_len
+        .checked_mul(2)
+        .ok_or(AkitaError::InvalidProof)?;
     let degree_bits = usize::BITS - (degree - 1).leading_zeros();
-    let field_bits = (F::MODULUS_BITS as usize).saturating_sub(1)
-        .checked_mul(E::DEGREE).ok_or(AkitaError::InvalidProof)?;
+    let field_bits = (F::MODULUS_BITS as usize)
+        .saturating_sub(1)
+        .checked_mul(E::DEGREE)
+        .ok_or(AkitaError::InvalidProof)?;
     if field_bits.saturating_sub(degree_bits as usize) < 65 {
-        return Err(AkitaError::InvalidSetup("terminal certificate challenge field is too small".into()));
+        return Err(AkitaError::InvalidSetup(
+            "terminal certificate challenge field is too small".into(),
+        ));
     }
     let rows = scheduled.inner.matrix.output_rank();
     let last_count = rows.checked_mul(d).ok_or(AkitaError::InvalidProof)?;
-    let quotient_count = rows.checked_mul(quotient_len).ok_or(AkitaError::InvalidProof)?;
+    let quotient_count = rows
+        .checked_mul(quotient_len)
+        .ok_or(AkitaError::InvalidProof)?;
     let last = akita_transcript::receive_field_group::<F>(
-        grinding.state_mut(), FoldSite::TerminalLastT { level }.id()?, last_count,
+        grinding.state_mut(),
+        FoldSite::TerminalLastT { level }.id()?,
+        last_count,
     )?;
     if akita_transcript::field_digest(&last) != *last_digest {
         return Err(AkitaError::InvalidProof);
     }
     let coefficients = akita_transcript::receive_field_group::<F>(
-        grinding.state_mut(), FoldSite::TerminalQuotient { level }.id()?, quotient_count,
+        grinding.state_mut(),
+        FoldSite::TerminalQuotient { level }.id()?,
+        quotient_count,
     )?;
     let points = akita_transcript::ext_challenges::<E, _>(
-        grinding.state_mut(), FoldSite::TerminalQuotientPoints { level }.id()?, 2,
+        grinding.state_mut(),
+        FoldSite::TerminalQuotientPoints { level }.id()?,
+        2,
     )?;
-    let group = scheduled.response_shape.layout.groups.first().ok_or(AkitaError::InvalidProof)?;
+    let group = scheduled
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
     let z = akita_types::decode_terminal_z_golomb_payload(
-        response.z_payloads.first().ok_or(AkitaError::InvalidProof)?, group,
+        response
+            .z_payloads
+            .first()
+            .ok_or(AkitaError::InvalidProof)?,
+        group,
     )?;
-    let expected_z = scheduled.inner.matrix.input_width().checked_mul(d)
+    let expected_z = scheduled
+        .inner
+        .matrix
+        .input_width()
+        .checked_mul(d)
         .ok_or(AkitaError::InvalidProof)?;
     if z.len() != expected_z || challenges.len() != scheduled.blocks.live_blocks {
         return Err(AkitaError::InvalidProof);
     }
     let last = RingVec::from_coeffs(last);
     let products = akita_params::dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner), F, d, |D| {
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        d,
+        |D| {
             let sent = response.t_fields.as_ring_slice::<D>()?;
             let last = last.as_ring_slice::<D>()?;
-            let expected_sent = challenges.len().checked_sub(1)
-                .and_then(|v| v.checked_mul(rows)).ok_or(AkitaError::InvalidProof)?;
+            let expected_sent = challenges
+                .len()
+                .checked_sub(1)
+                .and_then(|v| v.checked_mul(rows))
+                .ok_or(AkitaError::InvalidProof)?;
             if sent.len() != expected_sent || last.len() != rows || rows == 0 {
                 return Err(AkitaError::InvalidProof);
             }
-            let products = (0..rows).map(|row| {
-                let end = last.get(row).ok_or(AkitaError::InvalidProof)?;
-                super::direct::sparse_challenge_dot(
-                    challenges.as_slice(), sent.iter().skip(row).step_by(rows).chain([end]),
-                )
-            }).collect::<Result<Vec<CyclotomicRing<F, D>>, AkitaError>>()?;
+            let products = (0..rows)
+                .map(|row| {
+                    let end = last.get(row).ok_or(AkitaError::InvalidProof)?;
+                    super::direct::sparse_challenge_dot(
+                        challenges.as_slice(),
+                        sent.iter().skip(row).step_by(rows).chain([end]),
+                    )
+                })
+                .collect::<Result<Vec<CyclotomicRing<F, D>>, AkitaError>>()?;
             Ok::<_, AkitaError>(RingVec::from_ring_elems(&products))
         }
     )?;
-    check_polynomials(setup, &z, products.coeffs(), &coefficients, &points, d, rows)?;
+    check_polynomials(
+        setup,
+        &z,
+        products.coeffs(),
+        &coefficients,
+        &points,
+        d,
+        rows,
+    )?;
     Ok(products)
 }
 
 fn evaluate<F: Field, E: ExtField<F>>(coefficients: &[F], point: E) -> E {
-    coefficients.iter().rev().fold(E::zero(), |value, &coefficient| {
-        value * point + E::lift_base(coefficient)
-    })
+    coefficients
+        .iter()
+        .rev()
+        .fold(E::zero(), |value, &coefficient| {
+            value * point + E::lift_base(coefficient)
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
 fn check_polynomials<F: Field, E: ExtField<F>>(
-    setup: &[F], z: &[i16], products: &[F], quotients: &[F], points: &[E],
-    d: usize, rows: usize,
+    setup: &[F],
+    z: &[i16],
+    products: &[F],
+    quotients: &[F],
+    points: &[E],
+    d: usize,
+    rows: usize,
 ) -> Result<(), AkitaError> {
     let q_len = akita_types::terminal_quotient_len(d)?;
     let row_len = z.len();
     let prefix = rows.checked_mul(row_len).ok_or(AkitaError::InvalidProof)?;
     let product_len = rows.checked_mul(d).ok_or(AkitaError::InvalidProof)?;
     let quotient_len = rows.checked_mul(q_len).ok_or(AkitaError::InvalidProof)?;
-    if !row_len.is_multiple_of(d) || products.len() != product_len
-        || quotients.len() != quotient_len || points.len() != 2 || rows == 0 || row_len == 0 {
+    if !row_len.is_multiple_of(d)
+        || products.len() != product_len
+        || quotients.len() != quotient_len
+        || points.len() != 2
+        || rows == 0
+        || row_len == 0
+    {
         return Err(AkitaError::InvalidProof);
     }
     let matrix = setup.get(..prefix).ok_or(AkitaError::InvalidProof)?;
     let z_fields: Vec<F> = z.iter().map(|&v| F::from_i64(i64::from(v))).collect();
     for &point in points {
         let shift = (0..d).fold(E::one(), |v, _| v * point) + E::one();
-        let z_evals: Vec<E> = z_fields.chunks_exact(d).map(|ring| evaluate(ring, point)).collect();
-        for ((row, product), quotient) in matrix.chunks_exact(row_len)
-            .zip(products.chunks_exact(d)).zip(quotients.chunks_exact(q_len)) {
-            let actual = row.chunks_exact(d).zip(&z_evals)
+        let z_evals: Vec<E> = z_fields
+            .chunks_exact(d)
+            .map(|ring| evaluate(ring, point))
+            .collect();
+        for ((row, product), quotient) in matrix
+            .chunks_exact(row_len)
+            .zip(products.chunks_exact(d))
+            .zip(quotients.chunks_exact(q_len))
+        {
+            let actual = row
+                .chunks_exact(d)
+                .zip(&z_evals)
                 .fold(E::zero(), |v, (a, z)| v + evaluate(a, point) * *z);
             if actual - evaluate(product, point) != shift * evaluate(quotient, point) {
                 return Err(AkitaError::InvalidProof);

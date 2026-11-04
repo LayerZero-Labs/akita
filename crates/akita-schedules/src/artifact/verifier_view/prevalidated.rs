@@ -143,8 +143,10 @@ impl ValidatedScheduleCatalog {
             .map(|(index, row)| {
                 (
                     super::super::key_for_profiles(
-                        row.profiles(), row.schedule().root_accumulated_setup_prefix_len,
-                    ).canonical_order_key(),
+                        row.profiles(),
+                        row.schedule().root_accumulated_setup_prefix_len,
+                    )
+                    .canonical_order_key(),
                     index,
                 )
             })
@@ -160,7 +162,9 @@ impl ValidatedScheduleCatalog {
         #[cfg(not(feature = "digest-nozero"))]
         let row_digests = {
             let mut digests = vec![[0u8; 32]; artifact.row_digests.len() / 32];
-            digests.as_flattened_mut().copy_from_slice(&artifact.row_digests);
+            digests
+                .as_flattened_mut()
+                .copy_from_slice(&artifact.row_digests);
             digests
         };
         #[cfg(feature = "digest-nozero")]
@@ -176,7 +180,6 @@ impl ValidatedScheduleCatalog {
         })
     }
 }
-
 
 impl PrevalidatedVerifierRecord {
     /// Borrow the immutable bytes and identities established by validation.

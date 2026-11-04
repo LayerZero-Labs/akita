@@ -161,6 +161,11 @@ impl Graph<'_> {
             .iter()
             .filter(|value| !value.is_zero())
             .count();
+        // The online seed collector charges every residual coordinate it visits,
+        // including zero weights, unless the family scalar is already zero.
+        if self.residual.is_some() && !family.scalar.is_zero() {
+            charged += usize::from(self.seeds);
+        }
         let mut edge_start = 0;
         let mut introduction_start = 0;
         let mut choices = [F::zero(); 16];

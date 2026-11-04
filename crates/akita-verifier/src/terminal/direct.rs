@@ -422,7 +422,12 @@ where
                     #[cfg(not(feature = "l2-terminal-quotient"))]
                     {
                         a_row_sides::<F, D_A>(
-                            terminal_ntt, t, z_centered, sent_challenges, n_a, n_a_cols,
+                            terminal_ntt,
+                            t,
+                            z_centered,
+                            sent_challenges,
+                            n_a,
+                            n_a_cols,
                         )
                     }
                     #[cfg(feature = "l2-terminal-quotient")]
@@ -432,9 +437,12 @@ where
                             return Err(AkitaError::InvalidProof);
                         }
                         let t_partials = (0..n_a)
-                            .map(|row| sparse_challenge_dot(
-                                sent_challenges, t.iter().skip(row).step_by(n_a),
-                            ))
+                            .map(|row| {
+                                sparse_challenge_dot(
+                                    sent_challenges,
+                                    t.iter().skip(row).step_by(n_a),
+                                )
+                            })
                             .collect::<Result<Vec<_>, AkitaError>>()?;
                         Ok(ARowSides { t_partials, a_z })
                     }

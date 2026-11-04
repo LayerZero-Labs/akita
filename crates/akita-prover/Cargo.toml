@@ -40,7 +40,11 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 ] }
 
 [features]
-l2-terminal-quotient = ["akita-config/l2-terminal-quotient", "akita-types/l2-terminal-quotient", "akita-transcript/l2-terminal-quotient"]
+l2-terminal-quotient = [
+  "akita-config/l2-terminal-quotient",
+  "akita-types/l2-terminal-quotient",
+  "akita-transcript/l2-terminal-quotient",
+]
 default = ["transcript-keccak"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

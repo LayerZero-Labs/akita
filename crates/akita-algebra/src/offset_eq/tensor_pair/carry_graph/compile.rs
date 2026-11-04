@@ -7,8 +7,8 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-pub(super) mod shapes;
 mod residual;
+pub(super) mod shapes;
 
 const MAX_EDGES: usize = 65_536;
 const MAX_STATES: usize = 1024;
@@ -109,7 +109,8 @@ impl<'a> OwnedGraph<'a> {
             residual,
             seeds,
             terminal: None,
-            work: seeds,
+            // Include the residual-coordinate visit charge as well as seed emission.
+            work: seeds + if residual.is_some() { seeds } else { 0 },
         };
         for (bit, introductions) in at_bit.iter().enumerate() {
             if introductions.len() > 4 {

@@ -155,6 +155,44 @@ fn frozen_carry_graph_equivalence_all_keys() {
 }
 
 #[test]
+fn residual_coordinate_visits_match_online_budget() {
+    let shape = Shape {
+        bits: [0, 2],
+        offsets: [0, 0],
+        axes: &[Axis {
+            len: 3,
+            strides: [0, 1],
+            kind: WeightKind::Dense,
+        }],
+    };
+    let graph = OwnedGraph::compile(shape).unwrap().unwrap();
+    let mut input = Inputs::new(shape, &mut || F::from_u64(2));
+    input.check(&graph);
+    let (_, online_work) = input.online();
+    assert_eq!(graph.work, online_work);
+    let mut work = MAX_COMPACT_STRIDE_TERMS - online_work;
+    assert!(graph
+        .view()
+        .try_evaluate(&input.left, &input.right, &input.family, &mut work)
+        .is_some());
+    assert_eq!(work, MAX_COMPACT_STRIDE_TERMS);
+    let mut work = MAX_COMPACT_STRIDE_TERMS - online_work + 1;
+    let before = work;
+    assert!(graph
+        .view()
+        .try_evaluate(&input.left, &input.right, &input.family, &mut work)
+        .is_none());
+    assert_eq!(work, before);
+
+    input.family.axes[0] = EqPairTensorAxis::dense(0, 1, vec![F::zero(); 3]);
+    input.check(&graph);
+    assert_eq!(input.online().1, 3, "zero coordinates still cost a visit");
+    input.family.scalar = F::zero();
+    input.check(&graph);
+    assert_eq!(input.online().1, 0, "a zero scalar skips all visits");
+}
+
+#[test]
 fn carry_graph_misses_and_budget_preserve_fallback() {
     let shape = SHAPES12[0];
     let graph = OwnedGraph::compile(shape).unwrap().unwrap();
@@ -256,9 +294,14 @@ fn generated_graph_is_used_by_public_dispatch() {
     };
     for &shape in shapes {
         let input = Inputs::new(shape, &mut || F::random(&mut rng));
-        let call = || crate::offset_eq::eval_boolean_pair_tensor_families::<F, false, false>(
-            &input.left, &input.right, std::slice::from_ref(&input.family),
-        ).unwrap();
+        let call = || {
+            crate::offset_eq::eval_boolean_pair_tensor_families::<F, false, false>(
+                &input.left,
+                &input.right,
+                std::slice::from_ref(&input.family),
+            )
+            .unwrap()
+        };
         super::super::BYPASS.with(|bypass| bypass.set(true));
         let expected = call();
         super::super::BYPASS.with(|bypass| bypass.set(false));

@@ -1,6 +1,6 @@
-mod evaluate;
 #[cfg(feature = "carry-graph")]
 pub mod carry_graph;
+mod evaluate;
 mod factored;
 mod materialize;
 

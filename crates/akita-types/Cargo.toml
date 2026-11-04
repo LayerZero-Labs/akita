@@ -26,7 +26,10 @@ shake = "0.1.0"
 tracing = "0.1"
 
 [features]
-l2-terminal-quotient = ["akita-transcript/l2-terminal-quotient", "akita-params/l2-terminal-quotient"]
+l2-terminal-quotient = [
+  "akita-transcript/l2-terminal-quotient",
+  "akita-params/l2-terminal-quotient",
+]
 default = ["transcript-keccak"]
 test-support = ["akita-params/test-support"]
 # Prover-side grinding replay, which searches on a copy of the sponge state.

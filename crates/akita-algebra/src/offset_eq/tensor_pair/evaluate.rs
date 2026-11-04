@@ -639,7 +639,11 @@ fn bit_axis_choices<F: Field>(
         .collect())
 }
 
-pub(super) fn basis_pair_factors<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+pub(super) fn basis_pair_factors<
+    F: Field,
+    const LEFT_MONOMIAL: bool,
+    const RIGHT_MONOMIAL: bool,
+>(
     left: Option<F>,
     right: Option<F>,
 ) -> [Option<F>; 4] {

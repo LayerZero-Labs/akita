@@ -156,7 +156,12 @@ where
     };
     #[cfg(feature = "l2-terminal-quotient")]
     let a_products = crate::terminal::quotient::receive_and_check::<F, E>(
-        grinding, level, scheduled, setup_matrix, &terminal_response, &challenges,
+        grinding,
+        level,
+        scheduled,
+        setup_matrix,
+        &terminal_response,
+        &challenges,
         &last_block_digests.t,
     )?;
     let e_fields = crate::terminal::direct::verify_terminal_ring_relations(
