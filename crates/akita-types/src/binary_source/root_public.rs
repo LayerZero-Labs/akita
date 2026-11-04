@@ -12,6 +12,7 @@ use super::{
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
+use std::ops::Range;
 
 /// Materialize the q24 source matrix from its canonical typed setup identity.
 ///
@@ -151,6 +152,45 @@ impl BinaryRootPublic {
         self.batch_count
     }
 
+    /// Batch ranges: terminal, B, D, ordinary rows, negative bits, prime rows.
+    fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
+        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
+            .ok_or(AkitaError::InvalidProof)?;
+        let b =
+            checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
+        let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
+        let ordinary_rows = checked::range(
+            d.end,
+            self.ordinary
+                .as_ref()
+                .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+        let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
+            .ok_or(AkitaError::InvalidProof)?;
+        let prime_rows = checked::range(
+            negative_bits.end,
+            checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+        Ok([terminal, b, d, ordinary_rows, negative_bits, prime_rows])
+    }
+
+    /// Row batches of the B and D authentication rows, in that order.
+    pub fn authentication_batches<'a, E>(
+        &self,
+        batches: &'a [E],
+    ) -> Result<[&'a [E]; 2], AkitaError> {
+        if batches.len() != self.batch_count {
+            return Err(AkitaError::InvalidProof);
+        }
+        let [_, b, d, ..] = self.batch_ranges()?;
+        Ok([
+            batches.get(b).ok_or(AkitaError::InvalidProof)?,
+            batches.get(d).ok_or(AkitaError::InvalidProof)?,
+        ])
+    }
+
     /// Compile the single linear oracle after the outgoing commitment.
     ///
     /// Batch coordinates are independent field challenges, one per row.
@@ -186,25 +226,7 @@ impl BinaryRootPublic {
             .iter()
             .zip(projected_values)
             .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
-        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
-            .ok_or(AkitaError::InvalidProof)?;
-        let b =
-            checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let ordinary_rows = checked::range(
-            d.end,
-            self.ordinary
-                .as_ref()
-                .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-        let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
-            .ok_or(AkitaError::InvalidProof)?;
-        let prime_rows = checked::range(
-            negative_bits.end,
-            checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
+        let [terminal, b, d, ordinary_rows, negative_bits, prime_rows] = self.batch_ranges()?;
         let span = tracing::info_span!("binary_root_weights_algebra").entered();
         let algebra = self.plan.relation_weights(
             self.claim.as_ref(),

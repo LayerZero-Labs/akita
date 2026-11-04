@@ -13,8 +13,8 @@ use super::{
     binary_root_matrix, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan,
 };
 
-const DEGREE: usize = 648;
-const STRIDE: usize = 1024;
+pub(super) const DEGREE: usize = 648;
+pub(super) const STRIDE: usize = 1024;
 
 /// Size of the canonical typed A prefix: one row per source ring row, each
 /// holding the rank axis padded to a power of two times 1024 coefficients.
@@ -65,9 +65,10 @@ impl BinaryAPrefixLen {
     }
 }
 
-/// Canonical typed prefix: source row, padded rank row, padded coefficient.
-/// All padding is zero, including any extra capacity of the selected prefix.
-/// This function is for setup preparation and proving, never online verification.
+/// Canonical A part of the typed prefix: source row, padded rank row, padded
+/// coefficient. Every other cell is zero; [`super::BinaryTypedPrefix`] adds
+/// the B/D setup. This function is for setup preparation and proving, never
+/// online verification.
 pub fn binary_a_setup_coefficients<F: Field>(
     seed: &[u8; 32],
     manifest: &BinaryCommittedGroupManifest,

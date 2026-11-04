@@ -20,6 +20,7 @@ mod root_public;
 mod root_request;
 mod root_transcript;
 mod terminal;
+mod typed_prefix;
 mod word_claim;
 pub use a_product::*;
 pub use agreement::*;
@@ -41,6 +42,7 @@ pub use root_public::*;
 pub use root_request::*;
 pub use root_transcript::*;
 pub use terminal::*;
+pub use typed_prefix::*;
 pub use word_claim::*;
 #[cfg(test)]
 mod tests;
