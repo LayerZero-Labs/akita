@@ -359,7 +359,6 @@ impl RootCoefficientRepacking {
             });
         }
         self.coefficient_weights(segment, element, coefficient, F::one())?
-            .into_iter()
             .try_fold(F::zero(), |sum, (address, weight)| {
                 Ok(sum + *table.get(address).ok_or(AkitaError::InvalidProof)? * weight)
             })
@@ -484,7 +483,6 @@ mod tests {
         );
         let weights = plan.coefficient_weights(0, 1, 13, F::from_u64(11)).unwrap();
         let relation = weights
-            .into_iter()
             .map(|(address, weight)| table[address] * weight)
             .sum::<F>();
         assert_eq!(relation, F::from_u64(11 * 3 * 64));
