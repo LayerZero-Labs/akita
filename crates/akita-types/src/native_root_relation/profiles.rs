@@ -99,6 +99,10 @@ impl<E: Field> RootWeightProfiles<E> {
     }
 }
 
+/// Lanes one parallel task of [`ProfileBuilder::add_lanes`] fills.
+#[cfg(feature = "parallel")]
+const LANES_PER_TASK: usize = 32;
+
 /// Builds [`RootWeightProfiles`] from explicit terms and structured families.
 pub(crate) struct ProfileBuilder<E: Field> {
     block_bits: usize,
@@ -133,7 +137,7 @@ impl<E: Field> ProfileBuilder<E> {
         Ok(builder)
     }
 
-    fn width(&self) -> usize {
+    pub(crate) fn width(&self) -> usize {
         1 << self.block_bits
     }
 
@@ -162,6 +166,70 @@ impl<E: Field> ProfileBuilder<E> {
         };
         let index = own as usize * self.width() + (address & (self.width() - 1));
         self.rows[index] += value;
+        Ok(())
+    }
+
+    /// Add per-address weights to whole lanes, in parallel.
+    ///
+    /// Every lane starts at a block boundary in `bases` and covers `degree`
+    /// addresses, so it spans `degree.div_ceil(width)` consecutive blocks.
+    /// Blocks without their own row receive one first. `add(lanes, rows)`
+    /// then adds the weights of a run of consecutive lanes: `rows` holds the
+    /// own rows of their blocks, lane by lane, in address order.
+    pub(crate) fn add_lanes(
+        &mut self,
+        bases: &[usize],
+        degree: usize,
+        add: impl Fn(std::ops::Range<usize>, &mut [&mut [E]]) -> Result<(), AkitaError> + Sync + Send,
+    ) -> Result<(), AkitaError> {
+        let width = self.width();
+        let lane_rows = degree.div_ceil(width);
+        if bases.is_empty() || lane_rows == 0 {
+            return Ok(());
+        }
+        let (block_bits, block_count) = (self.block_bits, self.blocks.len());
+        let blocks = move |base: usize| {
+            let first = base >> block_bits;
+            (base.is_multiple_of(width) && first + lane_rows <= block_count)
+                .then_some(first..first + lane_rows)
+        };
+        for &base in bases {
+            let range = blocks(base).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "root weight profile lanes differ from their blocks".into(),
+                )
+            })?;
+            for block in range {
+                if self.blocks[block].own == 0 {
+                    self.blocks[block].own = self.row()?;
+                }
+            }
+        }
+        let mut rows = self
+            .rows
+            .chunks_exact_mut(width)
+            .map(Some)
+            .collect::<Vec<_>>();
+        let mut lanes = Vec::with_capacity(bases.len() * lane_rows);
+        for &base in bases {
+            for block in blocks(base).ok_or(AkitaError::InvalidProof)? {
+                lanes.push(
+                    rows.get_mut(self.blocks[block].own as usize)
+                        .and_then(Option::take)
+                        .ok_or(AkitaError::InvalidProof)?,
+                );
+            }
+        }
+        #[cfg(feature = "parallel")]
+        lanes
+            .par_chunks_mut(LANES_PER_TASK * lane_rows)
+            .enumerate()
+            .try_for_each(|(task, rows)| {
+                let start = task * LANES_PER_TASK;
+                add(start..start + rows.len() / lane_rows, rows)
+            })?;
+        #[cfg(not(feature = "parallel"))]
+        add(0..bases.len(), &mut lanes)?;
         Ok(())
     }
 

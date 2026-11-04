@@ -300,7 +300,7 @@ impl<E: Field> RootWeightFamily<E> {
             }
             Self::Authentication(authentication) => {
                 let _span = tracing::info_span!("root_weights_emit_authentication").entered();
-                authentication.visit(|address, value| profiles.add(address, value))
+                authentication.emit(profiles)
             }
         }
     }

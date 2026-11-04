@@ -10,7 +10,8 @@ use jolt_field::Field;
 
 use super::BinaryRootWitnessPlan;
 use crate::native_root_relation::{
-    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH,
+    weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
+    WEIGH_BATCH,
 };
 
 /// Ordinary ring degree used by the explicit experimental image and U setup.
@@ -334,22 +335,79 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         Ok(sum)
     }
 
-    /// `sum_r batch_r * K(M_rc)`, the weights of setup column `c` in order.
+    /// `sum_r batch_r * K(M_rc) = K(sum_r batch_r * M_rc)`, the weights of
+    /// setup column `c` in order. The kernel is linear, so it runs once.
     fn column_weights(
         &self,
         kernel: &ResidueKernelPoint<E>,
         column: usize,
     ) -> Result<[E; BINARY_DIGIT_COMMITMENT_DEGREE], AkitaError> {
-        let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-        let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+        let mut combined = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
         for (row, batch) in self.rows() {
             let matrix = setup_entry::<E>(&self.seed, self.label, row, column)?;
-            kernel.field_kernel_into(matrix.coefficients(), &mut reduced)?;
-            for (weight, &value) in weights.iter_mut().zip(&reduced) {
-                *weight += batch * value;
+            for (sum, &value) in combined.iter_mut().zip(matrix.coefficients()) {
+                *sum += batch * value;
             }
         }
+        let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+        kernel.field_kernel_into(&combined, &mut weights)?;
         Ok(weights)
+    }
+
+    /// Add every column's weights to block profiles. When every lane is a
+    /// whole number of blocks, runs of lanes weigh their columns and fill
+    /// their rows in parallel; otherwise the addresses stream one by one.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        let width = profiles.width();
+        if self
+            .lanes
+            .iter()
+            .any(|lanes| !lanes.stride().is_multiple_of(width))
+        {
+            return self.visit(|address, value| profiles.add(address, value));
+        }
+        let kernel = ResidueKernelPoint::new(self.alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
+        // The compact digit index of the current segment's first coefficient.
+        let mut first = 0usize;
+        for lanes in &self.lanes {
+            let degree = lanes.degree();
+            let mut bases = Vec::new();
+            bases
+                .try_reserve_exact(
+                    checked::product([lanes.elements(), lanes.digits()])
+                        .ok_or(AkitaError::InvalidProof)?,
+                )
+                .map_err(|_| AkitaError::InvalidProof)?;
+            for element in 0..lanes.elements() {
+                for digit in 0..lanes.digits() {
+                    bases.push(lanes.base(element, digit)?);
+                }
+            }
+            profiles.add_lanes(&bases, degree, |run, rows| {
+                let mut digit =
+                    checked::mul_add(run.start, degree, first).ok_or(AkitaError::InvalidProof)?;
+                let mut column = None;
+                let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+                let lane_rows = rows.len() / run.len().max(1);
+                for lane in rows.chunks_exact_mut(lane_rows) {
+                    for slot in lane.iter_mut().flat_map(|row| row.iter_mut()).take(degree) {
+                        let current = digit / BINARY_DIGIT_COMMITMENT_DEGREE;
+                        if column != Some(current) {
+                            weights = self.column_weights(&kernel, current)?;
+                            column = Some(current);
+                        }
+                        *slot += weights[digit % BINARY_DIGIT_COMMITMENT_DEGREE];
+                        digit += 1;
+                    }
+                }
+                Ok(())
+            })?;
+            first = checked::mul_add(bases.len(), degree, first).ok_or(AkitaError::InvalidProof)?;
+        }
+        if first.div_ceil(BINARY_DIGIT_COMMITMENT_DEGREE) != self.columns {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
     }
 
     /// Stream every column's weights onto its digit addresses. Columns are

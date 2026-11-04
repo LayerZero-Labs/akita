@@ -45,3 +45,41 @@ fn profiles_reject_blocks_wider_than_the_table() {
     let num_vars = fixture.weights.table_len().trailing_zeros() as usize;
     assert!(fixture.weights.profiles(num_vars + 1).is_err());
 }
+
+/// Lane runs fill the same table as per-address terms, across several
+/// parallel tasks, a partial last block per lane and blocks that already
+/// hold rows.
+#[test]
+fn lanes_add_like_per_address_terms() {
+    use super::ProfileBuilder;
+    let (degree, stride) = (13, 16);
+    let bases = (0..70).map(|lane| lane * stride).collect::<Vec<_>>();
+    let value = |lane: usize, offset: usize| F::from_u64((lane * 1_000 + offset + 1) as u64);
+    let mut lanes = ProfileBuilder::<F>::new(1 << 12, 3).unwrap();
+    let mut terms = ProfileBuilder::<F>::new(1 << 12, 3).unwrap();
+    for builder in [&mut lanes, &mut terms] {
+        builder.add(5 * stride + 2, F::from_u64(9)).unwrap();
+    }
+    lanes
+        .add_lanes(&bases, degree, |run, rows| {
+            let lane_rows = rows.len() / run.len();
+            for (lane, rows) in run.zip(rows.chunks_exact_mut(lane_rows)) {
+                for (offset, slot) in rows
+                    .iter_mut()
+                    .flat_map(|row| row.iter_mut())
+                    .enumerate()
+                    .take(degree)
+                {
+                    *slot += value(lane, offset);
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    for (lane, &base) in bases.iter().enumerate() {
+        for offset in 0..degree {
+            terms.add(base + offset, value(lane, offset)).unwrap();
+        }
+    }
+    assert_eq!(lanes.finish().take_dense(), terms.finish().take_dense());
+}
