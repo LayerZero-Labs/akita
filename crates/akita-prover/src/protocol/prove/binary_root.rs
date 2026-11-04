@@ -378,6 +378,7 @@ where
             "binary root typed prefix was not prepared".into(),
         ));
     }
+    let phase = tracing::info_span!("binary_root_stage3_layout").entered();
     let typed = akita_types::binary_source::BinaryTypedPrefix::new(
         manifest,
         claim.is_some(),
@@ -390,14 +391,18 @@ where
         &stage2.challenges,
         prefix.n_prefix()?,
     )?;
+    drop(phase);
     // The shared setup source is built first: converting it into the shared
     // slice copies it once, and that copy must not overlap the dense weight.
+    let phase = tracing::info_span!("binary_root_stage3_source").entered();
     let coefficients: std::sync::Arc<[_]> = typed
         .setup_coefficients(&expanded.setup_seed.seed, manifest, prefix.n_prefix()?)?
         .into();
+    drop(phase);
     // A, B and D share one dense weight over the typed prefix. It enters as
     // the index factor: the rounds bind the same variables in the same order,
     // and the input pass keeps one accumulator instead of one per cell.
+    let phase = tracing::info_span!("binary_root_stage3_weights").entered();
     let index_factor = typed.prover_weights(
         &product,
         &stage2.challenges,
@@ -405,6 +410,8 @@ where
         [&authentication[0], &authentication[1]],
         prefix.n_prefix()?,
     )?;
+    drop(phase);
+    let phase = tracing::info_span!("binary_root_stage3_begin").entered();
     let (claim, session) =
         backend.begin_factored_stage3(crate::backend::FactoredStage3Request {
             session: proof_session,
@@ -413,8 +420,10 @@ where
             index_factor,
             coefficient_factor: vec![Cfg::ExtField::one()],
         })?;
+    drop(phase);
     akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
     akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
+    let phase = tracing::info_span!("binary_root_stage3_rounds").entered();
     let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         session,
@@ -423,6 +432,7 @@ where
         grinding,
         0,
     )?;
+    drop(phase);
     backend.advance_witness_level(&mut witness)?;
     drop(span);
     Ok(ProveLevelOutput {
