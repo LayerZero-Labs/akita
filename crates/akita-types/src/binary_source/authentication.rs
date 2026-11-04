@@ -64,9 +64,14 @@ pub(super) fn setup_entry<F: Field>(
 /// setup columns; the final chunk is zero-filled. The returned payload is row
 /// major. Image digits use `ImageCommitment`; U uses `WitnessCommitment`.
 /// This experimental geometry carries no SIS security claim.
+///
+/// `digits` starts at setup column `first_column`. The commitment is linear,
+/// so a table's payload is the field sum of the payloads of disjoint
+/// column-aligned pieces; a prover may compute those pieces in parallel.
 pub fn binary_public_digit_commitment<F: Field>(
     seed: &[u8; 32],
     label: SetupStreamLabel,
+    first_column: usize,
     digits: &[i8],
 ) -> Result<Vec<F>, AkitaError> {
     let rows = validate_label::<F>(label)?;
@@ -88,6 +93,7 @@ pub fn binary_public_digit_commitment<F: Field>(
             for (output, &digit) in coefficients.iter_mut().zip(chunk) {
                 *output = F::from_i64(i64::from(digit));
             }
+            let column = checked::sum([first_column, column]).ok_or(AkitaError::InvalidProof)?;
             setup_entry(seed, label, row, column)?
                 .mul_accumulate_into(&CyclotomicRing::from_coefficients(coefficients), &mut image);
         }

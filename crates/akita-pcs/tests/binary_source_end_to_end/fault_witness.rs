@@ -134,6 +134,7 @@ pub(super) fn foreign_partial_payload(
             role: akita_params::binary_setup::SetupStreamRole::WitnessCommitment,
             ..manifest.b_label()
         },
+        0,
         &partials,
     )
 }
