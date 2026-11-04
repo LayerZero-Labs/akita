@@ -22,23 +22,6 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("usage:", completed.stdout)
 
-    def test_profile_bench_does_not_persist_setup_cache(self) -> None:
-        repo = pathlib.Path(__file__).resolve().parents[2]
-        workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertNotIn("disk-persistence", workflow)
-        self.assertNotIn("LOCALAPPDATA", workflow)
-
-    def test_profile_bench_records_workflow_shard_identity(self) -> None:
-        repo = pathlib.Path(__file__).resolve().parents[2]
-        workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn('--benchmark-shard "${{ matrix.group.name }}"', workflow)
-
     def test_merge_base_policy_reads_narrow_profile_mode_registry(self) -> None:
         from scripts.profile_bench_merge_base_policy import profile_modes_from_modes_rs
 

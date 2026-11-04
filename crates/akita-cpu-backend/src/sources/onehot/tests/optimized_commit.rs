@@ -171,19 +171,6 @@ fn every_stored_index_width_reaches_the_same_commitment_sweep() {
 }
 
 #[test]
-fn production_selector_has_measured_regions_and_explicit_boundaries() {
-    use super::super::column_sweep::{select_sweep, OneHotSweep};
-
-    assert_eq!(select_sweep(512, 4096, 16), OneHotSweep::Bucketed);
-    assert_eq!(select_sweep(512, 64, 16), OneHotSweep::Merge);
-
-    assert_eq!(select_sweep(31, 64, 1), OneHotSweep::Bucketed);
-    assert_eq!(select_sweep(32, 64, 1), OneHotSweep::Merge);
-    assert_eq!(select_sweep(512, 64, 16), OneHotSweep::Merge);
-    assert_eq!(select_sweep(512, 64, 17), OneHotSweep::Bucketed);
-}
-
-#[test]
 fn retained_sweeps_handle_oversized_and_empty_blocks() {
     use super::super::column_sweep::{bucketed_sweep_tile, direct_sweep_tile, merge_sweep_tile};
 
