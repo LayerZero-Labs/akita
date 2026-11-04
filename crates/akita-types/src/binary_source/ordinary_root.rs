@@ -7,7 +7,7 @@ use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::{CompressionChainPlan, GroupCommitPhaseParams, RelationRowGeometry};
 use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
 
-use crate::native_root_relation::NativeRootWeights;
+use crate::native_root_relation::{weigh_units, NativeRootWeights, WEIGH_BATCH};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
 
@@ -358,52 +358,57 @@ impl OrdinaryNativeRootPlan {
         let blocks = self.profile.blocks.live_blocks;
         let positions = self.profile.blocks.positions_per_block;
         let digits = self.profile.inner.digits.num_digits;
-        for owner in 0..owners {
-            for block in 0..blocks {
-                for a_row in 0..a.output_rank() {
-                    let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
-                    row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-                    let owner_block =
-                        checked::mul_add(owner, blocks, block).ok_or(AkitaError::InvalidProof)?;
-                    for position in 0..positions {
-                        let element = checked::mul_add(owner_block, positions, position)
+        let span = tracing::info_span!("ordinary_weights_a").entered();
+        // One unit per (owner, block, A row) and source position, followed by
+        // that row's image unit; units are appended in this nested order.
+        let a_rows =
+            checked::product([owners, blocks, a.output_rank()]).ok_or(AkitaError::InvalidProof)?;
+        let units_per_row = checked::sum([positions, 1]).ok_or(AkitaError::InvalidProof)?;
+        let first_a_row = row;
+        extend_weighed(
+            &mut terms,
+            checked::product([a_rows, units_per_row]).ok_or(AkitaError::InvalidProof)?,
+            WEIGH_BATCH,
+            |unit| {
+                let (image, position) = (unit / units_per_row, unit % units_per_row);
+                let (owner_block, a_row) = (image / a.output_rank(), image % a.output_rank());
+                let batch = *batches
+                    .get(checked::sum([first_a_row, image]).ok_or(AkitaError::InvalidProof)?)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let mut unit_terms = Vec::new();
+                if position < positions {
+                    let element = checked::mul_add(owner_block, positions, position)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    for digit in 0..digits {
+                        let column = checked::mul_add(position, digits, digit)
                             .ok_or(AkitaError::InvalidProof)?;
-                        for digit in 0..digits {
-                            let column = checked::mul_add(position, digits, digit)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let kernel = ordinary_matrix_kernel(
-                                matrix,
-                                a_row,
-                                a.input_width(),
-                                column,
-                                a.ring_dimension(),
-                                alpha,
-                            )?;
-                            for (coefficient, weight) in kernel.into_iter().enumerate() {
-                                terms.push((
-                                    repacking.coefficient_address(
-                                        s_segment,
-                                        element,
-                                        digit,
-                                        coefficient,
-                                    )?,
-                                    batch * weight,
-                                ));
-                            }
+                        let kernel = ordinary_matrix_kernel(
+                            matrix,
+                            a_row,
+                            a.input_width(),
+                            column,
+                            a.ring_dimension(),
+                            alpha,
+                        )?;
+                        for (coefficient, weight) in kernel.into_iter().enumerate() {
+                            unit_terms.push((
+                                repacking.coefficient_address(
+                                    s_segment,
+                                    element,
+                                    digit,
+                                    coefficient,
+                                )?,
+                                batch * weight,
+                            ));
                         }
                     }
+                } else {
                     let mut power = batch;
                     for coefficient in 0..a.ring_dimension() {
-                        let image_row = checked::mul_add(owner_block, a.output_rank(), a_row)
-                            .and_then(|image| {
-                                checked::mul_add(
-                                    image,
-                                    subcolumns,
-                                    coefficient / b.ring_dimension(),
-                                )
-                            })
-                            .ok_or(AkitaError::InvalidProof)?;
-                        terms.extend(repacking.coefficient_weights(
+                        let image_row =
+                            checked::mul_add(image, subcolumns, coefficient / b.ring_dimension())
+                                .ok_or(AkitaError::InvalidProof)?;
+                        unit_terms.extend(repacking.coefficient_weights(
                             t_segment,
                             image_row,
                             coefficient % b.ring_dimension(),
@@ -412,8 +417,12 @@ impl OrdinaryNativeRootPlan {
                         power *= alpha;
                     }
                 }
-            }
-        }
+                Ok(unit_terms)
+            },
+        )?;
+        row = checked::sum([row, a_rows]).ok_or(AkitaError::InvalidProof)?;
+        drop(span);
+        let span = tracing::info_span!("ordinary_weights_b").entered();
         let geometry = self.profile.derive_slice_geometry()?;
         for block_range in geometry.block_ranges() {
             for b_row in 0..b.output_rank() {
@@ -502,6 +511,8 @@ impl OrdinaryNativeRootPlan {
                 }
             }
         }
+        drop(span);
+        let span = tracing::info_span!("ordinary_weights_compression").entered();
         for (map, source_segment, next_segment) in [
             (first, f_segment, Some(h_segment)),
             (second, h_segment, None),
@@ -546,26 +557,52 @@ impl OrdinaryNativeRootPlan {
                         .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
             }
         }
+        drop(span);
+        let span = tracing::info_span!("ordinary_weights_evaluation").entered();
         let equality = akita_algebra::offset_eq::OffsetEqWindow::new(point)?;
         let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
         let elements_per_owner =
             checked::product([blocks, positions]).ok_or(AkitaError::InvalidProof)?;
-        for (owner, &evaluation) in evaluations.iter().enumerate() {
+        let chunk = source_len.min(EVALUATION_CHUNK);
+        let chunks = checked::exact_div(source_len, chunk).ok_or(AkitaError::InvalidProof)?;
+        let first_evaluation_row = row;
+        extend_weighed(
+            &mut terms,
+            checked::product([evaluations.len(), chunks]).ok_or(AkitaError::InvalidProof)?,
+            EVALUATION_BATCH,
+            |unit| {
+                let (owner, first) = (unit / chunks, (unit % chunks) * chunk);
+                let batch = *batches
+                    .get(
+                        checked::sum([first_evaluation_row, owner])
+                            .ok_or(AkitaError::InvalidProof)?,
+                    )
+                    .ok_or(AkitaError::InvalidProof)?;
+                let mut unit_terms = Vec::new();
+                for coefficient in first..first + chunk {
+                    let element = checked::mul_add(
+                        owner,
+                        elements_per_owner,
+                        coefficient / a.ring_dimension(),
+                    )
+                    .ok_or(AkitaError::InvalidProof)?;
+                    unit_terms.extend(repacking.coefficient_weights(
+                        s_segment,
+                        element,
+                        coefficient % a.ring_dimension(),
+                        batch * equality.eval(coefficient),
+                    )?);
+                }
+                Ok(unit_terms)
+            },
+        )?;
+        for &evaluation in evaluations {
             let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
             row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-            for coefficient in 0..source_len {
-                let element =
-                    checked::mul_add(owner, elements_per_owner, coefficient / a.ring_dimension())
-                        .ok_or(AkitaError::InvalidProof)?;
-                terms.extend(repacking.coefficient_weights(
-                    s_segment,
-                    element,
-                    coefficient % a.ring_dimension(),
-                    batch * equality.eval(coefficient),
-                )?);
-            }
             claim += batch * evaluation;
         }
+        drop(span);
+        let span = tracing::info_span!("ordinary_weights_signed_bits").entered();
         if let Some(width) = self.source_width {
             let bit_segment =
                 checked::sum([self.first_segment, 4]).ok_or(AkitaError::InvalidProof)?;
@@ -601,11 +638,35 @@ impl OrdinaryNativeRootPlan {
                 }
             }
         }
+        drop(span);
+        let _span = tracing::info_span!("ordinary_weights_new").entered();
         if row != batches.len() {
             return Err(AkitaError::InvalidProof);
         }
         NativeRootWeights::new(repacking.domain_len(), terms, claim)
     }
+}
+
+/// Source coefficients per parallel unit of the evaluation rows.
+const EVALUATION_CHUNK: usize = 1024;
+/// Evaluation units buffered at once; bounds the copy of their terms.
+const EVALUATION_BATCH: usize = 256;
+
+/// Append every unit's terms in unit order. Units are weighed in parallel
+/// batches of `batch` through [`weigh_units`], which bounds the buffered terms.
+fn extend_weighed<E: Field>(
+    terms: &mut Vec<(usize, E)>,
+    units: usize,
+    batch: usize,
+    weigh: impl Fn(usize) -> Result<Vec<(usize, E)>, AkitaError> + Sync + Send,
+) -> Result<(), AkitaError> {
+    for start in (0..units).step_by(batch) {
+        let end = units.min(start + batch);
+        for unit in weigh_units(start..end, &weigh)? {
+            terms.extend(unit);
+        }
+    }
+    Ok(())
 }
 
 fn ordinary_matrix_kernel<E: Field>(

@@ -310,29 +310,34 @@ impl RootCoefficientRepacking {
     /// These addresses are the ordinary successor's digit witness addresses.
     /// A root equation compiled from them authenticates coefficient repacking
     /// against that witness without a second coefficient table.
+    ///
+    /// The digit lanes of one element are consecutive, so digit `d` sits `d`
+    /// lane widths after digit zero. Both end addresses are checked here; the
+    /// weights are then yielded without allocation.
     pub fn coefficient_weights<F: Field>(
         &self,
         segment: usize,
         element: usize,
         coefficient: usize,
         scale: F,
-    ) -> Result<Vec<(usize, F)>, AkitaError> {
+    ) -> Result<impl Iterator<Item = (usize, F)>, AkitaError> {
         let shape = self.segments.get(segment).ok_or_else(|| {
             AkitaError::InvalidInput("root repacking segment index is invalid".into())
         })?;
-        let mut weights = Vec::new();
-        weights.try_reserve_exact(shape.digits).map_err(|_| {
-            AkitaError::InvalidSetup("root coefficient weight allocation is too large".into())
-        })?;
+        let first = match shape.digits.checked_sub(1) {
+            Some(last) => {
+                self.coefficient_address(segment, element, last, coefficient)?;
+                self.coefficient_address(segment, element, 0, coefficient)?
+            }
+            None => 0,
+        };
+        let width = shape.geometry.physical_coefficient_width();
         let mut power = scale;
-        for digit in 0..shape.digits {
-            weights.push((
-                self.coefficient_address(segment, element, digit, coefficient)?,
-                power,
-            ));
+        Ok((0..shape.digits).map(move |digit| {
+            let weight = power;
             power *= F::from_u64(8);
-        }
-        Ok(weights)
+            (first + digit * width, weight)
+        }))
     }
 
     /// Evaluate the same linear coefficient map used by the root relation.
