@@ -123,6 +123,25 @@ Failed cases remain visible and name the phase that failed. A missing or
 unsupported merge base case is reported instead of being compared with a
 different workload.
 
+## Explicit onehot NTT comparison
+
+The FP128 shard also runs an nv38, K=16, recursive commitment comparison
+within the head binary. It explicitly selects accumulation and five-prime NTT
+with eight blocks and 48 columns per panel. Both use 16 workers, the same
+resident independent witness, and the same prepared setup. This case requires
+48 GiB of available RAM; insufficient memory fails the job.
+
+One warmup per method precedes three interleaved measurements per method.
+The report shows median commit time, time reduction, and speedup. Setup and
+preprocessing are excluded; witness conversion is included. These numbers are
+separate from the default-path merge-base percentages above.
+
+Every trial must emit the expected kernel execution marker, pass both verifier
+thread policies, and produce identical serialized commitment and proof bytes.
+An NTT fallback, missing marker, verification failure, or byte mismatch fails
+the comparison. The `onehot-ntt-ci` artifact contains all trial logs, payloads,
+CPU metadata, and JSON results; its table is also appended to the PR comment.
+
 ## Full report artifact
 
 `scripts/profile_bench_report.py` writes these files:
