@@ -354,6 +354,22 @@ impl OrdinaryNativeRootPlan {
         let h_segment = checked::sum([self.first_segment, 3]).ok_or(AkitaError::InvalidProof)?;
         let subcolumns = checked::exact_div(a.ring_dimension(), b.ring_dimension())
             .ok_or(AkitaError::InvalidProof)?;
+        // Kernels depend on the matrix entry only, so blocks and slices that
+        // reuse an entry share one kernel.
+        let mut a_kernels = KernelCache::new(
+            matrix,
+            a.output_rank(),
+            a.input_width(),
+            a.ring_dimension(),
+            alpha,
+        )?;
+        let mut b_kernels = KernelCache::new(
+            matrix,
+            b.output_rank(),
+            b.input_width(),
+            b.ring_dimension(),
+            alpha,
+        )?;
         let owners = self.profile.group.num_polynomials();
         let blocks = self.profile.blocks.live_blocks;
         let positions = self.profile.blocks.positions_per_block;
@@ -371,15 +387,8 @@ impl OrdinaryNativeRootPlan {
                         for digit in 0..digits {
                             let column = checked::mul_add(position, digits, digit)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            let kernel = ordinary_matrix_kernel(
-                                matrix,
-                                a_row,
-                                a.input_width(),
-                                column,
-                                a.ring_dimension(),
-                                alpha,
-                            )?;
-                            for (coefficient, weight) in kernel.into_iter().enumerate() {
+                            let kernel = a_kernels.get(a_row, column)?;
+                            for (coefficient, &weight) in kernel.iter().enumerate() {
                                 terms.push((
                                     repacking.coefficient_address(
                                         s_segment,
@@ -452,15 +461,8 @@ impl OrdinaryNativeRootPlan {
                                         )
                                     })
                                     .ok_or(AkitaError::InvalidProof)?;
-                                    let kernel = ordinary_matrix_kernel(
-                                        matrix,
-                                        b_row,
-                                        b.input_width(),
-                                        column,
-                                        b.ring_dimension(),
-                                        alpha,
-                                    )?;
-                                    for (coefficient, weight) in kernel.into_iter().enumerate() {
+                                    let kernel = b_kernels.get(b_row, column)?;
+                                    for (coefficient, &weight) in kernel.iter().enumerate() {
                                         terms.push((
                                             repacking.coefficient_address(
                                                 t_segment,
@@ -508,16 +510,11 @@ impl OrdinaryNativeRootPlan {
         ] {
             let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
             row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
+            let mut map_kernels =
+                KernelCache::new(matrix, 1, map.input_width(), map.ring_dimension(), alpha)?;
             for column in 0..map.input_width() {
-                let kernel = ordinary_matrix_kernel(
-                    matrix,
-                    0,
-                    map.input_width(),
-                    column,
-                    map.ring_dimension(),
-                    alpha,
-                )?;
-                for (coefficient, weight) in kernel.into_iter().enumerate() {
+                let kernel = map_kernels.get(0, column)?;
+                for (coefficient, &weight) in kernel.iter().enumerate() {
                     terms.push((
                         repacking.coefficient_address(source_segment, column, 0, coefficient)?,
                         batch * weight,
@@ -608,32 +605,71 @@ impl OrdinaryNativeRootPlan {
     }
 }
 
-fn ordinary_matrix_kernel<E: Field>(
-    matrix: &[Prime128Offset275],
-    row: usize,
+/// Residue kernels of one public matrix role, each computed on first use.
+///
+/// Entry `(row, column)` is the degree-`degree` ring at flat offset
+/// `(row * width + column) * degree` of the ordinary setup prefix.
+struct KernelCache<'a, E: Field> {
+    matrix: &'a [Prime128Offset275],
     width: usize,
-    column: usize,
     degree: usize,
-    alpha: E,
-) -> Result<Vec<E>, AkitaError> {
-    let start = checked::mul_add(row, width, column)
-        .and_then(|entry| checked::product([entry, degree]))
-        .ok_or(AkitaError::InvalidProof)?;
-    let range = checked::range(start, degree).ok_or(AkitaError::InvalidProof)?;
-    let coefficients = matrix
-        .get(range)
-        .ok_or(AkitaError::InvalidProof)?
-        .iter()
-        .map(|coefficient| {
-            coefficient
-                .to_u128_checked()
-                .map(E::from_u128)
-                .ok_or(AkitaError::InvalidProof)
+    point: ResidueKernelPoint<E>,
+    kernels: Vec<Option<Vec<E>>>,
+}
+
+impl<'a, E: Field> KernelCache<'a, E> {
+    fn new(
+        matrix: &'a [Prime128Offset275],
+        rows: usize,
+        width: usize,
+        degree: usize,
+        alpha: E,
+    ) -> Result<Self, AkitaError> {
+        let entries = checked::product([rows, width]).ok_or(AkitaError::InvalidProof)?;
+        let mut kernels = Vec::new();
+        kernels
+            .try_reserve_exact(entries)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        kernels.resize(entries, None);
+        Ok(Self {
+            matrix,
+            width,
+            degree,
+            point: ResidueKernelPoint::new(alpha, degree)?,
+            kernels,
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut weights = vec![E::zero(); degree];
-    ResidueKernelPoint::new(alpha, degree)?.field_kernel_into(&coefficients, &mut weights)?;
-    Ok(weights)
+    }
+
+    fn get(&mut self, row: usize, column: usize) -> Result<&[E], AkitaError> {
+        if column >= self.width {
+            return Err(AkitaError::InvalidProof);
+        }
+        let entry = checked::mul_add(row, self.width, column).ok_or(AkitaError::InvalidProof)?;
+        let start = checked::product([entry, self.degree]).ok_or(AkitaError::InvalidProof)?;
+        let range = checked::range(start, self.degree).ok_or(AkitaError::InvalidProof)?;
+        let slot = self
+            .kernels
+            .get_mut(entry)
+            .ok_or(AkitaError::InvalidProof)?;
+        if slot.is_none() {
+            let coefficients = self
+                .matrix
+                .get(range)
+                .ok_or(AkitaError::InvalidProof)?
+                .iter()
+                .map(|coefficient| {
+                    coefficient
+                        .to_u128_checked()
+                        .map(E::from_u128)
+                        .ok_or(AkitaError::InvalidProof)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut weights = vec![E::zero(); self.degree];
+            self.point.field_kernel_into(&coefficients, &mut weights)?;
+            *slot = Some(weights);
+        }
+        slot.as_deref().ok_or(AkitaError::InvalidProof)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

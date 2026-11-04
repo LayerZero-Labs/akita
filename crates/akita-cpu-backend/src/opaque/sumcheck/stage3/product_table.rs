@@ -64,7 +64,8 @@ pub(in crate::opaque::sumcheck) enum SetupProductWeights<E: Field> {
 /// terms, sharing coefficient challenges and merging into one index product.
 /// Both cases retain only contracted coefficient and index tables.
 pub struct SetupProductSumcheck<F: Field, E: Field> {
-    setup: SetupProductSource<F>,
+    /// Released once the index table is materialized; no later round reads it.
+    setup: Option<SetupProductSource<F>>,
     row_capacity: usize,
     coefficient_len: usize,
     total_rounds: usize,
@@ -72,6 +73,9 @@ pub struct SetupProductSumcheck<F: Field, E: Field> {
     terms: Vec<CoefficientTerm<E>>,
     weights: Vec<SetupProductWeights<E>>,
     index_table: Vec<E>,
+    /// The index table of a one-coefficient view before its first index
+    /// fold: every entry is read from the setup source, which is not copied.
+    index_from_source: bool,
     index_factor: Vec<E>,
     input_claim: E,
     claim: E,
@@ -159,7 +163,7 @@ where
             .flat_map(|term| term.table.iter().zip(&term.factor))
             .fold(E::zero(), |sum, (&value, &factor)| sum + value * factor);
         let mut product = Self {
-            setup,
+            setup: Some(setup),
             row_capacity,
             coefficient_len,
             total_rounds: coefficient_len.trailing_zeros() as usize
@@ -168,50 +172,99 @@ where
             terms,
             weights,
             index_table: Vec::new(),
+            index_from_source: false,
             index_factor: Vec::new(),
             input_claim,
             claim: input_claim,
             round: 0,
             pending: None,
         };
+        // A one-coefficient view has no coefficient-round challenge to
+        // trigger the normal phase transition. Its index table is the source
+        // itself: the first index round reads it in place and the first
+        // challenge folds it into a half-length table, so the product never
+        // holds a full-length copy beside the source. A zero-round view
+        // materializes its single final value now.
         if coefficient_len == 1 {
-            product.materialize_index_table()?;
+            if product.total_rounds == 0 {
+                product.materialize_index_table()?;
+            } else {
+                product.index_factor = product.combine_index_weights()?;
+                product.index_from_source = true;
+            }
         }
         Ok(product)
     }
 
-    fn compute_round_univariate(&self) -> UnivariatePoly<E> {
-        let (constant, linear, quadratic) = if self.index_table.is_empty() {
+    fn source(&self) -> Result<&[F], AkitaError> {
+        self.setup
+            .as_ref()
+            .map(SetupProductSource::coefficients)
+            .ok_or_else(|| AkitaError::Internal("setup source already released".into()))
+    }
+
+    fn compute_round_univariate(&self) -> Result<UnivariatePoly<E>, AkitaError> {
+        let (constant, linear, quadratic) = if self.index_from_source {
+            let source = self.source()?;
+            let one = [E::one()];
+            accumulate_left_round(
+                |index| E::dot_base(&one, &source[index..index + 1]),
+                &self.index_factor,
+                E::one(),
+            )
+        } else if self.index_table.is_empty() {
             self.terms
                 .iter()
                 .fold((E::zero(), E::zero(), E::zero()), |sum, term| {
-                    let p = accumulate_left_round(&term.table, &term.factor, E::one());
+                    let p =
+                        accumulate_left_round(|index| term.table[index], &term.factor, E::one());
                     (sum.0 + p.0, sum.1 + p.1, sum.2 + p.2)
                 })
         } else {
-            accumulate_left_round(&self.index_table, &self.index_factor, E::one())
+            accumulate_left_round(
+                |index| self.index_table[index],
+                &self.index_factor,
+                E::one(),
+            )
         };
-        UnivariatePoly::new(vec![constant, linear, quadratic])
+        Ok(UnivariatePoly::new(vec![constant, linear, quadratic]))
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
         if round < self.coefficient_len.trailing_zeros() as usize {
             self.coefficient_challenges.push(challenge);
             for term in &mut self.terms {
-                fold_dense_left_round(&mut term.table, challenge);
+                term.table =
+                    fold_dense_left_round(term.table.len(), |index| term.table[index], challenge);
                 fold_factor_in_place(&mut term.factor, challenge);
             }
             if round + 1 == self.coefficient_len.trailing_zeros() as usize {
                 self.materialize_index_table()?;
             }
+        } else if self.index_from_source {
+            let source = self.source()?;
+            let one = [E::one()];
+            self.index_table = fold_dense_left_round(
+                self.row_capacity,
+                |index| E::dot_base(&one, &source[index..index + 1]),
+                challenge,
+            );
+            self.index_from_source = false;
+            self.setup = None;
+            fold_factor_in_place(&mut self.index_factor, challenge);
         } else {
-            fold_dense_left_round(&mut self.index_table, challenge);
+            self.index_table = fold_dense_left_round(
+                self.index_table.len(),
+                |index| self.index_table[index],
+                challenge,
+            );
             fold_factor_in_place(&mut self.index_factor, challenge);
         }
         Ok(())
     }
 
-    fn materialize_index_table(&mut self) -> Result<(), AkitaError> {
+    /// Combine every term's index weights at its bound coefficient scale.
+    fn combine_index_weights(&mut self) -> Result<Vec<E>, AkitaError> {
         let mut combined = vec![E::zero(); self.row_capacity];
         let mut terms = self.terms.iter();
         for weights in std::mem::take(&mut self.weights) {
@@ -252,6 +305,12 @@ where
             return Err(AkitaError::InvalidProof);
         }
         self.terms.clear();
+        Ok(combined)
+    }
+
+    /// Materialize the index table and release the setup source.
+    fn materialize_index_table(&mut self) -> Result<(), AkitaError> {
+        let combined = self.combine_index_weights()?;
         let equality = EqPolynomial::evals(&self.coefficient_challenges)?;
         let _span = tracing::info_span!(
             "stage3_setup_index_pass",
@@ -264,11 +323,12 @@ where
         )
         .entered();
         self.index_table = contract_setup_indices(
-            self.setup.coefficients(),
+            self.source()?,
             self.coefficient_len,
             self.row_capacity,
             &equality,
         );
+        self.setup = None;
         self.index_factor = combined;
         Ok(())
     }
@@ -314,7 +374,7 @@ where
                 "invalid setup product round progression".into(),
             ));
         }
-        let polynomial = self.compute_round_univariate();
+        let polynomial = self.compute_round_univariate()?;
         self.pending = Some(polynomial.clone());
         Ok(polynomial)
     }
@@ -399,7 +459,11 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
         let (constant, linear, quadratic) = if round < self.right_rounds {
             accumulate_right_round(&self.table, &self.left_factor, &self.right_factor)
         } else {
-            accumulate_left_round(&self.table, &self.left_factor, self.right_factor[0])
+            accumulate_left_round(
+                |index| self.table[index],
+                &self.left_factor,
+                self.right_factor[0],
+            )
         };
         UnivariatePoly::new(vec![constant, linear, quadratic])
     }
@@ -569,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn rectangular_setup_product_materializes_index_state_without_coefficient_rounds() {
+    fn rectangular_setup_product_reads_the_source_index_state_without_coefficient_rounds() {
         assert_round_parity(3, 4, 1);
         assert_round_parity(1, 1, 1);
     }
