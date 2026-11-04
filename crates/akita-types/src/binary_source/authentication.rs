@@ -50,10 +50,9 @@ pub(super) fn setup_entry<F: Field>(
             ..label
         },
     )?;
-    let mut coefficients = [F::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-    for coefficient in &mut coefficients {
-        *coefficient = F::from_u128(stream.sample_p()?);
-    }
+    let mut values = [0u128; BINARY_DIGIT_COMMITMENT_DEGREE];
+    stream.fill_p(&mut values)?;
+    let coefficients = values.map(F::from_u128);
     Ok(CyclotomicRing::from_coefficients(coefficients))
 }
 

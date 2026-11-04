@@ -168,22 +168,62 @@ impl TypedSetupStream {
     /// # Errors
     /// Rejects a q stream or exhaustion of 256 rejection candidates.
     pub fn sample_p(&mut self) -> Result<u128, AkitaError> {
+        let mut output = [0u128];
+        self.fill_p(&mut output)?;
+        Ok(output[0])
+    }
+
+    /// Fill `output` with consecutive [`Self::sample_p`] draws.
+    ///
+    /// The candidates for the whole slice are squeezed in one read; only a
+    /// rejection reads further candidates. The accepted values, the stream
+    /// position afterwards and the per-draw rejection budget are exactly those
+    /// of `output.len()` successive `sample_p` calls.
+    ///
+    /// # Errors
+    /// Rejects a q stream or exhaustion of 256 consecutive rejection candidates.
+    pub fn fill_p(&mut self, output: &mut [u128]) -> Result<(), AkitaError> {
+        const BLOCK: usize = 64;
         if self.modulus != SetupStreamModulus::Prime128Offset275 {
             return Err(AkitaError::InvalidSetup(
                 "q setup stream requested as P".into(),
             ));
         }
-        for _ in 0..MAX_REJECTION_ATTEMPTS {
-            let mut bytes = [0u8; 16];
-            self.reader.read(&mut bytes);
-            let candidate = u128::from_le_bytes(bytes);
-            if candidate < BINARY_SETUP_P {
-                return Ok(candidate);
+        let mut rejected = 0;
+        let mut bytes = [0u8; 16 * BLOCK];
+        let mut remaining = output;
+        while !remaining.is_empty() {
+            let wanted = remaining.len().min(BLOCK);
+            let block = bytes
+                .get_mut(..16 * wanted)
+                .ok_or_else(|| AkitaError::InvalidSetup("P setup block overflow".into()))?;
+            self.reader.read(block);
+            let mut accepted = 0;
+            for candidate in block.chunks_exact(16) {
+                let mut word = [0u8; 16];
+                word.copy_from_slice(candidate);
+                let candidate = u128::from_le_bytes(word);
+                if candidate < BINARY_SETUP_P {
+                    // At most `wanted <= remaining.len()` candidates are accepted.
+                    if let Some(slot) = remaining.get_mut(accepted) {
+                        *slot = candidate;
+                    }
+                    accepted += 1;
+                    rejected = 0;
+                } else {
+                    rejected += 1;
+                    if rejected == MAX_REJECTION_ATTEMPTS {
+                        return Err(AkitaError::InvalidSetup(
+                            "P setup rejection budget exhausted".into(),
+                        ));
+                    }
+                }
             }
+            remaining = std::mem::take(&mut remaining)
+                .get_mut(accepted..)
+                .unwrap_or_default();
         }
-        Err(AkitaError::InvalidSetup(
-            "P setup rejection budget exhausted".into(),
-        ))
+        Ok(())
     }
 }
 
