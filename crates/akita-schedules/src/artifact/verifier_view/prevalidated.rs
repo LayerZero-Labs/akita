@@ -211,13 +211,14 @@ impl PrevalidatedVerifierRecord {
 impl<'a> PrevalidatedVerifierView<'a> {
     /// Restore a record embedded by a trusted offline generator.
     ///
-    /// # Safety
-    ///
-    /// All arguments must be copied from one successful call to
-    /// `prevalidate_verifier_view` in this protocol version. `view` must be
-    /// exactly the validated bytes. These values must never come from a proof
-    /// or unaudited caller input: this constructor bypasses semantic admission.
-    pub const unsafe fn from_trusted_parts(
+    /// This is trusted verifier configuration, not a memory-safety contract,
+    /// so the constructor is safe and usable from crates that forbid unsafe
+    /// code. All arguments must be copied from one successful call to
+    /// `prevalidate_verifier_view` in this protocol version, and `view` must
+    /// be exactly the validated bytes. These values must never come from a
+    /// proof or unaudited caller input: this constructor bypasses semantic
+    /// admission.
+    pub const fn from_trusted_parts(
         view: &'a [u8],
         policy_digest: [u8; 32],
         catalog_digest: [u8; 32],
