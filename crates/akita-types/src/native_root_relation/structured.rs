@@ -276,7 +276,7 @@ impl<E: Field> RootWeightFamily<E> {
     }
 
     /// Add this family to block profiles. Recomposed families add one
-    /// profile per element; the others add every term.
+    /// profile per element; the others add per-address weights by lane.
     pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
         match self {
             Self::DirectA(direct) => {
@@ -293,7 +293,7 @@ impl<E: Field> RootWeightFamily<E> {
             }
             Self::ParityRows(rows) => {
                 let _span = tracing::info_span!("root_weights_emit_parity_rows").entered();
-                rows.visit(|address, value| profiles.add(address, value))
+                rows.emit(profiles)
             }
             Self::Authentication(authentication) => {
                 let _span = tracing::info_span!("root_weights_emit_authentication").entered();

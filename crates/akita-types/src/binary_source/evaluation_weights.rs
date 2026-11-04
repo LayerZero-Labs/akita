@@ -11,7 +11,8 @@ use super::{
     BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
 use crate::native_root_relation::{
-    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH,
+    weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
+    WEIGH_BATCH,
 };
 use crate::root_repacking::RootCoefficientRepacking;
 
@@ -259,26 +260,62 @@ impl<E: Field> ParityRowWeights<E> {
         Ok(self.batch * sum)
     }
 
+    /// `SRE(bits_r, alpha)`, the shifted-remainder kernel of row `r`.
+    fn kernel(&self, row: usize) -> Result<[E; 162], AkitaError> {
+        let words = self.rows.get(row).ok_or(AkitaError::InvalidProof)?;
+        let multiplier: [E; 162] = std::array::from_fn(|index| {
+            let word = words.get(index / 64).copied().unwrap_or(0);
+            E::from_u64((word >> (index % 64)) & 1)
+        });
+        let mut kernel = [E::zero(); 162];
+        shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, self.alpha, &mut kernel)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        Ok(kernel)
+    }
+
+    /// Add the row weights to block profiles. Each response element's low
+    /// digit lane takes its four rows in one parallel task when the lanes
+    /// are whole blocks; otherwise the addresses stream one by one.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        let width = profiles.width();
+        if !self.response.stride().is_multiple_of(width) {
+            return self.visit(|address, value| profiles.add(address, value));
+        }
+        let bases = (0..self.rows.len().div_ceil(4))
+            .map(|quad| self.response.base(self.element(4 * quad)?, 0))
+            .collect::<Result<Vec<_>, _>>()?;
+        profiles.add_lanes(&bases, self.response.degree(), |run, lanes| {
+            let lane_rows = lanes.len() / run.len().max(1);
+            for (quad, lane) in run.zip(lanes.chunks_exact_mut(lane_rows)) {
+                for row in 4 * quad..self.rows.len().min(4 * quad + 4) {
+                    for (coefficient, weight) in self.kernel(row)?.into_iter().enumerate() {
+                        let signed = if coefficient % 2 == 0 {
+                            weight
+                        } else {
+                            -weight
+                        };
+                        let offset = 4 * coefficient + row % 4;
+                        *lane
+                            .get_mut(offset / width)
+                            .and_then(|slots| slots.get_mut(offset % width))
+                            .ok_or(AkitaError::InvalidProof)? += self.batch * signed;
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Each row's shifted-remainder kernel is computed in batches through
     /// [`weigh_units`]; the weights are then streamed in row order.
     pub(crate) fn visit(
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
-        let weigh = |row: usize| -> Result<[E; 162], AkitaError> {
-            let words = self.rows.get(row).ok_or(AkitaError::InvalidProof)?;
-            let multiplier: [E; 162] = std::array::from_fn(|index| {
-                let word = words.get(index / 64).copied().unwrap_or(0);
-                E::from_u64((word >> (index % 64)) & 1)
-            });
-            let mut kernel = [E::zero(); 162];
-            shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, self.alpha, &mut kernel)
-                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-            Ok(kernel)
-        };
         for start in (0..self.rows.len()).step_by(WEIGH_BATCH) {
             let end = self.rows.len().min(start + WEIGH_BATCH);
-            for (row, kernel) in (start..end).zip(weigh_units(start..end, weigh)?) {
+            for (row, kernel) in (start..end).zip(weigh_units(start..end, |row| self.kernel(row))?)
+            {
                 let base = self.response.base(self.element(row)?, 0)?;
                 for (coefficient, weight) in kernel.into_iter().enumerate() {
                     let signed = if coefficient % 2 == 0 {
