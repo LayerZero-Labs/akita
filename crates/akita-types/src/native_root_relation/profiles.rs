@@ -176,11 +176,10 @@ impl<E: Field> ProfileBuilder<E> {
         offset: usize,
         value: E,
     ) -> Result<(), AkitaError> {
-        let width = self.width();
         if offset >= lanes.degree() {
             return Err(AkitaError::InvalidProof);
         }
-        if !lanes.stride().is_multiple_of(width) {
+        if lanes.stride() & (self.width() - 1) != 0 {
             return lanes.recompose(element, offset, value, &mut |address, value| {
                 self.add(address, value)
             });
@@ -191,8 +190,9 @@ impl<E: Field> ProfileBuilder<E> {
             Some(_) => self.share(lanes, element)?,
             None => return Err(AkitaError::InvalidProof),
         };
-        let index = (shared as usize + offset / width) * width + offset % width;
-        self.rows[index] += value;
+        // The element's shared rows are contiguous, so `offset` indexes them
+        // directly.
+        self.rows[((shared as usize) << self.block_bits) + offset] += value;
         Ok(())
     }
 
