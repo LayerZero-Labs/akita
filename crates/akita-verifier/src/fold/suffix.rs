@@ -1,6 +1,9 @@
 use super::terminal::verify_terminal_suffix;
-// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
-use super::{verify_fold, NextWitness, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
+use super::{
+    receive_opening_payload, verify_fold, NextWitness, NextWitnessPlan, PreparedFoldReplay,
+    SetupPrefixOpening,
+};
+use crate::claims::ClaimReplay;
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::{
     finalize_claims, prepare_single_field_suffix_groups, verify_coefficient_packing_suffix_prefix,
@@ -13,7 +16,6 @@ use akita_params::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
-use akita_types::GrindingReplay;
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
@@ -21,26 +23,11 @@ use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoM
 
 pub(super) struct SuffixVerifierState<F: Field, E: Field, V = E> {
     pub opening_point: Vec<E>,
-    pub opening: E,
+    pub opening: V,
     pub witness: NextWitness<F>,
     pub basis: BasisMode,
     pub witness_len: usize,
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
-}
-
-impl<F: Field, E: Field, V> SuffixVerifierState<F, E, V> {
-    /// The continuation the root fold hands the first recursive fold.
-    pub(super) fn from_root(root: super::FoldVerifyOutput<F, E, V>, witness_len: usize) -> Self {
-        Self {
-            opening_point: root.challenges,
-            opening: root.opening,
-            witness: root.next_witness,
-            witness_last_block_digest: root.next_witness_last_block_digest,
-            basis: BasisMode::Lagrange,
-            witness_len,
-            setup_prefix_opening: root.setup_prefix_opening,
-        }
-    }
 }
 
 fn suffix_commitment_payloads<F, E>(
@@ -97,10 +84,9 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
-fn prepare_fold_replay<'a, F, E>(
+fn prepare_fold_replay<'a, F, E, G: ClaimReplay<F, E>>(
     setup: &'a AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
     current_state: &SuffixVerifierState<F, E, G::Claim>,
     lp: &'a CommittedGroupParams,
@@ -158,17 +144,16 @@ where
     };
     let opening_batch = block_claims.layout()?;
     // Group order: the setup-prefix evaluation, then the witness evaluation.
-    let openings: Vec<G::Claim> = current_state
-        .setup_prefix_opening
-        .iter()
-        .map(|(_, evaluation)| G::constant(*evaluation))
-        .chain(std::iter::once(current_state.opening.clone()))
-        .collect();
     let prefix_evaluation = current_state
         .setup_prefix_opening
         .as_ref()
         .map(|(_, evaluation)| evaluation);
     let witness_evaluation = std::slice::from_ref(&current_state.opening);
+    let openings: Vec<G::Claim> = prefix_evaluation
+        .map(|evaluation| G::constant(*evaluation))
+        .into_iter()
+        .chain(std::iter::once(current_state.opening.clone()))
+        .collect();
     let group_points = (0..opening_batch.num_groups())
         .map(|group_index| block_claims.group_point(group_index))
         .collect::<Result<Vec<_>, _>>()?;
@@ -176,7 +161,7 @@ where
         lp.opening_method(),
         akita_params::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
-        verify_coefficient_packing_suffix_prefix::<F, E>(
+        let material = verify_coefficient_packing_suffix_prefix::<F, E, _>(
             &block_claims,
             openings,
             &opening_batch,
@@ -201,15 +186,7 @@ where
                 point,
             )?;
         }
-        // T0-PORT(private): dev bound the openings through `grinding.bind_openings(level,
-        // prefix_evaluation, witness_evaluation)` (fold_sites::bind_fold_openings: the prefix
-        // public, derived claims via bind_derived, D25), which absorbs nothing for masked
-        // derived claims; re-express on v8.
-        akita_transcript::public_extensions::<F, E, _>(
-            grinding.state_mut(),
-            akita_types::FoldSite::Openings { level }.id()?,
-            &openings,
-        )?;
+        grinding.bind_openings(level, prefix_evaluation, witness_evaluation)?;
         FoldClaimMaterial {
             prepared_points: prepared
                 .into_iter()
@@ -220,7 +197,7 @@ where
             reduction_factors: None,
         }
     } else {
-        verify_extension_claim_suffix_prefix::<F, E>(
+        let material = verify_extension_claim_suffix_prefix::<F, E, _>(
             &group_points,
             &G::clear_values(&openings)?,
             &opening_batch,
@@ -242,18 +219,8 @@ where
     };
     let relation_geometry = RelationWitnessGeometry::for_level(lp, &opening_batch, E::DEGREE)?;
     let opening_geometry = relation_geometry.rhs_layout().opening_payload_geometry()?;
-    // T0-PORT(private): dev used exchange_public_all here; re-express on v8.
-    let opening_payload = akita_transcript::receive_field_group::<F>(
-        grinding.state_mut(),
-        akita_types::FoldSite::OpeningPayload {
-            level,
-            ring_dimension: opening_geometry.transcript_ring_dimension(),
-        }
-        .id()?,
-        opening_geometry.transmitted_coefficients(),
-    )
-    .map(RingVec::from_coeffs)?;
-    let prefix = finalize_claims::<F, E>(&opening_batch, material, grinding, level)?;
+    let opening_payload = receive_opening_payload::<F, E, _>(grinding, level, &opening_geometry)?;
+    let prefix = finalize_claims::<F, E, _>(&opening_batch, material, grinding, level)?;
     let commitment_payloads =
         suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, witness)?;
     let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
@@ -328,9 +295,55 @@ where
     })
 }
 
-// T0-PORT(private): dev used ClaimReplay, G::Claim here; re-express on v8.
-// T0-PORT(private): dev split one recursive level into `verify_suffix_level`, generic over
-// `G: ClaimReplay`, so the masked prefix can replay levels up to the cut; re-express on v8.
+/// Replays recursive fold `offset + 1` from the predecessor's continuation and
+/// returns its own.
+pub(super) fn verify_suffix_level<F, E, G: ClaimReplay<F, E>>(
+    setup: &AkitaVerifierSetup<F>,
+    grinding: &mut G,
+    schedule: &FoldSchedule,
+    offset: usize,
+    current_state: SuffixVerifierState<F, E, G::Claim>,
+    setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
+) -> Result<SuffixVerifierState<F, E, G::Claim>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
+{
+    let step = schedule
+        .recursive_folds
+        .get(offset)
+        .ok_or(AkitaError::InvalidProof)?;
+    let level = u32::try_from(offset + 1).map_err(|_| AkitaError::InvalidProof)?;
+    if current_state.witness_len != step.input_witness_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    let next = schedule.recursive_folds.get(offset + 1);
+    let prepared = prepare_fold_replay::<F, E, _>(
+        setup,
+        grinding,
+        level,
+        &current_state,
+        &step.params,
+        step.output_witness_len,
+        next,
+        &schedule.terminal,
+    )?;
+    let output = verify_fold(setup, grinding, prepared, setup_policy)?;
+    Ok(SuffixVerifierState {
+        opening_point: output.challenges,
+        opening: output.opening,
+        witness: output.next_witness,
+        basis: BasisMode::Lagrange,
+        witness_len: step.output_witness_len,
+        setup_prefix_opening: output.setup_prefix_opening,
+    })
+}
+
 pub(super) fn verify_suffix<F, E>(
     setup: &AkitaVerifierSetup<F>,
     terminal_ntt: &TerminalNttCache,
@@ -348,31 +361,9 @@ where
         + MulBaseUnreduced<F>
         + ChallengeCodec,
 {
-    for (offset, step) in schedule.recursive_folds.iter().enumerate() {
-        let level = u32::try_from(offset + 1).map_err(|_| AkitaError::InvalidProof)?;
-        if current_state.witness_len != step.input_witness_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        let next = schedule.recursive_folds.get(offset + 1);
-        let prepared = prepare_fold_replay::<F, E>(
-            setup,
-            grinding,
-            level,
-            &current_state,
-            &step.params,
-            step.output_witness_len,
-            next,
-            &schedule.terminal,
-        )?;
-        let output = verify_fold(setup, grinding, prepared, setup_policy)?;
-        current_state = SuffixVerifierState {
-            opening_point: output.challenges,
-            opening: output.opening,
-            witness: output.next_witness,
-            basis: BasisMode::Lagrange,
-            witness_len: step.output_witness_len,
-            setup_prefix_opening: output.setup_prefix_opening,
-        };
+    for offset in 0..schedule.recursive_folds.len() {
+        current_state =
+            verify_suffix_level(setup, grinding, schedule, offset, current_state, setup_policy)?;
     }
     verify_terminal_suffix(
         terminal_ntt,

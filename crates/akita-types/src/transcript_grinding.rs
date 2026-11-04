@@ -12,7 +12,7 @@ pub use masked::MaskedVerifierChannel;
 #[cfg(feature = "zk")]
 pub use replay::CountingGrinding;
 pub use replay::{
-    FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance,
+    grinding_sumcheck_body_site, FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance,
     VerifierGrinding, VerifierGrindingChannel,
 };
 #[cfg(feature = "prover")]

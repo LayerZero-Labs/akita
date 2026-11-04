@@ -11,7 +11,10 @@
 //! mistake; messages public in both modes go through
 //! [`PrivateProofChannel::exchange_public`].
 
-use super::{exchange_extension_atoms, exchange_extension_group, ProofChannel, ProtocolSiteId};
+use super::{
+    exchange_extension_atoms, exchange_extension_group, exchange_field_atoms, ProofChannel,
+    ProtocolSiteId,
+};
 use akita_error::AkitaError;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_transcript::PadSlots;
@@ -97,6 +100,28 @@ where
     S: PrivateProofChannel<F>,
 {
     exchange_extension_atoms::<F, E, S>(state, site, values, |state, atoms| {
+        state.exchange_public(atoms)
+    })
+}
+
+/// A schedule-fixed group of base-field proof atoms that is public in both
+/// modes (an opening payload, A42): [`receive_field_group`](super::receive_field_group)
+/// and [`send_field_group`](super::send_field_group) on a clear channel, sent
+/// unmasked even on a masked one.
+///
+/// # Errors
+///
+/// As [`PrivateProofChannel::exchange_public`].
+pub fn exchange_public_field_group<F, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [F],
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    S: PrivateProofChannel<F>,
+{
+    exchange_field_atoms::<F, S>(state, site, values, |state, atoms| {
         state.exchange_public(atoms)
     })
 }

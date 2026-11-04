@@ -118,3 +118,4 @@ jolt-sumcheck = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-sumcheck" 
 jolt-crypto = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-crypto" }
 jolt-metal = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-metal" }
 jolt-zk = { path = "../jolt/.claude/worktrees/wo-t0/crates/jolt-zk" }
+jolt-inlines-ntt = { path = "../jolt/.claude/worktrees/wo-t0/jolt-inlines/ntt" }

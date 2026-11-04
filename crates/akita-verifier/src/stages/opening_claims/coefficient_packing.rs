@@ -7,6 +7,7 @@ use akita_params::{
     BasisMode, CommittedGroupParams, OpeningClaimsLayout, SubringCoefficientPackingGeometry,
 };
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::{
     CommittedGroup, FpExtEncoding, OpeningClaims, PreparedSubringCoefficientPackingPoint,
 };
@@ -70,10 +71,11 @@ fn prepare_prefix_points<F: Field, E: ExtField<F>, C>(
     Ok(prepared_points)
 }
 
-/// Prepare a root packing prefix directly from the authenticated public claims.
-pub(crate) fn verify_coefficient_packing_root_prefix<F, E>(
+/// Prepare a root packing prefix from the statement's points and its
+/// `openings`, the statement claims in group order.
+pub(crate) fn verify_coefficient_packing_root_prefix<F, E, V>(
     claims: &OpeningClaims<'_, E, &CommittedGroup<F>>,
-    openings: &[E],
+    openings: Vec<V>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
@@ -92,19 +94,20 @@ where
     })
 }
 
-// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
-pub(crate) fn verify_coefficient_packing_suffix_prefix<F, E>(
+/// Prepare a suffix packing prefix and bind its group points; the caller
+/// binds the openings.
+pub(crate) fn verify_coefficient_packing_suffix_prefix<F, E, G: ClaimReplay<F, E>>(
     claims: &OpeningClaims<'_, E>,
     openings: Vec<G::Claim>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<FoldClaimMaterial<F, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + jolt_algebra::CanonicalDecode,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
     let prepared_points =
         prepare_prefix_points::<F, E, _>(claims, openings.len(), opening_batch, basis, lp)?;
@@ -119,11 +122,6 @@ where
             claims.group_point(group_index)?,
         )?;
     }
-    akita_transcript::public_extensions::<F, E, _>(
-        grinding.state_mut(),
-        akita_types::FoldSite::Openings { level }.id()?,
-        openings,
-    )?;
     Ok(FoldClaimMaterial {
         prepared_points,
         openings,

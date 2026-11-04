@@ -11,18 +11,17 @@
 //! ([`OperandShapeDomain`]) and the prover's auxiliary values
 //! ([`ValuesDomain`]).
 
-use crate::claims::ClaimReplay;
+use crate::claims::{clear_sumcheck, ClaimReplay, SumcheckFormat, SumcheckInstance};
 use akita_error::AkitaError;
+use akita_transcript::{ChallengeCodec, PrivateProofChannel, ProtocolSiteId};
 use akita_types::{
-    check_range_leaf, check_stage2_oracle, FoldResponseReplay, GrindingReplay,
-    GrindingSumcheckVerifier, RangeLeaf, Stage2OracleWeights, FIELD_DIGEST_BYTES,
+    check_range_leaf, check_stage2_oracle, grinding_sumcheck_body_site, FoldResponseReplay,
+    GrindingReplay, RangeLeaf, Stage2OracleWeights, VerifierGrindingChannel, FIELD_DIGEST_BYTES,
 };
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_poly::{Point, HIGH_TO_LOW};
-use jolt_sumcheck::{
-    receive_masked_single, DegreeSchedule, SingleFormat, SingleInstance, SumcheckError,
-};
-use jolt_transcript::{ClaimDomain, Fork, PadSlots, PrivateChannel, SiteId};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_poly::{Point, HIGH_TO_LOW, LOW_TO_HIGH};
+use jolt_sumcheck::{DegreeSchedule, MaskedRound};
+use jolt_transcript::{ClaimDomain, PadSlots};
 use jolt_zk::masking::{
     sumcheck_rows, AffineRow, OperandShapeDomain, PadIndex, PadLayout, ResidualRelation,
     ResidualRows, ResidualVar, RoundFormat, RowsDomain, ValuesDomain, ZkError,
@@ -106,19 +105,10 @@ impl<G: GrindingReplay, F> GrindingReplay for MaskedReplay<'_, G, F> {
     fn grind_query(&mut self, site: akita_params::GrindingSite) -> Result<(), AkitaError> {
         self.grinding.grind_query(site)
     }
-
-    fn check_public(&mut self, holds: bool) -> Result<(), AkitaError> {
-        self.grinding.check_public(holds)
-    }
 }
 
 impl<G: FoldResponseReplay, F> FoldResponseReplay for MaskedReplay<'_, G, F> {
-    type Sponge = G::Sponge;
-
-    fn read_fold_response(
-        &mut self,
-        site: akita_params::GrindingSite,
-    ) -> Result<Fork<G::Sponge>, AkitaError> {
+    fn read_fold_response(&mut self, site: akita_params::GrindingSite) -> Result<u32, AkitaError> {
         self.grinding.read_fold_response(site)
     }
 
@@ -127,21 +117,20 @@ impl<G: FoldResponseReplay, F> FoldResponseReplay for MaskedReplay<'_, G, F> {
         level: u32,
         group: u32,
         coordinate_count: usize,
-        draws: &akita_types::FoldDrawRecord,
     ) -> Result<(), AkitaError> {
         self.grinding
-            .record_fold_challenges(level, group, coordinate_count, draws)
+            .record_fold_challenges(level, group, coordinate_count)
     }
 }
 
 /// The masked replay: claims are affine forms over the pads, and the stage
 /// checks are recorded for [`MaskedPrefix`]. Claims live in the base field
 /// (`E::DEGREE = 1`, which admission requires), so each takes one pad.
-impl<F, E, G> ClaimReplay<F, E> for MaskedReplay<'_, G, E>
+impl<'proof, F, E, G> ClaimReplay<F, E> for MaskedReplay<'_, G, E>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    G: FoldResponseReplay<State: PrivateChannel<Error: Into<SumcheckError<E>>>>,
+    E: ExtField<F> + ChallengeCodec,
+    G: FoldResponseReplay<State: PrivateProofChannel<F> + VerifierGrindingChannel<'proof>>,
 {
     type Claim = AffineRow<E>;
 
@@ -177,7 +166,10 @@ where
         Ok(self.cut.payload_len)
     }
 
-    fn receive_field_digest(&mut self, _: SiteId) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError> {
+    fn receive_field_digest(
+        &mut self,
+        _: ProtocolSiteId,
+    ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError> {
         clear_only()
     }
 
@@ -188,10 +180,9 @@ where
         &mut self,
         level: u32,
         prefix: Option<&E>,
-        openings: &[AffineRow<E>],
+        _openings: &[AffineRow<E>],
     ) -> Result<(), AkitaError> {
-        let unbound = akita_types::extension_slots::<E>(openings.len())?;
-        akita_types::bind_fold_openings::<F, E, _>(self.grinding, level, prefix, &unbound)
+        akita_types::bind_fold_openings::<F, E, _>(self.grinding, level, prefix, &[])
     }
 
     /// Receives the masked rounds and lowers them with jolt-zk's
@@ -203,17 +194,36 @@ where
         protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
-        instance: SingleInstance<E>,
+        instance: SumcheckInstance<E>,
         input: AffineRow<E>,
     ) -> Result<(Vec<E>, AffineRow<E>), AkitaError> {
-        let mut context =
-            GrindingSumcheckVerifier::<F, E, _>::new(self.grinding, protocol, level, stage);
-        let rounds = receive_masked_single::<F, E, AkitaError, _>(&instance, &mut context)?;
+        let mut rounds = Vec::with_capacity(instance.rounds);
+        for round in 0..instance.rounds {
+            let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+            let mut wire = vec![E::zero(); instance.degree];
+            let slots = self.grinding.state_mut().exchange_private_extension_group(
+                grinding_sumcheck_body_site(protocol, level, stage, instance.invocation, round_id),
+                &mut wire,
+            )?;
+            let challenge = self.grinding.grinded_ext_challenge::<E>(
+                akita_params::GrindingSite::SumcheckRound {
+                    protocol,
+                    level,
+                    stage,
+                    round: round_id,
+                },
+            )?;
+            rounds.push(MaskedRound {
+                wire,
+                slots,
+                challenge,
+            });
+        }
         let format = match instance.format {
-            SingleFormat::Compressed => RoundFormat::Compressed,
-            SingleFormat::EqFactored { equality_point } => {
-                RoundFormat::EqFactored { equality_point }
-            }
+            SumcheckFormat::Compressed => RoundFormat::Compressed,
+            SumcheckFormat::EqFactored { equality_point } => RoundFormat::EqFactored {
+                equality_point: Point::<LOW_TO_HIGH, E>::low_to_high(equality_point),
+            },
         };
         let mut unused = ResidualRelation::new(PadLayout::new(0, 0)?, 0);
         let output = sumcheck_rows(
@@ -229,6 +239,17 @@ where
             ));
         }
         Ok((rounds.iter().map(|round| round.challenge).collect(), output))
+    }
+
+    fn public_sumcheck(
+        &mut self,
+        protocol: akita_params::SumcheckProtocol,
+        level: u32,
+        stage: u32,
+        instance: SumcheckInstance<E>,
+        input: E,
+    ) -> Result<(Vec<E>, E), AkitaError> {
+        clear_sumcheck::<F, E, _>(self.grinding, protocol, level, stage, instance, input)
     }
 
     fn range_image(&mut self, level: u32, stage: u32) -> Result<AffineRow<E>, AkitaError> {

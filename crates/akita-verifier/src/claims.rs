@@ -9,21 +9,42 @@
 //! `akita-types` (`check_range_leaf`, `check_stage2_oracle`).
 
 use akita_error::AkitaError;
+use akita_transcript::{ChallengeCodec, PrivateProofChannel, ProtocolSiteId, VerifierChannel};
 use akita_types::{
     check_range_leaf, check_stage2_oracle, FoldResponseReplay, GrindingReplay,
-    GrindingSumcheckVerifier, RangeLeaf, Stage2OracleWeights, VerifierGrinding, FIELD_DIGEST_BYTES,
+    GrindingSumcheckVerifier, RangeLeaf, Stage2OracleWeights, VerifierGrinding,
+    VerifierGrindingChannel, FIELD_DIGEST_BYTES,
 };
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_sumcheck::{verify_single, SingleInstance, SumcheckError};
-use jolt_transcript::{ClaimMismatch, ClearDomain, PrivateChannel, SiteId, Sponge};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::{ClaimMismatch, ClearDomain};
+
+/// How a single-instance sumcheck's rounds go on the wire: v8's two drivers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SumcheckFormat<E> {
+    /// `[c0, c2, …, c_degree]` per round, the linear coefficient omitted.
+    Compressed,
+    /// `[q1, …, q_degree]` of `s(X) = eq(τ_i, X) · q(X)` per round, with
+    /// `τ_i = equality_point[i]` (low to high); the running claim is the
+    /// normalized `q(r_i)`.
+    EqFactored { equality_point: Vec<E> },
+}
+
+/// One single-instance sumcheck's public shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SumcheckInstance<E> {
+    /// The invocation's index among its protocol's sumchecks at one stage.
+    pub(crate) invocation: u32,
+    pub(crate) rounds: usize,
+    pub(crate) degree: usize,
+    pub(crate) format: SumcheckFormat<E>,
+}
 
 /// A fold verifier's replay: the grinding replay it reads the proof through,
 /// and how it holds and checks the claims that depend on the witness.
-pub(crate) trait ClaimReplay<F, E>:
-    FoldResponseReplay<State: PrivateChannel<Error: Into<SumcheckError<E>>>>
+pub(crate) trait ClaimReplay<F, E>: FoldResponseReplay<State: PrivateProofChannel<F>>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
 {
     /// A witness-dependent claim: a value in the clear, an affine form over
     /// the pads when masked.
@@ -76,7 +97,7 @@ where
     /// terminal, returns [`AkitaError::UnsupportedSchedule`].
     fn receive_field_digest(
         &mut self,
-        site: SiteId,
+        site: ProtocolSiteId,
     ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError>;
 
     /// Binds a fold level's openings at its `Openings` site
@@ -93,8 +114,7 @@ where
     ) -> Result<(), AkitaError>;
 
     /// Replays one single-instance sumcheck of `protocol` from `input` and
-    /// returns its challenges and running output claim. The instance's own
-    /// `input_claim` is ignored.
+    /// returns its challenges and running output claim.
     ///
     /// # Errors
     ///
@@ -104,9 +124,24 @@ where
         protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
-        instance: SingleInstance<E>,
+        instance: SumcheckInstance<E>,
         input: Self::Claim,
     ) -> Result<(Vec<E>, Self::Claim), AkitaError>;
+
+    /// Replays one sumcheck that is public in both modes (Stage 3, A42):
+    /// its rounds arrive clear and its claims are values.
+    ///
+    /// # Errors
+    ///
+    /// The sumcheck's or the channel's error.
+    fn public_sumcheck(
+        &mut self,
+        protocol: akita_params::SumcheckProtocol,
+        level: u32,
+        stage: u32,
+        instance: SumcheckInstance<E>,
+        input: E,
+    ) -> Result<(Vec<E>, E), AkitaError>;
 
     /// Receives the Stage-1 range-image evaluation of `level`.
     ///
@@ -156,11 +191,10 @@ where
 }
 
 /// The clear verifier: every claim is a value, checked when it is formed.
-impl<'proof, F, E, H> ClaimReplay<F, E> for VerifierGrinding<'_, 'proof, H>
+impl<'proof, F, E> ClaimReplay<F, E> for VerifierGrinding<'proof, '_, VerifierChannel<'proof>>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    H: Sponge,
+    E: ExtField<F> + ChallengeCodec,
 {
     type Claim = E;
 
@@ -190,7 +224,7 @@ where
 
     fn receive_field_digest(
         &mut self,
-        site: SiteId,
+        site: ProtocolSiteId,
     ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError> {
         akita_types::receive_field_digest(self.state_mut(), site)
     }
@@ -209,18 +243,21 @@ where
         protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
-        instance: SingleInstance<E>,
+        instance: SumcheckInstance<E>,
         input: E,
     ) -> Result<(Vec<E>, E), AkitaError> {
-        let mut channel = GrindingSumcheckVerifier::<F, E, _>::new(self, protocol, level, stage);
-        let replay = verify_single::<F, E, AkitaError, _>(
-            &SingleInstance {
-                input_claim: input,
-                ..instance
-            },
-            &mut channel,
-        )?;
-        Ok((replay.challenges, replay.output_claim))
+        clear_sumcheck::<F, E, _>(self, protocol, level, stage, instance, input)
+    }
+
+    fn public_sumcheck(
+        &mut self,
+        protocol: akita_params::SumcheckProtocol,
+        level: u32,
+        stage: u32,
+        instance: SumcheckInstance<E>,
+        input: E,
+    ) -> Result<(Vec<E>, E), AkitaError> {
+        clear_sumcheck::<F, E, _>(self, protocol, level, stage, instance, input)
     }
 
     fn range_image(&mut self, level: u32, stage: u32) -> Result<E, AkitaError> {
@@ -258,4 +295,42 @@ where
         check_stage2_oracle(&mut ClearDomain, &weights, witness_eval, claim)
             .map_err(|ClaimMismatch| AkitaError::InvalidProof)
     }
+}
+
+/// Replays one sumcheck whose rounds arrive clear on `grinding`'s channel:
+/// every sumcheck of the clear verifier, and the public ones of the masked
+/// verifier.
+pub(crate) fn clear_sumcheck<'proof, F, E, G>(
+    grinding: &mut G,
+    protocol: akita_params::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    instance: SumcheckInstance<E>,
+    input: E,
+) -> Result<(Vec<E>, E), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + ChallengeCodec,
+    G: GrindingReplay<State: VerifierGrindingChannel<'proof>>,
+{
+    let shape = akita_sumcheck::SumcheckShape::new(instance.rounds, instance.degree)?;
+    let mut channel = GrindingSumcheckVerifier::<F, E, _>::new(grinding, protocol, level, stage);
+    let replay = match instance.format {
+        SumcheckFormat::Compressed => akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
+            &mut channel,
+            instance.invocation,
+            input,
+            shape,
+        )?,
+        SumcheckFormat::EqFactored { equality_point } => {
+            akita_sumcheck::verify_eq_factored_sumcheck_rounds::<F, E, _>(
+                &equality_point,
+                input,
+                shape,
+                &mut channel,
+                instance.invocation,
+            )?
+        }
+    };
+    Ok((replay.challenges, replay.output_claim))
 }

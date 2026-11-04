@@ -28,7 +28,7 @@ pub use logging::{
 #[cfg(feature = "logging-transcript")]
 pub use proof_stream::finish_proof_ranges;
 pub use proof_stream::{
-    bind_instance, exchange_extension_group, exchange_public_extension_group, ext_challenge, ext_challenges, extension_slots,
+    bind_instance, exchange_extension_group, exchange_public_extension_group, exchange_public_field_group, exchange_field_group, ext_challenge, ext_challenges, extension_slots,
     new_prover_channel, new_verifier_channel, nonce_encoded_len, nonce_max_bytes, prover_context,
     public_bytes, public_extensions, public_fields, receive_bounded_bytes, receive_byte_group,
     receive_field_group, receive_nonce, reject, send_bounded_bytes, send_byte_group,

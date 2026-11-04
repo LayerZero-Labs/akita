@@ -1,4 +1,6 @@
-use super::{verify_fold, FoldVerifyOutput, NextWitnessPlan, PreparedFoldReplay};
+use super::{
+    receive_opening_payload, verify_fold, FoldVerifyOutput, NextWitnessPlan, PreparedFoldReplay,
+};
 use crate::claims::ClaimReplay;
 use crate::stages::opening_claims::{finalize_claims, verify_coefficient_packing_root_prefix};
 use akita_error::AkitaError;
@@ -7,26 +9,27 @@ use akita_params::{
     SetupContributionMode, TerminalFoldParams,
 };
 use akita_serialization::AkitaSerialize;
-// T0-PORT(private): dev used ClaimReplay, G::Claim here; re-express on v8.
 use akita_transcript::ChallengeCodec;
 use akita_types::CommittedGroup;
-use akita_types::GrindingReplay;
-use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
+use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
+/// Replays the root fold. `claims` supplies the statement's commitments and
+/// points, and `openings` its claims in group order; the evaluations stored in
+/// `claims` are not read.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_root<F, E>(
+pub(super) fn verify_root<F, E, G: ClaimReplay<F, E>>(
     setup: &AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     claims: &OpeningClaims<'_, E, &CommittedGroup<F>>,
+    openings: Vec<G::Claim>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&FoldParams>,
     terminal: &TerminalFoldParams,
-    // T0-PORT(private): dev used G::Claim here; re-express on v8.
     setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
-) -> Result<FoldVerifyOutput<F, E>, AkitaError>
+) -> Result<FoldVerifyOutput<F, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F>
@@ -87,24 +90,9 @@ where
         basis,
         root_lp,
     )?;
-    // T0-PORT(private): dev used exchange_public_all here; re-express on v8.
-    akita_transcript::public_extensions::<F, E, _>(
-        grinding.state_mut(),
-        akita_types::FoldSite::Openings { level: 0 }.id()?,
-        &openings,
-    )?;
     let payload_geometry = relation_layout.opening_payload_geometry()?;
-    let opening_payload = akita_transcript::receive_field_group::<F>(
-        grinding.state_mut(),
-        akita_types::FoldSite::OpeningPayload {
-            level: 0,
-            ring_dimension: payload_geometry.transcript_ring_dimension(),
-        }
-        .id()?,
-        payload_geometry.transmitted_coefficients(),
-    )
-    .map(RingVec::from_coeffs)?;
-    let prefix = finalize_claims::<F, E>(opening_batch, material, grinding, 0)?;
+    let opening_payload = receive_opening_payload::<F, E, _>(grinding, 0, &payload_geometry)?;
+    let prefix = finalize_claims::<F, E, _>(opening_batch, material, grinding, 0)?;
     let order = opening_batch.root_group_order()?;
     let commitment_payloads = order
         .into_iter()

@@ -783,7 +783,7 @@ mod extension_challenges {
                                 .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
                     },
                 );
-                let mut sumcheck = GrindingSumcheckVerifier::<F, E>::new(
+                let mut sumcheck = GrindingSumcheckVerifier::<F, E, _>::new(
                     &mut replay,
                     SumcheckProtocol::ExtensionOpeningReduction,
                     1,

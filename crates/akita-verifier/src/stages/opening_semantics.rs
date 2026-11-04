@@ -13,7 +13,8 @@ use akita_types::{
     ensure_trace_stage2_supported, proof::relation::relation_row_weight, EvaluationTraceInputs,
     FpExtEncoding, OpeningFamily,
 };
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use akita_transcript::ChallengeCodec;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Fold-level inputs to the Stage 2 opening semantics.
 pub(crate) struct OpeningSemanticsInput<'a, F: Field, E: Field, V = E> {
@@ -34,7 +35,7 @@ pub(crate) fn prepare_opening_semantics<'a, F, E, G>(
 ) -> Result<Stage2OpeningSemantics<'a, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F> + CanonicalDecode,
+    E: ExtField<F> + FpExtEncoding<F> + ChallengeCodec,
     G: ClaimReplay<F, E>,
 {
     let trace_domain = rs.relation_address_geometry.digit_witness_domain();

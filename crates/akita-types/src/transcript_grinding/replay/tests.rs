@@ -208,7 +208,7 @@ fn grinding_sumcheck_rejects_unscheduled_invocation() {
     let plan = plan();
     let mut state = new_verifier_channel(b"sumcheck-invocation", &[]);
     let mut verifier = VerifierGrinding::new(&mut state, &plan);
-    let mut channel = GrindingSumcheckVerifier::<F, F>::new(
+    let mut channel = GrindingSumcheckVerifier::<F, F, _>::new(
         &mut verifier,
         akita_params::SumcheckProtocol::Stage1,
         0,

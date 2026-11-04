@@ -1,7 +1,6 @@
 //! Ring-switch challenge replay: alpha, tau0, and tau1, plus the prepared
 //! relation evaluator and Stage 2 compression state they determine.
 
-use crate::claims::ClaimReplay;
 use crate::relation::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
@@ -59,14 +58,13 @@ where
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
 }
 
-struct RingSwitchChallenges<'a, 'proof, 'plan>(
-    &'a mut akita_types::VerifierGrinding<'proof, 'plan>,
-);
+struct RingSwitchChallenges<'a, G>(&'a mut G);
 
-impl<F, E> RingSwitchChallengeSource<F, E> for RingSwitchChallenges<'_, '_, '_>
+impl<F, E, G> RingSwitchChallengeSource<F, E> for RingSwitchChallenges<'_, G>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
+    G: GrindingReplay,
 {
     fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
         self.0
@@ -84,11 +82,10 @@ where
     }
 }
 
-// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
-pub(crate) fn ring_switch_verifier<F, E>(
+pub(crate) fn ring_switch_verifier<F, E, G: GrindingReplay>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where

@@ -2,10 +2,6 @@ use super::PhysicalBWeightTerm;
 use akita_algebra::row_batch::WeightedRowBatch;
 use jolt_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-#[cfg(test)]
-use jolt_algebra::ring::eval_flat_ring_at_pows_fast;
-use jolt_algebra::ring::eval_ring_at_pows_fast;
-use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{ExtField, Field, MulBaseUnreduced};
 
 #[derive(Clone)]

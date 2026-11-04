@@ -24,7 +24,9 @@ mod nonce;
 mod private;
 mod site;
 pub use channel::ProofChannel;
-pub use private::{exchange_public_extension_group, PrivateProofChannel};
+pub use private::{
+    exchange_public_extension_group, exchange_public_field_group, PrivateProofChannel,
+};
 pub use digest::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, NonceAtom};
 
@@ -781,6 +783,53 @@ where
     S: ProofChannel,
 {
     exchange_extension_atoms::<F, E, S>(state, site, values, |state, atoms| state.exchange(atoms))
+}
+
+/// Exchange a schedule-fixed group of base-field proof values in place, as
+/// [`send_field_group`] and [`receive_field_group`] do on their channels.
+///
+/// # Errors
+///
+/// As [`exchange_extension_group`].
+pub fn exchange_field_group<F, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [F],
+) -> Result<(), AkitaError>
+where
+    F: CanonicalEncoding + Copy,
+    S: ProofChannel,
+{
+    exchange_field_atoms::<F, S>(state, site, values, |state, atoms| state.exchange(atoms))
+}
+
+/// One group of base-field atoms, exchanged by `exchange`: the shared body of
+/// [`exchange_field_group`] and
+/// [`exchange_public_field_group`](private::exchange_public_field_group).
+fn exchange_field_atoms<F, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [F],
+    exchange: impl FnOnce(&mut S, &mut [FieldAtom<F>]) -> Result<(), AkitaError>,
+) -> Result<(), AkitaError>
+where
+    F: CanonicalEncoding + Copy,
+    S: ProofChannel,
+{
+    let record = group_record(
+        site,
+        ProtocolMessageKind::ProofAtoms,
+        Some(values.len()),
+        F::NUM_BYTES,
+    );
+    let record = state.guard(record)?;
+    state.context(record);
+    let mut atoms: Vec<FieldAtom<F>> = values.iter().map(|&value| FieldAtom::new(value)).collect();
+    exchange(state, &mut atoms)?;
+    for (value, atom) in values.iter_mut().zip(atoms) {
+        *value = atom.into_inner();
+    }
+    Ok(())
 }
 
 /// One group of extension atoms, exchanged by `exchange`: the shared body of

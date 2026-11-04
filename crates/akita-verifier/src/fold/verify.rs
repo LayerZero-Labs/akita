@@ -220,10 +220,12 @@ where
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-            let root = verify_root::<Cfg::Field, Cfg::ExtField>(
+            let openings = raw_claims.flat_evaluations();
+            let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
                 setup,
                 &mut grinding,
                 &raw_claims,
+                openings,
                 &opening_batch,
                 basis,
                 root_params,

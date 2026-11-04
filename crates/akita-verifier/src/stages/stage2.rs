@@ -1,6 +1,6 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::claims::ClaimReplay;
+use crate::claims::{ClaimReplay, SumcheckFormat, SumcheckInstance};
 use crate::coefficient_packing_relation::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
@@ -47,7 +47,7 @@ impl<'a, E: Field, V: Clone> PackingStage2<'a, E, V> {
     ) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode,
+        E: ExtField<F> + ChallengeCodec,
         G: ClaimReplay<F, E, Claim = V>,
     {
         let groups = batch.groups();
@@ -129,7 +129,7 @@ impl<'a, E: Field, V: Clone> Stage2OpeningSemantics<'a, E, V> {
     ) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode,
+        E: ExtField<F> + ChallengeCodec,
         G: ClaimReplay<F, E, Claim = V>,
     {
         Ok(Self(OpeningFamily::SubringCoefficientPacking(
@@ -369,34 +369,37 @@ pub(crate) struct Stage2Output<E: Field, V = E> {
 
 /// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
 /// physical L2 input claims.
-// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
-pub(crate) fn replay_stage2<F, E>(
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+pub(crate) fn replay_stage2<F, E, G: ClaimReplay<F, E>>(
+    grinding: &mut G,
     level: u32,
     stage1: &Stage1Replay<'_, E, G::Claim>,
     relation_claim: E,
     opening_semantics: &Stage2OpeningSemantics<'_, E, G::Claim>,
-    rounds: usize,
+    shape: akita_sumcheck::SumcheckShape,
 ) -> Result<Stage2RoundReplay<E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
 {
-    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
-        + relation_claim
-        + opening_semantics.opening_claim()
-        + stage1.physical_l2_claim;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
-        grinding,
+    let input_claim = G::add(
+        &G::add(
+            &G::scale(&stage1.range_image_evaluation, stage1.batching_coeff),
+            &G::constant(relation_claim),
+        ),
+        &G::add(
+            opening_semantics.opening_claim(),
+            &G::constant(stage1.physical_l2_claim),
+        ),
+    );
+    let (challenges, output_claim) = grinding.single_sumcheck(
         akita_params::SumcheckProtocol::Stage2,
         level,
         0,
-        SingleInstance {
-            input_claim: E::zero(),
-            rounds,
-            degree: akita_params::STAGE2_SUMCHECK_DEGREE,
-            format: SingleFormat::Compressed,
+        SumcheckInstance {
             invocation: 0,
+            rounds: shape.num_rounds(),
+            degree: shape.degree_bound(),
+            format: SumcheckFormat::Compressed,
         },
         input_claim,
     )?;
@@ -408,21 +411,26 @@ where
     })
 }
 
-// T0-PORT(private): dev used ClaimReplay here; re-express on v8.
 /// Resolve this fold's setup contribution and check the Stage 2 output claim.
-pub(crate) fn validate_stage2_replay<F, E>(
+#[expect(clippy::too_many_arguments, reason = "one stage's replayed inputs")]
+pub(crate) fn validate_stage2_replay<F, E, G: ClaimReplay<F, E>>(
+    grinding: &mut G,
     setup: &AkitaVerifierSetup<F>,
     stage1: Stage1Replay<'_, E, G::Claim>,
     rs: &RingSwitchVerifyOutput<E>,
     setup_claim: Option<E>,
-    // T0-PORT(private): dev used G::Claim here; re-express on v8.
-    opening_semantics: Stage2OpeningSemantics<'_, E>,
-    replay: Stage2RoundReplay<E>,
+    opening_semantics: Stage2OpeningSemantics<'_, E, G::Claim>,
+    replay: Stage2RoundReplay<E, G::Claim>,
     fold_setup: FoldSetup<'_, '_, E>,
-) -> Result<Stage2Output<E>, AkitaError>
+) -> Result<Stage2Output<E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     let external_relation_weight = match fold_setup {
         FoldSetup::Ordinary => None,

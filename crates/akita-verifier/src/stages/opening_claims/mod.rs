@@ -42,11 +42,10 @@ pub(crate) struct FoldClaimMaterial<F: Field, E: Field, V = E> {
     pub(crate) reduction_factors: Option<Vec<E>>,
 }
 
-// T0-PORT(private): dev used ClaimReplay, G::Claim here; re-express on v8.
-pub(crate) fn finalize_claims<F, E>(
+pub(crate) fn finalize_claims<F, E, G: ClaimReplay<F, E>>(
     opening_shape: &OpeningClaimsLayout,
-    material: FoldClaimMaterial<F, E>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    material: FoldClaimMaterial<F, E, G::Claim>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<FoldPrefix<F, E, G::Claim>, AkitaError>
 where

@@ -828,6 +828,19 @@ fn grinding_sumcheck_site(
     }
 }
 
+/// Site of round `round`'s body in `invocation` of a grinding-backed
+/// sumcheck: where a masked replay reads the round it lowers itself.
+#[must_use]
+pub fn grinding_sumcheck_body_site(
+    protocol: akita_params::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    invocation: u32,
+    round: u32,
+) -> ProtocolSiteId {
+    grinding_sumcheck_site(protocol, level, stage, invocation, round, SumcheckRole::RoundBody)
+}
+
 /// Whether a sumcheck's rounds are witness-dependent (masked on a masked
 /// channel) or public in both modes (`specs/whiteout-akita.md` A42).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -959,20 +972,22 @@ where
     }
 }
 
-/// Standard-sumcheck channel borrowing a verifier grinding context.
-pub struct GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E, C = VerifierChannel<'proof>> {
-    grinding: &'context mut VerifierGrinding<'proof, 'plan, C>,
+/// Standard-sumcheck channel borrowing a verifier grinding context. Its
+/// rounds are clear messages: a clear channel's private rounds, or a public
+/// sumcheck's on any channel (A42).
+pub struct GrindingSumcheckVerifier<'context, F, E, G> {
+    grinding: &'context mut G,
     protocol: akita_params::SumcheckProtocol,
     level: u32,
     stage: u32,
     _fields: PhantomData<fn() -> (F, E)>,
 }
 
-impl<'context, 'proof, 'plan, F, E, C> GrindingSumcheckVerifier<'context, 'proof, 'plan, F, E, C> {
+impl<'context, F, E, G> GrindingSumcheckVerifier<'context, F, E, G> {
     /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
-        grinding: &'context mut VerifierGrinding<'proof, 'plan, C>,
+        grinding: &'context mut G,
         protocol: akita_params::SumcheckProtocol,
         level: u32,
         stage: u32,
@@ -987,14 +1002,13 @@ impl<'context, 'proof, 'plan, F, E, C> GrindingSumcheckVerifier<'context, 'proof
     }
 }
 
-impl<'proof, F, E, C> SumcheckVerifierChannel<'proof, E>
-    for GrindingSumcheckVerifier<'_, 'proof, '_, F, E, C>
+impl<'proof, F, E, G> SumcheckVerifierChannel<'proof, E> for GrindingSumcheckVerifier<'_, F, E, G>
 where
     E: ChallengeCodec,
-    C: VerifierGrindingChannel<'proof>,
+    G: GrindingReplay<State: VerifierGrindingChannel<'proof>>,
 {
     fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
-        self.grinding.state.clear_state()
+        self.grinding.state_mut().clear_state()
     }
 
     fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {

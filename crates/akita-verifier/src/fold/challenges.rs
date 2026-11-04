@@ -1,19 +1,17 @@
 //! Fold-challenge draw for every opening group of one recursive level.
 
-use akita_types::VerifierFoldDraw;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
-use akita_types::GrindingReplay;
-use akita_types::{draw_group_fold_challenges, GroupFoldChallenges};
+use akita_types::{
+    draw_group_fold_challenges, FoldResponseReplay, GroupFoldChallenges, VerifierFoldDraw,
+};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
-// T0-PORT(private): dev made this generic over `G: FoldResponseReplay` so the masked
-// prefix and the counting replay (CountingGrinding) draw through it; re-express on v8.
 /// Draw each group's sparse fold challenges for one recursive level: one
 /// squeezed message per group, in group order.
-pub(crate) fn derive_multi_group_stage1_challenges<F, E>(
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+pub(crate) fn derive_multi_group_stage1_challenges<F, E, G: FoldResponseReplay>(
+    grinding: &mut G,
     level: u32,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,

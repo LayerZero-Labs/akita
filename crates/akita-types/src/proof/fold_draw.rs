@@ -130,21 +130,18 @@ impl FoldDraw for ProverFoldDraw<'_> {
     }
 }
 
-/// One group-local fold draw against the live verifier channel.
-pub struct VerifierFoldDraw<'a, 'proof> {
-    state: &'a mut akita_transcript::VerifierChannel<'proof>,
+/// One group-local fold draw against the live verifier channel, clear or
+/// masked: fold challenges are public in both modes.
+pub struct VerifierFoldDraw<'a, S> {
+    state: &'a mut S,
     level: u32,
     group: u32,
 }
 
-impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
+impl<'a, S: akita_transcript::ProofChannel> VerifierFoldDraw<'a, S> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
-    pub const fn new(
-        state: &'a mut akita_transcript::VerifierChannel<'proof>,
-        level: u32,
-        group: u32,
-    ) -> Self {
+    pub const fn new(state: &'a mut S, level: u32, group: u32) -> Self {
         Self {
             state,
             level,
@@ -153,7 +150,7 @@ impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
     }
 }
 
-impl FoldDraw for VerifierFoldDraw<'_, '_> {
+impl<S: akita_transcript::ProofChannel> FoldDraw for VerifierFoldDraw<'_, S> {
     fn draw_message<T>(
         &mut self,
         len: usize,
