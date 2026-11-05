@@ -6,7 +6,7 @@ use akita_params::binary_setup::{derive_centered_q_matrix, SetupStreamLabel, Set
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_iter_mut, Field};
+use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
@@ -230,32 +230,60 @@ impl BinaryRootPublic {
             .zip(projected_values)
             .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
         let [terminal, b, d, ordinary_rows, negative_bits, prime_rows] = self.batch_ranges()?;
-        let span = tracing::info_span!("binary_root_weights_algebra").entered();
-        let algebra = self.plan.relation_weights(
-            self.claim.as_ref(),
-            matrix,
-            challenges,
-            alpha,
-            rho,
-            batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
-        )?;
-        drop(span);
-        let span = tracing::info_span!("binary_root_weights_prime").entered();
-        let prime_weights = if let Some(segment) = self.plan.prime_segment() {
-            Some(super::prime_plane_relation_weights(
-                self.manifest.descriptor(),
-                &self.prime,
-                self.plan.repacking(),
-                0,
-                segment,
+        // The A image and terminal, prime-plane and ordinary components are
+        // independent and compiled in parallel. Their errors are checked in
+        // the order in which they were compiled serially.
+        let algebra = || {
+            let _span = tracing::info_span!("binary_root_weights_algebra").entered();
+            self.plan.relation_weights(
+                self.claim.as_ref(),
+                matrix,
                 challenges,
                 alpha,
-                batches.get(prime_rows).ok_or(AkitaError::InvalidProof)?,
-            )?)
-        } else {
-            None
+                rho,
+                batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
+            )
         };
-        drop(span);
+        let prime_weights = || {
+            let _span = tracing::info_span!("binary_root_weights_prime").entered();
+            self.plan
+                .prime_segment()
+                .map(|segment| {
+                    super::prime_plane_relation_weights(
+                        self.manifest.descriptor(),
+                        &self.prime,
+                        self.plan.repacking(),
+                        0,
+                        segment,
+                        challenges,
+                        alpha,
+                        batches.get(prime_rows).ok_or(AkitaError::InvalidProof)?,
+                    )
+                })
+                .transpose()
+        };
+        let ordinary_weights = || {
+            let _span = tracing::info_span!("binary_root_weights_ordinary").entered();
+            match (&self.ordinary, ordinary_claim) {
+                (Some(ordinary), Some((point, evaluation, payload))) => ordinary
+                    .linear_weights(
+                        self.plan.repacking(),
+                        &self.setup,
+                        point,
+                        core::slice::from_ref(&evaluation),
+                        payload,
+                        alpha,
+                        batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
+                    )
+                    .map(Some),
+                (None, None) => Ok(None),
+                _ => Err(AkitaError::InvalidProof),
+            }
+        };
+        let (algebra, (prime_weights, ordinary_weights)) =
+            cfg_join!(algebra, || cfg_join!(prime_weights, ordinary_weights));
+        let algebra = algebra?;
+        let prime_weights = prime_weights?;
         let span = tracing::info_span!("binary_root_weights_b").entered();
         let b_weights = binary_digit_authentication_weights(
             &self.plan,
@@ -292,21 +320,7 @@ impl BinaryRootPublic {
                 NativeRootWeights::new(domain_len, Vec::new(), d_weights.claim())?,
             )
         };
-        let span = tracing::info_span!("binary_root_weights_ordinary").entered();
-        let ordinary_weights = match (&self.ordinary, ordinary_claim) {
-            (Some(ordinary), Some((point, evaluation, payload))) => Some(ordinary.linear_weights(
-                self.plan.repacking(),
-                &self.setup,
-                point,
-                core::slice::from_ref(&evaluation),
-                payload,
-                alpha,
-                batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
-            )?),
-            (None, None) => None,
-            _ => return Err(AkitaError::InvalidProof),
-        };
-        drop(span);
+        let ordinary_weights = ordinary_weights?;
         let _span = tracing::info_span!("binary_root_weights_merge").entered();
         let components = [
             Some(algebra),
