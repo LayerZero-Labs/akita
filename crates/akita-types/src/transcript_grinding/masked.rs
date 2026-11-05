@@ -227,3 +227,57 @@ impl<'proof, C> VerifierGrindingChannel<'proof> for MaskedVerifierChannel<'_, 'p
         self.state
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_transcript::{new_verifier_channel, FieldAtom};
+    use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
+
+    /// A clear `exchange` on a masked channel would send a private value
+    /// unmasked; both roles refuse it before any byte moves.
+    #[test]
+    fn masked_verifier_channel_refuses_a_clear_message() {
+        let proof = [0u8; 64];
+        let mut state = new_verifier_channel(b"masked-refusal", &proof);
+        let mut view = CommittedPadsView::counting();
+        let mut channel = MaskedVerifierChannel::new(&mut state, &mut view);
+        let error = channel
+            .exchange(&mut [FieldAtom::new(F::zero())])
+            .unwrap_err();
+        assert!(
+            matches!(error, AkitaError::UnsupportedSchedule(_)),
+            "{error}"
+        );
+        assert_eq!(view.used(), 0);
+    }
+
+    #[cfg(feature = "prover")]
+    #[test]
+    fn masked_prover_channel_refuses_a_clear_message() {
+        use akita_transcript::new_prover_channel;
+        use jolt_zk::masking::PadLayout;
+
+        let mut state = new_prover_channel(b"masked-refusal");
+        let mut pads =
+            CommittedPads::uncommitted(PadLayout::new(1, 0).unwrap(), vec![F::one()]).unwrap();
+        let mut channel = MaskedProverChannel::new(&mut state, &mut pads);
+        let error = channel
+            .exchange(&mut [FieldAtom::new(F::one())])
+            .unwrap_err();
+        assert!(
+            matches!(error, AkitaError::UnsupportedSchedule(_)),
+            "{error}"
+        );
+        // The same value goes out through the private exchange, masked.
+        let slots = PrivateProofChannel::<F>::exchange_private_extension_group(
+            &mut channel,
+            ProtocolSiteId::default(),
+            &mut [F::one()],
+        )
+        .unwrap();
+        assert_eq!((slots.start, slots.len), (0, 1));
+        pads.finish().unwrap();
+        assert!(!state.narg_string().is_empty());
+    }
+}
