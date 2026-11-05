@@ -227,6 +227,12 @@ impl RootCoefficientRepacking {
                     actual: digits.len(),
                 });
             }
+            // Reject bad digits before allocating the table.
+            if !cfg_iter!(digits).all(|value| (-4..=3).contains(value)) {
+                return Err(AkitaError::InvalidInput(
+                    "root repacking digit is outside the balanced base-eight interval".into(),
+                ));
+            }
         }
         let mut table = Vec::new();
         table.try_reserve_exact(self.domain_len).map_err(|_| {
@@ -263,28 +269,21 @@ impl RootCoefficientRepacking {
             let lanes = table
                 .get_mut(range.start..end)
                 .ok_or(AkitaError::InvalidProof)?;
-            let fill = |(lane, lane_digits): (&mut [i8], &[i8])| -> Result<(), AkitaError> {
+            let fill = |(lane, lane_digits): (&mut [i8], &[i8])| {
                 for (&offset, &value) in offsets.iter().zip(lane_digits) {
-                    if !(-4..=3).contains(&value) {
-                        return Err(AkitaError::InvalidInput(
-                            "root repacking digit is outside the balanced base-eight interval"
-                                .into(),
-                        ));
-                    }
                     lane[offset] = value;
                 }
-                Ok(())
             };
             #[cfg(feature = "parallel")]
             lanes
                 .par_chunks_exact_mut(width)
                 .zip(digits.par_chunks_exact(natural_width))
-                .try_for_each(fill)?;
+                .for_each(fill);
             #[cfg(not(feature = "parallel"))]
             lanes
                 .chunks_exact_mut(width)
                 .zip(digits.chunks_exact(natural_width))
-                .try_for_each(fill)?;
+                .for_each(fill);
         }
         Ok(table)
     }
@@ -522,6 +521,13 @@ mod tests {
         let mut bad = vec![0; 2 * 4 * 648];
         bad[0] = 4;
         assert!(plan.repack(&[&bad, &[0; 32]]).is_err());
+        // A bad digit is rejected before the table is allocated, even for a
+        // domain far too large to allocate.
+        let huge = plan().with_domain_len(1 << 60).unwrap();
+        assert!(matches!(
+            huge.repack(&[&bad, &[0; 32]]),
+            Err(AkitaError::InvalidInput(_))
+        ));
         assert!(plan.validate_digit_table::<F>(&[]).is_err());
         let segment = RootRepackingSegment {
             geometry: RelationRowGeometry::native(8).unwrap(),

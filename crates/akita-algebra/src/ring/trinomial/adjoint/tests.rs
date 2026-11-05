@@ -355,7 +355,7 @@ fn integer_rows_with<M: TrinomialModulus, const D: usize>(
     columns: usize,
 ) {
     let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
-    let mut rows = (0..3)
+    let mut rows = (0..rho.len())
         .map(|_| {
             (0..columns)
                 .map(|_| {
@@ -367,8 +367,10 @@ fn integer_rows_with<M: TrinomialModulus, const D: usize>(
         })
         .collect::<Vec<_>>();
     // Exercise both extremes of the declared bound.
-    rows[0][0] = [bound; D];
-    rows[1][0] = [-bound; D];
+    if columns > 0 {
+        rows[0][0] = [bound; D];
+        rows[1][0] = [-bound; D];
+    }
     let canonical: fn(&Prime128Offset275) -> Option<u128> =
         |x| jolt_field::CanonicalEncoding::to_u128_checked(x);
     let fast = adjoint
@@ -410,6 +412,23 @@ fn trace_limb_rows_match_field_adjoint_for_extreme_functionals() {
     integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 7_126_704, 9);
     // Above the limb domains' operand range the auxiliary transforms remain.
     integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 1 << 40, 2);
+}
+
+/// At the largest committed coefficient bound the limb path admits ranks up
+/// to nine; rank ten takes the auxiliary transforms. Both sides of that
+/// boundary, and zero columns, agree with the field adjoint.
+#[test]
+fn trace_limb_admission_boundary_and_zero_columns() {
+    const BOUND: u128 = 7_126_704;
+    assert!(super::trace::limb_bound(9, BOUND, DEGREE).is_some());
+    assert!(super::trace::limb_bound(10, BOUND, DEGREE).is_none());
+    let mut rng = StdRng::seed_from_u64(16);
+    for (rank, columns) in [(9, 2), (10, 2), (3, 0)] {
+        let rho = (0..rank)
+            .map(|_| core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)))
+            .collect::<Vec<[Prime128Offset275; DEGREE]>>();
+        integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, BOUND as i128, columns);
+    }
 }
 
 #[test]

@@ -2541,10 +2541,11 @@ same loads. All runs reproduced their pins and verified.
 Peak RSS rises by 7–22%, as in the third-pass results above. The second
 pass alone lowers it. At 2^22 `word` the Stage 3 rounds also run
 slower in this head, 36.9 → 56.0 ms, with the same CPU time (about 370 ms)
-and the same live-heap peak. Both effects follow the system allocator's
-large-block cache. With `MallocLargeCache=0`, three more interleaved pairs
-at 2^22 `word` (loads 10.11–10.93) gave Stage 3 rounds of 60.7 → 44.2 ms and
-peak RSS of 1,735,442,432 → 1,560,182,784 bytes.
+and the same live-heap peak. Both effects are most likely the system
+allocator's large-block cache. With `MallocLargeCache=0`, three more
+interleaved pairs at 2^22 `word` (loads 10.11–10.93) gave Stage 3 rounds of
+60.7 → 44.2 ms and peak RSS of 1,735,442,432 → 1,560,182,784 bytes. That
+cause is inferred from these runs; it has not been profiled.
 
 What remains in the root at `word-prime-ordinary` includes two closed-form
 families from the base. Both are emitted serially, one address at a time: the
