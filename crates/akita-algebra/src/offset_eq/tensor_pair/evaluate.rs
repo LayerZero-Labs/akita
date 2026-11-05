@@ -447,21 +447,31 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
             left_challenges.get(bit).copied(),
             right_challenges.get(bit).copied(),
         );
+        // A choice's weight and bit factor do not depend on the incoming
+        // carry beyond its two parity bits. Combine them once per choice.
+        let weighted_choices = choices
+            .into_iter()
+            .map(|(l, r, weight)| {
+                let factors = if weight == F::one() {
+                    bit_factors
+                } else {
+                    bit_factors.map(|factor| factor.map(|factor| weight * factor))
+                };
+                (l, r, factors)
+            })
+            .collect::<Vec<_>>();
         for ((left_carry, right_carry), state_weight) in states {
-            for &(left_add, right_add, multiplicity) in &choices {
+            for &(left_add, right_add, ref factors) in &weighted_choices {
                 let left = left_carry.checked_add(left_add).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor left carry overflow".into())
                 })?;
                 let right = right_carry.checked_add(right_add).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor right carry overflow".into())
                 })?;
-                let Some(factor) = bit_factors[(left & 1) * 2 + (right & 1)] else {
+                let Some(factor) = factors[(left & 1) * 2 + (right & 1)] else {
                     continue;
                 };
-                next.push((
-                    (left >> 1, right >> 1),
-                    state_weight * multiplicity * factor,
-                ));
+                next.push(((left >> 1, right >> 1), state_weight * factor));
             }
         }
         states = merge_pair_states(next)?;
@@ -617,11 +627,41 @@ fn basis_pair_factors<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL:
     left: Option<F>,
     right: Option<F>,
 ) -> [Option<F>; 4] {
-    let left: [Option<F>; 2] =
-        std::array::from_fn(|bit| basis_bit_factor::<F, LEFT_MONOMIAL>(left, bit));
-    let right: [Option<F>; 2] =
-        std::array::from_fn(|bit| basis_bit_factor::<F, RIGHT_MONOMIAL>(right, bit));
-    std::array::from_fn(|pair| Some(left[pair / 2]? * right[pair % 2]?))
+    match (left, right) {
+        (Some(l), Some(r)) => {
+            let lr = l * r;
+            let l0r1 = if LEFT_MONOMIAL { r } else { r - lr };
+            let l1r0 = if RIGHT_MONOMIAL { l } else { l - lr };
+            let l0r0 = match (LEFT_MONOMIAL, RIGHT_MONOMIAL) {
+                (false, false) => F::one() - l - r + lr,
+                (true, false) => F::one() - r,
+                (false, true) => F::one() - l,
+                (true, true) => F::one(),
+            };
+            [Some(l0r0), Some(l0r1), Some(l1r0), Some(lr)]
+        }
+        (Some(l), None) => [
+            Some(if LEFT_MONOMIAL {
+                F::one()
+            } else {
+                F::one() - l
+            }),
+            None,
+            Some(l),
+            None,
+        ],
+        (None, Some(r)) => [
+            Some(if RIGHT_MONOMIAL {
+                F::one()
+            } else {
+                F::one() - r
+            }),
+            Some(r),
+            None,
+            None,
+        ],
+        (None, None) => [Some(F::one()), None, None, None],
+    }
 }
 
 fn basis_bit_factor<F: Field, const MONOMIAL: bool>(challenge: Option<F>, bit: usize) -> Option<F> {
@@ -873,22 +913,20 @@ fn finish_seed_states<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL:
         next.try_reserve_exact(states.len()).map_err(|_| {
             AkitaError::InvalidInput("paired tensor carry allocation failed".into())
         })?;
+        let factors = basis_pair_factors::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+            left_challenges.get(bit).copied(),
+            right_challenges.get(bit).copied(),
+        );
         for ((left_carry, right_carry), state_weight) in states {
-            let Some((left_high, left_factor)) =
-                basis_carry_step::<F, LEFT_MONOMIAL>(left_challenges.get(bit).copied(), left_carry)
-            else {
+            if (bit >= left_challenges.len() && left_carry != 0)
+                || (bit >= right_challenges.len() && right_carry != 0)
+            {
+                continue;
+            }
+            let Some(factor) = factors[(left_carry & 1) * 2 + (right_carry & 1)] else {
                 continue;
             };
-            let Some((right_high, right_factor)) = basis_carry_step::<F, RIGHT_MONOMIAL>(
-                right_challenges.get(bit).copied(),
-                right_carry,
-            ) else {
-                continue;
-            };
-            next.push((
-                (left_high, right_high),
-                state_weight * left_factor * right_factor,
-            ));
+            next.push(((left_carry >> 1, right_carry >> 1), state_weight * factor));
         }
         states = merge_pair_states(next)?;
         bit += 1;
@@ -920,20 +958,6 @@ fn finish_seed_states<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL:
             state_weight * left_equality * right_equality
         })
         .sum())
-}
-
-fn basis_carry_step<F: Field, const MONOMIAL: bool>(
-    challenge: Option<F>,
-    carry: usize,
-) -> Option<(usize, F)> {
-    if let Some(challenge) = challenge {
-        basis_bit_factor::<F, MONOMIAL>(Some(challenge), carry & 1)
-            .map(|factor| (carry >> 1, factor))
-    } else if carry == 0 {
-        Some((0, F::one()))
-    } else {
-        None
-    }
 }
 
 fn basis_eval_at_index<F: Field, const MONOMIAL: bool>(challenges: &[F], index: usize) -> F {
