@@ -28,8 +28,8 @@ enum SignedBlockStorage {
 ///
 /// The values may be a secret witness (Whiteout's response digits,
 /// `specs/whiteout-akita.md` A45): they enter the field through
-/// [`lift_ct`], readers do not skip zeros, and owned values are wiped on
-/// drop.
+/// [`lift_ct`], readers do not skip zero values (only the zero extension
+/// past the public [`Self::len`]), and owned values are wiped on drop.
 pub struct SignedBlockPoly {
     storage: SignedBlockStorage,
     len: usize,

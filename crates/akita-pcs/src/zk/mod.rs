@@ -285,8 +285,10 @@ where
         committed.resize(shape.padded_len(), 0);
 
         // 1. Commit to e. The backend keeps the digits as `i8` until the
-        // opening, read in constant time (`SignedBlockPoly`).
-        let poly = SignedBlockPoly::i8(committed.to_vec(), shape.num_vars).map_err(zk_error)?;
+        // opening, read in constant time (`SignedBlockPoly`), and skips the
+        // zero extension past `live`.
+        let poly =
+            SignedBlockPoly::i8(committed[..live].to_vec(), shape.num_vars).map_err(zk_error)?;
         let source = side.backend.import_source(vec![poly]).map_err(zk_error)?;
         let output = side
             .backend

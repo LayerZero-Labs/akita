@@ -74,10 +74,13 @@ impl<'a, E: Field> FusedPackingWeights<'a, E> {
 /// coefficients, while packed recursive sources decode one D-sized ring into an
 /// owned array. The arithmetic loop is shared and reads the prepared position
 /// through `coefficient` without repeating source validation or decoding.
+/// Positions from `source_positions` on hold only zeros and are skipped; the
+/// count is the source's public length, never a property of its values.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
 pub(crate) fn coefficient_packing_partials_from_position_source<F, E, P, const D: usize>(
     fused_weights: &FusedPackingWeights<'_, E>,
     source_num_vars: usize,
+    source_positions: usize,
     position_at: impl Fn(usize) -> Result<P, AkitaError> + Sync,
     coefficient: impl Fn(usize, usize, &P) -> F + Sync,
 ) -> Result<Vec<F>, AkitaError>
@@ -121,7 +124,8 @@ where
                         "coefficient-packing block starts beyond the live positions".into(),
                     )
                 })?
-                .min(point.num_positions_per_block());
+                .min(point.num_positions_per_block())
+                .min(source_positions.saturating_sub(first_position));
             let packed = if E::SUM_IS_EXACT {
                 let mut products = zero_vec::<<E as Unreduced>::Product>(s)?;
                 // Small strides expose more independent subring accumulators
