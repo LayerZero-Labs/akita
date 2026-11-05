@@ -369,6 +369,68 @@ mod tests {
         }
     }
 
+    fn boxed<T: std::fmt::Debug, const D: usize>(value: impl Fn(usize) -> T) -> Box<[T; D]> {
+        let values: Vec<T> = (0..D).map(value).collect();
+        values.try_into().expect("D values")
+    }
+
+    /// Compare against the per-term kernels on one challenge, with `i8` digits
+    /// at the bound 127, widened `i8` digits that reach -128, and `i16` digits.
+    fn check_boundaries<const D: usize>(challenge: &SparseChallenge, seed: usize) {
+        let mut scratch = ShiftScratch::<D>::new();
+        let narrow = ShiftedChallenge::new::<D>(challenge, 127).expect("admitted challenge");
+        let widened = ShiftedChallenge::new::<D>(challenge, 128).expect("admitted challenge");
+        assert!(narrow.negates_i8 && !widened.negates_i8);
+        let at_bound: Box<[i8; D]> = boxed(|index| [127, -127, 0, 1][(index + seed) % 4]);
+        let full: Box<[i8; D]> = boxed(|index| [-128, 127, -1, 0][(index + seed) % 4]);
+        let wide: Box<[i16; D]> = boxed(|index| [255, -255, 3, 0][(index + seed) % 4]);
+        let start: Box<[i16; D]> = boxed(|index| (index % 17) as i16 - 8);
+        for (plane, table) in [(&at_bound, &narrow), (&full, &widened)] {
+            let (mut expected, mut actual) = (start.clone(), start.clone());
+            sparse_mul_acc(plane, challenge, &mut expected);
+            shifted_mul_acc(plane, table, &mut scratch, &mut actual);
+            assert_eq!(actual, expected);
+        }
+        let (mut expected, mut actual) = (start.clone(), start);
+        sparse_mul_acc_i16(&wide, challenge, &mut expected);
+        shifted_mul_acc_i16(&wide, &narrow, &mut scratch, &mut actual);
+        assert_eq!(actual, expected);
+    }
+
+    /// The table boundaries: positions 0 and `D - 1`, single-sign and
+    /// magnitude-two challenges up to 64 terms, and the largest degree whose
+    /// extended plane the `u16` offsets address.
+    #[test]
+    fn shifted_windows_match_per_term_accumulation_at_boundaries() {
+        const D: usize = 512;
+        let sparse = |positions: Vec<u32>, coeffs: Vec<i8>| SparseChallenge {
+            positions: positions.into(),
+            coeffs: coeffs.into(),
+        };
+        let cases = [
+            sparse(vec![0, D as u32 - 1, 255], vec![1, -2, -1]),
+            sparse((0..41).map(|term| term * 12 + 5).collect(), vec![-1; 41]),
+            sparse(
+                (0..64).map(|term| term * 8 + 7).collect(),
+                (0..64)
+                    .map(|term| if term % 2 == 0 { 2 } else { -2 })
+                    .collect(),
+            ),
+            sparse((0..64).map(|term| term * 8).collect(), vec![-2; 64]),
+        ];
+        for (seed, challenge) in cases.iter().enumerate() {
+            check_boundaries::<D>(challenge, seed);
+        }
+
+        // 3 * 21,824 + 16 = 65,488 fits a u16 offset; 3 * 21,840 + 16 does not.
+        const MAX_D: usize = 21_824;
+        check_boundaries::<MAX_D>(
+            &sparse(vec![0, MAX_D as u32 - 1, 10_000], vec![-2, 1, 2]),
+            0,
+        );
+        assert!(ShiftedChallenge::new::<21_840>(&sparse(vec![0], vec![1]), 64).is_none());
+    }
+
     #[test]
     fn shifted_challenge_rejects_large_coefficients_and_ragged_degrees() {
         let mut large = challenge(0);
