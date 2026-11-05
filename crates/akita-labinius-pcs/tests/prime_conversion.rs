@@ -15,7 +15,7 @@ use akita_labinius_pcs::{
 };
 use akita_labinius_verifier::lowered::LoweredRootLayout;
 use akita_params::sis::labinius::LabiniusRootProfile;
-use akita_types::proof::AkitaSetupSeed;
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use jolt_algebra::{ExtField, Field, One, Ring, Zero};
 
 /// Sum over Boolean vertices directly, independently of the fold evaluator.

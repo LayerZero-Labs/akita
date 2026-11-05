@@ -1,6 +1,6 @@
 //! Public coefficient weights authenticating committed prime evaluation planes.
 
-use jolt_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
+use akita_algebra::{shifted_remainder_evaluations, PlusTrinomial};
 use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
 use jolt_algebra::checked;

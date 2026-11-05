@@ -228,8 +228,8 @@ impl OrdinaryNativeRootPlan {
                 "mixed root exceeds the admitted setup prefix".into(),
             ));
         }
-        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed);
-        let matrix = matrix.as_field_slice();
+        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed)?;
+        let matrix = matrix.as_slice();
         let source_coefficients = checked::product([
             self.segments
                 .first()

@@ -4,7 +4,7 @@ use akita_algebra::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
 use akita_types::FoldChallengeDrawDomain;
 use akita_types::FoldChallengeFamily;
-use akita_types::FoldDraw;
+use akita_types::{FoldChallengeDraw, FoldDraw};
 use akita_types::binary_source::{
     BinaryCommitmentProfiles, BinaryIndexMap, BinaryTerminalClaim, PrimePlaneClaim,
     PrimePlaneManifest,

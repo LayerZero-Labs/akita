@@ -14,7 +14,7 @@ use akita_labinius_prover::{
 };
 use akita_labinius_verifier::AdmittedRootSetup;
 use akita_params::sis::labinius::LabiniusRootProfile;
-use akita_types::proof::AkitaSetupSeed;
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_algebra::Prime128Offset275;
 use rand::{rngs::StdRng, RngCore, SeedableRng};

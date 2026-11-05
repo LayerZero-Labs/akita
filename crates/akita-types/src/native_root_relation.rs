@@ -5,9 +5,9 @@
 //! commitment. The caller fixes this plan and that commitment before choosing
 //! any row functional (in particular before the projection seed).
 
-use jolt_algebra::ring::{
-    shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial, ResidueKernelPoint,
-};
+use jolt_algebra::ring::ResidueKernelPoint;
+
+use akita_algebra::{shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial};
 use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use jolt_algebra::checked;

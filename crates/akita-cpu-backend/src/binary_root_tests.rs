@@ -1,7 +1,7 @@
 use super::*;
 use akita_types::FoldChallengeDrawDomain;
 use akita_types::FoldChallengeFamily;
-use akita_types::FoldDraw;
+use akita_types::{FoldChallengeDraw, FoldDraw};
 use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use akita_types::native_root_relation::NativeRootRelation;
 use jolt_algebra::Ring;

@@ -50,6 +50,7 @@ fn ordinary_profile() -> GroupCommitPhaseParams {
     .unwrap();
     let profile = GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
+        randomness_columns: 0,
         group: PolynomialGroupLayout::singleton(10),
         blocks: BlockGeometry::new(8, 2, 4),
         outer_slice_count: CommitmentSliceCount::ONE,

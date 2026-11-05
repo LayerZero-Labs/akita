@@ -1,5 +1,5 @@
 use akita_algebra::{binary::BinaryField162, EqPolynomial};
-use jolt_algebra::ring::{embed_scalar, TrinomialModulus};
+use akita_algebra::{embed_scalar, TrinomialModulus};
 use akita_challenges::BinaryChallenge;
 use akita_error::AkitaError;
 use jolt_algebra::checked;

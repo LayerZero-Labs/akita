@@ -41,7 +41,7 @@ fn ordinary_group_root_selects_binary_family_and_indexed_columns() {
     let challenges = draw.draw_fold_challenges(&family, 8, 1).unwrap().unwrap();
     assert_eq!(draw.message_lens, vec![32]);
     let reference = BinaryChallengeSampler::new(root_family::profile().unwrap())
-        .sample_from_seed(&MESSAGE, 8)
+        .sample_challenges(&mut Draw::default(), 8)
         .unwrap();
     for (actual, expected) in challenges.as_slice().iter().zip(reference) {
         assert_eq!(actual.positions.len(), expected.weight());

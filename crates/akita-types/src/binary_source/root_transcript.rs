@@ -4,9 +4,9 @@ use super::{BinaryCommittedGroupManifest, BinaryWordClaim};
 use crate::GrindingReplay;
 use jolt_crypto::challenge::Challenges;
 use akita_params::FoldChallengeDistribution;
-use akita_types::FoldChallengeDrawDomain;
-use akita_types::FoldChallengeFamily;
-use akita_types::FoldDraw;
+use crate::FoldChallengeDrawDomain;
+use crate::FoldChallengeFamily;
+use crate::{FoldChallengeDraw, FoldDraw};
 use akita_error::AkitaError;
 use akita_params::GrindingSite;
 use akita_transcript::{

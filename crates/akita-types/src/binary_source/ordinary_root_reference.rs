@@ -13,7 +13,8 @@ use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275};
 use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
-use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
+use crate::AkitaSetupDescriptor;
+use jolt_crypto::lattice::derive_public_matrix_prefix;
 
 impl OrdinaryNativeRootPlan {
     /// Flat reference for [`OrdinaryNativeRootPlan::linear_weights`].
@@ -67,8 +68,8 @@ impl OrdinaryNativeRootPlan {
                 "mixed root exceeds the admitted setup prefix".into(),
             ));
         }
-        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed);
-        let matrix = matrix.as_field_slice();
+        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed)?;
+        let matrix = matrix.as_slice();
         let source_coefficients = checked::product([
             self.segments
                 .first()
@@ -517,6 +518,7 @@ mod tests {
         .unwrap();
         let profile = GroupCommitPhaseParams {
             version: GroupCommitPhaseParams::VERSION,
+            randomness_columns: 0,
             group: PolynomialGroupLayout::singleton(10),
             blocks: BlockGeometry::new(8, 2, 4),
             outer_slice_count: slices,
@@ -567,6 +569,7 @@ mod tests {
         .unwrap();
         let profile = GroupCommitPhaseParams {
             version: GroupCommitPhaseParams::VERSION,
+            randomness_columns: 0,
             group: PolynomialGroupLayout::new(7, slots),
             blocks: BlockGeometry::new(2, 1, 2),
             outer_slice_count: slices,

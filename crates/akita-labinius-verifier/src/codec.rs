@@ -1,7 +1,7 @@
 //! Fixed-width canonical proof atoms. No proof-controlled length prefixes.
 use crate::{channel::ClearChannel, profile::BinaryClearSetup};
 use akita_algebra::binary::BinaryField162;
-use jolt_algebra::ring::trinomial::TrinomialModulus;
+use akita_algebra::trinomial::TrinomialModulus;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};

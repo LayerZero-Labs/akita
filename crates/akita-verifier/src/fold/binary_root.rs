@@ -17,7 +17,7 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{
-    AkitaVerifierSetup, CommittedGroup, DigitRangeEqualityPoint, FpExtEncoding, GrindingReplay,
+    AkitaVerifierSetup, CommittedGroup, DigitRangeEqualityPoint, FpExtEncoding, FoldResponseReplay, GrindingReplay,
     OpeningClaims, RingVec,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -234,9 +234,9 @@ where
     let equality_point =
         DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau0, num_vars, 0)?;
     let stage1 = Stage1Verifier::new(equality_point, DigitRangePlan::new(8)?)
-        .verify::<F>(grinding, None, 0)?;
+        .verify::<F, _>(grinding, None, 0)?;
     let gamma = grinding.grinded_ext_challenge::<E>(GrindingSite::Stage2Batch { level: 0 })?;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
         grinding,
         SumcheckProtocol::Stage2,
         0,
@@ -248,7 +248,7 @@ where
         relation.claim() + gamma * stage1.range_image_evaluation,
         akita_sumcheck::SumcheckShape::new(num_vars, 3)?,
     )?;
-    let witness_eval = akita_types::stage2_w_eval::<F, E, _>(grinding, 0, E::zero())?;
+    let (witness_eval, _) = akita_types::stage2_w_eval::<F, E, _>(grinding, 0, E::zero())?;
     drop(span);
     let negative_bit_weight = akita_types::native_root_relation::NativeRootWeights::new(
         domain_len,

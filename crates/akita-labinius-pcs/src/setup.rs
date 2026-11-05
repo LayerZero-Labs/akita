@@ -2,7 +2,7 @@
 
 use akita_error::AkitaError;
 use akita_labinius_verifier::codec::length_prefixed;
-use akita_types::proof::AkitaSetupSeed;
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use jolt_algebra::Prime128Offset275;
 
 use crate::{session::canonical_bytes, shipped::SupportedGeometry, RootSetup};

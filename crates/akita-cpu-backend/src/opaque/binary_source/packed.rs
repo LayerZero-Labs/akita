@@ -2,7 +2,7 @@
 
 use super::*;
 use akita_algebra::binary::BinaryField128;
-use jolt_algebra::ring::trinomial::module_map::pack_signed_components;
+use akita_algebra::trinomial::module_map::pack_signed_components;
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing};
 use jolt_crypto::challenge::Challenges;
 use akita_params::FoldChallengeDistribution;

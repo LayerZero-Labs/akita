@@ -51,7 +51,7 @@ pub use statement::{PrimeClaim, RootOpeningMode, RootStatement};
 
 use akita_algebra::binary::{field_switch::SwitchField, BinaryField162 as B};
 
-use jolt_algebra::ring::trinomial::TrinomialModulus;
+use akita_algebra::trinomial::TrinomialModulus;
 use akita_challenges::BinaryChallengeSampler;
 use akita_error::AkitaError;
 use jolt_algebra::checked;

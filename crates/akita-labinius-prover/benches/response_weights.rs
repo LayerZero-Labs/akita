@@ -11,7 +11,7 @@ use akita_labinius_verifier::{
     AdmittedRootSetup,
 };
 use akita_params::sis::labinius::LabiniusRootProfile;
-use akita_types::proof::AkitaSetupSeed;
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime64Offset59};
 use std::{hint::black_box, time::Duration};

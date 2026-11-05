@@ -8,7 +8,8 @@
 use akita_algebra::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::trinomial::module_map::pack_signed_components;
 use akita_algebra::trinomial::MinusTrinomial;
-use jolt_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial, ResidueKernelPoint};
+use jolt_algebra::ring::ResidueKernelPoint;
+use akita_algebra::{shifted_remainder_evaluations, PlusTrinomial};
 use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
 use jolt_algebra::checked;

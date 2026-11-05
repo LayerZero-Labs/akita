@@ -5,11 +5,11 @@
 
 use std::{fmt::Debug, hint::black_box, time::Duration};
 
-use akita_algebra::{MinusTrinomial, Prime64Offset23703, TrinomialRing};
+use akita_algebra::{MinusTrinomial, Prime64Offset23703, TrinomialField, TrinomialRing};
 
 use jolt_algebra::Field;
 
-use jolt_algebra::SmoothFftField;
+
 use akita_cpu_backend::benchmark_support::TrinomialRelationQuotientBuilder;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_algebra::Prime128OffsetA7F7;
@@ -24,7 +24,7 @@ fn input<F: Field, const D: usize>(seed: u64) -> TrinomialRing<F, D, MinusTrinom
     .unwrap()
 }
 
-fn profile<F: SmoothFftField + Debug, const D: usize>(c: &mut Criterion, name: &str) {
+fn profile<F: TrinomialField + Debug, const D: usize>(c: &mut Criterion, name: &str) {
     let a = [input::<F, D>(17), input(31), input(47), input(71)];
     let response = [input::<F, D>(91), input(101), input(131), input(151)];
     let one = TrinomialRing::from_coefficients(std::array::from_fn(|i| {

@@ -85,7 +85,7 @@ where
     let shape = akita_sumcheck::SumcheckShape::new(rounds, SETUP_SUMCHECK_DEGREE)?;
     akita_types::stage3_public_slot(grinding, level, encoded_slot)?;
     let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
         grinding,
         akita_params::SumcheckProtocol::Stage3,
         level,

@@ -439,5 +439,6 @@ where
                 setup_prefix_opening: Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
             },
         },
+        range_leaf: stage1.range_leaf,
     })
 }

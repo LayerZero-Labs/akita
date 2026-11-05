@@ -13,7 +13,8 @@ use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275};
 use super::paired_offset_eq_sum;
 use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, TranslatedLanes};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
-use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
+use crate::AkitaSetupDescriptor;
+use jolt_crypto::lattice::derive_public_matrix_prefix;
 
 /// Ordinary preimage families sharing the native root's outgoing table.
 ///
@@ -297,8 +298,8 @@ impl OrdinaryNativeRootPlan {
                 "mixed root exceeds the admitted setup prefix".into(),
             ));
         }
-        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed);
-        let matrix = matrix.as_field_slice();
+        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed)?;
+        let matrix = matrix.as_slice();
         let table_len = repacking.domain_len();
         let lanes = |offset| {
             checked::sum([self.first_segment, offset])

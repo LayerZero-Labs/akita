@@ -24,7 +24,7 @@ use akita_params::sis::labinius::{
     LabiniusCommitmentModulus, LabiniusRingDegree, LabiniusRootProfile,
 };
 use akita_transcript::ChallengeCodec;
-use akita_types::proof::AkitaSetupSeed;
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, Prime128Offset275};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::marker::PhantomData;

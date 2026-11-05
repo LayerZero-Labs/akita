@@ -131,6 +131,7 @@ dependencies = [
  "akita-types",
  "akita-verifier",
  "jolt-algebra",
+ "jolt-crypto",
  "jolt-transcript",
  "tracing",
  "tracing-subscriber",
@@ -205,8 +206,10 @@ dependencies = [
  "jolt-transcript",
  "jolt-zk",
  "num-bigint 0.5.1",
+ "postcard",
  "rand 0.8.8",
  "serde",
+ "serde_json",
  "sha3",
  "shake",
 ]
@@ -300,6 +303,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "akita-params",
+ "jolt-algebra",
  "jolt-crypto",
  "postcard",
  "serde",

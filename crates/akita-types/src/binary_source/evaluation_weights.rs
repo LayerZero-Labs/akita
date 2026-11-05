@@ -1,6 +1,6 @@
 //! Direct public coefficient weights for the two binary terminal identities.
 
-use jolt_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
+use akita_algebra::{shifted_remainder_evaluations, PlusTrinomial};
 use jolt_crypto::challenge::Challenges;
 use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
