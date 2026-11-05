@@ -24,6 +24,7 @@
 
 #[cfg(any(test, feature = "benchmark-support"))]
 mod benchmark_support;
+mod claims;
 mod coefficient_packing_relation;
 mod fold;
 mod prepared_cache;

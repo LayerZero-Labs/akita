@@ -1,6 +1,7 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
+use crate::claims::{ClaimReplay, SumcheckFormat, SumcheckInstance};
 use crate::fold::FoldSetup;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 #[cfg(test)]
@@ -15,7 +16,7 @@ use akita_transcript::ChallengeCodec;
 use akita_types::AkitaExpandedSetup;
 use akita_types::{
     setup_claims::{SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery},
-    setup_prefix_coverage_eval_len, AkitaVerifierSetup, FpExtEncoding,
+    setup_prefix_coverage_eval_len, AkitaVerifierSetup, FpExtEncoding, GrindingReplay,
     PreparedCoefficientFunctional, PreparedRelationAddress,
 };
 #[cfg(test)]
@@ -30,11 +31,11 @@ pub(crate) struct SetupSumcheckReplay<E: Field> {
 }
 
 /// Check a setup sumcheck, leaving its setup evaluation to the successor.
-fn verify_setup_sumcheck<F, E>(
+fn verify_setup_sumcheck<F, E, G: ClaimReplay<F, E>>(
     statement: &SetupBatchStatement<E>,
     coefficients: &[E],
     claim: E,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
 where
@@ -42,30 +43,28 @@ where
     E: ExtField<F> + ChallengeCodec,
 {
     let input = statement.input_claim(coefficients)?;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
-        grinding,
+    // Public in both modes, as the prover sends them.
+    let (challenges, output_claim) = grinding.public_sumcheck(
         akita_params::SumcheckProtocol::Stage3,
         level,
         0,
-    );
-    let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-        &mut channel,
-        0,
+        SumcheckInstance {
+            invocation: 0,
+            rounds: statement.polynomial().num_variables(),
+            degree: SETUP_SUMCHECK_DEGREE,
+            format: SumcheckFormat::Compressed,
+        },
         input,
-        akita_sumcheck::SumcheckShape::new(
-            statement.polynomial().num_variables(),
-            SETUP_SUMCHECK_DEGREE,
-        )?,
     )?;
     let value = akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
-    let weight = statement.evaluate_weight(coefficients, &replay.challenges)?;
-    if replay.output_claim != value * weight {
+    let weight = statement.evaluate_weight(coefficients, &challenges)?;
+    if output_claim != value * weight {
         return Err(AkitaError::InvalidProof);
     }
     Ok(SetupSumcheckReplay {
         claim,
         setup_prefix_eval: value,
-        challenges: replay.challenges,
+        challenges,
     })
 }
 
@@ -74,12 +73,12 @@ where
 /// The setup contribution is evaluated at the Stage 2 point with its
 /// coefficient variables removed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_stage3<F, E>(
+pub(crate) fn verify_stage3<F, E, G: ClaimReplay<F, E>>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
     stage2_challenges: &[E],
     next_params: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
     fold_setup: &FoldSetup<'_, '_, E>,
 ) -> Result<SetupSumcheckReplay<E>, AkitaError>
@@ -137,7 +136,7 @@ where
         // transcript, so it needs no batch descriptor or random coefficient.
         (&singleton, unit_coefficient.as_slice(), claim)
     };
-    verify_setup_sumcheck::<F, E>(statement, coefficients, claim, grinding, level)
+    verify_setup_sumcheck::<F, E, _>(statement, coefficients, claim, grinding, level)
 }
 
 /// Resolve the planned setup-prefix slot in the verifier setup, check that it
@@ -146,12 +145,12 @@ where
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
 /// common base ring dimension is a power of two.
-fn bind_setup_prefix_slot<F>(
+fn bind_setup_prefix_slot<F, G: GrindingReplay>(
     setup: &AkitaVerifierSetup<F>,
     next_fold_level_params: &CommittedGroupParams,
     natural_field_len: usize,
     ring_d: usize,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<(), AkitaError>
 where
@@ -416,7 +415,7 @@ mod tests {
                 let mut state = akita_transcript::new_verifier_channel(b"checked-stage3", &proof);
                 akita_transcript::bind_instance(&mut state, b"fixture").unwrap();
                 let mut verifier = VerifierGrinding::new(&mut state, &plan);
-                let result = verify_setup_sumcheck::<F, F>(
+                let result = verify_setup_sumcheck::<F, F, _>(
                     &statement,
                     &[coefficient],
                     value,

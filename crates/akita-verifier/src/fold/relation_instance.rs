@@ -17,8 +17,8 @@ use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 ///
 /// Runs before the fold response is read, so every rejection here precedes
 /// any fold transcript operation.
-pub(super) fn validate_fold_payloads<F, E>(
-    prepared: &PreparedFoldReplay<'_, F, E>,
+pub(super) fn validate_fold_payloads<F, E, V>(
+    prepared: &PreparedFoldReplay<'_, F, E, V>,
 ) -> Result<RelationWitnessGeometry, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -62,8 +62,8 @@ where
 
 /// Assemble the fold's ring-relation instance from the evaluation-batch row
 /// coefficients, the transmitted payloads, and the drawn fold challenges.
-pub(super) fn assemble_relation_instance<F, E>(
-    prepared: &PreparedFoldReplay<'_, F, E>,
+pub(super) fn assemble_relation_instance<F, E, V>(
+    prepared: &PreparedFoldReplay<'_, F, E, V>,
     relation_geometry: &RelationWitnessGeometry,
     group_challenges: Vec<GroupFoldChallenges>,
 ) -> Result<RingRelationInstance<F>, AkitaError>

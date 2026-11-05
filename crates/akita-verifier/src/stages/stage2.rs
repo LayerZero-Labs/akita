@@ -1,5 +1,6 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
+use crate::claims::{ClaimReplay, SumcheckFormat, SumcheckInstance};
 use crate::coefficient_packing_relation::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
@@ -23,44 +24,54 @@ use akita_types::{
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
-pub(crate) struct EvaluationTraceStage2<E: Field> {
+pub(crate) struct EvaluationTraceStage2<E: Field, V = E> {
     pub(crate) trace: PreparedEvaluationTrace<E>,
     pub(crate) row_weight: E,
-    pub(crate) opening_claim: E,
+    pub(crate) opening_claim: V,
 }
 
-pub(crate) struct PackingStage2<'a, E: Field> {
+pub(crate) struct PackingStage2<'a, E: Field, V = E> {
     groups: &'a [CoefficientPackingVerifierGroupSemantics<E>],
-    opening_claim: E,
+    opening_claim: V,
 }
 
-pub(crate) struct Stage2OpeningSemantics<'a, E: Field>(
-    OpeningFamily<EvaluationTraceStage2<E>, PackingStage2<'a, E>>,
+pub(crate) struct Stage2OpeningSemantics<'a, E: Field, V = E>(
+    OpeningFamily<EvaluationTraceStage2<E, V>, PackingStage2<'a, E, V>>,
 );
 
-impl<'a, E: Field> PackingStage2<'a, E> {
-    pub(crate) fn new(
+impl<'a, E: Field, V: Clone> PackingStage2<'a, E, V> {
+    pub(crate) fn new<F, G>(
         batch: &'a CoefficientPackingVerifierBatchSemantics<E>,
-        scalar_openings: &[(usize, E)],
-    ) -> Result<Self, AkitaError> {
+        scalar_openings: &[(usize, V)],
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + ChallengeCodec,
+        G: ClaimReplay<F, E, Claim = V>,
+    {
         let groups = batch.groups();
         if groups.is_empty() || scalar_openings.len() != groups.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let mut opening_claim = E::zero();
+        let mut opening_claim = G::constant(E::zero());
         for semantics in groups {
             let authenticated_opening = scalar_openings
                 .iter()
-                .find_map(|&(group, opening)| (group == semantics.group_index()).then_some(opening))
+                .find_map(|(group, opening)| (*group == semantics.group_index()).then_some(opening))
                 .ok_or(AkitaError::InvalidProof)?;
-            opening_claim += semantics.scalar_claim_weight() * authenticated_opening;
+            opening_claim = G::add(
+                &opening_claim,
+                &G::scale(authenticated_opening, semantics.scalar_claim_weight()),
+            );
         }
         Ok(Self {
             groups,
             opening_claim,
         })
     }
+}
 
+impl<E: Field, V> PackingStage2<'_, E, V> {
     fn weight_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         let evaluate_group = |semantics: &CoefficientPackingVerifierGroupSemantics<E>| {
             let (relation, structured) = cfg_join!(
@@ -98,11 +109,11 @@ impl<'a, E: Field> PackingStage2<'a, E> {
     }
 }
 
-impl<'a, E: Field> Stage2OpeningSemantics<'a, E> {
+impl<'a, E: Field, V: Clone> Stage2OpeningSemantics<'a, E, V> {
     pub(crate) fn evaluation_trace(
         trace: PreparedEvaluationTrace<E>,
         row_weight: E,
-        opening_claim: E,
+        opening_claim: V,
     ) -> Self {
         Self(OpeningFamily::EvaluationTrace(EvaluationTraceStage2 {
             trace,
@@ -111,25 +122,30 @@ impl<'a, E: Field> Stage2OpeningSemantics<'a, E> {
         }))
     }
 
-    pub(crate) fn packing(
+    pub(crate) fn packing<F, G>(
         batch: &'a CoefficientPackingVerifierBatchSemantics<E>,
-        scalar_openings: &[(usize, E)],
-    ) -> Result<Self, AkitaError> {
+        scalar_openings: &[(usize, V)],
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + ChallengeCodec,
+        G: ClaimReplay<F, E, Claim = V>,
+    {
         Ok(Self(OpeningFamily::SubringCoefficientPacking(
-            PackingStage2::new(batch, scalar_openings)?,
+            PackingStage2::new::<F, G>(batch, scalar_openings)?,
         )))
     }
 
-    pub(crate) fn opening_claim(&self) -> E {
+    pub(crate) fn opening_claim(&self) -> &V {
         match &self.0 {
-            OpeningFamily::EvaluationTrace(trace) => trace.opening_claim,
-            OpeningFamily::SubringCoefficientPacking(packing) => packing.opening_claim,
+            OpeningFamily::EvaluationTrace(trace) => &trace.opening_claim,
+            OpeningFamily::SubringCoefficientPacking(packing) => &packing.opening_claim,
         }
     }
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
+pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field, V = E> {
     batching_coeff: E,
     witness_eval: E,
     stage1_point: Vec<E>,
@@ -139,13 +155,13 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     external_relation_weight: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
-    opening_semantics: Stage2OpeningSemantics<'a, E>,
+    opening_semantics: Stage2OpeningSemantics<'a, E, V>,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
     _marker: std::marker::PhantomData<F>,
 }
 
 /// Replayed inputs for [`AkitaStage2Verifier::new`].
-pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
+pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field, V = E> {
     /// Stage 2 batching coefficient drawn after Stage 1.
     pub(crate) batching_coeff: E,
     /// Prover-sent witness evaluation at the Stage 2 point.
@@ -168,7 +184,7 @@ pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
     /// Relation coefficient variable count.
     pub(crate) ring_bits: usize,
     /// Opening-claim semantics for this level.
-    pub(crate) opening_semantics: Stage2OpeningSemantics<'a, E>,
+    pub(crate) opening_semantics: Stage2OpeningSemantics<'a, E, V>,
     /// Batched physical L2 virtual claim, zero without a physical plan.
     pub(crate) physical_l2_claim: E,
     /// Physical L2 virtualization families.
@@ -189,7 +205,7 @@ pub(crate) enum Stage2CompressionOracle<'a, E: Field> {
     },
 }
 
-impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
+impl<'a, F, E, V> AkitaStage2Verifier<'a, F, E, V>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
@@ -197,7 +213,7 @@ where
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new")]
-    pub(crate) fn new(input: Stage2VerifierInput<'a, F, E>) -> Result<Self, AkitaError> {
+    pub(crate) fn new(input: Stage2VerifierInput<'a, F, E, V>) -> Result<Self, AkitaError> {
         let Stage2VerifierInput {
             batching_coeff,
             witness_eval,
@@ -243,7 +259,7 @@ where
     }
 }
 
-impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
+impl<F, E, V: Sync> AkitaStage2Verifier<'_, F, E, V>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
@@ -345,65 +361,80 @@ where
 
 /// Stage 2 sumcheck rounds and the prover's witness evaluation, before the
 /// output claim is checked.
-pub(crate) struct Stage2RoundReplay<E: Field> {
-    pub(crate) output_claim: E,
+pub(crate) struct Stage2RoundReplay<E: Field, V = E> {
+    pub(crate) output_claim: V,
     pub(crate) challenges: Vec<E>,
-    pub(crate) witness_eval: E,
+    pub(crate) witness_eval: V,
 }
 
 /// Checked Stage 2 output: the fold's next opening point and claim.
-pub(crate) struct Stage2Output<E: Field> {
+pub(crate) struct Stage2Output<E: Field, V = E> {
     pub(crate) point: Vec<E>,
-    pub(crate) witness_eval: E,
+    pub(crate) witness_eval: V,
 }
 
 /// Replay the Stage 2 rounds from the batched Stage 1, relation, opening, and
 /// physical L2 input claims.
-pub(crate) fn replay_stage2<F, E>(
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+pub(crate) fn replay_stage2<F, E, G: ClaimReplay<F, E>>(
+    grinding: &mut G,
     level: u32,
-    stage1: &Stage1Replay<'_, E>,
+    stage1: &Stage1Replay<'_, E, G::Claim>,
     relation_claim: E,
-    opening_semantics: &Stage2OpeningSemantics<'_, E>,
+    opening_semantics: &Stage2OpeningSemantics<'_, E, G::Claim>,
     shape: akita_sumcheck::SumcheckShape,
-) -> Result<Stage2RoundReplay<E>, AkitaError>
+) -> Result<Stage2RoundReplay<E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
 {
-    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
-        + relation_claim
-        + opening_semantics.opening_claim()
-        + stage1.physical_l2_claim;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
-        grinding,
+    let input_claim = G::add(
+        &G::add(
+            &G::add(
+                &G::scale(&stage1.range_image_evaluation, stage1.batching_coeff),
+                &G::constant(relation_claim),
+            ),
+            opening_semantics.opening_claim(),
+        ),
+        &G::constant(stage1.physical_l2_claim),
+    );
+    let (challenges, output_claim) = grinding.single_sumcheck(
         akita_params::SumcheckProtocol::Stage2,
         level,
         0,
-    );
-    let replay =
-        akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(&mut channel, 0, input_claim, shape)?;
-    let witness_eval = akita_types::stage2_w_eval::<F, E, _>(grinding, level, E::zero())?;
+        SumcheckInstance {
+            invocation: 0,
+            rounds: shape.num_rounds(),
+            degree: shape.degree_bound(),
+            format: SumcheckFormat::Compressed,
+        },
+        input_claim,
+    )?;
+    let witness_eval = grinding.witness_eval(level)?;
     Ok(Stage2RoundReplay {
-        output_claim: replay.output_claim,
-        challenges: replay.challenges,
+        output_claim,
+        challenges,
         witness_eval,
     })
 }
 
 /// Resolve this fold's setup contribution and check the Stage 2 output claim.
-pub(crate) fn validate_stage2_replay<F, E>(
+pub(crate) fn validate_stage2_replay<F, E, G: ClaimReplay<F, E>>(
     setup: &AkitaVerifierSetup<F>,
-    stage1: Stage1Replay<'_, E>,
+    stage1: Stage1Replay<'_, E, G::Claim>,
     rs: &RingSwitchVerifyOutput<E>,
     setup_claim: Option<E>,
-    opening_semantics: Stage2OpeningSemantics<'_, E>,
-    replay: Stage2RoundReplay<E>,
+    opening_semantics: Stage2OpeningSemantics<'_, E, G::Claim>,
+    replay: Stage2RoundReplay<E, G::Claim>,
     fold_setup: FoldSetup<'_, '_, E>,
-) -> Result<Stage2Output<E>, AkitaError>
+) -> Result<Stage2Output<E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     let external_relation_weight = match fold_setup {
         FoldSetup::Ordinary => None,
@@ -418,10 +449,14 @@ where
         ),
     };
 
-    let witness_eval = replay.witness_eval;
-    let stage2_verifier = AkitaStage2Verifier::<F, E>::new(Stage2VerifierInput {
+    let [witness_value, output_claim] = <[E; 2]>::try_from(G::clear_values(&[
+        replay.witness_eval.clone(),
+        replay.output_claim,
+    ])?)
+    .map_err(|_| AkitaError::InvalidProof)?;
+    let stage2_verifier = AkitaStage2Verifier::<F, E, G::Claim>::new(Stage2VerifierInput {
         batching_coeff: stage1.batching_coeff,
-        witness_eval,
+        witness_eval: witness_value,
         stage1_point: stage1.stage1_point,
         relation_matrix_evaluator: &rs.relation_matrix_evaluator,
         compression: stage1.compression,
@@ -439,12 +474,12 @@ where
     })?;
 
     let expected = stage2_verifier.expected_output_claim(&replay.challenges)?;
-    if replay.output_claim != expected {
+    if output_claim != expected {
         return Err(AkitaError::InvalidProof);
     }
     Ok(Stage2Output {
         point: replay.challenges,
-        witness_eval,
+        witness_eval: replay.witness_eval,
     })
 }
 
@@ -516,6 +551,7 @@ mod tests {
 
     type F = Prime64Offset59;
     type E = Ext2<F>;
+    type Clear<'a> = akita_types::VerifierGrinding<'a, 'a>;
 
     #[test]
     fn packing_batch_drives_stage2_claim_and_compact_weight_once() {
@@ -695,14 +731,17 @@ mod tests {
             external_relation_weight: None,
             col_bits: relation_address_geometry.relation_lane_variable_count(),
             ring_bits: relation_address_geometry.relation_coefficient_variable_count(),
-            opening_semantics: Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)])
-                .unwrap(),
+            opening_semantics: Stage2OpeningSemantics::packing::<F, Clear<'_>>(
+                &batch,
+                &[(0, scalar_opening)],
+            )
+            .unwrap(),
             physical_l2_claim: E::zero(),
             physical_l2_families: Vec::new(),
         })
         .unwrap();
         assert_eq!(
-            verifier.opening_semantics.opening_claim(),
+            *verifier.opening_semantics.opening_claim(),
             batch.groups()[0].scalar_claim_weight() * scalar_opening
         );
         let point = (0..domain.num_vars())
@@ -730,7 +769,7 @@ mod tests {
                 .unwrap()
         );
 
-        assert!(Stage2OpeningSemantics::packing(
+        assert!(Stage2OpeningSemantics::packing::<F, Clear<'_>>(
             &batch,
             &[(0, scalar_opening), (0, scalar_opening)]
         )
