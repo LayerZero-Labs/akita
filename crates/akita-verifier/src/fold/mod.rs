@@ -237,6 +237,7 @@ where
         })
         .transpose()?;
     let stage2 = validate_stage2_replay::<F, E, G>(
+        grinding,
         setup,
         stage1,
         &rs,

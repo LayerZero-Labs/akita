@@ -12,10 +12,12 @@ use akita_error::AkitaError;
 use akita_transcript::FIELD_DIGEST_BYTES;
 use akita_transcript::{ChallengeCodec, PrivateProofChannel, ProtocolSiteId, VerifierChannel};
 use akita_types::{
-    FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, VerifierGrinding,
+    check_range_leaf, check_stage2_oracle, FoldResponseReplay, GrindingReplay,
+    GrindingSumcheckVerifier, RangeLeaf, Stage2OracleWeights, VerifierGrinding,
     VerifierGrindingChannel,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::{ClaimMismatch, ClearDomain};
 
 /// How a single-instance sumcheck's rounds go on the wire: the two drivers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,8 +68,8 @@ where
     /// A replay that does not support the path.
     fn clear_path(value: E) -> Result<Self::Claim, AkitaError>;
 
-    /// The values of claims a clear-only path or check consumes: the Stage-1
-    /// leaf and Stage-2 oracle checks, extension-field opening claims.
+    /// The values of claims a clear-only path consumes: Stage-1 product
+    /// stages, the physical ℓ2 norm, extension-field opening claims.
     ///
     /// # Errors
     ///
@@ -149,6 +151,30 @@ where
     ///
     /// [`AkitaError::InvalidProof`] if they differ.
     fn check_equal(&mut self, lhs: &Self::Claim, rhs: &Self::Claim) -> Result<(), AkitaError>;
+
+    /// The Stage-1 leaf check, [`check_range_leaf`].
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidProof`] if the check fails.
+    fn check_range_leaf(
+        &mut self,
+        leaf: RangeLeaf<E>,
+        range_image: Self::Claim,
+        claim: Self::Claim,
+    ) -> Result<(), AkitaError>;
+
+    /// The Stage-2 oracle check, [`check_stage2_oracle`].
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidProof`] if the check fails.
+    fn check_stage2_oracle(
+        &mut self,
+        weights: Stage2OracleWeights<E>,
+        witness_eval: Self::Claim,
+        claim: Self::Claim,
+    ) -> Result<(), AkitaError>;
 }
 
 /// The clear verifier: every claim is a value, checked when it is formed.
@@ -231,6 +257,26 @@ where
         } else {
             Err(AkitaError::InvalidProof)
         }
+    }
+
+    fn check_range_leaf(
+        &mut self,
+        leaf: RangeLeaf<E>,
+        range_image: E,
+        claim: E,
+    ) -> Result<(), AkitaError> {
+        check_range_leaf(&mut ClearDomain, &leaf, range_image, claim)
+            .map_err(|ClaimMismatch| AkitaError::InvalidProof)
+    }
+
+    fn check_stage2_oracle(
+        &mut self,
+        weights: Stage2OracleWeights<E>,
+        witness_eval: E,
+        claim: E,
+    ) -> Result<(), AkitaError> {
+        check_stage2_oracle(&mut ClearDomain, &weights, witness_eval, claim)
+            .map_err(|ClaimMismatch| AkitaError::InvalidProof)
     }
 }
 
