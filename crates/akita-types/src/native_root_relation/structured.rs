@@ -383,11 +383,14 @@ impl<E: Field> RootWeightFamily<E> {
 pub(crate) struct TranslatedLanes<E: Field> {
     table_len: usize,
     copies: Vec<(usize, E)>,
-    lanes: Vec<(usize, Vec<E>)>,
+    lanes: Vec<Lane<E>>,
     residue: Option<ResidueKernelPoint<E>>,
     /// One past the largest lane address relative to a base.
     span: usize,
 }
+
+/// A lane's offset from its copy's base and its weights.
+type Lane<E> = (usize, Vec<E>);
 
 /// Lanes per parallel chunk of one pattern pass.
 const PATTERN_CHUNK_LANES: usize = 16;
@@ -545,7 +548,7 @@ impl<E: Field> TranslatedLanes<E> {
     }
 
     /// Each lane's per-address weights: its residue kernel, or the lane.
-    fn kernels(&self) -> Result<Cow<'_, [(usize, Vec<E>)]>, AkitaError> {
+    fn kernels(&self) -> Result<Cow<'_, [Lane<E>]>, AkitaError> {
         Ok(match &self.residue {
             Some(point) => Cow::Owned(
                 cfg_iter!(self.lanes)
