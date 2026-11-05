@@ -16,7 +16,6 @@
 
 #[cfg(feature = "labinius-binary")]
 pub mod binary;
-mod cyclotomic_inverse;
 pub mod eq_poly;
 pub mod offset_eq;
 pub mod poly;
@@ -26,7 +25,6 @@ pub mod split_eq;
 pub mod trinomial;
 
 // Flat re-exports for convenience.
-pub use cyclotomic_inverse::CyclotomicInverse;
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use split_eq::GruenSplitEq;
 #[cfg(feature = "labinius-trinomial")]
