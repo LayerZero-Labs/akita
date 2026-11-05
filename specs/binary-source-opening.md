@@ -1500,7 +1500,7 @@ base → final, in milliseconds. The ordinary suffix's Stage 2 verification
 (`stage2_verifier`, which contains `relation_setup_scan`) is untouched and
 is now the largest single cost.
 
-| Span | 2^22 word | 2^22 binary-and-prime-claims | 2^22 binary-and-prime-claims-plus-ordinary | 2^22 five-prime-claims | 2^23 word | 2^23 binary-and-prime-claims | 2^23 binary-and-prime-claims-plus-ordinary | 2^23 five-prime-claims |
+| Span | 2^22 binary-claim | 2^22 binary-and-prime-claims | 2^22 binary-and-prime-claims-plus-ordinary | 2^22 five-prime-claims | 2^23 binary-claim | 2^23 binary-and-prime-claims | 2^23 binary-and-prime-claims-plus-ordinary | 2^23 five-prime-claims |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `verify_complete_opening` | 24.1 → 18.8 | 31.4 → 25.8 | 212.8 → 35.4 | 29.6 → 25.4 | 30.2 → 24.9 | 32.3 → 26.8 | 356.9 → 38.5 | 32.1 → 27.1 |
 | `binary_root_verify` | 9.2 → 3.8 | 10.4 → 4.6 | 191.9 → 14.3 | 8.5 → 4.3 | 9.8 → 4.4 | 11.3 → 5.7 | 335.7 → 17.4 | 10.1 → 5.2 |
@@ -1528,7 +1528,7 @@ base-to-final difference.
 | --- | --- | --- | --- | --- | --- |
 | `85902a75e` | Ordinary root rows as translated patterns with residue kernels, evaluated in closed form | 2^22 / 2^23 mixed | 135.1 → 26.5 / 226.5 → 29.3 | 212.8 → 43.4 / 356.9 → 47.9 | 8.8–16.7 |
 | `b66cfdb7f` | Ordinary root residue kernels derived in parallel; superseded by `4fcb1e43f` | 2^22 / 2^23 mixed | 26.5 → 25.9 / 29.3 → 27.5 | 43.4 → 43.4 / 47.9 → 47.2 | 8.8–16.7 |
-| `86cc8a002` | Terminal partial columns as one structured family | 2^22 word / 2^23 word | 15.9 → 13.5 / 23.1 → 18.4 | 23.8 → 21.5 / 31.1 → 28.8 | 10.5–13.4 |
+| `86cc8a002` | Terminal partial columns as one structured family | 2^22 binary-claim / 2^23 binary-claim | 15.9 → 13.5 / 23.1 → 18.4 | 23.8 → 21.5 / 31.1 → 28.8 | 10.5–13.4 |
 | `9fbde6581` | Trinomial adjoint of an equality table in closed form | 2^22 binary-and-prime-claims / 2^23 binary-and-prime-claims | 14.3 → 11.7 / 17.3 → 14.3 | 28.7 → 25.7 / 30.1 → 27.0 | 21.4–23.1 |
 | `2c31ad17d` | Prime plane work shared across one polynomial's planes | 2^22 five-prime-claims / 2^23 five-prime-claims | 12.6 → 10.7 / 14.0 → 11.4 | 26.3 → 25.0 / 28.3 → 26.4 | 6.7–6.9 |
 | `4fcb1e43f` | Ordinary root residue kernels read through low windows | 2^22 / 2^23 mixed | 20.2 → 17.7 / 20.2 → 18.3 | 37.5 → 34.6 / 42.3 → 38.0 | 7.4–7.5 |
@@ -1666,7 +1666,7 @@ triples above.
 
 N=2^22:
 
-| Phase | word ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 26,377,241,416 | 28,476,150,041 | 10,488,192,167 | 29,101,533,000 |
 | Cold prover setup | 41,027,459 | 81,349,250 | 81,609,875 | 168,867,875 |
@@ -1682,7 +1682,7 @@ N=2^22:
 
 N=2^23:
 
-| Phase | word ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 31,336,903,750 | 31,482,820,625 | 11,295,199,625 | 31,778,615,875 |
 | Cold prover setup | 83,035,417 | 82,813,792 | 79,797,625 | 166,126,208 |
@@ -2788,12 +2788,12 @@ measured:
   most of the SHAKE share above. From the sample shares, that is about 40 ms
   of authentication emission and about 30 ms of D payload at `five-prime-claims`, and
   about 25 ms in all at `binary-and-prime-claims`.
-- **Word's first-fold digit basis and challenge weight for the binary-and-prime-claims
+- **`binary-claim`'s first-fold digit basis and challenge weight for the binary-and-prime-claims
   shapes.** At `binary-claim` the first fold uses base-1,024 digits and challenges of
   weight 19. Its decomposition takes 12.4 ms and its suffix Stage 1
   sumchecks 53 ms, against 36.6 ms and 104.5 ms at `binary-and-prime-claims`, which uses 19
-  base-128 digits and weight 41. With word's parameters, the `binary-and-prime-claims`
-  suffix would move toward word's 247 ms. This changes the proof bytes and
+  base-128 digits and weight 41. With `binary-claim`'s parameters, the `binary-and-prime-claims`
+  suffix would move toward `binary-claim`'s 247 ms. This changes the proof bytes and
   needs the planner's security accounting.
 - **A lower root challenge weight.** The response fold scales linearly with
   the root family's weight of 46. That weight is set by the root's security
@@ -3362,7 +3362,7 @@ measured:
   bytes and the planner's security accounting.
 - **A larger prime-plane digit basis.** The 43 base-8 digits per prime-plane
   coefficient set the prime digit count and the D payload's width.
-- The fourth pass's notes on word's first-fold parameters for the binary-and-prime-claims
+- The fourth pass's notes on `binary-claim`'s first-fold parameters for the binary-and-prime-claims
   shapes and on the root challenge weight still apply.
 
 ### Sixth prover pass
@@ -3691,7 +3691,7 @@ triples are:
 
 N=2^22:
 
-| Phase | word ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 26,444,312,458 | 28,269,842,667 | 10,192,390,708 | 29,025,299,917 |
 | Cold prover setup | 42,911,125 | 85,848,291 | 73,045,084 | 164,313,584 |
@@ -3708,7 +3708,7 @@ N=2^22:
 
 N=2^23:
 
-| Phase | word ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 31,553,362,042 | 32,214,784,167 | 11,380,303,292 | 31,845,983,042 |
 | Cold prover setup | 75,469,459 | 86,793,708 | 101,245,292 | 150,365,041 |
@@ -4205,7 +4205,7 @@ The first N=2^22 driver logged HEAD `da4f701d2` with native-admission changes
 uncommitted; N=2^23 logged clean HEAD `4fc40d2db`. The saved current-protocol
 baseline executable has SHA-256
 `7398ec122a80fbf811ea4d3e861b9f4af9595bb5b94823650c39ad70fee84d83`.
-Later word and five-plane measurements explicitly record that source commit
+Later `binary-claim` and five-plane measurements explicitly record that source commit
 and executable digest. These are baselines before the subsequent parity,
 Stage-2 lifetime and adjoint optimizations.
 
@@ -4449,7 +4449,7 @@ no row was measured below one-minute load 4.
 
 Historical dev-protocol N=2^22, inclusive nanoseconds, with the load triples above:
 
-| Phase | word ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 30,920,451,042 | 32,485,773,875 | 9,311,988,791 | 31,613,850,625 |
 | Cold prover setup | 57,612,167 | 66,512,792 | 67,569,500 | 94,900,958 |
@@ -4465,7 +4465,7 @@ Historical dev-protocol N=2^22, inclusive nanoseconds, with the load triples abo
 
 Historical dev-protocol N=2^23, inclusive nanoseconds, with the load triples above:
 
-| Phase | word ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 36,788,665,000 | 36,754,778,959 | 13,405,380,042 | 36,218,120,041 |
 | Cold prover setup | 139,934,000 | 128,158,708 | 182,121,166 | 126,810,875 |

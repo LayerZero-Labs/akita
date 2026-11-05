@@ -319,7 +319,7 @@ The per-root sum is `648 + 9n + 2 + 2k` over P.
 
 | N | Shapes | n | k | Current root sum | Padding term (padding-point rule) | With padding point | Deletion rule |
 | --- | --- | ---: | ---: | --- | --- | --- | --- |
-| 2^22 | word, binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 25 | 24 | 923/P = 2^-118.1498 | 25/P = 2^-123.3561 | 948/P = 2^-118.1113 | 923/P (unchanged) |
+| 2^22 | binary-claim, binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 25 | 24 | 923/P = 2^-118.1498 | 25/P = 2^-123.3561 | 948/P = 2^-118.1113 | 923/P (unchanged) |
 | 2^22 | five-prime-claims | 26 | 24 | 932/P = 2^-118.1358 | 26/P = 2^-123.2996 | 958/P = 2^-118.0961 | 932/P |
 | 2^23 | all four | 26 | 25 | 934/P = 2^-118.1327 | 26/P = 2^-123.2996 | 960/P = 2^-118.0931 | 934/P |
 

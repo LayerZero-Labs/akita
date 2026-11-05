@@ -297,10 +297,10 @@ difference is that `W` has more nonzero cells.
 
 | Shapes | `k` → `k'` | Before | After |
 | --- | --- | --- | --- |
-| 2^22 word | 24 → 24 | `48/P = 2^-122.415` | unchanged |
+| 2^22 binary-claim | 24 → 24 | `48/P = 2^-122.415` | unchanged |
 | 2^22 binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 24 → 25 | `48/P = 2^-122.415` | `50/P = 2^-122.356` |
 | 2^22 five-prime-claims | 24 → 26 | `48/P = 2^-122.415` | `52/P = 2^-122.300` |
-| 2^23 word, binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 25 → 25 | `50/P = 2^-122.356` | unchanged |
+| 2^23 binary-claim, binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 25 → 25 | `50/P = 2^-122.356` | unchanged |
 | 2^23 five-prime-claims | 25 → 26 | `50/P = 2^-122.356` | `52/P = 2^-122.300` |
 
 There is no batching term, because B and D enter through the `beta` already
