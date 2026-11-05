@@ -229,6 +229,20 @@ const PARTITION_BUCKETS: usize = 1 << 16;
 /// [`accumulate_partitioned_class_values`].
 const CLASS_VALUE_CHUNK: usize = 1 << 12;
 
+/// Entries of task `task` when `explicit_count` entries split into
+/// `partitions` contiguous runs of equal length, the last one shorter.
+///
+/// The endpoints are computed in `u64`: a run's rounded end can pass
+/// `u32::MAX` even though every entry index fits `u32`.
+fn task_entry_range(explicit_count: u32, partitions: usize, task: usize) -> core::ops::Range<u32> {
+    let total = u64::from(explicit_count);
+    let per_task = total.div_ceil(partitions.max(1) as u64).max(1);
+    let start = total.min((task as u64).saturating_mul(per_task));
+    let end = total.min(start.saturating_add(per_task));
+    // Both ends are at most `explicit_count`.
+    start as u32..end as u32
+}
+
 /// Explicit part of [`accumulate_equality_weighted_class_values`] for many
 /// classes, split into `partitions` contiguous class ranges.
 ///
@@ -252,11 +266,7 @@ fn accumulate_partitioned_class_values<E: Field, const N: usize>(
     let partitions = partitions.max(1);
     let bucket_width = class_count.div_ceil(PARTITION_BUCKETS).max(1);
     let bucket_count = class_count.div_ceil(bucket_width);
-    let entries_per_task = explicit_count.div_ceil(partitions as u32).max(1);
-    let task_entries = |task: usize| {
-        let start = explicit_count.min(task as u32 * entries_per_task);
-        start..explicit_count.min(start + entries_per_task)
-    };
+    let task_entries = |task: usize| task_entry_range(explicit_count, partitions, task);
     let task_counts: Vec<Vec<u32>> = cfg_into_iter!(0..partitions)
         .map(|task| {
             let mut counts = vec![0u32; bucket_count];
@@ -346,6 +356,30 @@ fn accumulate_partitioned_class_values<E: Field, const N: usize>(
 #[cfg(test)]
 mod tests {
     use super::super::MAX_TREE_STAGE_Q_DEGREE;
+
+    #[test]
+    fn task_entry_ranges_cover_every_entry_near_u32_max() {
+        for (explicit_count, partitions) in [
+            (u32::MAX - 7, 16),
+            (u32::MAX, 16),
+            (u32::MAX, 7),
+            (u32::MAX, 1),
+            (5, 16),
+            (0, 4),
+        ] {
+            let mut next = 0u32;
+            for task in 0..partitions {
+                let range = task_entry_range(explicit_count, partitions, task);
+                assert_eq!(range.start, next, "count {explicit_count}, task {task}");
+                assert!(range.start <= range.end);
+                next = range.end;
+            }
+            assert_eq!(
+                next, explicit_count,
+                "count {explicit_count}, {partitions} tasks"
+            );
+        }
+    }
     use super::*;
     use jolt_field::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
 
