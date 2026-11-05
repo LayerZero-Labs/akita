@@ -278,3 +278,189 @@ fn paired_p_draws_match_separate_draws_and_stream_positions() {
     let mut q = TypedSetupStream::new(&[5; 32], label(SetupStreamModulus::Q(5))).unwrap();
     assert!(TypedSetupStream::fill_p_pair(&mut p, &mut [0; 1], &mut q, &mut [0; 1]).is_err());
 }
+
+/// Run `len` draws over `candidates` through [`PDraws`], reading blocks the
+/// way [`TypedSetupStream::fill_p`] does. Returns the accepted values, or
+/// `None` once the rejection budget is exhausted, and the candidates read.
+fn block_p_draws(candidates: &[u128], len: usize) -> (Option<Vec<u128>>, usize) {
+    let mut output = vec![0u128; len];
+    let mut next = 0;
+    let exhausted = {
+        let mut draws = PDraws::new(&mut output);
+        loop {
+            if draws.done() {
+                break false;
+            }
+            for slot in draws.block().chunks_exact_mut(16) {
+                slot.copy_from_slice(&candidates[next].to_le_bytes());
+                next += 1;
+            }
+            if draws.accept().is_err() {
+                break true;
+            }
+        }
+    };
+    ((!exhausted).then_some(output), next)
+}
+
+/// `len` successive single draws, each accepting the first candidate below P
+/// within its budget of 256 candidates.
+fn single_p_draws(candidates: &[u128], len: usize) -> (Option<Vec<u128>>, usize) {
+    let mut values = Vec::with_capacity(len);
+    let mut next = 0;
+    for _ in 0..len {
+        let mut accepted = None;
+        for _ in 0..MAX_REJECTION_ATTEMPTS {
+            let candidate = candidates[next];
+            next += 1;
+            if candidate < BINARY_SETUP_P {
+                accepted = Some(candidate);
+                break;
+            }
+        }
+        match accepted {
+            Some(value) => values.push(value),
+            None => return (None, next),
+        }
+    }
+    (Some(values), next)
+}
+
+/// Synthetic candidates for the rejection paths that a real stream reaches
+/// with probability about 2^-120 per candidate.
+#[test]
+fn block_p_draws_match_single_draws_on_rejection_paths() {
+    const REJECTS: [u128; 3] = [BINARY_SETUP_P, BINARY_SETUP_P + 1, u128::MAX];
+    let rejects = |count: usize| (0..count).map(|index| REJECTS[index % 3]);
+    let accepts = |count: usize, from: u128| (0..count as u128).map(move |index| from + index);
+    let sequence = |parts: Vec<Vec<u128>>| {
+        let mut candidates: Vec<u128> = parts.into_iter().flatten().collect();
+        // Enough accepted tail for any block read past the last draw.
+        candidates.extend(accepts(2 * P_BLOCK, 1 << 64));
+        candidates
+    };
+    let accepted_cases = [
+        // P - 1 is accepted; P, P + 1 and 2^128 - 1 are rejected.
+        (
+            3,
+            sequence(vec![
+                vec![BINARY_SETUP_P - 1],
+                rejects(3).collect(),
+                vec![0, BINARY_SETUP_P - 1],
+            ]),
+        ),
+        // A rejection run across the first block boundary of a long fill.
+        (
+            70,
+            sequence(vec![
+                accepts(62, 10).collect(),
+                rejects(5).collect(),
+                accepts(20, 100).collect(),
+            ]),
+        ),
+        // 255 rejections, then an acceptance, inside one block.
+        (
+            3,
+            sequence(vec![vec![1], rejects(255).collect(), vec![2, 3]]),
+        ),
+        // 255 rejections starting at the last candidate of a full block.
+        (
+            64,
+            sequence(vec![
+                accepts(63, 10).collect(),
+                rejects(255).collect(),
+                vec![7],
+            ]),
+        ),
+        // The count resets at every acceptance: 400 rejections in all.
+        (
+            2,
+            sequence(vec![
+                rejects(200).collect(),
+                vec![1],
+                rejects(200).collect(),
+                vec![2],
+            ]),
+        ),
+    ];
+    for (len, candidates) in &accepted_cases {
+        let single = single_p_draws(candidates, *len);
+        assert!(single.0.is_some(), "length {len}");
+        assert_eq!(block_p_draws(candidates, *len), single, "length {len}");
+    }
+    let exhausted_cases = [
+        (2, sequence(vec![vec![1], rejects(256).collect()])),
+        (
+            64,
+            sequence(vec![accepts(10, 5).collect(), rejects(256).collect()]),
+        ),
+        (
+            70,
+            sequence(vec![accepts(63, 5).collect(), rejects(256).collect()]),
+        ),
+    ];
+    for (len, candidates) in &exhausted_cases {
+        assert_eq!(single_p_draws(candidates, *len).0, None, "length {len}");
+        assert_eq!(block_p_draws(candidates, *len).0, None, "length {len}");
+    }
+}
+
+/// With q = 2^31 + 1 about half of all candidates are rejected. The draws
+/// must follow the reference SHAKE256 stream of the documented identity.
+#[test]
+fn rejection_heavy_q_draws_follow_the_reference_stream() {
+    use shake::digest::{ExtendableOutput, Update, XofReader};
+    let q = (1u32 << 31) + 1;
+    assert_eq!(q_rejection_threshold(q).unwrap(), u64::from(q));
+    let seed = [9u8; 32];
+    let label = label(SetupStreamModulus::Q(q));
+    let (group, level, rank) = (
+        label.group.to_le_bytes(),
+        label.level.to_le_bytes(),
+        label.rank.to_le_bytes(),
+    );
+    let (row, column, degree) = (
+        label.row.to_le_bytes(),
+        label.column.to_le_bytes(),
+        label.degree.to_le_bytes(),
+    );
+    let modulus = u128::from(q).to_le_bytes();
+    let parts: [&[u8]; 12] = [
+        SETUP_DOMAIN,
+        &seed,
+        &[label.role as u8],
+        &group,
+        &level,
+        &rank,
+        &row,
+        &column,
+        &[label.ring as u8],
+        &degree,
+        &[1],
+        &modulus,
+    ];
+    let mut reference = shake::Shake256::default();
+    for part in parts {
+        reference.update(part);
+    }
+    let mut reference = reference.finalize_xof();
+    let mut stream = TypedSetupStream::new(&seed, label).unwrap();
+    let mut rejections = 0;
+    for _ in 0..2_000 {
+        let expected = loop {
+            let mut bytes = [0u8; 4];
+            reference.read(&mut bytes);
+            let candidate = u32::from_le_bytes(bytes);
+            if candidate < q {
+                break if candidate > q / 2 {
+                    i64::from(candidate) - i64::from(q)
+                } else {
+                    i64::from(candidate)
+                };
+            }
+            rejections += 1;
+        };
+        assert_eq!(stream.sample_q_centered().unwrap(), expected);
+    }
+    assert!(rejections > 1_000, "{rejections} rejections");
+}

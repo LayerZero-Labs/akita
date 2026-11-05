@@ -26,7 +26,7 @@ const DEGREE: usize = BINARY_DIGIT_COMMITMENT_DEGREE;
 const LIMBS: usize = 8;
 /// Every digit `c_k[t]` has magnitude at most 4, every signed limb at most
 /// `2^15`, so one column adds at most `64 * 4 * 2^15 = 2^23` to a limb sum,
-/// and this many columns stay below `2^30`.
+/// and this many columns add at most `2^30`, well inside `i32`.
 const BLOCK_COLUMNS: usize = 128;
 
 /// Setup columns in one parallel piece of a public digit commitment.
