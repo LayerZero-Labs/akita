@@ -108,7 +108,8 @@ pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,
     QuotientCoefficientBreakdown, RelationQuotientLayout, RelationQuotientPlan, WitnessChunkShape,
-    WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
+    WitnessLayout, WitnessQuotientRowLayout, WitnessRandomnessLayout, WitnessUnitLayout,
+    MAX_WITNESS_CHUNKS,
 };
 
 #[cfg(any(test, feature = "test-support"))]

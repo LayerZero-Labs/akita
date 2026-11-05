@@ -582,6 +582,7 @@ fn root_final_group_level_params_candidate(
         .copied()
         .chain(std::iter::once(akita_params::GroupOpenPhaseParams {
             profile: akita_params::GroupCommitPhaseParams {
+                randomness_columns: 0,
                 version: akita_params::GroupCommitPhaseParams::VERSION,
                 group: akita_params::PolynomialGroupLayout::new(
                     ctx.final_num_vars,

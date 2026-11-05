@@ -387,6 +387,7 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         };
     let group = PolynomialGroupLayout::new(FIXTURE_NUM_VARS, 1);
     let profile = |params: &CommittedGroupParams| GroupCommitPhaseParams {
+        randomness_columns: 0,
         version: GroupCommitPhaseParams::VERSION,
         group,
 

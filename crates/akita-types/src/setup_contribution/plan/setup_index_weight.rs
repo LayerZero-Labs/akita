@@ -92,14 +92,14 @@ impl<E: Field> SetupContributionPlan<E> {
                     )?,
                     self.materialize_role_tensor_weights(
                         group.b_relation_ratio,
-                        &group.physical_b.relation_tensors,
-                        group.physical_b.logical_input_width(),
+                        &group.physical_b.column_tensors(),
+                        group.physical_b.column_len()?,
                         alpha,
                     )?,
                     self.materialize_role_tensor_weights(
                         group.d_relation_ratio,
-                        &group.d_tensors,
-                        group.d_col_range.len(),
+                        &group.d_column_tensors(),
+                        group.d_column_len(),
                         alpha,
                     )?,
                 ];
@@ -172,7 +172,9 @@ impl<E: Field> SetupContributionPlan<E> {
             if d_idx < d_footprint {
                 let d_col = d_idx % self.d_physical_cols;
                 let d_row = d_idx / self.d_physical_cols;
-                if group.d_col_range.contains(&d_col) {
+                if (group.d_col_range.start..group.d_col_range.start + group.d_column_len())
+                    .contains(&d_col)
+                {
                     let term = self.d_weights[d_row]
                         * *e_eq.get(d_col - group.d_col_range.start).ok_or_else(|| {
                             AkitaError::Internal(

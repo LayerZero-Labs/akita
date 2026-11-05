@@ -200,6 +200,7 @@ fn precommit_admission_fixture() -> (
     )
     .expect("audited B matrix");
     let layout = GroupCommitPhaseParams {
+        randomness_columns: 0,
         version: GroupCommitPhaseParams::VERSION,
         group: PolynomialGroupLayout::new(14, 1),
         blocks: akita_params::BlockGeometry::new(256, 32, 8),

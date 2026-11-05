@@ -729,6 +729,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|group_index| RelationGroupRows {
+                randomness_columns: 0,
                 group_index,
                 role_dims,
                 opening_geometry,
