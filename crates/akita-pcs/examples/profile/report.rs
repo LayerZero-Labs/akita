@@ -1,6 +1,6 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_cpu_backend::{PreparedCrtNttProfile, PreparedNttCacheMetric};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{
     sis::compute_num_digits_field_width, CommitmentPayloadMode, CommitmentSliceCount,
     CommittedGroupParams, CommittedSourceEncoding, FoldSchedule, GrindingPlan,
@@ -9,6 +9,7 @@ use akita_params::{
     SubringCoefficientPackingGeometry,
 };
 use akita_types::NttTransformDomain;
+use jolt_algebra::checked;
 
 mod grinding;
 

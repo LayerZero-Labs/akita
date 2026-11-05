@@ -1,5 +1,5 @@
 use super::*;
-use akita_error::checked;
+use jolt_algebra::checked;
 
 /// Borrowed one-hot commitment source independent of [`OneHotPoly`] ownership.
 #[derive(Debug, Clone, Copy)]

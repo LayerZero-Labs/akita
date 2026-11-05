@@ -2,7 +2,8 @@
 //!
 //! The checked packing geometry lives in `layout/subring_packing_geometry.rs`.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 
 #[cfg(test)]

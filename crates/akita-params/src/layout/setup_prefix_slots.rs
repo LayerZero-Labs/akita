@@ -12,10 +12,11 @@ use crate::{
     GroupOpenPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PolynomialGroupLayout,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_algebra::checked;
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};

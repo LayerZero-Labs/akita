@@ -38,6 +38,7 @@ impl TrustedBytes {
     }
 }
 mod poly_impls;
+mod ring_impls;
 
 /// Elements a run decoder reserves ahead of the bytes it has read, so a forged
 /// element count cannot force a large allocation before the data arrives.

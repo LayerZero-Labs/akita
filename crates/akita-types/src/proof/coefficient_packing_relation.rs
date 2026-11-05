@@ -8,7 +8,8 @@ use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 use jolt_algebra::{canonical_extension_basis, CanonicalEncoding, ExtField, Field};
 
 use super::{

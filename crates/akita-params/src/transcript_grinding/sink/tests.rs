@@ -4,7 +4,8 @@ use crate::transcript_grinding::{
     GrindingPlanAccumulator, GrindingRun, GrindingSite, SumcheckProtocol,
 };
 use crate::ChallengeFieldOrder;
-use akita_error::{narrowing::usize_to_u32, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::narrowing::usize_to_u32;
 
 fn batch(rounds: usize) -> SumcheckRoundBatch {
     SumcheckRoundBatch {

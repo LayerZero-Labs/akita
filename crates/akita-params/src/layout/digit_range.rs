@@ -2,9 +2,10 @@
 
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::InnerCommitSecurityRoute;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_serialization::{SerializationError, Valid};
 use akita_sumcheck::{EqFactoredSumcheckProofShape, SumcheckProofShape};
+use jolt_algebra::checked;
 use jolt_algebra::{Field, Ring};
 
 /// Checked flat Boolean domain for the compact digit witness.

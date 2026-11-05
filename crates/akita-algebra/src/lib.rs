@@ -1,25 +1,34 @@
 //! Concrete algebra backends and arithmetic building blocks.
 //!
-//! This module includes:
-//! - Multilinear polynomial utilities (`poly`)
-//! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
-//! - Cyclotomic ring and backend arithmetic structure
+//! This module includes multilinear polynomial, eq-polynomial, and offset-eq
+//! utilities.
 //!
-//! Concrete fields and field packing live in `jolt-algebra`. Sparse
-//! Fiat–Shamir challenge representations and samplers live in
-//! `akita-challenges`.
+//! Concrete fields, field packing, the cyclotomic ring, NTT/CRT arithmetic,
+//! and the smooth FFT live in `jolt-algebra`; [`fft`], [`ntt`], and [`ring`]
+//! re-export its modules under their former paths. Sparse Fiat–Shamir
+//! challenge representations and samplers live in `akita-challenges`.
 
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
 pub mod eq_poly;
-pub mod fft;
-pub mod ntt;
 pub mod offset_eq;
 pub mod poly;
-pub mod ring;
 pub mod row_batch;
 pub mod split_eq;
+
+pub use jolt_algebra::{fft, ntt, ring};
+
+// The Jolt RISC-V guest inlines serve jolt-algebra's 64-point `i32` NTT and
+// pointwise dot (the `ntt-inline` feature). jolt-algebra cannot depend on
+// `jolt-inlines-ntt` itself: that crate's host registration reaches
+// jolt-algebra again through `jolt-inlines-sdk` and `tracer`, a package
+// cycle Cargo rejects, so the backend is supplied from here.
+#[cfg(feature = "ntt-inline")]
+jolt_algebra::ntt64_backend!(
+    jolt_inlines_ntt::forward_ntt64,
+    jolt_inlines_ntt::pointwise_dot64
+);
 
 // Flat re-exports for convenience.
 pub use eq_poly::{EqPolynomial, SplitEqEvals};

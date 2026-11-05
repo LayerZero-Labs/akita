@@ -4,9 +4,10 @@ pub mod transcript;
 mod transport;
 
 use crate::{AkitaExpandedSetup, AkitaSetupSeed, FpExtEncoding};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::dispatch::field_modulus_be_bytes;
 use akita_serialization::{AkitaSerialize, Valid};
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 pub use query::{SetupQuery, SetupWeightTerm};
 

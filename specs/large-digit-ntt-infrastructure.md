@@ -432,10 +432,10 @@ without changing this implementation inventory.
 
 Primary implemented files:
 
-- `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs`: shared signed
+- `jolt-algebra/src/ring/cyclotomic/decomposition.rs`: shared signed
   decomposition and i16 APIs.
-- `crates/akita-algebra/src/ntt/`: 12289 table plus AVX2/NEON/scalar i16 work.
-- `crates/akita-algebra/src/ring/crt_ntt_repr/`: homogeneous base operations,
+- `jolt-algebra/src/ntt/`: 12289 table plus AVX2/NEON/scalar i16 work.
+- `jolt-algebra/src/ring/crt_ntt_repr/`: homogeneous base operations,
   private base-plus-tail reconstruction, and signed matvecs.
 - `crates/akita-types/src/ntt_cache.rs`: canonical exactness selector, unified
   preparation API, prepared layouts, checked type erasure, and verifier cache.
@@ -456,8 +456,8 @@ Primary implemented files:
 | `akita-types/src/ntt_cache.rs` | `NttCacheMode`, `PreparedNttCache`, and `prepare_ntt_cache` own request validation, exact layout derivation, coalesced verifier prefixes, checked `Any` downcasts, and cache-byte accounting |
 | `akita-types/src/lib.rs` | exports the unified cache surface and canonical base-profile selector; removed capability/profile/slot families have no aliases |
 | `akita-types/src/proof/setup.rs` | requests an exact negacyclic prefix by `(base prefix, tail prefix, width, log_basis)` without exposing a physical profile enum |
-| `akita-algebra/src/ring/crt_ntt_repr/mixed.rs` | keeps only `I16TailParams` and one shape-checked operation over separate base and tail slices; the public aggregate element type is gone |
-| `akita-algebra/src/ring/crt_ntt_repr/ops.rs` | owns the homogeneous signed-i16 matvec and common SIMD pointwise dispatch |
+| `jolt-algebra/src/ring/crt_ntt_repr/mixed.rs` | keeps only `I16TailParams` and one shape-checked operation over separate base and tail slices; the public aggregate element type is gone |
+| `jolt-algebra/src/ring/crt_ntt_repr/ops.rs` | owns the homogeneous signed-i16 matvec and common SIMD pointwise dispatch |
 | `akita-verifier/src/terminal/ntt.rs` | coalesces terminal group requirements during warm-up and invokes the unified signed-i16 cache operation |
 | `akita-cpu-backend/src/arithmetic/` | CPU caches use checked standard type erasure internally; backend traits no longer expose prepared NTT slots |
 | prover linear kernels | consume typed prepared caches inside CPU execution and call canonical algebra operations directly |
@@ -821,9 +821,9 @@ the exact field/ring/width CRT selector remains in
 
 | Review concern | Primary files |
 | --- | --- |
-| digit mathematics and storage | `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs`, `book/src/foundations/gadget-decomposition.md` |
-| prime/order and SIMD arithmetic | `crates/akita-algebra/src/ntt/tables.rs`, `crates/akita-algebra/src/ntt/avx/`, `crates/akita-algebra/src/ntt/neon/i16_kernels.rs`, `crates/akita-algebra/src/ntt/neon/i32_kernels.rs`, `crates/akita-algebra/src/ntt/neon/tests.rs`, `crates/akita-algebra/src/ntt/butterfly.rs` |
-| CRT exactness and reconstruction | `crates/akita-algebra/src/ring/crt_ntt_repr/`, `crates/akita-types/src/ntt_cache.rs` |
+| digit mathematics and storage | `jolt-algebra/src/ring/cyclotomic/decomposition.rs`, `book/src/foundations/gadget-decomposition.md` |
+| prime/order and SIMD arithmetic | `jolt-algebra/src/ntt/tables.rs`, `jolt-algebra/src/ntt/avx/`, `jolt-algebra/src/ntt/neon/i16_kernels.rs`, `jolt-algebra/src/ntt/neon/i32_kernels.rs`, `jolt-algebra/src/ntt/neon/tests.rs`, `jolt-algebra/src/ntt/butterfly.rs` |
+| CRT exactness and reconstruction | `jolt-algebra/src/ring/crt_ntt_repr/`, `crates/akita-types/src/ntt_cache.rs` |
 | cache API and type erasure | `crates/akita-types/src/ntt_cache.rs`, `crates/akita-types/src/proof/setup.rs` |
 | terminal verifier and no-panic behavior | `crates/akita-verifier/src/terminal/direct.rs`, `terminal/ntt.rs`, `fold/verify.rs` |
 | backend portability | `crates/akita-prover/src/backend/`, `crates/akita-cpu-backend/src/opaque/backend.rs`, `crates/akita-cpu-backend/src/arithmetic/` |

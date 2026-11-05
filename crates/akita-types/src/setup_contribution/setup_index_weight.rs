@@ -11,8 +11,9 @@ use crate::{
 use akita_algebra::offset_eq::{
     eval_boolean_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{RelationAddressGeometry, SetupProjectionGeometry};
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 
 struct ProjectedEqPairTensor<E: Field> {

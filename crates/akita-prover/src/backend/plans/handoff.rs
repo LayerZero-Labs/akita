@@ -1,10 +1,11 @@
 use super::{ValidatedRecursiveWitnessCommitPlan, WitnessCommitmentParameters};
 use crate::backend::{HandoffMetadata, RecursiveWitnessManifest};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{
     CompressionChainPlan, FoldSchedule, OpeningClaimsLayout, RingRelationMode, WitnessLayout,
 };
 use akita_types::{AkitaSetupDescriptor, RingVec};
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Entire work performed by a producer, including committing its successor.

@@ -46,7 +46,7 @@ fn embedded_terminal_functionals<E: Field>(
                 .get_mut(start..end)
                 .ok_or(AkitaError::InvalidProof)?
                 .copy_from_slice(native_equality);
-            terminal_residue_kernel(&embedded, alpha)
+            terminal_residue_kernel(&embedded, alpha).map_err(AkitaError::from)
         })
         .collect()
 }

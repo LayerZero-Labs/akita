@@ -1,13 +1,9 @@
-//! Protocol errors and checked integer arithmetic shared by Akita crates.
+//! Protocol errors shared by Akita crates.
 
 #![deny(missing_docs)]
 #![warn(unreachable_pub)]
 
-/// Checked integer formulas shared by Akita's layout and validation code.
-pub mod checked;
-
-/// Checked narrowing conversions from `usize` into fixed-width integers.
-pub mod narrowing;
+use jolt_algebra::AlgebraError;
 
 /// Errors that can occur in Akita PCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -62,4 +58,18 @@ pub enum AkitaError {
     /// [`AkitaError::InvalidProof`].
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+/// Algebra errors keep their classification: every [`AlgebraError`] variant
+/// reports a rejected argument, so each maps to the same-named variant.
+impl From<AlgebraError> for AkitaError {
+    fn from(error: AlgebraError) -> Self {
+        match error {
+            AlgebraError::InvalidInput(message) => Self::InvalidInput(message),
+            AlgebraError::InvalidSize { expected, actual } => {
+                Self::InvalidSize { expected, actual }
+            }
+            AlgebraError::InvalidSetup(message) => Self::InvalidSetup(message),
+        }
+    }
 }

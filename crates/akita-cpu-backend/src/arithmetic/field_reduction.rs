@@ -1,6 +1,7 @@
 use crate::opaque::RecursiveWitnessFlat;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::pack_tensor_base_lift_i8_digits;
+use jolt_algebra::checked;
 use jolt_algebra::{ExtField, Field};
 
 fn tensor_extension_split<F, E>(context: &'static str) -> Result<(usize, usize), AkitaError>

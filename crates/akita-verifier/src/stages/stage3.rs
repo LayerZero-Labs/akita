@@ -122,7 +122,7 @@ where
         )?;
         let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
         let field_len =
-            akita_error::checked::pow2(geometry.rounds()).ok_or(AkitaError::InvalidProof)?;
+            jolt_algebra::checked::pow2(geometry.rounds()).ok_or(AkitaError::InvalidProof)?;
         let polynomial = SetupPolynomialId::new::<F, E>(setup.expanded(), field_len)?;
         let query = SetupQuery::contribution(
             plan,

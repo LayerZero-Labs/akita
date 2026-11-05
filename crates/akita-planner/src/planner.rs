@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, CommittedSourceContract, HonestFoldPolicy, HonestFoldSizingQuery,
@@ -14,6 +14,7 @@ use akita_params::{
     GroupOpenPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
     PrecommittedGroupAdmissionPolicy,
 };
+use jolt_algebra::checked;
 
 use akita_schedules::planner_support::projected_collision_role_price;
 use akita_schedules::ResolvedScheduleRow;
@@ -141,7 +142,7 @@ fn materialize_precommitted_group_for_open_basis(
                 layout.inner.digits.log_basis,
                 layout.inner.digits.num_digits,
                 ring_dimension,
-                akita_error::checked::pow2(layout.group.num_vars())
+                jolt_algebra::checked::pow2(layout.group.num_vars())
                     .and_then(|len| len.checked_mul(group_claims))
                     .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?,
             )?
@@ -511,7 +512,7 @@ fn root_final_group_level_params_candidate(
             log_basis_inner,
             num_digits_inner,
             d_a,
-            akita_error::checked::pow2(ctx.final_num_vars)
+            jolt_algebra::checked::pow2(ctx.final_num_vars)
                 .and_then(|len| len.checked_mul(ctx.main_num_polys))
                 .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?,
         )?

@@ -30,14 +30,16 @@ where
             "reduced relation challenge positions and coefficients differ in length".into(),
         ));
     }
-    point.sparse_kernel(challenge.positions.iter().zip(&challenge.coeffs).map(
-        |(&position, &coefficient)| {
-            (
-                position as usize,
-                E::lift_base(F::from_i64(i64::from(coefficient))),
-            )
-        },
-    ))
+    point
+        .sparse_kernel(challenge.positions.iter().zip(&challenge.coeffs).map(
+            |(&position, &coefficient)| {
+                (
+                    position as usize,
+                    E::lift_base(F::from_i64(i64::from(coefficient))),
+                )
+            },
+        ))
+        .map_err(AkitaError::from)
 }
 
 enum PositionMultiplierKernels<'a, F, E> {

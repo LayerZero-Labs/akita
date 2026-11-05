@@ -1,6 +1,7 @@
 //! Session construction, canonical Akita proof atoms and diagnostic site records.
 
-use akita_error::{narrowing::usize_to_u64, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::narrowing::usize_to_u64;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_transcript::{
     protocol_tag, BytesMsg, ChallengeCodec, DigestHash, DigestHasher, Shake128, DIGEST_HASH,
@@ -818,7 +819,7 @@ where
 {
     let challenge_bytes = E::challenge_bytes(count).unwrap_or(0);
     let challenge_bytes = usize_to_u64(challenge_bytes, "challenge message byte count");
-    let challenge_bytes = state.guard(challenge_bytes)?;
+    let challenge_bytes = state.guard(challenge_bytes.map_err(AkitaError::from))?;
     state.context(ProtocolContextRecord::new(
         site.to_bytes(),
         ProtocolMessageKind::Challenge as u32,

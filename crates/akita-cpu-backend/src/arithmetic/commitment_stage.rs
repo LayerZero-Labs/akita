@@ -7,9 +7,10 @@ use crate::commitment::{
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::opaque::{CommitInnerPlan, DigitRowsComputeBackend};
 use akita_algebra::ring::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_types::{DigitBlocks, RingVec};
+use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::mem::size_of;

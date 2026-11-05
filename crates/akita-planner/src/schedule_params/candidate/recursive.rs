@@ -1,5 +1,5 @@
 use super::*;
-use akita_error::checked;
+use jolt_algebra::checked;
 
 mod frontier;
 mod level_search;

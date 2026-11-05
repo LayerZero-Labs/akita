@@ -16,7 +16,6 @@ dependencies = [
  "akita-serialization",
  "jolt-algebra",
  "jolt-poly",
- "rand_core",
  "rayon",
  "tracing",
 ]
@@ -70,6 +69,7 @@ dependencies = [
 name = "akita-error"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "thiserror",
 ]
 
@@ -610,17 +610,6 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
-dependencies = [
- "cfg-if",
- "libc",
- "wasi",
-]
-
-[[package]]
-name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
@@ -681,14 +670,14 @@ version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
 dependencies = [
- "getrandom 0.4.3",
+ "getrandom",
  "libc",
 ]
 
 [[package]]
 name = "jolt-algebra"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
+source = "git+https://github.com/a16z/jolt?rev=8a92941b01488ebe2373b51546395a93fbb94a6e#8a92941b01488ebe2373b51546395a93fbb94a6e"
 dependencies = [
  "cc",
  "num-traits",
@@ -702,7 +691,7 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
+source = "git+https://github.com/a16z/jolt?rev=8a92941b01488ebe2373b51546395a93fbb94a6e#8a92941b01488ebe2373b51546395a93fbb94a6e"
 dependencies = [
  "jolt-algebra",
 ]
@@ -710,7 +699,7 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
+source = "git+https://github.com/a16z/jolt?rev=8a92941b01488ebe2373b51546395a93fbb94a6e#8a92941b01488ebe2373b51546395a93fbb94a6e"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -724,9 +713,9 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
+source = "git+https://github.com/a16z/jolt?rev=8a92941b01488ebe2373b51546395a93fbb94a6e#8a92941b01488ebe2373b51546395a93fbb94a6e"
 dependencies = [
- "getrandom 0.4.3",
+ "getrandom",
  "jolt-field",
  "sha3",
  "shake",
@@ -736,7 +725,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
+source = "git+https://github.com/a16z/jolt?rev=8a92941b01488ebe2373b51546395a93fbb94a6e#8a92941b01488ebe2373b51546395a93fbb94a6e"
 dependencies = [
  "num-traits",
 ]
@@ -886,9 +875,6 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-dependencies = [
- "getrandom 0.2.17",
-]
 
 [[package]]
 name = "rayon"
@@ -1067,7 +1053,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62560b5029264a655fc461a0ecadc4d24862799190897d3225b3272b7a3f13b7"
 dependencies = [
  "digest 0.11.3",
- "getrandom 0.4.3",
+ "getrandom",
  "keccak",
  "zeroize",
 ]
@@ -1226,12 +1212,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "wasi"
-version = "0.11.1+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasm-bindgen"

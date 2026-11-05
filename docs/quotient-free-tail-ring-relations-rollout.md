@@ -217,7 +217,7 @@ Archive it after the durable content is fully folded, following
 |---|---|
 | Protocol mode and schedule binding | `crates/akita-params/src/layout/params.rs`, `layout/params/descriptor.rs`, `schedule.rs`, `instance_descriptor/mod.rs` |
 | Semantic rows and physical layout | `crates/akita-params/src/layout/relation_layout.rs`, `proof/relation.rs`, `witness.rs`, `witness/scalar_len.rs` |
-| Shared residue algebra | `crates/akita-algebra/src/ring/` |
+| Shared residue algebra | `jolt-algebra/src/ring/` |
 | Prover quotient removal | `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`, `ring_switch/coeffs.rs` |
 | Prover Stage-2 weights | `crates/akita-prover/src/protocol/ring_switch/relation_weights/`, `sumcheck/relation_range_image/` |
 | Verifier terminal MLE | `crates/akita-verifier/src/relation/prepared_point.rs`, `relation/evaluation.rs` |

@@ -3,9 +3,10 @@
 use crate::sources::poly_helpers::SignedDigitBasis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
 use akita_types::{AkitaExpandedSetup, RingVec};
+use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, Field};
 use std::borrow::Cow;

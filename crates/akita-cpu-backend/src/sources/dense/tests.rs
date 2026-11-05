@@ -661,7 +661,7 @@ fn zero_suffix_preserves_full_shape_and_fold_values() {
         assert_eq!(compact, poly);
         assert_eq!(
             compact.field_coeffs().len(),
-            akita_error::checked::align_up(live, *SUPPORTED_COMMITMENT_RING_DIMS.last().unwrap())
+            jolt_algebra::checked::align_up(live, *SUPPORTED_COMMITMENT_RING_DIMS.last().unwrap())
                 .unwrap()
         );
         for representation in [&poly, &compact] {

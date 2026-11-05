@@ -7,7 +7,8 @@
 //! and at most one new high equality evaluation. Callers share one prepared
 //! window across base offsets, claims and witness units on the same point.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::{AffineWeight, AffineWeightSource, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use crate::{eq_poly::EqPolynomial, Field};
