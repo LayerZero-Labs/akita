@@ -56,8 +56,8 @@ pub use decomposition_digits::{
     num_digits_inner_for_bound, num_digits_open, projected_role_ring_count,
 };
 pub use honest_fold_policy::{
-    BalancedSignedDigitFoldPolicy, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
-    UnitOneHotFoldPolicy, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
+    BalancedSignedDigitFoldPolicy, FoldFailureTarget, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, UnitOneHotFoldPolicy, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
 };
 pub use l2_table::{
     ceil_supported_l2_collision_sq, min_secure_l2_rank, sis_l2_table_key_for_collision_sq,

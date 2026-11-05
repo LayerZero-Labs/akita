@@ -43,6 +43,18 @@ pub enum AkitaError {
     #[error("Invalid or missing setup file: {0}")]
     InvalidSetup(String),
 
+    /// The one-shot fold response at `level` fell outside its digit range.
+    ///
+    /// Extension seam: zero knowledge (akita#120). Only a fold-response run with
+    /// `nonce_bits = 0` probes its response once, and `main` schedules none.
+    /// The event has probability at most the fold's one-shot failure target;
+    /// a caller that resamples the prover's randomness may rerun the proof.
+    #[error("Fold response overflowed its digit range at level {level}")]
+    FoldOverflow {
+        /// Fold level of the rejected response.
+        level: u32,
+    },
+
     /// An invariant that Akita maintains itself failed after the inputs were
     /// admitted. This reports a bug in Akita or in a custom backend, not a
     /// rejected proof and not a caller mistake. The message names the failed

@@ -1023,6 +1023,25 @@ impl FoldPreview {
     /// live channel will when it sends the nonce.
     #[must_use]
     pub fn new(state: &ProverChannel, nonce: u32) -> Self {
+        let mut preview = Self::detached(state, nonce);
+        preview
+            .state
+            .public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
+        preview
+    }
+
+    /// Copy the public state for a one-shot fold response, which sends no
+    /// nonce: its counter is 0 and nothing is absorbed before the proof of
+    /// work.
+    ///
+    /// Extension seam: zero knowledge (akita#120). Only a run with `nonce_bits = 0`
+    /// previews this way, and `main` schedules none.
+    #[must_use]
+    pub fn one_shot(state: &ProverChannel) -> Self {
+        Self::detached(state, 0)
+    }
+
+    fn detached(state: &ProverChannel, nonce: u32) -> Self {
         // The preview draws no private randomness and its sponge is replaced
         // by the live one, so it takes a fixed seed instead of OS entropy and
         // derives the session identifier once.
@@ -1030,10 +1049,8 @@ impl FoldPreview {
         let mut detached =
             ProverChannel::new_with_seed(&PREVIEW_SESSION, &BytesMsg(Vec::new()), [0; 32]);
         detached.duplex_sponge_state = state.duplex_sponge_state.clone();
-        let mut state = detached;
-        state.public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
         Self {
-            state,
+            state: detached,
             nonce,
             work: None,
         }
