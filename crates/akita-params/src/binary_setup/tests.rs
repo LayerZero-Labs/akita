@@ -187,3 +187,94 @@ fn block_p_draws_match_single_draws_and_stream_position() {
     let mut q = TypedSetupStream::new(&[5; 32], label(SetupStreamModulus::Q(5))).unwrap();
     assert!(q.fill_p(&mut [0u128; 3]).is_err());
 }
+
+#[test]
+fn sponge_squeezes_the_shake256_stream() {
+    use shake::digest::{ExtendableOutput, Update, XofReader};
+    let message = [0x5a_u8; 135];
+    for length in [0, 1, 37, 120, 134, 135] {
+        let mut reference = shake::Shake256::default();
+        reference.update(&message[..length]);
+        let mut reference = reference.finalize_xof();
+        let (head, tail) = message[..length].split_at(length / 3);
+        let mut squeeze = ShakeSqueeze::new(&[head, tail]).unwrap();
+        // Reads straddling block boundaries at several widths.
+        for width in [1, 7, 136, 16, 300, 135, 1024] {
+            let mut expected = vec![0u8; width];
+            reference.read(&mut expected);
+            let mut actual = vec![0u8; width];
+            squeeze.read(&mut actual);
+            assert_eq!(actual, expected, "message {length}, read {width}");
+        }
+    }
+    assert!(ShakeSqueeze::new(&[&message, &[0]]).is_err());
+}
+
+#[test]
+fn paired_reads_match_separate_reads() {
+    let first_message: &[u8] = b"first";
+    let second_message: &[u8] = b"second stream";
+    for (first_width, second_width) in [(0, 0), (1, 0), (0, 300), (136, 136), (500, 17), (3, 2000)]
+    {
+        let mut first = ShakeSqueeze::new(&[first_message]).unwrap();
+        let mut second = ShakeSqueeze::new(&[second_message]).unwrap();
+        let mut first_reference = first.clone();
+        let mut second_reference = second.clone();
+        // Offset the streams so their blocks run out at different reads.
+        first.read(&mut [0; 40]);
+        first_reference.read(&mut [0; 40]);
+        let mut first_actual = vec![0u8; first_width];
+        let mut second_actual = vec![0u8; second_width];
+        ShakeSqueeze::read_pair(
+            &mut first,
+            &mut first_actual,
+            &mut second,
+            &mut second_actual,
+        );
+        let mut first_expected = vec![0u8; first_width];
+        let mut second_expected = vec![0u8; second_width];
+        first_reference.read(&mut first_expected);
+        second_reference.read(&mut second_expected);
+        assert_eq!(first_actual, first_expected);
+        assert_eq!(second_actual, second_expected);
+        let (mut next, mut next_expected) = ([0u8; 64], [0u8; 64]);
+        first.read(&mut next);
+        first_reference.read(&mut next_expected);
+        assert_eq!(next, next_expected);
+        second.read(&mut next);
+        second_reference.read(&mut next_expected);
+        assert_eq!(next, next_expected);
+    }
+}
+
+#[test]
+fn paired_p_draws_match_separate_draws_and_stream_positions() {
+    let p_label = label(SetupStreamModulus::Prime128Offset275);
+    let other = SetupStreamLabel { row: 1, ..p_label };
+    for (first_len, second_len) in [(0, 0), (64, 64), (1, 200), (65, 3), (0, 64)] {
+        let mut first = TypedSetupStream::new(&[5; 32], p_label).unwrap();
+        let mut second = TypedSetupStream::new(&[5; 32], other).unwrap();
+        let mut first_actual = vec![0u128; first_len];
+        let mut second_actual = vec![0u128; second_len];
+        TypedSetupStream::fill_p_pair(
+            &mut first,
+            &mut first_actual,
+            &mut second,
+            &mut second_actual,
+        )
+        .unwrap();
+        first_actual.push(first.sample_p().unwrap());
+        second_actual.push(second.sample_p().unwrap());
+        let mut first_reference = TypedSetupStream::new(&[5; 32], p_label).unwrap();
+        let mut second_reference = TypedSetupStream::new(&[5; 32], other).unwrap();
+        let mut first_expected = vec![0u128; first_len + 1];
+        let mut second_expected = vec![0u128; second_len + 1];
+        first_reference.fill_p(&mut first_expected).unwrap();
+        second_reference.fill_p(&mut second_expected).unwrap();
+        assert_eq!(first_actual, first_expected);
+        assert_eq!(second_actual, second_expected);
+    }
+    let mut p = TypedSetupStream::new(&[5; 32], p_label).unwrap();
+    let mut q = TypedSetupStream::new(&[5; 32], label(SetupStreamModulus::Q(5))).unwrap();
+    assert!(TypedSetupStream::fill_p_pair(&mut p, &mut [0; 1], &mut q, &mut [0; 1]).is_err());
+}

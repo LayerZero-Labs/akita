@@ -15,9 +15,10 @@
 //! payload's integer modulo `P`, so the payload is identical.
 
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::{SetupStreamLabel, TypedSetupStream};
+use akita_params::binary_setup::SetupStreamLabel;
 use akita_types::binary_source::{
-    binary_public_digit_commitment, validate_digit_commitment_label, BINARY_DIGIT_COMMITMENT_DEGREE,
+    binary_public_digit_commitment, digit_commitment_setup_column, validate_digit_commitment_label,
+    BINARY_DIGIT_COMMITMENT_DEGREE,
 };
 use jolt_field::Field;
 
@@ -95,32 +96,20 @@ fn piece_commitment<F: Field>(
             "binary commitment needs nonempty balanced digits".into(),
         ));
     }
-    let row_labels = (0..label.rank)
-        .map(|row| SetupStreamLabel { row, ..label })
-        .collect::<Vec<_>>();
     let mut payload =
         vec![F::zero(); checked::product([rows, DEGREE]).ok_or(AkitaError::InvalidProof)?];
     let mut sums = vec![[[0i32; LIMBS]; DEGREE]; rows];
     let mut digit_sums = [0i32; DEGREE];
-    let mut entry = [0u128; DEGREE];
     for (block_index, block) in digits.chunks(BLOCK_COLUMNS * DEGREE).enumerate() {
         let block_first = checked::mul_add(block_index, BLOCK_COLUMNS, first_column)
             .ok_or(AkitaError::InvalidProof)?;
         for (index, chunk) in block.chunks(DEGREE).enumerate() {
             let column = checked::sum([block_first, index]).ok_or(AkitaError::InvalidProof)?;
-            let column = u64::try_from(column).map_err(|_| AkitaError::InvalidProof)?;
             let window = digit_window(chunk);
             add_digit_sums(chunk, &mut digit_sums);
-            for (row_label, row_sums) in row_labels.iter().zip(sums.iter_mut()) {
-                TypedSetupStream::new(
-                    seed,
-                    SetupStreamLabel {
-                        column,
-                        ..*row_label
-                    },
-                )?
-                .fill_p(&mut entry)?;
-                accumulate_column(&signed_limbs(&entry), &window, row_sums);
+            let entries = digit_commitment_setup_column(seed, label, column)?;
+            for (entry, row_sums) in entries.iter().zip(sums.iter_mut()) {
+                accumulate_column(&signed_limbs(entry), &window, row_sums);
             }
         }
         fold_block(&mut sums, &mut digit_sums, &mut payload);

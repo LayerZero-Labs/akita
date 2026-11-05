@@ -65,6 +65,33 @@ fn setup_stream(
     )
 }
 
+/// The P setup entries of both rows of setup column `column` of a validated
+/// digit commitment label. The two rows' SHAKE streams squeeze through paired
+/// permutations; the entries are those of separate streams.
+///
+/// # Errors
+/// Rejects labels other than rank 2 and columns beyond `u64`.
+pub fn digit_commitment_setup_column(
+    seed: &[u8; 32],
+    label: SetupStreamLabel,
+    column: usize,
+) -> Result<[[u128; BINARY_DIGIT_COMMITMENT_DEGREE]; 2], AkitaError> {
+    if label.rank != 2 {
+        return Err(AkitaError::InvalidSetup(
+            "binary digit commitment setup has two rows".into(),
+        ));
+    }
+    let mut entries = [[0u128; BINARY_DIGIT_COMMITMENT_DEGREE]; 2];
+    let [first, second] = &mut entries;
+    TypedSetupStream::fill_p_pair(
+        &mut setup_stream(seed, label, 0, column)?,
+        first,
+        &mut setup_stream(seed, label, 1, column)?,
+        second,
+    )?;
+    Ok(entries)
+}
+
 pub(super) fn setup_entry<F: Field>(
     seed: &[u8; 32],
     label: SetupStreamLabel,
@@ -322,10 +349,6 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         Ok(filled)
     }
 
-    fn rows(&self) -> impl Iterator<Item = (u32, E)> + '_ {
-        (0u32..).zip(self.row_batches.iter().copied())
-    }
-
     /// Sum every setup column's contribution; columns run in parallel under
     /// the `parallel` feature. Field addition is exact, so the order of the
     /// partial sums does not change the result.
@@ -347,15 +370,14 @@ impl<E: Field> DigitAuthenticationWeights<E> {
             }
             let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
             kernel.field_kernel_into(&equality, &mut reduced)?;
+            let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
             let mut sum = E::zero();
-            for (row, batch) in self.rows() {
-                let matrix = setup_entry::<E>(&self.seed, self.label, row, column)?;
+            for (&batch, entry) in self.row_batches.iter().zip(&entries) {
                 sum += batch
-                    * matrix
-                        .coefficients()
+                    * entry
                         .iter()
                         .zip(&reduced)
-                        .fold(E::zero(), |acc, (&m, &k)| acc + m * k);
+                        .fold(E::zero(), |acc, (&m, &k)| acc + E::from_u128(m) * k);
             }
             Ok(sum)
         };
@@ -372,11 +394,11 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         kernel: &ResidueKernelPoint<E>,
         column: usize,
     ) -> Result<[E; BINARY_DIGIT_COMMITMENT_DEGREE], AkitaError> {
+        let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
         let mut combined = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-        for (row, batch) in self.rows() {
-            let matrix = setup_entry::<E>(&self.seed, self.label, row, column)?;
-            for (sum, &value) in combined.iter_mut().zip(matrix.coefficients()) {
-                *sum += batch * value;
+        for (&batch, entry) in self.row_batches.iter().zip(&entries) {
+            for (sum, &value) in combined.iter_mut().zip(entry) {
+                *sum += batch * E::from_u128(value);
             }
         }
         let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
