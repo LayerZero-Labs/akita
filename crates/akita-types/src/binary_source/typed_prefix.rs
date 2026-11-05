@@ -27,12 +27,12 @@
 //! region's fixed bits, the slot, column and period bits.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use jolt_algebra::ring::ResidueKernelPoint;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::AkitaSerialize;
+use jolt_algebra::checked;
+use jolt_algebra::ring::ResidueKernelPoint;
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{cfg_chunks_mut, Field};

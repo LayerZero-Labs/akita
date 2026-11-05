@@ -1,13 +1,13 @@
 //! Shared public compilation of the binary root's fused linear relation.
 
-use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::{derive_centered_q_matrix, SetupStreamLabel, SetupStreamRole};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{cfg_chunks, cfg_iter_mut, Field};
+use jolt_crypto::challenge::Challenges;
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,

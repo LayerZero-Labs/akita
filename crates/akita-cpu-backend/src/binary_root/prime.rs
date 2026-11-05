@@ -2,9 +2,9 @@
 
 use akita_algebra::trinomial::module_map::unpack_signed_components;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_types::binary_source::{BinarySourceDescriptor, PrimePlaneManifest, PRIME_PLANE_DIGITS};
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Build the committed prime planes before drawing column fold challenges.

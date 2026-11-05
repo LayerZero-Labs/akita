@@ -1,18 +1,18 @@
 //! Shared transcript atoms of an explicitly selected binary root.
 
 use super::{BinaryCommittedGroupManifest, BinaryWordClaim};
-use crate::GrindingReplay;
-use jolt_crypto::challenge::Challenges;
-use akita_params::FoldChallengeDistribution;
 use crate::FoldChallengeDrawDomain;
 use crate::FoldChallengeFamily;
+use crate::GrindingReplay;
 use crate::{FoldChallengeDraw, FoldDraw};
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::GrindingSite;
 use akita_transcript::{
     ext_challenges, ChallengeCodec, ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_crypto::challenge::Challenges;
 
 /// Extension seam: bind the complete order-zero binary and mixed statement.
 /// <https://github.com/LayerZero-Labs/akita/issues/285>

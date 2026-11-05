@@ -1,6 +1,4 @@
 use super::*;
-use akita_types::PreviewFoldDraw;
-use akita_types::ProverFoldDraw;
 use akita_params::{
     DigitRangePlan, FlatBooleanDomain, GrindingSite, NextWitnessBindingPolicy,
     SetupContributionMode,
@@ -11,6 +9,8 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
+use akita_types::PreviewFoldDraw;
+use akita_types::ProverFoldDraw;
 use jolt_algebra::AdditiveGroup;
 
 #[allow(clippy::too_many_arguments)]

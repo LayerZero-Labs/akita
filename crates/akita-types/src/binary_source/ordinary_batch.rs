@@ -2,9 +2,9 @@
 
 use akita_error::AkitaError;
 
-use jolt_algebra::checked;
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::GroupCommitPhaseParams;
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 
 use super::OrdinaryNativeRootPlan;

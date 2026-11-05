@@ -14,8 +14,8 @@ use crate::opaque::{
     CpuOuterCommitOperation, NttCacheOwnerId,
 };
 use crate::{AkitaProverSetup, DensePoly};
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedGroupParams, CompressionChainPlan, RingRelationMode, SetupMatrixCapacity,
     SisModulusProfileId,

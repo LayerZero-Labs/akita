@@ -1,5 +1,8 @@
 use super::*;
-use crate::{FoldChallengeDraw, FoldChallengeDrawDomain, FoldChallengeFamily, PreviewFoldDraw, ProverFoldDraw, VerifierFoldDraw};
+use crate::{
+    FoldChallengeDraw, FoldChallengeDrawDomain, FoldChallengeFamily, PreviewFoldDraw,
+    ProverFoldDraw, VerifierFoldDraw,
+};
 use akita_params::{ChallengeFieldOrder, GrindingRun};
 use akita_transcript::{
     new_prover_channel, new_verifier_channel, FoldPreview, NonceAtom, ProverTranscript,

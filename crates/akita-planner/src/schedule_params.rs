@@ -29,7 +29,6 @@ pub(crate) fn direct_setup_scan_work_elements(
         .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan work overflow".into()))
 }
 
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
@@ -38,6 +37,7 @@ use akita_params::sis::{
     HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OuterCommitMatrixParams,
 };
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
     DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,

@@ -16,12 +16,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::emit::{PlannerCost, PreplannedSchedule};
 use crate::{find_schedule, EmitSpec, PlannerPolicy};
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId, ScheduleLookupKey};
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{

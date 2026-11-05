@@ -1,7 +1,7 @@
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::{commitment::BinaryClearCommitment, lowered::LoweredRootLayout};
 use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

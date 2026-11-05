@@ -7,15 +7,15 @@ use akita_sumcheck::SumcheckProverChannel;
 use akita_sumcheck::{SumcheckRole, SumcheckVerifierChannel};
 use akita_transcript::{
     ext_challenges, nonce_max_bytes, receive_nonce, reject, verifier_context, ChallengeCodec,
-    PrivateProofChannel, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
-    VerifierChannel, VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS,
-    SITE_FAMILY_SUMCHECK,
+    ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId, VerifierChannel,
+    VerifierTranscript, GRINDING_CHECK_BYTES, GRINDING_NONCE_SLACK_BITS, SITE_FAMILY_SUMCHECK,
 };
 #[cfg(feature = "prover")]
 use akita_transcript::{
-    nonce_encoded_len, prover_context, send_nonce, FoldPreview, FoldWork, ProverChannel,
-    ProverTranscript,
+    nonce_encoded_len, prover_context, send_nonce, FoldPreview, FoldWork, PrivateProofChannel,
+    ProverChannel, ProverTranscript,
 };
+#[cfg(feature = "prover")]
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 
@@ -871,6 +871,7 @@ pub fn grinding_sumcheck_body_site(
 
 /// Whether a sumcheck's rounds are witness-dependent (masked on a masked
 /// channel) or public in both modes (`specs/whiteout-akita.md` A42).
+#[cfg(feature = "prover")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RoundPrivacy {
     Private,

@@ -3,8 +3,8 @@
 mod verifier_view;
 
 use crate::audit::ScheduleAdmission;
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     digest_descriptor_bytes, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
     ScheduleRowDigest, AKITA_INSTANCE_DESCRIPTOR_VERSION,

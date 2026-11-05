@@ -9,7 +9,6 @@ mod common;
 use akita_config::SetupRequirements;
 use akita_cpu_backend::AkitaProverSetup;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_pcs::{
     family::{tables::shipped_catalog, Family128, Family64, FieldFamily},
     shipped::{ShippedCatalogError, SupportedGeometry, SUPPORTED_GEOMETRIES},
@@ -17,6 +16,7 @@ use akita_labinius_pcs::{
 };
 use akita_labinius_verifier::{RootOpeningMode, RootStatement};
 use common::{artifacts, geometry, locate, message, sample_geometry_opening, Case, H};
+use jolt_algebra::checked;
 
 /// Accept the honest opening, then reject each changed statement and each
 /// changed proof as `InvalidProof`.

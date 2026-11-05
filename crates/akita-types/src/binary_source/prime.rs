@@ -1,7 +1,7 @@
 use super::{BinarySourceDescriptor, PRIME_POINT_CAP};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::BINARY_SETUP_P;
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 
 /// Number of balanced base-eight digits for a centered prime coefficient.

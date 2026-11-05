@@ -10,7 +10,6 @@ use akita_config::{
     ResolvedScheduleRow, TrustedScheduleCatalog,
 };
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::{
     channel::ClearChannel, lowered::LoweredRootLayout, root::RootEvaluationClaims,
 };
@@ -20,6 +19,7 @@ use akita_types::{
     instance_descriptor::SetupSection, AkitaSetupDescriptor, Commitment, CommittedGroup,
     GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
+use jolt_algebra::checked;
 use jolt_algebra::{ExtField, Zero};
 
 /// Domain label of the statement the image binding absorbs.
@@ -201,6 +201,7 @@ pub(crate) fn bind_image<P: FieldFamily, S: ClearChannel>(
         P::Digits::decomposition(),
         P::Digits::sis_modulus_profile(),
         &setup.setup_seed,
+        akita_types::ProtocolFeatureSet { zk: false },
     )
     .map_err(|_| AkitaError::InvalidProof)?;
     public_length_prefixed(channel, &canonical_bytes(&setup_identity)?)?;

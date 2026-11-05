@@ -839,14 +839,14 @@ fn validate_level_opening_execution(
         else {
             continue;
         };
-        let expected = crate::FoldChallengeDistribution::production_for_ring_dim(
-            challenge_subring_dimension,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "coefficient-packing challenge subring is not in the production ladder".into(),
-            )
-        })?;
+        let expected =
+            crate::FoldChallengeDistribution::production_for_ring_dim(challenge_subring_dimension)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "coefficient-packing challenge subring is not in the production ladder"
+                            .into(),
+                    )
+                })?;
         let matrix = group.inner_commit_matrix;
         if !matches!(matrix.security_route(), InnerCommitSecurityRoute::Linf(_)) {
             return Err(AkitaError::InvalidSetup(

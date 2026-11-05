@@ -4,14 +4,14 @@ use akita_algebra::binary::field_switch::SwitchField;
 
 use akita_algebra::TrinomialModulus;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::{
     derive_centered_q_matrix, SetupStreamLabel, SetupStreamModulus, SetupStreamRing,
     SetupStreamRole,
 };
 use akita_params::sis::labinius::{LabiniusRootProfile, LabiniusRootShape};
-use jolt_crypto::lattice::{PublicMatrixDerivation, PublicMatrixSeed as AkitaSetupSeed};
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field};
+use jolt_crypto::lattice::{PublicMatrixDerivation, PublicMatrixSeed as AkitaSetupSeed};
 
 use crate::BinaryClearSetup;
 

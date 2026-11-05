@@ -5,13 +5,13 @@ use super::{
     MAX_BINARY_POLYNOMIALS,
 };
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::binary_setup::{
     SetupStreamLabel, SetupStreamModulus, SetupStreamRing, SetupStreamRole,
 };
 use akita_params::GroupCommitPhaseParams;
 use akita_serialization::SerializationError;
+use jolt_algebra::checked;
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 use std::io::{Cursor, Read};

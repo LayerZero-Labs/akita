@@ -1,8 +1,8 @@
 //! The fixed binary root family selected by an ordinary group draw.
 
 use super::{BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing};
-use jolt_crypto::challenge::SparseChallenge;
 use akita_error::AkitaError;
+use jolt_crypto::challenge::SparseChallenge;
 
 pub const IDENTITY: &[u8] = b"\x01akita/binary-root/phi243/bounded46/shake256-v1";
 pub const WEIGHT: usize = 46;

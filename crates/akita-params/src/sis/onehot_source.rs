@@ -291,11 +291,12 @@ mod tests {
 
     #[test]
     fn replacement_mgf_dominates_exact_disjoint_fixed_weight_support() {
-        let challenge =
-            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+        let challenge = FoldChallengeDistribution::SignedSparse(
+            jolt_crypto::challenge::SparseChallengeConfig {
                 count_pm1: 2,
                 count_pm2: 1,
-            });
+            },
+        );
         let class = SourceClass { nonzero_count: 3 };
         let magnitudes = [1.0f64, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let lambda = 0.375;

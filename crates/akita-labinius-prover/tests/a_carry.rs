@@ -4,10 +4,10 @@ mod common;
 
 use akita_algebra::MinusTrinomial;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_prover::lowered::matrix_remainders_limb;
 use akita_labinius_verifier::{commitment::matrix_row_remainder, endpoint::pack_response};
 use common::clear_setup;
+use jolt_algebra::checked;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[test]

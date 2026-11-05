@@ -1,7 +1,7 @@
 use akita_algebra::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialModulus};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::profile::BinaryClearSetup;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

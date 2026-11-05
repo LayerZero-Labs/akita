@@ -1,11 +1,11 @@
 //! Prime readings are computed independently from the committed bit tables.
 use super::*;
-use akita_types::FoldDraw;
-use akita_types::ProverFoldDraw;
-use akita_types::VerifierFoldDraw;
 use akita_types::binary_source::{
     binary_root_challenges, binary_root_statement, PrimePlaneClaim, PrimePlaneManifest,
 };
+use akita_types::FoldDraw;
+use akita_types::ProverFoldDraw;
+use akita_types::VerifierFoldDraw;
 use jolt_algebra::CanonicalEncoding;
 
 const WORDS: [u128; 8] = [

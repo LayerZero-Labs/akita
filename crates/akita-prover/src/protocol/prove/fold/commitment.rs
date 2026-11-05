@@ -125,4 +125,3 @@ where
         commitment_material_handle,
     })
 }
-

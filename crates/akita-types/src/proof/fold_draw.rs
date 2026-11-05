@@ -5,9 +5,9 @@
 use akita_error::AkitaError;
 use jolt_crypto::challenge::Challenges;
 
-pub use akita_challenges::{FoldDraw, ProverFoldDraw, VerifierFoldDraw};
 #[cfg(feature = "prover")]
 pub use akita_challenges::PreviewFoldDraw;
+pub use akita_challenges::{FoldDraw, ProverFoldDraw, VerifierFoldDraw};
 pub use akita_params::{FoldChallengeDrawDomain, FoldChallengeFamily};
 
 /// Draws one fold group's challenges from its [`FoldChallengeFamily`].
@@ -34,15 +34,13 @@ pub trait FoldChallengeDraw: FoldDraw {
         })?;
         #[cfg(feature = "labinius-trinomial")]
         if family.distribution() == akita_params::FoldChallengeDistribution::BinaryRoot {
-            let challenges = self.draw_message(
-                akita_challenges::BINARY_CHALLENGE_SEED_LEN,
-                |message| {
+            let challenges =
+                self.draw_message(akita_challenges::BINARY_CHALLENGE_SEED_LEN, |message| {
                     let seed = message.try_into().map_err(|_| {
                         AkitaError::Internal("binary root message has the wrong width".into())
                     })?;
                     akita_challenges::root_family::sample(seed, total).map(Some)
-                },
-            )?;
+                })?;
             return challenges
                 .map(|challenges| {
                     Challenges::from_sparse(challenges, num_live_blocks, num_claims)

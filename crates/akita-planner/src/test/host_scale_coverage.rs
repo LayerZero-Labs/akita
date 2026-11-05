@@ -7,8 +7,7 @@ use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId, OpeningClaimsLayout};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-type RingChallengeConfig =
-    fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>;
+type RingChallengeConfig = fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>;
 
 struct Shape {
     label: String,

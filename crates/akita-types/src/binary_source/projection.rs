@@ -2,10 +2,10 @@
 
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
+use akita_params::FoldChallengeDistribution;
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
+use jolt_algebra::checked;
 
 use super::{
     BINARY_RESPONSE_INTERVAL, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW, ENFORCED_IMAGE_WINDOW,

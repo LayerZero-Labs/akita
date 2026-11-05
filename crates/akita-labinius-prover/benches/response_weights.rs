@@ -4,16 +4,16 @@
 
 use akita_algebra::MinusTrinomial;
 use akita_challenges::BinaryChallengeSampler;
-use akita_types::FoldDraw;
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
     lowered::{coefficient_weights, LoweredChallenges, LoweredPublic, LoweredRootLayout},
     AdmittedRootSetup,
 };
 use akita_params::sis::labinius::LabiniusRootProfile;
-use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
+use akita_types::FoldDraw;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime64Offset59};
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use std::{hint::black_box, time::Duration};
 
 struct Draw;

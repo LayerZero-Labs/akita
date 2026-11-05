@@ -349,8 +349,13 @@ where
         session: &mut session_handle,
         field: std::marker::PhantomData,
     };
-    let (mut claim, equality_coordinates, leaf_weights) =
-        prove_stage1_products::<F, E, _, _>(&mut steps, digit_range, equality_coordinates, grinding, level)?;
+    let (mut claim, equality_coordinates, leaf_weights) = prove_stage1_products::<F, E, _, _>(
+        &mut steps,
+        digit_range,
+        equality_coordinates,
+        grinding,
+        level,
+    )?;
 
     let final_point;
     let (range_image_evaluation, norm_proof) = if physical_plan.is_some() {

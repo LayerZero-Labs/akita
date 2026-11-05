@@ -4,12 +4,12 @@ use super::*;
 use akita_algebra::binary::BinaryField128;
 use akita_algebra::trinomial::module_map::pack_signed_components;
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing};
-use jolt_crypto::challenge::Challenges;
-use akita_params::FoldChallengeDistribution;
 use akita_labinius_prover::{
     commit_binary_clear_limb_prepared, fold_kernel::fold_integer, PreparedLimbCommitMatrix,
 };
+use akita_params::FoldChallengeDistribution;
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
+use jolt_crypto::challenge::Challenges;
 
 pub(super) fn pack_logical_words(
     descriptor: &BinarySourceDescriptor,

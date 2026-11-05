@@ -6,13 +6,13 @@ use akita_algebra::trinomial::{
     signed::{signed_trinomial_product, signed_trinomial_remainder},
 };
 use akita_algebra::PlusTrinomial;
-use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_types::binary_source::{
     binary_scalar_challenges, binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor,
     BinaryTerminalClaim, BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
+use jolt_algebra::checked;
+use jolt_crypto::challenge::Challenges;
 
 /// Natural coefficient-order digit segments fixed by the outgoing commitment.
 /// No carry table is a clear proof message.

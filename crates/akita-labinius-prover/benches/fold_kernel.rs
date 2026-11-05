@@ -12,11 +12,11 @@ use std::time::{Duration, Instant};
 
 use akita_algebra::binary::BinaryField128;
 use akita_challenges::BinaryChallengeSampler;
-use akita_types::FoldDraw;
 use akita_error::AkitaError;
 use akita_labinius_prover::fold_kernel::fold_integer as kernel;
 use akita_labinius_verifier::endpoint::fold_integer as reference;
 use akita_params::sis::labinius::LabiniusRootProfile;
+use akita_types::FoldDraw;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 

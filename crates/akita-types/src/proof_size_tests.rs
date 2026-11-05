@@ -7,8 +7,8 @@ mod tests {
     use akita_params::proof_size::*;
     use akita_params::{CommittedGroupParams, DigitRangePlan};
 
-    use akita_params::FoldChallengeDistribution;
     use akita_error::AkitaError;
+    use akita_params::FoldChallengeDistribution;
     use akita_serialization::{AkitaSerialize, Compress};
     use jolt_algebra::{
         CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99,

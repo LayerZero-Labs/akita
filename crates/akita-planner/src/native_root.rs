@@ -5,8 +5,8 @@ use crate::schedule_params::{
     RelationTraversalOrder, ScheduleMemo, SetupFieldBudget, SuffixCtx, SuffixState, SuffixTopology,
 };
 use crate::PlannerPolicy;
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{FoldParams, FoldSchedule, PolynomialGroupLayout, TerminalFoldParams};
 pub use akita_schedules::native_root::NativeRootTransition;
 use akita_schedules::ResolvedScheduleRow;

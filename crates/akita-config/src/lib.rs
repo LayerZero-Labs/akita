@@ -5,8 +5,8 @@
 //! Runtime resolution is strict: missing catalog rows reject instead of invoking
 //! planner search.
 
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 #[cfg(test)]
 use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};

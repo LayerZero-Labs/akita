@@ -1,9 +1,9 @@
 //! Integer lift admission for the committed binary parity and value carries.
 
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::sis::checked_balanced_digit_representable_bounds;
+use akita_params::FoldChallengeDistribution;
+use jolt_algebra::checked;
 
 /// Fixed carry depths for the admitted terminal geometry.
 pub const BINARY_PARITY_CARRY_DIGITS: usize = 9;

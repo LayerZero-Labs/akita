@@ -185,9 +185,9 @@ fn derive_inner_coeff_linf_bounds(
         if !inner_challenge_mass_supported(modulus_profile, ring_dimension, challenge_dimension) {
             continue;
         }
-        let Some(config) = crate::FoldChallengeDistribution::production_for_ring_dim(
-            challenge_dimension,
-        ) else {
+        let Some(config) =
+            crate::FoldChallengeDistribution::production_for_ring_dim(challenge_dimension)
+        else {
             continue;
         };
         bounds.extend(
@@ -325,9 +325,7 @@ mod tests {
     fn production_challenge_l1_norms() -> Vec<u128> {
         let mut norms = jolt_crypto::challenge::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
             .iter()
-            .filter_map(|&dim| {
-                crate::FoldChallengeDistribution::production_for_ring_dim(dim)
-            })
+            .filter_map(|&dim| crate::FoldChallengeDistribution::production_for_ring_dim(dim))
             .chain(core::iter::once(
                 crate::FoldChallengeDistribution::SignedSparse(
                     jolt_crypto::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG,

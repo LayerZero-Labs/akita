@@ -2,7 +2,6 @@
 
 use jolt_crypto::challenge::Challenges;
 
-use jolt_crypto::challenge::SparseChallenge;
 use akita_params::sis::{
     sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
@@ -12,6 +11,7 @@ use akita_params::{
     GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
 };
 use jolt_algebra::{CanonicalEncoding, Prime128Offset275, Ring};
+use jolt_crypto::challenge::SparseChallenge;
 
 use super::{
     BinaryAOperand, BinaryAProduct, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic,

@@ -11,11 +11,11 @@
 
 use crate::channel::ClearChannel;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
 use akita_sumcheck::{
     verify_sumcheck_rounds, SumcheckRoundResult, SumcheckShape, SumcheckVerifierChannel,
 };
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Stored digits of either committed table lie in `[0, DIGIT_ALPHABET)`.

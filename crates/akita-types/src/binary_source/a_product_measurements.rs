@@ -8,9 +8,9 @@ use crate::binary_source::{
     binary_direct_a_weights, BinaryAOperand, BinaryCommitmentProfiles, BinaryIndexMap,
     BinarySourceDescriptor, CANONICAL_IMAGE_WINDOW,
 };
+use jolt_algebra::{Prime128Offset275 as F, Ring};
 use jolt_crypto::challenge::Challenges;
 use jolt_crypto::challenge::SparseChallenge;
-use jolt_algebra::{Prime128Offset275 as F, Ring};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::hint::black_box;
 use std::time::{Duration, Instant};

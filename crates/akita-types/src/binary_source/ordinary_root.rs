@@ -2,12 +2,12 @@
 
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
 };
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275};
 
 use super::paired_offset_eq_sum;

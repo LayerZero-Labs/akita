@@ -8,10 +8,10 @@ use std::{fmt::Debug, marker::PhantomData};
 
 use akita_algebra::{TrinomialField, TrinomialModulus, TrinomialRing};
 
-use jolt_algebra::fft::{FftWorkspace, SmoothDomain};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_types::{RelationCoefficientRole, RelationPolynomial};
+use jolt_algebra::checked;
+use jolt_algebra::fft::{FftWorkspace, SmoothDomain};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

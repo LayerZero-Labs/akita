@@ -2,8 +2,8 @@
 
 use super::FieldFamily;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::lowered::LoweredRootLayout;
+use jolt_algebra::checked;
 use jolt_algebra::{ExtField, Field, One, Zero};
 
 /// Flatten the prime left opening into one base-field table, coordinate

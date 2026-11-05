@@ -4,10 +4,8 @@ use crate::relation::evaluation::PreparedDirectRelation;
 use crate::relation::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
-use jolt_crypto::challenge::Challenges;
-use akita_params::FoldChallengeDistribution;
-use jolt_crypto::challenge::SparseChallenge;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
@@ -18,6 +16,8 @@ use akita_types::{
     RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
 use jolt_algebra::{CanonicalEncoding, Prime128OffsetA7F7};
+use jolt_crypto::challenge::Challenges;
+use jolt_crypto::challenge::SparseChallenge;
 use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
 
 /// Inputs for one exact production relation-evaluator benchmark cell.

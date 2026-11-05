@@ -8,8 +8,8 @@ use crate::commitment::{
     UncompressedCommitmentOutput,
 };
 use crate::{AkitaProverSetup, DensePoly};
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedGroupParams, RingRelationMode, SetupMatrixCapacity, SisModulusProfileId,
 };

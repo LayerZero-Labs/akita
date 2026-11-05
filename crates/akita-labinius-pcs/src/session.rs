@@ -5,10 +5,10 @@
 
 use akita_config::{policy_of, CommitmentConfig, ResolvedScheduleRow};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::channel::ClearChannel;
 use akita_params::ScheduleLookupKey;
 use akita_serialization::AkitaSerialize;
+use jolt_algebra::checked;
 
 pub(crate) fn canonical_bytes<T: AkitaSerialize>(value: &T) -> Result<Vec<u8>, AkitaError> {
     let mut bytes = Vec::new();

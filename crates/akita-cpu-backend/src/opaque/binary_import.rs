@@ -3,8 +3,8 @@
 use super::packed::pack_logical_words;
 use super::MAX_BINARY_SOURCE_MATERIAL_BYTES;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_types::binary_source::BinarySourceDescriptor;
+use jolt_algebra::checked;
 use std::mem::size_of;
 
 pub(super) enum BinarySourceInput {

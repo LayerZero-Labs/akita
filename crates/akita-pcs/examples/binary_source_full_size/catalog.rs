@@ -1,7 +1,6 @@
 use super::{claims, config::FullSize};
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, PolynomialGroupLayout, ScheduleLookupKey,
     SetupContributionMode,
@@ -11,6 +10,7 @@ use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimePlaneClaim,
     PrimePlaneManifest,
 };
+use jolt_algebra::checked;
 
 pub(super) fn plan(
     log: usize,

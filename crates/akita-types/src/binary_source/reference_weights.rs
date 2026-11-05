@@ -8,14 +8,14 @@
 use akita_algebra::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::trinomial::module_map::pack_signed_components;
 use akita_algebra::trinomial::MinusTrinomial;
-use jolt_algebra::ring::ResidueKernelPoint;
 use akita_algebra::{shifted_remainder_evaluations, PlusTrinomial};
-use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole, BINARY_SETUP_P};
 use akita_params::RelationPolynomial;
+use jolt_algebra::checked;
+use jolt_algebra::ring::ResidueKernelPoint;
 use jolt_algebra::Field;
+use jolt_crypto::challenge::Challenges;
 
 use super::super::authentication::{setup_entry, validate_label};
 use super::super::{

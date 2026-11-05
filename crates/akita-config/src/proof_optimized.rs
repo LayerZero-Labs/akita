@@ -58,9 +58,10 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
 ) -> Result<akita_params::FoldChallengeDistribution, AkitaError> {
-    let cfg = akita_params::FoldChallengeDistribution::production_for_ring_dim(d).ok_or_else(
-        || AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}")),
-    )?;
+    let cfg =
+        akita_params::FoldChallengeDistribution::production_for_ring_dim(d).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}"))
+        })?;
     cfg.validate_for_ring_dim(d)
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(cfg)

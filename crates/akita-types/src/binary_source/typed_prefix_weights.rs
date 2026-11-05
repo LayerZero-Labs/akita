@@ -10,9 +10,9 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use jolt_algebra::ring::ResidueKernelPoint;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
+use jolt_algebra::ring::ResidueKernelPoint;
 use jolt_algebra::Field;
 
 use super::{BinaryAProduct, BinaryTypedPrefix, A_DEGREE, A_STRIDE, SLOTS, SLOT_BITS};

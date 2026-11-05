@@ -1,11 +1,11 @@
 // Frozen test oracle from 6a294098. Do not update when changing the live compiler.
 //! Ordinary commitment preimages authenticated in a mixed native root.
 
-use jolt_algebra::ring::ResidueKernelPoint;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{CompressionChainPlan, GroupCommitPhaseParams, RelationRowGeometry};
+use jolt_algebra::checked;
+use jolt_algebra::ring::ResidueKernelPoint;
 use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275};
 
 use akita_types::native_root_relation::NativeRootWeights;

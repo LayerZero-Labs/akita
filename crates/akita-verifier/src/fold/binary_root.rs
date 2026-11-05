@@ -3,7 +3,6 @@
 use super::FoldVerifyOutput;
 use crate::stages::stage1::Stage1Verifier;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_types::VerifierFoldDraw;
 use akita_error::AkitaError;
 use akita_params::{
     CommittedGroupParams, DigitRangePlan, FoldParams, GrindingSite, OpeningClaimsLayout,
@@ -16,9 +15,10 @@ use akita_types::binary_source::{
     binary_root_statement, BinaryProjectionRows, BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
+use akita_types::VerifierFoldDraw;
 use akita_types::{
-    AkitaVerifierSetup, CommittedGroup, DigitRangeEqualityPoint, FpExtEncoding, FoldResponseReplay, GrindingReplay,
-    OpeningClaims, RingVec,
+    AkitaVerifierSetup, CommittedGroup, DigitRangeEqualityPoint, FoldResponseReplay, FpExtEncoding,
+    GrindingReplay, OpeningClaims, RingVec,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 

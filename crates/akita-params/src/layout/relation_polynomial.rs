@@ -3,10 +3,10 @@
 #[cfg(feature = "labinius-trinomial")]
 use core::ops::Range;
 
-use jolt_algebra::fft::field_pow;
+use akita_error::AkitaError;
 #[cfg(feature = "labinius-trinomial")]
 use jolt_algebra::checked;
-use akita_error::AkitaError;
+use jolt_algebra::fft::field_pow;
 use jolt_algebra::Field;
 
 /// Sign of the middle term in `X^D +/- X^(D/2) + 1`.

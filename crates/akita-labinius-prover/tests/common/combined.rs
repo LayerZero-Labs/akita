@@ -2,7 +2,6 @@
 
 use akita_error::AkitaError;
 
-use jolt_algebra::checked;
 use akita_labinius_verifier::channel::ClearChannel;
 use akita_labinius_verifier::root_sumcheck::{
     alphabet_polynomial, bind_root_sumcheck_instance, combined_input_claim, combined_shape,
@@ -12,6 +11,7 @@ use akita_sumcheck::{
     prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
 };
 use akita_transcript::ChallengeCodec;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 

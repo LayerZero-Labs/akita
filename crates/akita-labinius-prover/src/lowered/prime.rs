@@ -1,7 +1,7 @@
 use akita_algebra::{binary::field_switch::SwitchField, EqPolynomial};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::lowered::LoweredRootLayout;
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

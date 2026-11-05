@@ -2,7 +2,6 @@ use super::*;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
-use jolt_algebra::ring::scalar_powers;
 use akita_params::FoldChallengeDistribution;
 use akita_params::{
     gadget_row_scalars, CommitmentPayloadMode, FlatMatrix, GroupCommitPhaseParams,
@@ -15,6 +14,7 @@ use akita_types::check_stage2_oracle;
 use akita_types::{
     build_reduced_compression_relation_weights, AkitaSetupDescriptor, NegativeBinarySupport,
 };
+use jolt_algebra::ring::scalar_powers;
 use jolt_algebra::{Ext2, ExtField, One, Prime64Offset59, Zero};
 use jolt_transcript::{ClaimMismatch, ClearDomain};
 

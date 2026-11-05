@@ -9,7 +9,6 @@ use akita_algebra::{MinusTrinomial, Prime64Offset23703, TrinomialField, Trinomia
 
 use jolt_algebra::Field;
 
-
 use akita_cpu_backend::benchmark_support::TrinomialRelationQuotientBuilder;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_algebra::Prime128OffsetA7F7;

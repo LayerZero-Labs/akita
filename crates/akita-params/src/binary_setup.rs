@@ -5,8 +5,8 @@
 
 use akita_error::AkitaError;
 
-use jolt_algebra::checked;
 use jolt_algebra::cfg_chunks_mut;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use shake::digest::{ExtendableOutput, Update, XofReader};

@@ -15,15 +15,15 @@ use akita_algebra::trinomial::{
     signed::signed_trinomial_product,
 };
 use akita_algebra::{MinusTrinomial, TrinomialRing};
-use jolt_crypto::challenge::Challenges;
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
 use akita_types::native_root_relation::{binary_commitment_group, NativeRootGroup};
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field, One, Prime128Offset275, Prime128OffsetA7F7, Ring};
+use jolt_crypto::challenge::Challenges;
 
 use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
 

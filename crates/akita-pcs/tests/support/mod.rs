@@ -5,9 +5,9 @@
 
 #![allow(dead_code)]
 
-use akita_params::FoldChallengeDistribution;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedGroupBatchProfile, DecompositionParams, GroupCommitPhaseParams, ScheduleLookupKey,
     SisModulusProfileId,

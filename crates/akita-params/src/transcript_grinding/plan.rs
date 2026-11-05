@@ -551,8 +551,8 @@ fn append_claim_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SisModulusProfileId;
     use crate::FoldChallengeDistribution;
+    use crate::SisModulusProfileId;
 
     // Pre-PR 56 per-round construction retained as an independent parity oracle.
     fn append_sumcheck(

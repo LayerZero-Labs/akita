@@ -1,5 +1,4 @@
 use super::*;
-use akita_params::FoldChallengeDistribution;
 use akita_params::layout::setup_prefix_slots::{
     active_setup_field_len, scheduled_setup_prefix, setup_prefix_precommitted_params,
 };
@@ -7,6 +6,7 @@ use akita_params::test_fixtures::{
     prefix_eligible_level_params, retarget_group_role_dims, retarget_group_role_dims_wide,
     sample_level_params,
 };
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedGroupParams, OpeningClaimsLayout, OuterCommitMatrixParams, SisModulusProfileId,
 };

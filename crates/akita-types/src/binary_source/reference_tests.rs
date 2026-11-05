@@ -5,7 +5,6 @@ use crate::binary_source::{
     BinaryAOperand, BinaryCommittedGroupManifest, BinaryIndexMap, PrimePlaneClaim,
 };
 use crate::AkitaSetupDescriptor;
-use jolt_crypto::challenge::SparseChallenge;
 use akita_params::sis::{
     sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
@@ -15,6 +14,7 @@ use akita_params::{
     GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
 };
 use jolt_algebra::{Prime128Offset275 as F, Ring, Zero};
+use jolt_crypto::challenge::SparseChallenge;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 /// One small ordinary group with real audited table cells, as the mixed root

@@ -25,6 +25,7 @@ use crate::sis::{
     BalancedSignedDigitFoldPolicy, CommittedSourceContract, FoldFailureTarget, FoldWitnessNorms,
     HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery, SisModulusProfileId,
 };
+use crate::FoldChallengeDistribution;
 use crate::{
     CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams, FoldParams, FoldSchedule,
     GroupCommitPhaseParams, GroupOpenPhaseParams, InnerCommitSecurityRoute, OpeningMethod,
@@ -33,7 +34,6 @@ use crate::{
 use akita_error::AkitaError;
 use core::ops::Range;
 use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
-use crate::FoldChallengeDistribution;
 use jolt_crypto::lattice::required_randomness_columns;
 
 /// The only supported cut: levels 0 and 1 are masked (`k = 2`).

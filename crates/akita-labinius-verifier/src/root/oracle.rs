@@ -1,8 +1,8 @@
 use crate::{channel::ClearChannel, codec, lowered::LoweredRootLayout};
 use akita_algebra::{poly::multilinear_eval, EqPolynomial};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use core::marker::PhantomData;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// The polynomial-opening obligations returned by the reduction: one point
@@ -271,10 +271,10 @@ mod tests {
         DIGIT_CHUNK_BITS,
     };
     use akita_algebra::poly::multilinear_eval;
-    use jolt_algebra::One;
-    use jolt_algebra::Ring;
     use akita_error::AkitaError;
     use jolt_algebra::checked;
+    use jolt_algebra::One;
+    use jolt_algebra::Ring;
 
     type F = jolt_algebra::Prime128Offset275;
 

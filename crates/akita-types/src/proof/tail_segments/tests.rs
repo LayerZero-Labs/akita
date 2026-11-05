@@ -1,9 +1,9 @@
 use super::*;
-use akita_params::FoldChallengeDistribution;
 use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::tail_golomb_rice_low_bits::wire_rice_low_bits;
 use akita_params::test_fixtures::test_lp;
 use akita_params::CommittedGroupParams;
+use akita_params::FoldChallengeDistribution;
 use jolt_algebra::{Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;

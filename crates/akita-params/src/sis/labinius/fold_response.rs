@@ -44,9 +44,9 @@
 
 use akita_challenges::BinaryChallengeProfile;
 
-use jolt_crypto::challenge::SparseChallengeConfig;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
+use jolt_crypto::challenge::SparseChallengeConfig;
 
 use super::LabiniusRingDegree;
 use crate::sis::{

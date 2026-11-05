@@ -17,8 +17,8 @@ use crate::opaque::{
     RoutedNttRequirement,
 };
 use crate::{AkitaProverSetup, DensePoly};
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };

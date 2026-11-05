@@ -14,11 +14,11 @@ use akita_algebra::binary::field_switch::SwitchField;
 use akita_algebra::TrinomialModulus;
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::sis::labinius::{
     checked_source_comparison_class_bound, LabiniusCommitmentModulus, LabiniusRingDegree,
     LabiniusSourceComparisonId, SourceOccurrenceBound,
 };
+use jolt_algebra::checked;
 
 /// Admitted explicit setup for the standalone clear differential oracle.
 #[derive(Clone, Debug)]

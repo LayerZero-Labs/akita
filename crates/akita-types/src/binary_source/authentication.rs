@@ -1,12 +1,12 @@
 //! Public digit commitments and their direct root authentication weights.
 
-use jolt_algebra::ring::{CyclotomicRing, ResidueKernelPoint};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::{
     SetupStreamLabel, SetupStreamModulus, SetupStreamRing, SetupStreamRole, TypedSetupStream,
     BINARY_SETUP_P,
 };
+use jolt_algebra::checked;
+use jolt_algebra::ring::{CyclotomicRing, ResidueKernelPoint};
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{cfg_into_iter, Field};

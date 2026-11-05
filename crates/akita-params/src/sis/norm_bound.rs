@@ -553,14 +553,15 @@ mod tests {
     #[test]
     fn rounded_up_role_a_inf_norm_matches_certified_difference_envelope() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
 
-        let fold_challenge_config =
-            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+        let fold_challenge_config = FoldChallengeDistribution::SignedSparse(
+            jolt_crypto::challenge::SparseChallengeConfig {
                 count_pm1: D64_PRODUCTION_PM1_COUNT,
                 count_pm2: D64_PRODUCTION_PM2_COUNT,
-            });
+            },
+        );
         // One-hot committed root (`log_commit_bound == 1`); `log_open_bound`
         // sets `field_bits = 128` for a realistic digit plan.
         let decomposition = DecompositionParams {
@@ -651,14 +652,15 @@ mod tests {
     #[test]
     fn committed_fold_collision_prices_digit_envelope_not_honest_cap() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
 
-        let fold_challenge_config =
-            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+        let fold_challenge_config = FoldChallengeDistribution::SignedSparse(
+            jolt_crypto::challenge::SparseChallengeConfig {
                 count_pm1: D64_PRODUCTION_PM1_COUNT,
                 count_pm2: D64_PRODUCTION_PM2_COUNT,
-            });
+            },
+        );
         // One-hot committed root (`log_commit_bound == 1`).
         let decomposition = DecompositionParams {
             log_basis: 3,
@@ -711,14 +713,15 @@ mod tests {
     #[test]
     fn fold_linf_digit_plan_uses_the_universal_tail_cap() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
 
-        let fold_challenge_config =
-            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+        let fold_challenge_config = FoldChallengeDistribution::SignedSparse(
+            jolt_crypto::challenge::SparseChallengeConfig {
                 count_pm1: D64_PRODUCTION_PM1_COUNT,
                 count_pm2: D64_PRODUCTION_PM2_COUNT,
-            });
+            },
+        );
         let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::bounded(3, 64);
         let decomposition = DecompositionParams {
@@ -759,14 +762,15 @@ mod tests {
     #[test]
     fn committed_fold_collision_uses_num_digits_fold_verifier_bound() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
 
-        let fold_challenge_config =
-            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+        let fold_challenge_config = FoldChallengeDistribution::SignedSparse(
+            jolt_crypto::challenge::SparseChallengeConfig {
                 count_pm1: D64_PRODUCTION_PM1_COUNT,
                 count_pm2: D64_PRODUCTION_PM2_COUNT,
-            });
+            },
+        );
         // Dense recursive witness path (`is_root = false` ⇒ `is_onehot = false`).
         let decomposition = DecompositionParams {
             log_basis: 3,

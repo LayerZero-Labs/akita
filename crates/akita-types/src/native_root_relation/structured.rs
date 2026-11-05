@@ -9,9 +9,9 @@
 use std::borrow::Cow;
 
 use akita_algebra::eq_poly::EqPolynomial;
-use jolt_algebra::ring::ResidueKernelPoint;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
+use jolt_algebra::ring::ResidueKernelPoint;
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{cfg_chunks, Field};

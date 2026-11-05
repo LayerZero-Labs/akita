@@ -1,7 +1,7 @@
 //! Rebuild one root with the fixture's reduced-width packing geometry.
 use super::geometry::rebuild_group_output_matrices;
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{FoldParams, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
 

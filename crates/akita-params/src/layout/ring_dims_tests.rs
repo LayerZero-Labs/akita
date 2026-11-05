@@ -1,9 +1,9 @@
 use super::*;
+use crate::FoldChallengeDistribution;
 use crate::{
     CommittedGroupParams, FoldParams, FoldSchedule, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalFoldParams, TerminalResponseShape,
 };
-use crate::FoldChallengeDistribution;
 
 fn committed(ring_dimension: usize) -> CommittedGroupParams {
     CommittedGroupParams::params_only(

@@ -6,9 +6,9 @@
 
 use std::path::PathBuf;
 
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
+use akita_params::FoldChallengeDistribution;
 use akita_params::ScheduleLookupKey;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
 

@@ -2,13 +2,13 @@ use super::*;
 use akita_algebra::binary::BinaryField162;
 use akita_algebra::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
-use akita_types::FoldChallengeDrawDomain;
-use akita_types::FoldChallengeFamily;
-use akita_types::{FoldChallengeDraw, FoldDraw};
 use akita_types::binary_source::{
     BinaryCommitmentProfiles, BinaryIndexMap, BinaryTerminalClaim, PrimePlaneClaim,
     PrimePlaneManifest,
 };
+use akita_types::FoldChallengeDrawDomain;
+use akita_types::FoldChallengeFamily;
+use akita_types::{FoldChallengeDraw, FoldDraw};
 use jolt_algebra::Prime128Offset275;
 
 struct SeedDraw;

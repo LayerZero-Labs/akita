@@ -514,9 +514,7 @@ mod tests {
     use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
     use crate::coefficient_packing_relation::tests::materialize_stage2;
     use crate::relation::{FlatRelationContext, RelationMatrixEvaluator};
-    use jolt_crypto::challenge::Challenges;
     use akita_params::FoldChallengeDistribution;
-    use jolt_crypto::challenge::SparseChallenge;
     use akita_params::{
         BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
         OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry, RelationWitnessGeometry,
@@ -529,6 +527,8 @@ mod tests {
     };
     use jolt_algebra::Zero;
     use jolt_algebra::{Ext2, Prime64Offset59};
+    use jolt_crypto::challenge::Challenges;
+    use jolt_crypto::challenge::SparseChallenge;
     use std::sync::Arc;
 
     type F = Prime64Offset59;

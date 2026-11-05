@@ -25,12 +25,12 @@ mod stage3_catalog;
 mod statement_binding;
 
 use akita_algebra::binary::{BinaryField128, BinaryField162};
-use akita_params::FoldChallengeDistribution;
 use akita_config::{
     proof_optimized::fp128::DenseBounded, CommitmentConfig, TrustedScheduleCatalog,
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     sis::CommittedSourceClass, BasisMode, ChunkedWitnessCfg, DecompositionParams,
     PolynomialGroupLayout, ScheduleLookupKey, SisModulusProfileId,

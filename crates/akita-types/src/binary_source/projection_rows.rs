@@ -2,8 +2,8 @@
 
 use akita_error::AkitaError;
 
-use jolt_algebra::checked;
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 
 use super::{challenge_block, BinaryProjectionBounds, BINARY_PROJECTION_COUNT, BINARY_SOURCE_Q};

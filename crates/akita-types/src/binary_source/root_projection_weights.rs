@@ -3,10 +3,10 @@
 use akita_algebra::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::trinomial::module_map::pack_signed_components;
 use akita_algebra::trinomial::MinusTrinomial;
-use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
 use jolt_algebra::Field;
+use jolt_crypto::challenge::Challenges;
 
 use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,

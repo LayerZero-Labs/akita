@@ -3,10 +3,7 @@ use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec, RoleLaneWeig
 use super::*;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use jolt_algebra::ring::scalar_powers;
-use jolt_crypto::challenge::Challenges;
 use akita_params::FoldChallengeDistribution;
-use jolt_crypto::challenge::SparseChallenge;
 use akita_params::{
     dyadic_block_ranges, gadget_row_scalars, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
     OpeningClaimsLayout, RingRole, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
@@ -15,7 +12,10 @@ use akita_types::{
     AkitaExpandedSetup, AkitaSetupDescriptor, PhysicalBSetupPlan, PreparedRelationAddress,
     SetupContributionGroupInputs,
 };
+use jolt_algebra::ring::scalar_powers;
 use jolt_algebra::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
+use jolt_crypto::challenge::Challenges;
+use jolt_crypto::challenge::SparseChallenge;
 
 mod address_spans;
 mod direct_evaluation_regressions;

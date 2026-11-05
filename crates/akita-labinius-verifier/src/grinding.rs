@@ -10,7 +10,6 @@
 
 use akita_algebra::binary::{field_switch::SwitchField, BinaryField162};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::{
     multilinear_point_loss_factor, polynomial_identity_loss_factor, powers_batch_loss_factor,
     sis::labinius::{LabiniusRootEncoding, LabiniusRootShape},
@@ -18,6 +17,7 @@ use akita_params::{
 };
 use akita_sumcheck::SumcheckShape;
 use akita_transcript::nonce_max_bytes;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 use crate::{

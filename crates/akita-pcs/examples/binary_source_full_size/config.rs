@@ -1,6 +1,6 @@
-use akita_params::FoldChallengeDistribution;
 use akita_config::{proof_optimized::fp128::DenseBounded, CommitmentConfig};
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{sis::CommittedSourceClass, DecompositionParams, SisModulusProfileId};
 
 pub(super) type F = jolt_algebra::Prime128Offset275;

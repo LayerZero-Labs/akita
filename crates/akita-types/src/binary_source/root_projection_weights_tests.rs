@@ -1,8 +1,8 @@
 use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor};
 use akita_algebra::trinomial::signed::signed_trinomial_product;
-use jolt_crypto::challenge::SparseChallenge;
 use jolt_algebra::{One, Prime128Offset275 as F, Ring, Zero};
+use jolt_crypto::challenge::SparseChallenge;
 
 #[test]
 fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_rows() {

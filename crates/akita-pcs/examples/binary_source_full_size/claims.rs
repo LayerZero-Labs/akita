@@ -2,11 +2,11 @@
 use super::config::F;
 use akita_algebra::binary::BinaryField128;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
     PrimePlaneClaim,
 };
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, One, Ring, Zero};
 use serde::{Deserialize, Serialize};
 

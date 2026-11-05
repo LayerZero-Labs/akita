@@ -2,8 +2,8 @@
 
 use super::*;
 use akita_algebra::binary::field_switch::transparent_weight;
-use akita_types::ProverFoldDraw;
 use akita_transcript::{ChallengeCodec, ProofChannel, ProtocolContextRecord};
+use akita_types::ProverFoldDraw;
 use spongefish::{Encoding, FromNarg};
 
 struct ZeroWeight<S> {

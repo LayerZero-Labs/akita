@@ -26,8 +26,8 @@
 use akita_algebra::binary::field_switch::SwitchField;
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::{endpoint, source::challenge_binary};
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

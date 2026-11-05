@@ -1,10 +1,10 @@
 use super::*;
 
-use akita_params::FoldChallengeDistribution;
 use akita_config::proof_optimized::fp128::OneHotMultiChunk;
 use akita_config::{
     policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
 };
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedGroupBatchProfile, FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute,
     MultiChunkProfileId, OpeningMethod,

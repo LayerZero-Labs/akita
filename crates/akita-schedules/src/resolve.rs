@@ -45,7 +45,13 @@ impl ResolvedScheduleRow {
         policy: &PlannerPolicy,
         admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
-        Self::with_root_transition(profiles, schedule, policy, admission, &OrdinaryRootTransition)
+        Self::with_root_transition(
+            profiles,
+            schedule,
+            policy,
+            admission,
+            &OrdinaryRootTransition,
+        )
     }
 
     /// Extension seam: audit a selected root transition while sharing every

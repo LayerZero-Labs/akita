@@ -1,8 +1,8 @@
 //! Deliberately unsupported evaluation-trace rows for admission regressions.
 use super::{RootCoefficientPackingConfig, UnsupportedEvaluationTraceConfig};
-use akita_params::FoldChallengeDistribution;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{CommittedGroupBatchProfile, ScheduleLookupKey};
 
 impl<Base, const LEVEL: usize> UnsupportedEvaluationTraceConfig<Base, LEVEL>

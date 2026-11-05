@@ -3,11 +3,11 @@ use crate::commitment::PortableStatePolicy;
 use crate::opaque::CpuBackend;
 use crate::opaque::{ComputeBackendSetup, OperationCtx};
 use crate::{AkitaProverSetup, DensePoly};
-use akita_params::FoldChallengeDistribution;
 use akita_params::sis::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedSourceEncoding, CompressionChainPlan, GroupCommitPhaseParams, InnerCommitMatrixParams,
     OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout,

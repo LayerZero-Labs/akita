@@ -262,12 +262,12 @@ pub(crate) fn materialize_coefficient_packing_d_input<
 mod tests {
     use super::*;
     use akita_params::FoldChallengeDistribution;
-    use jolt_crypto::challenge::SparseChallenge;
     use akita_params::{
         gadget_row_scalars, CommittedGroupParams, OpenCommitMatrixParams, OpeningClaimsLayout,
         PolynomialGroupLayout, SisModulusProfileId,
     };
     use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_crypto::challenge::SparseChallenge;
 
     type F = Prime128OffsetA7F7;
 

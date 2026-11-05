@@ -4,9 +4,9 @@ use super::owned::CommitmentHandle;
 use super::owned_kind::SourceGroupKind;
 use super::CpuBackend;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::dispatch_for_field;
 use akita_types::binary_source::OrdinaryNativeRootPlan;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<F, E> CpuBackend<F, E>

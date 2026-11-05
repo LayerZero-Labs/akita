@@ -3,11 +3,11 @@ use crate::test_fixtures::{
     prefix_eligible_level_params, retarget_group_role_dims, retarget_group_role_dims_wide,
     sample_level_params,
 };
+use crate::FoldChallengeDistribution;
 use crate::{
     CommittedGroupParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
     OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, SisModulusProfileId,
 };
-use crate::FoldChallengeDistribution;
 use std::collections::{BTreeSet, HashSet};
 
 fn precommitted_group(

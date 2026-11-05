@@ -30,10 +30,10 @@ use crate::{
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
     TerminalLevelProof, TerminalResponse,
 };
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::nonterminal_level_layout;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     extension_opening_reduction_level_bytes, sumcheck_rounds, terminal_response_max_bytes,
     CommitmentPayloadMode, CommittedGroupBatchProfile, DigitRangePlan, OpeningClaimsLayout,

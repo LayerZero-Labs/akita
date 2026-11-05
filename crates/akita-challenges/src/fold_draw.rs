@@ -131,4 +131,3 @@ impl<S: akita_transcript::ProofChannel> FoldDraw for VerifierFoldDraw<'_, S> {
         })
     }
 }
-

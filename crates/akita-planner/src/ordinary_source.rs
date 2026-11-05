@@ -1,8 +1,8 @@
 //! Per-source producer planning for explicitly selected signed native sources.
 
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::ordinary_source::OrdinarySourceWidth;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     PlannedFoldSchedule, PolynomialGroupLayout, ScheduleLookupKey, SisModulusProfileId,
 };

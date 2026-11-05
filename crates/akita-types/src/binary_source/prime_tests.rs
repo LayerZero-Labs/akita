@@ -2,10 +2,10 @@ use super::*;
 use crate::binary_source::prime_weights::prime_plane_relation_weights;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
-use jolt_crypto::challenge::Challenges;
-use jolt_crypto::challenge::SparseChallenge;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use jolt_algebra::{One, Prime128Offset275, Ring};
+use jolt_crypto::challenge::Challenges;
+use jolt_crypto::challenge::SparseChallenge;
 
 type F = Prime128Offset275;
 

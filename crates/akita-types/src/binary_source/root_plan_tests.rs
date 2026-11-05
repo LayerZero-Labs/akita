@@ -1,7 +1,7 @@
 use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, CANONICAL_IMAGE_WINDOW};
-use jolt_crypto::challenge::SparseChallenge;
 use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
+use jolt_crypto::challenge::SparseChallenge;
 
 type F = Prime128Offset275;
 

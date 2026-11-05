@@ -1,11 +1,11 @@
 //! Public outgoing layout and direct relation assembly for a binary root.
 
-use jolt_crypto::challenge::Challenges;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
+use jolt_algebra::checked;
 use jolt_algebra::Field;
+use jolt_crypto::challenge::Challenges;
 
 use super::{
     binary_scalar_geometry, BinaryEvaluationBounds, BinaryEvaluationSegments,

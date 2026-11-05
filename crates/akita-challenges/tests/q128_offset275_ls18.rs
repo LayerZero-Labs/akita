@@ -8,8 +8,8 @@
 
 use jolt_crypto::challenge::SparseChallengeConfig;
 
-use jolt_crypto::challenge::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 use jolt_algebra::{pseudo_mersenne_modulus, Prime128Offset275, PseudoMersenne};
+use jolt_crypto::challenge::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 
 /// Number of irreducible factors of `X^d + 1` modulo the prime.
 const SPLIT_COUNT: u128 = 2;

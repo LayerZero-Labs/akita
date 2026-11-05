@@ -37,7 +37,9 @@ enum FamilyShell {
     SignedSparse(SparseChallengeShell),
     /// Decoded from one 32-byte message by indexed SHAKE256 substreams.
     #[cfg(feature = "labinius-challenges")]
-    BinaryRoot { ring_d: usize },
+    BinaryRoot {
+        ring_d: usize,
+    },
 }
 
 impl FoldChallengeFamily {
@@ -332,9 +334,10 @@ impl FoldChallengeDistribution {
     pub fn validate_for_ring_dim(&self, ring_d: usize) -> Result<(), &'static str> {
         match self {
             #[cfg(feature = "labinius-challenges")]
-            Self::BinaryRoot => {
-                akita_challenges::root_family::validate(ring_d, jolt_crypto::challenge::MIN_FOLD_CHALLENGE_ENTROPY_BITS)
-            }
+            Self::BinaryRoot => akita_challenges::root_family::validate(
+                ring_d,
+                jolt_crypto::challenge::MIN_FOLD_CHALLENGE_ENTROPY_BITS,
+            ),
             Self::SignedSparse(config) => config.validate_for_ring_dim(ring_d),
         }
     }
@@ -404,6 +407,9 @@ mod tests {
             count_pm2: 1,
         });
         assert!(postcard::to_allocvec(&alias).is_err());
-        assert_eq!(binary.ordering_descriptor_bytes(), akita_challenges::root_family::IDENTITY);
+        assert_eq!(
+            binary.ordering_descriptor_bytes(),
+            akita_challenges::root_family::IDENTITY
+        );
     }
 }

@@ -7,10 +7,10 @@
 use crate::artifact::validate_schedule_challenge_hooks;
 use crate::resolve::RootTransitionValidation;
 use crate::{PlannerPolicy, ResolvedScheduleRow, ScheduleAdmission, ValidatedScheduleCatalog};
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{CommittedGroupBatchProfile, FoldParams, FoldSchedule, OpeningClaimsLayout};
+use jolt_algebra::checked;
 
 /// Trusted geometry of the native root's balanced-digit output and typed A prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,7 +176,12 @@ impl ValidatedScheduleCatalog {
         for row in &resolved {
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
         }
-        Self::from_resolved_rows(family_name.into(), resolved, policy, ScheduleAdmission::Clear)
+        Self::from_resolved_rows(
+            family_name.into(),
+            resolved,
+            policy,
+            ScheduleAdmission::Clear,
+        )
     }
 }
 

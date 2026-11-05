@@ -72,7 +72,6 @@ fn ordinary_group_root_selects_binary_family_and_indexed_columns() {
     assert!(root_family::sample(&[0; 32], (1 << 20) + 1).is_err());
 }
 
-
 #[test]
 fn binary_family_replays_on_the_callers_live_session() {
     use akita_transcript::{new_prover_channel, new_verifier_channel};
@@ -89,4 +88,3 @@ fn binary_family_replays_on_the_callers_live_session() {
     assert_eq!(expected, actual);
     verifier.check_eof().unwrap();
 }
-

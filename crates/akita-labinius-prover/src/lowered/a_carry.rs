@@ -1,7 +1,6 @@
 use akita_algebra::TrinomialModulus;
 use akita_challenges::BinaryChallenge;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::{
     commitment::{folded_image_remainder, matrix_row_remainder},
     endpoint::pack_response,
@@ -9,6 +8,7 @@ use akita_labinius_verifier::{
     BinaryClearCommitment,
 };
 use akita_params::sis::labinius::LabiniusSignedRange;
+use jolt_algebra::checked;
 
 use super::matrix_remainders_limb;
 

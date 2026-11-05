@@ -12,8 +12,8 @@ use core::ops::Range;
 
 use akita_error::AkitaError;
 
-use jolt_algebra::checked;
 use akita_params::RelationRowGeometry;
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 
 /// One bounded coefficient family in the root witness.

@@ -21,7 +21,7 @@ use akita_planner::{
     publish_artifact_outputs, render_schedule_artifact_outputs_with_validation, EmitSpec,
     MaterializationDiagnostics,
 };
-use akita_schedules::ValidatedScheduleCatalog;
+use akita_schedules::{ScheduleAdmission, ValidatedScheduleCatalog};
 use std::{fs, path::Path, time::Instant};
 
 fn scalar<C: CommitmentConfig>(group: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
@@ -120,6 +120,7 @@ fn scalar_spec<C: CommitmentConfig>(
         preplanned: Vec::new(),
         output_path: output_dir.join(format!("{}.aks", C::schedule_family_name())),
         ring_challenge_config: C::ring_challenge_config,
+        admission: ScheduleAdmission::Clear,
     };
     let rows = preplan::<C>(&mut spec)?;
     Ok((spec, rows))

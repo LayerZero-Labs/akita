@@ -15,8 +15,8 @@ use crate::opaque::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
 };
 use crate::AkitaProverSetup;
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use akita_types::RingVec;
 use jolt_algebra::Prime64Offset59;

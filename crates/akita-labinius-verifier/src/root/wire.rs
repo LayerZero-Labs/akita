@@ -1,8 +1,8 @@
 use akita_algebra::binary::field_switch::SwitchField;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::{sis::labinius::LabiniusRootShape, FOLD_RESPONSE_NONCE_BITS};
 use akita_transcript::nonce_max_bytes;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 use crate::{

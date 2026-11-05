@@ -10,13 +10,13 @@ use crate::shipped::{
 };
 use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_verifier::admitted::field_characteristic;
 use akita_params::{
     sis::labinius::LabiniusRootShape, GroupCommitPhaseParams, PolynomialGroupLayout,
     ScheduleLookupKey,
 };
 use akita_schedules::ValidatedScheduleCatalog;
+use jolt_algebra::checked;
 use jolt_algebra::ExtField;
 use std::path::Path;
 

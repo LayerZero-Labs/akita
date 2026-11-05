@@ -1,9 +1,7 @@
 use super::*;
 
 use akita_algebra::poly::multilinear_eval;
-use jolt_crypto::challenge::Challenges;
 use akita_params::FoldChallengeDistribution;
-use jolt_crypto::challenge::SparseChallenge;
 use akita_params::{
     r_decomp_levels, BasisMode, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
     OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod, RelationAddressGeometry,
@@ -18,6 +16,8 @@ use akita_types::{
     RingRelationGroupOpening, RingRelationInstance, RingVec, SubringCoefficientPackingTables,
 };
 use jolt_algebra::{Ext2, One, Prime64Offset59, Ring, Zero};
+use jolt_crypto::challenge::Challenges;
+use jolt_crypto::challenge::SparseChallenge;
 
 type F = Prime64Offset59;
 type E = Ext2<F>;

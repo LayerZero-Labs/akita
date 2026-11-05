@@ -1,7 +1,7 @@
 //! Checked packing catalogs for root and setup-prefixed successor roundtrips.
-use akita_params::FoldChallengeDistribution;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::ScheduleLookupKey;
 use akita_params::{
     CommittedGroupBatchProfile, DecompositionParams, GroupCommitPhaseParams, SetupMatrixCapacity,

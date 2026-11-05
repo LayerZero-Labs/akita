@@ -1,11 +1,11 @@
 //! Shared parameter fixtures for unit and cross-crate tests.
 
+use crate::FoldChallengeDistribution;
 use crate::{
     CommittedGroupParams, GroupCommitPhaseParams, GroupOpenPhaseParams, InnerCommitMatrixParams,
     OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
     SisModulusProfileId,
 };
-use crate::FoldChallengeDistribution;
 
 pub fn sample_level_params() -> CommittedGroupParams {
     CommittedGroupParams::params_only(

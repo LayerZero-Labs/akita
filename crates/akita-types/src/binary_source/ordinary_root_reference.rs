@@ -4,10 +4,10 @@
 //! term. It pushes one `(address, weight)` pair per public coefficient weight;
 //! the differential tests compare the structured families with it.
 
-use jolt_algebra::ring::ResidueKernelPoint;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_params::binary_setup::BINARY_SETUP_P;
+use jolt_algebra::checked;
+use jolt_algebra::ring::ResidueKernelPoint;
 use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275};
 
 use super::OrdinaryNativeRootPlan;

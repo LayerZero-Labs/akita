@@ -1,9 +1,9 @@
 //! Observe order-zero binding before any witness-dependent message or challenge.
 use super::*;
+use akita_types::binary_source::{binary_root_challenges, binary_root_statement};
 use akita_types::FoldDraw;
 use akita_types::ProverFoldDraw;
 use akita_types::VerifierFoldDraw;
-use akita_types::binary_source::{binary_root_challenges, binary_root_statement};
 
 /// A narrow test-only hook around the actual fold sampler. Capture the first
 /// squeezed seed rather than inferring binding from later relation rejection.

@@ -1,5 +1,5 @@
 use super::*;
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, One, Zero};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, Field, One, Zero};
 
 type F = Prime64Offset23703;
 

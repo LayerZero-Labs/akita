@@ -19,7 +19,6 @@ use akita_cpu_backend::{
     AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
 };
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use akita_labinius_prover::{
     commit_binary_clear_prepared, lowered::encode_image, prove_root_reduction_bytes,
     prove_root_reduction_in_session, PreparedLimbCommitMatrix,
@@ -35,6 +34,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
 use akita_types::CommittedGroup;
+use jolt_algebra::checked;
 use jolt_algebra::{ExtField, Ring};
 use tracing::info_span;
 

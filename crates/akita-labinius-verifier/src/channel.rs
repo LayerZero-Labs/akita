@@ -1,9 +1,9 @@
 //! The sole dependency boundary to Akita's current transcript transport.
 #[cfg(feature = "prover")]
-use akita_types::PreviewFoldDraw;
+use akita_challenges::PreviewFoldDraw;
+use akita_challenges::ProverFoldDraw;
+use akita_challenges::VerifierFoldDraw;
 use akita_challenges::{BinaryChallenge, BinaryChallengeSampler};
-use akita_types::ProverFoldDraw;
-use akita_types::VerifierFoldDraw;
 use akita_error::AkitaError;
 use akita_params::FOLD_RESPONSE_ATTEMPTS;
 use akita_sumcheck::SumcheckRole;

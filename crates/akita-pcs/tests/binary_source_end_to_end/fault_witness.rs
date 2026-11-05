@@ -4,13 +4,13 @@ use super::*;
 use akita_algebra::trinomial::image::Q24Image;
 use akita_algebra::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
-use jolt_crypto::challenge::Challenges;
-use akita_params::FoldChallengeDistribution;
 use akita_cpu_backend::binary_root::{
     binary_row_partials, BinaryEvaluationWitness, BinaryRootRelation,
 };
+use akita_params::FoldChallengeDistribution;
 use akita_types::binary_source::{binary_root_matrix, PrimePlaneManifest, BINARY_SOURCE_Q};
 use akita_types::root_repacking::RootCoefficientRepacking;
+use jolt_crypto::challenge::Challenges;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reconstruct(

@@ -1,8 +1,8 @@
 //! Recursive setup-offloading config adapter.
 
 use crate::CommitmentConfig;
-use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{DecompositionParams, SisModulusProfileId};
 use std::marker::PhantomData;
 

@@ -16,8 +16,8 @@ use jolt_algebra::{CanonicalEncoding, Field, One, Prime128OffsetA7F7, Ring, Zero
 use rayon::prelude::*;
 
 use super::{internal, TrinomialAdjoint};
-use jolt_algebra::fft::{primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 use crate::trinomial::TrinomialModulus;
+use jolt_algebra::fft::{primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 
 type Auxiliary = Prime128OffsetA7F7;
 
@@ -111,7 +111,8 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
                     })?;
                     *slot = Auxiliary::from_u64((value >> (64 * limb)) as u64);
                 }
-                domain.forward_into(&scratch.padded, transform, &mut scratch.workspace)
+                domain
+                    .forward_into(&scratch.padded, transform, &mut scratch.workspace)
                     .map_err(|_| internal("integer adjoint auxiliary transform"))?;
             }
             limbs.push(pair);
@@ -129,11 +130,12 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
                 for (slot, &value) in scratch.padded.iter_mut().zip(element.iter().rev()) {
                     *slot = Auxiliary::from_i128(value);
                 }
-                domain.forward_into(
-                    &scratch.padded,
-                    &mut scratch.transform,
-                    &mut scratch.workspace,
-                )
+                domain
+                    .forward_into(
+                        &scratch.padded,
+                        &mut scratch.transform,
+                        &mut scratch.workspace,
+                    )
                     .map_err(|_| internal("integer adjoint auxiliary transform"))?;
                 for (sum, limb) in scratch.sums.iter_mut().zip(pair) {
                     for ((slot, &a), &g) in sum.iter_mut().zip(&scratch.transform).zip(limb) {
@@ -142,7 +144,8 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
                 }
             }
             for (sum, product) in scratch.sums.iter().zip(&mut scratch.products) {
-                domain.inverse_into(sum, product, &mut scratch.workspace)
+                domain
+                    .inverse_into(sum, product, &mut scratch.workspace)
                     .map_err(|_| internal("integer adjoint auxiliary transform"))?;
             }
             let lift = |value: Auxiliary| -> Result<F, AkitaError> {
