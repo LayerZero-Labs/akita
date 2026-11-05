@@ -22,11 +22,11 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
 serde = { version = "1", features = ["derive"] }
 sha3 = "0.12.0"
-shake = { version = "0.1.0", optional = true }
+keccak = { version = "0.2.2", features = ["parallel"], optional = true }
 
 [features]
 labinius-trinomial = ["akita-algebra/labinius-trinomial"]
-labinius-sis = ["akita-challenges/labinius-challenges", "dep:shake"]
+labinius-sis = ["akita-challenges/labinius-challenges", "dep:keccak"]
 # Selects the dev protocol: every wire-format change `dev` carries that `main`
 # does not, together. Off by default. Schedules priced for it live in
 # `artifacts/schedules-dev`. See docs/branches.md.
@@ -49,6 +49,7 @@ logging-transcript = ["akita-transcript/logging-transcript"]
 [dev-dependencies]
 num-bigint = "0.5.1"
 rand = "0.8"
+shake = "0.1.0"
 
 [lints]
 workspace = true

@@ -3076,6 +3076,286 @@ With the first two, the mixed shape's parallel verification would fall to
 roughly 10 ms at the loads measured here. That is an estimate from the spans,
 not a measurement.
 
+### Fifth prover pass
+
+A fifth byte-preserving pass starts from `31aa471a2`, the fourth pass. It
+targets the two shapes still above 0.8 s of complete proving at N=2^22:
+`prime5` first, then `word-prime-ordinary`.
+
+The base was proved three times per shape at N=2^22 in isolated processes
+with `BINARY_SOURCE_CATALOG_CACHE`, after one warm-up run per shape,
+alternating the two shapes. All runs reproduced their pins. The machine was
+shared: other sessions' test runs held 4–11 cores, and one-minute loads were
+8.46–10.18. Complete proving is therefore slower than in the fourth pass's
+results (1,640 against 1,254 ms at `prime5`, 944 against 806 ms at
+`word-prime-ordinary`). The interleaved base runs behind the first change
+below, at loads of 5.9–15.2, took 1,290 and 834 ms. Only interleaved pairs
+are compared. Logs are `$CARGO_TARGET_DIR/p5/logs/base-22-<shape>-p<run>.txt`.
+Each cell is the median wall time in ms, with process CPU time in
+parentheses. Spans that the root and the suffix share, such as the Stage 2
+fold rounds, are listed once, under the root.
+
+| Span | `prime5` | `word-prime-ordinary` |
+| --- | ---: | ---: |
+| Complete proving | 1,640.1 (14,990) | 944.3 (8,936) |
+| › binary root level | 809.5 (7,704) | 576.0 (5,256) |
+| ›› Stage 2 | 279.1 (2,680) | 206.1 (2,079) |
+| ››› weight profiles | 127.6 (1,065) | 90.2 (721) |
+| ›››› authentication | 99.2 (859) | 41.2 (395) |
+| ›››› translated lanes | — | 12.4 (73) |
+| ›››› prime planes | 11.1 (105) | 2.8 (27) |
+| ›››› parity rows | — | 10.8 (70) |
+| ›››› image | 9.6 (89) | 9.9 (90) |
+| ››› fold rounds, root and suffix | 123.9 (1,149) | 72.6 (769) |
+| ›››› `fold_evals_in_place` | 55.3 (524) | 45.5 (506) |
+| ›››› fused fold and next round | 28.2 (262) | — |
+| ››› folded dense round terms, root and suffix | 58.4 (589) | 39.2 (461) |
+| ››› compact dense round terms, root and suffix | 45.8 (495) | 34.2 (394) |
+| ››› compact quotient prefix | — | 8.0 (60) |
+| ›› D commitment | 231.3 (2,397) | 58.3 (528) |
+| ››› D payload | 132.6 (1,613) | 27.1 (337) |
+| ››› prime digits | 98.7 (791) | 19.7 (157) |
+| ›› response build | 101.2 (915) | 110.3 (1,005) |
+| ››› response fold | 72.8 (805) | 78.8 (837) |
+| ››› witness import | 14.0 (48) | 11.8 (42) |
+| ››› evaluation witness | — | 13.1 (60) |
+| ››› repack | 11.9 (49) | 6.4 (51) |
+| ›› Stage 3 | 90.2 (744) | 58.0 (494) |
+| ››› rounds | 71.4 (651) | 47.3 (431) |
+| ››› weights | 10.1 (10) | 6.3 (6) |
+| ››› begin | 8.5 (83) | 5.4 (54) |
+| ›› field switch | — | 48.4 (264) |
+| ››› rounds | — | 25.8 (134) |
+| ››› partials | — | 11.2 (96) |
+| ››› source | — | 6.0 (30) |
+| ›› relation compile | 38.8 (320) | 38.8 (318) |
+| ››› direct A adjoint | 34.0 (315) | 32.0 (306) |
+| ›› Stage 1 | 23.1 (253) | 26.3 (217) |
+| ›› outgoing commitment | 22.5 (223) | 17.7 (176) |
+| ›› projections | 19.7 (196) | 20.2 (175) |
+| › ordinary suffix Stage 1 sumchecks (6) | 362.6 (3,578) | 114.4 (1,172) |
+| ›› product rounds, materialized | 86.3 (851) | 17.7 (185) |
+| ›› product rounds, first two | 78.9 (827) | 4.9 (46) |
+| ›› product folds | 67.8 (617) | 21.6 (223) |
+| ›› leaf rounds, materialized | 44.1 (487) | 24.6 (266) |
+| ›› product materialization after two rounds | 33.0 (344) | 10.8 (115) |
+| ›› leaf folds | 24.6 (255) | 17.1 (177) |
+| ›› second-round quartet table | — | 6.3 (59) |
+| ›› leaf first round | 5.8 (48) | 3.0 (26) |
+| › ordinary suffix Stage 2 sumchecks (6) | 166.2 (1,697) | 102.4 (970) |
+| ›› relation lane weights | 42.1 (469) | 30.5 (342) |
+| ››› B setup columns | 18.8 (232) | 25.2 (290) |
+| ››› D setup columns | 19.2 (206) | 2.8 (26) |
+| ›› compact partial-lane round terms | 22.0 (243) | — |
+| ›› reduced dense relation weights | 16.1 (130) | 15.1 (133) |
+| ›› folded partial-lane round terms | 12.3 (151) | — |
+| › `RingRelationProver::prepare` (6) | 129.0 (1,190) | 93.5 (918) |
+| ›› fold grinding | 108.4 (1,017) | 86.6 (882) |
+| ››› first fold's `DensePoly::decompose_fold` | 65.0 (671) | 49.7 (532) |
+| ››› other folds' `SuffixWitnessView::decompose_fold` | 6.8 (59) | 6.1 (65) |
+| ››› recursive witness build | 30.4 (265) | 27.4 (273) |
+| ›››› relation quotient | 22.4 (195) | 21.3 (209) |
+| ›› opening rows | 19.8 (171) | 6.9 (34) |
+| › outgoing and successor commitments (7) | 54.4 (487) | 44.8 (390) |
+| ›› `prepare_ntt_cache` | 50.6 (414) | 24.3 (270) |
+| › coefficient-packing partials | 36.9 (415) | 26.4 (274) |
+| Prover peak RSS (bytes) | 5,805,326,336 | 3,313,369,088 |
+
+The first suffix fold dominates the suffix. In medians of three, at `prime5`
+its Stage 1 sumcheck takes 277.9 ms, its Stage 2 sumcheck 122.2 ms and its
+`RingRelationProver::prepare` 120.0 ms. At `word-prime-ordinary` they take
+67.5, 58.9 and 85.2 ms.
+
+One `prime5` proof was sampled at 1 ms with the system `sample` tool. Where
+the time of the largest spans goes:
+
+- **D payload: arithmetic.** Of the samples in the digit commitment, which
+  also serves the B payload at commit time, 74% are the exact 192-bit integer
+  additions of `accumulate_digit_product` and 24% the SHAKE permutation and
+  stream setup behind the setup entries. Each setup column costs 64 × 64
+  carry-propagating additions per row.
+- **Authentication emission: hashing.** 66% of its samples are SHAKE (the
+  permutation alone 57%), 19% the residue kernel and 12% the field
+  combination of the two rows. The SHA-3 instructions permute two states per
+  call, but each stream calls the permutation alone.
+- **Prime digits: a serial section and subset sums.** About 27 ms run on the
+  calling thread in `write_prime_column`, which writes the 43 balanced digits
+  of every prime-plane coefficient one at a time. The rest is the parallel
+  eight-row subset sums of `weighted_source_bits`, one pass per plane, which
+  average 8 cores.
+- **Suffix Stage 1: arithmetic.** 68% of its samples are the arity-four
+  product values of the materialized and second-round product rounds:
+  10 field multiplications per pair and parent, the minimum for the four
+  evaluations those rounds send. The folds between rounds are a separate
+  pass over the table.
+- **Response fold: arithmetic.** As in the fourth pass, every sample is the
+  bit-sliced counter kernel.
+
+Candidate changes, with the expected gain at N=2^22:
+
+| Candidate | Spans reduced | Shapes | Expected gain (ms) |
+| --- | --- | --- | ---: |
+| D payload as signed 16-bit limb products in NEON multiply-accumulates | D payload | `prime5`, then the word-prime shapes | 60–80 at `prime5`, 10–15 elsewhere |
+| SHAKE streams squeezed two at a time through the paired permutation | authentication emission, D payload | `prime5`, then the others | 25–40 at `prime5`, 8–15 elsewhere |
+| Prime digits written in parallel; planes share one source pass | prime digits | `prime5` | 25–40 |
+| Product folds fused into the next round's pass (ordinary) | suffix Stage 1 sumchecks | `prime5` | 0–40 |
+| `word-prime-ordinary` translated lanes, parity rows and compact quotient prefix | weight profiles | `word-prime-ordinary` | 5–15 |
+
+A cache of expanded setup entries would hold 139,320 columns × 2 rows × 64
+coefficients of 16 bytes at `prime5`, 285 MB, which is 5% of the base peak
+RSS on its own; it is not pursued. The response fold is not retried: the
+profile shows nothing the fourth pass did not.
+
+#### Fifth-pass changes
+
+Every change below preserves setup, commitment and proof bytes and the
+transcript; each one reproduced every pin it was measured on. Each commit
+message records its median of three interleaved runs against its parent at
+2^22, with the one-minute loads. No commit touches ordinary-protocol files.
+
+| Commit | Change | Ordinary | Span: before → after (ms) |
+| --- | --- | --- | --- |
+| `4c3b80c05` | D payload as signed 16-bit limb products | no | `prime5` D payload 119.5 → 46.6, D commitment 207.9 → 132.6; `word-prime-ordinary` D payload 23.8 → 9.7 |
+| `63fadf01d` | Two setup rows squeezed through the paired permutation | no | `prime5` authentication 74.9 → 66.0, D payload 41.9 → 34.4; `word-prime-ordinary` authentication 33.7 → 28.6 |
+| `c1e710606` | Prime-plane digits written in parallel by column | no | `prime5` prime digits 80.6 → 52.5; `word-prime-ordinary` 16.3 → 11.2 |
+
+The digit commitment multiplies digits in [-4, 3] by negacyclic setup
+entries of degree 64 modulo P. With `s_j = a_j - 2^15` for the eight 16-bit
+limbs `a_j` of an entry coefficient, the coefficient is
+`sum_j 2^(16 j) s_j + H` for the constant `H = 0x8000...8000`. Coefficient
+`k` of the product with a digit chunk `d` is therefore
+`sum_j 2^(16 j) L_j[k] + H Z[k]`, where `L_j[k] = sum_t c_k[t] s_j[t]` and
+`Z[k] = sum_t c_k[t]`, with `c_k[t] = d[k - t]` for `t <= k` and
+`-d[k - t + 64]` otherwise. One column adds at most `2^23` to a limb sum, so
+the sums of a block of 128 columns stay exact in `i32`; each block then folds
+into the field once. The limb sums are NEON multiply-accumulates on AArch64
+(`vmlal_laneq_s16`) and a portable loop elsewhere, and the digit sums come
+from prefix sums. Tests compare the kernel with the portable loop and the
+payload with the reference commitment.
+
+The setup streams' SHAKE256 sponge now keeps its raw permutation state, so the two
+rows of a setup column squeeze together. Whenever both streams need a block,
+one call of the backend's parallel permutation permutes both states; on the
+AArch64 SHA-3 instructions that costs what one state costs. The stream
+bytes, the rejection rule and the per-draw rejection budget are unchanged.
+The authentication weights, their evaluation and the digit commitment read
+setup columns through the paired fill.
+
+The prime digits were written on the calling thread, one digit at a time,
+with Euclidean division and checked address arithmetic. Each plane column
+now owns a window of 43 × 162 digits, the columns write in parallel, and the
+digit loop takes the remainder from the low three bits and divides by an
+exact arithmetic shift.
+
+Three candidates were measured or examined and not kept:
+
+- **An in-place `fold_evals_in_place`.** The allocating parallel fold was
+  4.11 ms against 4.45 ms for an in-place wave fold over a full 2^22 fold
+  chain, so the allocation is not the cost.
+- **The quartet coefficient table for the second product round at `prime5`.**
+  Its first fold has 32 digit classes, so the table would hold 2^20 entries of
+  five coefficients, as many as the quartets it replaces.
+- **Product folds fused into the next round.** The fold and the round are
+  both arithmetic-bound and run at 9–10 cores; fusion would save one read of
+  the folded table, which does not justify restructuring the ordinary
+  sumcheck.
+
+#### Fifth-pass results
+
+Base `31aa471a2` and head `c1e710606` were proved alternately, three times
+each per configuration, in isolated processes with a cached catalog. All 48
+runs reproduced their pins and verified with matching caller transcript
+continuation. The first round at `word-prime-ordinary`, `prime5` and 2^23
+ran while other sessions pushed one-minute loads to 12; it reproduced its
+pins but was rerun in the same order, 2^23 last, and the table uses the
+rerun. Each cell is the median of three. The suffix columns are the six
+ordinary Stage 1 and Stage 2 sumchecks and the six
+`RingRelationProver::prepare` calls.
+
+| N | Shape | Complete proving (ms) | Root level (ms) | Suffix Stage 1 (ms) | Suffix Stage 2 (ms) | Suffix `prepare` (ms) | Process CPU (ms) | Peak RSS (bytes) | Loads |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 2^22 | `word` | 590.5 → 579.3 | 353.3 → 343.1 | 49.2 → 49.0 | 87.8 → 88.1 | 50.4 → 49.3 | 6,541 → 6,525 | 2,492,235,776 → 2,493,431,808 | 1.66–3.23 |
+| 2^22 | `word-prime` | 725.4 → 710.6 | 406.1 → 388.9 | 101.0 → 103.6 | 95.2 → 96.7 | 74.2 → 72.4 | 8,464 → 8,187 | 3,647,111,168 → 3,645,620,224 | 3.20–4.07 |
+| 2^22 | `word-prime-ordinary` | 772.7 → 756.9 | 470.3 → 450.3 | 95.1 → 95.9 | 91.4 → 91.5 | 70.1 → 70.3 | 9,044 → 8,812 | 3,312,517,120 → 3,312,091,136 | 5.41–6.34 |
+| 2^22 | `prime5` | 1,321.3 → 1,137.5 | 715.0 → 555.1 | 279.4 → 276.3 | 147.7 → 142.9 | 106.0 → 96.5 | 15,222 → 13,994 | 5,807,603,712 → 5,806,735,360 | 5.71–9.77 |
+| 2^23 | `word-prime` | 993.8 → 944.2 | 659.3 → 627.5 | 99.8 → 98.9 | 95.1 → 93.2 | 72.1 → 73.0 | 11,419 → 11,112 | 4,620,402,688 → 4,559,323,136 | 6.77–9.77 |
+
+`word`, `word-prime` and `word-prime-ordinary` now prove inside the
+0.4–0.8 s target; `prime5` does not. The `prime5` runs were 1,504.8, 1,321.3
+and 1,168.9 ms for the base and 1,339.4, 1,137.5 and 1,093.7 ms for the head;
+its root level, where every change sits, fell 160 ms. The third `word-prime`
+run of each binary (895.5 and 878.8 ms) met a load spike. Verification is
+unchanged: 9.4, 10.8, 15.9 and 10.5 ms at 2^22 and 11.4 ms at 2^23 for the
+base, within 0.5 ms for the head.
+
+Peak RSS moves by at most 1.3%, at 2^23, where it falls. No change holds
+setup material across phases.
+
+Spans at 2^22 from the same runs, base → head:
+
+| Span (ms, median of 3) | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| --- | ---: | ---: | ---: | ---: |
+| root D commitment | 4.2 → 2.6 | 39.1 → 21.1 | 46.2 → 29.2 | 212.7 → 93.1 |
+| › D payload | 2.3 → 0.8 | 20.3 → 7.8 | 20.3 → 7.6 | 123.6 → 36.9 |
+| › prime digits | — | 17.2 → 12.0 | 16.1 → 11.6 | 85.9 → 56.2 |
+| root weight profiles | 43.4 → 38.2 | 54.4 → 49.4 | 76.5 → 71.7 | 100.8 → 88.7 |
+| › authentication | 23.8 → 19.7 | 34.0 → 29.0 | 33.7 → 28.4 | 81.9 → 70.5 |
+| root response fold | 56.1 → 57.0 | 53.2 → 52.8 | 56.4 → 58.2 | 69.3 → 68.4 |
+| root Stage 3 | 45.0 → 45.5 | 47.3 → 47.7 | 44.1 → 46.2 | 78.7 → 75.6 |
+
+At 2^23 `word-prime` the D commitment fell 53.7 → 32.6 ms and authentication
+33.9 → 28.7 ms.
+
+#### Fifth-pass remainder
+
+At `prime5` the head still spends about 390 ms in the first suffix fold: in
+the median run, 202 ms of Stage 1, 104 ms of Stage 2 and 88 ms of
+`prepare`. The largest remaining spans:
+
+- **`prime5` suffix Stage 1, 276 ms.** Its second product round rescans the
+  quartets with the arity-four product kernel, because the first fold's
+  32 digit classes are too many for the quartet coefficient table. The
+  materialized rounds and the folds between them are arithmetic at 9–10
+  cores.
+- **Relation fold rounds, root and suffix, 96 ms at `prime5`,** and their
+  dense round terms, 68 ms. Their allocating fold is already faster than an
+  in-place one.
+- **Authentication emission, 20–71 ms.** In a sample of the head at
+  `prime5`, 37% of its samples are the paired SHAKE permutation, 23% the
+  residue kernel, 18% the field combination of the two rows and 9% the
+  per-stream absorb, which still permutes alone. Pairing the absorb would
+  save about 3 ms.
+- **`prime5` prime digits, 56 ms.** Most of it is now the parallel subset
+  sums of `weighted_source_bits`: about 16 field additions per source word
+  per plane. Accumulating them as unreduced integers would need a
+  field-specific path through that generic labinius-prover boundary;
+  inferred gain 15–25 ms, not measured.
+- **The response fold, 52–68 ms, and root Stage 3, 46–76 ms,** are
+  unchanged.
+- **`DensePoly::decompose_fold`, 47 ms at `prime5`.** Nearly all of it is the
+  vectorized balanced decomposition kernel.
+
+A cache of the D setup columns would let authentication reuse the entries
+the D payload already expanded. It would hold the D share of the 285 MB
+estimated above at `prime5`; it is not pursued. No change needed a
+verifier-side edit.
+
+What a protocol change would buy, inferred from these profiles and not
+measured:
+
+- **A cheaper setup generator.** SHAKE is about 37% of authentication
+  emission at `prime5`, so replacing it would save about 25 ms there, plus
+  the SHAKE share of the 37 ms D payload, which this pass did not separate
+  from its limb products.
+- **A smaller first-fold digit basis at `prime5`.** With eight digit classes
+  instead of 32, the second product round would use the quartet coefficient
+  table, which takes 6 ms at `word-prime-ordinary`. This changes the proof
+  bytes and the planner's security accounting.
+- **A larger prime-plane digit basis.** The 43 base-8 digits per prime-plane
+  coefficient set the prime digit count and the D payload's width.
+- The fourth pass's notes on word's first-fold parameters for the word-prime
+  shapes and on the root challenge weight still apply.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs

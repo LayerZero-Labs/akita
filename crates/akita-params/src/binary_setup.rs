@@ -7,13 +7,17 @@ use akita_error::{checked, AkitaError};
 use jolt_field::cfg_chunks_mut;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use shake::digest::{ExtendableOutput, Update, XofReader};
-use shake::Shake256;
+use keccak::{Backend, BackendClosure, Keccak, ParState1600, State1600, PLEN};
 
 /// Characteristic of the scalar field used by binary source groups.
 pub const BINARY_SETUP_P: u128 = u128::MAX - 274;
 const MAX_REJECTION_ATTEMPTS: usize = 256;
 const MAX_MATERIALIZED_BYTES: usize = 1 << 27;
+/// Bytes absorbed and squeezed per SHAKE256 permutation.
+const SHAKE256_RATE: usize = 136;
+/// Candidates squeezed per read of [`PDraws`].
+const P_BLOCK: usize = 64;
+const SETUP_DOMAIN: &[u8] = b"akita/binary-source/setup/shake256/v1";
 
 /// Algebraic role of the public setup coefficients.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,9 +99,218 @@ pub fn q_rejection_threshold(q: u32) -> Result<u64, AkitaError> {
 
 /// Stateful coefficient stream with validated, typed identity.
 pub struct TypedSetupStream {
-    reader: <Shake256 as ExtendableOutput>::Reader,
+    squeeze: ShakeSqueeze,
     modulus: SetupStreamModulus,
     q_threshold: u64,
+}
+
+/// A SHAKE256 sponge in its squeezing phase.
+///
+/// The output is the standard SHAKE256 stream of the absorbed message: the
+/// little-endian bytes of the first `SHAKE256_RATE / 8` lanes after each
+/// permutation. Holding the state lets two streams share one call of the
+/// backend's two-state permutation, which costs what one state costs on the
+/// AArch64 SHA-3 instructions.
+#[derive(Clone)]
+struct ShakeSqueeze {
+    keccak: Keccak,
+    state: State1600,
+    /// The current output block, the state's leading bytes.
+    block: [u8; SHAKE256_RATE],
+    /// Bytes of `block` already read.
+    read: usize,
+}
+
+impl ShakeSqueeze {
+    /// Absorb a message shorter than one block, pad it and permute.
+    fn new(message: &[&[u8]]) -> Result<Self, AkitaError> {
+        let length = message.iter().map(|part| part.len()).sum::<usize>();
+        let mut padded = [0u8; SHAKE256_RATE];
+        if length >= SHAKE256_RATE {
+            return Err(AkitaError::InvalidSetup(
+                "setup stream identity exceeds one SHAKE256 block".into(),
+            ));
+        }
+        for (slot, &byte) in padded
+            .iter_mut()
+            .zip(message.iter().flat_map(|part| part.iter()))
+        {
+            *slot = byte;
+        }
+        *padded.get_mut(length).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup stream identity exceeds one SHAKE256 block".into())
+        })? ^= 0x1f;
+        padded[SHAKE256_RATE - 1] ^= 0x80;
+        let mut state = [0u64; PLEN];
+        for (lane, bytes) in state.iter_mut().zip(padded.chunks_exact(8)) {
+            let mut word = [0u8; 8];
+            word.copy_from_slice(bytes);
+            *lane = u64::from_le_bytes(word);
+        }
+        let mut squeeze = Self {
+            keccak: Keccak::new(),
+            state,
+            block: [0; SHAKE256_RATE],
+            read: 0,
+        };
+        squeeze.permute();
+        Ok(squeeze)
+    }
+
+    fn permute(&mut self) {
+        self.keccak.with_f1600(|permute| permute(&mut self.state));
+        self.refill();
+    }
+
+    /// Start reading the block of a freshly permuted state.
+    fn refill(&mut self) {
+        for (bytes, lane) in self.block.chunks_exact_mut(8).zip(&self.state) {
+            bytes.copy_from_slice(&lane.to_le_bytes());
+        }
+        self.read = 0;
+    }
+
+    /// Copy unread bytes of the current block to the front of `output` and
+    /// return the rest of `output`, which is empty unless the block ran out.
+    fn take<'a>(&mut self, output: &'a mut [u8]) -> &'a mut [u8] {
+        let unread = self.block.get(self.read..).unwrap_or_default();
+        let count = unread.len().min(output.len());
+        let (front, rest) = output.split_at_mut(count);
+        front.copy_from_slice(unread.get(..count).unwrap_or_default());
+        self.read += count;
+        rest
+    }
+
+    /// Fill `output` with the next bytes of the stream.
+    fn read(&mut self, mut output: &mut [u8]) {
+        loop {
+            output = self.take(output);
+            if output.is_empty() {
+                return;
+            }
+            self.permute();
+        }
+    }
+
+    /// Fill both outputs from their streams, exactly as two calls of
+    /// [`Self::read`]; whenever both streams need a block, one call permutes
+    /// both states.
+    fn read_pair(
+        first: &mut Self,
+        mut first_output: &mut [u8],
+        second: &mut Self,
+        mut second_output: &mut [u8],
+    ) {
+        loop {
+            first_output = first.take(first_output);
+            second_output = second.take(second_output);
+            match (first_output.is_empty(), second_output.is_empty()) {
+                (true, true) => return,
+                (false, true) => first.permute(),
+                (true, false) => second.permute(),
+                (false, false) => {
+                    first
+                        .keccak
+                        .with_backend(PermutePair(&mut first.state, &mut second.state));
+                    first.refill();
+                    second.refill();
+                }
+            }
+        }
+    }
+}
+
+/// Two SHAKE256 permutation states permuted through the backend's parallel
+/// permutation when it holds two or more states, otherwise one at a time.
+struct PermutePair<'a>(&'a mut State1600, &'a mut State1600);
+
+impl BackendClosure for PermutePair<'_> {
+    #[inline(always)]
+    fn call_once<B: Backend>(self) {
+        let mut states = ParState1600::<B>::default();
+        if let [first, second, ..] = states.as_mut_slice() {
+            *first = *self.0;
+            *second = *self.1;
+        } else {
+            let permute = B::get_f1600();
+            permute(self.0);
+            permute(self.1);
+            return;
+        }
+        B::get_par_f1600()(&mut states);
+        if let [first, second, ..] = states.as_slice() {
+            *self.0 = *first;
+            *self.1 = *second;
+        }
+    }
+}
+
+/// One stream's progress through consecutive exact P draws.
+///
+/// Candidates are read in blocks of one per remaining draw, at most
+/// [`P_BLOCK`]; only a rejection reads further candidates. The accepted
+/// values, the stream position afterwards and the per-draw rejection budget
+/// are exactly those of successive single draws.
+struct PDraws<'a> {
+    remaining: &'a mut [u128],
+    rejected: usize,
+    bytes: [u8; 16 * P_BLOCK],
+    wanted: usize,
+}
+
+impl<'a> PDraws<'a> {
+    fn new(output: &'a mut [u128]) -> Self {
+        Self {
+            remaining: output,
+            rejected: 0,
+            bytes: [0; 16 * P_BLOCK],
+            wanted: 0,
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.remaining.is_empty()
+    }
+
+    /// The candidate bytes to read next; empty once every draw is accepted.
+    fn block(&mut self) -> &mut [u8] {
+        self.wanted = self.remaining.len().min(P_BLOCK);
+        self.bytes.get_mut(..16 * self.wanted).unwrap_or_default()
+    }
+
+    /// Accept the candidates of the block just read.
+    fn accept(&mut self) -> Result<(), AkitaError> {
+        let mut accepted = 0;
+        for candidate in self
+            .bytes
+            .get(..16 * self.wanted)
+            .unwrap_or_default()
+            .chunks_exact(16)
+        {
+            let mut word = [0u8; 16];
+            word.copy_from_slice(candidate);
+            let candidate = u128::from_le_bytes(word);
+            if candidate < BINARY_SETUP_P {
+                // At most `wanted <= remaining.len()` candidates are accepted.
+                if let Some(slot) = self.remaining.get_mut(accepted) {
+                    *slot = candidate;
+                }
+                accepted += 1;
+                self.rejected = 0;
+            } else {
+                self.rejected += 1;
+                if self.rejected == MAX_REJECTION_ATTEMPTS {
+                    return Err(AkitaError::InvalidSetup(
+                        "P setup rejection budget exhausted".into(),
+                    ));
+                }
+            }
+        }
+        self.remaining = std::mem::take(&mut self.remaining)
+            .get_mut(accepted..)
+            .unwrap_or_default();
+        Ok(())
+    }
 }
 
 impl TypedSetupStream {
@@ -117,21 +330,22 @@ impl TypedSetupStream {
             SetupStreamModulus::Q(q) => (1u8, u128::from(q), q_rejection_threshold(q)?),
             SetupStreamModulus::Prime128Offset275 => (2u8, BINARY_SETUP_P, 0),
         };
-        let mut xof = Shake256::default();
-        xof.update(b"akita/binary-source/setup/shake256/v1");
-        xof.update(seed);
-        xof.update(&[label.role as u8]);
-        xof.update(&label.group.to_le_bytes());
-        xof.update(&label.level.to_le_bytes());
-        xof.update(&label.rank.to_le_bytes());
-        xof.update(&label.row.to_le_bytes());
-        xof.update(&label.column.to_le_bytes());
-        xof.update(&[label.ring as u8]);
-        xof.update(&label.degree.to_le_bytes());
-        xof.update(&[tag]);
-        xof.update(&modulus.to_le_bytes());
+        let squeeze = ShakeSqueeze::new(&[
+            SETUP_DOMAIN,
+            seed,
+            &[label.role as u8],
+            &label.group.to_le_bytes(),
+            &label.level.to_le_bytes(),
+            &label.rank.to_le_bytes(),
+            &label.row.to_le_bytes(),
+            &label.column.to_le_bytes(),
+            &[label.ring as u8],
+            &label.degree.to_le_bytes(),
+            &[tag],
+            &modulus.to_le_bytes(),
+        ])?;
         Ok(Self {
-            reader: xof.finalize_xof(),
+            squeeze,
             modulus: label.modulus,
             q_threshold,
         })
@@ -150,7 +364,7 @@ impl TypedSetupStream {
         };
         for _ in 0..MAX_REJECTION_ATTEMPTS {
             let mut bytes = [0u8; 4];
-            self.reader.read(&mut bytes);
+            self.squeeze.read(&mut bytes);
             let candidate = u32::from_le_bytes(bytes);
             if u64::from(candidate) < self.q_threshold {
                 let residue = candidate % q;
@@ -186,45 +400,50 @@ impl TypedSetupStream {
     /// # Errors
     /// Rejects a q stream or exhaustion of 256 consecutive rejection candidates.
     pub fn fill_p(&mut self, output: &mut [u128]) -> Result<(), AkitaError> {
-        const BLOCK: usize = 64;
+        self.require_p()?;
+        let mut draws = PDraws::new(output);
+        while !draws.done() {
+            self.squeeze.read(draws.block());
+            draws.accept()?;
+        }
+        Ok(())
+    }
+
+    /// Fill each output from its own stream, exactly as [`Self::fill_p`] on
+    /// each stream would. The two streams squeeze through paired
+    /// permutations, which halves the permutation work where the backend
+    /// permutes two states per call.
+    ///
+    /// # Errors
+    /// Rejects a q stream or exhaustion of either stream's rejection budget.
+    pub fn fill_p_pair(
+        first: &mut Self,
+        first_output: &mut [u128],
+        second: &mut Self,
+        second_output: &mut [u128],
+    ) -> Result<(), AkitaError> {
+        first.require_p()?;
+        second.require_p()?;
+        let mut first_draws = PDraws::new(first_output);
+        let mut second_draws = PDraws::new(second_output);
+        while !(first_draws.done() && second_draws.done()) {
+            ShakeSqueeze::read_pair(
+                &mut first.squeeze,
+                first_draws.block(),
+                &mut second.squeeze,
+                second_draws.block(),
+            );
+            first_draws.accept()?;
+            second_draws.accept()?;
+        }
+        Ok(())
+    }
+
+    fn require_p(&self) -> Result<(), AkitaError> {
         if self.modulus != SetupStreamModulus::Prime128Offset275 {
             return Err(AkitaError::InvalidSetup(
                 "q setup stream requested as P".into(),
             ));
-        }
-        let mut rejected = 0;
-        let mut bytes = [0u8; 16 * BLOCK];
-        let mut remaining = output;
-        while !remaining.is_empty() {
-            let wanted = remaining.len().min(BLOCK);
-            let block = bytes
-                .get_mut(..16 * wanted)
-                .ok_or_else(|| AkitaError::InvalidSetup("P setup block overflow".into()))?;
-            self.reader.read(block);
-            let mut accepted = 0;
-            for candidate in block.chunks_exact(16) {
-                let mut word = [0u8; 16];
-                word.copy_from_slice(candidate);
-                let candidate = u128::from_le_bytes(word);
-                if candidate < BINARY_SETUP_P {
-                    // At most `wanted <= remaining.len()` candidates are accepted.
-                    if let Some(slot) = remaining.get_mut(accepted) {
-                        *slot = candidate;
-                    }
-                    accepted += 1;
-                    rejected = 0;
-                } else {
-                    rejected += 1;
-                    if rejected == MAX_REJECTION_ATTEMPTS {
-                        return Err(AkitaError::InvalidSetup(
-                            "P setup rejection budget exhausted".into(),
-                        ));
-                    }
-                }
-            }
-            remaining = std::mem::take(&mut remaining)
-                .get_mut(accepted..)
-                .unwrap_or_default();
         }
         Ok(())
     }

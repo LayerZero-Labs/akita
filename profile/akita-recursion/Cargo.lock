@@ -181,9 +181,9 @@ dependencies = [
  "akita-transcript",
  "jolt-field",
  "jolt-transcript",
+ "keccak 0.2.2",
  "serde",
  "sha3",
- "shake",
 ]
 
 [[package]]
@@ -1736,6 +1736,7 @@ checksum = "d8f198d1db720e4940b5a493201d199d9f24f568f8f746bd13706243a2f71598"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
+ "hybrid-array",
 ]
 
 [[package]]
