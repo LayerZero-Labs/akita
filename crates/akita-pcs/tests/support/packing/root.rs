@@ -4,7 +4,6 @@ use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{FoldParams, ScheduleLookupKey};
 use akita_schedules::PlannerPolicy;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 pub(super) fn build_root(
     template: &FoldParams,

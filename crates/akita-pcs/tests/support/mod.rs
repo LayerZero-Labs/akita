@@ -12,7 +12,6 @@ use akita_params::{
     CommittedGroupBatchProfile, DecompositionParams, GroupCommitPhaseParams, ScheduleLookupKey,
     SisModulusProfileId,
 };
-use jolt_crypto::challenge::SparseChallengeConfig;
 use std::marker::PhantomData;
 
 mod cross_mode;

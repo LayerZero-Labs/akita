@@ -754,7 +754,7 @@ mod tests {
     #[test]
     fn one_shot_headline_balanced_fold_meets_the_per_fold_target() {
         let challenge = FoldChallengeDistribution::production_for_ring_dim(512).unwrap();
-        assert_eq!((challenge.count_pm1, challenge.count_pm2), (19, 0));
+        assert_eq!((challenge.signed_sparse().unwrap().count_pm1, challenge.signed_sparse().unwrap().count_pm2), (19, 0));
         let query = headline_level1(&challenge);
         let digits = BalancedSignedDigitFoldPolicy::universal(128)
             .num_digits_fold(query)
@@ -773,7 +773,7 @@ mod tests {
     #[test]
     fn one_shot_headline_onehot_threshold_is_frozen() {
         let challenge = FoldChallengeDistribution::production_for_ring_dim(64).unwrap();
-        assert_eq!((challenge.count_pm1, challenge.count_pm2), (31, 10));
+        assert_eq!((challenge.signed_sparse().unwrap().count_pm1, challenge.signed_sparse().unwrap().count_pm2), (31, 10));
         let policy = UnitOneHotFoldPolicy::canonical(128, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE);
         let one_shot = headline_root(&challenge);
         let per_attempt = HonestFoldSizingQuery {

@@ -597,7 +597,6 @@ mod tests {
     use akita_params::FoldChallengeDistribution;
     use akita_params::{CommitmentPayloadMode, CompressionMapPlan, RingRelationMode};
     use jolt_algebra::{One, Prime128OffsetA7F7 as F, Ring, Zero};
-    use jolt_crypto::challenge::SparseChallengeConfig;
 
     #[test]
     fn reduced_compression_program_covers_every_map_without_quotient_events() {

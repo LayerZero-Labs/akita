@@ -1,4 +1,4 @@
-use akita_types::FoldDraw;
+use crate::FoldDraw;
 use akita_error::AkitaError;
 use num_bigint::BigUint;
 
@@ -212,7 +212,7 @@ fn uniform_biguint_below(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{ProverFoldDraw, VerifierFoldDraw};
+    use crate::{ProverFoldDraw, VerifierFoldDraw};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
     use shake::digest::{ExtendableOutput, Update, XofReader};
     use shake::Shake256;

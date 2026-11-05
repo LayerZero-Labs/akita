@@ -738,7 +738,6 @@ mod tests {
         };
         use akita_params::test_fixtures::retarget_group_role_dims_wide;
         use akita_params::{padded_setup_prefix_len, PolynomialGroupLayout};
-        use jolt_crypto::challenge::SparseChallengeConfig;
 
         let mut compared = 0;
         let mut compared_chunked = 0;
@@ -752,7 +751,7 @@ mod tests {
                 2,
                 3,
                 2,
-                SparseChallengeConfig::pm1_only(3),
+                akita_params::FoldChallengeDistribution::pm1_only(3),
             )
             .with_decomp(
                 2,

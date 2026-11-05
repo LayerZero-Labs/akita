@@ -15,7 +15,6 @@ use akita_params::{
 };
 use akita_types::RingVec;
 use jolt_algebra::{Prime64Offset59, Ring};
-use jolt_crypto::challenge::SparseChallengeConfig;
 use std::sync::Arc;
 
 type F = Prime64Offset59;

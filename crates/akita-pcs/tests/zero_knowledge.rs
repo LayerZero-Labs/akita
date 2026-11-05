@@ -891,6 +891,7 @@ fn the_descriptor_binds_the_configuration_mode() {
                     row.schedule(),
                     BasisMode::Lagrange,
                     None,
+                    Ok,
                 )
             } else {
                 akita_config::transcript_instance_descriptor::<F, Clear>(
@@ -900,6 +901,7 @@ fn the_descriptor_binds_the_configuration_mode() {
                     row.schedule(),
                     BasisMode::Lagrange,
                     None,
+                    Ok,
                 )
             };
             bytes.unwrap().1

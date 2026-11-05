@@ -1010,10 +1010,10 @@ mod tests {
     #[test]
     fn signed_sparse_selector_preserves_legacy_json_and_postcard_bytes() {
         for sparse in [
-            akita_params::FoldChallengeDistribution::pm1_only(0),
-            akita_params::FoldChallengeDistribution::pm1_only(3),
+            jolt_crypto::challenge::SparseChallengeConfig::pm1_only(0),
+            jolt_crypto::challenge::SparseChallengeConfig::pm1_only(3),
             jolt_crypto::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
-            akita_params::FoldChallengeDistribution::production_for_ring_dim(128).unwrap(),
+            jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
         ] {
             let family = FoldChallengeDistribution::SignedSparse(sparse);
             let old_json = serde_json::to_vec(&sparse).unwrap();

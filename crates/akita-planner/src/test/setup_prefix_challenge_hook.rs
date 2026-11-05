@@ -9,7 +9,6 @@ use akita_params::{
     CommittedGroupBatchProfile, FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute,
     MultiChunkProfileId, OpeningMethod,
 };
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 fn replace_evaluation_trace_challenge(
     group: &mut GroupOpenPhaseParams,

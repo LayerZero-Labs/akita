@@ -10,7 +10,6 @@ use akita_params::test_fixtures::{
 use akita_params::{
     CommittedGroupParams, OpeningClaimsLayout, OuterCommitMatrixParams, SisModulusProfileId,
 };
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 #[test]
 fn setup_prefix_profile_must_commit_every_ring_in_the_full_domain() {

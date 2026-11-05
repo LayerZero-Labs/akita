@@ -15,9 +15,7 @@ use akita_types::check_stage2_oracle;
 use akita_types::{
     build_reduced_compression_relation_weights, AkitaSetupDescriptor, NegativeBinarySupport,
 };
-use jolt_algebra::ring::scalar_powers;
 use jolt_algebra::{Ext2, ExtField, One, Prime64Offset59, Zero};
-use jolt_crypto::challenge::SparseChallengeConfig;
 use jolt_transcript::{ClaimMismatch, ClearDomain};
 
 type F = Prime64Offset59;

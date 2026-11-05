@@ -3,8 +3,8 @@ use jolt_algebra::CanonicalBytes;
 
 #[test]
 fn ordinary_setup_prefix_bytes_are_pinned() {
-    let seed = akita_types::AkitaSetupSeed::shake256_paged_v1([0x5b; 32]);
-    let prefix = jolt_crypto::lattice::derive_public_matrix_prefix::<TestF>(8, &seed);
+    let seed = jolt_crypto::lattice::PublicMatrixSeed::shake256_paged_v1([0x5b; 32]);
+    let prefix = jolt_crypto::lattice::derive_public_matrix_prefix::<TestF>(8, &seed).unwrap();
     // Independently expanded SHAKE256 page zero for the fp128 preset modulus
     // 2^128 - 2^32 + 22537. Each candidate is already canonical.
     let expected = [
@@ -17,7 +17,7 @@ fn ordinary_setup_prefix_bytes_are_pinned() {
         0x6e80b0462c8cbad4d119c37197a4b751,
         0x569e16e95bd92c903bd004dfe62f5e6e,
     ];
-    for (value, expected) in prefix.as_field_slice().iter().zip(expected) {
+    for (value, expected) in prefix.iter().zip(expected) {
         let mut bytes = [0u8; 16];
         value.to_bytes_le(&mut bytes);
         assert_eq!(bytes, expected.to_le_bytes());

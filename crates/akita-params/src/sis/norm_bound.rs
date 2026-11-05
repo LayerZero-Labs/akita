@@ -553,12 +553,8 @@ mod tests {
     #[test]
     fn rounded_up_role_a_inf_norm_matches_certified_difference_envelope() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{
-            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
-        };
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
         let fold_challenge_config =
             FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
@@ -655,12 +651,8 @@ mod tests {
     #[test]
     fn committed_fold_collision_prices_digit_envelope_not_honest_cap() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{
-            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
-        };
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
         let fold_challenge_config =
             FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
@@ -719,12 +711,8 @@ mod tests {
     #[test]
     fn fold_linf_digit_plan_uses_the_universal_tail_cap() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{
-            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
-        };
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
         let fold_challenge_config =
             FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
@@ -771,12 +759,8 @@ mod tests {
     #[test]
     fn committed_fold_collision_uses_num_digits_fold_verifier_bound() {
         use crate::DecompositionParams;
-        use jolt_crypto::challenge::{
-            SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
-        };
+        use jolt_crypto::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         use crate::FoldChallengeDistribution;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
-        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
         let fold_challenge_config =
             FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {

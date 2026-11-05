@@ -43,9 +43,7 @@ name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
  "akita-error",
- "akita-params",
  "akita-transcript",
- "akita-types",
  "criterion",
  "jolt-algebra",
  "jolt-crypto",

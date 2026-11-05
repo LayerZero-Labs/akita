@@ -1,7 +1,6 @@
 //! Deterministic terminal checks over the revealed terminal response.
 
 use akita_algebra::row_batch::ROW_BATCH;
-use akita_algebra::CyclotomicInverse;
 use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, TerminalFoldParams};
 use akita_transcript::{field_digest, FIELD_DIGEST_BYTES};

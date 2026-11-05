@@ -5,7 +5,6 @@ use akita_params::test_fixtures::{
 };
 use akita_params::PolynomialGroupLayout;
 use akita_params::{CommitmentRingDims, OpeningClaimsLayout};
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 #[test]
 fn relation_mode_is_bound_immediately_after_payload_mode() {

@@ -2,7 +2,7 @@
 
 use akita_challenges::{BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing};
 
-use akita_types::FoldDraw;
+use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;

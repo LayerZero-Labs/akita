@@ -878,7 +878,7 @@ pub fn find_zk_schedule(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
     zk: akita_params::zk::ZkOpeningSchedule,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -913,7 +913,7 @@ pub fn find_zk_schedule_offloading_at_cut_for_test(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
     zk: akita_params::zk::ZkOpeningSchedule,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -936,7 +936,7 @@ fn find_zk_schedule_with(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
     zk: super::schedule_params::ZkSearch,
 ) -> Result<PlannedFoldSchedule, AkitaError> {

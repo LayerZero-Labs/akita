@@ -7,7 +7,8 @@ use akita_error::AkitaError;
 pub const IDENTITY: &[u8] = b"\x01akita/binary-root/phi243/bounded46/shake256-v1";
 pub const WEIGHT: usize = 46;
 
-pub(crate) fn profile() -> Result<BinaryChallengeProfile, AkitaError> {
+/// The root family's bounded-weight profile over the Phi243 scalar ring.
+pub fn profile() -> Result<BinaryChallengeProfile, AkitaError> {
     BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, WEIGHT)
 }
 

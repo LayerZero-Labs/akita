@@ -700,7 +700,7 @@ mod tests {
     fn verifier_setup_prefix_context_survives_clone_and_rejects_serialization() {
         use crate::proof::{RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
         let descriptor = seed([7u8; 32]);
-        let matrix = derive_public_matrix_prefix::<F>(2 * D, &descriptor.setup_seed);
+        let matrix = derive_matrix::<F>(2 * D, &descriptor.setup_seed);
         let expanded = Arc::new(
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                 descriptor.clone(),

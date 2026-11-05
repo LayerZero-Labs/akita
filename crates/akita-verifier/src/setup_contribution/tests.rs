@@ -15,9 +15,7 @@ use akita_types::{
     AkitaExpandedSetup, AkitaSetupDescriptor, PhysicalBSetupPlan, PreparedRelationAddress,
     SetupContributionGroupInputs,
 };
-use jolt_algebra::ring::scalar_powers;
 use jolt_algebra::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
-use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
 
 mod address_spans;
 mod direct_evaluation_regressions;

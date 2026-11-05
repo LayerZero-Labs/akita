@@ -529,7 +529,6 @@ mod tests {
     };
     use jolt_algebra::Zero;
     use jolt_algebra::{Ext2, Prime64Offset59};
-    use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
     use std::sync::Arc;
 
     type F = Prime64Offset59;

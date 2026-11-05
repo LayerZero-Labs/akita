@@ -5,7 +5,6 @@ use jolt_crypto::challenge::Challenges;
 use akita_params::FoldChallengeDistribution;
 use jolt_crypto::challenge::SparseChallenge;
 use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
-use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
 
 use crate::{
     relation_rhs_coeff_len, CoefficientPackingChallenges, FpExtEncoding,

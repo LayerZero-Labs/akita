@@ -489,9 +489,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_types::FoldDraw;
     use akita_params::FoldChallengeDistribution;
     use akita_params::SisModulusProfileId;
-    use jolt_crypto::challenge::SparseChallengeConfig;
 
     type F = jolt_algebra::Prime128Offset275;
 

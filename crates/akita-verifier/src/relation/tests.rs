@@ -11,9 +11,7 @@ use akita_types::{
     relation_rhs_coeff_len, AkitaSetupDescriptor, PreparedRelationAddress,
     RingRelationGroupOpening, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
 };
-use jolt_algebra::ring::scalar_powers;
 use jolt_algebra::{Fp32, One, Prime128OffsetA7F7, Zero};
-use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
 
 type F = Fp32<251>;
 const D: usize = 128;

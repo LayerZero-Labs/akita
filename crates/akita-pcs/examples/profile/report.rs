@@ -10,7 +10,6 @@ use akita_params::{
 };
 use akita_types::NttTransformDomain;
 use jolt_algebra::checked;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 mod grinding;
 

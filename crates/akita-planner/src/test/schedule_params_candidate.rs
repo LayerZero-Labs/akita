@@ -5,7 +5,6 @@ use super::recursive::{
 use super::*;
 use akita_params::FoldChallengeDistribution;
 use akita_params::{PolynomialGroupLayout, SisModulusProfileId};
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 fn synthetic_profile(
     group: PolynomialGroupLayout,

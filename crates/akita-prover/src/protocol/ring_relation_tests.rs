@@ -9,7 +9,6 @@ use akita_types::{
     relation_rhs_coeff_len, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables,
 };
 use jolt_algebra::{Ext2, ExtField, Prime64Offset59, Zero};
-use jolt_crypto::challenge::{SparseChallenge, SparseChallengeConfig};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;

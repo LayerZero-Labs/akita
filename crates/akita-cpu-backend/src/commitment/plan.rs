@@ -352,7 +352,6 @@ mod tests {
     use super::*;
     use akita_params::FoldChallengeDistribution;
     use akita_params::{CommitmentPayloadMode, SisModulusProfileId};
-    use jolt_crypto::challenge::SparseChallengeConfig;
 
     fn recursive_params(payload_mode: CommitmentPayloadMode) -> CommittedGroupParams {
         let mut params = CommittedGroupParams::params_only(

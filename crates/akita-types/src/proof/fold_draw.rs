@@ -61,6 +61,9 @@ pub trait FoldChallengeDraw: FoldDraw {
 
 impl<D: FoldDraw + ?Sized> FoldChallengeDraw for D {}
 
+#[cfg(all(test, feature = "labinius-trinomial", feature = "prover"))]
+mod binary_root_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

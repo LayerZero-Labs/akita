@@ -18,7 +18,6 @@ use akita_types::{
     RingRelationGroupOpening, RingRelationInstance, RingVec, SubringCoefficientPackingTables,
 };
 use jolt_algebra::{Ext2, One, Prime64Offset59, Ring, Zero};
-use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;

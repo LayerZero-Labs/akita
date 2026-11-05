@@ -13,9 +13,7 @@ use akita_params::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
     PolynomialGroupLayout, RingOpeningPoint,
 };
-use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{Fp32, One, Zero};
-use jolt_crypto::challenge::{SparseChallenge, SparseChallengeConfig};
 use support::{flatten_markers, marker};
 
 type F = Fp32<251>;

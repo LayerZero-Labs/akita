@@ -34,7 +34,7 @@ use akita_types::{
     RelationRangeImagePlan, RingRelationInstance,
 };
 use compiler::RelationWeightCompilation;
-use jolt_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
+use jolt_algebra::ring::scalar_powers;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use setup_columns::{
@@ -481,9 +481,9 @@ where
             1,
             1,
             |coefficients| {
-                Ok(vec![eval_flat_ring_at_pows_fast(
-                    coefficients,
+                Ok(vec![MulBaseUnreduced::dot_base(
                     &alpha_pows_d,
+                    coefficients,
                 )])
             },
         )?;

@@ -14,7 +14,6 @@ mod tests {
         CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
         Prime64Offset59, Zero,
     };
-    use jolt_crypto::challenge::SparseChallengeConfig;
     use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 
     use crate::{

@@ -41,7 +41,6 @@ use akita_params::{
     TailSegmentLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_serialization::{AkitaSerialize, Compress};
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use jolt_algebra::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
 

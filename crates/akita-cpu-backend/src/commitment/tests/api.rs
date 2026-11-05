@@ -15,7 +15,6 @@ use akita_params::{
 };
 use akita_types::RingVec;
 use jolt_algebra::Fp64;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 type F = Fp64<4294967197>;
 // A compressed q32 image needs a ring dimension divisible by the first

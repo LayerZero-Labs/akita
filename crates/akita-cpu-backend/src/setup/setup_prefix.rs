@@ -182,7 +182,6 @@ mod tests {
     };
     use akita_serialization::AkitaSerialize;
     use jolt_algebra::Prime128OffsetA7F7 as F;
-    use jolt_crypto::challenge::SparseChallengeConfig;
     use std::sync::Arc;
 
     type MissingExportExecutor<'a> = (

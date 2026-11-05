@@ -2,8 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_params::{DecompositionParams, SisModulusProfileId};
-use jolt_crypto::challenge::SparseChallengeConfig;
+use akita_params::{DecompositionParams, FoldChallengeDistribution, SisModulusProfileId};
 use std::marker::PhantomData;
 
 /// `Cfg` proving in zero knowledge: its own field, decomposition and planning
@@ -39,7 +38,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ZkCommitmentConfig<Cfg> {
         Cfg::decomposition()
     }
 
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         Cfg::ring_challenge_config(d)
     }
 

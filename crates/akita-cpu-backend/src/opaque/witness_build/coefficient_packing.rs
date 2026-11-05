@@ -268,7 +268,6 @@ mod tests {
         PolynomialGroupLayout, SisModulusProfileId,
     };
     use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
-    use jolt_crypto::challenge::{SparseChallenge, SparseChallengeConfig};
 
     type F = Prime128OffsetA7F7;
 
