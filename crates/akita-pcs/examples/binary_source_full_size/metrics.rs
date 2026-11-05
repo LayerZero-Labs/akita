@@ -68,6 +68,12 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Timings {
 }
 
 impl Timings {
+    /// Forget every recorded span, so later totals cover only later work.
+    pub(super) fn clear(&self) {
+        if let Ok(mut totals) = self.0.lock() {
+            totals.clear();
+        }
+    }
     pub(super) fn print(&self, phase: &str) {
         if let Ok(totals) = self.0.lock() {
             for (name, totals) in totals.iter() {

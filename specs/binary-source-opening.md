@@ -2553,6 +2553,152 @@ translated lanes at 27.9 ms and the source evaluation at 28.7 ms. A lane fill
 like the authentication family's would apply to both. This pass does not make
 that change.
 
+### Verifier pass
+
+This pass makes the binary-source verifier faster without changing setup,
+commitment or proof bytes, or the transcript. Its target is 5–10 ms of
+verification at N=2^22 for all four shapes. It starts from `737c6a6f5`, the
+third prover pass after merging `dev`.
+
+#### Repeated verification
+
+A single verification at N=2^22 takes about 10 ms, so one isolated run is
+dominated by noise. With `BINARY_SOURCE_VERIFY_REPEAT=n`, the driver's verify
+phase builds its verifier once, verifies the fixture once as a warm-up, clears
+the span records, and verifies it `n` more times in the same process. Each
+repeat rebuilds the statement and the caller transcript, and checks the
+continuation and the end of the proof, exactly as the single run does. It
+prints the median, minimum and maximum wall time of the repeats
+(`verify_repeat`) and the warm-up's wall time (`verify_first`). The span
+records then cover the repeats only, so a span's per-verification time is its
+total divided by `n`. The variable does not change any byte. Without it the
+verify phase runs once, as before. `RAYON_NUM_THREADS=1` gives the
+single-threaded figures.
+
+Every figure below is from 50 repeats against a fixture proved once by the
+base executable. Every fixture reproduced its pin, and every repeated run
+reported `verification passed=true`. The one-minute load before each run is
+listed per configuration. The repeats' spread is small: at N=2^22
+`word-prime` the minimum and maximum lie within 4% of the median in parallel
+and within 2% single-threaded.
+
+#### Base profile
+
+Per-verification span times at `737c6a6f5`, in milliseconds. The columns are
+the four shapes at N=2^22 (`word`, `word-prime`, `word-prime-ordinary`,
+`prime5`), `word-prime` at N=2^23, and the smoke run, `word-prime-ordinary` at
+N=2^10. Indentation is the measured span tree; spans with no parent were
+opened on Rayon workers and are placed under the span that spawned them.
+
+Parallel, loads 5.11–5.53:
+
+| Span (ms) | 2^22 w | 2^22 wp | 2^22 wpo | 2^22 p5 | 2^23 wp | 2^10 wpo |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Median verification | 8.62 | 9.68 | 15.49 | 9.56 | 10.54 | 8.81 |
+| › binary root (`binary_root_verify`) | 3.25 | 3.98 | 9.52 | 3.74 | 4.92 | 5.20 |
+| ›› relation compile | 1.02 | 1.28 | 3.10 | 1.35 | 1.48 | 1.02 |
+| ››› A image and terminal (`binary_root_weights_algebra`) | 1.01 | 1.00 | 1.02 | 0.77 | 1.14 | 0.04 |
+| ››› prime planes | — | 0.27 | 0.28 | 0.57 | 0.34 | 0.01 |
+| ››› ordinary root (`binary_root_weights_ordinary`) | — | — | 1.67 | — | — | 0.85 |
+| ›››› `derive_public_matrix_prefix` | — | — | 0.65 | — | — | 0.32 |
+| ›› relation evaluation | 1.25 | 1.59 | 2.67 | 1.36 | 2.33 | 1.14 |
+| ››› parity rows | 0.54 | 0.54 | 0.55 | — | 1.01 | 0.08 |
+| ››› image | 0.35 | 0.35 | 0.36 | 0.35 | 0.35 | 0.20 |
+| ››› prime planes | — | 0.34 | 0.35 | 0.79 | 0.52 | 0.02 |
+| ››› partial columns | 0.22 | 0.22 | 0.23 | — | 0.22 | 0.01 |
+| ››› ordinary translated lanes | — | — | 1.02 | — | — | 0.76 |
+| ›› τ₁ draw | 0.00 | 0.00 | 1.87 | 0.00 | 0.00 | 1.83 |
+| ›› Stage 3 (`binary_root_a_stage3`) | 0.33 | 0.45 | 0.47 | 0.44 | 0.44 | 0.36 |
+| ›› `binary_root_public_new` | 0.00 | 0.00 | 0.30 | 0.00 | 0.00 | 0.28 |
+| › suffix Stage 2 (`stage2_verifier`, 6 folds) | 4.00 | 4.23 | 5.24 | 4.26 | 4.17 | 2.42 |
+| ›› setup scan (`setup_contribution_scan`) | 2.18 | 2.73 | 3.66 | 2.69 | 2.69 | 1.39 |
+| ›› coefficient functional preparation | 0.83 | 0.62 | 0.64 | 0.64 | 0.60 | 0.37 |
+| ›› structured groups | 0.48 | 0.42 | 0.45 | 0.45 | 0.41 | 0.28 |
+| › terminal ring relations | 0.37 | 0.36 | 0.57 | 0.37 | 0.36 | 0.36 |
+
+Single-threaded, same loads:
+
+| Span (ms) | 2^22 w | 2^22 wp | 2^22 wpo | 2^22 p5 | 2^23 wp | 2^10 wpo |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Median verification | 16.86 | 23.96 | 31.27 | 22.92 | 24.89 | 11.72 |
+| › binary root | 3.25 | 4.02 | 11.31 | 3.71 | 4.92 | 6.27 |
+| ›› relation compile | 1.02 | 1.30 | 4.62 | 1.34 | 1.48 | 1.83 |
+| ››› ordinary root | — | — | 3.21 | — | — | 1.66 |
+| ›››› `derive_public_matrix_prefix` | — | — | 2.27 | — | — | 1.14 |
+| ›› relation evaluation | 1.25 | 1.61 | 2.92 | 1.35 | 2.33 | 1.13 |
+| ›› τ₁ draw | 0.00 | 0.00 | 1.84 | 0.00 | 0.00 | 1.85 |
+| › suffix Stage 2 (6 folds) | 12.13 | 18.45 | 18.46 | 17.60 | 18.38 | 4.18 |
+| ›› setup scan | 9.94 | 16.81 | 16.80 | 15.71 | 16.72 | 3.27 |
+| › terminal ring relations | 0.55 | 0.55 | 0.55 | 0.54 | 0.54 | 0.52 |
+
+The other binary-root rows have the same single-threaded values as in
+parallel: the binary root runs on one thread, apart from the ordinary root's
+setup derivation and translated lanes.
+
+Three facts shape the pass:
+
+- **The suffix's setup scan dominates single-threaded verification**: 59–72%
+  at N=2^22. It is ordinary-protocol code under
+  `crates/akita-verifier/src/setup_contribution/`, which this pass does not
+  touch (see below).
+- **In parallel, the binary root is the largest serial cost**: 3.3–4.9 ms of
+  8.6–10.5 ms for the binary-only shapes and 9.5 of 15.5 ms for the mixed
+  shape.
+- **About 1 ms of each verification is outside every span.** A `sample`
+  profile of single-threaded N=2^22 `word-prime` attributes it to the suffix
+  folds' Stage 1 replay (`verify_stage1`, about 0.35 ms over six folds), their
+  Stage 1 challenge derivation (about 0.3 ms), Stage 2 sumcheck replay, and
+  the root's field switch and projection-row draw.
+
+The same profile breaks down the root's 1.0 ms A image and terminal compile.
+About 0.75 ms of it is building the image family's challenge supports
+(`binary_direct_a_weights`). Every one of the 256 or 512 sparse challenges is
+expanded into a 648-entry `i128` array (`pack_signed_components`), each entry
+is lifted into the proof field, and the array is scanned again for its at most
+46 nonzero entries. The challenge positions give the same supports directly.
+
+#### The setup scan and PR #327
+
+PR #327 (to `main`, head `0ff08a8a9`) rewrites the direct setup scan with
+slice-wise weight assembly and a per-ring contraction. Its scan files differ
+from this base only in a test file, so its scan was applied to the base for a
+measurement executable that was never committed. Base and that executable
+verified the same fixtures alternately, 50 repeats each, at loads of
+4.38–5.22. Every run passed.
+
+| N=2^22 shape | Parallel: scan, verification (ms) | Single-threaded: scan, verification (ms) |
+| --- | --- | --- |
+| `word` | 2.37 → 2.29, 8.90 → 8.74 | 10.01 → 9.29, 17.09 → 15.90 |
+| `word-prime` | 2.66 → 2.58, 9.57 → 9.45 | 16.81 → 15.89, 24.40 → 23.00 |
+| `word-prime-ordinary` | 3.09 → 2.98, 15.23 → 15.07 | 17.26 → 16.34, 32.12 → 31.41 |
+| `prime5` | 3.01 → 2.87, 9.98 → 9.87 | 15.77 → 15.28, 23.17 → 22.59 |
+
+#327 makes the scan 3–7% faster here. That is 0.5–0.9 ms single-threaded,
+where the scan is 54–70% of verification, and 0.1 ms in parallel, where it is
+20–31%. It will reach `dev` separately, and none of its gain is counted in
+this pass.
+
+#### Candidates
+
+Expected gains at N=2^22, from the profile above:
+
+| Candidate | Spans reduced | Shapes | Parallel gain (ms) | Single-threaded gain (ms) |
+| --- | --- | --- | ---: | ---: |
+| Image challenge supports read from the challenge positions | A image compile | all | 0.7 | 0.7 |
+| Independent root weight families evaluated in parallel | relation evaluation | all | 0.6–1.5 | 0 |
+| Independent root weight families compiled in parallel | relation compile | `word-prime`, `prime5`, mixed | 0.2–1.0 | 0 |
+| Ordinary root role rings without per-ring conversion and copies | ordinary root compile | mixed | 0.2–0.5 | 0.3–0.6 |
+| Image and Stage 3 adjoints of the A rows in parallel | image evaluation, Stage 3 | all | 0.1–0.3 | 0 |
+| Suffix Stage 1 replay and challenge derivation | ordinary-protocol code | all | 0.1–0.3 | 0.1–0.3 |
+
+The τ₁ draw of the mixed shape (1.8 ms) is the sponge squeezing 69,632
+coefficients in chunks, so a byte-preserving change cannot shorten it here.
+The ordinary root's `derive_public_matrix_prefix` (0.65 ms parallel, 2.27 ms
+single-threaded) depends only on the setup and the schedule. It could be
+derived once when the verifier is built instead of in every verification, but
+that moves the cost to verifier preparation rather than removing it, so this
+pass does not count it.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs

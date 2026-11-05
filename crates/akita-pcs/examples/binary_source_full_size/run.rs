@@ -71,7 +71,7 @@ pub(super) fn main() -> Result<()> {
     println!("fixture log_carriers={log} shape={shape} columns={columns} rank=3 dev_protocol={} security_claim=false", akita_params::DEV_PROTOCOL);
     let outcome = match phase.as_str() {
         "prove" => prove(log, &shape, &directory),
-        "verify" => verify(log, &shape, &directory),
+        "verify" => verify(log, &shape, &directory, &timings),
         "plan" => catalog::plan_only(log, &shape),
         _ => Err("phase must be prove, verify or plan".into()),
     };
@@ -327,7 +327,7 @@ fn groups(
     Ok(groups)
 }
 
-fn verify(log: usize, shape: &str, directory: &Path) -> Result<()> {
+fn verify(log: usize, shape: &str, directory: &Path, timings: &metrics::Timings) -> Result<()> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
     let catalog = if log == 10 {
         TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
@@ -357,46 +357,76 @@ fn verify(log: usize, shape: &str, directory: &Path) -> Result<()> {
         &(),
     )?;
     let descriptor = claims::descriptor(log)?;
-    let owned = groups(log, &fixture.claims, &descriptor, &commitments)?;
-    let borrowed = owned
-        .into_iter()
-        .zip(&commitments)
-        .map(|(group, commitment)| group.map_commitment(|_| commitment))
-        .collect();
-    let claims = OpeningClaims::from_groups(borrowed)?;
-    let (final_group, precommitteds) = claims.groups().split_last().ok_or("empty statement")?;
-    let profiles = CommittedGroupBatchProfile {
-        final_group: *final_group.commitment().profile(),
-        precommitteds: precommitteds
-            .iter()
-            .map(|g| *g.commitment().profile())
-            .collect(),
-    };
-    let selection = scheme
-        .schedules()
-        .resolve_profiles(&profiles, 0)?
-        .selection();
-    let statement = GroupBatchStatement::new(selection, claims)?;
     let proof = std::fs::read(directory.join("proof.bin"))?;
-    let mut replay = new_verifier_channel(PROTOCOL, &proof);
-    replay.public_message(&BytesMsg(b"application-prefix"));
-    let guard = BinaryAReadGuard::forbid();
-    let pending = {
-        let _span = tracing::info_span!("verify_complete_opening").entered();
-        verifier.batched_verify_embedded(
-            &mut replay,
-            statement,
-            BasisMode::Lagrange,
-            SetupPolicy::Check(None),
-        )?
+    let once = || -> Result<()> {
+        let owned = groups(log, &fixture.claims, &descriptor, &commitments)?;
+        let borrowed = owned
+            .into_iter()
+            .zip(&commitments)
+            .map(|(group, commitment)| group.map_commitment(|_| commitment))
+            .collect();
+        let claims = OpeningClaims::from_groups(borrowed)?;
+        let (final_group, precommitteds) = claims.groups().split_last().ok_or("empty statement")?;
+        let profiles = CommittedGroupBatchProfile {
+            final_group: *final_group.commitment().profile(),
+            precommitteds: precommitteds
+                .iter()
+                .map(|g| *g.commitment().profile())
+                .collect(),
+        };
+        let selection = scheme
+            .schedules()
+            .resolve_profiles(&profiles, 0)?
+            .selection();
+        let statement = GroupBatchStatement::new(selection, claims)?;
+        let mut replay = new_verifier_channel(PROTOCOL, &proof);
+        replay.public_message(&BytesMsg(b"application-prefix"));
+        let guard = BinaryAReadGuard::forbid();
+        let pending = {
+            let _span = tracing::info_span!("verify_complete_opening").entered();
+            verifier.batched_verify_embedded(
+                &mut replay,
+                statement,
+                BasisMode::Lagrange,
+                SetupPolicy::Check(None),
+            )?
+        };
+        drop(guard);
+        replay.public_message(&BytesMsg(b"application-suffix"));
+        let continuation: [u8; 32] = replay.verifier_message();
+        if continuation != fixture.continuation {
+            return Err("caller transcript continuation mismatch".into());
+        }
+        pending.check_eof(replay)?;
+        Ok(())
     };
-    drop(guard);
-    replay.public_message(&BytesMsg(b"application-suffix"));
-    let continuation: [u8; 32] = replay.verifier_message();
-    if continuation != fixture.continuation {
-        return Err("caller transcript continuation mismatch".into());
+    let start = std::time::Instant::now();
+    once()?;
+    println!("verify_first wall_ns={}", start.elapsed().as_nanos());
+    // Repeated verification reuses this process's verifier, after the first
+    // run above as warm-up. The span totals then cover the repeats only.
+    let repeats = std::env::var("BINARY_SOURCE_VERIFY_REPEAT")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(0);
+    if repeats > 0 {
+        timings.clear();
+        let mut walls = Vec::with_capacity(repeats);
+        for _ in 0..repeats {
+            let start = std::time::Instant::now();
+            once()?;
+            walls.push(start.elapsed().as_nanos());
+        }
+        walls.sort_unstable();
+        println!(
+            "verify_repeat count={repeats} median_ns={} min_ns={} max_ns={} rayon_num_threads={}",
+            walls[repeats / 2],
+            walls[0],
+            walls[repeats - 1],
+            std::env::var("RAYON_NUM_THREADS").unwrap_or_else(|_| "default".into()),
+        );
     }
-    pending.check_eof(replay)?;
     println!("verification passed=true caller_transcript_continuation_matches=true online_a_reads=forbidden");
     Ok(())
 }
