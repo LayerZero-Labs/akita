@@ -109,7 +109,6 @@ dev-protocol = ["akita-params/dev-protocol"]
 # configuration does. It compiles no hiding sampler (jolt-zk's `whiteout`
 # only, I6), so a hiding commitment fails without `zk-prover` (A46).
 zk = [
-  "dep:jolt-sumcheck",
   "dep:jolt-zk",
   "dep:akita-sumcheck",
   "dep:jolt-poly",
@@ -154,7 +153,6 @@ akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = f
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", optional = true }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
 jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
   "whiteout",
 ], optional = true }
@@ -166,7 +164,6 @@ zeroize = { version = "1.8", default-features = false, features = [
 [dev-dependencies]
 zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
   "test-support",
   "whiteout-test-support",

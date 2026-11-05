@@ -201,7 +201,6 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
- "jolt-sumcheck",
  "jolt-transcript",
  "jolt-zk",
  "libc",
