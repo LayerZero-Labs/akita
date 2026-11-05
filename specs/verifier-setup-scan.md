@@ -11,19 +11,19 @@
 
 Under `SetupContributionMode::Direct`, every ordinary fold's Stage-2 relation
 check evaluates the setup matrix's contribution to the relation weight by
-scanning a prefix of the expanded setup. In binary-source verification at
-N = 2^22 the six ordinary suffix folds spend about 10 ms single-threaded and
-2.7 ms parallel in this scan, the largest verifier cost after the binary root.
-This note records what the scan computes, a cost model, measured spans, and
-the speedups that keep every transcript, schedule, setup, and proof byte
-unchanged.
+scanning a prefix of the expanded setup. On the CI profile benchmarks
+(`.github/workflows/profile-bench.yml`) this scan is the largest phase of
+single-threaded verification: 44–77% of it on an Apple M4 Max at the base
+commit. This note records what the scan computes, a cost model, measured
+spans, and the speedups that keep every transcript, schedule, setup, and
+proof byte unchanged.
 
 ## What the scan computes
 
 A fold's plan (`SetupContributionPlan`) projects every group's A, B, and D
-setup roles onto one base ring dimension `d` (64 for every fold measured
-here). Base ring `b` of the shared matrix, for `b < required`, carries
-coefficients `c_{b,0..d}`. The scan returns
+setup roles onto one base ring dimension `d` (64 or 128 in the profiles
+measured here). Base ring `b` of the shared matrix, for `b < required`,
+carries coefficients `c_{b,0..d}`. The scan returns
 
     S = Σ_{b < required} w(b) · Σ_{j < d} c_{b,j} · π_j
 
@@ -52,172 +52,193 @@ lane-scale product per projected base ring.
 
 The setup is materialized once in `AkitaExpandedSetup`; the scan derives no
 setup entry. Each fold reads the prefix `[0, required)` of the same matrix.
-Over the six folds at 2^22 that is 97,688 ring reads (6.25 M field
-coefficients, 100 MB) against 52,632 distinct rings.
+In `onehot_fp128` at 33 variables the six folds read 110,592 rings against
+65,536 distinct ones.
 
-For fp128 (`E = F = Prime128Offset275`) a coefficient costs one 128 × 128-bit
-schoolbook product, eight 64-bit multiply instructions, accumulated into
-four 128-bit slots. Single-threaded throughput is 1.3 ns per coefficient
-(12 GB/s of setup), which is compute-bound and close to the two-multiplier
-port limit of the core. The `d` coefficient products per ring are a lower
-bound for a uniformly random setup: every coefficient carries an independent
+For fp128 (`E = F = Prime128OffsetA7F7`) a coefficient costs one
+128 × 128-bit schoolbook product accumulated into an unreduced
+`Fp128ProductAccum`. The `d` coefficient products per ring are a lower bound
+for a uniformly random setup: every coefficient carries an independent
 weight `w(b)·π_j`, so contracting the tensor structure of `w` or `π` cannot
 reduce the count below one wide product per coefficient.
 
 ## Measured profile
 
-Machine: Apple M4 Max (12 performance and 4 efficiency cores), shared;
-the one-minute load is recorded with every measurement. Binary-source runs use
-`scripts/binary-source-full-size.sh` fixtures (proof digests match
-`scripts/binary-source-full-size-digests.tsv`) and time the verify phase only.
-The ordinary schedule is the `profile` example with `onehot_fp128` at
-`AKITA_NUM_VARS=32`, which reports the setup-scan phase single- and
-multi-threaded. Every figure is the median of three runs at the base commit
-`84c2176e8`.
+The thirteen CI profiles run in seven shards. The `profile` example reports
+each verification's relation phases (`setup_scan`, `structured_groups`,
+`coefficient_functional_preparation`, `quotient_tail`) single- and
+multi-threaded; `AKITA_PROFILE_SPAN_CLOSES=1` adds one `relation_setup_scan`
+span per fold with its geometry.
 
-| Configuration | Parallel (ms) | One thread (ms) | Load |
-| --- | ---: | ---: | --- |
-| binary source 2^22 `word-prime` | 2.71 | 10.04 | 8.5–9.6 |
-| binary source 2^22 `word` | 2.81 | 9.94 | 8.1–8.5 |
-| binary source 2^23 `word` | 4.27 | 17.77 | 8.1–9.8 |
-| binary source 2^23 `word-prime` | 4.08 | 17.08 | 9.6–9.9 |
-| ordinary `onehot_fp128`, nv 32 | 2.44 | 10.85 | 16–19 |
+Local figures come from an Apple M4 Max (12 performance and 4 efficiency
+cores), shared; the one-minute load is recorded with every measurement.
+Every figure is the median of three interleaved runs of the base and the
+candidate binaries, built with `parallel,profile-ci,transcript-keccak`.
 
-Fold geometry at 2^22 `word-prime` (all `d = 64`):
+Fold geometry and single-threaded scan spans at the base commit
+(`b05545e69`), M4:
 
-| Fold | Mode | Groups | Rings | Scan, one thread (ms) | `⟨c_b, π⟩` alone (ms) |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 0 | quotient lift, A ratio 8 | 2 (fused) | 52,632 | 5.66 | 4.42 |
-| 1 | reduced | 1 | 24,576 | 2.53 | 2.07 |
-| 2 | reduced | 1 | 12,288 | 1.22 | 1.00 |
-| 3 | reduced | 1 | 4,096 | 0.43 | 0.33 |
-| 4 | reduced | 1 | 2,048 | 0.22 | 0.18 |
-| 5 | reduced | 1 | 2,048 | 0.20 | 0.17 |
+| Profile | Fold | Mode | `d` | Rings | A ratio | Scan, one thread (ms) |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| `onehot_fp128`, nv 33 | 0 | quotient lift | 128 | 65,536 | 4 | 12.35 |
+| | 1 | quotient lift | 64 | 24,576 | 2 | 2.46 |
+| | 2–5 | reduced | 64 | 12,288 + 4,096 + 2 × 2,048 | 1 | 2.01 |
+| `multi_chunk_w2r2`, nv 29 | 0 | quotient lift | 128 | 16,384 | 4 | 3.05 |
+| | 1 | quotient lift | 64 | 24,576 | 1 | 2.33 |
+| | 2–5 | reduced | 64 | 10,240 + 3 × 2,048 | 1 | 1.64 |
+| `multi_chunk_w8r2`, nv 29 | 0 | quotient lift | 64 | 32,768 | 4 | 3.76 |
+| | 1 | quotient lift | 64 | 14,336 | 1 | 1.63 |
+| | 2–6 | reduced | 64 | 24,576 + 6,665 + 5,120 + 2 × 2,048 | 1 | 3.95 |
 
-The last column times a bare `dot_base` loop over the same rings. It is the
-multiplication floor: 8.2 ms of the 10.2 ms. Adding the per-ring weight
-multiplication through `WeightedRowBatch` raises it to 8.8 ms. The remaining
-1.2–1.4 ms forms the weights: per-ring closures, `Result` plumbing, bounds
-checks, and up to four reduced multiplications per ring. Every B segment at
-2^22 has one term.
+In these three profiles and in `dense_fp128`, every plan has one group whose
+segments cover every base ring below `required`, so the scan never skips a
+ring.
 
-The ordinary schedule has two quotient-lift single-group folds (65,536 and
-14,104 rings, A ratio 8) and four reduced folds. Its large fold costs 8.2 ms
-against a 5.45 ms floor, because each physical B ring there sums eight
-logical-slice terms.
+### The CI runners differ
 
-Parallelization is a Rayon fold over jobs of `SETUP_SCAN_JOB_RINGS = 2048`
-rings; folds run in sequence. Folds 3–5 at 2^22 have one or two jobs, so they
-run serially. A job on an efficiency core takes about 3.5 times as long, and
-the slowest job sets each fold's latency. Parallel throughput is 37 GB/s,
-far below the memory system, so the parallel scan is latency- and
-balance-bound rather than bandwidth-bound.
+The profile-benchmark shards do not run on one CPU model. In run
+`41858592471`, the `7-distributed` shard (the three `multi_chunk` profiles)
+ran on an AMD EPYC 9V74 (Zen 4), and every other shard on an Intel Xeon
+6973P-C. The same base scan code costs very different amounts on the two:
+the `onehot_fp128` nv 33 quotient-lift folds took 74 ms single-threaded on
+the Xeon 6 runner, against about 34 ms on Zen 4 runners in other runs of the
+same code. Comparisons are therefore valid only within one runner model, and
+a change can win on one runner and lose on the other.
 
-## Candidate speedups
+## Changes
 
-All candidates keep the scan's exact field value: they reorder exact field
+All changes keep the scan's exact field value: they reorder exact field
 sums, and delayed reduction is used only where the `jolt-field` contract
-declares it exact.
+declares it exact (`Unreduced::SUM_IS_EXACT`).
 
-1. **Slice-wise weight assembly.** Build each job's ring weights segment by
-   segment with one contiguous pass per role, forming a projected role's
-   weighted equality value once per role ring rather than per base ring. One
-   job evaluator then serves single-group, fused, and shared-functional
-   reduced scans. Expected gain: 0.5–1 ms single-threaded at 2^22, more on the
-   ordinary quotient-lift folds.
-2. **Transposed contraction.** Evaluate `Σ_j π_j · Σ_b w(b)·c_{b,j}` per job,
-   accumulating the inner sums as unreduced `E × F` products
-   (`MulBaseUnreduced::mul_base_unreduced`, exact within the accumulator
-   headroom for every implementor). This drops one reduction and one
-   `E × E` multiplication per ring. Expected gain: 0.4–0.6 ms single-threaded
-   at 2^22.
-3. **Smaller scan jobs.** Jobs of 256–512 rings give every fold enough jobs
-   to balance, and shorten the tail an efficiency core adds. Expected gain:
-   0.4–1 ms parallel at 2^22, nothing single-threaded.
+### Slice-wise weight assembly
 
-Not pursued here; see [What remains](#what-remains):
+Each job of `SETUP_SCAN_JOB_RINGS = 2048` base rings builds its ring weights
+segment by segment, one contiguous pass per role (and per B slice term),
+forming a projected role's weighted equality value once per role ring rather
+than per base ring. One job evaluator (`evaluate_weighted_scan`) serves the
+single-group, fused multi-group, and shared-functional reduced scans; the
+per-ring role dispatch and the separate fused-group scan are gone.
 
-- a faster fp128 widening dot kernel, which belongs in `jolt-field`;
-- contracting the B role's slice terms through the tensor structure of `t`;
-- fusing the six folds' scans into one pass, which saves memory traffic but
-  no multiplications, and which the sequential fold verification does not
-  allow without restructuring.
+A job assembles its weights in blocks of `WEIGHT_BLOCK_RINGS = 128` rings.
+The block's weight slots live on the stack; at fp128 a slot is a 64-byte
+delayed product sum, so a block takes 8 KiB and stays in the L1 cache while
+every role pass reads and writes it. The job allocates nothing.
+
+### Per-ring contraction with a delayed sum
+
+After a block's weights are assembled, the job adds `w(b)·⟨c_b, π⟩` for
+every nonzero-weight ring into one delayed product sum (`ProductSum`), and
+reduces once per job. `⟨c_b, π⟩` is `MulBaseUnreduced::dot_base`.
+
+The delayed sum is exact. A job sums at most `SETUP_SCAN_JOB_RINGS` products
+of reduced field elements. Every `jolt-field` accumulator documents a
+headroom of at least `2^61` products, and `Fp128ProductAccum` one of
+`2^64 − 1`. Fields without `SUM_IS_EXACT` use
+`CanonicalProductSum`, which reduces every product.
+
+### Rejected: column-first contraction
+
+The contraction can also run column first, `Σ_j π_j · Σ_b w(b)·c_{b,j}`,
+accumulating each column as unreduced `E × F` products over tiles of four
+rings and applying `π` once per column. Against a per-ring dot product this
+saves one reduction and one `E × E` multiplication per ring. It is what the
+branch first shipped, and it is the cause of the `7-distributed` shard's
+regression.
+
+- **M4.** Column-first is 5–11% faster than the per-ring contraction in the
+  single-threaded scan of every CI profile, for every field.
+- **Zen 4, CI.** On the `7-distributed` shard the `multi_chunk_w2r2`
+  single-threaded quotient-lift scan went from 12.6 ms at the base commit to
+  14.3–15.6 ms, and the reduced folds from 3.71 to 3.96–4.19 ms. The same
+  run made the Xeon 6 shards faster, which hid the problem in the other ten
+  profiles.
+- **Zen 4, standalone fold.** A reproduction of one fp128 identity fold
+  (`d = 64`, 10,240 rings, D, B, and A roles) on an AMD EPYC 9554P measured
+  the base scan at 1.94 ms. Column-first in tiles of 2, 4, 8, and 16 rings
+  measured 2.64–3.38 ms. The per-ring contraction measured 2.25 ms with heap
+  weight slots and 2.08 ms with the 128-ring stack blocks.
+- **Zen 4, profile.** The `profile` example built with
+  `-C target-cpu=x86-64-v3` on the same EPYC 9554P (a shared 4-vCPU virtual
+  machine at load 7–12, so these are minima over five runs) gave these sums of
+  the single-threaded `relation_setup_scan` spans:
+
+  | Profile | Base (ms) | Column-first (ms) | Per-ring (ms) |
+  | --- | ---: | ---: | ---: |
+  | `multi_chunk_w2r2`, nv 29 | 17.1 | 31.7 | 16.9 |
+  | `multi_chunk_w4r2`, nv 29 | 15.2 | 39.2 | 14.7 |
+  | `multi_chunk_w8r2`, nv 29 | 21.1 | 35.3 | 25.4 |
+
+  The W8R2 row ran at the highest load; an earlier three-run pass at load
+  10 gave medians of 29.1, 46.4, and 25.9 ms.
+
+`llvm-mca` predicts equal throughput per product for the two inner loops on
+`znver4` and `graniterapids`, so the x86 cost is not in the multiply chain;
+the cause was not isolated further. The Xeon 6 runner was not measured
+outside CI.
 
 ## Results
 
-Candidates 1 and 2 landed; candidate 3 did not. Every figure is the median of
-three interleaved runs of the base binary (`84c2176e8`) and the final binary,
-with the one-minute load range over those runs. Single-threaded figures
-repeat within about 0.2 ms. Parallel figures on this shared machine vary by
-up to 2× between runs at loads above about 7, so treat their differences as
-indicative only.
+Every figure is the median of three interleaved runs of the base binary
+(`b05545e69`) and the final binary on the M4, with the one-minute load range
+over those runs. Single-threaded figures repeat within a few percent.
+Parallel figures on this shared machine vary by up to 2× at loads above
+about 7, so treat their differences as indicative only.
 
-| Configuration | Parallel (ms) | One thread (ms) | Load |
-| --- | --- | --- | --- |
-| binary source 2^22 `word-prime` | 2.53 → 2.09 | 10.03 → 8.59 | 6.7–7.9 |
-| binary source 2^22 `word` | 2.76 → 2.48 | 9.96 → 8.73 | 7.6–8.1 |
-| binary source 2^23 `word` | 8.77 → 5.29 | 16.99 → 14.76 | 11.8–13.2 |
-| binary source 2^23 `word-prime` | 3.10 → 2.82 | 16.58 → 14.52 | 6.2–8.1 |
-| ordinary `onehot_fp128`, nv 32 | 3.60 → 2.18 | 10.94 → 9.23 | 11.7–17.1 |
+| Profile | Verify, parallel (ms) | Verify, one thread (ms) | Scan, one thread (ms) | Load |
+| --- | --- | --- | --- | --- |
+| `dense_fp32` 30:1 | 7.5 → 6.8 | 17.6 → 14.7 | 8.99 → 6.28 | 4.5–9.3 |
+| `onehot_fp32` 31:1 | 6.7 → 6.5 | 13.5 → 11.7 | 7.29 → 5.37 | 6.5–10.0 |
+| `dense_fp64` 29:1 | 5.7 → 5.4 | 12.7 → 10.6 | 8.06 → 6.04 | 9.0–10.4 |
+| `onehot_fp64` 32:1 | 5.6 → 5.3 | 14.4 → 12.2 | 9.06 → 6.86 | 3.4–7.2 |
+| `dense_fp128` 28:1 | 5.6 → 5.3 | 17.2 → 16.5 | 12.00 → 11.48 | 5.3–9.2 |
+| `onehot_fp128` 33:1 direct | 6.1 → 6.1 | 21.7 → 21.1 | 16.61 → 16.02 | 7.2–26.4 |
+| `onehot_fp128` 33:1 recursive | 5.6 → 5.5 | 11.4 → 11.0 | 7.45 → 6.98 | 9.2–19.1 |
+| `onehot_fp128_multi_group` 31:4 direct | 6.0 → 5.8 | 17.6 → 17.0 | 11.76 → 11.35 | 7.9–11.9 |
+| `onehot_fp128_multi_group_recursive` 31:4 | 6.2 → 6.1 | 12.2 → 11.9 | 7.55 → 7.24 | 5.2–11.1 |
+| `…_multi_group_recursive_multi_chunk_w8r2` 29:4 | 8.6 → 8.5 | 14.3 → 14.1 | 6.31 → 6.00 | 6.9–9.3 |
+| `onehot_fp128_multi_chunk_w2r2` 29:1 | 4.8 → 4.6 | 10.5 → 10.3 | 7.11 → 7.01 | 9.5–17.2 |
+| `onehot_fp128_multi_chunk_w4r2` 29:1 | 5.8 → 6.2 | 12.0 → 11.8 | 6.99 → 6.76 | 11.7–13.8 |
+| `onehot_fp128_multi_chunk_w8r2` 29:1 | 6.6 → 6.5 | 15.9 → 16.0 | 9.57 → 9.25 | 12.7–14.9 |
 
-The single-threaded scan is 12–16% faster across all five configurations.
-Per commit, at binary source 2^22 `word-prime`, one thread:
-
-| Commit | Before (ms) | After (ms) | Load |
-| --- | ---: | ---: | --- |
-| slice-wise weight assembly | 10.16 | 9.57 | 8.0–13.1 |
-| column-first contraction | 9.49 | 8.69 | 7.1–7.4 |
-
-The column-first contraction stages rings in tiles. Tiles of 4, 8, and 16
-rings measured 8.87, 9.10, and 10.34 ms in one interleaved run at load
-10–13; the code uses 4.
-
-Smaller jobs (candidate 3) gave no parallel gain distinguishable from noise.
-In nine interleaved parallel runs at 2^22 `word-prime` (load 8–11), jobs of
-2048, 256, and a fold-dependent size (about 64 jobs per fold, clamped to
-256–2048) measured 2.27, 2.46, and 2.26 ms. One earlier run at load 6.5 had
-favored 256-ring jobs, 1.91 against 2.27 ms. The column-first contraction
-also changes the trade-off. Each job now ends with 64 reductions and 64
-`E × E` multiplications, so 256-ring jobs cost 0.3 ms single-threaded (8.64
-against 8.96 ms). Choosing the size from the Rayon pool's thread count
-would avoid that cost; the verifier's `parallel` feature enables
-`dep:rayon`, so the thread count is available under that feature. Without a
-measurable parallel gain from smaller jobs, this was not pursued.
-Carrying the unreduced column sums through the Rayon fold, one finish per
-split, measured slower in both modes. The job size stays 2048.
+The single-threaded scan is 1–30% faster on every profile; the fp32 and
+fp64 profiles gain most. Against the column-first contraction the final scan
+is 5–11% slower on the M4 and, on Zen 4, about as fast as the base instead
+of 1.7–2.6 times slower.
 
 ## What remains
 
-After these changes the single-threaded scan at 2^22 takes 8.6 ms, near the
-8.2 ms per-ring dot floor in the fold table above. Further byte-preserving
-gains need a different kernel or a different scan structure:
-
+- **Confirmation on the CI runners.** The Zen 4 evidence comes from a
+  shared virtual machine, and the Xeon 6 runner has not been measured
+  outside CI. The next profile-benchmark run measures both.
+- **The M4's 5–11%.** Keeping the column-first contraction on `aarch64`
+  alone would recover it, at the cost of a second contraction path selected
+  by target architecture. That is worth doing only with measurements on more
+  than one Arm core.
 - **A faster widening fp128 dot kernel.** The `E × F` product dominates. A
   lazier carry layout in `Fp128ProductAccum`, or a NEON kernel, belongs in
-  `jolt-field`; every caller of `mul_base_unreduced` would benefit.
-- **Tensor-structured B contraction.** On the ordinary quotient-lift folds
-  every physical B ring sums eight logical-slice terms. Contracting those
-  terms through the tensor structure of `t` would remove most of that weight
-  work. It does not remove any coefficient product.
+  `jolt-field`; every caller of `dot_base` would benefit.
+- **Tensor-structured B contraction.** On quotient-lift folds with several
+  commitment slices every physical B ring sums one term per slice.
+  Contracting those terms through the tensor structure of `t` would remove
+  most of that weight work. It does not remove any coefficient product.
 - **Fusing the folds' scans.** The folds read overlapping prefixes of one
-  matrix: 97,688 ring reads over 52,632 distinct rings at 2^22. One pass that
-  serves every fold would save memory traffic and scheduling but no
-  multiplications. It needs every fold's weights and functional before the
-  first fold's check, which changes the verifier's control flow.
-- **Parallel balance.** The parallel scan reaches about four times the
-  single-threaded speed on 16 cores, because the folds run in sequence and
-  the small folds have one or two jobs. A balance fix needs either fold
-  fusion or a job size chosen from the thread pool (see Results).
+  matrix: 110,592 ring reads over 65,536 distinct rings in `onehot_fp128` at
+  nv 33. One pass that serves every fold would save memory traffic and
+  scheduling but no multiplications. It needs every fold's weights and
+  functional before the first fold's check, which changes the verifier's
+  control flow.
+- **Parallel balance.** Folds run in sequence, and the smallest reduced
+  folds have one job each, so they run serially. Smaller jobs did not give a
+  parallel gain distinguishable from noise on the shared M4, and each job's
+  final reduction makes them cost single-threaded time.
 - **Weight preparation.** `DirectScan::new` (span `relation_setup_weights`)
-  is now a visible share of the per-fold setup cost. It is outside the scan.
-- **The binary root.** `binary_direct_a_weights` dominates binary-source
-  verification and is outside this note.
+  is a visible share of the per-fold setup cost. It is outside the scan.
 
 A protocol change could cut further. Each fold now evaluates its own linear
 functional of the setup. If the folds' setup claims were deferred and batched
 with a random linear combination into one claim, the verifier would scan the
-largest prefix once, 52,632 rings instead of 97,688 at 2^22. Each scan's
-`d` products per ring would also become shared. Alternatively, the verifier
-could check the claims against a commitment to the setup with an opening
-proof, and stop scanning the setup. Both change the transcript and what the
-verifier checks, so neither is implemented here.
+largest prefix once. Alternatively, the verifier could check the claims
+against a commitment to the setup with an opening proof, and stop scanning
+the setup. Both change the transcript and what the verifier checks, so
+neither is implemented here.
