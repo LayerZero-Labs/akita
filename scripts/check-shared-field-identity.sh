@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # The integrated dependency graph must contain no akita-field, exactly one
-# jolt-algebra and jolt-poly package identity, at most one jolt-field identity
-# (the re-export of jolt-algebra that Jolt's own crates may still name), and
-# one shared Jolt Git commit.
+# jolt-algebra, jolt-crypto, and jolt-poly package identity, at most one
+# jolt-field identity (the re-export of jolt-algebra that Jolt's own crates may
+# still name), and one shared Jolt Git commit.
 #
 # Structural check over `cargo metadata` package IDs: immune to `cargo tree`
 # rendering (CARGO_TERM_COLOR=always colorizes the `(*)` dedup marker, which
@@ -39,7 +39,7 @@ check_workspace() {
     exit 1
   fi
 
-  for package in jolt-algebra jolt-poly jolt-field; do
+  for package in jolt-algebra jolt-crypto jolt-poly jolt-field; do
     identities="$(package_ids "$metadata" "$package")"
     count="$(grep -c . <<<"$identities" || true)"
     if [[ "$package" == jolt-field && "$count" -eq 0 ]]; then

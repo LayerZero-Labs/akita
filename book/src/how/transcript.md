@@ -270,9 +270,9 @@ Operator-norm families price $K$ as 128, the size their certificate proves.
 Implementation:
 
 - `crates/akita-challenges/src/fold_draw.rs` owns the one squeeze per group.
-- `crates/akita-challenges/src/sampler/stream.rs` defines message lengths,
+- [`jolt-crypto/src/challenge/sampler/stream.rs`](https://github.com/a16z/jolt/blob/8f0f5b9edf4ef1b1b837a282357f1061c833dc62/crates/jolt-crypto/src/challenge/sampler/stream.rs) defines message lengths,
   pool sizes and the decoder.
-- `crates/akita-challenges/src/sampler/op_norm.rs` checks the certified
+- [`jolt-crypto/src/challenge/sampler/op_norm.rs`](https://github.com/a16z/jolt/blob/8f0f5b9edf4ef1b1b837a282357f1061c833dc62/crates/jolt-crypto/src/challenge/sampler/op_norm.rs) checks the certified
   operator-norm predicate.
 - `crates/akita-params/src/transcript_grinding.rs` prices the fold proof of
   work as its own run kind, `FoldChallengeWork`.
@@ -575,7 +575,7 @@ nonce encoding are documented in
 - `crates/akita-params/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-types/src/transcript_grinding/replay.rs` couples
   nonce transport, proof-of-work checks, challenges, and plan progress.
-- `crates/akita-challenges/src/sampler/stream.rs` decodes each group's sparse
+- [`jolt-crypto/src/challenge/sampler/stream.rs`](https://github.com/a16z/jolt/blob/8f0f5b9edf4ef1b1b837a282357f1061c833dc62/crates/jolt-crypto/src/challenge/sampler/stream.rs) decodes each group's sparse
   challenge message.
 - `crates/akita-verifier/src/fold/mod.rs` and
   `crates/akita-verifier/src/fold/terminal.rs` enforce fold and
