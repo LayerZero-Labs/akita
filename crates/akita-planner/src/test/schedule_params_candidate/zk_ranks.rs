@@ -73,6 +73,84 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
     }
 }
 
+/// The capped-level case of the test above, which main's K = 16 row no
+/// longer reaches: a modeled ℓ∞ cap one digit below the clear derivation's
+/// lowers the clear digits, and the one-shot sizing, which ignores the
+/// per-attempt cap, still re-prices A at the capped clear rank.
+#[test]
+fn one_shot_sizing_keeps_the_capped_clear_a_rank() {
+    type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
+    const NUM_VARS: usize = 36;
+
+    let chunking = akita_params::ChunkedWitnessCfg::default_non_chunked();
+    let policy = policy_of::<Cfg>(chunking);
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>(chunking)
+        .expect("recursive one-hot catalog");
+    let row = catalog
+        .resolve_key(&akita_params::ScheduleLookupKey::single(
+            PolynomialGroupLayout::new(NUM_VARS, 1),
+        ))
+        .expect("headline-shaped row");
+    let source = Cfg::committed_source_contract().unwrap();
+    let zk = ZkOpeningSchedule::new(ZK_CUT_LEVEL).unwrap();
+    for level in 0..=ZK_CUT_LEVEL as usize {
+        let sizing = MaskedFoldSizing::new(row.schedule(), level, source).unwrap();
+        let params = sizing.params();
+        let derive = |masking: LevelMasking, modeled_linf_cap: Option<u128>| {
+            let query = sizing.query(masking.failure_target()).unwrap();
+            derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
+                policy: &policy,
+                fold_policy: sizing.policy(),
+                ring_challenge_cfg: query.challenge_config,
+                challenge_dimension: query.challenge_dimension,
+                dimensions: params.role_dims(),
+                num_claims: query.num_claims,
+                num_live_ring_elements_per_claim: query.num_live_ring_elements_per_claim,
+                num_live_blocks: query.num_live_blocks,
+                num_positions_per_block: query.num_positions_per_block,
+                num_chunks: query.num_chunks,
+                witness_norms: query.witness_norms,
+                log_basis_open: query.log_basis_response,
+                width_s: params.inner().matrix.input_width(),
+                modeled_linf_cap,
+                masking,
+            })
+            .unwrap()
+            .expect("admitted candidate")
+        };
+        let uncapped = derive(LevelMasking::Clear, None);
+        // The largest value `uncapped.num_digits_fold − 1` balanced digits
+        // of base `b` hold: (b/2 − 1)(b^n − 1)/(b − 1).
+        let log_basis = sizing
+            .query(LevelMasking::Clear.failure_target())
+            .unwrap()
+            .log_basis_response;
+        let base = 1u128 << log_basis;
+        let digits = u32::try_from(uncapped.num_digits_fold - 1).unwrap();
+        let cap = (base / 2 - 1) * ((base.pow(digits) - 1) / (base - 1));
+        let capped = derive(LevelMasking::Clear, Some(cap));
+        assert_eq!(
+            capped.num_digits_fold,
+            uncapped.num_digits_fold - 1,
+            "level {level}: the cap lowers the clear digits by one"
+        );
+        let target = LevelMasking::Masked(zk.fold_failure_target(1).unwrap());
+        let one_shot = derive(target, Some(cap));
+        assert_eq!(
+            one_shot.num_digits_fold,
+            derive(target, None).num_digits_fold,
+            "level {level}: a one-shot sizing ignores the per-attempt cap"
+        );
+        assert_eq!(
+            one_shot.inner_commit_matrix.output_rank(),
+            capped.inner_commit_matrix.output_rank(),
+            "level {level}: one-shot digits {} vs capped clear {}",
+            one_shot.num_digits_fold,
+            capped.num_digits_fold,
+        );
+    }
+}
+
 /// W5e: every checked-in zero-knowledge row commits the residual (the level
 /// after the cut) with A_a and [B_a | B′_a] at least at their Σ-binding
 /// ranks, from the Σ-binding table, at both families, and lists both
