@@ -14,7 +14,7 @@ use akita_error::{checked, AkitaError};
 use akita_params::RelationRowGeometry;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::Field;
+use jolt_field::{cfg_iter, Field};
 
 /// One bounded coefficient family in the root witness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -523,9 +523,9 @@ mod tests {
         assert!(plan.repack(&[&bad, &[0; 32]]).is_err());
         // A bad digit is rejected before the table is allocated, even for a
         // domain far too large to allocate.
-        let huge = plan().with_domain_len(1 << 60).unwrap();
+        let huge = plan.clone().with_domain_len(1 << 60).unwrap();
         assert!(matches!(
-            huge.repack(&[&bad, &[0; 32]]),
+            huge.repack(&[bad.as_slice(), &[0; 32]]),
             Err(AkitaError::InvalidInput(_))
         ));
         assert!(plan.validate_digit_table::<F>(&[]).is_err());
