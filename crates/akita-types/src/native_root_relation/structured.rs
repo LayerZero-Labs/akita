@@ -13,7 +13,7 @@ use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, Field};
+use jolt_field::{cfg_chunks, cfg_iter, Field};
 
 use super::profiles::ProfileBuilder;
 use crate::binary_source::{
@@ -349,11 +349,11 @@ impl<E: Field> RootWeightFamily<E> {
             }
             Self::Translated(lanes) => {
                 let _span = tracing::info_span!("root_weights_emit_translated").entered();
-                lanes.visit(|address, value| profiles.add(address, value))
+                lanes.emit(profiles)
             }
             Self::SourceEvaluation(source) => {
                 let _span = tracing::info_span!("root_weights_emit_source").entered();
-                source.visit(|address, value| profiles.add(address, value))
+                source.emit(profiles)
             }
         }
     }
@@ -544,19 +544,23 @@ impl<E: Field> TranslatedLanes<E> {
             })
     }
 
-    pub(crate) fn visit(
-        &self,
-        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
-    ) -> Result<(), AkitaError> {
-        let kernels = match &self.residue {
+    /// Each lane's per-address weights: its residue kernel, or the lane.
+    fn kernels(&self) -> Result<Cow<'_, [(usize, Vec<E>)]>, AkitaError> {
+        Ok(match &self.residue {
             Some(point) => Cow::Owned(
-                self.lanes
-                    .iter()
+                cfg_iter!(self.lanes)
                     .map(|(offset, ring)| Ok((*offset, point.field_kernel(ring)?)))
                     .collect::<Result<Vec<_>, AkitaError>>()?,
             ),
             None => Cow::Borrowed(&self.lanes),
-        };
+        })
+    }
+
+    pub(crate) fn visit(
+        &self,
+        mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let kernels = self.kernels()?;
         for &(base, scale) in &self.copies {
             for (offset, weights) in kernels.iter() {
                 for (coefficient, &weight) in weights.iter().enumerate() {
@@ -565,6 +569,35 @@ impl<E: Field> TranslatedLanes<E> {
             }
         }
         Ok(())
+    }
+
+    /// Add every copy of every lane to block profiles, in parallel.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        let kernels = self.kernels()?;
+        let mut intervals = Vec::new();
+        intervals
+            .try_reserve_exact(
+                checked::product([self.copies.len(), kernels.len()])
+                    .ok_or(AkitaError::InvalidProof)?,
+            )
+            .map_err(|_| AkitaError::InvalidSetup("translated lane allocation".into()))?;
+        for &(base, _) in &self.copies {
+            for (offset, weights) in kernels.iter() {
+                let start = checked::sum([base, *offset]).ok_or(AkitaError::InvalidProof)?;
+                intervals.push((start, weights.len()));
+            }
+        }
+        profiles.add_intervals(&intervals, |interval, first, row| {
+            let scale = self.copies[interval / kernels.len()].1;
+            let weights = kernels[interval % kernels.len()]
+                .1
+                .get(first..first + row.len())
+                .ok_or(AkitaError::InvalidProof)?;
+            for (slot, &weight) in row.iter_mut().zip(weights) {
+                *slot += scale * weight;
+            }
+            Ok(())
+        })
     }
 }
 
