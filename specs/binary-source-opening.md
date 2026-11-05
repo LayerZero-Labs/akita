@@ -2758,7 +2758,7 @@ These are the largest spans at 2^22 that this pass did not reduce:
   payload (up to 107 ms at `prime5`) and the suffix's relation-lane setup
   columns (23–42 ms) expand B and D setup entries from SHAKE streams on every
   proof. In a sample profile of the `word-prime` emission, 56% of the samples
-  are in the Keccak permutation and 20% in the residue kernel. Caching the
+  are in the SHAKE permutation and 20% in the residue kernel. Caching the
   expanded entries would trade that time for memory of the setup's size.
 - **`prime5` D commitment, 180–185 ms.** Its D payload and prime digits were
   not changed in this pass. The third pass measured the payload at about 72%
@@ -2776,7 +2776,7 @@ What a protocol change would buy, inferred from these profiles and not
 measured:
 
 - **A cheaper setup generator** for the B and D setup columns would remove
-  most of the Keccak share above. From the sample shares, that is about 40 ms
+  most of the SHAKE share above. From the sample shares, that is about 40 ms
   of authentication emission and about 30 ms of D payload at `prime5`, and
   about 25 ms in all at `word-prime`.
 - **Word's first-fold digit basis and challenge weight for the word-prime
