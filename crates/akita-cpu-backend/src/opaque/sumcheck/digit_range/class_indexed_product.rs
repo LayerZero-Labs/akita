@@ -20,6 +20,12 @@ use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
 
+/// The second round sums over quartet classes once quartets outnumber them
+/// this many times. It evaluates every occurring class once and passes over
+/// the quartets three times, so near parity the per-quartet rescan is
+/// cheaper: `word` at N=2^22 has 70,112 quartets for 2^16 classes.
+const QUARTETS_PER_QUARTET_CLASS: usize = 2;
+
 struct CompactProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,
     nodes: ProductNodeTable<E, LANES>,
@@ -539,7 +545,9 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     )
                     .entered();
                     *coefficients
-                } else if source.quartet_count() >= folded_pairs.quartet_class_count() {
+                } else if source.quartet_count()
+                    >= QUARTETS_PER_QUARTET_CLASS.saturating_mul(folded_pairs.quartet_class_count())
+                {
                     let _span = tracing::info_span!(
                         "digit_range_product_initial_round",
                         round = self.rounds_completed,
@@ -913,8 +921,8 @@ mod tests {
         // Basis 32 has sixteen classes, so 2^16 quartet classes; enough
         // quartets select the class-weight round, split into class ranges.
         let plan = DigitRangePlan::new(32).unwrap();
-        let num_vars = 19;
-        let live_len = 300_001;
+        let num_vars = 20;
+        let live_len = 600_001;
         let digits = (0..live_len)
             .map(|index| i8::try_from(((index * 2_654_435_761usize) >> 7) % 32).unwrap() - 16)
             .collect::<Vec<_>>();
@@ -947,7 +955,10 @@ mod tests {
         else {
             panic!("sixteen classes defer the second round without a quartet table");
         };
-        assert!(source.quartet_count() >= folded_pairs.quartet_class_count());
+        assert!(
+            source.quartet_count()
+                >= QUARTETS_PER_QUARTET_CLASS * folded_pairs.quartet_class_count()
+        );
         let (first, second) = prover.split_eq.remaining_eq_tables();
         let expected = accumulate_equality_weighted_values(
             first,
