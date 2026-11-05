@@ -12,7 +12,9 @@ use core::ops::Range;
 
 use akita_error::{checked, AkitaError};
 use akita_params::RelationRowGeometry;
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_iter, Field};
 
 /// One bounded coefficient family in the root witness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,7 +227,8 @@ impl RootCoefficientRepacking {
                     actual: digits.len(),
                 });
             }
-            if digits.iter().any(|value| !(-4..=3).contains(value)) {
+            // Reject bad digits before allocating the table.
+            if !cfg_iter!(digits).all(|value| (-4..=3).contains(value)) {
                 return Err(AkitaError::InvalidInput(
                     "root repacking digit is outside the balanced base-eight interval".into(),
                 ));
@@ -236,9 +239,10 @@ impl RootCoefficientRepacking {
             AkitaError::InvalidSetup("root repacking table allocation is too large".into())
         })?;
         table.resize(self.domain_len, 0);
-        // Every lane is lane zero translated by its first address, so
-        // [`Self::coefficient_address`] runs once per coefficient of lane zero
-        // and once per later lane, not once per digit.
+        // Lane `l` of a segment is the block `[l * width, (l + 1) * width)`
+        // past the segment start, laid out as lane zero, so
+        // [`Self::coefficient_address`] runs once per coefficient of lane
+        // zero and the lanes fill their disjoint blocks in parallel.
         for (segment, (shape, digits)) in self.segments.iter().zip(natural_digits).enumerate() {
             let natural_width = checked::product([
                 shape.geometry.polynomial_modulus_dimension(),
@@ -248,34 +252,38 @@ impl RootCoefficientRepacking {
             if shape.elements == 0 || shape.digits == 0 {
                 continue;
             }
-            let lane_zero = (0..natural_width)
-                .map(|coefficient| self.coefficient_address(segment, 0, 0, coefficient))
+            let range = self.segment_range(segment)?;
+            let width = shape.geometry.physical_coefficient_width();
+            let offsets = (0..natural_width)
+                .map(|coefficient| {
+                    self.coefficient_address(segment, 0, 0, coefficient)?
+                        .checked_sub(range.start)
+                        .filter(|&offset| offset < width)
+                        .ok_or(AkitaError::InvalidProof)
+                })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            let first = self.coefficient_address(segment, 0, 0, 0)?;
-            let end = self
-                .ranges
-                .get(segment)
-                .ok_or(AkitaError::InvalidProof)?
-                .end;
-            let last = lane_zero
-                .iter()
-                .copied()
-                .max()
+            let end = checked::product([shape.elements, shape.digits, width])
+                .and_then(|len| checked::sum([range.start, len]))
+                .filter(|&end| end <= range.end)
                 .ok_or(AkitaError::InvalidProof)?;
-            for (lane, lane_digits) in digits.chunks_exact(natural_width).enumerate() {
-                let shift = self
-                    .coefficient_address(segment, lane / shape.digits, lane % shape.digits, 0)?
-                    .checked_sub(first)
-                    .ok_or(AkitaError::InvalidProof)?;
-                if checked::sum([last, shift]).is_none_or(|address| address >= end) {
-                    return Err(AkitaError::InvalidProof);
+            let lanes = table
+                .get_mut(range.start..end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let fill = |(lane, lane_digits): (&mut [i8], &[i8])| {
+                for (&offset, &value) in offsets.iter().zip(lane_digits) {
+                    lane[offset] = value;
                 }
-                for (&address, &value) in lane_zero.iter().zip(lane_digits) {
-                    *table
-                        .get_mut(address + shift)
-                        .ok_or(AkitaError::InvalidProof)? = value;
-                }
-            }
+            };
+            #[cfg(feature = "parallel")]
+            lanes
+                .par_chunks_exact_mut(width)
+                .zip(digits.par_chunks_exact(natural_width))
+                .for_each(fill);
+            #[cfg(not(feature = "parallel"))]
+            lanes
+                .chunks_exact_mut(width)
+                .zip(digits.chunks_exact(natural_width))
+                .for_each(fill);
         }
         Ok(table)
     }
@@ -513,6 +521,13 @@ mod tests {
         let mut bad = vec![0; 2 * 4 * 648];
         bad[0] = 4;
         assert!(plan.repack(&[&bad, &[0; 32]]).is_err());
+        // A bad digit is rejected before the table is allocated, even for a
+        // domain far too large to allocate.
+        let huge = plan.clone().with_domain_len(1 << 60).unwrap();
+        assert!(matches!(
+            huge.repack(&[bad.as_slice(), &[0; 32]]),
+            Err(AkitaError::InvalidInput(_))
+        ));
         assert!(plan.validate_digit_table::<F>(&[]).is_err());
         let segment = RootRepackingSegment {
             geometry: RelationRowGeometry::native(8).unwrap(),

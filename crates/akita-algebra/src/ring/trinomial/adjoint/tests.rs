@@ -342,11 +342,20 @@ fn equality_adjoint_matches_the_convolution_adjoint() {
 
 fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, columns: usize) {
     let mut rng = StdRng::seed_from_u64(seed);
-    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
     let rho = (0..3)
         .map(|_| core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)))
         .collect::<Vec<[Prime128Offset275; D]>>();
-    let mut rows = (0..3)
+    integer_rows_with::<M, D>(&mut rng, &rho, bound, columns);
+}
+
+fn integer_rows_with<M: TrinomialModulus, const D: usize>(
+    rng: &mut StdRng,
+    rho: &[[Prime128Offset275; D]],
+    bound: i128,
+    columns: usize,
+) {
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
+    let mut rows = (0..rho.len())
         .map(|_| {
             (0..columns)
                 .map(|_| {
@@ -358,12 +367,14 @@ fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, col
         })
         .collect::<Vec<_>>();
     // Exercise both extremes of the declared bound.
-    rows[0][0] = [bound; D];
-    rows[1][0] = [-bound; D];
+    if columns > 0 {
+        rows[0][0] = [bound; D];
+        rows[1][0] = [-bound; D];
+    }
     let canonical: fn(&Prime128Offset275) -> Option<u128> =
         |x| jolt_field::CanonicalEncoding::to_u128_checked(x);
     let fast = adjoint
-        .apply_integer_rows(&rho, &rows, bound.unsigned_abs(), canonical)
+        .apply_integer_rows(rho, &rows, bound.unsigned_abs(), canonical)
         .unwrap();
     assert_eq!(fast.len(), columns);
     for (j, h) in fast.iter().enumerate() {
@@ -378,6 +389,45 @@ fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, col
             }
         }
         assert_eq!(h.as_slice(), expected.as_slice(), "column {j}");
+    }
+}
+
+/// The 648 trinomial takes the trace-form limb path: functionals at the top
+/// of the field fill every limb, and the extreme rows reach the CRT bound.
+#[test]
+fn trace_limb_rows_match_field_adjoint_for_extreme_functionals() {
+    let mut rng = StdRng::seed_from_u64(15);
+    let top = -Prime128Offset275::one();
+    let rho = vec![
+        [top; DEGREE],
+        core::array::from_fn(|t| {
+            if t % 2 == 0 {
+                top
+            } else {
+                Prime128Offset275::one()
+            }
+        }),
+        core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)),
+    ];
+    integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 7_126_704, 9);
+    // Above the limb domains' operand range the auxiliary transforms remain.
+    integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 1 << 40, 2);
+}
+
+/// At the largest committed coefficient bound the limb path admits ranks up
+/// to nine; rank ten takes the auxiliary transforms. Both sides of that
+/// boundary, and zero columns, agree with the field adjoint.
+#[test]
+fn trace_limb_admission_boundary_and_zero_columns() {
+    const BOUND: u128 = 7_126_704;
+    assert!(super::trace::limb_bound(9, BOUND, DEGREE).is_some());
+    assert!(super::trace::limb_bound(10, BOUND, DEGREE).is_none());
+    let mut rng = StdRng::seed_from_u64(16);
+    for (rank, columns) in [(9, 2), (10, 2), (3, 0)] {
+        let rho = (0..rank)
+            .map(|_| core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)))
+            .collect::<Vec<[Prime128Offset275; DEGREE]>>();
+        integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, BOUND as i128, columns);
     }
 }
 

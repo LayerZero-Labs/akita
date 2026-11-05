@@ -2276,6 +2276,283 @@ Stage 2 and Stage 3 run the base's code in both executables. Stage 3 CPU
 time agrees within 2.5%. Stage 2 uses 2.5–6.3% more CPU time in this head at
 every shape. The cause is not measured. Verification time is within noise.
 
+### Third prover pass
+
+A third byte-preserving pass starts from `7137782e9`, which merges the second
+prover pass (`e7b6c127a`) and structured Stage 2 (`4d536c84e`) on
+`f92e959ee`. The profile executable adds one field to the driver's span
+records: the names of each span's enclosing spans, so the span tree below is
+measured rather than inferred. Spans opened on worker threads have no parent.
+
+The merged base was proved three times at N=2^22 `word-prime` in isolated
+processes with `BINARY_SOURCE_CATALOG_CACHE`. Every run reproduced its pin. An
+earlier set of three runs at a one-minute load of 17.9–19.1 took 1,732, 2,943
+and 2,587 ms with unchanged CPU time (7.8–8.0 s); it is disturbed and not used.
+The runs below had one-minute loads of 10.9–12.2. Logs are
+`$CARGO_TARGET_DIR/p3/logs/c0-22-word-prime-{4,5,6}.txt`.
+
+| Span (ms, median of 3) | Wall | Process CPU |
+| --- | ---: | ---: |
+| Complete proving | 1,000.8 | 8,415.6 |
+| › binary root level | 720.1 | 5,779.1 |
+| ›› Stage 2 | 258.4 | 1,981.4 |
+| ››› weight profiles | 161.1 | 874.9 |
+| ›››› authentication (2 calls) | 94.6 | 657.5 |
+| ›››› parity rows | 23.2 | 92.2 |
+| ›››› prime planes | 18.0 | 22.1 |
+| ›››› direct A | 13.3 | 13.3 |
+| ›››› image | 11.0 | 85.6 |
+| ›› relation compile | 134.8 | 1,431.6 |
+| ››› direct A adjoint | 128.0 | 1,424.9 |
+| ›› response build | 117.8 | 897.3 |
+| ››› response fold | 66.8 | 787.3 |
+| ››› evaluation witness | 20.1 | 54.0 |
+| ››› repack | 11.8 | 11.8 |
+| ››› witness import | 10.0 | 36.1 |
+| ››› response digits | 8.5 | 8.5 |
+| ›› D commitment | 65.2 | 512.6 |
+| ››› D payload | 27.3 | 328.9 |
+| ››› prime digits | 20.9 | 160.3 |
+| ››› row partials | 17.0 | 17.0 |
+| ›› Stage 3 | 39.5 | 258.8 |
+| ›› field switch | 37.9 | 252.0 |
+| ›› projections | 28.0 | 117.9 |
+| ›› Stage 1 | 19.1 | 182.7 |
+| ›› outgoing commitment | 18.0 | 161.6 |
+| › ordinary suffix (complete minus root) | 280.7 | 2,636.5 |
+| ›› Stage 2 sumchecks (6) | 97.8 | 889.1 |
+| ›› `RingRelationProver::prepare` (6) | 74.1 | 682.2 |
+| ››› fold grinding (6) | 58.1 | 559.0 |
+| ›››› sampling (6) | 37.9 | 388.2 |
+| ››› opening rows (6) | 15.8 | 125.8 |
+| ›› Stage 1 sumchecks (6) | 51.5 | 499.7 |
+| ›› successor commitments (6) | 26.7 | 221.6 |
+| ›› coefficient-packing partials | 19.6 | 192.2 |
+| Prover peak RSS bytes | 2,386,247,680 | |
+
+The Stage 2 sumcheck spans (`RelationRangeImageProver::*`) are shared by the
+root and the suffix and are reported under the span that encloses them. The
+suffix successor commitments are `commit_w_level` minus the root's outgoing
+commitment.
+
+Five spans run serially or nearly so: the prime-plane and direct-A profile
+emission, the row partials, the repack and the response digits. Together they
+take 69 ms. The authentication profile build weighs its columns in parallel,
+but streams every weight into the profile rows serially, one address at a
+time; it runs at 7 cores of 16.
+
+Candidate changes, with the expected gain at N=2^22 `word-prime`:
+
+| Candidate | Spans reduced | Expected gain (ms) |
+| --- | --- | ---: |
+| Direct A adjoint as trace-form ring products over limb primes | direct A adjoint | 90–110 |
+| Parallel authentication rows, one residue kernel per setup column | authentication profile | 50–70 |
+| Parallel profile emission for the parity, prime and direct-A families | weight profiles | 25–40 |
+| Parallel D row partials; profile the D payload's SHAKE streams against its arithmetic | D commitment | 15–25 |
+| Parallel repack, response digits and evaluation witness | response build | 15–25 |
+| Ordinary fold-grinding sampler and the first fold's preparation | `RingRelationProver::prepare` | 10–30 |
+| Response fold | response fold | 0–20 |
+
+The direct A adjoint is the largest. It computes
+`h_j = sum_i adj(rho_i, A_ij)` for 4,096 columns through five 128-bit
+transforms of length 1,458 per column, about 350 µs of CPU each. Multiplication
+by `A` in `Z[Y]/(Phi_1944)` is self-adjoint under the trace form, so
+`adj(rho, A) = G (A * G^-1 rho)`, where `G` is the trace form's Gram matrix in
+the power basis. `Tr(Y^n)` vanishes unless 324 divides `n`, so `G` has two
+nonzero entries per row, and `G^-1 rho` is computed once per functional. The
+products `A_ij * w` then run in the 648-point trinomial limb domains that the
+residual rows already use, and are recovered exactly by Chinese remaindering.
+No transform of A is kept.
+
+The ordinary candidates are ordinary-protocol code. Any change there keeps
+the fold-grinding acceptance rule and nonce order, and lands in its own
+commit.
+
+#### Third-pass changes
+
+Every change below preserves setup, commitment and proof bytes; each one
+reproduced every pin it was measured on. None touches ordinary-protocol code.
+Each commit message records its median of three interleaved runs against its
+parent at 2^22 `word-prime`, with the one-minute loads.
+
+| Commit | Change | Span: before → after (ms) |
+| --- | --- | --- |
+| `ca3ccb522` | Direct A adjoint as trace-form ring products | direct A adjoint 129.5 → 33.9 |
+| `866a1caa5` | Authentication profile rows filled by lane in parallel | authentication emission 70.3 → 35.3 |
+| `dea319a3d` | Recomposed profiles filled one element per task | direct A 13.5 → 4.0, image 10.3 → 7.8, prime 18.0 → 2.6 |
+| `84d3091dc` | Parity row weights filled by response lane | parity rows 20.5 → 7.8 |
+| `eaf31d0f6` | D row partials one column per task | row partials 22.9 → 2.3 |
+| `fb09842a1` | Parallel repack and response digits | repack 11.5 → 3.1, response digits 8.1 → 1.5 |
+| `cec527e88` | Evaluation-witness columns reduced in parallel | evaluation witness 18.5 → 11.3 |
+
+The direct A adjoint uses three limb primes, 67,091,329, 134,217,649 and
+268,433,353. Each canonical `w = G'^-1 rho` is cut into three unsigned 43-bit
+limbs, which are reduced and transformed once per functional. Every column then
+transforms `A_ij` once per prime, accumulates the pointwise products of all its
+rows and limbs, and inverts once per limb. Garner reconstruction is exact
+because `2 * 3 * rank * 648 * bound * 2^43` stays below the primes' product.
+The path applies only when the bound is at most half the smallest prime;
+other inputs keep the auxiliary transforms.
+
+`ProfileBuilder` gained two parallel entry points. `add_lanes` gives every
+lane's blocks their own rows in address order and hands runs of 32 lanes to
+parallel tasks, which serve the authentication and parity families.
+`add_shared` gives every element its shared rows and lets one task add each
+element's whole profile, which serves the direct A, image and prime families.
+Authentication also runs its residue kernel once per setup column on the
+batched combination of the setup rows, since the kernel is linear.
+
+The D payload was profiled before any change to it. For 8,192 columns at rank 2
+on one thread, sampling the setup coefficients from their SHAKE streams takes
+20.6 ms of the 73.3 ms commitment, so the integer negacyclic digit products are
+about 72% and SHAKE about 28%. Rewriting the products as 16-bit limbs in i32
+lanes brought the commitment to 64.7 ms, a 12% gain. That is worth about 12 ms
+at `prime5` and 2.5 ms at `word-prime`, so the rewrite was not kept.
+
+#### Third-pass results
+
+Base `7137782e9` and head `cec527e88` were proved alternately, three times
+each per configuration, in isolated processes with a cached catalog. All 30
+runs reproduced their pins. 2^23 ran last.
+
+| N | Shape | Complete proving (ms) | Root level (ms) | Process CPU (ms) | Peak RSS (bytes) | Loads |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 2^22 | `word` | 745.1 → 595.1 | 501.7 → 343.7 | 7,540 → 6,219 | 2,290,221,056 → 2,608,889,856 | 5.17–6.52 |
+| 2^22 | `word-prime` | 822.3 → 636.1 | 584.0 → 398.8 | 8,566 → 7,143 | 2,370,994,176 → 2,704,932,864 | 6.52–8.27 |
+| 2^22 | `word-prime-ordinary` | 993.3 → 756.4 | 748.2 → 512.2 | 9,471 → 8,084 | 2,875,932,672 → 2,932,752,384 | 7.31–8.08 |
+| 2^22 | `prime5` | 1,094.6 → 822.4 | 846.3 → 577.7 | 11,498 → 9,979 | 2,538,864,640 → 2,839,494,656 | 4.06–7.54 |
+| 2^23 | `word-prime` | 1,392.5 → 1,221.6 | 1,013.6 → 784.4 | 13,946 → 11,436 | 4,158,078,976 → 5,080,317,952 | 4.55–9.19 |
+
+The base column is faster than the opening profile above because the machine
+was less loaded; only interleaved pairs are compared.
+
+Root spans at 2^22 `word-prime`, from the same runs:
+
+| Span (ms, median of 3) | Base | Head |
+| --- | ---: | ---: |
+| Stage 2 | 205.0 | 126.5 |
+| › weight profiles | 129.8 | 54.3 |
+| ›› authentication | 70.1 | 35.2 |
+| ›› parity rows | 20.5 | 7.5 |
+| ›› prime planes | 17.5 | 1.7 |
+| ›› direct A | 13.1 | 3.9 |
+| ›› image | 8.3 | 5.7 |
+| relation compile | 104.8 | 34.1 |
+| › direct A adjoint | 98.2 | 27.1 |
+| response build | 104.1 | 83.4 |
+| › response fold | 56.3 | 57.8 |
+| › evaluation witness | 18.4 | 11.3 |
+| › repack | 11.4 | 3.1 |
+| › response digits | 8.4 | 1.4 |
+| D commitment | 54.8 | 39.3 |
+| › prime digits | 16.3 | 16.1 |
+| › row partials | 16.1 | 1.8 |
+| Stage 3 | 31.8 | 32.6 |
+| field switch | 31.1 | 31.9 |
+| projections | 24.2 | 24.3 |
+
+The ordinary suffix is unchanged: its Stage 2 sumchecks take 85.5 ms, its
+`RingRelationProver::prepare` 58.3 ms, of which fold grinding is 45.9 ms, and
+its Stage 1 sumchecks 48.0 ms.
+
+Peak RSS rises 13–14% at `word`, `word-prime` and `prime5`, 2% at
+`word-prime-ordinary` and 22% at 2^23. Live heap does not: the prove-phase
+live-heap peak is identical in base and head, 1,516, 1,565, 1,996 and 2,009 MB
+for the four 2^22 shapes and 2,961 MB at 2^23. The difference is freed memory
+that the system allocator keeps resident in its large-block cache. With
+`MallocLargeCache=0`, peak RSS at `word-prime` falls from 1,687,420,928 to
+1,663,991,808 bytes at 2^22 and from 3,142,221,824 to 3,101,229,056 bytes at
+2^23. In the base, the authentication emission allocated and freed a batch
+of column weights every 4,096 columns. That churn happened to evict the
+cache, so resident memory dropped from 2,048 to 1,430 MB during the emission.
+The lane fill allocates nothing large, so freed buffers of earlier stages stay
+cached and later stages map fresh pages. The prover keeps no more live data
+than before; the RSS budget is exceeded only by allocator residency.
+
+What remains at 2^22 `word-prime` is about 400 ms in the root and 237 ms in
+the suffix. No root span above 10 ms is still serial. The largest are:
+
+- the response fold at 58 ms, an integer fold of every carrier that already
+  runs at 14 cores of 16;
+- the authentication emission at 35 ms, which reads every setup column's
+  entries from per-entry SHAKE streams;
+- the Stage 2 sumcheck rounds after the profiles, at about 72 ms;
+- the D commitment at 39 ms: payload 21 ms and prime digits 16 ms.
+
+At `prime5` the D commitment is 179 ms, of which the payload is 100 ms and the
+prime digits 78 ms; they already run at 15 and 10 cores. The suffix's six ordinary
+folds run at 12–14 cores. A further gain there needs a different algorithm,
+not more threads, and the fold-grinding acceptance rule and nonce order fix
+their sampling work.
+
+A protocol change could buy the following; none is made here:
+
+- The D commitment, and the B commitment at commit time, multiply every
+  setup entry, a 64-coefficient polynomial over `P = 2^128 - 275`, by its
+  digit chunk as integers. Arithmetic is about 72% of the D payload. A commitment modulus with a
+  64-point negacyclic transform, or a limb-prime path like the direct A
+  adjoint's, would cut most of that share: at most about 70 ms of the
+  `prime5` payload and 15 ms at `word-prime`.
+- Setup entries come from one SHAKE stream each. A setup derived from fewer,
+  longer streams would cut the SHAKE share of the D payload, about 28%, and
+  part of the authentication emission.
+- The suffix costs about 40 ms per ordinary fold on average over six folds.
+  A schedule with one fewer fold would save about that much, at the cost of
+  larger proofs per level.
+
+#### Third pass on the Stage 3 weight base
+
+This pass was merged (`8f575025c`) with the second pass on the Stage 3 weight
+base (`a35eed1be`, described above), so it now runs on `0ff6a96f7`. The only
+code conflict was the prime-plane profile: the base stores challenge supports
+as signs, so `plane_profile` writes `-1` or `1` into its multiplier. Setup,
+commitment and proof bytes are unchanged.
+
+The base's structured Stage 2 and closed-form families changed the code
+around four of this pass's changes. Each still runs on the prover path and
+keeps its gain. The figures below are medians at 2^22 `word-prime`, from the
+runs below, as base → second pass → this head:
+
+- *Authentication profile fill.* The authentication family still emits
+  through `ProfileBuilder::add_lanes`: 140.2 → 153.4 → 60.7 ms, and 175.3 →
+  195.8 → 85.7 ms at `prime5`.
+- *Recomposed profile fill.* Direct A, the image and the prime planes still
+  add one element's profile per task through `ProfileBuilder::add_shared`.
+  The prime-plane emission takes 19.6 → 19.8 → 4.6 ms, and 91.3 → 90.4 →
+  10.8 ms at `prime5`. The direct A emission takes 14.2 → 14.1 → 5.6 ms and
+  the image emission 20.4 → 16.7 → 13.1 ms.
+- *D row partials.* `binary_root_row_partials` takes 17.4 → 17.8 → 5.1 ms.
+- *Direct A adjoint.* The relation compile still calls `apply_integer_rows`:
+  255.5 → 161.3 → 56.1 ms, and 167.5 → 140.3 → 41.8 ms at
+  `word-prime-ordinary`.
+
+Base `0ff6a96f7` and head `8f575025c` were proved in the interleaved rounds
+described in the second pass's subsection, with the same 60 runs and the
+same loads. All runs reproduced their pins and verified.
+
+| N | Shape | Complete proving (ms) | Root level (ms) | Verification (ms) | Prover peak RSS (bytes) | Loads |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 2^22 | `word` | 1,194.0 → 853.1 | 918.7 → 505.0 | 10.1 → 10.5 | 2,221,703,168 → 2,485,534,720 | 9.29–11.99 |
+| 2^22 | `word-prime` | 2,269.4 → 1,435.8 | 1,612.5 → 789.8 | 14.3 → 15.5 | 3,095,003,136 → 3,673,833,472 | 14.50–22.84 |
+| 2^22 | `word-prime-ordinary` | 1,769.0 → 1,076.3 | 1,251.5 → 621.1 | 17.9 → 19.2 | 3,297,558,528 → 4,013,850,624 | 15.46–19.54 |
+| 2^22 | `prime5` | 2,270.8 → 1,430.1 | 1,559.5 → 747.1 | 11.2 → 12.2 | 5,414,666,240 → 5,815,009,280 | 10.29–16.40 |
+| 2^23 | `word-prime` | 2,439.7 → 1,184.5 | 1,997.7 → 773.3 | 13.8 → 12.2 | 3,984,883,712 → 4,629,168,128 | 13.99–20.40 |
+
+Peak RSS rises by 7–22%, as in the third-pass results above. The second
+pass alone lowers it. At 2^22 `word` the Stage 3 rounds also run
+slower in this head, 36.9 → 56.0 ms, with the same CPU time (about 370 ms)
+and the same live-heap peak. Both effects are most likely the system
+allocator's large-block cache. With `MallocLargeCache=0`, three more
+interleaved pairs at 2^22 `word` (loads 10.11–10.93) gave Stage 3 rounds of
+60.7 → 44.2 ms and peak RSS of 1,735,442,432 → 1,560,182,784 bytes. That
+cause is inferred from these runs; it has not been profiled.
+
+What remains in the root at `word-prime-ordinary` includes two closed-form
+families from the base. Both are emitted serially, one address at a time: the
+translated lanes at 27.9 ms and the source evaluation at 28.7 ms. A lane fill
+like the authentication family's would apply to both. This pass does not make
+that change.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs

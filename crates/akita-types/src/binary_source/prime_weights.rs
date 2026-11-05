@@ -10,7 +10,7 @@ use super::{
     binary_scalar_challenges, BinarySourceDescriptor, PrimePlaneManifest, PRIME_PLANE_DIGITS,
 };
 use crate::native_root_relation::{
-    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes,
+    weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
 };
 use crate::root_repacking::RootCoefficientRepacking;
 
@@ -320,6 +320,71 @@ impl<E: Field> PrimePlaneWeights<E> {
         Ok(sum)
     }
 
+    /// Profile `reading * w_c * omega - relation * SRE(c, alpha)` of plane
+    /// column `c`, from the column's scalar challenge support.
+    fn plane_profile(&self, plane: &PlaneInputs<E>, column: usize) -> Result<[E; 162], AkitaError> {
+        let column_weight = *plane
+            .column_weights
+            .get(column)
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut multiplier = [E::zero(); 162];
+        for &(s, negative) in self.support(plane.polynomial, column)? {
+            *multiplier.get_mut(s).ok_or(AkitaError::InvalidProof)? =
+                if negative { -E::one() } else { E::one() };
+        }
+        let mut profile = [E::zero(); 162];
+        shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, self.alpha, &mut profile)
+            .map_err(|error| AkitaError::Internal(error.to_string()))?;
+        for (slot, &omega) in profile.iter_mut().zip(&plane.omega) {
+            *slot = plane.reading * column_weight * omega - plane.relation * *slot;
+        }
+        Ok(profile)
+    }
+
+    /// Add both profiles to block profiles, one element per parallel task.
+    /// A response element `polynomial * ring_rows + ring_row` gathers rows
+    /// `4 * ring_row + k` of every plane on that polynomial.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        profiles.add_shared(&self.response, |element, profile| {
+            let (polynomial, ring_row) = (element / self.ring_rows, element % self.ring_rows);
+            for plane in self
+                .planes
+                .iter()
+                .filter(|plane| plane.polynomial == polynomial)
+            {
+                for k in 0..4 {
+                    let row_weight = *plane
+                        .rows
+                        .get(4 * ring_row + k)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    if row_weight == E::zero() {
+                        continue;
+                    }
+                    let mut power = plane.relation * row_weight;
+                    for coefficient in 0..162 {
+                        let signed = if coefficient % 2 == 0 { power } else { -power };
+                        *profile
+                            .get_mut(4 * coefficient + k)
+                            .ok_or(AkitaError::InvalidProof)? += signed;
+                        power *= self.alpha;
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        profiles.add_shared(&self.plane_lanes, |element, profile| {
+            let plane = self
+                .planes
+                .get(element / self.columns)
+                .ok_or(AkitaError::InvalidProof)?;
+            let values = self.plane_profile(plane, element % self.columns)?;
+            for (slot, value) in profile.iter_mut().zip(values) {
+                *slot += value;
+            }
+            Ok(())
+        })
+    }
+
     /// Stream the response-row and plane-column profiles; digit `d` of each
     /// weighs `8^d` times its profile entry.
     pub(crate) fn profiles(
@@ -339,37 +404,14 @@ impl<E: Field> PrimePlaneWeights<E> {
                     power *= self.alpha;
                 }
             }
-            let columns = plane.column_weights.len();
-            let weigh = |column: usize| -> Result<[E; 162], AkitaError> {
-                let mut multiplier = [E::zero(); 162];
-                for &(s, negative) in self.support(plane.polynomial, column)? {
-                    *multiplier.get_mut(s).ok_or(AkitaError::InvalidProof)? =
-                        if negative { -E::one() } else { E::one() };
-                }
-                let mut kernel = [E::zero(); 162];
-                shifted_remainder_evaluations::<E, PlusTrinomial>(
-                    &multiplier,
-                    self.alpha,
-                    &mut kernel,
-                )
-                .map_err(|error| AkitaError::Internal(error.to_string()))?;
-                Ok(kernel)
-            };
-            let kernels = weigh_units(0..columns, weigh)?;
-            for ((column, &column_weight), kernel) in
-                plane.column_weights.iter().enumerate().zip(kernels)
-            {
+            let columns = weigh_units(0..plane.column_weights.len(), |column| {
+                self.plane_profile(plane, column)
+            })?;
+            for (column, values) in columns.into_iter().enumerate() {
                 let element = checked::mul_add(plane_index, self.columns, column)
                     .ok_or(AkitaError::InvalidProof)?;
-                for (coefficient, (&relation, &omega)) in
-                    kernel.iter().zip(&plane.omega).enumerate()
-                {
-                    profile(
-                        &self.plane_lanes,
-                        element,
-                        coefficient,
-                        plane.reading * column_weight * omega - plane.relation * relation,
-                    )?;
+                for (coefficient, value) in values.into_iter().enumerate() {
+                    profile(&self.plane_lanes, element, coefficient, value)?;
                 }
             }
         }

@@ -320,31 +320,28 @@ impl<E: Field> RootWeightFamily<E> {
     }
 
     /// Add this family to block profiles. Recomposed families add one
-    /// profile entry per element coefficient; the others add every term.
+    /// profile per element; the others add per-address weights by lane.
     pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
-        let mut recomposed = |lanes: &SegmentLanes, element, offset, value| {
-            profiles.add_recomposed(lanes, element, offset, value)
-        };
         match self {
             Self::DirectA(direct) => {
                 let _span = tracing::info_span!("root_weights_emit_direct_a").entered();
-                direct.profiles(&mut recomposed)
+                direct.emit(profiles)
             }
             Self::Image(image) => {
                 let _span = tracing::info_span!("root_weights_emit_image").entered();
-                image.profiles(&mut recomposed)
+                image.emit(profiles)
             }
             Self::Prime(prime) => {
                 let _span = tracing::info_span!("root_weights_emit_prime").entered();
-                prime.profiles(&mut recomposed)
+                prime.emit(profiles)
             }
             Self::ParityRows(rows) => {
                 let _span = tracing::info_span!("root_weights_emit_parity_rows").entered();
-                rows.visit(|address, value| profiles.add(address, value))
+                rows.emit(profiles)
             }
             Self::Authentication(authentication) => {
                 let _span = tracing::info_span!("root_weights_emit_authentication").entered();
-                authentication.visit(|address, value| profiles.add(address, value))
+                authentication.emit(profiles)
             }
             Self::PartialColumns(columns) => {
                 let _span = tracing::info_span!("root_weights_emit_partial_columns").entered();

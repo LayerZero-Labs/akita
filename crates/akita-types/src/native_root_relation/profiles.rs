@@ -99,6 +99,10 @@ impl<E: Field> RootWeightProfiles<E> {
     }
 }
 
+/// Lanes one parallel task of [`ProfileBuilder::add_lanes`] fills.
+#[cfg(feature = "parallel")]
+const LANES_PER_TASK: usize = 32;
+
 /// Builds [`RootWeightProfiles`] from explicit terms and structured families.
 pub(crate) struct ProfileBuilder<E: Field> {
     block_bits: usize,
@@ -133,7 +137,7 @@ impl<E: Field> ProfileBuilder<E> {
         Ok(builder)
     }
 
-    fn width(&self) -> usize {
+    pub(crate) fn width(&self) -> usize {
         1 << self.block_bits
     }
 
@@ -165,34 +169,139 @@ impl<E: Field> ProfileBuilder<E> {
         Ok(())
     }
 
-    /// Add `8^d * value` at `offset` of every digit lane `d` of `element`.
+    /// Add per-address weights to whole lanes, in parallel.
     ///
-    /// Lanes whose stride is a multiple of the block width keep one shared
-    /// profile per element; narrower lanes fall back to per-address terms.
-    pub(crate) fn add_recomposed(
+    /// Every lane starts at a block boundary in `bases` and covers `degree`
+    /// addresses, so it spans `degree.div_ceil(width)` consecutive blocks.
+    /// Blocks without their own row receive one first. `add(lanes, rows)`
+    /// then adds the weights of a run of consecutive lanes: `rows` holds the
+    /// own rows of their blocks, lane by lane, in address order.
+    pub(crate) fn add_lanes(
+        &mut self,
+        bases: &[usize],
+        degree: usize,
+        add: impl Fn(std::ops::Range<usize>, &mut [&mut [E]]) -> Result<(), AkitaError> + Sync + Send,
+    ) -> Result<(), AkitaError> {
+        let width = self.width();
+        let lane_rows = degree.div_ceil(width);
+        if bases.is_empty() || lane_rows == 0 {
+            return Ok(());
+        }
+        let (block_bits, block_count) = (self.block_bits, self.blocks.len());
+        let blocks = move |base: usize| {
+            let first = base >> block_bits;
+            (base.is_multiple_of(width) && first + lane_rows <= block_count)
+                .then_some(first..first + lane_rows)
+        };
+        for &base in bases {
+            let range = blocks(base).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "root weight profile lanes differ from their blocks".into(),
+                )
+            })?;
+            for block in range {
+                if self.blocks[block].own == 0 {
+                    self.blocks[block].own = self.row()?;
+                }
+            }
+        }
+        let mut rows = self
+            .rows
+            .chunks_exact_mut(width)
+            .map(Some)
+            .collect::<Vec<_>>();
+        let mut lanes = Vec::with_capacity(bases.len() * lane_rows);
+        for &base in bases {
+            for block in blocks(base).ok_or(AkitaError::InvalidProof)? {
+                lanes.push(
+                    rows.get_mut(self.blocks[block].own as usize)
+                        .and_then(Option::take)
+                        .ok_or(AkitaError::InvalidProof)?,
+                );
+            }
+        }
+        #[cfg(feature = "parallel")]
+        lanes
+            .par_chunks_mut(LANES_PER_TASK * lane_rows)
+            .enumerate()
+            .try_for_each(|(task, rows)| {
+                let start = task * LANES_PER_TASK;
+                add(start..start + rows.len() / lane_rows, rows)
+            })?;
+        #[cfg(not(feature = "parallel"))]
+        add(0..bases.len(), &mut lanes)?;
+        Ok(())
+    }
+
+    /// Add one profile to every element of `lanes`, in parallel.
+    ///
+    /// `add(element, profile)` adds to the element's `degree` natural
+    /// coefficients, which digit lane `d` weighs by `8^d`. Lanes whose stride
+    /// is a multiple of the block width keep one shared profile per element;
+    /// narrower lanes stream the nonzero entries as per-address terms.
+    pub(crate) fn add_shared(
         &mut self,
         lanes: &SegmentLanes,
-        element: usize,
-        offset: usize,
-        value: E,
+        add: impl Fn(usize, &mut [E]) -> Result<(), AkitaError> + Sync + Send,
     ) -> Result<(), AkitaError> {
-        if offset >= lanes.degree() {
-            return Err(AkitaError::InvalidProof);
-        }
+        let degree = lanes.degree();
         if lanes.stride() & (self.width() - 1) != 0 {
-            return lanes.recompose(element, offset, value, &mut |address, value| {
-                self.add(address, value)
-            });
+            let mut profile = vec![E::zero(); degree];
+            for element in 0..lanes.elements() {
+                profile.fill(E::zero());
+                add(element, &mut profile)?;
+                for (offset, &value) in profile.iter().enumerate() {
+                    if !value.is_zero() {
+                        lanes.recompose(element, offset, value, &mut |address, value| {
+                            self.add(address, value)
+                        })?;
+                    }
+                }
+            }
+            return Ok(());
         }
-        let first = lanes.base(element, 0)? >> self.block_bits;
-        let shared = match self.blocks.get(first) {
-            Some(weight) if weight.shared != 0 => weight.shared,
-            Some(_) => self.share(lanes, element)?,
-            None => return Err(AkitaError::InvalidProof),
-        };
-        // The element's shared rows are contiguous, so `offset` indexes them
-        // directly.
-        self.rows[((shared as usize) << self.block_bits) + offset] += value;
+        let mut shared = Vec::with_capacity(lanes.elements());
+        for element in 0..lanes.elements() {
+            let first = lanes.base(element, 0)? >> self.block_bits;
+            let row = match self.blocks.get(first) {
+                Some(weight) if weight.shared != 0 => weight.shared,
+                Some(_) => self.share(lanes, element)?,
+                None => return Err(AkitaError::InvalidProof),
+            };
+            shared.push((row as usize, element));
+        }
+        // Every element owns distinct contiguous rows; split them off in
+        // row order.
+        shared.sort_unstable();
+        let span = degree.div_ceil(self.width()) << self.block_bits;
+        let mut profiles = Vec::with_capacity(shared.len());
+        let mut rest = self.rows.as_mut_slice();
+        let mut position = 0;
+        for (row, element) in shared {
+            let start = (row << self.block_bits)
+                .checked_sub(position)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (_, tail) = rest
+                .split_at_mut_checked(start)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (rows, tail) = tail
+                .split_at_mut_checked(span)
+                .ok_or(AkitaError::InvalidProof)?;
+            profiles.push((
+                element,
+                rows.get_mut(..degree).ok_or(AkitaError::InvalidProof)?,
+            ));
+            rest = tail;
+            position = (row << self.block_bits) + span;
+        }
+        #[cfg(feature = "parallel")]
+        profiles
+            .par_iter_mut()
+            .try_for_each(|(element, profile)| add(*element, profile))?;
+        #[cfg(not(feature = "parallel"))]
+        profiles
+            .iter_mut()
+            .try_for_each(|(element, profile)| add(*element, profile))?;
         Ok(())
     }
 

@@ -11,7 +11,8 @@ use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,
 };
 use crate::native_root_relation::{
-    weigh_units, NativeRootWeights, RootEq, RootWeightFamily, SegmentLanes, WEIGH_BATCH,
+    weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
+    WEIGH_BATCH,
 };
 
 /// The prover's A operand for [`binary_direct_a_weights`].
@@ -161,6 +162,17 @@ impl<E: Field> DirectAWeights<E> {
         Ok(sum)
     }
 
+    /// Add each element's profile `h` to block profiles in parallel.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        profiles.add_shared(&self.lanes, |element, profile| {
+            let h = self.columns.get(element).ok_or(AkitaError::InvalidProof)?;
+            for (slot, &weight) in profile.iter_mut().zip(h) {
+                *slot += weight;
+            }
+            Ok(())
+        })
+    }
+
     /// Stream each element's profile `h[t]`; digit `d` weighs `8^d * h[t]`.
     pub(crate) fn profiles(
         &self,
@@ -280,6 +292,49 @@ impl<E: Field> ImageWeights<E> {
         Ok(-sum)
     }
 
+    /// The extended rows `adjoint.extend_row(rho)` of every A row.
+    fn extended_rows(&self) -> Result<Vec<Vec<E>>, AkitaError> {
+        let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
+        self.rho.iter().map(|rho| adjoint.extend_row(rho)).collect()
+    }
+
+    /// The image element of one (A row, column) pair and its profile `h`,
+    /// the pair's support applied as signed shifts of the extended row.
+    fn expand(
+        &self,
+        extended: &[Vec<E>],
+        row_index: usize,
+        column: usize,
+    ) -> Result<(usize, [E; 648]), AkitaError> {
+        let (element, support) = self.row_column(row_index, column)?;
+        let extended = extended.get(row_index).ok_or(AkitaError::InvalidProof)?;
+        let mut h = [E::zero(); 648];
+        for &(k, value) in support {
+            let shifted = extended.get(k..k + 648).ok_or(AkitaError::InvalidProof)?;
+            for (slot, &g) in h.iter_mut().zip(shifted) {
+                *slot += value * g;
+            }
+        }
+        Ok((element, h))
+    }
+
+    /// Add each element's profile `-h` to block profiles in parallel. An
+    /// element `(owner * columns + column) * rank + row` meets A row
+    /// `owner * rank + row` at `column`.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        let extended = self.extended_rows()?;
+        profiles.add_shared(&self.lanes, |element, profile| {
+            let index = element / self.rank;
+            let row_index = checked::mul_add(index / self.columns, self.rank, element % self.rank)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (_, h) = self.expand(&extended, row_index, index % self.columns)?;
+            for (slot, &weight) in profile.iter_mut().zip(&h) {
+                *slot += -weight;
+            }
+            Ok(())
+        })
+    }
+
     /// Expand each (A row, column) pair by its support, in batches through
     /// [`weigh_units`], and stream the element profiles `-h[t]`; digit `d`
     /// weighs `-8^d * h[t]`.
@@ -287,29 +342,13 @@ impl<E: Field> ImageWeights<E> {
         &self,
         mut profile: impl FnMut(&SegmentLanes, usize, usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
-        let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
-        let extended = self
-            .rho
-            .iter()
-            .map(|rho| adjoint.extend_row(rho))
-            .collect::<Result<Vec<_>, _>>()?;
-        let weigh = |unit: usize| -> Result<(usize, [E; 648]), AkitaError> {
-            let row_index = unit / self.columns;
-            let (element, support) = self.row_column(row_index, unit % self.columns)?;
-            let extended = extended.get(row_index).ok_or(AkitaError::InvalidProof)?;
-            let mut h = [E::zero(); 648];
-            for &(k, value) in support {
-                let shifted = extended.get(k..k + 648).ok_or(AkitaError::InvalidProof)?;
-                for (slot, &g) in h.iter_mut().zip(shifted) {
-                    *slot += value * g;
-                }
-            }
-            Ok((element, h))
-        };
+        let extended = self.extended_rows()?;
         let units =
             checked::product([self.rho.len(), self.columns]).ok_or(AkitaError::InvalidProof)?;
         for start in (0..units).step_by(WEIGH_BATCH) {
             let end = units.min(start + WEIGH_BATCH);
+            let weigh =
+                |unit: usize| self.expand(&extended, unit / self.columns, unit % self.columns);
             for (element, h) in weigh_units(start..end, weigh)? {
                 for (t, &weight) in h.iter().enumerate() {
                     profile(&self.lanes, element, t, -weight)?;

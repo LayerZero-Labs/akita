@@ -5,9 +5,11 @@ use tracing::{span, Subscriber};
 use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
 
 /// Per-name totals: calls, wall, process CPU, the largest live-heap peak and
-/// the live heap at that span's entry, and the individual call walls.
+/// the live heap at that span's entry, the individual call walls, and the
+/// names of the enclosing spans.
 #[derive(Default)]
 struct Totals {
+    parents: std::collections::BTreeSet<&'static str>,
     calls: u64,
     wall: Duration,
     cpu: Duration,
@@ -46,6 +48,9 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Timings {
                 let heap = start.heap.as_ref().map(heap::Scope::close);
                 if let Ok(mut totals) = self.0.lock() {
                     let entry = totals.entry(span.metadata().name()).or_default();
+                    entry
+                        .parents
+                        .insert(span.parent().map_or("-", |p| p.metadata().name()));
                     entry.calls += 1;
                     entry.wall += wall;
                     entry.cpu += cpu;
@@ -77,12 +82,13 @@ impl Timings {
                     "many".into()
                 };
                 println!(
-                    "span phase={phase} name={name} calls={} inclusive_wall_ns={} process_cpu_ns={} heap_entry_bytes={} heap_peak_bytes={} call_wall_ns={walls}",
+                    "span phase={phase} name={name} calls={} inclusive_wall_ns={} process_cpu_ns={} heap_entry_bytes={} heap_peak_bytes={} call_wall_ns={walls} parent={}",
                     totals.calls,
                     totals.wall.as_nanos(),
                     totals.cpu.as_nanos(),
                     totals.heap_entry,
                     totals.heap_peak,
+                    totals.parents.iter().copied().collect::<Vec<_>>().join("|"),
                 );
             }
         }

@@ -12,6 +12,8 @@ use akita_types::binary_source::{
     binary_scalar_challenges, binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor,
     BinaryTerminalClaim, BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Natural coefficient-order digit segments fixed by the outgoing commitment.
 /// No carry table is a clear proof message.
@@ -116,31 +118,34 @@ pub(crate) fn packed_row_partials(
         checked::product([owner, index.padded_carriers()]).ok_or(AkitaError::InvalidProof)?;
     let range =
         checked::range(owner_start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
-    for (column, words) in sources
-        .get(range)
-        .ok_or(AkitaError::InvalidProof)?
-        .chunks_exact(rows)
-        .enumerate()
-    {
+    let sources = sources.get(range).ok_or(AkitaError::InvalidProof)?;
+    let owner_len = checked::product([columns, 162]).ok_or(AkitaError::InvalidProof)?;
+    let range = checked::product([owner, owner_len])
+        .and_then(|start| checked::range(start, owner_len))
+        .ok_or(AkitaError::InvalidProof)?;
+    let targets = partials.get_mut(range).ok_or(AkitaError::InvalidProof)?;
+    let column = |(words, targets): (&[u128], &mut [i8])| -> Result<(), AkitaError> {
         let mut value = BinaryField162::ZERO;
         for (&word, &weight) in words.iter().zip(&weights) {
             let embedded = BinaryField162::from_words([word as u64, (word >> 64) as u64, 0])
                 .ok_or(AkitaError::InvalidProof)?;
             value += weight * embedded;
         }
-        let start = checked::mul_add(owner, columns, column)
-            .and_then(|x| checked::product([x, 162]))
-            .ok_or(AkitaError::InvalidProof)?;
-        let range = checked::range(start, 162).ok_or(AkitaError::InvalidProof)?;
-        for (target, bit) in partials
-            .get_mut(range)
-            .ok_or(AkitaError::InvalidProof)?
-            .iter_mut()
-            .zip(binary_scalar_lift(value))
-        {
+        for (target, bit) in targets.iter_mut().zip(binary_scalar_lift(value)) {
             *target = bit as i8;
         }
-    }
+        Ok(())
+    };
+    #[cfg(feature = "parallel")]
+    sources
+        .par_chunks_exact(rows)
+        .zip(targets.par_chunks_exact_mut(162))
+        .try_for_each(column)?;
+    #[cfg(not(feature = "parallel"))]
+    sources
+        .chunks_exact(rows)
+        .zip(targets.chunks_exact_mut(162))
+        .try_for_each(column)?;
     Ok(partials)
 }
 
@@ -204,26 +209,45 @@ impl BinaryEvaluationWitness {
             )?;
             signed_trinomial_remainder::<162, PlusTrinomial>(&product)
         })?;
-        let mut value = [0i128; 162];
-        for (column, weight) in column_weights.into_iter().enumerate() {
+        // Each column adds `partial * challenge` to the parity sum and
+        // `partial * lift(weight)` to the value sum. The sums are exact
+        // integers far inside i128, so columns run in parallel and reduce.
+        let column = |column: usize| -> Result<[[i128; 162]; 2], AkitaError> {
             let element =
                 checked::mul_add(owner, columns, column).ok_or(AkitaError::InvalidProof)?;
             let start = checked::product([element, 162]).ok_or(AkitaError::InvalidProof)?;
             let range = checked::range(start, 162).ok_or(AkitaError::InvalidProof)?;
             let partial = partials.get(range).ok_or(AkitaError::InvalidProof)?;
-            let product = signed_trinomial_product::<162, PlusTrinomial>(
-                partial,
-                scalar_challenges
-                    .get(element)
-                    .ok_or(AkitaError::InvalidProof)?,
-            )?;
-            accumulate(&mut parity, &product, true)?;
-            let product = signed_trinomial_product::<162, PlusTrinomial>(
-                partial,
-                &binary_scalar_lift(weight),
-            )?;
-            accumulate(&mut value, &product, false)?;
-        }
+            let weight = *column_weights.get(column).ok_or(AkitaError::InvalidProof)?;
+            Ok([
+                signed_trinomial_product::<162, PlusTrinomial>(
+                    partial,
+                    scalar_challenges
+                        .get(element)
+                        .ok_or(AkitaError::InvalidProof)?,
+                )?,
+                signed_trinomial_product::<162, PlusTrinomial>(
+                    partial,
+                    &binary_scalar_lift(weight),
+                )?,
+            ])
+        };
+        let add = |mut sums: [[i128; 162]; 2], other: [[i128; 162]; 2]| {
+            for (sum, other) in sums.iter_mut().zip(&other) {
+                accumulate(sum, other, false)?;
+            }
+            Ok(sums)
+        };
+        #[cfg(feature = "parallel")]
+        let [parity_sum, mut value] = (0..column_weights.len())
+            .into_par_iter()
+            .map(column)
+            .try_reduce(|| [[0; 162]; 2], add)?;
+        #[cfg(not(feature = "parallel"))]
+        let [parity_sum, mut value] = (0..column_weights.len())
+            .map(column)
+            .try_fold([[0; 162]; 2], |sums, products| add(sums, products?))?;
+        accumulate(&mut parity, &parity_sum, true)?;
         let terminal = BinaryField162::from_bytes(claim.value()).ok_or(AkitaError::InvalidProof)?;
         accumulate(&mut value, &binary_scalar_lift(terminal), true)?;
         let mut parity_digits =

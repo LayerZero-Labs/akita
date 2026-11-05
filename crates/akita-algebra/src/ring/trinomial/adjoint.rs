@@ -14,6 +14,7 @@ use super::TrinomialModulus;
 use crate::offset_eq::eq_eval_at_index;
 
 mod integer;
+mod trace;
 
 /// An internal bound failure: unreachable for inputs that passed validation.
 fn internal(what: &str) -> AkitaError {
