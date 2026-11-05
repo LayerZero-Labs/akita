@@ -32,7 +32,8 @@ pub struct BinaryProjectionRequest {
 /// Private result of a [`BinaryProjectionRequest`].
 ///
 /// `matrix` is the source handle's A, shared rather than copied, so the
-/// prover compiles the relation and its typed prefix without deriving A again.
+/// prover compiles the relation without deriving A again. Typed-prefix
+/// preparation derives A itself, and Stage 3 reads the committed prefix table.
 pub struct BinaryProjectionWitness {
     pub residuals: Vec<[i128; 648]>,
     pub matrix: std::sync::Arc<Vec<Vec<[i128; 648]>>>,

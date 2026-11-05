@@ -270,9 +270,6 @@ pub fn derive_centered_q_matrix(
     matrix
         .try_reserve_exact(count)
         .map_err(|_| AkitaError::InvalidSetup("q setup matrix allocation failed".into()))?;
-    if count == 0 {
-        return Ok(matrix);
-    }
     matrix.resize(count, 0);
     // Every entry has its own stream, so entries derive independently.
     cfg_chunks_mut!(matrix, degree).enumerate().try_for_each(
