@@ -1033,7 +1033,7 @@ impl<F: Field, S> CommitmentExecutionOutput<F, S> {
 mod tests {
     use super::*;
     use crate::commitment::StateOwnerCapability;
-    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
+    use akita_types::{AkitaSetupDescriptor, PublicMatrixSeed};
     use jolt_algebra::Prime64Offset59;
 
     type F = Prime64Offset59;
@@ -1067,7 +1067,7 @@ mod tests {
                 max_num_vars: 8,
                 max_num_batched_polys: 1,
                 num_field_elements: 64,
-                setup_seed: AkitaSetupSeed::shake256_paged_v1([7; 32]),
+                setup_seed: PublicMatrixSeed::shake256_paged_v1([7; 32]),
             },
             plan,
             1,

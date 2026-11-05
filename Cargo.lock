@@ -204,6 +204,7 @@ name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
  "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
  "proptest",
  "thiserror",
@@ -275,11 +276,11 @@ dependencies = [
  "akita-transcript",
  "criterion",
  "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.8",
  "rand_core 0.6.4",
- "shake",
  "spongefish",
  "tracing",
 ]

@@ -158,7 +158,7 @@ mod tests {
         PolynomialGroupLayout, ScheduleLookupKey,
     };
     use akita_types::{
-        AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, SetupPrefixVerifierRegistry,
+        AkitaExpandedSetup, AkitaSetupDescriptor, PublicMatrixSeed, SetupPrefixVerifierRegistry,
     };
     use jolt_algebra::Ring;
     use std::sync::Arc;
@@ -175,7 +175,7 @@ mod tests {
     }
 
     fn setup(max_num_vars: usize, num_field_elements: usize) -> AkitaVerifierSetup<F> {
-        let seed: AkitaSetupSeed = [6; 32].into();
+        let seed: PublicMatrixSeed = [6; 32].into();
         AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

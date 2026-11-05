@@ -12,8 +12,8 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_params::OpeningScheduleSelection;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{
-    AkitaExpandedSetup, AkitaInstanceDescriptor, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedGroup,
+    AkitaExpandedSetup, AkitaInstanceDescriptor, AkitaSetupDescriptor, AkitaVerifierSetup,
+    CommittedGroup, PublicMatrixSeed,
 };
 
 /// An accepted encoding must equal its re-encoding byte for byte, and the
@@ -51,7 +51,7 @@ pub fn run(data: &[u8]) {
         4 => canonical::<AkitaVerifierSetup<fp32::Field>>(bytes, "verifier_setup_fp32"),
         5 => canonical::<AkitaExpandedSetup<fp64::Field>>(bytes, "expanded_setup_fp64"),
         6 => canonical::<AkitaSetupDescriptor>(bytes, "setup_descriptor"),
-        7 => canonical::<AkitaSetupSeed>(bytes, "setup_seed"),
+        7 => canonical::<PublicMatrixSeed>(bytes, "setup_seed"),
         8 => canonical::<AkitaInstanceDescriptor>(bytes, "instance_descriptor"),
         9 => canonical::<OpeningScheduleSelection>(bytes, "schedule_selection"),
         10 => canonical::<Vec<fp128::Field>>(bytes, "field_vec_fp128"),
