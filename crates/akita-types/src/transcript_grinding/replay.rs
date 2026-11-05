@@ -109,6 +109,16 @@ impl<'a> GrindingPlanCursor<'a> {
     fn is_finished(&self) -> bool {
         self.run_index == self.plan.runs().len() && self.run_offset == 0
     }
+
+    /// Whether every unconsumed entry belongs to a level after `cut_level`.
+    fn is_finished_through(&self, cut_level: u32) -> bool {
+        self.run_offset == 0
+            && self
+                .plan
+                .runs()
+                .get(self.run_index..)
+                .is_some_and(|rest| rest.iter().all(|run| run.site().level() > cut_level))
+    }
 }
 
 const fn value_fits(value: u32, width: u8) -> bool {
@@ -561,6 +571,25 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
         result
     }
 
+    /// Require that replay consumed exactly the grinding plan of levels
+    /// `0..=cut_level` without error.
+    ///
+    /// Extension seam: zero knowledge (akita#120). An opening that stops at a cut ends
+    /// its replay here instead of at [`finish`](Self::finish).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidInput`] when an earlier step failed or an
+    /// entry of a level up to `cut_level` is unconsumed.
+    pub fn finish_through(self, cut_level: u32) -> Result<(), AkitaError> {
+        if self.invalid || !self.cursor.is_finished_through(cut_level) {
+            return Err(AkitaError::InvalidInput(
+                "the grinding replay did not stop exactly at the cut".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Finish plan replay. Akita's messages are now in the borrowed channel's
     /// argument string.
     pub fn finish(self) -> Result<(), AkitaError> {
@@ -706,6 +735,24 @@ impl<'proof, 'plan, C: VerifierGrindingChannel<'proof>> VerifierGrinding<'proof,
             return Err(AkitaError::InvalidProof);
         }
         Ok(PendingEof { _private: () })
+    }
+
+    /// Require that replay consumed exactly the grinding plan of levels
+    /// `0..=cut_level` without error. The end of the argument string is the
+    /// caller's to check: its tail follows the cut.
+    ///
+    /// Extension seam: zero knowledge (akita#120). An opening that stops at a cut ends
+    /// its replay here instead of at [`finish`](Self::finish).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] and rejects the state otherwise.
+    pub fn finish_through(mut self, cut_level: u32) -> Result<(), AkitaError> {
+        if self.invalid || !self.cursor.is_finished_through(cut_level) {
+            self.poison();
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
     }
 }
 

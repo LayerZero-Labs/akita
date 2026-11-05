@@ -30,6 +30,20 @@ pub(super) struct SuffixVerifierState<F: Field, E: Field, V = E> {
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
 }
 
+impl<F: Field, E: Field, V> SuffixVerifierState<F, E, V> {
+    /// The continuation the root fold hands the first recursive fold.
+    pub(super) fn from_root(root: super::FoldVerifyOutput<F, E, V>, witness_len: usize) -> Self {
+        Self {
+            opening_point: root.challenges,
+            opening: root.opening,
+            witness: root.next_witness,
+            basis: BasisMode::Lagrange,
+            witness_len,
+            setup_prefix_opening: root.setup_prefix_opening,
+        }
+    }
+}
+
 fn suffix_commitment_payloads<F, E>(
     setup: &AkitaVerifierSetup<F>,
     lp: &CommittedGroupParams,

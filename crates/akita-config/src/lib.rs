@@ -487,6 +487,20 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Stable trusted schedule family identity for external artifact loading.
     fn schedule_family_name() -> &'static str;
+
+    /// Whether this configuration proves in zero knowledge. It is bound into
+    /// every proof's descriptor (`SetupSection::protocol_features`).
+    ///
+    /// Extension seam: zero knowledge (akita#120). It is `false` for every configuration
+    /// on `main`.
+    const IS_ZK: bool = false;
+
+    /// The family of this configuration's zero-knowledge schedules, if it has
+    /// one.
+    ///
+    /// Extension seam: zero knowledge (akita#120). It is `None` for every configuration on
+    /// `main`, which ships no zero-knowledge schedule artifacts.
+    const ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> = None;
 }
 
 #[cfg(test)]
