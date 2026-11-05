@@ -218,7 +218,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             });
         }
         if physical.is_some() {
-            digit_source.prepare_class_indexed_leaf();
+            digit_source.prepare_class_indexed_leaf()?;
         }
         let mut session = Self {
             source: digit_source,
