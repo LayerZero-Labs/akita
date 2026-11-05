@@ -2947,7 +2947,7 @@ into the field once. The limb sums are NEON multiply-accumulates on AArch64
 from prefix sums. Tests compare the kernel with the portable loop and the
 payload with the reference commitment.
 
-The setup streams' SHAKE256 sponge is now held as a Keccak state, so the two
+The setup streams' SHAKE256 sponge now keeps its raw permutation state, so the two
 rows of a setup column squeeze together. Whenever both streams need a block,
 one call of the backend's parallel permutation permutes both states; on the
 AArch64 SHA-3 instructions that costs what one state costs. The stream

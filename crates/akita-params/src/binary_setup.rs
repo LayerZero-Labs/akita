@@ -220,7 +220,7 @@ impl ShakeSqueeze {
     }
 }
 
-/// Two Keccak-f\[1600\] states permuted through the backend's parallel
+/// Two SHAKE256 permutation states permuted through the backend's parallel
 /// permutation when it holds two or more states, otherwise one at a time.
 struct PermutePair<'a>(&'a mut State1600, &'a mut State1600);
 
