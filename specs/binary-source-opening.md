@@ -3211,6 +3211,138 @@ ordinary-protocol prover code only. Each lands in its own commit, keeps the
 ordinary fixture at 65,567 bytes and the fold-grinding acceptance rule and
 nonce order, and changes no transcript input.
 
+#### Sixth-pass changes
+
+Every change below preserves setup, commitment and proof bytes and the
+transcript, and reproduced every pin it was measured on. Each touches only
+the ordinary digit-range prover in `akita-cpu-backend`, so the ordinary
+fixture stays at 65,567 bytes and fold grinding keeps its acceptance rule and
+nonce order. Each commit message records its interleaved runs against its
+parent at 2^22, with the one-minute loads.
+
+| Commit | Change | Ordinary | Span: before → after (ms) |
+| --- | --- | --- | --- |
+| `bf520dd38` | `digit_range` bench of the `prime5` first-fold session | yes (bench) | — |
+| `46b07b6fb` | Exact-prefix tables folded out of place in one parallel pass | yes | `prime5` Stage 1 264.5 → 220.7, product folds 50.8 → 26.6, leaf folds 21.1 → 9.0; `word-prime` Stage 1 95.2 → 76.4 |
+| `ff34ad710` | The second parent's batch weight folded into its node lane | yes | `prime5` Stage 1 223.9 → 215.2, product initial rounds 53.3 → 49.8, materialized rounds 59.6 → 55.7 |
+| `59938c8a3` | The product's second round summed over quartet classes | yes | `prime5` Stage 1 222.1 → 214.6, product initial rounds 51.9 → 41.7 |
+| `75daa646c4e2baa9344fc31325fef267f9493a52` | That round kept on the rescan below two quartets per class | yes | `word` Stage 1 49.2 → 45.4, product initial rounds 5.1 → 2.3 |
+
+**Out-of-place folds.** An exact-prefix table folded in place in a serial
+prefix and then in dependent parallel waves. It now writes the folded prefix
+into a new table in one parallel pass, and stays serial below 4,096 pairs.
+Each folded entry is the same `fold_pair` of the same two entries.
+
+**Prescaled parent lane.** The arity-four stage multiplied the second
+parent's lane by the interstage batch challenge in every row of every round.
+The node table now scales that lane once when the prover starts, and the
+weight becomes one. The child claims divide the lane by the challenge again.
+Both maps are linear through every fold, so every round polynomial and claim
+is the same field element.
+
+**Quartet-class second round.** After the first challenge, a quartet's
+second-round coefficients depend only on its pair of folded class pairs. At
+`prime5` the 4,754,304 quartets fall into 981,064 of the 2^20 quartet
+classes. The round now sums each class's equality weight, then multiplies
+each nonzero class weight by that class's coefficients once. Above 4,096
+classes, the classes split into ranges that hold equal numbers of quartets:
+`prime5`'s digits are skewed, and a split into equal class ranges gave one
+of 16 ranges 1.64 M quartets. Each range fills its own slice of one weight
+table. This is the exact field sum of the rescan, reordered. At `word`,
+70,112 quartets fall into 2^16 classes, and there the rescan is faster. The
+class round therefore runs only when quartets outnumber classes twice over.
+Of the second rounds probed at 2^22, in `word`, `word-prime` and `prime5`,
+only `prime5`'s first fold qualifies.
+
+Measured and not kept:
+
+- **The leaf's second round over quartet classes.** Deferring the leaf's
+  materialization by one round and summing that round over quartet classes
+  cut the leaf's materialized rounds by 12 ms (34.7 → 22.8) and added 14 ms
+  to its first rounds (3.9 → 18.3). Stage 1 went from 214.6 to 218.2 ms.
+- **Deferred-reduction slot sums in `weighted_source_bits`.** The slots
+  summed as unreduced 128-bit products and reduced once per column. A scratch
+  kernel at the `prime5` plane shape (16,384 rows, 256 columns) ran 8.6 →
+  6.9 ms per plane at a load of 1.7. In the prover, `prime5` prime digits
+  measured 71.0 → 72.4 ms at loads 6–10, so the change did not pay. Tiling
+  columns to keep a group's 256 subset sums in L1 was no faster in the
+  scratch kernel: 8.6 ms untiled, 8.6–11.5 ms for tiles of 4–16 columns.
+- The remaining planned candidates were not built. Materializing one round
+  later is the leaf result above in the product stage, and the class round
+  already shortens that round. Late rounds on the calling thread and a fused
+  fold and round were estimated at 2–10 ms. The paired authentication absorb
+  was estimated at 3 ms.
+
+#### Sixth-pass results
+
+Base `016f466b7` and head `75daa646c4e2baa9344fc31325fef267f9493a52` were proved alternately, three times
+each per configuration, in isolated processes with a cached catalog, 2^23
+last. All 30 runs reproduced their pins. One-minute loads were 3.6–7.8. Each
+cell is the median of three; the suffix columns are the six ordinary Stage 1
+and Stage 2 sumchecks and the six `RingRelationProver::prepare` calls.
+
+| N | Shape | Complete proving (ms) | Root level (ms) | Suffix Stage 1 (ms) | Suffix Stage 2 (ms) | Suffix `prepare` (ms) | Process CPU (ms) | Peak RSS (bytes) | Loads |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 2^22 | `word` | 566.0 → 567.0 | 331.9 → 335.1 | 48.6 → 45.4 | 87.7 → 88.5 | 48.7 → 48.6 | 6,550 → 6,518 | 2,495,119,360 → 2,491,645,952 | 3.56–7.06 |
+| 2^22 | `word-prime` | 689.0 → 668.1 | 379.1 → 378.8 | 99.0 → 78.0 | 93.5 → 92.9 | 70.3 → 70.1 | 8,352 → 8,087 | 3,654,303,744 → 3,652,124,672 | 3.56–7.06 |
+| 2^22 | `word-prime-ordinary` | 740.4 → 728.9 | 433.7 → 430.9 | 95.6 → 79.8 | 90.8 → 91.8 | 71.3 → 71.8 | 8,785 → 8,570 | 3,313,106,944 → 3,306,831,872 | 4.57–7.78 |
+| 2^22 | `prime5` | 1,064.5 → 1,016.2 | 519.0 → 513.8 | 256.1 → 204.2 | 134.8 → 141.4 | 91.1 → 91.0 | 13,980 → 13,089 | 5,801,394,176 → 5,827,313,664 | 4.40–7.40 |
+| 2^23 | `word-prime` | 936.9 → 917.1 | 621.9 → 622.5 | 98.7 → 76.7 | 94.5 → 93.5 | 71.9 → 72.2 | 11,083 → 10,871 | 4,621,647,872 → 4,625,219,584 | 3.61–3.96 |
+
+Every gain sits in suffix Stage 1. The other columns move within their run
+spread: one head `prime5` Stage 2 run took 148.9 ms, the other two 141.4 and
+134.1. `prime5` still proves above the 0.8 s target. The head runs were
+1,016.2, 1,024.2 and 1,004.0 ms. Peak RSS rises by at most 0.45%, at
+`prime5`, where the out-of-place folds and the class weights hold one more
+table at a time. Verification was not remeasured; no verifier code changed.
+
+Stage 1 spans at 2^22 from the same runs, base → head:
+
+| Span (ms, median of 3) | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| --- | ---: | ---: | ---: | ---: |
+| first suffix fold, Stage 1 | 12.1 → 12.2 | 51.1 → 39.5 | 48.7 → 40.3 | 182.3 → 145.7 |
+| product folds | 4.5 → 2.4 | 20.3 → 9.3 | 19.4 → 8.9 | 50.4 → 27.6 |
+| product rounds, first two | 2.3 → 2.2 | 3.9 → 3.7 | 3.9 → 4.0 | 54.0 → 40.2 |
+| product rounds, materialized | 5.1 → 6.0 | 15.2 → 15.5 | 15.2 → 15.5 | 58.6 → 55.1 |
+| leaf rounds, materialized | 3.7 → 3.4 | 19.0 → 19.5 | 18.9 → 20.2 | 32.8 → 32.4 |
+
+At 2^23 `word-prime` the first fold's Stage 1 fell 50.8 → 39.4 ms and the
+product folds 19.3 → 8.7 ms.
+
+The first fold's Stage 1 at `prime5` now runs at 1.55 times the 94 ms
+multiplication bound above, against 1.94 times for the base in the same runs.
+
+#### Sixth-pass remainder
+
+At `prime5` the head spends 514 ms in the binary root level and 146 ms in
+Stage 1 of the first suffix fold. The largest remaining spans:
+
+- **Root Stage 2, 111 ms beyond its 81 ms of weight profiles.** It is a
+  relation range-image sumcheck whose spans share their names with the
+  suffix Stage 2. Its fold is already one allocating parallel pass.
+- **Authentication emission, 64 ms.** It is bound by the paired SHAKE
+  permutation and the residue kernel; the fifth pass's breakdown still
+  applies.
+- **Prime digits, 52 ms.** Deferred reduction did not pay in the prover; see
+  above.
+- **The response fold, 58 ms, and root Stage 3, 71 ms,** are unchanged.
+- **First-fold Stage 1, 146 ms.** The materialized product rounds (55 ms),
+  the leaf's materialized rounds (32 ms) and the folds run at 9–10 cores and
+  are arithmetic-bound. The bench session of the same size takes 126 ms with
+  Rayon.
+
+What a protocol change would buy, without making one:
+
+- **A base-16 first fold at `prime5`.** In the `digit_range` bench, a
+  session of 19,017,216 base-16 digits takes 42.8 ms against 125.7 ms for
+  base 64, measured. A base-16 decomposition of the same values needs 1.5
+  times the digits, so the session would take about 64 ms, inferred; about
+  60 ms off the first fold's Stage 1. The extra digits would widen the
+  fold's commitment and its Stage 2, and the change alters the proof bytes
+  and the planner's security accounting.
+- **A cheaper setup generator** and **a larger prime-plane digit basis**, as
+  in the fifth-pass remainder.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
