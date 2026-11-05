@@ -10,94 +10,61 @@
 //! per term. Unlike the subring gather in `windowed_accum`, the windows need
 //! not be aligned, so any challenge positions qualify.
 //!
-//! The tables use the word layout of `windowed_accum`, and on aarch64 the
-//! sums run through its NEON gather. Every output coefficient receives the
-//! same integer sum as the per-term kernels in `narrow_accum`, so the result
-//! is bit-identical.
+//! The source lists are [`WindowLists`], and on aarch64 `i8` sums run
+//! through the NEON gather of `windowed_accum`. Every output coefficient
+//! receives the same integer sum as the per-term kernels in `narrow_accum`,
+//! so the result is bit-identical.
 
-use super::windowed_accum::{WINDOW, WORD_OFFSETS};
+use super::windowed_accum::{WindowLists, WINDOW, WORD_OFFSETS};
 use akita_challenges::SparseChallenge;
 
-/// Per-window source lists for one challenge.
-///
-/// Every output window owns `words_per_window` table words: first
-/// `once_words` words listing the terms with coefficient magnitude one, then
-/// the words listing the terms with magnitude two. Each word packs
-/// [`WORD_OFFSETS`] offsets into the extended plane; unused slots point at
-/// its zeros.
+/// Per-window source lists for one challenge, with offsets into the extended
+/// plane; unused slots point at its zeros.
 pub(crate) struct ShiftedChallenge {
-    words: Vec<u64>,
-    once_words: usize,
-    words_per_window: usize,
+    lists: WindowLists,
     /// Whether every `i8` digit has an `i8` negation, so `i8` planes extend
     /// in `i8`; otherwise they extend widened to `i16`.
     negates_i8: bool,
 }
 
 impl ShiftedChallenge {
-    /// Build the window tables, or `None` when the ring degree is not a
+    /// Build the window lists, or `None` when the ring degree is not a
     /// multiple of [`WINDOW`], the extended plane outgrows the `u16` offsets,
-    /// or a coefficient is not `±1` or `±2`. `digit_abs_bound` must bound
-    /// every digit the tables are used with.
+    /// or [`WindowLists::new`] rejects the challenge. `digit_abs_bound` must
+    /// bound every digit the lists are used with.
     pub(super) fn new<const D: usize>(
         challenge: &SparseChallenge,
         digit_abs_bound: u64,
     ) -> Option<Self> {
-        let num_terms = challenge.positions.len();
         if !D.is_multiple_of(WINDOW)
             || extended_len::<D>() > usize::from(u16::MAX)
-            || num_terms == 0
-            || num_terms != challenge.coeffs.len()
             || challenge
                 .positions
                 .iter()
                 .any(|&position| position as usize >= D)
-            || challenge
-                .coeffs
-                .iter()
-                .any(|coefficient| !matches!(coefficient.unsigned_abs(), 1 | 2))
         {
             return None;
         }
-        let num_once = challenge
-            .coeffs
-            .iter()
-            .filter(|coefficient| coefficient.unsigned_abs() == 1)
-            .count();
-        let once_words = num_once.div_ceil(WORD_OFFSETS);
-        let words_per_window = once_words + (num_terms - num_once).div_ceil(WORD_OFFSETS);
-        let zeros = (3 * D) as u64;
-        let mut words = Vec::with_capacity(D / WINDOW * words_per_window);
-        let mut offsets = Vec::with_capacity(num_terms);
-        for out in (0..D).step_by(WINDOW) {
-            for magnitude in [1u8, 2] {
-                offsets.clear();
-                for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-                    if coefficient.unsigned_abs() != magnitude {
-                        continue;
-                    }
-                    let sign = if coefficient < 0 { D } else { 0 };
-                    offsets.push((D - position as usize + out + sign) as u64);
-                }
-                words.extend(offsets.chunks(WORD_OFFSETS).map(|group| {
-                    (0..WORD_OFFSETS).fold(0u64, |word, slot| {
-                        word | (group.get(slot).copied().unwrap_or(zeros) << (16 * slot))
-                    })
-                }));
-            }
-        }
+        let lists = WindowLists::new(
+            challenge,
+            D / WINDOW,
+            (3 * D) as u64,
+            |window, position, coefficient| {
+                let sign = if coefficient < 0 { D } else { 0 };
+                (D - position + window * WINDOW + sign) as u64
+            },
+        )?;
         Some(Self {
-            words,
-            once_words,
-            words_per_window,
+            lists,
             negates_i8: digit_abs_bound <= i8::MAX as u64,
         })
     }
 
-    fn windows(&self) -> impl Iterator<Item = (&[u64], &[u64])> {
-        self.words
-            .chunks_exact(self.words_per_window)
-            .map(|words| words.split_at(self.once_words))
+    /// The `(once, twice)` lists of every output window of a degree-`D`
+    /// ring. Panics unless the lists were built for degree `D`.
+    fn windows<const D: usize>(&self) -> impl Iterator<Item = (&[u64], &[u64])> {
+        assert_eq!(self.lists.num_windows(), D / WINDOW);
+        self.lists.windows()
     }
 }
 
@@ -157,19 +124,6 @@ fn fill_extended<S: Copy, T: Copy + Default, const D: usize>(
     zeros.fill(T::default());
 }
 
-/// Portable sum of the listed windows, scaled by one or two.
-#[inline(always)]
-fn add_listed<T: Copy + Into<i16>>(ext: &[T], words: &[u64], scale: i16, sum: &mut [i16]) {
-    for &word in words {
-        for slot in 0..WORD_OFFSETS {
-            let offset = (word >> (16 * slot)) as u16 as usize;
-            for (lane, &value) in sum.iter_mut().zip(&ext[offset..offset + WINDOW]) {
-                *lane = lane.wrapping_add(scale.wrapping_mul(value.into()));
-            }
-        }
-    }
-}
-
 /// Add `challenge * plane` to `acc`.
 ///
 /// The caller must prove that the complete partial sum stays in the `i16`
@@ -181,34 +135,13 @@ pub(super) fn shifted_mul_acc<const D: usize>(
     scratch: &mut ShiftScratch<D>,
     acc: &mut [i16; D],
 ) {
-    if !challenge.negates_i8 {
+    if challenge.negates_i8 {
+        fill_extended(plane, &mut scratch.i8_plane, |x| x, |x: i8| -x);
+        accumulate_i8(&scratch.i8_plane, challenge, acc);
+    } else {
         fill_extended(plane, &mut scratch.i16_plane, i16::from, |x| -i16::from(x));
-        accumulate_portable(&scratch.i16_plane, challenge, acc);
-        return;
+        accumulate_i16(&scratch.i16_plane, challenge, acc);
     }
-    fill_extended(plane, &mut scratch.i8_plane, |x| x, |x: i8| -x);
-    assert_eq!(
-        challenge.words.len(),
-        D / WINDOW * challenge.words_per_window
-    );
-    #[cfg(target_arch = "aarch64")]
-    for (acc_window, (once, twice)) in acc.chunks_exact_mut(WINDOW).zip(challenge.windows()) {
-        // SAFETY: `ShiftedChallenge::new::<D>` only packs offsets `o` with
-        // `o + WINDOW <= 3 * D + WINDOW`, the length of the extended plane,
-        // and the length check above ties the table to this `D`;
-        // `acc_window` is exactly one window; NEON is baseline on aarch64.
-        unsafe {
-            super::windowed_accum::neon::gather_window::<false>(
-                scratch.i8_plane.as_ptr(),
-                once,
-                twice,
-                0,
-                acc_window.as_mut_ptr(),
-            );
-        }
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    accumulate_portable(&scratch.i8_plane, challenge, acc);
 }
 
 /// Signed-`i16` source variant of [`shifted_mul_acc`].
@@ -219,25 +152,61 @@ pub(super) fn shifted_mul_acc_i16<const D: usize>(
     acc: &mut [i16; D],
 ) {
     fill_extended(plane, &mut scratch.i16_plane, |x| x, |x: i16| -x);
-    assert_eq!(
-        challenge.words.len(),
-        D / WINDOW * challenge.words_per_window
-    );
+    accumulate_i16(&scratch.i16_plane, challenge, acc);
+}
+
+/// Add the listed windows of the `i8` extended plane `ext` to `acc`.
+#[inline(always)]
+fn accumulate_i8<const D: usize>(ext: &[i8], challenge: &ShiftedChallenge, acc: &mut [i16; D]) {
+    assert_eq!(ext.len(), extended_len::<D>());
     #[cfg(target_arch = "aarch64")]
-    for (acc_window, (once, twice)) in acc.chunks_exact_mut(WINDOW).zip(challenge.windows()) {
-        // SAFETY: as in `shifted_mul_acc`, every packed offset leaves one
-        // window inside the extended plane, and `acc_window` is one window.
+    for (acc_window, (once, twice)) in acc.chunks_exact_mut(WINDOW).zip(challenge.windows::<D>()) {
+        // SAFETY: `ShiftedChallenge::new::<D>` only packs offsets `o` with
+        // `o + WINDOW <= 3 * D + WINDOW`, the length of `ext` checked above,
+        // and `windows::<D>` ties the lists to this `D`; `acc_window` is
+        // exactly one window; NEON is baseline on aarch64.
         unsafe {
-            neon::gather_window_i16(
-                scratch.i16_plane.as_ptr(),
+            super::windowed_accum::neon::gather_window::<false>(
+                ext.as_ptr(),
                 once,
                 twice,
+                0,
                 acc_window.as_mut_ptr(),
             );
         }
     }
     #[cfg(not(target_arch = "aarch64"))]
-    accumulate_portable(&scratch.i16_plane, challenge, acc);
+    accumulate_portable(ext, challenge, acc);
+}
+
+/// Add the listed windows of the `i16` extended plane `ext` to `acc`.
+#[inline(always)]
+fn accumulate_i16<const D: usize>(ext: &[i16], challenge: &ShiftedChallenge, acc: &mut [i16; D]) {
+    assert_eq!(ext.len(), extended_len::<D>());
+    #[cfg(target_arch = "aarch64")]
+    for (acc_window, (once, twice)) in acc.chunks_exact_mut(WINDOW).zip(challenge.windows::<D>()) {
+        // SAFETY: as in `accumulate_i8`, every packed offset leaves one window
+        // inside `ext`, and `acc_window` is one window.
+        unsafe {
+            neon::gather_window_i16(ext.as_ptr(), once, twice, acc_window.as_mut_ptr());
+        }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    accumulate_portable(ext, challenge, acc);
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+/// Portable sum of the listed windows, scaled by one or two.
+#[inline(always)]
+fn add_listed<T: Copy + Into<i16>>(ext: &[T], words: &[u64], scale: i16, sum: &mut [i16]) {
+    for &word in words {
+        for slot in 0..WORD_OFFSETS {
+            let offset = (word >> (16 * slot)) as u16 as usize;
+            for (lane, &value) in sum.iter_mut().zip(&ext[offset..offset + WINDOW]) {
+                *lane = lane.wrapping_add(scale.wrapping_mul(value.into()));
+            }
+        }
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -303,13 +272,14 @@ mod neon {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 #[inline(always)]
 fn accumulate_portable<T: Copy + Into<i16>, const D: usize>(
     ext: &[T],
     challenge: &ShiftedChallenge,
     acc: &mut [i16; D],
 ) {
-    for (acc_window, (once, twice)) in acc.chunks_exact_mut(WINDOW).zip(challenge.windows()) {
+    for (acc_window, (once, twice)) in acc.chunks_exact_mut(WINDOW).zip(challenge.windows::<D>()) {
         let mut sum = [0i16; WINDOW];
         add_listed(ext, once, 1, &mut sum);
         add_listed(ext, twice, 2, &mut sum);
@@ -332,41 +302,6 @@ mod tests {
             .map(|term| [1i8, -1, 2, -2][(term + seed as usize) % 4])
             .collect();
         SparseChallenge { positions, coeffs }
-    }
-
-    #[test]
-    fn shifted_windows_match_per_term_accumulation() {
-        const D: usize = 512;
-        let mut scratch = ShiftScratch::<D>::new();
-        for seed in 0..4u32 {
-            let challenge = challenge(seed);
-            let shifted = ShiftedChallenge::new::<D>(&challenge, 64).expect("small coefficients");
-            let widened = ShiftedChallenge::new::<D>(&challenge, 128).expect("small coefficients");
-            let plane: [i8; D] = std::array::from_fn(|index| {
-                (((index * 29 + seed as usize) % 129) as i16 - 64) as i8
-            });
-            let full: [i8; D] = std::array::from_fn(|index| {
-                (((index * 23 + seed as usize) % 256) as i16 - 128) as i8
-            });
-            let wide: [i16; D] =
-                std::array::from_fn(|index| ((index * 31 + seed as usize) % 801) as i16 - 400);
-            let start: [i16; D] = std::array::from_fn(|index| (index % 17) as i16 - 8);
-
-            let (mut expected, mut actual) = (start, start);
-            sparse_mul_acc(&plane, &challenge, &mut expected);
-            shifted_mul_acc(&plane, &shifted, &mut scratch, &mut actual);
-            assert_eq!(actual, expected);
-
-            let (mut expected, mut actual) = (start, start);
-            sparse_mul_acc(&full, &challenge, &mut expected);
-            shifted_mul_acc(&full, &widened, &mut scratch, &mut actual);
-            assert_eq!(actual, expected);
-
-            let (mut expected, mut actual) = (start, start);
-            sparse_mul_acc_i16(&wide, &challenge, &mut expected);
-            shifted_mul_acc_i16(&wide, &shifted, &mut scratch, &mut actual);
-            assert_eq!(actual, expected);
-        }
     }
 
     fn boxed<T: std::fmt::Debug, const D: usize>(value: impl Fn(usize) -> T) -> Box<[T; D]> {
@@ -397,11 +332,11 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    /// The table boundaries: positions 0 and `D - 1`, single-sign and
-    /// magnitude-two challenges up to 64 terms, and the largest degree whose
-    /// extended plane the `u16` offsets address.
+    /// Mixed 41-term challenges, the table boundaries (positions 0 and
+    /// `D - 1`, single-sign and magnitude-two challenges up to 64 terms), and
+    /// the largest degree whose extended plane the `u16` offsets address.
     #[test]
-    fn shifted_windows_match_per_term_accumulation_at_boundaries() {
+    fn shifted_windows_match_per_term_accumulation() {
         const D: usize = 512;
         let sparse = |positions: Vec<u32>, coeffs: Vec<i8>| SparseChallenge {
             positions: positions.into(),
@@ -420,6 +355,9 @@ mod tests {
         ];
         for (seed, challenge) in cases.iter().enumerate() {
             check_boundaries::<D>(challenge, seed);
+        }
+        for seed in 0..4 {
+            check_boundaries::<D>(&challenge(seed), seed as usize);
         }
 
         // 3 * 21,824 + 16 = 65,488 fits a u16 offset; 3 * 21,840 + 16 does not.
