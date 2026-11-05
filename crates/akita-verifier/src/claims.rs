@@ -114,6 +114,10 @@ where
         site: ProtocolSiteId,
     ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError>;
 
+    /// Records fold `level`'s EvaluationBatch coefficients, one per opening.
+    #[cfg(feature = "test-support")]
+    fn record_batch_coefficients(&mut self, _level: u32, _coefficients: &[E]) {}
+
     /// Binds a fold level's openings at its `Openings` site
     /// (`akita_types::bind_fold_openings`).
     ///

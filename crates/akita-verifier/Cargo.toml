@@ -56,6 +56,9 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
 ]
 benchmark-support = []
+# Test-only views of verifier internals (the masked prefix's batch
+# coefficients) for downstream binding probes.
+test-support = []
 # The masked prefix of a zero-knowledge opening (`specs/whiteout-akita.md`
 # §4.5–4.6). It selects nothing: a zero-knowledge configuration does.
 zk = [

@@ -53,6 +53,8 @@ pub(crate) struct MaskedReplay<'g, G, F> {
     grinding: &'g mut G,
     checks: Vec<MaskedCheck<F>>,
     cut: CompressedCut,
+    #[cfg(feature = "test-support")]
+    batch_coefficients: Vec<F>,
 }
 
 impl<'g, G, F> MaskedReplay<'g, G, F> {
@@ -61,6 +63,8 @@ impl<'g, G, F> MaskedReplay<'g, G, F> {
             grinding,
             checks: Vec::new(),
             cut,
+            #[cfg(feature = "test-support")]
+            batch_coefficients: Vec::new(),
         }
     }
 }
@@ -183,6 +187,13 @@ where
         _: ProtocolSiteId,
     ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError> {
         clear_only()
+    }
+
+    #[cfg(feature = "test-support")]
+    fn record_batch_coefficients(&mut self, level: u32, coefficients: &[E]) {
+        if level == 0 {
+            self.batch_coefficients = coefficients.to_vec();
+        }
     }
 
     /// The openings bind nothing on a masked channel: the masked messages
@@ -399,6 +410,8 @@ impl<F: Field, B> ResidualClaim<F, B> {
 pub struct MaskedPrefix<F, B> {
     checks: Vec<MaskedCheck<F>>,
     claim: ResidualClaim<F, B>,
+    #[cfg(feature = "test-support")]
+    batch_coefficients: Vec<F>,
 }
 
 impl<F: Field, B> MaskedPrefix<F, B> {
@@ -406,7 +419,16 @@ impl<F: Field, B> MaskedPrefix<F, B> {
         Self {
             checks: replay.checks,
             claim,
+            #[cfg(feature = "test-support")]
+            batch_coefficients: replay.batch_coefficients,
         }
+    }
+
+    /// The root fold's EvaluationBatch coefficients, one per opening claim,
+    /// in claim order: the challenges that batch the masked openings.
+    #[cfg(feature = "test-support")]
+    pub fn batch_coefficients(&self) -> &[F] {
+        &self.batch_coefficients
     }
 
     /// The hand-off at the cut.
