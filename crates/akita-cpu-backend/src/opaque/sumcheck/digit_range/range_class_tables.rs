@@ -52,6 +52,13 @@ impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
         Ok(Self { rows })
     }
 
+    /// Multiply one lane of every class row by `factor`.
+    pub(super) fn scale_lane(&mut self, lane: usize, factor: E) {
+        for row in &mut self.rows {
+            row[lane] *= factor;
+        }
+    }
+
     #[inline(always)]
     #[cfg(test)]
     pub(super) fn row(&self, class: RangeImageClass) -> [E; LANES] {

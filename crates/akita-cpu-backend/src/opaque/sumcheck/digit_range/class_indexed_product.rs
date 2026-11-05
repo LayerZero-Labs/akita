@@ -361,6 +361,9 @@ pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize
     pair_layout: ExactPrefixLayout,
     quartet_layout: ExactPrefixLayout,
     parent_weights: Vec<E>,
+    /// First lane of each parent whose weight was folded into its node values,
+    /// with the inverse weight that recovers the lane's child claim.
+    prescaled_lanes: Vec<(usize, E)>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
     interpolation: RoundInterpolation<E>,
@@ -398,7 +401,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
                 "range-product implementation lane count: expected {expected_lanes}, actual {LANES}"
             )));
         }
-        let nodes = {
+        let mut nodes = {
             let _span = tracing::info_span!(
                 "digit_range_build_node_table",
                 stage_index,
@@ -408,6 +411,24 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             .entered();
             ProductNodeTable::new(plan, leaf_polynomials, stage_index)?
         };
+        // A parent's product is linear in each of its lanes, and every later
+        // table is a fold of the node rows, so scaling a parent's first lane
+        // by its weight once replaces the weight multiplication in every
+        // round. The final child claim of that lane is unscaled exactly. A
+        // non-invertible weight keeps its per-round multiplication.
+        let mut parent_weights = parent_weights;
+        let mut prescaled_lanes = Vec::new();
+        for (parent_index, weight) in parent_weights.iter_mut().enumerate() {
+            if *weight == E::one() {
+                continue;
+            }
+            if let Some(inverse) = weight.inverse() {
+                let lane = parent_index * arity.degree();
+                nodes.scale_lane(lane, *weight);
+                prescaled_lanes.push((lane, inverse));
+                *weight = E::one();
+            }
+        }
         let pair_coefficients = {
             let _span = tracing::info_span!(
                 "digit_range_build_pair_coefficients",
@@ -432,6 +453,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
                 pair_coefficients,
             }),
             parent_weights,
+            prescaled_lanes,
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
             interpolation: RoundInterpolation::new().ok_or_else(|| {
@@ -448,7 +470,12 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
     pub(super) fn final_child_claims(&self) -> Result<Vec<E>, AkitaError> {
         self.product_table
             .final_value()
-            .map(|claims| claims.to_vec())
+            .map(|mut claims| {
+                for &(lane, inverse_weight) in &self.prescaled_lanes {
+                    claims[lane] *= inverse_weight;
+                }
+                claims.to_vec()
+            })
             .ok_or_else(|| AkitaError::Internal("product stage was not fully folded".into()))
     }
 }
@@ -774,6 +801,74 @@ mod tests {
         }
         assert_eq!(prover.final_child_claims().unwrap().len(), 2);
         assert!(ProductArity::new(3).is_none());
+    }
+
+    #[test]
+    fn prescaled_parent_lanes_preserve_rounds_and_child_claims() {
+        use crate::sources::packed_digits::PackedSignedDigits;
+        use akita_params::FlatBooleanDomain;
+        use jolt_field::{One, Zero};
+        type F = Prime128Offset275;
+        let plan = DigitRangePlan::new(64).unwrap();
+        let num_vars = 6;
+        let digits = (0..50)
+            .map(|index| i8::try_from((index * 37 + 11) % 64).unwrap() - 32)
+            .collect::<Vec<_>>();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(digits),
+            FlatBooleanDomain::new(50, num_vars).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let equality_point = (0..num_vars)
+            .map(|index| F::from_u64(index as u64 * 5 + 7))
+            .collect::<Vec<_>>();
+        let leaf_coeffs = plan.leaf_coeffs::<F>();
+        let weight = F::from_u64(19);
+        // The rounds are affine in the second parent's weight and the claim,
+        // so a claim affine in the weight gives rounds affine in the weight.
+        // Weights one and zero keep their per-round multiplication; `weight`
+        // is folded into the node table and unscaled in the child claims.
+        let run = |second_weight: F| {
+            let claim = F::from_u64(3) + second_weight * F::from_u64(29);
+            let mut prover = ClassIndexedProductSubcheckProver::<F, 8>::new(
+                source.clone(),
+                plan,
+                &leaf_coeffs,
+                1,
+                vec![F::one(), second_weight],
+                &equality_point,
+                claim,
+            )
+            .unwrap();
+            let mut rounds = Vec::new();
+            for round in 0..num_vars {
+                rounds.push(
+                    prover
+                        .compute_round_eq_factored(round, claim)
+                        .into_coefficients(),
+                );
+                prover.ingest_challenge(round, F::from_u64(round as u64 * 13 + 2));
+            }
+            (rounds, prover.final_child_claims().unwrap())
+        };
+        let (unweighted_rounds, unweighted_claims) = run(F::zero());
+        let (unit_rounds, unit_claims) = run(F::one());
+        let (weighted_rounds, weighted_claims) = run(weight);
+        assert_eq!(weighted_claims, unweighted_claims);
+        assert_eq!(unit_claims, unweighted_claims);
+        for ((weighted, unweighted), unit) in weighted_rounds
+            .iter()
+            .zip(&unweighted_rounds)
+            .zip(&unit_rounds)
+        {
+            let expected = unweighted
+                .iter()
+                .zip(unit)
+                .map(|(&zero, &one)| zero + weight * (one - zero))
+                .collect::<Vec<_>>();
+            assert_eq!(weighted, &expected);
+        }
     }
 
     fn check_interpolated_rounds<E: Field + Ring + Unreduced, const LANES: usize>(
