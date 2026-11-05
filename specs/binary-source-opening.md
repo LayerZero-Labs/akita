@@ -2790,6 +2790,136 @@ measured:
   the root family's weight of 46. That weight is set by the root's security
   analysis.
 
+### Fifth prover pass
+
+A fifth byte-preserving pass starts from `31aa471a2`, the fourth pass. It
+targets the two shapes still above 0.8 s of complete proving at N=2^22:
+`prime5` first, then `word-prime-ordinary`.
+
+The base was proved three times per shape at N=2^22 in isolated processes
+with `BINARY_SOURCE_CATALOG_CACHE`, after one warm-up run per shape,
+alternating the two shapes. All runs reproduced their pins. The machine was
+shared: other sessions' test runs held 4–11 cores, and one-minute loads were
+8.46–10.18. Complete proving is therefore slower than in the fourth pass's
+results (1,640 against 1,254 ms at `prime5`, 944 against 806 ms at
+`word-prime-ordinary`). The interleaved base runs behind the first change
+below, at loads of 5.9–15.2, took 1,290 and 834 ms. Only interleaved pairs
+are compared. Logs are `$CARGO_TARGET_DIR/p5/logs/base-22-<shape>-p<run>.txt`.
+Each cell is the median wall time in ms, with process CPU time in
+parentheses. Spans that the root and the suffix share, such as the Stage 2
+fold rounds, are listed once, under the root.
+
+| Span | `prime5` | `word-prime-ordinary` |
+| --- | ---: | ---: |
+| Complete proving | 1,640.1 (14,990) | 944.3 (8,936) |
+| › binary root level | 809.5 (7,704) | 576.0 (5,256) |
+| ›› Stage 2 | 279.1 (2,680) | 206.1 (2,079) |
+| ››› weight profiles | 127.6 (1,065) | 90.2 (721) |
+| ›››› authentication | 99.2 (859) | 41.2 (395) |
+| ›››› translated lanes | — | 12.4 (73) |
+| ›››› prime planes | 11.1 (105) | 2.8 (27) |
+| ›››› parity rows | — | 10.8 (70) |
+| ›››› image | 9.6 (89) | 9.9 (90) |
+| ››› fold rounds, root and suffix | 123.9 (1,149) | 72.6 (769) |
+| ›››› `fold_evals_in_place` | 55.3 (524) | 45.5 (506) |
+| ›››› fused fold and next round | 28.2 (262) | — |
+| ››› folded dense round terms, root and suffix | 58.4 (589) | 39.2 (461) |
+| ››› compact dense round terms, root and suffix | 45.8 (495) | 34.2 (394) |
+| ››› compact quotient prefix | — | 8.0 (60) |
+| ›› D commitment | 231.3 (2,397) | 58.3 (528) |
+| ››› D payload | 132.6 (1,613) | 27.1 (337) |
+| ››› prime digits | 98.7 (791) | 19.7 (157) |
+| ›› response build | 101.2 (915) | 110.3 (1,005) |
+| ››› response fold | 72.8 (805) | 78.8 (837) |
+| ››› witness import | 14.0 (48) | 11.8 (42) |
+| ››› evaluation witness | — | 13.1 (60) |
+| ››› repack | 11.9 (49) | 6.4 (51) |
+| ›› Stage 3 | 90.2 (744) | 58.0 (494) |
+| ››› rounds | 71.4 (651) | 47.3 (431) |
+| ››› weights | 10.1 (10) | 6.3 (6) |
+| ››› begin | 8.5 (83) | 5.4 (54) |
+| ›› field switch | — | 48.4 (264) |
+| ››› rounds | — | 25.8 (134) |
+| ››› partials | — | 11.2 (96) |
+| ››› source | — | 6.0 (30) |
+| ›› relation compile | 38.8 (320) | 38.8 (318) |
+| ››› direct A adjoint | 34.0 (315) | 32.0 (306) |
+| ›› Stage 1 | 23.1 (253) | 26.3 (217) |
+| ›› outgoing commitment | 22.5 (223) | 17.7 (176) |
+| ›› projections | 19.7 (196) | 20.2 (175) |
+| › ordinary suffix Stage 1 sumchecks (6) | 362.6 (3,578) | 114.4 (1,172) |
+| ›› product rounds, materialized | 86.3 (851) | 17.7 (185) |
+| ›› product rounds, first two | 78.9 (827) | 4.9 (46) |
+| ›› product folds | 67.8 (617) | 21.6 (223) |
+| ›› leaf rounds, materialized | 44.1 (487) | 24.6 (266) |
+| ›› product materialization after two rounds | 33.0 (344) | 10.8 (115) |
+| ›› leaf folds | 24.6 (255) | 17.1 (177) |
+| ›› second-round quartet table | — | 6.3 (59) |
+| ›› leaf first round | 5.8 (48) | 3.0 (26) |
+| › ordinary suffix Stage 2 sumchecks (6) | 166.2 (1,697) | 102.4 (970) |
+| ›› relation lane weights | 42.1 (469) | 30.5 (342) |
+| ››› B setup columns | 18.8 (232) | 25.2 (290) |
+| ››› D setup columns | 19.2 (206) | 2.8 (26) |
+| ›› compact partial-lane round terms | 22.0 (243) | — |
+| ›› reduced dense relation weights | 16.1 (130) | 15.1 (133) |
+| ›› folded partial-lane round terms | 12.3 (151) | — |
+| › `RingRelationProver::prepare` (6) | 129.0 (1,190) | 93.5 (918) |
+| ›› fold grinding | 108.4 (1,017) | 86.6 (882) |
+| ››› first fold's `DensePoly::decompose_fold` | 65.0 (671) | 49.7 (532) |
+| ››› other folds' `SuffixWitnessView::decompose_fold` | 6.8 (59) | 6.1 (65) |
+| ››› recursive witness build | 30.4 (265) | 27.4 (273) |
+| ›››› relation quotient | 22.4 (195) | 21.3 (209) |
+| ›› opening rows | 19.8 (171) | 6.9 (34) |
+| › outgoing and successor commitments (7) | 54.4 (487) | 44.8 (390) |
+| ›› `prepare_ntt_cache` | 50.6 (414) | 24.3 (270) |
+| › coefficient-packing partials | 36.9 (415) | 26.4 (274) |
+| Prover peak RSS (bytes) | 5,805,326,336 | 3,313,369,088 |
+
+The first suffix fold dominates the suffix. In medians of three, at `prime5`
+its Stage 1 sumcheck takes 277.9 ms, its Stage 2 sumcheck 122.2 ms and its
+`RingRelationProver::prepare` 120.0 ms. At `word-prime-ordinary` they take
+67.5, 58.9 and 85.2 ms.
+
+One `prime5` proof was sampled at 1 ms with the system `sample` tool. Where
+the time of the largest spans goes:
+
+- **D payload: arithmetic.** Of the samples in the digit commitment, which
+  also serves the B payload at commit time, 74% are the exact 192-bit integer
+  additions of `accumulate_digit_product` and 24% the SHAKE permutation and
+  stream setup behind the setup entries. Each setup column costs 64 × 64
+  carry-propagating additions per row.
+- **Authentication emission: hashing.** 66% of its samples are SHAKE (the
+  permutation alone 57%), 19% the residue kernel and 12% the field
+  combination of the two rows. The SHA-3 instructions permute two states per
+  call, but each stream calls the permutation alone.
+- **Prime digits: a serial section and subset sums.** About 27 ms run on the
+  calling thread in `write_prime_column`, which writes the 43 balanced digits
+  of every prime-plane coefficient one at a time. The rest is the parallel
+  eight-row subset sums of `weighted_source_bits`, one pass per plane, which
+  average 8 cores.
+- **Suffix Stage 1: arithmetic.** 68% of its samples are the arity-four
+  product values of the materialized and second-round product rounds:
+  10 field multiplications per pair and parent, the minimum for the four
+  evaluations those rounds send. The folds between rounds are a separate
+  pass over the table.
+- **Response fold: arithmetic.** As in the fourth pass, every sample is the
+  bit-sliced counter kernel.
+
+Candidate changes, with the expected gain at N=2^22:
+
+| Candidate | Spans reduced | Shapes | Expected gain (ms) |
+| --- | --- | --- | ---: |
+| D payload as signed 16-bit limb products in NEON multiply-accumulates | D payload | `prime5`, then the word-prime shapes | 60–80 at `prime5`, 10–15 elsewhere |
+| SHAKE streams squeezed two at a time through the paired permutation | authentication emission, D payload | `prime5`, then the others | 25–40 at `prime5`, 8–15 elsewhere |
+| Prime digits written in parallel; planes share one source pass | prime digits | `prime5` | 25–40 |
+| Product folds fused into the next round's pass (ordinary) | suffix Stage 1 sumchecks | `prime5` | 0–40 |
+| `word-prime-ordinary` translated lanes, parity rows and compact quotient prefix | weight profiles | `word-prime-ordinary` | 5–15 |
+
+A cache of expanded setup entries would hold 139,320 columns × 2 rows × 64
+coefficients of 16 bytes at `prime5`, 285 MB, which is 5% of the base peak
+RSS on its own; it is not pursued. The response fold is not retried: the
+profile shows nothing the fourth pass did not.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
