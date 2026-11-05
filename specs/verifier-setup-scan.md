@@ -121,21 +121,30 @@ single-group, fused multi-group, and shared-functional reduced scans; the
 per-ring role dispatch and the separate fused-group scan are gone.
 
 A job assembles its weights in blocks of `WEIGHT_BLOCK_RINGS = 128` rings.
-The block's weight slots live on the stack; at fp128 a slot is a 64-byte
-delayed product sum, so a block takes 8 KiB and stays in the L1 cache while
-every role pass reads and writes it. The job allocates nothing.
+The block's weight slots live on the stack and stay in the L1 cache while
+every role pass reads and writes them. The job allocates nothing. A slot's
+size depends on the outer sum below: a canonical field element where every
+product is reduced (16 bytes at fp128, so a block takes 2 KiB), or a 64-byte
+delayed product sum for the quartic fp32 and quadratic fp64 extensions
+(8 KiB a block).
 
-### Per-ring contraction with a delayed sum
+### Per-ring contraction
 
 After a block's weights are assembled, the job adds `w(b)·⟨c_b, π⟩` for
-every nonzero-weight ring into one delayed product sum (`ProductSum`), and
-reduces once per job. `⟨c_b, π⟩` is `MulBaseUnreduced::dot_base`.
+every nonzero-weight ring into one product sum (`ProductSum`).
+`⟨c_b, π⟩` is `MulBaseUnreduced::dot_base`, whose base-field products are
+summed exactly within that function's own capacity contract.
+
+The outer sum is delayed, and reduced once per job, only where the field
+declares `SUM_IS_EXACT`: in the pinned `jolt-field`, the quartic fp32 and
+quadratic fp64 extensions. Every other field, including fp128 and therefore
+every fp128 CI profile, uses `CanonicalProductSum`, which reduces each
+product.
 
 The delayed sum is exact. A job sums at most `SETUP_SCAN_JOB_RINGS` products
-of reduced field elements. Every `jolt-field` accumulator documents a
-headroom of at least `2^61` products, and `Fp128ProductAccum` one of
-`2^64 − 1`. Fields without `SUM_IS_EXACT` use
-`CanonicalProductSum`, which reduces every product.
+of reduced field elements, and the shared-functional reduced scan at most
+that many per functional class, at most 12,288 in all. The two delayed
+accumulators document a headroom of at least `2^61` products.
 
 ### Rejected: column-first contraction
 
@@ -208,9 +217,11 @@ of 1.7–2.6 times slower.
 
 ## What remains
 
-- **Confirmation on the CI runners.** The Zen 4 evidence comes from a
-  shared virtual machine, and the Xeon 6 runner has not been measured
-  outside CI. The next profile-benchmark run measures both.
+- **Confirmation on the CI runners.** The profile benchmark on
+  `0ff08a8a9` (run 41953778461) settles it: single-threaded verification
+  is faster on all 13 profiles, by 1.6–7.7%, including the three
+  `multi_chunk` profiles on the Zen 4 shard (−1.6%, −3.7%, −3.9%).
+  Multi-threaded differences are within ±8% and mixed.
 - **The M4's 5–11%.** Keeping the column-first contraction on `aarch64`
   alone would recover it, at the cost of a second contraction path selected
   by target architecture. That is worth doing only with measurements on more

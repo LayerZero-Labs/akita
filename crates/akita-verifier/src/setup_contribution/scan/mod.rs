@@ -310,8 +310,9 @@ where
 
 /// Base rings whose weights a scan job assembles before contracting them.
 ///
-/// The block's weight slots live on the stack and stay in the L1 cache: at
-/// fp128 a slot is a 64-byte delayed product sum, so a block takes 8 KiB.
+/// The block's weight slots live on the stack and stay in the L1 cache: a
+/// canonical fp128 slot is 16 bytes (2 KiB a block), and a delayed product sum
+/// for the quartic fp32 or quadratic fp64 extension is 64 bytes (8 KiB).
 const WEIGHT_BLOCK_RINGS: usize = 128;
 
 fn evaluate_weighted_scan_with<F, E, const BASE_D: usize, A>(
