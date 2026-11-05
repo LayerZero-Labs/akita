@@ -14,7 +14,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use akita_config::proof_optimized::fp128::ResponseDigits;
-use akita_config::recursive_commitment::RecursiveCommitmentConfig;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout,
@@ -28,7 +27,7 @@ use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::test_support::{SyntheticSigma, F};
 use jolt_zk::whiteout::{ImageCompression, ResponseProver, ResponseStatement, ResponseWitness};
 
-type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
+type Cfg = ResponseDigits;
 const D: usize = 256;
 
 /// Times the inner prover and counts the bytes it writes.

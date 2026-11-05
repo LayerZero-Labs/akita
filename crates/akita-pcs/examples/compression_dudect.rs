@@ -32,7 +32,6 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use akita_config::proof_optimized::fp128::ResponseDigits;
-use akita_config::recursive_commitment::RecursiveCommitmentConfig;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout,
@@ -48,7 +47,7 @@ use jolt_zk::whiteout::ImageCompression;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
+type Cfg = ResponseDigits;
 const CHUNK: usize = 1_000;
 const THRESHOLD: f64 = 4.5;
 const CROPS: usize = 10;

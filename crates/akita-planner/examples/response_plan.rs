@@ -14,14 +14,13 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::Instant;
 
 use akita_config::proof_optimized::fp128::ResponseDigits;
-use akita_config::recursive_commitment::RecursiveCommitmentConfig;
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout,
     ScheduleLookupKey,
 };
 
-type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
+type Cfg = ResponseDigits;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()

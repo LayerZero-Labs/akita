@@ -223,7 +223,7 @@ const FP128_ONEHOT_RECURSIVE_ZK_KEYS: &[PolynomialGroupLayout] = onehot_keys![(3
 /// §5.2), one per `e` length `2^ν`: `ν = 23` for the single-group
 /// end-to-end statement and `ν = 27` for the multi-group one and the
 /// headline.
-const FP128_RESPONSE_DIGITS_RECURSIVE_KEYS: &[PolynomialGroupLayout] = &[
+const FP128_RESPONSE_DIGITS_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(23),
     PolynomialGroupLayout::singleton(27),
 ];
@@ -760,9 +760,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         ChunkedWitnessCfg::default_non_chunked()
     ),
     family_row!(
-        recursive,
-        FP128_RESPONSE_DIGITS_RECURSIVE_KEYS,
-        RecursiveCommitmentConfig<fp128::ResponseDigits>,
+        FP128_RESPONSE_DIGITS_KEYS,
         fp128::ResponseDigits,
         no_grouped_requests,
         ChunkedWitnessCfg::default_non_chunked()

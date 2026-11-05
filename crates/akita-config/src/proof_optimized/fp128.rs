@@ -239,8 +239,14 @@ impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW8
 
 /// Dense preset for balanced radix-16 digits, the centered range `[-8, 7]`
 /// (a signed bit width of 4): the committed vector `e` of Whiteout's
-/// response proof (`specs/whiteout-akita.md` §5.2). Its recursive companion
-/// is the response opening's schedule family.
+/// response proof (`specs/whiteout-akita.md` §5.2), and the response
+/// opening's schedule family.
+///
+/// The family is direct-only. Recursive setup planning ranks the padded
+/// setup envelope before proof bytes, and at `ν = 18..=22` and `ν = 24` every
+/// multi-fold response row needs one more setup power of two, so it keeps a
+/// one-fold row whose proof is 2.0--3.4x larger. Direct planning is never
+/// larger in bytes for `ν = 18..=28`.
 #[cfg(feature = "zk")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ResponseDigits;
@@ -263,11 +269,6 @@ impl_proof_optimized_preset!(
         potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
     }
 );
-
-#[cfg(feature = "zk")]
-impl crate::recursive_commitment::RecursiveScheduleConfig for ResponseDigits {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_response_digits_recursive";
-}
 
 #[cfg(test)]
 mod tests {
