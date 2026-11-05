@@ -91,7 +91,7 @@ impl FixtureCatalog {
             .ordinary
             .first()
             .map(|(profiles, _)| profiles.final_group);
-        if ordinary.is_some() != (shape == "word-prime-ordinary") {
+        if ordinary.is_some() != (shape == "binary-and-prime-claims-plus-ordinary") {
             return Err(format!("native catalog ordinary rows do not match shape {shape}").into());
         }
         let price = catalog::plan(log, shape, carrier, ordinary, 64)?;
@@ -211,7 +211,7 @@ fn plan(
     let singleton = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log));
     let contract = FullSize::committed_source_contract()?;
     let mut ordinary = Vec::new();
-    let producer = if shape == "word-prime-ordinary" {
+    let producer = if shape == "binary-and-prime-claims-plus-ordinary" {
         Some(akita_planner::find_schedule(
             &singleton,
             contract,
@@ -309,9 +309,15 @@ mod tests {
 
     #[test]
     fn identity_rejects_another_request() {
-        let word = CatalogIdentity::new(22, "word");
-        assert!(word.check(&CatalogIdentity::new(22, "word")).is_ok());
-        assert!(word.check(&CatalogIdentity::new(22, "prime5")).is_err());
-        assert!(word.check(&CatalogIdentity::new(23, "word")).is_err());
+        let word = CatalogIdentity::new(22, "binary-claim");
+        assert!(word
+            .check(&CatalogIdentity::new(22, "binary-claim"))
+            .is_ok());
+        assert!(word
+            .check(&CatalogIdentity::new(22, "five-prime-claims"))
+            .is_err());
+        assert!(word
+            .check(&CatalogIdentity::new(23, "binary-claim"))
+            .is_err());
     }
 }

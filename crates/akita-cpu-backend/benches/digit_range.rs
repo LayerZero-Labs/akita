@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-//! Ordinary Stage 1 digit-range session at the size of the `prime5` first
+//! Ordinary Stage 1 digit-range session at the size of the `five-prime-claims` first
 //! suffix fold: 19,017,216 balanced base-64 digits on a 2^25 domain.
 
 use akita_cpu_backend::standalone::digit_range_session;

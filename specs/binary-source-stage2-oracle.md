@@ -26,7 +26,7 @@ round messages, the transcript and every proof byte stay identical.
 
 ## Baseline profile
 
-Measured on `f92e959ee` at `--log-carriers 22 --shape word-prime`, with the
+Measured on `f92e959ee` at `--log-carriers 22 --shape binary-and-prime-claims`, with the
 #317 catalog cache, on the shared 64 GB machine. The breakdown uses temporary
 spans that were not committed.
 
@@ -50,7 +50,7 @@ is the serial conversion of the `2^n` compact digits into field elements when
 the prover enters its lane phase in round 0. The 32 sumcheck rounds take
 91 ms; round 0 alone takes 17.4 ms.
 
-The 2^22 `prime5` shape spends 584 ms materializing and 592 ms in Stage 2.
+The 2^22 `five-prime-claims` shape spends 584 ms materializing and 592 ms in Stage 2.
 
 ## How Stage 2 reads the weight
 
@@ -215,7 +215,7 @@ number of own entries.
 | Rounds `T..n` | dense on `N / B` | dense on `N / B` |
 | Peak weight memory | `N` (q) plus `N` (E witness at round 0) | `S + O` plus `N / 2` (folded witness after round 0) |
 
-At 2^22 `word-prime` (`n = 25`, block 256):
+At 2^22 `binary-and-prime-claims` (`n = 25`, block 256):
 
 - Shared entries: 4,096 response elements × 1,024, plus 768 image elements ×
   1,024, plus 256 prime elements × 256. That is about 5.05M.
@@ -228,14 +228,14 @@ At 2^22 `word-prime` (`n = 25`, block 256):
 ## Expected gains
 
 These are estimates from the cost model and the profile above; measurements
-follow below. All four shapes have `n = 25` at 2^22 except `prime5` (`n = 26`).
+follow below. All four shapes have `n = 25` at 2^22 except `five-prime-claims` (`n = 26`).
 
 | Shape | Weights today → structured (ms) | Stage 2 today → structured (ms) | Complete proving |
 | --- | --- | --- | --- |
-| `word` | ~150 → ~70 | ~320 → ~80 | −300 to −350 ms |
-| `word-prime` | 223 → ~95 | 327 → ~80 | −350 to −400 ms (1.67 s → ~1.3 s) |
-| `word-prime-ordinary` | ~260 → ~130 | ~330 → ~90 | −350 to −400 ms |
-| `prime5` | 584 → ~170 | 592 → ~160 | −800 to −850 ms |
+| `binary-claim` | ~150 → ~70 | ~320 → ~80 | −300 to −350 ms |
+| `binary-and-prime-claims` | 223 → ~95 | 327 → ~80 | −350 to −400 ms (1.67 s → ~1.3 s) |
+| `binary-and-prime-claims-plus-ordinary` | ~260 → ~130 | ~330 → ~90 | −350 to −400 ms |
+| `five-prime-claims` | 584 → ~170 | 592 → ~160 | −800 to −850 ms |
 
 - The prime-plane gain is largest because those lanes have 43 digits.
 - Authentication remains the floor of the weight build. Its setup columns have
@@ -243,7 +243,7 @@ follow below. All four shapes have `n = 25` at 2^22 except `prime5` (`n = 26`).
 - The 0.4–0.8 s target for complete proving is not reachable from these two
   spans alone. The remaining spans are owned by other work: projections,
   relation compile, the D commitment and the root commitment. At 2^22
-  `word-prime` they sum to about 1.1 s.
+  `binary-and-prime-claims` they sum to about 1.1 s.
 
 ## Acceptance
 
@@ -279,22 +279,22 @@ tens of milliseconds are noise. Logs are
 
 | N | Shape | Weights + Stage 2, base → structured | › profile build | Complete proving, base → structured | Prover peak RSS bytes, base → structured |
 | --- | --- | --- | ---: | --- | --- |
-| 2^22 | `word` | 421.6 → 178.5 | 97.2 | 1,583.4 → 1,494.0 (−89) | 4,445,175,808 → 2,996,060,160 (−33%) |
-| 2^22 | `word-prime` | 588.5 → 250.9 | 152.6 | 2,391.3 → 2,105.5 (−286) | 5,238,603,776 → 5,181,784,064 (−1%) |
-| 2^22 | `word-prime-ordinary` | 583.3 → 271.3 | 168.8 | 2,560.5 → 2,226.9 (−334) | 5,584,814,080 → 5,495,062,528 (−2%) |
-| 2^22 | `prime5` | 1,167.8 → 395.0 | 279.2 | 3,471.4 → 2,818.0 (−653) | 9,370,451,968 → 8,814,641,152 (−6%) |
-| 2^23 | `word-prime` | 1,027.1 → 345.7 | 208.6 | 3,513.2 → 2,900.1 (−613) | 8,610,463,744 → 5,448,220,672 (−37%) |
+| 2^22 | `binary-claim` | 421.6 → 178.5 | 97.2 | 1,583.4 → 1,494.0 (−89) | 4,445,175,808 → 2,996,060,160 (−33%) |
+| 2^22 | `binary-and-prime-claims` | 588.5 → 250.9 | 152.6 | 2,391.3 → 2,105.5 (−286) | 5,238,603,776 → 5,181,784,064 (−1%) |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 583.3 → 271.3 | 168.8 | 2,560.5 → 2,226.9 (−334) | 5,584,814,080 → 5,495,062,528 (−2%) |
+| 2^22 | `five-prime-claims` | 1,167.8 → 395.0 | 279.2 | 3,471.4 → 2,818.0 (−653) | 9,370,451,968 → 8,814,641,152 (−6%) |
+| 2^23 | `binary-and-prime-claims` | 1,027.1 → 345.7 | 208.6 | 3,513.2 → 2,900.1 (−613) | 8,610,463,744 → 5,448,220,672 (−37%) |
 
 The live-heap peaks of the counting allocator, median GB, show where the
 process peak now sits:
 
 | N | Shape | Stage 2 peak, base → structured | Stage 3 peak, both |
 | --- | --- | --- | ---: |
-| 2^22 | `word` | 2.86 → 1.52 | 1.77 |
-| 2^22 | `word-prime` | 3.58 → 2.28 | 3.30 |
-| 2^22 | `word-prime-ordinary` | 3.66 → 2.71 | 3.37 |
-| 2^22 | `prime5` | 6.56 → 3.81 | 6.00 |
-| 2^23 | `word-prime` | 5.67 → 2.94 | 3.50 |
+| 2^22 | `binary-claim` | 2.86 → 1.52 | 1.77 |
+| 2^22 | `binary-and-prime-claims` | 3.58 → 2.28 | 3.30 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 3.66 → 2.71 | 3.37 |
+| 2^22 | `five-prime-claims` | 6.56 → 3.81 | 6.00 |
+| 2^23 | `binary-and-prime-claims` | 5.67 → 2.94 | 3.50 |
 
 What changes on this base:
 
@@ -304,15 +304,15 @@ What changes on this base:
   Stage 2 fall by 53–66%, as before.
 - **Memory.** Stage 3 now builds a dense weight over the typed A/B/D prefix.
   For the 2^22 shapes with prime planes it sets the process peak, so the
-  structured Stage 2 no longer lowers peak RSS there. At 2^22 `word` and 2^23
-  `word-prime`, Stage 3 stays below the old Stage 2 peak and peak RSS falls by
+  structured Stage 2 no longer lowers peak RSS there. At 2^22 `binary-claim` and 2^23
+  `binary-and-prime-claims`, Stage 3 stays below the old Stage 2 peak and peak RSS falls by
   a third. The 5% ceiling holds everywhere.
 - **Stage 3 timing.** Stage 3 runs the same code in both executables, but took
   40–90 ms longer in the structured runs for every configuration except
-  `word-prime-ordinary`. This has not been investigated. One possible cause
+  `binary-and-prime-claims-plus-ordinary`. This has not been investigated. One possible cause
   is page faults: the baseline's larger Stage 2 leaves freed pages that Stage 3
   can reuse. It accounts for part of the gap between the Stage 2 saving and
-  the complete-proving saving, most visibly at `word`, together with load noise.
+  the complete-proving saving, most visibly at `binary-claim`, together with load noise.
 
 ### Before the B/D setup offload
 
@@ -330,11 +330,11 @@ was shared, so differences of a few tens of milliseconds are noise. Logs are
 
 | N | Shape | Weights + Stage 2, base → structured | › profile build | Complete proving, base → structured | Prover peak RSS bytes, base → structured |
 | --- | --- | --- | ---: | --- | --- |
-| 2^22 | `word` | 451.7 → 175.0 | 97.3 | 1,524.1 → 1,273.1 (−251) | 4,194,680,832 → 2,581,151,744 (−38%) |
-| 2^22 | `word-prime` | 555.6 → 227.3 | 140.4 | 1,746.6 → 1,416.0 (−331) | 4,195,729,408 → 2,646,753,280 (−37%) |
-| 2^22 | `word-prime-ordinary` | 572.5 → 270.9 | 169.2 | 2,041.4 → 1,753.5 (−288) | 4,753,358,848 → 3,263,168,512 (−31%) |
-| 2^22 | `prime5` | 1,194.2 → 415.7 | 287.2 | 2,686.3 → 1,866.9 (−819) | 6,945,423,360 → 2,792,046,592 (−60%) |
-| 2^23 | `word-prime` | 993.5 → 334.3 | 200.3 | 3,148.9 → 2,497.3 (−652) | 8,059,813,888 → 4,623,138,816 (−43%) |
+| 2^22 | `binary-claim` | 451.7 → 175.0 | 97.3 | 1,524.1 → 1,273.1 (−251) | 4,194,680,832 → 2,581,151,744 (−38%) |
+| 2^22 | `binary-and-prime-claims` | 555.6 → 227.3 | 140.4 | 1,746.6 → 1,416.0 (−331) | 4,195,729,408 → 2,646,753,280 (−37%) |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 572.5 → 270.9 | 169.2 | 2,041.4 → 1,753.5 (−288) | 4,753,358,848 → 3,263,168,512 (−31%) |
+| 2^22 | `five-prime-claims` | 1,194.2 → 415.7 | 287.2 | 2,686.3 → 1,866.9 (−819) | 6,945,423,360 → 2,792,046,592 (−60%) |
+| 2^23 | `binary-and-prime-claims` | 993.5 → 334.3 | 200.3 | 3,148.9 → 2,497.3 (−652) | 8,059,813,888 → 4,623,138,816 (−43%) |
 
 "Weights + Stage 2" is `binary_root_relation_materialize` plus
 `binary_root_stage2` for the baseline. The structured executable has no
@@ -345,12 +345,12 @@ What these measurements showed:
 
 - **Stage 2 rounds.** Excluding the profile build, the root's Stage 2
   took about 80–130 ms at 2^22, against 310–590 ms. The baseline's root
-  `RelationRangeImageProver::new` took about 123 ms at 2^22 `word-prime`
+  `RelationRangeImageProver::new` took about 123 ms at 2^22 `binary-and-prime-claims`
   building its dense field-element state; the structured one takes
   under 0.1 ms, because round 0 reads the packed digits.
 - **Profile build.** The profile build is the larger remaining part, and the
-  authentication family dominates it: 52 ms (`word`), 76 ms (`word-prime`) and
-  170 ms (`prime5`) at 2^22. Its setup columns have no shared structure, so
+  authentication family dominates it: 52 ms (`binary-claim`), 76 ms (`binary-and-prime-claims`) and
+  170 ms (`five-prime-claims`) at 2^22. Its setup columns have no shared structure, so
   its own rows are as dense as the table over the authenticated region. The
   build is bound by weighing the setup entries, which runs in parallel
   batches; streaming into the profiles is not the bottleneck. A synthetic
@@ -360,10 +360,10 @@ What these measurements showed:
   The dense table and the dense field-element witness of round 0 no longer
   exist together.
 - **Against the estimates.** Complete proving gains match the estimates for
-  `word-prime` and `prime5`. The weight build is slower than estimated:
+  `binary-and-prime-claims` and `five-prime-claims`. The weight build is slower than estimated:
   authentication costs what it did in the dense build, and the cost model
   undercounted it.
-- **The 0.4–0.8 s target.** Complete proving at 2^22 `word-prime` was about
+- **The 0.4–0.8 s target.** Complete proving at 2^22 `binary-and-prime-claims` was about
   1.42 s on that base (about 2.11 s on the current base, under heavier load
   and with B and D in Stage 3). Even with no weight build and no Stage 2 at all, it would be about
   1.19 s. The rest belongs to the projections, relation compile, the D

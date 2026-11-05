@@ -43,7 +43,7 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         word_value: [0; 16],
         primes: Vec::new(),
     };
-    if shape != "prime5" {
+    if shape != "five-prime-claims" {
         let point = (0..log)
             .map(|axis| (31 + axis as u128 * 17).to_le_bytes())
             .collect::<Vec<_>>();
@@ -60,9 +60,9 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         result.word_value = (u128::from(low) | (u128::from(high) << 64)).to_le_bytes();
         result.word_point = Some(point);
     }
-    let planes = if shape == "word" {
+    let planes = if shape == "binary-claim" {
         0
-    } else if shape == "prime5" {
+    } else if shape == "five-prime-claims" {
         5
     } else {
         1
