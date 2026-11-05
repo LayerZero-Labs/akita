@@ -2553,6 +2553,92 @@ translated lanes at 27.9 ms and the source evaluation at 28.7 ms. A lane fill
 like the authentication family's would apply to both. This pass does not make
 that change.
 
+### Fourth prover pass
+
+A fourth byte-preserving pass starts from `737c6a6f5`, the third pass on the
+Stage 3 weight base. Its target is 0.4–0.8 s of complete proving at N=2^22
+for every shape.
+
+The third-pass results above (595, 636, 756 and 822 ms) were measured on a
+base without the B/D setup offload (#318), which changed the proof bytes. At
+2^22 `word-prime` that base proves 82,743 bytes and `737c6a6f5` proves 84,392
+bytes. The offload moves work into the ordinary suffix: at `word-prime` the
+first suffix fold's `DensePoly::decompose_fold` takes 68.5 ms here and 13 ms
+in the third-pass runs, and the suffix's Stage 1 sumchecks take 117.7 ms here
+and 48.0 ms there. The figures below are the baseline for this pass.
+
+Every shape was proved three times at N=2^22 in isolated processes with
+`BINARY_SOURCE_CATALOG_CACHE`, after one warm-up round, round-robin across the
+shapes. All runs reproduced their pins. One-minute loads were 5.18–7.08.
+Logs are `$CARGO_TARGET_DIR/p4/logs/base-22-<shape>-p<run>.txt`. Each cell is
+the median wall time in ms, with process CPU time in parentheses.
+
+| Span | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| --- | ---: | ---: | ---: | ---: |
+| Complete proving | 615.8 (6,791) | 804.3 (9,061) | 895.3 (9,543) | 1,268.5 (15,544) |
+| › binary root level | 369.2 (3,858) | 433.0 (4,729) | 525.2 (5,086) | 664.6 (7,712) |
+| ›› Stage 2 | 111.2 (1,406) | 137.3 (1,749) | 207.6 (2,012) | 213.4 (2,753) |
+| ››› weight profiles | 42.3 (425) | 55.8 (577) | 111.7 (640) | 94.2 (1,048) |
+| ›››› authentication | 23.2 (259) | 34.6 (389) | 35.5 (392) | 76.6 (852) |
+| ›››› translated lanes | — | — | 27.0 (29) | — |
+| ›››› source evaluation | — | — | 27.9 (28) | — |
+| ›› response build | 89.7 (968) | 90.6 (982) | 91.4 (997) | 87.8 (929) |
+| ››› response fold | 61.9 (827) | 63.7 (830) | 62.6 (833) | 62.1 (823) |
+| ›› D commitment | 4.1 (31) | 41.2 (484) | 49.8 (498) | 191.6 (2,390) |
+| ››› D payload | 2.3 (7) | 22.5 (312) | 22.9 (316) | 110.6 (1,624) |
+| ››› prime digits | — | 17.1 (154) | 17.1 (154) | 80.9 (771) |
+| ›› Stage 3 | 45.2 (429) | 47.7 (496) | 46.3 (489) | 72.9 (762) |
+| ››› rounds | 36.9 (380) | 37.3 (439) | 36.3 (430) | 57.4 (668) |
+| ›› relation compile | 32.9 (323) | 32.4 (316) | 35.5 (324) | 32.2 (313) |
+| ›› field switch | 32.4 (261) | 32.3 (264) | 32.7 (259) | — |
+| ›› projections | 25.2 (113) | 25.3 (114) | 25.7 (114) | 24.8 (114) |
+| ›› Stage 1 | 13.9 (169) | 14.9 (190) | 17.4 (217) | 18.7 (249) |
+| ›› outgoing commitment | 12.5 (137) | 12.5 (154) | 14.4 (172) | 18.1 (222) |
+| › ordinary suffix (complete minus root) | 249.2 (2,915) | 371.3 (4,342) | 374.1 (4,456) | 603.9 (7,847) |
+| ›› Stage 1 sumchecks (6) | 48.9 (599) | 117.7 (1,297) | 113.9 (1,325) | 283.6 (3,790) |
+| ›› Stage 2 sumchecks (6) | 88.7 (1,026) | 93.8 (1,085) | 93.3 (1,104) | 137.0 (1,831) |
+| ››› relation lane weights | 23.3 (316) | 31.2 (429) | 30.2 (435) | 41.8 (600) |
+| ›› `RingRelationProver::prepare` (6) | 60.9 (713) | 112.4 (1,391) | 115.1 (1,433) | 117.9 (1,432) |
+| ››› first fold's `DensePoly::decompose_fold` | 14.8 (193) | 68.5 (912) | 69.9 (932) | 62.5 (825) |
+| ››› relation quotient | 9.9 (121) | 15.7 (197) | 16.2 (203) | 15.5 (188) |
+| ›› Stage 1 compact digit source (7) | 0.4 (0) | 17.9 (18) | 16.1 (16) | 20.1 (20) |
+| ›› coefficient-packing partials | 13.3 (166) | 17.4 (242) | 18.6 (258) | 29.5 (406) |
+| Prover peak RSS (bytes) | 2,484,502,528 | 3,687,809,024 | 4,013,096,960 | 5,810,634,752 |
+
+The first suffix fold dominates the suffix. In medians of three, at `prime5`
+its Stage 1 sumcheck takes 209.5 ms of the six folds' 283.6 ms, its Stage 2
+sumcheck 98.4 ms of 137.0 ms, and its `RingRelationProver::prepare` 102.4 ms
+of 117.9 ms. At `word-prime` the same three take 67.7, 53.0 and 96.7 ms.
+
+What the largest suffix spans spend their time on:
+
+- **First-fold decomposition.** At `word-prime` the first suffix fold folds
+  65,536 ring elements of degree 512, in 256 blocks of 256 positions, into 19
+  balanced base-128 digits under challenges of weight 41 with coefficients
+  of magnitude one or two. Each digit plane adds 41 shifted copies of itself
+  into an `i16` accumulator held in memory, so every term loads and stores
+  the whole accumulator. At `word` and `prime5` the digits are base 1,024 and
+  run through the same loop on `i16` planes.
+- **Stage 1 compact digit source.** The class pairs of the Stage 1 leaf are
+  derived by one serial pass over every packed digit.
+
+Candidate changes, with the expected gain at N=2^22:
+
+| Candidate | Spans reduced | Shapes | Expected gain (ms) |
+| --- | --- | --- | ---: |
+| Parallel interval fill for the translated-lane and source-evaluation families | weight profiles | `word-prime-ordinary` | 40–50 |
+| Register-blocked digit-plane accumulation in the first suffix fold (ordinary) | `DensePoly::decompose_fold` | `word-prime`, `word-prime-ordinary`, `prime5` | 25–40 |
+| Parallel class pairs in the Stage 1 compact digit source (ordinary) | Stage 1 compact digit source | `word-prime`, `word-prime-ordinary`, `prime5` | 12–18 |
+| First suffix fold's Stage 1 sumcheck (ordinary) | Stage 1 sumchecks | `prime5`, then the others | 0–60 |
+| Authentication emission | weight profiles | all, most at `prime5` | 10–30 |
+| D payload and prime digits | D commitment | `prime5`, then `word-prime` | 0–40 |
+| Response fold, per-carrier work | response fold | all | 0–15 |
+
+The ordinary candidates change ordinary-protocol prover code only. Each lands
+in its own commit, keeps the ordinary fixture at 65,567 bytes and the
+fold-grinding acceptance rule and nonce order, and changes no transcript
+input.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
