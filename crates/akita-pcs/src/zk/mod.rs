@@ -46,7 +46,7 @@ use akita_transcript::{
 };
 use akita_types::{
     AkitaExpandedSetup, AkitaVerifierSetup, Commitment, CommittedGroup, DigitRangeEqualityPoint,
-    GroupBatchStatement, NegativeBinarySupport, OpeningClaims, PolynomialGroupClaims,
+    GroupBatchStatement, NegativeBinarySupport, OpeningClaims, PendingEof, PolynomialGroupClaims,
     ProverGrinding, RingVec, VerifierGrinding,
 };
 use akita_verifier::{AkitaVerifier, SetupPolicy, Stage1Verifier};
@@ -519,7 +519,9 @@ where
         )
         .verify_clear::<F>(&mut grinding, None, RANGE_LEVEL)
         .map_err(zk_error)?;
-        grinding.finish_through(RANGE_LEVEL).map_err(zk_error)?;
+        // The response's later messages follow on this state; the Whiteout
+        // verifier checks the end of the argument string after its tail.
+        let _: PendingEof = grinding.finish().map_err(zk_error)?;
         drop(range_span);
 
         // 5. The fused range-and-relation sumcheck, with the binary
