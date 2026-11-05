@@ -1,7 +1,6 @@
 //! Projected A relation on canonical digit addresses, with an explicit rho.
 
 use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
-use akita_algebra::ring::trinomial::module_map::pack_signed_components;
 use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
@@ -62,12 +61,7 @@ pub fn binary_direct_a_weights<E: Field>(
             ));
         }
     }
-    let embedded = binary_scalar_challenges(descriptor, challenges)?
-        .into_iter()
-        .map(|scalar| {
-            Ok(pack_signed_components(&[scalar, [0; 162], [0; 162], [0; 162]])?.map(E::from_i128))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let scalars = binary_scalar_challenges(descriptor, challenges)?;
     let mut families = Vec::new();
     if let Some(operand) = matrix {
         let _span = tracing::info_span!("binary_root_weights_direct_a").entered();
@@ -76,7 +70,7 @@ pub fn binary_direct_a_weights<E: Field>(
         )?));
     }
     families.push(RootWeightFamily::Image(ImageWeights::new(
-        plan, rho, &embedded,
+        plan, rho, &scalars,
     )?));
     NativeRootWeights::structured(
         plan.repacking().domain_len(),
@@ -187,8 +181,9 @@ impl<E: Field> DirectAWeights<E> {
     }
 }
 
-/// Nonzero `(coefficient, value)` entries of one embedded challenge.
-type ChallengeSupport<E> = Vec<(usize, E)>;
+/// Nonzero entries of one embedded challenge, as `(coefficient, negative)`:
+/// every entry is `1` or `-1`.
+type ChallengeSupport = Vec<(usize, bool)>;
 
 /// The image part `-sum_j <rho_i, rem(c_j * T_ji)>` of the A identity.
 ///
@@ -208,22 +203,26 @@ pub(crate) struct ImageWeights<E: Field> {
     /// `rho[owner * rank + row]`.
     rho: Vec<[E; 648]>,
     /// Nonzero embedded coefficients for `owner * columns + column`.
-    challenges: Vec<ChallengeSupport<E>>,
+    challenges: Vec<ChallengeSupport>,
 }
 
 impl<E: Field> ImageWeights<E> {
+    /// `scalars` are the scalar challenges of every owner and column. Each
+    /// embeds into R as the first signed component
+    /// (`pack_signed_components`): scalar coefficient `s` lands on
+    /// coefficient `4s`, negated when `s` is odd.
     fn new(
         plan: &BinaryRootWitnessPlan,
         rho: &[[E; 648]],
-        embedded: &[[E; 648]],
+        scalars: &[[i128; 162]],
     ) -> Result<Self, AkitaError> {
         let columns = plan.descriptor().index_map().columns();
         let lanes = SegmentLanes::new(plan.repacking(), 1)?;
-        let elements = checked::product([embedded.len(), plan.rank()]);
+        let elements = checked::product([scalars.len(), plan.rank()]);
         if lanes.degree() != 648
             || elements != Some(lanes.elements())
             || checked::product([plan.descriptor().polynomials().len(), columns])
-                != Some(embedded.len())
+                != Some(scalars.len())
         {
             return Err(AkitaError::InvalidSetup(
                 "binary image lanes differ from the challenge geometry".into(),
@@ -231,17 +230,20 @@ impl<E: Field> ImageWeights<E> {
         }
         let mut challenges = Vec::new();
         challenges
-            .try_reserve_exact(embedded.len())
+            .try_reserve_exact(scalars.len())
             .map_err(|_| AkitaError::InvalidProof)?;
-        for challenge in embedded {
-            challenges.push(
-                challenge
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, value)| !value.is_zero())
-                    .map(|(k, &value)| (k, value))
-                    .collect(),
-            );
+        for scalar in scalars {
+            let mut support = Vec::new();
+            for (s, &coefficient) in scalar.iter().enumerate() {
+                let negative = match coefficient {
+                    0 => continue,
+                    1 => false,
+                    -1 => true,
+                    _ => return Err(AkitaError::InvalidProof),
+                };
+                support.push((4 * s, negative != (s % 2 == 1)));
+            }
+            challenges.push(support);
         }
         Ok(Self {
             lanes,
@@ -263,7 +265,7 @@ impl<E: Field> ImageWeights<E> {
         &self,
         row_index: usize,
         column: usize,
-    ) -> Result<(usize, &ChallengeSupport<E>), AkitaError> {
+    ) -> Result<(usize, &ChallengeSupport), AkitaError> {
         let owner = row_index / self.rank;
         let row = row_index % self.rank;
         let index =
@@ -283,8 +285,13 @@ impl<E: Field> ImageWeights<E> {
             for column in 0..self.columns {
                 let (element, support) = self.row_column(row_index, column)?;
                 let mut dot = E::zero();
-                for &(k, value) in support {
-                    dot += value * *adjoint_low.get(k).ok_or(AkitaError::InvalidProof)?;
+                for &(k, negative) in support {
+                    let value = *adjoint_low.get(k).ok_or(AkitaError::InvalidProof)?;
+                    if negative {
+                        dot -= value;
+                    } else {
+                        dot += value;
+                    }
                 }
                 sum += self.lanes.block_digit_weight(eq, element)? * dot;
             }
@@ -309,10 +316,16 @@ impl<E: Field> ImageWeights<E> {
         let (element, support) = self.row_column(row_index, column)?;
         let extended = extended.get(row_index).ok_or(AkitaError::InvalidProof)?;
         let mut h = [E::zero(); 648];
-        for &(k, value) in support {
+        for &(k, negative) in support {
             let shifted = extended.get(k..k + 648).ok_or(AkitaError::InvalidProof)?;
-            for (slot, &g) in h.iter_mut().zip(shifted) {
-                *slot += value * g;
+            if negative {
+                for (slot, &g) in h.iter_mut().zip(shifted) {
+                    *slot -= g;
+                }
+            } else {
+                for (slot, &g) in h.iter_mut().zip(shifted) {
+                    *slot += g;
+                }
             }
         }
         Ok((element, h))

@@ -264,7 +264,7 @@ where
     if setup.prefix_slots().get(&prefix).is_none() {
         return Err(AkitaError::InvalidProof);
     }
-    let stage3 = {
+    let mut replay_stage3 = || {
         let _span = tracing::info_span!("binary_root_a_stage3").entered();
         let product = akita_types::binary_source::BinaryAProduct::new(
             public.plan(),
@@ -286,12 +286,37 @@ where
                         [&authentication[0], &authentication[1]],
                     )?)
             },
-        )?
+        )
     };
-    let relation_evaluation = {
+    let evaluate_relation = || {
         let _span = tracing::info_span!("binary_root_relation_evaluate").entered();
-        relation.evaluate(&replay.challenges)?
+        relation.evaluate(&replay.challenges)
     };
+    // The relation evaluation reads only the Stage 2 point, so a pool task
+    // evaluates it while this thread replays Stage 3 on the transcript.
+    // Errors keep their order: a Stage 3 error is returned first.
+    #[cfg(feature = "parallel")]
+    let (stage3, relation_evaluation) = if rayon::current_num_threads() > 1 {
+        let mut relation_evaluation = None;
+        let stage3 = rayon::in_place_scope(|scope| {
+            scope.spawn(|_| relation_evaluation = Some(evaluate_relation()));
+            replay_stage3()
+        });
+        (
+            stage3,
+            relation_evaluation.unwrap_or_else(|| {
+                Err(AkitaError::Internal(
+                    "binary root relation evaluation did not run".into(),
+                ))
+            }),
+        )
+    } else {
+        (replay_stage3(), evaluate_relation())
+    };
+    #[cfg(not(feature = "parallel"))]
+    let (stage3, relation_evaluation) = (replay_stage3(), evaluate_relation());
+    let stage3 = stage3?;
+    let relation_evaluation = relation_evaluation?;
     let expected = (relation_evaluation + stage3.claim) * witness_eval
         + (negative_bit_weight + gamma * EqPolynomial::mle(&stage1.point, &replay.challenges)?)
             * witness_eval

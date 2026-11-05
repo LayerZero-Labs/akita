@@ -13,7 +13,7 @@ use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationPolynomialKind, TrinomialSign};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, Field};
+use jolt_field::{cfg_chunks, cfg_iter, Field};
 
 use crate::binary_source::{BinarySourceDescriptor, BINARY_SOURCE_Q};
 use crate::root_repacking::RootCoefficientRepacking;
@@ -358,10 +358,14 @@ impl<E: Field> NativeRootWeights<E> {
             .into_iter()
             .fold(E::zero(), |acc, partial| acc + partial);
         if !self.families.is_empty() {
+            // Families are independent; their exact field sum is the same in
+            // any order.
             let equality = RootEq::new(point)?;
-            for family in &self.families {
-                value += family.evaluate(&equality)?;
-            }
+            value += cfg_iter!(self.families)
+                .map(|family| family.evaluate(&equality))
+                .collect::<Result<Vec<_>, AkitaError>>()?
+                .into_iter()
+                .fold(E::zero(), |acc, family| acc + family);
         }
         Ok(value)
     }
