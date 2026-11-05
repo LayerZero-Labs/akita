@@ -7,7 +7,9 @@ use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
 };
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275};
 
 use super::paired_offset_eq_sum;
 use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, TranslatedLanes};
@@ -347,7 +349,7 @@ impl OrdinaryNativeRootPlan {
         };
         // A rows read their residue kernels against the source digits in
         // every owner and block.
-        let a_rings = role_rings(matrix, a.output_rank(), a.input_width(), a.ring_dimension())?;
+        let a_rings = RoleRings::new(matrix, a.output_rank(), a.input_width(), a.ring_dimension())?;
         for a_row in 0..a.output_rank() {
             let copies = (0..owner_blocks)
                 .map(|owner_block| {
@@ -366,7 +368,7 @@ impl OrdinaryNativeRootPlan {
                         .ok_or(AkitaError::InvalidProof)?;
                     kernels.push((
                         s_lanes.offset(position, digit)?,
-                        ring(&a_rings, a.input_width(), a_row, column)?,
+                        a_rings.ring(a_row, column)?,
                     ));
                 }
             }
@@ -405,7 +407,7 @@ impl OrdinaryNativeRootPlan {
         // B rows read their residue kernels against the T digits of every
         // owner in every slice; slices of one width share one pattern. Each
         // owner's B columns are padded to the widest slice.
-        let b_rings = role_rings(matrix, b.output_rank(), b.input_width(), b.ring_dimension())?;
+        let b_rings = RoleRings::new(matrix, b.output_rank(), b.input_width(), b.ring_dimension())?;
         let block_elements =
             checked::product([a.output_rank(), subcolumns]).ok_or(AkitaError::InvalidProof)?;
         let owner_elements = checked::product([self.profile.blocks.live_blocks, block_elements])
@@ -446,10 +448,8 @@ impl OrdinaryNativeRootPlan {
                             let column = checked::mul_add(owner, owner_columns, element)
                                 .and_then(|column| checked::mul_add(column, digits, digit))
                                 .ok_or(AkitaError::InvalidProof)?;
-                            kernels.push((
-                                t_lanes.offset(lane, digit)?,
-                                ring(&b_rings, b.input_width(), b_row, column)?,
-                            ));
+                            kernels
+                                .push((t_lanes.offset(lane, digit)?, b_rings.ring(b_row, column)?));
                         }
                     }
                 }
@@ -482,14 +482,9 @@ impl OrdinaryNativeRootPlan {
             (first, &f_lanes, first_batch),
             (second, &h_lanes, second_batch),
         ] {
-            let map_rings = role_rings(matrix, 1, map.input_width(), map.ring_dimension())?;
+            let map_rings = RoleRings::new(matrix, 1, map.input_width(), map.ring_dimension())?;
             let kernels = (0..map.input_width())
-                .map(|column| {
-                    Ok((
-                        lanes.offset(column, 0)?,
-                        ring(&map_rings, map.input_width(), 0, column)?,
-                    ))
-                })
+                .map(|column| Ok((lanes.offset(column, 0)?, map_rings.ring(0, column)?)))
                 .collect::<Result<Vec<_>, AkitaError>>()?;
             translated(vec![(lanes.base(0, 0)?, batch)], kernels, Some(alpha))?;
         }
@@ -607,48 +602,64 @@ impl OrdinaryNativeRootPlan {
 /// Ring coefficients of every entry of one public matrix role, row-major.
 ///
 /// Entry `(row, column)` is the degree-`degree` ring at flat offset
-/// `(row * width + column) * degree` of the ordinary setup prefix.
-fn role_rings<E: Field>(
-    matrix: &[Prime128Offset275],
-    rows: usize,
+/// `(row * width + column) * degree` of the ordinary setup prefix. The
+/// coefficients are converted once into one buffer, in parallel under
+/// `parallel`; [`Self::ring`] copies one entry out.
+struct RoleRings<E> {
+    coefficients: Vec<E>,
     width: usize,
     degree: usize,
-) -> Result<Vec<Vec<E>>, AkitaError> {
-    let len = checked::product([rows, width, degree]).ok_or(AkitaError::InvalidProof)?;
-    let coefficients = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
-    if degree == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    coefficients
-        .chunks_exact(degree)
-        .map(|entry| {
-            entry
-                .iter()
-                .map(|coefficient| {
-                    coefficient
-                        .to_u128_checked()
-                        .map(E::from_u128)
-                        .ok_or(AkitaError::InvalidProof)
-                })
-                .collect()
-        })
-        .collect()
 }
 
-/// A copy of ring `(row, column)` of a role with `width` columns.
-fn ring<E: Field>(
-    rings: &[Vec<E>],
-    width: usize,
-    row: usize,
-    column: usize,
-) -> Result<Vec<E>, AkitaError> {
-    if column >= width {
-        return Err(AkitaError::InvalidProof);
+/// Coefficients one parallel task converts.
+const ROLE_CHUNK: usize = 1 << 13;
+
+impl<E: Field> RoleRings<E> {
+    fn new(
+        matrix: &[Prime128Offset275],
+        rows: usize,
+        width: usize,
+        degree: usize,
+    ) -> Result<Self, AkitaError> {
+        let len = checked::product([rows, width, degree]).ok_or(AkitaError::InvalidProof)?;
+        let source = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
+        if degree == 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut coefficients = Vec::new();
+        coefficients
+            .try_reserve_exact(len)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        coefficients.resize(len, E::zero());
+        cfg_chunks_mut!(coefficients, ROLE_CHUNK)
+            .zip(cfg_chunks!(source, ROLE_CHUNK))
+            .try_for_each(|(target, source)| {
+                for (slot, coefficient) in target.iter_mut().zip(source) {
+                    *slot = coefficient
+                        .to_u128_checked()
+                        .map(E::from_u128)
+                        .ok_or(AkitaError::InvalidProof)?;
+                }
+                Ok::<_, AkitaError>(())
+            })?;
+        Ok(Self {
+            coefficients,
+            width,
+            degree,
+        })
     }
-    checked::mul_add(row, width, column)
-        .and_then(|entry| rings.get(entry))
-        .cloned()
-        .ok_or(AkitaError::InvalidProof)
+
+    /// A copy of ring `(row, column)`.
+    fn ring(&self, row: usize, column: usize) -> Result<Vec<E>, AkitaError> {
+        if column >= self.width {
+            return Err(AkitaError::InvalidProof);
+        }
+        checked::mul_add(row, self.width, column)
+            .and_then(|entry| checked::range(checked::product([entry, self.degree])?, self.degree))
+            .and_then(|range| self.coefficients.get(range))
+            .map(<[E]>::to_vec)
+            .ok_or(AkitaError::InvalidProof)
+    }
 }
 
 /// Addresses of one single-plane, unpadded segment with contiguous lanes.
