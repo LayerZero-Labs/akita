@@ -1,6 +1,7 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
 mod unit_intervals;
+mod unit_intervals_cache;
 
 use super::{
     charge_work, checked_axis_offset, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
