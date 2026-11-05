@@ -229,7 +229,7 @@ fn signed_block_commit_matches_field_full_and_short_all_storage() {
             num_live_blocks: 2,
             ..plan()
         };
-        for len in [512, 509] {
+        for len in [512, 509, 190, 0] {
             let values: Vec<i8> = (0..len).map(|i| (i % 7) as i8 - 3).collect();
             let wide: Vec<i16> = values
                 .iter()
