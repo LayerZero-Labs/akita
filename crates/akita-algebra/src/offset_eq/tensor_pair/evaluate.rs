@@ -1,5 +1,7 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
+mod unit_intervals;
+
 use super::{
     charge_work, checked_axis_offset, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
 };
@@ -747,6 +749,16 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
         return Ok(F::zero());
     }
 
+    if left_stride == 1 && right_stride == 1 && seeds.len() >= 128 && len >= 512 {
+        return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+            left_challenges,
+            right_challenges,
+            len,
+            seeds,
+            work,
+        );
+    }
+
     let left_domain = 1usize << left_challenges.len();
     let right_domain = 1usize << right_challenges.len();
     let block_bucket_count = usize::BITS as usize - len.leading_zeros() as usize;
@@ -950,3 +962,6 @@ fn basis_eval_at_index<F: Field, const MONOMIAL: bool>(challenges: &[F], index: 
         eq_eval_at_index(challenges, index)
     }
 }
+
+#[cfg(test)]
+mod unit_intervals_tests;
