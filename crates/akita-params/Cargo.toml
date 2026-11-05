@@ -58,6 +58,8 @@ parallel = ["akita-algebra/parallel", "jolt-algebra/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
+serde_json = "1"
 num-bigint = "0.5.1"
 rand = "0.8"
 

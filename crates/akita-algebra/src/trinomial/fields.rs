@@ -80,5 +80,4 @@ impl TrinomialField for Prime64Offset23703 {
 }
 
 #[cfg(test)]
-#[path = "fields_tests.rs"]
 mod tests;

@@ -381,3 +381,29 @@ impl FoldChallengeDistribution {
     }
 }
 
+#[cfg(all(test, feature = "labinius-challenges"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_family_encoding_is_explicit_and_roundtrips() {
+        let binary = FoldChallengeDistribution::BinaryRoot;
+        let encoded = postcard::to_allocvec(&binary).unwrap();
+        assert_eq!(
+            postcard::from_bytes::<FoldChallengeDistribution>(&encoded).unwrap(),
+            binary
+        );
+        let json = serde_json::to_string(&binary).unwrap();
+        assert_eq!(json, r#"{"count_pm1":4294967295,"count_pm2":1}"#);
+        assert_eq!(
+            serde_json::from_str::<FoldChallengeDistribution>(&json).unwrap(),
+            binary
+        );
+        let alias = FoldChallengeDistribution::SignedSparse(SparseChallengeConfig {
+            count_pm1: u32::MAX as usize,
+            count_pm2: 1,
+        });
+        assert!(postcard::to_allocvec(&alias).is_err());
+        assert_eq!(binary.ordering_descriptor_bytes(), akita_challenges::root_family::IDENTITY);
+    }
+}
