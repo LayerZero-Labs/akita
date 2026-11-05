@@ -446,10 +446,28 @@ impl Challenges {
             // these sixteen field terms. Multiplication by literal one folds
             // into the accumulator representation on the portable backend.
             let mut sum = <E as Unreduced>::SmallProduct::zero();
-            for q in 0..16 {
-                let code = ((words[q / 4] >> (10 * (q % 4))) & 1023) as usize;
-                sum += tables[q * 625 + code].mul_u64_unreduced(1);
+            macro_rules! add_quartet {
+                ($q:literal) => {{
+                    let code = ((words[$q / 4] >> (10 * ($q % 4))) & 1023) as usize;
+                    sum += tables[$q * 625 + code].mul_u64_unreduced(1);
+                }};
             }
+            add_quartet!(0);
+            add_quartet!(1);
+            add_quartet!(2);
+            add_quartet!(3);
+            add_quartet!(4);
+            add_quartet!(5);
+            add_quartet!(6);
+            add_quartet!(7);
+            add_quartet!(8);
+            add_quartet!(9);
+            add_quartet!(10);
+            add_quartet!(11);
+            add_quartet!(12);
+            add_quartet!(13);
+            add_quartet!(14);
+            add_quartet!(15);
             output.push(E::reduce_small_product(sum));
         }
         Ok(output)
