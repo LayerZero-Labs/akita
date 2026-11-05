@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 mod packed;
 mod projection;
-use packed::{fold_packed, image_hint, probe_packed};
+use packed::{fold_packed, image_hint};
 
 #[path = "binary_import.rs"]
 mod import;
@@ -25,7 +25,17 @@ use import::BinarySourceInput;
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
 
+/// The accepted fold challenges and the response they fold the source into.
+type AcceptedResponse = (
+    akita_challenges::Challenges,
+    Vec<[i128; SOURCE_RING_DEGREE]>,
+);
+
 /// Immutable private source and q24 image hint. Neither table is a public payload.
+///
+/// `accepted` is a private cache, not source material: the root build leaves
+/// its response there and the projection takes it back when the challenges
+/// agree. The response is a function of the sources and challenges alone.
 #[derive(Clone)]
 pub(super) struct BinarySourceStorage {
     manifest: BinaryCommittedGroupManifest,
@@ -35,6 +45,7 @@ pub(super) struct BinarySourceStorage {
     matrix: Arc<Vec<Vec<[i128; SOURCE_RING_DEGREE]>>>,
     images: Arc<Vec<[Q24Image; SOURCE_RING_DEGREE]>>,
     image_digits: Arc<Vec<i8>>,
+    accepted: Arc<std::sync::Mutex<Option<AcceptedResponse>>>,
 }
 
 impl<F, E> CpuBackend<F, E>
@@ -124,6 +135,7 @@ where
                 matrix: Arc::new(matrix),
                 images: Arc::new(images),
                 image_digits: Arc::new(image_digits),
+                accepted: Arc::default(),
             }),
             metadata,
         })
@@ -471,6 +483,9 @@ where
         })
         .transpose()?;
     drop(span);
+    if let Ok(mut accepted) = source.accepted.lock() {
+        *accepted = Some((challenges.clone(), response));
+    }
     let span = tracing::info_span!("binary_root_repack").entered();
     let mut natural: Vec<&[i8]> = vec![&response_digits, &source.image_digits];
     if let Some(evaluation) = &evaluation {
@@ -543,6 +558,7 @@ where
             "field-switch source owner mismatch".into(),
         ));
     }
+    let _span = tracing::info_span!("binary_field_switch_source").entered();
     let descriptor = request.manifest.descriptor();
     let owner = descriptor
         .polynomials()
@@ -556,21 +572,39 @@ where
     carriers
         .try_reserve_exact(index.padded_carriers())
         .map_err(|_| AkitaError::InvalidInput("carrier allocation failed".into()))?;
-    for carrier in 0..index.padded_carriers() {
-        let address = checked::sum([owner_start, index.kernel_carrier_index(carrier)?])
-            .ok_or(AkitaError::InvalidProof)?;
-        carriers.push(
-            *source
+    carriers.resize(index.padded_carriers(), 0u128);
+    let gather = |(first, chunk): (usize, &mut [u128])| {
+        for (carrier, slot) in (first * FIELD_SWITCH_GATHER_CHUNK..).zip(chunk) {
+            let address = checked::sum([owner_start, index.kernel_carrier_index(carrier)?])
+                .ok_or(AkitaError::InvalidProof)?;
+            *slot = *source
                 .sources
                 .get(address)
-                .ok_or(AkitaError::InvalidProof)?,
-        );
+                .ok_or(AkitaError::InvalidProof)?;
+        }
+        Ok::<_, AkitaError>(())
+    };
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        carriers
+            .par_chunks_mut(FIELD_SWITCH_GATHER_CHUNK)
+            .enumerate()
+            .try_for_each(gather)?;
     }
+    #[cfg(not(feature = "parallel"))]
+    carriers
+        .chunks_mut(FIELD_SWITCH_GATHER_CHUNK)
+        .enumerate()
+        .try_for_each(gather)?;
     binding
         .scope_lease()
         .admit_commitment(context, handle.committed.commitment_id)?;
     Ok((Vec::new(), Box::new(carriers)))
 }
+
+/// Carriers gathered by one parallel task of the field-switch source.
+const FIELD_SWITCH_GATHER_CHUNK: usize = 1 << 14;
 
 /// Setup columns in one parallel piece of a public digit commitment.
 const DIGIT_COMMITMENT_PIECE_COLUMNS: usize = 256;

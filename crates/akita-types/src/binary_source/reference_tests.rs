@@ -533,7 +533,7 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
         // Digit copies may fill the A tensor's zero padding, so compare
         // against the A-only prefix: zero batches leave only the A weights.
         let a_setup = crate::binary_source::binary_a_setup_coefficients::<F>(
-            &seed_bytes,
+            &crate::binary_source::binary_root_matrix(&seed_bytes, manifest).unwrap(),
             manifest,
             prefix_len,
         )

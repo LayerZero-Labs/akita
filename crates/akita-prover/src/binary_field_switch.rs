@@ -23,7 +23,9 @@ pub fn prove_field_switch(
     claim.validate(descriptor)?;
     let point = claim.carrier_point(descriptor)?;
     let mut equality = Vec::new();
+    let span = tracing::info_span!("binary_field_switch_partials").entered();
     let partials = partial_evaluations::<H>(source, &point, &mut equality)?;
+    drop(span);
     if claim.reconstructed_value(descriptor, &partials)? != claim.decoded_value() {
         return Err(AkitaError::InvalidInput(
             "incorrect binary word claim".into(),
@@ -34,6 +36,7 @@ pub fn prove_field_switch(
         .map(|_| field_switch_challenge(channel))
         .collect::<Result<Vec<_>, _>>()?;
     let mut product = partials.batch(&lambda)?;
+    let _span = tracing::info_span!("binary_field_switch_rounds").entered();
     let mut a = PackedBinary162::new();
     a.refill_binary_words(source);
     let mut b = PackedBinary162::new();

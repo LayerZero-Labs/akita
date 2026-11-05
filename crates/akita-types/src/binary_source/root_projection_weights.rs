@@ -69,6 +69,7 @@ pub fn binary_direct_a_weights<E: Field>(
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let mut families = Vec::new();
     if let Some(operand) = matrix {
+        let _span = tracing::info_span!("binary_root_weights_direct_a").entered();
         families.push(RootWeightFamily::DirectA(DirectAWeights::new(
             plan, operand, rho,
         )?));

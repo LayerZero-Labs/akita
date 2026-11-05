@@ -39,8 +39,8 @@ use jolt_field::{cfg_chunks_mut, Field};
 use super::a_product::{DEGREE as A_DEGREE, STRIDE as A_STRIDE};
 use super::authentication::{setup_entry, BINARY_DIGIT_COMMITMENT_DEGREE};
 use super::{
-    binary_a_setup_coefficients, BinaryAPrefixLen, BinaryAProduct, BinaryCommittedGroupManifest,
-    BinaryRootWitnessPlan,
+    binary_a_setup_coefficients, binary_root_matrix, BinaryAPrefixLen, BinaryAProduct,
+    BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
 };
 use crate::native_root_relation::SegmentLanes;
 
@@ -440,7 +440,9 @@ impl BinaryTypedPrefix {
         prefix_len: usize,
     ) -> Result<Vec<F>, AkitaError> {
         self.validate_prefix(prefix_len)?;
-        let mut coefficients = binary_a_setup_coefficients(seed, manifest, prefix_len)?;
+        let matrix = binary_root_matrix(seed, manifest)?;
+        let mut coefficients = binary_a_setup_coefficients(&matrix, manifest, prefix_len)?;
+        drop(matrix);
         let labels = [
             manifest.b_label(),
             SetupStreamLabel {

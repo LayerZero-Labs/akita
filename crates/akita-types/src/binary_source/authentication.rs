@@ -40,22 +40,30 @@ pub(super) fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize,
     usize::try_from(label.rank).map_err(|_| AkitaError::InvalidProof)
 }
 
-pub(super) fn setup_entry<F: Field>(
+fn setup_stream(
     seed: &[u8; 32],
     label: SetupStreamLabel,
     row: u32,
     column: usize,
-) -> Result<CyclotomicRing<F, BINARY_DIGIT_COMMITMENT_DEGREE>, AkitaError> {
-    let mut stream = TypedSetupStream::new(
+) -> Result<TypedSetupStream, AkitaError> {
+    TypedSetupStream::new(
         seed,
         SetupStreamLabel {
             row,
             column: u64::try_from(column).map_err(|_| AkitaError::InvalidProof)?,
             ..label
         },
-    )?;
+    )
+}
+
+pub(super) fn setup_entry<F: Field>(
+    seed: &[u8; 32],
+    label: SetupStreamLabel,
+    row: u32,
+    column: usize,
+) -> Result<CyclotomicRing<F, BINARY_DIGIT_COMMITMENT_DEGREE>, AkitaError> {
     let mut values = [0u128; BINARY_DIGIT_COMMITMENT_DEGREE];
-    stream.fill_p(&mut values)?;
+    setup_stream(seed, label, row, column)?.fill_p(&mut values)?;
     let coefficients = values.map(F::from_u128);
     Ok(CyclotomicRing::from_coefficients(coefficients))
 }
@@ -89,20 +97,69 @@ pub fn binary_public_digit_commitment<F: Field>(
     payload
         .try_reserve_exact(count)
         .map_err(|_| AkitaError::InvalidProof)?;
+    // 2^128 as a field element; accumulators hold `hi * 2^128 + lo`.
+    let two_128 = F::from_u128(u128::MAX) + F::one();
     for row in 0..label.rank {
-        let mut image = CyclotomicRing::zero();
+        let mut image = [(0u128, 0u64); BINARY_DIGIT_COMMITMENT_DEGREE];
         for (column, chunk) in digits.chunks(BINARY_DIGIT_COMMITMENT_DEGREE).enumerate() {
-            let mut coefficients = [F::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-            for (output, &digit) in coefficients.iter_mut().zip(chunk) {
-                *output = F::from_i64(i64::from(digit));
-            }
             let column = checked::sum([first_column, column]).ok_or(AkitaError::InvalidProof)?;
-            setup_entry(seed, label, row, column)?
-                .mul_accumulate_into(&CyclotomicRing::from_coefficients(coefficients), &mut image);
+            accumulate_digit_product(
+                &mut setup_stream(seed, label, row, column)?,
+                chunk,
+                &mut image,
+            )?;
         }
-        payload.extend_from_slice(image.coefficients());
+        payload.extend(
+            image
+                .iter()
+                .map(|&(lo, hi)| F::from_u128(lo) + F::from_u64(hi) * two_128),
+        );
     }
     Ok(payload)
+}
+
+/// Add the negacyclic product of one setup entry and one digit chunk.
+///
+/// Each setup coefficient `a < P` stays an integer. A balanced digit `d`
+/// contributes `d * a`, or `|d| * (P - a)` when the product's sign is
+/// negative, so every term is a nonnegative integer below `2^131`. The
+/// accumulator never overflows: it would need `2^62` terms. The result
+/// equals the ring product of [`setup_entry`] and the chunk modulo `P`.
+fn accumulate_digit_product(
+    stream: &mut TypedSetupStream,
+    chunk: &[i8],
+    image: &mut [(u128, u64); BINARY_DIGIT_COMMITMENT_DEGREE],
+) -> Result<(), AkitaError> {
+    let mut entry = [0u128; BINARY_DIGIT_COMMITMENT_DEGREE];
+    stream.fill_p(&mut entry)?;
+    for (t, &a) in entry.iter().enumerate() {
+        let negative = if a == 0 { 0 } else { BINARY_SETUP_P - a };
+        // multiples[4 + e] is the canonical integer of `e * a`, for |e| <= 4.
+        let multiples: [(u128, u64); 9] = core::array::from_fn(|index| {
+            let (value, factor) = match index {
+                0..=3 => (negative, 4 - index),
+                _ => (a, index - 4),
+            };
+            let (lo, hi) = (value & u128::from(u64::MAX), value >> 64);
+            let factor = factor as u128;
+            let (lo, hi) = (lo * factor, hi * factor + ((lo * factor) >> 64));
+            ((lo & u128::from(u64::MAX)) | (hi << 64), (hi >> 64) as u64)
+        });
+        for (s, &digit) in chunk.iter().enumerate() {
+            let k = t + s;
+            let (k, digit) = if k < BINARY_DIGIT_COMMITMENT_DEGREE {
+                (k, digit)
+            } else {
+                (k - BINARY_DIGIT_COMMITMENT_DEGREE, -digit)
+            };
+            let (lo, hi) = multiples
+                [usize::try_from(4 + i32::from(digit)).map_err(|_| AkitaError::InvalidProof)?];
+            let slot = image.get_mut(k).ok_or(AkitaError::InvalidProof)?;
+            let (sum, carry) = slot.0.overflowing_add(lo);
+            *slot = (sum, slot.1 + hi + u64::from(carry));
+        }
+    }
+    Ok(())
 }
 
 /// Authenticate the image digits or U view against the outgoing witness.
