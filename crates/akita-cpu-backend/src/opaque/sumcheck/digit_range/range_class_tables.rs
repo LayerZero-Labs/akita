@@ -131,6 +131,11 @@ impl<E: Field + Ring + Fold, const LANES: usize> FoldedProductPairTable<E, LANES
     pub(super) fn row_by_pair_index(&self, pair_index: usize) -> [E; LANES] {
         self.rows[pair_index]
     }
+
+    /// Number of ordered pairs of ordered class pairs.
+    pub(super) fn quartet_class_count(&self) -> usize {
+        self.ordered_pair_count * self.ordered_pair_count
+    }
 }
 
 /// Range-image values folded at the first challenge, indexed by an ordered class pair.

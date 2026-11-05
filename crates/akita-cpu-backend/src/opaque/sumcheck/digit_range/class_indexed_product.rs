@@ -3,7 +3,6 @@
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
 use super::exact_prefix::ExactPrefixLayout;
-#[cfg(test)]
 use super::range_class_tables::product_coefficients;
 use super::range_class_tables::{
     FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
@@ -540,6 +539,41 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     )
                     .entered();
                     *coefficients
+                } else if source.quartet_count() >= folded_pairs.quartet_class_count() {
+                    let _span = tracing::info_span!(
+                        "digit_range_product_initial_round",
+                        round = self.rounds_completed,
+                        kernel_strategy = "quartet-class-weights",
+                    )
+                    .entered();
+                    // Every quartet class's coefficients are computed at most
+                    // once, for the classes that occur.
+                    let pair_class_count = source.class_count() * source.class_count();
+                    accumulate_equality_weighted_class_values(
+                        equality_prefix_weights,
+                        equality_suffix_weights,
+                        source.quartet_count(),
+                        folded_pairs.quartet_class_count(),
+                        |quartet_index| {
+                            let (left_pair, right_pair) =
+                                source.ordered_pair_indices_for_quartet(quartet_index);
+                            left_pair * pair_class_count + right_pair
+                        },
+                        |quartet| {
+                            product_coefficients(
+                                folded_pairs.row_by_pair_index(quartet / pair_class_count),
+                                folded_pairs.row_by_pair_index(quartet % pair_class_count),
+                                self.arity,
+                                &self.parent_weights,
+                            )
+                        },
+                        product_coefficients(
+                            folded_pairs.row_by_pair_index(0),
+                            folded_pairs.row_by_pair_index(0),
+                            self.arity,
+                            &self.parent_weights,
+                        ),
+                    )
                 } else {
                     let _span = tracing::info_span!(
                         "digit_range_product_initial_round",
@@ -869,6 +903,78 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(weighted, &expected);
         }
+    }
+
+    #[test]
+    fn quartet_class_weights_match_per_quartet_second_round() {
+        use crate::sources::packed_digits::PackedSignedDigits;
+        use akita_params::FlatBooleanDomain;
+        type F = Prime128Offset275;
+        // Basis 32 has sixteen classes, so 2^16 quartet classes; enough
+        // quartets select the class-weight round, split into class ranges.
+        let plan = DigitRangePlan::new(32).unwrap();
+        let num_vars = 19;
+        let live_len = 300_001;
+        let digits = (0..live_len)
+            .map(|index| i8::try_from(((index * 2_654_435_761usize) >> 7) % 32).unwrap() - 16)
+            .collect::<Vec<_>>();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(digits),
+            FlatBooleanDomain::new(live_len, num_vars).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let equality_point = (0..num_vars)
+            .map(|index| F::from_u64(index as u64 * 5 + 7))
+            .collect::<Vec<_>>();
+        let leaf_coeffs = plan.leaf_coeffs::<F>();
+        let mut prover = ClassIndexedProductSubcheckProver::<F, 4>::new(
+            source,
+            plan,
+            &leaf_coeffs,
+            0,
+            vec![F::from_u64(1)],
+            &equality_point,
+            F::from_u64(3),
+        )
+        .unwrap();
+        prover.ingest_challenge(0, F::from_u64(41));
+        let ProductTableState::FirstChallengeFolded(FirstChallengeFoldedProductState {
+            source,
+            folded_pairs,
+            cached_second_round_coefficients: None,
+        }) = &prover.product_table
+        else {
+            panic!("sixteen classes defer the second round without a quartet table");
+        };
+        assert!(source.quartet_count() >= folded_pairs.quartet_class_count());
+        let (first, second) = prover.split_eq.remaining_eq_tables();
+        let expected = accumulate_equality_weighted_values(
+            first,
+            second,
+            source.quartet_count(),
+            |quartet_index| {
+                let (left_pair, right_pair) =
+                    source.ordered_pair_indices_for_quartet(quartet_index);
+                product_coefficients(
+                    folded_pairs.row_by_pair_index(left_pair),
+                    folded_pairs.row_by_pair_index(right_pair),
+                    prover.arity,
+                    &prover.parent_weights,
+                )
+            },
+            product_coefficients(
+                folded_pairs.row_by_pair_index(0),
+                folded_pairs.row_by_pair_index(0),
+                prover.arity,
+                &prover.parent_weights,
+            ),
+        );
+        let actual = prover.compute_round_eq_factored(1, F::from_u64(3));
+        assert_eq!(
+            actual,
+            OmittedConstantPoly::from_q_coefficients(expected.to_vec())
+        );
     }
 
     fn check_interpolated_rounds<E: Field + Ring + Unreduced, const LANES: usize>(
