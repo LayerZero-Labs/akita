@@ -966,7 +966,6 @@ fn one_shot_fold_response_replays_without_a_nonce() {
             .unwrap();
         prover.record_fold_challenges(0, 0, coordinates).unwrap();
         let challenge = prover.grinded_ext_challenge::<E>(next.site()).unwrap();
-        drop(prover);
         let proof = transcript.narg_string().to_vec();
 
         let verify = |proof: &[u8]| -> Result<(u32, E), AkitaError> {
@@ -978,7 +977,6 @@ fn one_shot_fold_response_replays_without_a_nonce() {
             let counter = verifier.read_fold_response(site)?;
             verifier.record_fold_challenges(0, 0, coordinates)?;
             let challenge = verifier.grinded_ext_challenge::<E>(next.site())?;
-            drop(verifier);
             state.check_eof().map_err(|_| AkitaError::InvalidProof)?;
             Ok((counter, challenge))
         };
