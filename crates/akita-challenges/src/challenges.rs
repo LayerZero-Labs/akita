@@ -31,6 +31,7 @@ pub struct Challenges {
     sampled_family: Option<(usize, SparseChallengeConfig)>,
     embedding_stride: usize,
     materialized: std::sync::Arc<std::sync::OnceLock<Vec<SparseChallenge>>>,
+    quartet_codes: std::sync::Arc<std::sync::OnceLock<Vec<[u64; 4]>>>,
 }
 
 impl PartialEq for Challenges {
@@ -90,6 +91,7 @@ impl Challenges {
             sampled_family: None,
             embedding_stride: 1,
             materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+            quartet_codes: std::sync::Arc::new(std::sync::OnceLock::new()),
         })
     }
 
@@ -181,6 +183,16 @@ impl Challenges {
         F: Field + Ring,
         E: Field + ExtField<F> + Unreduced,
     {
+        if self.len() >= 1024
+            && self.sampled_family.as_ref().is_some_and(|(d, config)| {
+                *d == alpha_pows.len()
+                    && *d / self.embedding_stride == 64
+                    && config.count_pm1 == 31
+                    && config.count_pm2 == 10
+            })
+        {
+            return self.evaluate_quartets::<F, E>(alpha_pows);
+        }
         let sampled = self
             .sampled_family
             .as_ref()
@@ -294,6 +306,155 @@ impl Challenges {
         source.iter().map(evaluate).collect()
     }
 
+    fn evaluate_quartets<F: Field + Ring, E: Field + ExtField<F> + Unreduced>(
+        &self,
+        powers: &[E],
+    ) -> Result<Vec<E>, AkitaError> {
+        if self.quartet_codes.get().is_none() {
+            let mut packed = Vec::with_capacity(self.challenges.len());
+            for challenge in self.challenges.iter() {
+                let zero_word = 312u64 | (312 << 10) | (312 << 20) | (312 << 30);
+                let mut words = [zero_word; 4];
+                if challenge.positions.len() != challenge.coeffs.len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                const DELTAS: [u64; 64] = [
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                ];
+                if challenge.positions.len() != 41 {
+                    return Err(AkitaError::InvalidProof);
+                }
+                for (i, (&position, &coefficient)) in challenge
+                    .positions
+                    .iter()
+                    .zip(&challenge.coeffs)
+                    .enumerate()
+                {
+                    let position = position as usize;
+                    if position >= 64 {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    // Private sampler provenance fixes the first 31 magnitudes to 1, the last 10 to 2.
+                    let delta = DELTAS[position] << u32::from(i >= 31);
+                    let word = &mut words[position / 16];
+                    if coefficient < 0 {
+                        *word -= delta;
+                    } else {
+                        *word += delta;
+                    }
+                }
+                packed.push(words);
+            }
+            let _ = self.quartet_codes.set(packed);
+        }
+        let codes = self.quartet_codes.get().ok_or(AkitaError::InvalidProof)?;
+        let mut tables = Vec::with_capacity(16 * 625);
+        {
+            for q in 0..16 {
+                let mut p = [E::zero(); 4];
+                for (i, value) in p.iter_mut().enumerate() {
+                    *value = *powers
+                        .get((q * 4 + i) * self.embedding_stride)
+                        .ok_or(AkitaError::InvalidProof)?;
+                }
+                let sum = p.iter().copied().fold(E::zero(), |a, b| a + b);
+                let mut v3 = -(sum + sum);
+                for _ in 0..5 {
+                    let mut v2 = v3;
+                    for _ in 0..5 {
+                        let mut v1 = v2;
+                        for _ in 0..5 {
+                            let mut v0 = v1;
+                            for _ in 0..5 {
+                                tables.push(v0);
+                                v0 += p[0];
+                            }
+                            v1 += p[1];
+                        }
+                        v2 += p[2];
+                    }
+                    v3 += p[3];
+                }
+            }
+        }
+        let mut output = Vec::with_capacity(codes.len());
+        for words in codes {
+            // The existing small-product accumulator defers the reduction of
+            // these sixteen field terms. Multiplication by literal one folds
+            // into the accumulator representation on the portable backend.
+            let mut sum = <E as Unreduced>::SmallProduct::zero();
+            for q in 0..16 {
+                let code = ((words[q / 4] >> (10 * (q % 4))) & 1023) as usize;
+                sum += tables[q * 625 + code].mul_u64_unreduced(1);
+            }
+            output.push(E::reduce_small_product(sum));
+        }
+        Ok(output)
+    }
+
     /// Select complete claims in the requested order.
     ///
     /// # Errors
@@ -385,6 +546,7 @@ impl Challenges {
                     .map(|(_, config)| (ambient_ring_dimension, *config)),
                 embedding_stride: stride,
                 materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+                quartet_codes: std::sync::Arc::new(std::sync::OnceLock::new()),
             });
         }
         let source = self.as_slice();
@@ -656,3 +818,6 @@ mod embedding_view_tests {
 
 #[cfg(test)]
 mod deferred_evaluation_tests;
+
+#[cfg(test)]
+mod quartet_evaluation_tests;
