@@ -185,7 +185,7 @@ impl<'authority, 'output, F: Field, E: Field>
     pub fn challenge_alpha_values(&self) -> Result<Vec<E>, AkitaError>
     where
         F: CanonicalEncoding,
-        E: ExtField<F>,
+        E: ExtField<F> + jolt_field::Unreduced,
     {
         self.canonical_challenges
             .evals_at_pows::<F, E>(&self.alpha_powers)
@@ -335,7 +335,7 @@ fn prepare_coefficient_packing_group_semantics<'authority, 'output, F, E>(
 >
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F>,
+    E: ExtField<F> + FpExtEncoding<F> + jolt_field::Unreduced,
 {
     let authority = validate_coefficient_packing_batch_authority::<F, E>(
         inputs.level_params,
@@ -577,7 +577,7 @@ pub fn coefficient_packing_relation_events<F, E>(
 ) -> Result<Vec<RelationWeightEvent<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F>,
+    E: ExtField<F> + FpExtEncoding<F> + jolt_field::Unreduced,
 {
     let challenge_alpha_values = {
         let _span = tracing::info_span!("coefficient_packing_challenge_evaluations").entered();

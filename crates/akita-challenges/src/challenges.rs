@@ -4,7 +4,7 @@ use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{ExtField, Field, Ring};
+use jolt_field::{ExtField, Field, Ring, Unreduced, Zero};
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
@@ -179,7 +179,7 @@ impl Challenges {
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
         F: Field + Ring,
-        E: Field + ExtField<F>,
+        E: Field + ExtField<F> + Unreduced,
     {
         let sampled = self
             .sampled_family
@@ -199,21 +199,47 @@ impl Challenges {
             if sampled.is_some() {
                 // Sampler provenance guarantees the shape, range and +/-1/2 family.
                 // Bounds-checked indexing is retained at this immutable boundary.
-                Ok(E::signed_sum(
-                    challenge.positions.iter().zip(&challenge.coeffs).map(
-                        |(&position, &coefficient)| {
-                            let powers = if coefficient == 2 || coefficient == -2 {
-                                &doubles[..]
-                            } else {
-                                alpha_pows
-                            };
-                            (
-                                &powers[(position as usize) * self.embedding_stride],
-                                coefficient < 0,
-                            )
-                        },
-                    ),
-                ))
+                if std::mem::size_of::<E::SmallProduct>() > std::mem::size_of::<E>()
+                    && challenge.positions.len() <= 64
+                {
+                    // Bound each deferred sum to 64 unit-scalar terms,
+                    // within every supported small-product backend's headroom.
+                    let mut positive = E::SmallProduct::zero();
+                    let mut negative = E::SmallProduct::zero();
+                    for (&position, &coefficient) in
+                        challenge.positions.iter().zip(&challenge.coeffs)
+                    {
+                        let powers = if coefficient == 2 || coefficient == -2 {
+                            &doubles[..]
+                        } else {
+                            alpha_pows
+                        };
+                        let term = powers[(position as usize) * self.embedding_stride]
+                            .mul_u64_unreduced(1);
+                        if coefficient < 0 {
+                            negative += term;
+                        } else {
+                            positive += term;
+                        }
+                    }
+                    Ok(E::reduce_small_product(positive) - E::reduce_small_product(negative))
+                } else {
+                    Ok(E::signed_sum(
+                        challenge.positions.iter().zip(&challenge.coeffs).map(
+                            |(&position, &coefficient)| {
+                                let powers = if coefficient == 2 || coefficient == -2 {
+                                    &doubles[..]
+                                } else {
+                                    alpha_pows
+                                };
+                                (
+                                    &powers[(position as usize) * self.embedding_stride],
+                                    coefficient < 0,
+                                )
+                            },
+                        ),
+                    ))
+                }
             } else {
                 challenge.eval_at_pows::<F, E>(alpha_pows)
             }
@@ -627,3 +653,6 @@ mod embedding_view_tests {
         assert_eq!(once, eager);
     }
 }
+
+#[cfg(test)]
+mod deferred_evaluation_tests;
