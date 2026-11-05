@@ -3070,6 +3070,147 @@ measured:
 - The fourth pass's notes on word's first-fold parameters for the word-prime
   shapes and on the root challenge weight still apply.
 
+### Sixth prover pass
+
+A sixth byte-preserving pass starts from `016f466b7`, the fifth pass. Its
+target is `prime5`, the one shape still above 0.8 s of complete proving at
+N=2^22, and within it the first ordinary suffix fold.
+
+The base was proved three times at N=2^22 `prime5` in isolated processes with
+`BINARY_SOURCE_CATALOG_CACHE`, after one warm-up run. All runs reproduced
+their pin. One-minute loads were 5.21–6.15. Each cell is the median wall time
+in ms, with process CPU time in parentheses.
+
+| Span | `prime5` |
+| --- | ---: |
+| Complete proving | 1,130.6 (14,272) |
+| › binary root level | 553.5 (6,626) |
+| ›› authentication emission | 66.6 (692) |
+| ›› prime digits | 55.1 (751) |
+| ›› response fold | 64.7 (882) |
+| › ordinary suffix Stage 1 sumchecks (6) | 267.2 (3,800) |
+| ›› first fold | 192.8 |
+| ››› product rounds, materialized | 61.5 (885) |
+| ››› product rounds, first two | 56.2 (807) |
+| ››› product folds | 52.3 (729) |
+| ››› leaf rounds, materialized | 34.3 (503) |
+| ››› product materialization after two rounds | 26.7 (377) |
+| ››› leaf folds | 22.5 (316) |
+| › ordinary suffix Stage 2 sumchecks (6) | 139.8 (1,834) |
+| › relation fold rounds, root and suffix | 102.0 (1,309) |
+| › `RingRelationProver::prepare` (6) | 98.6 (1,179) |
+| Prover peak RSS (bytes) | 5,809,684,480 |
+
+The Stage 1 rows list all six folds; the first fold is about 72% of each.
+
+#### Stage 1 of the first suffix fold
+
+The first suffix fold range-checks 19,017,216 balanced base-64 digits on a
+2^25 domain, so each of its sumchecks has 25 rounds. Base 64 has 32
+range-image classes and three range sumchecks:
+
+- a product stage of arity two with one parent, whose rows hold 2 lanes;
+- a product stage of arity four with two parents, whose rows hold 8 lanes,
+  the second parent weighted by the interstage batch challenge;
+- the quartic leaf, whose rows hold one range-image value.
+
+Each product stage computes round 0 from a histogram of the 1,024 ordered
+class pairs, and round 1 by rescanning the 4,754,304 digit quartets through the
+1,024-row table of class pairs folded at the first challenge. It then
+materializes one row per quartet and runs rounds 2–24 on that table. Each
+materialized round is one pass that sums the round polynomial and one pass
+that folds the table. The leaf computes round 0 from the histogram,
+materializes one value per digit pair, and runs rounds 1–24 the same way.
+
+Work per round, with `Q` = 4,754,304 quartets, `S_k` = ⌈`Q`/2^(k−2)⌉ product
+rows in round `k`, and `T_k` = ⌈2`Q`/2^(k−1)⌉ leaf rows in round `k`. A field
+multiplication is one product in `Prime128Offset275`, reduced or unreduced.
+Bytes are the rows read and written.
+
+| Sumcheck | Round | Field multiplications | Bytes touched |
+| --- | --- | ---: | ---: |
+| arity two | 0 | none; one addition per pair | 19 MB |
+| arity two | 1 | 4 per quartet: 19.0 M | 19 MB |
+| arity two | materialization | 2 per quartet: 9.5 M | 152 MB |
+| arity two | `k` = 2–24 | 2 `S_k` round, 2 `S_k` fold | 80 `S_k` |
+| arity four | 0 | none; one addition per pair | 19 MB |
+| arity four | 1 | 28 per quartet: 133.1 M | 19 MB |
+| arity four | materialization | 8 per quartet: 38.0 M | 609 MB |
+| arity four | `k` = 2–24 | 14 `S_k` round, 8 `S_k` fold | 320 `S_k` |
+| leaf | 0 | none; one addition per pair | 19 MB |
+| leaf | materialization | none | 152 MB |
+| leaf | `k` = 1–24 | 4.5 `T_k` round, `T_k` fold | 40 `T_k` |
+
+Summed over the rounds, the arity-two stage costs 66.6 M multiplications, the
+arity-four stage 380.3 M and the leaf 104.6 M: 551.5 M in all. The rows read
+and written total 5.57 GB, of which the arity-four table is 3.65 GB. An
+arity-four pair costs 10 multiplications per parent, 4 more to weight the
+second parent, and 4 unreduced products for its equality weight.
+
+The machine is an Apple M4 Max with 12 performance and 4 efficiency cores
+and 16 Rayon threads. A scratch benchmark measured, at a one-minute load of
+6.6:
+
+- a `Prime128Offset275` multiplication at 1.69 ns of single-thread
+  throughput and 5.9 × 10^9 per second over all threads;
+- parallel reads at 230–280 GB/s and copies into resident memory at
+  320–360 GB/s;
+- copies into freshly allocated memory at 80 GB/s, because every first touch
+  of a page faults: about 20 ms per GB.
+
+**Lower bound.** The 551.5 M multiplications take 93.5 ms at the machine's
+rate, and the 5.57 GB take 18.6 ms at 300 GB/s, which the arithmetic can
+hide. Stage 1 of the first fold therefore cannot run below about 94 ms
+without fewer multiplications. It measures 192.8 ms, 2.1 times the bound.
+
+**Profile.** A new `digit_range` bench of `akita-cpu-backend` runs the same
+session on synthetic digits of the same count, basis and domain. It takes
+188 ms with Rayon, against 192.8 ms in the prover, and 1.73 s on one thread.
+Its span timings, and one proof sampled with `samply` at 1 kHz, attribute the
+time as follows:
+
+- **Arithmetic.** On one thread the session spends 0.93 s in its 551.5 M
+  multiplications and 0.79 s in the rest of the loop bodies: modular additions
+  and subtractions, unreduced accumulation, and copies of 8-lane rows passed
+  by value through the round closures. The arity-four materialized round
+  costs about 100 ns per pair on one thread, against 46 ns for its
+  multiplications.
+- **Serial sections.** Folds take 166–172 ms on one thread and 99 ms with
+  Rayon, a 1.7-fold speedup where the rounds reach 9–10. The fold works in
+  place, so a table of `n` rows folds in a serial prefix of 4,096 pairs and
+  then about log2(`n`/4,096) dependent parallel waves, each waiting for the
+  last. Folding the same tables out of place in one parallel pass took 26 ms
+  in the bench, with identical round polynomials and claims. In the sampled
+  proof, 63% of the worker samples inside the first fold's Stage 1 are in the
+  kernel's thread-yield call, where idle Rayon workers spin between
+  dispatches, and 15% in field multiplication. `samply` on macOS catches
+  only some samples of busy threads, so these shares are indicative.
+- **Allocation.** Materialization writes 913 MB of fresh tables, at about
+  20 ms of page faults per GB; the arity-four materialization takes 17–23 ms
+  in the bench against 6.4 ms for its multiplications.
+- **Memory traffic.** At the machine's multiplication rate the rounds need
+  at most 53 GB/s; none of them is bandwidth-bound.
+
+Candidate changes, with the expected gain at N=2^22 `prime5`:
+
+| Candidate | Spans reduced | Expected gain (ms) |
+| --- | --- | ---: |
+| Exact-prefix folds out of place in one parallel pass (ordinary) | product and leaf folds | 60–75 |
+| Tables materialized one round later, that round computed from the class pairs (ordinary) | materialization, first materialized round and fold | 10–20 |
+| Weighted parent lanes scaled once; arity-four rows read in place (ordinary) | product rounds | 10–30 |
+| Small late rounds on the calling thread (ordinary) | materialized rounds and folds | 2–5 |
+| Fold fused into the next round's pass (ordinary) | materialized rounds and folds | 0–10 |
+| Unreduced subset sums in `weighted_source_bits` | prime digits | 15–25 |
+| Authentication absorb through the paired permutation | authentication emission | about 3 |
+
+The first candidate raises Stage 1's live heap while the arity-four table
+folds, from 609 MB to 913 MB, which would put it about 90 MB above the
+prove-phase live-heap peak of 3,933 MB; the second lowers it again, to 456 MB.
+Both are measured for peak RSS. The ordinary candidates change
+ordinary-protocol prover code only. Each lands in its own commit, keeps the
+ordinary fixture at 65,567 bytes and the fold-grinding acceptance rule and
+nonce order, and changes no transcript input.
+
 ### Pre-v8 dev-protocol results
 
 These results and all their timings predate the v8 merge. Their proofs
