@@ -124,5 +124,9 @@ required-features = ["labinius-trinomial"]
 name = "quotient_kernels"
 harness = false
 
+[[bench]]
+name = "digit_range"
+harness = false
+
 [lints]
 workspace = true

@@ -620,6 +620,11 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
         Ok(())
     }
 
+    /// The running claim the next round polynomial must reduce.
+    pub(crate) fn current_claim(&self) -> E {
+        self.claim
+    }
+
     pub(crate) fn finish(self) -> Result<Stage1FinalClaims<E>, AkitaError> {
         if self.phase != Phase::Ready || self.pending.is_some() {
             return Err(AkitaError::InvalidInput(
