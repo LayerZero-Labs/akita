@@ -1,8 +1,8 @@
 use super::{DirectScanWeights, PhysicalBWeightTerm};
 use akita_error::AkitaError;
 #[cfg(test)]
-use jolt_field::ExtField;
-use jolt_field::{Field, MulBaseUnreduced, Unreduced, Zero};
+use jolt_field::{ExtField, MulBaseUnreduced};
+use jolt_field::{Field, Unreduced, Zero};
 
 pub(crate) struct GroupSetupSegment<E> {
     pub(super) lo: usize,
@@ -106,80 +106,6 @@ impl<E: Unreduced> ProductSum<E> for CanonicalProductSum<E> {
     #[inline(always)]
     fn finish(self) -> E {
         self.0
-    }
-}
-
-/// Rings staged per column pass of [`ColumnSums`].
-const COLUMN_TILE: usize = 4;
-
-/// `Σ_b w_b · ⟨ring_b, pows⟩` contracted column first.
-///
-/// Column `j` accumulates `Σ_b w_b · c_{b,j}` as unreduced `E × F` products,
-/// and `pows` is applied once per column in [`Self::finish`]. Against a
-/// per-ring dot product this saves, per ring, one reduction and one `E × E`
-/// multiplication by the weight. Rings are staged in tiles so each column
-/// accumulator is loaded and stored once per tile.
-///
-/// The caller bounds the rings pushed into one accumulator by the scan job
-/// size, so every column sums at most `SETUP_SCAN_JOB_RINGS` products. That is
-/// far inside every `MulBaseUnreduced` accumulator's documented headroom, so
-/// each reduced column sum, and the result, equals the per-ring evaluation.
-pub(super) struct ColumnSums<'a, F, E: Unreduced, const D: usize> {
-    columns: [E::Product; D],
-    rows: [&'a [F; D]; COLUMN_TILE],
-    weights: [E; COLUMN_TILE],
-    /// Staged rings; strictly below [`COLUMN_TILE`] between calls.
-    len: usize,
-}
-
-impl<'a, F, E, const D: usize> ColumnSums<'a, F, E, D>
-where
-    F: Field,
-    E: MulBaseUnreduced<F>,
-{
-    pub(super) fn new(first_row: &'a [F; D]) -> Self {
-        Self {
-            columns: [<E::Product as Zero>::zero(); D],
-            rows: [first_row; COLUMN_TILE],
-            weights: [E::zero(); COLUMN_TILE],
-            len: 0,
-        }
-    }
-
-    /// Add `weight · ring` to the column sums.
-    #[inline(always)]
-    pub(super) fn push(&mut self, row: &'a [F; D], weight: E) {
-        self.rows[self.len] = row;
-        self.weights[self.len] = weight;
-        self.len += 1;
-        if self.len == COLUMN_TILE {
-            self.flush();
-        }
-    }
-
-    #[inline(always)]
-    fn flush(&mut self) {
-        let rows = &self.rows[..self.len];
-        let weights = &self.weights[..self.len];
-        for (column_index, column) in self.columns.iter_mut().enumerate() {
-            let mut sum = *column;
-            for (row, &weight) in rows.iter().zip(weights) {
-                sum += weight.mul_base_unreduced(row[column_index]);
-            }
-            *column = sum;
-        }
-        self.len = 0;
-    }
-
-    /// `Σ_j pows[j] · Σ_b w_b · c_{b,j}` over every pushed ring.
-    pub(super) fn finish(mut self, pows: &[E; D]) -> E {
-        self.flush();
-        self.columns
-            .iter()
-            .zip(pows)
-            .fold(E::zero(), |acc, (&column, &pow)| {
-                acc + pow * E::reduce_product(column)
-            })
     }
 }
 
