@@ -8,14 +8,15 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::checked;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::binary_source::{
-    binary_public_digit_commitment, binary_root_matrix, BinaryCommittedGroupManifest,
-    BINARY_DIGIT_COMMITMENT_DEGREE, BINARY_SOURCE_Q,
+    binary_root_matrix, BinaryCommittedGroupManifest, BINARY_SOURCE_Q,
 };
 use akita_types::{Commitment, CommittedGroup, RingVec};
 use std::sync::Arc;
 
+mod digit_commitment;
 mod packed;
 mod projection;
+use digit_commitment::digit_commitment;
 use packed::{fold_packed, image_hint};
 
 #[path = "binary_import.rs"]
@@ -605,55 +606,3 @@ where
 
 /// Carriers gathered by one parallel task of the field-switch source.
 const FIELD_SWITCH_GATHER_CHUNK: usize = 1 << 14;
-
-/// Setup columns in one parallel piece of a public digit commitment.
-const DIGIT_COMMITMENT_PIECE_COLUMNS: usize = 256;
-
-/// Compute [`binary_public_digit_commitment`] as the field sum of disjoint
-/// column-aligned pieces, which run in parallel under the `parallel` feature.
-/// The sum is exact, so the payload equals the one-piece commitment.
-fn digit_commitment<F: Field>(
-    seed: &[u8; 32],
-    label: akita_params::binary_setup::SetupStreamLabel,
-    digits: &[i8],
-) -> Result<Vec<F>, AkitaError> {
-    let piece = checked::product([
-        DIGIT_COMMITMENT_PIECE_COLUMNS,
-        BINARY_DIGIT_COMMITMENT_DEGREE,
-    ])
-    .ok_or(AkitaError::InvalidProof)?;
-    if digits.len() <= piece {
-        return binary_public_digit_commitment(seed, label, 0, digits);
-    }
-    let commit = |(index, chunk): (usize, &[i8])| {
-        let first = checked::product([index, DIGIT_COMMITMENT_PIECE_COLUMNS])
-            .ok_or(AkitaError::InvalidProof)?;
-        binary_public_digit_commitment::<F>(seed, label, first, chunk)
-    };
-    #[cfg(feature = "parallel")]
-    let pieces = {
-        use rayon::prelude::*;
-        digits
-            .par_chunks(piece)
-            .enumerate()
-            .map(commit)
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    #[cfg(not(feature = "parallel"))]
-    let pieces = digits
-        .chunks(piece)
-        .enumerate()
-        .map(commit)
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut pieces = pieces.into_iter();
-    let mut payload = pieces.next().ok_or(AkitaError::InvalidProof)?;
-    for other in pieces {
-        if other.len() != payload.len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        for (sum, value) in payload.iter_mut().zip(other) {
-            *sum += value;
-        }
-    }
-    Ok(payload)
-}

@@ -19,7 +19,15 @@ use crate::native_root_relation::{
 /// Ordinary ring degree used by the explicit experimental image and U setup.
 pub const BINARY_DIGIT_COMMITMENT_DEGREE: usize = 64;
 
-pub(super) fn validate_label<F: Field>(label: SetupStreamLabel) -> Result<usize, AkitaError> {
+/// Validate a B or D digit commitment setup label for the field `F` and
+/// return its row count.
+///
+/// # Errors
+/// Rejects labels other than the rank-2, degree-64 negacyclic P setup of the
+/// image or witness commitment, and fields other than `2^128 - 275`.
+pub fn validate_digit_commitment_label<F: Field>(
+    label: SetupStreamLabel,
+) -> Result<usize, AkitaError> {
     if label.level != 0
         || label.row != 0
         || label.column != 0
@@ -86,7 +94,7 @@ pub fn binary_public_digit_commitment<F: Field>(
     first_column: usize,
     digits: &[i8],
 ) -> Result<Vec<F>, AkitaError> {
-    let rows = validate_label::<F>(label)?;
+    let rows = validate_digit_commitment_label::<F>(label)?;
     if digits.is_empty() || digits.iter().any(|digit| !(-4..=3).contains(digit)) {
         return Err(AkitaError::InvalidInput(
             "binary commitment needs nonempty balanced digits".into(),
@@ -179,7 +187,7 @@ pub fn binary_digit_authentication_weights<E: Field>(
     alpha: E,
     row_batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
-    let rows = validate_label::<E>(label)?;
+    let rows = validate_digit_commitment_label::<E>(label)?;
     let expected_segments = match label.role {
         SetupStreamRole::ImageCommitment => vec![1],
         SetupStreamRole::WitnessCommitment => plan.opening_segments(),

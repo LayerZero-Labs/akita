@@ -15,7 +15,7 @@ use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole, BINARY_SETUP
 use akita_params::RelationPolynomial;
 use jolt_field::Field;
 
-use super::super::authentication::{setup_entry, validate_label};
+use super::super::authentication::{setup_entry, validate_digit_commitment_label};
 use super::super::{
     binary_scalar_challenges, binary_scalar_lift, BinaryEvaluationBounds, BinaryEvaluationSegments,
     BinaryRootPublic, BinaryRootWitnessPlan, BinarySourceDescriptor, BinaryTerminalClaim,
@@ -386,7 +386,7 @@ pub(crate) fn digit_authentication_weights<E: Field>(
     alpha: E,
     row_batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
-    let rows = validate_label::<E>(label)?;
+    let rows = validate_digit_commitment_label::<E>(label)?;
     let expected_segments = match label.role {
         SetupStreamRole::ImageCommitment => vec![1],
         SetupStreamRole::WitnessCommitment => plan.opening_segments(),
