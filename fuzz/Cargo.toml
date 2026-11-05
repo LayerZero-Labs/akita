@@ -96,11 +96,11 @@ overflow-checks = true
 # Local Whiteout integration only, mirroring the root manifest's pin: the fuzz
 # workspace is standalone, so the root patch does not reach it.
 [patch."https://github.com/a16z/jolt"]
-jolt-algebra = { path = "../../jolt/.claude/worktrees/wo-t0/crates/jolt-algebra" }
-jolt-poly = { path = "../../jolt/.claude/worktrees/wo-t0/crates/jolt-poly" }
-jolt-transcript = { path = "../../jolt/.claude/worktrees/wo-t0/crates/jolt-transcript" }
-jolt-sumcheck = { path = "../../jolt/.claude/worktrees/wo-t0/crates/jolt-sumcheck" }
-jolt-crypto = { path = "../../jolt/.claude/worktrees/wo-t0/crates/jolt-crypto" }
+jolt-algebra = { path = "../../jolt/.claude/worktrees/wo-t0b/crates/jolt-algebra" }
+jolt-poly = { path = "../../jolt/.claude/worktrees/wo-t0b/crates/jolt-poly" }
+jolt-transcript = { path = "../../jolt/.claude/worktrees/wo-t0b/crates/jolt-transcript" }
+jolt-sumcheck = { path = "../../jolt/.claude/worktrees/wo-t0b/crates/jolt-sumcheck" }
+jolt-crypto = { path = "../../jolt/.claude/worktrees/wo-t0b/crates/jolt-crypto" }
 
 [[bin]]
 name = "serialization_vec"
