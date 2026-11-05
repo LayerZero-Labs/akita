@@ -54,16 +54,14 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
             .unwrap()
             .expect("admitted candidate")
         };
-        // Level 1 of this row schedules fewer digits than the policy's
-        // universal ones under the 169-bit tables (its modeled response cap
-        // lowers them), so the rank comparison below also covers a capped
-        // level.
-        if level == 1 {
-            assert!(
-                params.num_digits_fold() < derive(LevelMasking::Clear).num_digits_fold,
-                "level 1's modeled cap no longer lowers its digits"
-            );
-        }
+        // Neither masked level of main's K = 16 catalog row is capped (its
+        // scheduled digits equal the clear derivation's), so this compares
+        // uncapped levels only; dev's K = 256 row capped level 1.
+        assert_eq!(
+            params.num_digits_fold(),
+            derive(LevelMasking::Clear).num_digits_fold,
+            "level {level}: the row now caps its digits; restore the capped-level case",
+        );
         let one_shot = derive(LevelMasking::Masked(zk.fold_failure_target(1).unwrap()));
         assert_eq!(
             one_shot.inner_commit_matrix.output_rank(),

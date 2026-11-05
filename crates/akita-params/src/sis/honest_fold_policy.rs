@@ -769,7 +769,7 @@ mod tests {
     }
 
     /// The headline root's Chernoff thresholds, frozen: per attempt and one
-    /// shot.
+    /// shot, under main's one-hot source chunk (K = 16, #258).
     #[test]
     fn one_shot_headline_onehot_threshold_is_frozen() {
         let challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
@@ -785,7 +785,7 @@ mod tests {
                 policy.exact_threshold(per_attempt),
                 policy.exact_threshold(one_shot)
             ),
-            (Some(564), Some(1_469))
+            (Some(2_254), Some(5_866))
         );
     }
 }
