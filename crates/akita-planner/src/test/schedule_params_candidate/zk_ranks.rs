@@ -86,6 +86,10 @@ fn checked_in_zk_rows_commit_the_residual_at_its_sigma_binding_ranks() {
     use akita_params::zk::RESIDUAL_RING_DIMENSION;
     use akita_params::ScheduleSisBound;
 
+    // O6 fixes the residual ring at R_128; every check below reads the
+    // constant, so pin its value here.
+    assert_eq!(RESIDUAL_RING_DIMENSION, 128);
+
     /// The rows, and those whose cut level has a role ring below the
     /// residual's.
     fn check<Cfg: CommitmentConfig>() -> (usize, usize) {
