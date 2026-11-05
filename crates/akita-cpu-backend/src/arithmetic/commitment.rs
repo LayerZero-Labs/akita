@@ -277,6 +277,21 @@ impl<F: Field, E> CpuBackend<F, E> {
         ])
         .ok_or_else(|| AkitaError::InvalidSetup("signed-block row width overflow".into()))?;
         let kernel = signed_digit_kernel_for_setup(shape.log_basis, "for dense commitment")?;
+        // A block past the stored values holds only the zero extension and
+        // commits to zero rows; the length is public, so skipping them
+        // reads no value.
+        let live_blocks = block_ranges
+            .iter()
+            .take_while(|rings| rings.start * D < blocks.len())
+            .count();
+        if live_blocks == 0 {
+            return Ok(vec![
+                vec![CyclotomicRing::zero(); plan.n_a];
+                block_ranges.len()
+            ]);
+        }
+        let block_ranges_all = block_ranges.len();
+        let block_ranges = &block_ranges[..live_blocks];
         macro_rules! commit {
             ($storage:expr) => {{
                 let source = SignedBlockDigits::<F, _, D>::new(
@@ -291,7 +306,7 @@ impl<F: Field, E> CpuBackend<F, E> {
                     plan.n_a,
                     row_width,
                     &source,
-                    &block_ranges,
+                    block_ranges,
                     shape,
                     kernel,
                     false,
@@ -299,11 +314,13 @@ impl<F: Field, E> CpuBackend<F, E> {
                 )
             }};
         }
-        match blocks.values {
+        let mut rows = match blocks.values {
             SignedValues::I8(values) => commit!(I8Slice(values)),
             SignedValues::I16(values) => commit!(I16Slice(values)),
             SignedValues::DecodedI8(decoder) => commit!(Decoded(decoder)),
-        }
+        }?;
+        rows.resize(block_ranges_all, vec![CyclotomicRing::zero(); plan.n_a]);
+        Ok(rows)
     }
 
     #[allow(clippy::too_many_arguments)]
