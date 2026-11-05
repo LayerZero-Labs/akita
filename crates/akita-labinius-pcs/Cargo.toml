@@ -65,7 +65,7 @@ parallel = [
 ]
 
 [dependencies]
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "lattice",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -84,7 +84,7 @@ akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-feat
 akita-serialization = { version = "0.1.0", path = "../akita-serialization", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -94,7 +94,7 @@ tracing = "0.1"
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
 tracing-subscriber = "0.3"
 
 [[bin]]
