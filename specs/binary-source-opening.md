@@ -3418,17 +3418,18 @@ Bytes are the rows read and written.
 | arity two | 0 | none; one addition per pair | 19 MB |
 | arity two | 1 | 4 per quartet: 19.0 M | 19 MB |
 | arity two | materialization | 2 per quartet: 9.5 M | 152 MB |
-| arity two | `k` = 2–24 | 2 `S_k` round, 2 `S_k` fold | 80 `S_k` |
+| arity two | `k` = 2–24 | 2 `S_k` round, `S_k` fold | 80 `S_k` |
 | arity four | 0 | none; one addition per pair | 19 MB |
 | arity four | 1 | 28 per quartet: 133.1 M | 19 MB |
 | arity four | materialization | 8 per quartet: 38.0 M | 609 MB |
-| arity four | `k` = 2–24 | 14 `S_k` round, 8 `S_k` fold | 320 `S_k` |
+| arity four | `k` = 2–24 | 14 `S_k` round, 4 `S_k` fold | 320 `S_k` |
 | leaf | 0 | none; one addition per pair | 19 MB |
 | leaf | materialization | none | 152 MB |
-| leaf | `k` = 1–24 | 4.5 `T_k` round, `T_k` fold | 40 `T_k` |
+| leaf | `k` = 1–24 | 4.5 `T_k` round, `T_k`/2 fold | 40 `T_k` |
 
-Summed over the rounds, the arity-two stage costs 66.6 M multiplications, the
-arity-four stage 380.3 M and the leaf 104.6 M: 551.5 M in all. The rows read
+A fold costs one multiplication per output scalar. Summed over the rounds,
+the arity-two stage costs 57.1 M multiplications, the arity-four stage
+342.3 M and the leaf 95.1 M: 494.5 M in all. The rows read
 and written total 5.57 GB, of which the arity-four table is 3.65 GB. An
 arity-four pair costs 10 multiplications per parent, 4 more to weight the
 second parent, and 4 unreduced products for its equality weight.
@@ -3444,10 +3445,10 @@ and 16 Rayon threads. A scratch benchmark measured, at a one-minute load of
 - copies into freshly allocated memory at 80 GB/s, because every first touch
   of a page faults: about 20 ms per GB.
 
-**Lower bound.** The 551.5 M multiplications take 93.5 ms at the machine's
+**Lower bound.** The 494.5 M multiplications take 83.8 ms at the machine's
 rate, and the 5.57 GB take 18.6 ms at 300 GB/s, which the arithmetic can
-hide. Stage 1 of the first fold therefore cannot run below about 94 ms
-without fewer multiplications. It measures 192.8 ms, 2.1 times the bound.
+hide. Stage 1 of the first fold therefore cannot run below about 84 ms
+without fewer multiplications. It measures 192.8 ms, 2.3 times the bound.
 
 **Profile.** A new `digit_range` bench of `akita-cpu-backend` runs the same
 session on synthetic digits of the same count, basis and domain. It takes
@@ -3455,8 +3456,8 @@ session on synthetic digits of the same count, basis and domain. It takes
 Its span timings, and one proof sampled with `samply` at 1 kHz, attribute the
 time as follows:
 
-- **Arithmetic.** On one thread the session spends 0.93 s in its 551.5 M
-  multiplications and 0.79 s in the rest of the loop bodies: modular additions
+- **Arithmetic.** On one thread the session spends 0.84 s in its 494.5 M
+  multiplications and 0.89 s in the rest of the loop bodies: modular additions
   and subtractions, unreduced accumulation, and copies of 8-lane rows passed
   by value through the round closures. The arity-four materialized round
   costs about 100 ns per pair on one thread, against 46 ns for its
@@ -3595,8 +3596,8 @@ Stage 1 spans at 2^22 from the same runs, base → head:
 At 2^23 `word-prime` the first fold's Stage 1 fell 50.8 → 39.4 ms and the
 product folds 19.3 → 8.7 ms.
 
-The first fold's Stage 1 at `prime5` now runs at 1.55 times the 94 ms
-multiplication bound above, against 1.94 times for the base in the same runs.
+The first fold's Stage 1 at `prime5` now runs at 1.74 times the 84 ms
+multiplication bound above, against 2.18 times for the base in the same runs.
 
 #### Sixth-pass remainder
 
