@@ -7,11 +7,15 @@
 mod decompose_fold_partitioned;
 mod narrow_accum;
 mod rotated_accum;
+mod shifted_accum;
 mod windowed_accum;
 
 pub use decompose_fold_partitioned::balanced_ring_decompose_fold_partitioned;
-pub(crate) use decompose_fold_partitioned::{element_partitioned_decompose_fold, WidePlan};
-pub(crate) use windowed_accum::{I8DigitSpan, WindowedChallenge};
+pub(crate) use decompose_fold_partitioned::{
+    element_partitioned_decompose_fold, NarrowKernel, WidePlan,
+};
+pub(crate) use shifted_accum::ShiftScratch;
+pub(crate) use windowed_accum::I8DigitSpan;
 
 #[cfg(target_arch = "aarch64")]
 use crate::kernels::neon_decompose_fold as decompose_fold_neon;

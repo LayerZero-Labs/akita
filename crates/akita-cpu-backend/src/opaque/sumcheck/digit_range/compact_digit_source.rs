@@ -1,9 +1,16 @@
 use akita_error::AkitaError;
 use akita_params::{DigitRangePlan, FlatBooleanDomain};
+use jolt_field::cfg_chunks_mut;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use std::sync::Arc;
 
 use crate::sources::packed_digits::PackedSignedDigits;
+
+/// Digit pairs one task of [`CompactDigitSource::ordered_range_class_pairs`]
+/// classifies.
+const PAIRS_PER_TASK: usize = 4096;
 
 /// Collision class of one balanced digit under `digit * (digit + 1)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,7 +71,7 @@ impl CompactDigitSource {
         // DigitRangePlan admits log bases 2..=6, so the class count is 2..=32.
         let class_count = 1u8 << (plan.log_basis() - 1);
         let ordered_range_class_pairs = if !plan.product_stage_arities().is_empty() {
-            Self::ordered_range_class_pairs(&digits, class_count)
+            Self::ordered_range_class_pairs(&digits, class_count)?
         } else {
             Arc::from([])
         };
@@ -82,31 +89,45 @@ impl CompactDigitSource {
     /// this allocation. A physical L2 proof uses the class-indexed fused leaf
     /// even when the range plan has no product-prefix stage, so it requests the
     /// same pairs explicitly before entering that leaf.
-    pub(super) fn prepare_class_indexed_leaf(&mut self) {
+    pub(super) fn prepare_class_indexed_leaf(&mut self) -> Result<(), AkitaError> {
         if self.ordered_range_class_pairs.is_empty() && !self.digits.is_empty() {
             self.ordered_range_class_pairs =
-                Self::ordered_range_class_pairs(&self.digits, self.class_count);
+                Self::ordered_range_class_pairs(&self.digits, self.class_count)?;
         }
+        Ok(())
     }
 
-    fn ordered_range_class_pairs(digits: &PackedSignedDigits, class_count: u8) -> Arc<[u16]> {
-        let mut digits = digits.iter();
-        std::iter::from_fn(|| {
-            digits.next().map(|digit| {
-                let left = RangeImageClass::from_balanced_digit(digit, usize::from(class_count)).0;
-                let right = digits
-                    .next()
-                    .map(|digit| {
-                        RangeImageClass::from_balanced_digit(digit, usize::from(class_count))
-                    })
-                    .unwrap_or(RangeImageClass::PADDING)
-                    .0;
-                // An i8 digit's class is at most 127; even with a u8 class
-                // count, 127 * 255 + 127 fits u16.
-                u16::from(left) * u16::from(class_count) + u16::from(right)
-            })
-        })
-        .collect()
+    /// Class pairs of consecutive digits, a trailing odd digit paired with
+    /// padding, decoded and classified in parallel runs.
+    fn ordered_range_class_pairs(
+        digits: &PackedSignedDigits,
+        class_count: u8,
+    ) -> Result<Arc<[u16]>, AkitaError> {
+        let view = digits.view();
+        let mut pairs = vec![0u16; digits.len().div_ceil(2)];
+        cfg_chunks_mut!(pairs, PAIRS_PER_TASK)
+            .enumerate()
+            .try_for_each(|(task, pairs)| {
+                let start = 2 * task * PAIRS_PER_TASK;
+                let mut decoded = [0i8; 2 * PAIRS_PER_TASK];
+                let len = (2 * pairs.len()).min(digits.len() - start);
+                view.decode_range(start, &mut decoded[..len])?;
+                let class =
+                    |digit| RangeImageClass::from_balanced_digit(digit, usize::from(class_count)).0;
+                for (index, pair) in pairs.iter_mut().enumerate() {
+                    let left = class(decoded[2 * index]);
+                    let right = if 2 * index + 1 < len {
+                        class(decoded[2 * index + 1])
+                    } else {
+                        RangeImageClass::PADDING.0
+                    };
+                    // An i8 digit's class is at most 127; even with a u8 class
+                    // count, 127 * 255 + 127 fits u16.
+                    *pair = u16::from(left) * u16::from(class_count) + u16::from(right);
+                }
+                Ok::<_, AkitaError>(())
+            })?;
+        Ok(pairs.into())
     }
 
     pub(super) fn digits(&self) -> PackedSignedDigits {
@@ -200,10 +221,34 @@ mod tests {
         .unwrap();
         assert_eq!(source.pair_count(), 0);
 
-        source.prepare_class_indexed_leaf();
+        source.prepare_class_indexed_leaf().unwrap();
 
         assert_eq!(source.pair_count(), 2);
         assert_eq!(source.ordered_pair_index(0), 1);
         assert_eq!(source.ordered_pair_index(1), 3 * source.class_count());
+    }
+
+    /// Parallel runs classify the same pairs as one serial pass, across
+    /// several tasks and an odd trailing digit.
+    #[test]
+    fn parallel_pairs_match_a_serial_pass() {
+        let class_count = 16u8;
+        let len = 3 * 2 * PAIRS_PER_TASK + 101;
+        let digits = (0..len)
+            .map(|index| ((index * 7 + index / 5) % 32) as i8 - 16)
+            .collect::<Vec<_>>();
+        let packed = PackedSignedDigits::from_i8_digits_auto(digits.clone());
+        let class = |digit| RangeImageClass::from_balanced_digit(digit, 16).0;
+        let expected = digits
+            .chunks(2)
+            .map(|pair| {
+                let right = pair
+                    .get(1)
+                    .map_or(RangeImageClass::PADDING.0, |&d| class(d));
+                u16::from(class(pair[0])) * u16::from(class_count) + u16::from(right)
+            })
+            .collect::<Vec<_>>();
+        let pairs = CompactDigitSource::ordered_range_class_pairs(&packed, class_count).unwrap();
+        assert_eq!(&pairs[..], &expected[..]);
     }
 }

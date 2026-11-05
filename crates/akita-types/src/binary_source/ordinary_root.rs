@@ -12,7 +12,9 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275};
 
 use super::paired_offset_eq_sum;
-use crate::native_root_relation::{NativeRootWeights, RootEq, RootWeightFamily, TranslatedLanes};
+use crate::native_root_relation::{
+    NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, TranslatedLanes,
+};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
 
@@ -811,6 +813,18 @@ impl<E: Field> SourceEvaluationWeights<E> {
             )?;
         }
         Ok(())
+    }
+
+    /// Add the weights to block profiles, in parallel by block.
+    pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        let equality = OffsetEqWindow::new(&self.point)?;
+        let count = checked::pow2(self.point.len()).ok_or(AkitaError::InvalidProof)?;
+        profiles.add_intervals(&[(self.start, count)], |_, first, row| {
+            for (coefficient, slot) in (first..).zip(row.iter_mut()) {
+                *slot += self.scale * equality.eval(coefficient);
+            }
+            Ok(())
+        })
     }
 }
 

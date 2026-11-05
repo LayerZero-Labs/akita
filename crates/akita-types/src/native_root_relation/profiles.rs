@@ -103,6 +103,10 @@ impl<E: Field> RootWeightProfiles<E> {
 #[cfg(feature = "parallel")]
 const LANES_PER_TASK: usize = 32;
 
+/// Consecutive blocks whose rows one task of
+/// [`ProfileBuilder::add_intervals`] fills.
+const BLOCKS_PER_TASK: usize = 64;
+
 /// Builds [`RootWeightProfiles`] from explicit terms and structured families.
 pub(crate) struct ProfileBuilder<E: Field> {
     block_bits: usize,
@@ -230,6 +234,97 @@ impl<E: Field> ProfileBuilder<E> {
             })?;
         #[cfg(not(feature = "parallel"))]
         add(0..bases.len(), &mut lanes)?;
+        Ok(())
+    }
+
+    /// Add per-address weights over address intervals, in parallel.
+    ///
+    /// `intervals` holds `(start, len)` pairs, which may overlap. Every
+    /// block an interval meets receives its own row first. One task then
+    /// owns the rows of a run of consecutive blocks and adds every piece of
+    /// every interval inside that run: `add(interval, first, row)` adds the
+    /// weights of `interval` from its `first` address onward to `row`, the
+    /// addresses of one block that the interval covers.
+    pub(crate) fn add_intervals(
+        &mut self,
+        intervals: &[(usize, usize)],
+        add: impl Fn(usize, usize, &mut [E]) -> Result<(), AkitaError> + Sync + Send,
+    ) -> Result<(), AkitaError> {
+        let (width, block_bits) = (self.width(), self.block_bits);
+        let table_len = self.blocks.len() << block_bits;
+        let mut order = Vec::with_capacity(intervals.len());
+        let mut longest = 0;
+        for (index, &(start, len)) in intervals.iter().enumerate() {
+            if len == 0 {
+                continue;
+            }
+            let end = checked::sum([start, len])
+                .filter(|&end| end <= table_len)
+                .ok_or(AkitaError::InvalidProof)?;
+            for block in start >> block_bits..=(end - 1) >> block_bits {
+                if self.blocks[block].own == 0 {
+                    self.blocks[block].own = self.row()?;
+                }
+            }
+            order.push(index);
+            longest = longest.max(len);
+        }
+        if order.is_empty() {
+            return Ok(());
+        }
+        order.sort_unstable_by_key(|&index| intervals[index].0);
+        let mut rows = self
+            .rows
+            .chunks_exact_mut(width)
+            .map(Some)
+            .collect::<Vec<_>>();
+        let mut owned = self
+            .blocks
+            .iter()
+            .map(|block| match block.own {
+                0 => None,
+                own => rows.get_mut(own as usize).and_then(Option::take),
+            })
+            .collect::<Vec<_>>();
+        let fill = |task: usize, owned: &mut [Option<&mut [E]>]| {
+            let first_block = task * BLOCKS_PER_TASK;
+            let (low, high) = (
+                first_block << block_bits,
+                (first_block + owned.len()) << block_bits,
+            );
+            // Intervals are sorted by start and none is longer than
+            // `longest`, so every interval that reaches `low` starts here.
+            let from = order.partition_point(|&index| intervals[index].0 + longest <= low);
+            for &index in &order[from..] {
+                let (start, len) = intervals[index];
+                if start >= high {
+                    break;
+                }
+                let mut address = start.max(low);
+                let end = (start + len).min(high);
+                while address < end {
+                    let offset = address & (width - 1);
+                    let run = (width - offset).min(end - address);
+                    let row = owned
+                        .get_mut((address >> block_bits) - first_block)
+                        .and_then(Option::as_deref_mut)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    add(index, address - start, &mut row[offset..offset + run])?;
+                    address += run;
+                }
+            }
+            Ok(())
+        };
+        #[cfg(feature = "parallel")]
+        owned
+            .par_chunks_mut(BLOCKS_PER_TASK)
+            .enumerate()
+            .try_for_each(|(task, owned)| fill(task, owned))?;
+        #[cfg(not(feature = "parallel"))]
+        owned
+            .chunks_mut(BLOCKS_PER_TASK)
+            .enumerate()
+            .try_for_each(|(task, owned)| fill(task, owned))?;
         Ok(())
     }
 

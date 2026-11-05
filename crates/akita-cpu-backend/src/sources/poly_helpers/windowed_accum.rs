@@ -29,7 +29,7 @@ const GATHER: usize = 2 * WINDOW;
 const GATHER: usize = WINDOW;
 
 /// Source offsets packed into one table word, 16 bits each.
-const WORD_OFFSETS: usize = 4;
+pub(super) const WORD_OFFSETS: usize = 4;
 
 /// Value range of the `i8` digits a fold source hands to the gather kernel.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -271,7 +271,7 @@ pub(super) fn windowed_mul_acc<const D: usize>(
 }
 
 #[cfg(target_arch = "aarch64")]
-mod neon {
+pub(super) mod neon {
     use super::{WINDOW, WORD_OFFSETS};
     use std::arch::aarch64::*;
 
@@ -394,7 +394,7 @@ mod neon {
     /// Same contract as [`add_words`] for every word, and `acc_window` must
     /// address [`WINDOW`] valid i16 values.
     #[inline(always)]
-    pub(super) unsafe fn gather_window<const PAIRED: bool>(
+    pub(in super::super) unsafe fn gather_window<const PAIRED: bool>(
         digits: *const i8,
         once: &[u64],
         twice: &[u64],
