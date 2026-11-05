@@ -328,6 +328,7 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
             claims,
             transcript,
             &BackendCompression::<C>::new(&self.backend),
+            false,
         )?;
         self.send_auxiliary(pads, &auxiliary, transcript)?;
         Ok((residual, auxiliary))
@@ -335,18 +336,24 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Instance<C> {
 
     /// The masked claims and the masked prefix, without the auxiliary
     /// block, sending u_a under `compression`: the residual opening and
-    /// Akita's auxiliary values.
+    /// Akita's auxiliary values. `clear_claims` is a cheat for census
+    /// controls: the claims go out unmasked, though their pads are taken.
     pub(crate) fn prove_prefix_on(
         &self,
         pads: &mut CommittedPads<F, ()>,
         claims: impl FnOnce(Vec<F>) -> Vec<AffineRow<F>>,
         transcript: &mut ProverChannel,
         compression: &dyn ImageCompression<F>,
+        clear_claims: bool,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
         let (slots, masked_claims) = pads.mask(&self.openings())?;
-        send_field_group(transcript, CLAIMS_SITE, &masked_claims)?;
-        #[cfg(feature = "logging-transcript")]
-        akita_transcript::mark_masked(slots.start, slots.len);
+        if clear_claims {
+            send_field_group(transcript, CLAIMS_SITE, &self.openings())?;
+        } else {
+            send_field_group(transcript, CLAIMS_SITE, &masked_claims)?;
+            #[cfg(feature = "logging-transcript")]
+            akita_transcript::mark_masked(slots.start, slots.len);
+        }
         #[cfg(not(feature = "logging-transcript"))]
         let _ = slots;
         prove_masked_prefix::<C, _, _>(

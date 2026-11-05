@@ -161,8 +161,19 @@ fn class_of(
     }
 }
 
+/// Where the statement part stands: the pad commitment comes first, then
+/// the masked claims, then Akita's prefix and the auxiliary block.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Opening {
+    Start,
+    Pads,
+    Claims,
+    Prefix,
+}
+
 /// HT1's classifier: every byte of a `proof_len`-byte proof in exactly one
-/// class, in order, from the prover's log. Before the Σ-protocol every byte
+/// class, in order, from the prover's log. The pad commitment is the first
+/// message and the masked claims follow it. Before the Σ-protocol every byte
 /// is in one of Akita's proof groups; the Σ-protocol's own messages fill
 /// the bytes up to the response proof, whose groups run to the end.
 fn classify(
@@ -171,11 +182,31 @@ fn classify(
     grinding: &[ProtocolSiteId],
 ) -> Result<Vec<Received>, String> {
     let mut phase = Phase::Statement;
+    let mut opening = Opening::Start;
     let mut received = Vec::new();
     let mut cursor = 0;
     for range in &recorded.ranges {
         let bytes = range.start..range.start + range.len;
         let site = site_of(range.context.site_id);
+        if phase == Phase::Statement {
+            let next = match site {
+                PAD_SITE => Opening::Pads,
+                CLAIMS_SITE => Opening::Claims,
+                _ => Opening::Prefix,
+            };
+            let order = match (opening, next) {
+                (Opening::Start, Opening::Pads) => Ok(()),
+                (Opening::Start, _) => Err("a message before the pad commitment"),
+                (Opening::Pads, Opening::Prefix) => Err("Akita's prefix before the masked claims"),
+                (_, Opening::Pads) if opening != Opening::Pads => {
+                    Err("a pad commitment after the masked claims")
+                }
+                (Opening::Prefix, Opening::Claims) => Err("masked claims after Akita's prefix"),
+                _ => Ok(()),
+            };
+            order.map_err(|error| format!("bytes {bytes:?}: {error}"))?;
+            opening = next;
+        }
         if bytes.start >= recorded.sigma_start && phase == Phase::Statement {
             if cursor != recorded.sigma_start {
                 return Err(format!(
@@ -312,8 +343,10 @@ fn every_checked_in_zk_row_fits_the_response_bound() {
 /// arrives masked, and nothing else does. Both statement shapes; the
 /// multi-group one runs Stage 3 at level 0 in the clear.
 ///
-/// Positive control: the same verifier with the statement claims routed
-/// through the clear transcript instead of the masked channel is flagged.
+/// The pad commitment is the first message and the masked claims follow it.
+///
+/// Positive control: a prover that sends the statement claims clear is
+/// flagged, and the verifier rejects its proof.
 #[test]
 fn every_received_byte_is_in_one_public_class() {
     on_large_stack(|| {
@@ -355,18 +388,51 @@ fn every_received_byte_is_in_one_public_class() {
                 );
             }
 
-            // Positive control: one private site routed clear.
-            let mut clear_claims = proved.recorded.clone();
-            for range in &mut clear_claims.ranges {
-                if site_of(range.context.site_id) == CLAIMS_SITE {
-                    range.pads = None;
+            // The order controls: the claims ahead of the pad commitment,
+            // and Akita's prefix ahead of the claims.
+            for (from, to, flagged) in [
+                (PAD_SITE, CLAIMS_SITE, "a message before the pad commitment"),
+                (
+                    CLAIMS_SITE,
+                    PAD_SITE,
+                    "Akita's prefix before the masked claims",
+                ),
+            ] {
+                let mut reordered = proved.recorded.clone();
+                for range in &mut reordered.ranges {
+                    if site_of(range.context.site_id) == from {
+                        range.context.site_id = to.to_bytes();
+                        range.pads = None;
+                    }
                 }
+                let error = classify(&reordered, proved.proof.len(), &harness.grinding_sites())
+                    .unwrap_err();
+                assert!(error.contains(flagged), "{error}");
             }
-            let error =
-                classify(&clear_claims, proved.proof.len(), &harness.grinding_sites()).unwrap_err();
+
+            // Positive control: a prover that sends the statement claims
+            // clear. The census flags its log and the verifier, which
+            // decodes them through their pads, rejects its proof.
+            let clear_claims = Cheat {
+                clear_claims: true,
+                unchecked_sigma: true,
+                unchecked_response: true,
+                ..Cheat::default()
+            };
+            let cheated = harness.prove(seed, clear_claims).unwrap();
+            let error = classify(
+                &cheated.recorded,
+                cheated.proof.len(),
+                &harness.grinding_sites(),
+            )
+            .unwrap_err();
             assert!(
                 error.contains("Claim message reached a clear channel"),
                 "{error}"
+            );
+            assert!(
+                harness.verify(&cheated.proof).is_err(),
+                "a proof with clear claims verifies"
             );
         }
         check(&single(), 3);

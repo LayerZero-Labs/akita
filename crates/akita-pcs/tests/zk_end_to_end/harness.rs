@@ -327,6 +327,8 @@ pub(crate) struct Cheat {
     /// An injected leak in the first pad (the first statement claim's), for
     /// the distinguisher's positive controls (HT2).
     pub(crate) leak: Option<PadLeak>,
+    /// Send the statement claims unmasked, for HT1's positive control.
+    pub(crate) clear_claims: bool,
 }
 
 /// A weak pad, which an honest prover never draws.
@@ -535,9 +537,13 @@ impl<C: CommitmentConfig<Field = F, ExtField = F>> Harness<C> {
         } else {
             self.response()
         };
-        let (residual, auxiliary) =
-            self.instance
-                .prove_prefix_on(&mut masking, own_pads, &mut transcript, compression)?;
+        let (residual, auxiliary) = self.instance.prove_prefix_on(
+            &mut masking,
+            own_pads,
+            &mut transcript,
+            compression,
+            cheat.clear_claims,
+        )?;
         let u_a = if cheat.shifted_residual {
             shifted.shift(&residual.residual_commitment)
         } else {
