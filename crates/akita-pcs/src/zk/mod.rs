@@ -280,6 +280,8 @@ where
         if committed.len() > shape.padded_len() {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
+        // Every digit from `live` on is the padding's zero.
+        let live = committed.len();
         committed.resize(shape.padded_len(), 0);
 
         // 1. Commit to e. The backend keeps the digits as `i8` until the
@@ -383,6 +385,7 @@ where
             batch.a,
             SplitB::new(&range.point, gamma, zeta, support.intervals()),
             committed,
+            live,
             claim,
         )
         .map_err(zk_error)?;
