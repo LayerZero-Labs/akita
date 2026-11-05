@@ -474,13 +474,13 @@ impl<F: Field + CanonicalEncoding> SourceCoefficients<F> for crate::DensePoly<F>
             akita_error::checked::pow2(RootPolyMeta::<F>::num_vars(self)).ok_or_else(|| {
                 AkitaError::Internal("dense source coefficient extent overflow".into())
             })?;
-        Ok(std::borrow::Cow::Borrowed(
-            self.field_coeffs().get(..len).ok_or_else(|| {
-                AkitaError::Internal(
-                    "dense source coefficients do not cover the declared arity".into(),
-                )
-            })?,
-        ))
+        if let Some(full) = self.field_coeffs().get(..len) {
+            return Ok(std::borrow::Cow::Borrowed(full));
+        }
+        let mut full = Vec::with_capacity(len);
+        full.extend_from_slice(self.field_coeffs());
+        full.resize(len, F::zero());
+        Ok(std::borrow::Cow::Owned(full))
     }
 }
 impl<F: Field + CanonicalEncoding, I: crate::OneHotIndex> SourceCoefficients<F>

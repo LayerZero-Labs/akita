@@ -242,7 +242,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> RootPolynomialEvaluator<F, D>
             blocks,
             basis,
             |block_weights, position_weights, positions| {
-                self.ring_coeffs::<D>()?;
+                self.nonzero_ring_coeffs::<D>()?;
                 Ok(self
                     .evaluate_and_fold::<D>(block_weights, position_weights, positions)?
                     .0)
