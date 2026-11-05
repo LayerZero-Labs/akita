@@ -7,6 +7,7 @@
 mod combinatorics;
 mod position_sample;
 mod profile;
+pub mod root_family;
 mod sampler;
 mod sign;
 mod xof;
@@ -18,18 +19,9 @@ pub use profile::{
     BinaryChallengeFamily, BinaryChallengeProfile, BinaryScalarRing, BinarySignRule,
 };
 pub use sampler::BinaryChallengeSampler;
+pub use sampler::BINARY_CHALLENGE_SEED_LEN;
 
 use sign::coefficient_signs;
-
-/// Byte length of the seed one challenge batch expands.
-const SEED_LEN: usize = 32;
-
-/// Source of the seed a binary challenge batch expands: absorbs the batch's
-/// public context, then squeezes the seed.
-pub trait BinaryChallengeDraw {
-    /// Absorb `payload` and squeeze the batch seed.
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Result<[u8; SEED_LEN], AkitaError>;
-}
 
 /// Inline term capacity covering the first degree-162 production candidates
 /// and the degree-486 reference weights without per-challenge allocation.
@@ -68,6 +60,29 @@ impl BinaryChallenge {
             })
             .collect();
         Self { terms }
+    }
+
+    /// Convert an already drawn sparse challenge without resampling or changing signs.
+    ///
+    /// The canonical support order, family bound and deterministic sign rule are
+    /// checked against `profile` before the arithmetic kernel can use the terms.
+    pub fn try_from_sparse(
+        challenge: &jolt_crypto::challenge::SparseChallenge,
+        profile: &BinaryChallengeProfile,
+    ) -> Result<Self, AkitaError> {
+        challenge.validate_dyn(profile.scalar_ring().degree())?;
+        let mut terms = SmallVec::new();
+        for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+            terms.push(BinaryChallengeTerm {
+                position: u16::try_from(position).map_err(|_| {
+                    AkitaError::InvalidInput("binary challenge position is out of range".into())
+                })?,
+                coefficient,
+            });
+        }
+        let converted = Self { terms };
+        converted.validate(profile)?;
+        Ok(converted)
     }
 
     /// Return the canonical nonzero terms.
@@ -183,6 +198,40 @@ impl BinaryChallenge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sparse_adapter_preserves_terms_and_rejects_noncanonical_challenges() {
+        let profile =
+            BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 46).unwrap();
+        let original = BinaryChallengeSampler::new(profile.clone())
+            .sample_from_seed(&[17; 32], 1)
+            .unwrap()
+            .remove(0);
+        let mut sparse = jolt_crypto::challenge::SparseChallenge {
+            positions: original
+                .terms()
+                .iter()
+                .map(|term| u32::from(term.position))
+                .collect(),
+            coeffs: original
+                .terms()
+                .iter()
+                .map(|term| term.coefficient)
+                .collect(),
+        };
+        assert_eq!(
+            BinaryChallenge::try_from_sparse(&sparse, &profile).unwrap(),
+            original
+        );
+        sparse.coeffs[0] *= -1;
+        assert!(BinaryChallenge::try_from_sparse(&sparse, &profile).is_err());
+        sparse.coeffs[0] *= -1;
+        sparse.positions[0] = 162;
+        assert!(BinaryChallenge::try_from_sparse(&sparse, &profile).is_err());
+        sparse.positions[0] = original.terms()[0].position.into();
+        sparse.coeffs.pop();
+        assert!(BinaryChallenge::try_from_sparse(&sparse, &profile).is_err());
+    }
 
     #[test]
     fn canonical_profile_and_sign_fixture_is_stable() {

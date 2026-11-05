@@ -12,13 +12,11 @@ readme = "../../README.md"
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 rayon = { version = "1.10", optional = true }
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
-  "transcript-blake2b",
-] }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "lattice",
 ] }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, optional = true }
@@ -28,7 +26,12 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev =
 ] }
 
 [features]
+default = ["transcript-keccak"]
 parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-algebra/parallel"]
+# Prover-side channel adapters (fold-response previews and transcript grinding)
+# for akita-labinius-prover. Verifier-only builds leave it off, so they do not
+# enable spongefish's raw-state access.
+prover = ["akita-transcript/prover", "akita-challenges/prover"]
 labinius = [
   "akita-algebra/labinius-binary",
   "akita-algebra/labinius-trinomial",
@@ -37,9 +40,20 @@ labinius = [
   "dep:akita-types",
   "akita-types/labinius-trinomial",
 ]
-# Run the tests on Keccak instead of Blake2b; the protocol is generic over
-# the sponge.
-keccak-test-sponge = ["jolt-transcript/transcript-keccak"]
+transcript-blake2b = [
+  "akita-sumcheck/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-challenges/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+  "akita-types?/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-sumcheck/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-challenges/transcript-keccak",
+  "akita-params/transcript-keccak",
+  "akita-types?/transcript-keccak",
+]
 
 [lints]
 workspace = true

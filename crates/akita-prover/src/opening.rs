@@ -73,14 +73,8 @@ impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         let groups = claims
             .groups()
             .iter()
-            .map(|g| {
-                PolynomialGroupClaims::new(
-                    g.point().to_vec(),
-                    g.evaluations().to_vec(),
-                    g.commitment().commitment().clone(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|g| g.map_commitment(|commitment| commitment.commitment().clone()))
+            .collect();
         Ok(Self {
             setup_batch: None,
             profile,

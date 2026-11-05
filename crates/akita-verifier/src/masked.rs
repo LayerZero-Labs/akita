@@ -170,6 +170,14 @@ where
         Ok(self.cut.payload_len)
     }
 
+    #[cfg(feature = "labinius-trinomial")]
+    fn clear_replay<R>(
+        &mut self,
+        _: impl FnOnce(&mut akita_types::VerifierGrinding<'_, '_>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        clear_only()
+    }
+
     fn receive_field_digest(
         &mut self,
         _: ProtocolSiteId,

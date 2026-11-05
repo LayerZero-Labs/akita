@@ -18,7 +18,10 @@ pub mod lowered;
 pub mod root;
 pub mod root_sumcheck;
 
-pub use root::{prove_root_reduction, prove_root_reduction_bytes, TransparentRootProverOracle};
+pub use root::{
+    prove_root_reduction, prove_root_reduction_bytes, prove_root_reduction_in_session,
+    TransparentRootProverOracle,
+};
 
 pub use limb_commit_kernel::{
     commit_binary_clear_limb_prepared, commit_binary_clear_prepared, PreparedLimbCommitMatrix,
@@ -38,7 +41,6 @@ use akita_labinius_verifier::{
     source::pack_source_column,
 };
 use akita_params::FOLD_RESPONSE_ATTEMPTS;
-use jolt_transcript::Sponge;
 
 /// Commit each packed source column under the caller's explicit Ajtai matrix.
 ///
@@ -69,14 +71,14 @@ where
 /// Find and emit the fold-response nonce: the first value of the search domain
 /// whose fold challenges give a response inside the setup's interval.
 ///
-/// This is Akita's fold grinding (`specs/fold-linf-rejection.md`). One fork
-/// seed is squeezed from the live transcript, candidates are previewed on
-/// their forks, and only the accepted nonce is written to the proof. The interval is what the response encoding can represent, as in
+/// This is Akita's fold grinding (`specs/fold-linf-rejection.md`). Candidates
+/// are previewed on a copy of the public transcript state, and only the
+/// accepted nonce is written to the proof, directly before the fold-challenge
+/// draw. The interval is what the response encoding can represent, as in
 /// Akita, where the acceptance bounds are the balanced-digit range and not the
 /// honest cap it was sized from. Exhausting the domain is an error.
 pub(crate) fn search_fold_response<const D: usize, M, S>(
     setup: &BinaryClearSetup<D, M>,
-    label: &[u8],
     channel: &mut S,
     mut fold: impl FnMut(&[BinaryChallenge]) -> Result<Vec<[i64; 162]>, AkitaError>,
 ) -> Result<(Vec<BinaryChallenge>, Vec<[i64; 162]>), AkitaError>
@@ -85,10 +87,8 @@ where
     S: FoldSearchChannel,
 {
     let mut sampler = BinaryChallengeSampler::new(setup.profile().clone());
-    let seed = channel.begin_fold_search();
-    for nonce in 0..FOLD_RESPONSE_ATTEMPTS {
-        let candidate =
-            channel.preview_fold_challenges(&seed, &mut sampler, label, setup.columns(), nonce)?;
+    for mut nonce in 0..FOLD_RESPONSE_ATTEMPTS {
+        let candidate = channel.preview_fold_challenges(&mut sampler, setup.columns(), nonce)?;
         let response = fold(&candidate)?;
         if response
             .iter()
@@ -97,8 +97,7 @@ where
         {
             continue;
         }
-        let challenges =
-            channel.commit_fold_response(&seed, &mut sampler, label, setup.columns(), nonce)?;
+        let challenges = channel.fold_challenges(&mut sampler, setup.columns(), &mut nonce)?;
         if challenges != candidate {
             return Err(AkitaError::Internal(
                 "fold-response preview differs from the committed challenges".into(),
@@ -142,25 +141,20 @@ where
     for value in &mut expansion {
         exchange_binary(channel, value)?;
     }
-    let (_, mut response) = search_fold_response(
-        setup,
-        b"akita/labinius/clear-fold/v1",
-        channel,
-        |challenges| {
-            fold_integer::<H>(
-                source,
-                setup.scalar_rows(),
-                setup.columns(),
-                challenges,
-                setup.profile(),
-            )
-        },
-    )?;
+    let (_, mut response) = search_fold_response(setup, channel, |challenges| {
+        fold_integer::<H>(
+            source,
+            setup.scalar_rows(),
+            setup.columns(),
+            challenges,
+            setup.profile(),
+        )
+    })?;
     exchange_response(channel, setup, &mut response)
 }
 
 /// Create and finish a standalone prover channel, returning canonical proof bytes.
-pub fn prove_binary_clear_bytes<H, const D: usize, M, Sp: Sponge>(
+pub fn prove_binary_clear_bytes<H, const D: usize, M>(
     setup: &BinaryClearSetup<D, M>,
     source: &[H::Source],
     commitment: &BinaryClearCommitment,
@@ -171,7 +165,7 @@ where
     H: SwitchField,
     M: TrinomialModulus,
 {
-    let mut channel = new_prover::<Sp>()?;
+    let mut channel = new_prover();
     prove_binary_clear::<H, D, M, _>(setup, source, commitment, point, claim, &mut channel)?;
     Ok(finish_prover(channel))
 }

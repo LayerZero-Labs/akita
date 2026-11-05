@@ -451,7 +451,7 @@ pub(crate) fn terminal_fold_challenge_runs(
     let live_blocks = terminal.blocks.live_blocks;
     let family = terminal.fold_challenge_family()?;
     // The set size does not depend on the count, but the message must fit.
-    family.stream(live_blocks)?;
+    family.message_len(live_blocks)?;
     let challenges = usize_to_u64(live_blocks, "terminal fold coordinates")?;
     Ok((
         GrindingRun::fold_challenge_work(level, challenges, family.set_bits())?,
@@ -483,7 +483,7 @@ pub fn fold_challenge_runs(
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
         let family = group_params.fold_challenge_family()?;
         // The set size does not depend on the count, but the message must fit.
-        family.stream(count)?;
+        family.message_len(count)?;
         set_bits = set_bits.min(family.set_bits());
         let count = usize_to_u64(count, "fold coordinate count")?;
         challenges = challenges
@@ -552,7 +552,7 @@ fn append_claim_batch(
 mod tests {
     use super::*;
     use crate::SisModulusProfileId;
-    use jolt_crypto::challenge::SparseChallengeConfig;
+    use crate::FoldChallengeDistribution;
 
     // Pre-PR 56 per-round construction retained as an independent parity oracle.
     fn append_sumcheck(
@@ -585,7 +585,7 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+            FoldChallengeDistribution::production_for_ring_dim(ring_dimension)
                 .expect("production challenge"),
         )
         .with_decomp(1, 1, 2, 2, 2)
@@ -624,7 +624,7 @@ mod tests {
                             } => challenge_subring_dimension,
                         };
                         group.opening.fold_challenge_config =
-                            SparseChallengeConfig::production_for_ring_dim(challenge_dimension)
+                            FoldChallengeDistribution::production_for_ring_dim(challenge_dimension)
                                 .unwrap();
                     }
                     current.set_precommitted_groups(preceding).unwrap();

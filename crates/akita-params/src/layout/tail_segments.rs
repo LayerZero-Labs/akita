@@ -27,8 +27,9 @@ pub const fn terminal_sent_blocks(live_blocks: usize) -> Option<usize> {
 /// Whether this build speaks the dev protocol instead of the current one.
 ///
 /// The `dev-protocol` feature turns on every wire-format change that `dev`
-/// carries and `main` does not. The two protocols are incompatible, so each
-/// has its own schedule set.
+/// carries and `main` does not. Each change gets its own constant, set from
+/// this one, so code names the change it depends on. Each protocol has its
+/// own schedule set.
 pub const DEV_PROTOCOL: bool = cfg!(feature = "dev-protocol");
 
 /// Directory under the workspace `artifacts/` whose schedules are priced for

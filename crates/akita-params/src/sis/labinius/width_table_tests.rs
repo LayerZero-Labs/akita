@@ -38,8 +38,7 @@ fn lookup_admits_exactly_the_dominated_requests() {
             None
         );
     }
-    // No rank-one or rank-two cell is certified at 169 bits, and no other
-    // degree has a cell.
+    // No rank-one or rank-two cell is certified, and no other degree has a cell.
     assert_eq!(
         labinius_min_secure_rank(q, LabiniusRingDegree::D648, 1_506_960, 4_096),
         Some(3)

@@ -15,6 +15,7 @@ use crate::opaque::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
 };
 use crate::AkitaProverSetup;
+use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use akita_types::RingVec;
@@ -196,7 +197,7 @@ fn fused_external_encoder_appends_without_ordinary_submission() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();

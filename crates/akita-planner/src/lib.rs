@@ -30,9 +30,18 @@ mod diagnostics;
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
+/// Extension seam: opt-in native-root suffix planning; <https://github.com/LayerZero-Labs/akita/issues/285>.
+#[cfg(feature = "labinius-trinomial")]
+pub mod native_root;
+#[cfg(feature = "labinius-trinomial")]
+pub mod ordinary_source;
 mod planner;
 mod policy;
+/// Extension seam: opt-in binary plane pricing; <https://github.com/LayerZero-Labs/akita/issues/285>.
+#[cfg(feature = "labinius-trinomial")]
+pub mod prime_planes;
 mod response_model;
+mod root_setup;
 pub mod schedule_params;
 
 pub use akita_schedules::policy_digest;
@@ -48,6 +57,7 @@ pub use planner::find_zk_schedule;
 pub use planner::find_zk_schedule_offloading_at_cut_for_test;
 pub use planner::{find_adapted_schedule, find_schedule};
 pub use policy::InnerBasisSource;
+pub use root_setup::find_schedule_with_root_setup_mode;
 pub use schedule_params::suffix_opening_layout;
 #[cfg(feature = "test-support")]
 pub use schedule_params::TestRelationModeFilter;

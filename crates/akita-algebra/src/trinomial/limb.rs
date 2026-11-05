@@ -144,11 +144,19 @@ pub struct TrinomialLimbAccumulator {
 }
 
 impl TrinomialLimbDomain {
-    /// The LaBinius commitment prime `33_568_993 = 1 + 23328 * 1439`, the smallest
-    /// prime above `2^25` congruent to 1 modulo `23328 = lcm(1944, 3888, 5832, 7776)`,
-    /// then the largest prime below each of `2^26`, `2^27`, `2^28` congruent to 1
-    /// modulo 1944.
-    pub const ADMITTED_PRIMES: [u32; 4] = [33_568_993, 67_091_329, 134_217_649, 268_433_353];
+    /// The q24 prime `14_253_409 = 1 + 23328 * 611`, whose centered interval
+    /// fits eight balanced base-8 digits, and the retained q25 prime
+    /// `33_568_993 = 1 + 23328 * 1439`, the smallest prime above `2^25`
+    /// congruent to 1 modulo `23328 = lcm(1944, 3888, 5832, 7776)`.
+    /// The remaining entries are the largest primes below each of `2^26`,
+    /// `2^27`, `2^28` congruent to 1 modulo 1944.
+    pub const ADMITTED_PRIMES: [u32; 5] = [
+        super::image::Q24,
+        33_568_993,
+        67_091_329,
+        134_217_649,
+        268_433_353,
+    ];
 
     /// Build the transform plan; reject primes outside [`Self::ADMITTED_PRIMES`].
     pub fn new(prime: u32) -> Result<Self, TrinomialError> {
@@ -221,18 +229,25 @@ impl TrinomialLimbDomain {
             });
         }
         let one = Twiddle::new(arithmetic, 1);
+        // q24 has quotient 151 and uses the exact rounded-product path.
+        // The older primes retain their power-of-two normalization fast path.
         let quotient = one.quotient as u32;
-        let normalization_shift = 31 - quotient.trailing_zeros();
-        // The admitted primes round 2^31/p to exactly 2^(31-k).
-        // B4 + 2^(k-1) <= 1_520_783_036 + 134_217_728 < i32::MAX;
-        // the negative extreme only moves toward zero. Thus the rounding
-        // add is exact in i32 throughout the full admitted lazy interval.
-        if !quotient.is_power_of_two()
-            || !(25..=28).contains(&normalization_shift)
-            || bounds[4] + (1i64 << (normalization_shift - 1)) > i64::from(i32::MAX)
-        {
+        if quotient.is_power_of_two() {
+            let normalization_shift = 31 - quotient.trailing_zeros();
+            // B4 + 2^(k-1) <= 1_520_783_036 + 134_217_728 < i32::MAX.
+            // The negative extreme moves toward zero, so the rounding add
+            // is exact throughout the admitted lazy interval.
+            if !(25..=28).contains(&normalization_shift)
+                || bounds[4] + (1i64 << (normalization_shift - 1)) > i64::from(i32::MAX)
+            {
+                return Err(TrinomialError::LimbInput {
+                    reason: "limb normalization shift exceeds signed lanes",
+                });
+            }
+        }
+        if arithmetic::multiply_bound(prime, bounds[4]) >= i64::from(prime) {
             return Err(TrinomialError::LimbInput {
-                reason: "limb normalization requires a bounded power-of-two quotient",
+                reason: "limb normalization exceeds strict lazy interval",
             });
         }
         Ok(Self {
@@ -415,10 +430,16 @@ impl TrinomialLimbDomain {
                 );
             }
             // C(B4)<p: normalization gives the accumulator's strict |slot|<p bound.
-            let shift = 31 - self.one.quotient.trailing_zeros();
-            for value in values {
-                let quotient = (*value + (1 << (shift - 1))) >> shift;
-                *value = value.wrapping_sub(quotient.wrapping_mul(self.prime() as i32));
+            if (self.one.quotient as u32).is_power_of_two() {
+                let shift = 31 - self.one.quotient.trailing_zeros();
+                for value in values {
+                    let quotient = (*value + (1 << (shift - 1))) >> shift;
+                    *value = value.wrapping_sub(quotient.wrapping_mul(self.prime() as i32));
+                }
+            } else {
+                for value in values {
+                    *value = self.arithmetic.mul(*value, self.one);
+                }
             }
         }
     }

@@ -46,7 +46,7 @@ pub use benchmark_support::{
 #[cfg(feature = "zk")]
 pub use masked::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
 pub use prepared_cache::{build_riscv64_terminal_ntt_cache, TrustedTerminalCache};
-pub use relation::RelationMatrixEvaluator;
+pub use relation::{RelationMatrixEvaluator, Stage2RelationWeights};
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::{Stage1Verifier, Stage1VerifyOutput};
 pub use verifier::AkitaVerifier;
@@ -55,3 +55,10 @@ mod setup_batch;
 mod setup_claims;
 pub use setup_batch::{decide_setup_accumulator, verify_setup_batch_deferred};
 pub use setup_claims::{SetupClaimAccumulator, SetupClaimAdvice, SetupPolicy};
+
+#[cfg(feature = "labinius-trinomial")]
+pub use relation::native_root::MixedRootRelationWeights;
+
+#[cfg(feature = "labinius-trinomial")]
+#[doc(hidden)]
+pub mod binary_field_switch;

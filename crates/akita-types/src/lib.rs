@@ -1,5 +1,9 @@
 //! Shared Akita wire values and protocol math.
 
+/// Extension seam: binary source contracts
+/// ([tracking issue](https://github.com/LayerZero-Labs/akita/issues/285)).
+#[cfg(feature = "labinius-trinomial")]
+pub mod binary_source;
 mod eor_sites;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -46,9 +50,9 @@ pub use ntt_cache::{
     prepare_compression_ntt_cache, prepare_joined_exact_ntt_cache, prepare_ntt_cache,
     prepare_reduced_compression_ntt_cache, prepared_verifier_ntt_cache_metadata,
     select_compression_crt_ntt_params, select_crt_ntt_params, view_riscv64_scalar_q128_cache,
-    NttCacheKey, NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache,
-    PreparedNttTailPairView, PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
-    ProtocolCrtNttParams, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+    FieldCrtBases, NttCacheKey, NttCacheMode, NttPrefixRequirement, NttTransformDomain,
+    PreparedNttCache, PreparedNttTailPairView, PreparedVerifierNttCacheBinding,
+    PreparedVerifierNttCacheMetadata, ProtocolCrtNttParams, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
 #[cfg(feature = "prover")]
 pub use proof::PreviewFoldDraw;
@@ -92,7 +96,8 @@ pub(crate) use proof::{
     TerminalLevelProof,
 };
 pub use proof::{
-    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
+    FoldChallengeDraw, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw,
+    VerifierFoldDraw,
 };
 #[cfg(feature = "labinius-trinomial")]
 pub use relation_bridge::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
@@ -181,4 +186,8 @@ pub use setup_contribution::{
     materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
     PreparedCoefficientFunctional, ReducedRoleCoefficientState, SetupIndexWeightMle,
 };
+#[cfg(feature = "labinius-trinomial")]
+pub mod native_root_relation;
+#[cfg(feature = "labinius-trinomial")]
+pub mod root_repacking;
 pub mod setup_claims;

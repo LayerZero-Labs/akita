@@ -9,9 +9,14 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
+# Extension seam: https://github.com/LayerZero-Labs/akita/issues/285
+akita-labinius-prover = { version = "0.1.0", path = "../akita-labinius-prover", default-features = false, features = [
+  "labinius",
+], optional = true }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "lattice",
 ] }
@@ -56,7 +61,9 @@ akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-featur
 [features]
 default = ["transcript-keccak"]
 transcript-blake2b = [
+  "akita-labinius-prover?/transcript-blake2b",
   "akita-prover/transcript-blake2b",
+  "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
@@ -64,7 +71,9 @@ transcript-blake2b = [
   "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
+  "akita-labinius-prover?/transcript-keccak",
   "akita-prover/transcript-keccak",
+  "akita-challenges/transcript-keccak",
   "akita-config/transcript-keccak",
   "akita-sumcheck/transcript-keccak",
   "akita-transcript/transcript-keccak",
@@ -73,6 +82,7 @@ transcript-keccak = [
 ]
 logging-transcript = [
   "akita-prover/logging-transcript",
+  "akita-challenges/logging-transcript",
   "akita-transcript/logging-transcript",
   "akita-types/logging-transcript",
   "akita-params/logging-transcript",
@@ -88,6 +98,10 @@ zk-prover = ["zk", "jolt-crypto/sample", "rand_core/getrandom"]
 # Seeded hiding randomness for reproducible tests. Never enabled outside tests.
 test-support = []
 labinius-trinomial = [
+  "dep:akita-labinius-prover",
+  "akita-algebra/labinius-binary",
+  "akita-prover/labinius-trinomial",
+  "akita-verifier/labinius-trinomial",
   "akita-algebra/labinius-trinomial",
   "akita-types/labinius-trinomial",
 ]
@@ -95,6 +109,8 @@ parallel = [
   "akita-prover/parallel",
   "dep:rayon",
   "jolt-crypto/parallel",
+  "akita-labinius-prover?/parallel",
+  "akita-challenges/parallel",
   "jolt-algebra/parallel",
   "akita-sumcheck/parallel",
   "akita-types/parallel",
@@ -117,6 +133,11 @@ harness = false
 [[bench]]
 name = "root_kernels"
 harness = false
+
+[[bench]]
+name = "trinomial_relation"
+harness = false
+required-features = ["labinius-trinomial"]
 
 [[bench]]
 name = "quotient_kernels"

@@ -1,9 +1,9 @@
 //! Recursive setup-offloading config adapter.
 
 use crate::CommitmentConfig;
+use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{DecompositionParams, SisModulusProfileId};
-use jolt_crypto::challenge::SparseChallengeConfig;
 use std::marker::PhantomData;
 
 /// Config adapter that enables recursion-aware setup offloading schedules.
@@ -35,7 +35,7 @@ impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfi
         Cfg::decomposition()
     }
 
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         Cfg::ring_challenge_config(d)
     }
 

@@ -6,8 +6,8 @@
 //! [`super::decomposition_digits::balanced_digit_interval_diameter`] at the
 //! resulting `δ_fold` depth (see [`super::norm_bound::rounded_up_role_a_inf_norm`]).
 
+use crate::FoldChallengeDistribution;
 use akita_error::AkitaError;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 /// Per-challenge **grind** acceptance target `p_grind = NUM / DEN` used in the union-bound
 /// sizing for `t*` (`specs/fold-linf-rejection.md`).
@@ -163,7 +163,7 @@ impl FoldWitnessLinfCapConfig {
     /// inner A-matrix width (`num_positions_per_block · δ_commit`).
     #[inline]
     pub fn for_fold_coeffs(
-        fold_challenge_config: &SparseChallengeConfig,
+        fold_challenge_config: &FoldChallengeDistribution,
         num_fold_coeffs: usize,
     ) -> Result<Self, AkitaError> {
         let num_fold_coeffs = num_fold_coeffs as u128;
@@ -182,7 +182,7 @@ impl FoldWitnessLinfCapConfig {
     /// probability at most `2^-security_bits / masked_folds` over all
     /// `num_fold_coeffs` physical response coefficients.
     pub fn one_shot_for_fold_coeffs(
-        fold_challenge_config: &SparseChallengeConfig,
+        fold_challenge_config: &FoldChallengeDistribution,
         num_fold_coeffs: usize,
         security_bits: u32,
         masked_folds: u32,

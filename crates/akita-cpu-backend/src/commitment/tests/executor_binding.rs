@@ -4,6 +4,7 @@ use crate::commitment::{
     InnerRelationStateMaterial, NoRetainedStatePolicy, ResolvedCommitSource, StateOwnerCapability,
 };
 use crate::{AkitaProverSetup, DensePoly};
+use akita_params::FoldChallengeDistribution;
 use akita_params::{
     CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };
@@ -24,7 +25,7 @@ fn inner_relation_material_rejects_incomplete_exported_rows() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
@@ -198,7 +199,7 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();

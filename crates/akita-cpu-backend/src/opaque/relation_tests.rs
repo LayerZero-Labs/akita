@@ -18,6 +18,10 @@ use super::DecomposeFoldWitness;
 use crate::opaque::{RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness};
 use crate::AkitaProverSetup;
 use akita_algebra::{poly::multilinear_eval, EqPolynomial};
+use jolt_algebra::CyclotomicRing;
+use jolt_crypto::challenge::Challenges;
+use akita_params::FoldChallengeDistribution;
+use jolt_crypto::challenge::SparseChallenge;
 use akita_params::{
     active_setup_field_len, CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan,
     DigitRangePlan, OpeningClaimsLayout, RelationAddressGeometry, RingOpeningPoint,
@@ -45,7 +49,7 @@ fn reduced_params(payload_mode: CommitmentPayloadMode) -> CommittedGroupParams {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .expect("reduced ring-switch params");

@@ -124,7 +124,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let challenge = jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(256)
+    let challenge = akita_params::FoldChallengeDistribution::production_for_ring_dim(256)
         .expect("D256 challenge");
     let mut shell = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
@@ -294,7 +294,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let challenge = jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(64)
+    let challenge = akita_params::FoldChallengeDistribution::production_for_ring_dim(64)
         .expect("D64 challenge");
     let mut params = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,
@@ -433,6 +433,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         root_lookup_key: Some(&key),
         root_main_constraint: None,
         adaptation_guide: None,
+        root_setup_mode: None,
         root_source_contract: Some(OneHot::committed_source_contract().unwrap()),
         precommitted_source_contracts: &[],
         level_zero_is_root: true,

@@ -193,7 +193,7 @@ fn complete_candidate(
     output_witness_len: usize,
 ) -> super::ScheduleCandidate {
     // The terminal fold must be priceable, so draw from the production family.
-    let challenge = jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(64)
+    let challenge = akita_params::FoldChallengeDistribution::production_for_ring_dim(64)
         .expect("production d = 64 family");
     let mut params = akita_params::CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q128OffsetA7F7,

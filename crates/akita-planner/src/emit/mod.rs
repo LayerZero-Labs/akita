@@ -6,11 +6,11 @@
 
 use std::path::PathBuf;
 
+use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
 use akita_params::ScheduleLookupKey;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use crate::PlannerPolicy;
 use akita_schedules::ScheduleAdmission;
@@ -154,7 +154,7 @@ pub struct EmitSpec {
     /// Exact schedules already planned by the caller, audited against `policy` on emission.
     pub preplanned: Vec<PreplannedSchedule>,
     pub output_path: PathBuf,
-    pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    pub ring_challenge_config: fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     /// Which rows the family admits; a zero-knowledge family plans every row
     /// with [`crate::find_zk_schedule`].
     pub admission: ScheduleAdmission,

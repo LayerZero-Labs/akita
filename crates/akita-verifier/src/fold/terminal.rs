@@ -10,7 +10,7 @@ use akita_params::{OpeningClaimsLayout, TerminalFoldParams};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
 use akita_types::{prepare_opening_point, FpExtEncoding, RingVec};
-use akita_types::{FoldDraw, FoldResponseReplay, GrindingReplay};
+use akita_types::{FoldChallengeDraw, FoldResponseReplay, GrindingReplay};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 pub(super) fn verify_terminal_suffix<F, E>(

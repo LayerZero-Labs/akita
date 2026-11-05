@@ -97,10 +97,12 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
         let radix = DeviceBuffer::from_slice(metal.device(), &self.crt_weights::<F>())?;
         let scales = DeviceBuffer::from_slice(metal.device(), &[F::one()])?;
         let mut batch = Batch::new(metal.device())?;
-        // SAFETY: `akita_crt_reconstruct` returns for `index >= coefficients`. `residues` holds
-        // whole `K x D` rows and `out` was checked above to hold one element per coefficient; the
-        // prime, Garner, radix and scale tables are this parameter set's `K`-prime tables, which
-        // the kernel indexes by prime only.
+        // SAFETY: `rows` makes `residues` exactly `elements` rings of K x D
+        // words, and `out` holds `elements * D` coefficients. Thread
+        // `index < coefficients` reads the residue words
+        // `element * K * D + i * D + coefficient` for `i < K`, `primes[i]`,
+        // `gamma[i * K + j]` and `radix[i]` (buffers of K, K x K and K entries for
+        // this K), and `scales[0]` (one limb). It writes only `out[index]`.
         unsafe {
             batch.dispatch_unchecked(
                 pipeline,

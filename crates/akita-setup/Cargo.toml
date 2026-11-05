@@ -9,6 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
+labinius = ["akita-params/labinius-sis"]
 default = ["transcript-keccak"]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",

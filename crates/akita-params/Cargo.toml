@@ -11,7 +11,7 @@ readme = "../../README.md"
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-akita-challenges = { version = "0.1.0", path = "../akita-challenges", optional = true }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "lattice",
 ] }
@@ -28,23 +28,29 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 serde = { version = "1", features = ["derive"] }
 sha3 = "0.12.0"
+shake = { version = "0.1.0", optional = true }
 
 [features]
-default = ["transcript-keccak"]
-labinius-sis = ["dep:akita-challenges", "akita-challenges/labinius-challenges"]
+labinius-trinomial = ["akita-algebra/labinius-trinomial"]
+# The LaBinius binary root fold-challenge distribution.
+labinius-challenges = ["akita-challenges/labinius-challenges"]
+labinius-sis = ["labinius-challenges", "dep:shake"]
 # Selects the dev protocol: every wire-format change `dev` carries that `main`
 # does not, together. Off by default. Schedules priced for it live in
 # `artifacts/schedules-dev`. See docs/branches.md.
 dev-protocol = []
+default = ["transcript-keccak"]
 test-support = []
 # Whiteout zero-knowledge sizing helpers and the Σ-binding SIS table. Compiles
 # the `zk` modules only; it selects nothing (docs/branches.md rule 3).
 zk = ["dep:jolt-zk"]
 transcript-blake2b = [
+  "akita-challenges/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
 ]
 transcript-keccak = [
+  "akita-challenges/transcript-keccak",
   "akita-sumcheck/transcript-keccak",
   "akita-transcript/transcript-keccak",
 ]
@@ -52,6 +58,7 @@ parallel = ["akita-algebra/parallel", "jolt-algebra/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]
+num-bigint = "0.5.1"
 rand = "0.8"
 
 [lints]

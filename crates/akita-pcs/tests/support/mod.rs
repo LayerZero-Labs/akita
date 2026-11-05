@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+use akita_params::FoldChallengeDistribution;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_params::{
@@ -57,7 +58,7 @@ where
         Envelope::decomposition()
     }
 
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         Envelope::ring_challenge_config(d).or_else(|_| Final::ring_challenge_config(d))
     }
 
@@ -98,13 +99,13 @@ where
             (
                 policy_of::<Envelope>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
                 Envelope::ring_challenge_config
-                    as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+                    as fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
             )
         } else {
             (
                 policy_of::<Final>(akita_params::ChunkedWitnessCfg::default_non_chunked()),
                 Final::ring_challenge_config
-                    as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+                    as fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
             )
         };
         let precommitted_source_contracts =

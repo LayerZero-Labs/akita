@@ -79,9 +79,9 @@ fn make_case_with_shape(
         n_b,
         n_d,
         if num_groups == 1 {
-            jolt_crypto::challenge::SparseChallengeConfig::pm1_only(1)
+            akita_params::FoldChallengeDistribution::pm1_only(1)
         } else {
-            jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(role_dims.d_a())
+            akita_params::FoldChallengeDistribution::production_for_ring_dim(role_dims.d_a())
                 .unwrap()
         },
     )

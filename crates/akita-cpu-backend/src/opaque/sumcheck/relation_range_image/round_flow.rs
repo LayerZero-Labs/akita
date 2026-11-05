@@ -38,18 +38,18 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
                 relation: CoefficientRelation::ReducedDense(dense),
                 ..
             } => {
-                let (virt_terms, rel_terms) = match witness {
-                    WitnessState::CompactPrefix(compact_witness) => self
-                        .compute_round_compact_reduced_dense_terms(
-                            compact_witness.view(),
-                            dense.evaluations(),
-                        ),
-                    WitnessState::FoldedSuffix(folded_witness) => self
-                        .compute_folded_reduced_dense_round_terms(
-                            folded_witness,
-                            dense.evaluations(),
-                        ),
-                };
+                let dense = dense.evaluations();
+                let (virt_terms, rel_terms) = self
+                    .compute_unfactored_round_terms(witness, |left| (dense[left], dense[left + 1]));
+                RoundComputation::Terms(virt_terms, rel_terms)
+            }
+            Phase::Coefficient {
+                witness,
+                relation: CoefficientRelation::Structured(oracle),
+                ..
+            } => {
+                let (virt_terms, rel_terms) =
+                    self.compute_unfactored_round_terms(witness, |left| oracle.pair(left));
                 RoundComputation::Terms(virt_terms, rel_terms)
             }
             Phase::Coefficient {
@@ -159,12 +159,9 @@ impl<E: Field + Ring + Unreduced> RelationRoundState<E> {
 }
 
 impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
-    fn ingest_reduced_dense_challenge(
-        &mut self,
-        witness: &mut WitnessState<E>,
-        weights: &mut DenseRelationWeights<E>,
-        r: E,
-    ) {
+    /// Bind `r` in a coefficient round of an unfactored relation; the caller
+    /// binds its weights.
+    fn ingest_unfactored_challenge(&mut self, witness: &mut WitnessState<E>, r: E) {
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
         match witness {
@@ -178,7 +175,6 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRoundState<E> {
                 fold_evals_in_place(folded_witness, r);
             }
         }
-        weights.bind(r);
     }
 
     /// Bind `r` in a coefficient round of the factored relation outside the
@@ -314,9 +310,18 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                 witness,
                 relation: CoefficientRelation::ReducedDense(weights),
                 ..
-            } => self
-                .state
-                .ingest_reduced_dense_challenge(witness, weights, r),
+            } => {
+                self.state.ingest_unfactored_challenge(witness, r);
+                weights.bind(r);
+            }
+            Phase::Coefficient {
+                witness,
+                relation: CoefficientRelation::Structured(oracle),
+                ..
+            } => {
+                self.state.ingest_unfactored_challenge(witness, r);
+                oracle.bind(r);
+            }
             Phase::Lane { witness, lane } => {
                 self.state.ingest_lane_product_challenge(witness, lane, r)
             }

@@ -1,22 +1,8 @@
 use super::*;
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, One, Zero};
+use jolt_algebra::fft::{distinct_prime_factors, primitive_nth_root};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, Field, One, Zero};
 
 type F = Prime64Offset23703;
-
-fn distinct_prime_factors(mut n: usize) -> Vec<usize> {
-    let mut factors = Vec::new();
-    let mut factor = 2;
-    while n > 1 {
-        if n.is_multiple_of(factor) {
-            factors.push(factor);
-            while n.is_multiple_of(factor) {
-                n /= factor;
-            }
-        }
-        factor += 1;
-    }
-    factors
-}
 
 fn mul_mod(lhs: u64, rhs: u64, modulus: u64) -> u64 {
     ((u128::from(lhs) * u128::from(rhs)) % u128::from(modulus)) as u64
@@ -172,7 +158,7 @@ fn nr5_extension_has_expected_basis_norm_and_inverses() {
 #[test]
 fn transform_root_orders_cover_the_initial_tower() {
     for n in [81usize, 162, 243, 324, 648, 972, 1_944] {
-        let root = F::primitive_root(n).expect("n divides the smooth subgroup order");
+        let root = primitive_nth_root::<F>(n);
         let expected = pow_mod(
             F::SMOOTH_OMEGA as u64,
             F::SMOOTH_SUBGROUP_ORDER as u64 / n as u64,

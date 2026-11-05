@@ -150,15 +150,22 @@ pub fn centered_quotient_rows_with_i16_tail<F: Field + CanonicalEncoding, const 
             )
         }};
     }
-    if let (Some(neg), Some(cyc)) = (negacyclic_slot.q32_base(), cyclic_slot.q32_base()) {
-        dispatch!(neg, cyc)
-    } else if let (Some(neg), Some(cyc)) = (negacyclic_slot.q64_base(), cyclic_slot.q64_base()) {
-        dispatch!(neg, cyc)
-    } else if let (Some(neg), Some(cyc)) = (negacyclic_slot.q128_base(), cyclic_slot.q128_base()) {
-        dispatch!(neg, cyc)
-    } else {
-        Err(AkitaError::InvalidSetup(
-            "cyclic and negacyclic NTT profiles do not match".into(),
-        ))
+    if FieldCrtBases::<F>::Q32 {
+        if let (Some(neg), Some(cyc)) = (negacyclic_slot.q32_base(), cyclic_slot.q32_base()) {
+            return dispatch!(neg, cyc);
+        }
     }
+    if FieldCrtBases::<F>::Q64 {
+        if let (Some(neg), Some(cyc)) = (negacyclic_slot.q64_base(), cyclic_slot.q64_base()) {
+            return dispatch!(neg, cyc);
+        }
+    }
+    if FieldCrtBases::<F>::Q128 {
+        if let (Some(neg), Some(cyc)) = (negacyclic_slot.q128_base(), cyclic_slot.q128_base()) {
+            return dispatch!(neg, cyc);
+        }
+    }
+    Err(AkitaError::InvalidSetup(
+        "cyclic and negacyclic NTT profiles do not match".into(),
+    ))
 }

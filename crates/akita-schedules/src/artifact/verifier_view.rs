@@ -10,8 +10,8 @@
 //! selected row.
 
 use super::{
-    catalog_digest, policy_digest, AkitaError, CatalogCoverage, PlannerPolicy,
-    ScheduleCatalogArtifactRowV1, SparseChallengeConfig, ValidatedScheduleCatalog,
+    catalog_digest, policy_digest, AkitaError, CatalogCoverage, FoldChallengeDistribution,
+    PlannerPolicy, ScheduleCatalogArtifactRowV1, ValidatedScheduleCatalog,
     AKITA_INSTANCE_DESCRIPTOR_VERSION, MAX_TRUSTED_CATALOG_ROWS,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
@@ -69,6 +69,9 @@ impl ValidatedScheduleCatalog {
         &self,
         selections: &[OpeningScheduleSelection],
     ) -> Result<Vec<u8>, AkitaError> {
+        for row in &self.rows_by_digest {
+            row.require_ordinary_artifact()?;
+        }
         if selections.is_empty() || selections.len() > MAX_TRUSTED_CATALOG_ROWS {
             return Err(AkitaError::InvalidSetup(
                 "verifier catalog selection is outside row limits".into(),
@@ -129,7 +132,7 @@ impl ValidatedScheduleCatalog {
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<Self, AkitaError> {
         Self::from_verifier_view_admitting(
             bytes,
@@ -150,7 +153,7 @@ impl ValidatedScheduleCatalog {
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
         admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
         if bytes.len() > MAX_VERIFIER_VIEW_BYTES {

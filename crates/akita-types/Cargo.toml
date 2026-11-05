@@ -11,6 +11,7 @@ readme = "../../README.md"
 [dependencies]
 spongefish = { version = "=0.8.0", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
@@ -40,13 +41,15 @@ test-support = ["akita-params/test-support"]
 # masked levels (`specs/whiteout-akita.md` §4.5).
 zk = ["dep:jolt-zk", "akita-error/zk", "akita-params/zk"]
 # Prover-side grinding replay, which searches on a copy of the sponge state.
-prover = ["akita-transcript/prover"]
+prover = ["akita-transcript/prover", "akita-challenges/prover"]
 transcript-blake2b = [
+  "akita-challenges/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",
   "akita-transcript/transcript-blake2b",
   "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
+  "akita-challenges/transcript-keccak",
   "akita-sumcheck/transcript-keccak",
   "akita-transcript/transcript-keccak",
   "akita-params/transcript-keccak",
@@ -57,10 +60,16 @@ parallel = [
   "jolt-algebra/parallel",
   "jolt-crypto/parallel",
 ]
-labinius-trinomial = ["akita-algebra/labinius-trinomial"]
 logging-transcript = [
   "akita-params/logging-transcript",
   "akita-transcript/logging-transcript",
+]
+labinius-trinomial = [
+  "akita-algebra/labinius-binary",
+  "akita-challenges/labinius-challenges",
+  "akita-algebra/labinius-trinomial",
+  "akita-params/labinius-trinomial",
+  "akita-params/labinius-sis",
 ]
 # Diagnostic: cross-checks every factored compression relation weight
 # evaluation against the per-event evaluation and counts the evaluation tiers.

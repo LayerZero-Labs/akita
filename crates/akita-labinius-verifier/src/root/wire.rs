@@ -1,7 +1,8 @@
 use akita_algebra::binary::field_switch::SwitchField;
 use akita_error::AkitaError;
-use akita_params::{nonce_max_bytes, sis::labinius::LabiniusRootShape, FOLD_RESPONSE_NONCE_BITS};
 use jolt_algebra::checked;
+use akita_params::{sis::labinius::LabiniusRootShape, FOLD_RESPONSE_NONCE_BITS};
+use akita_transcript::nonce_max_bytes;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 use crate::{
@@ -59,7 +60,7 @@ where
     let prime = if mode.has_prime() {
         let num_vars = encoding.prime_table_log_len();
         // `y_P`, the round messages and the table evaluation.
-        checked::product([num_vars, product_shape(num_vars)?.degree])
+        checked::product([num_vars, product_shape(num_vars)?.degree_bound()])
             .and_then(|messages| checked::sum([messages, 2]))
             .and_then(|elements| checked::product([elements, element]))
             .ok_or_else(invalid)?
@@ -68,10 +69,10 @@ where
     };
     let ka =
         clear_integers(encoding.a_carry_len(), encoding.a_carry().bits()).ok_or_else(invalid)?;
-    let combined_degree = combined_shape(encoding.response_table_log_len())?.degree;
+    let combined_degree = combined_shape(encoding.response_table_log_len())?.degree_bound();
     let combined = checked::product([encoding.response_table_log_len(), combined_degree, element])
         .ok_or_else(invalid)?;
-    let image_degree = combined_shape(encoding.image_table_log_len())?.degree;
+    let image_degree = combined_shape(encoding.image_table_log_len())?.degree_bound();
     let image = checked::product([encoding.image_table_log_len(), image_degree, element])
         .ok_or_else(invalid)?;
     // `y_Y` and the two digit-table evaluations.

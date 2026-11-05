@@ -9,10 +9,11 @@ use akita_labinius_verifier::{
     grinding::RootGrindingPlan,
     root_sumcheck::{combined_shape, combined_terminal, verify_combined_rounds},
 };
+use akita_sumcheck::SumcheckInstanceProver;
+use akita_transcript::ChallengeCodec;
 use common::combined::CombinedRootSumcheck;
 use jolt_algebra::{
-    CanonicalDecode, CanonicalEncoding, Ext2, ExtField, Field, One, Prime128Offset275,
-    Prime64Offset59, Ring, Zero,
+    CanonicalEncoding, Ext2, ExtField, Field, One, Prime128Offset275, Prime64Offset59, Ring, Zero,
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -138,7 +139,7 @@ fn manual<E: Field>(f: &Fixture<E>, challenges: &[E]) {
     );
 }
 
-fn transcripts<B: Field + CanonicalEncoding, E: ExtField<B> + CanonicalDecode>(
+fn transcripts<B: Field + CanonicalEncoding, E: ExtField<B> + ChallengeCodec>(
     f: &Fixture<E>,
 ) -> Vec<u8> {
     let mut reference =
@@ -157,12 +158,10 @@ fn transcripts<B: Field + CanonicalEncoding, E: ExtField<B> + CanonicalDecode>(
         combined_shape(f.tau.len()).unwrap(),
     )])
     .unwrap();
-    let mut reference_state = channel::new_prover::<common::TestSponge>().unwrap();
-    let mut kernel_state = channel::new_prover::<common::TestSponge>().unwrap();
-    let mut reference_channel =
-        RootSumcheckProverChannel::<B, common::TestSponge>::new(&mut reference_state);
-    let mut kernel_channel =
-        RootSumcheckProverChannel::<B, common::TestSponge>::new(&mut kernel_state);
+    let mut reference_state = channel::new_prover();
+    let mut kernel_state = channel::new_prover();
+    let mut reference_channel = RootSumcheckProverChannel::<B>::new(&mut reference_state);
+    let mut kernel_channel = RootSumcheckProverChannel::<B>::new(&mut kernel_state);
     RootChallengeChannel::<E>::schedule(&mut reference_channel, plan.clone()).unwrap();
     RootChallengeChannel::<E>::schedule(&mut kernel_channel, plan.clone()).unwrap();
     let reference_result = common::combined::prove_combined_rounds::<B, E, _>(
@@ -185,9 +184,8 @@ fn transcripts<B: Field + CanonicalEncoding, E: ExtField<B> + CanonicalDecode>(
     assert_eq!(reference_bytes, kernel_bytes);
     assert_eq!(reference.final_evaluations(), kernel.final_evaluations());
     let (point, claim) = kernel_result;
-    let mut verifier = channel::new_verifier::<common::TestSponge>(&kernel_bytes).unwrap();
-    let mut verifier_channel =
-        RootSumcheckVerifierChannel::<B, common::TestSponge>::new(&mut verifier);
+    let mut verifier = channel::new_verifier(&kernel_bytes);
+    let mut verifier_channel = RootSumcheckVerifierChannel::<B>::new(&mut verifier);
     RootChallengeChannel::<E>::schedule(&mut verifier_channel, plan).unwrap();
     let replay = verify_combined_rounds::<B, E, _>(
         &mut verifier_channel,
@@ -220,7 +218,7 @@ fn transcripts<B: Field + CanonicalEncoding, E: ExtField<B> + CanonicalDecode>(
     kernel_bytes
 }
 
-fn random_rounds<B: Field + CanonicalEncoding, E: ExtField<B> + CanonicalDecode>() {
+fn random_rounds<B: Field + CanonicalEncoding, E: ExtField<B> + ChallengeCodec>() {
     let mut rng = StdRng::seed_from_u64(0xc0_6b_1e);
     // nu=16 also exercises larger packed classes through the direct path.
     for nu in (0..=13).chain([16]) {
@@ -237,7 +235,7 @@ fn random_rounds_transcripts_and_terminal_checks() {
     random_rounds::<P64, Ext2<P64>>();
 }
 
-fn digit_factor_shapes<B: Field + CanonicalEncoding, E: ExtField<B> + CanonicalDecode>() {
+fn digit_factor_shapes<B: Field + CanonicalEncoding, E: ExtField<B> + ChallengeCodec>() {
     let mut rng = StdRng::seed_from_u64(0x000f_ac70);
     // N = 256 is below every class table. N = 2048 owns one-byte class
     // tables: small factors sum their weights in compact form, large ones
@@ -264,7 +262,7 @@ fn digit_factor_shapes_and_padded_compact_entries_match_dense_reference() {
     digit_factor_shapes::<P64, Ext2<P64>>();
 }
 
-fn structured_tables<B: Field + CanonicalEncoding, E: ExtField<B> + CanonicalDecode>() {
+fn structured_tables<B: Field + CanonicalEncoding, E: ExtField<B> + ChallengeCodec>() {
     let mut rng = StdRng::seed_from_u64(0x5747_ab1e);
     // Round 2 reads eight digits as two 16-bit classes: slots 0..4 against
     // slots 4..8. With few live slots the kernel keeps moments per class of
@@ -368,12 +366,10 @@ fn false_linear_claim_preserves_polynomials_and_is_rejected() {
         combined_shape(f.tau.len()).unwrap(),
     )])
     .unwrap();
-    let mut reference_state = channel::new_prover::<common::TestSponge>().unwrap();
-    let mut kernel_state = channel::new_prover::<common::TestSponge>().unwrap();
-    let mut reference_channel =
-        RootSumcheckProverChannel::<F, common::TestSponge>::new(&mut reference_state);
-    let mut kernel_channel =
-        RootSumcheckProverChannel::<F, common::TestSponge>::new(&mut kernel_state);
+    let mut reference_state = channel::new_prover();
+    let mut kernel_state = channel::new_prover();
+    let mut reference_channel = RootSumcheckProverChannel::<F>::new(&mut reference_state);
+    let mut kernel_channel = RootSumcheckProverChannel::<F>::new(&mut kernel_state);
     RootChallengeChannel::<F>::schedule(&mut reference_channel, plan.clone()).unwrap();
     RootChallengeChannel::<F>::schedule(&mut kernel_channel, plan.clone()).unwrap();
     let reference_result = common::combined::prove_combined_rounds::<F, F, _>(
@@ -398,8 +394,8 @@ fn false_linear_claim_preserves_polynomials_and_is_rejected() {
     // Both provers produced the same proof bytes above. Compressed
     // round replay may reconstruct a polynomial using the false claim;
     // rejection therefore includes the authenticated terminal obligation.
-    let mut state = channel::new_verifier::<common::TestSponge>(&honest_proof).unwrap();
-    let mut verifier = RootSumcheckVerifierChannel::<F, common::TestSponge>::new(&mut state);
+    let mut state = channel::new_verifier(&honest_proof);
+    let mut verifier = RootSumcheckVerifierChannel::<F>::new(&mut state);
     RootChallengeChannel::<F>::schedule(&mut verifier, plan).unwrap();
     if let Ok(replay) =
         verify_combined_rounds::<F, F, _>(&mut verifier, INVOCATION, f.tau.len(), f.beta, f.s)

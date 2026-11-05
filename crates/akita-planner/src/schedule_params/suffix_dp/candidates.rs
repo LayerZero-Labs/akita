@@ -918,6 +918,7 @@ mod tests {
             root_lookup_key: Some(&key),
             root_main_constraint: None,
             adaptation_guide: None,
+            root_setup_mode: None,
             root_source_contract: Some(OneHot::committed_source_contract().unwrap()),
             precommitted_source_contracts: &[],
             level_zero_is_root: true,

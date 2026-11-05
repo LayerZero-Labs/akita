@@ -51,18 +51,20 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
     pub(crate) zk: Option<super::schedule_params::ZkSearch>,
+    pub(crate) root_setup_mode: Option<akita_params::SetupContributionMode>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
 }
 
 impl ScheduleSearchOptions<'_> {
-    const fn canonical() -> Self {
+    pub(crate) const fn canonical() -> Self {
         Self {
             relation_traversal_order: super::schedule_params::RelationTraversalOrder::Canonical,
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
             zk: None,
+            root_setup_mode: None,
             #[cfg(test)]
             query_prefix_count: 0,
         }
@@ -695,7 +697,7 @@ pub fn find_schedule(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     find_schedule_in_relation_order(
@@ -737,7 +739,7 @@ pub fn find_adapted_schedule(
     request: &crate::emit::GroupedGenerationRequest,
     final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let key = request.key();
@@ -773,7 +775,7 @@ fn find_adapted_schedule_for_key(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     akita_schedules::planner_support::validate_policy(policy)?;
@@ -834,7 +836,7 @@ pub fn find_schedule_for_test_relation_mode(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
     relation_mode_filter: super::schedule_params::TestRelationModeFilter,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -965,7 +967,7 @@ pub(crate) fn find_schedule_in_relation_order(
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
+    ring_challenge_config: impl Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>
         + Sync,
     options: ScheduleSearchOptions<'_>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -1046,6 +1048,7 @@ pub(crate) fn find_schedule_in_relation_order(
             root_lookup_key: Some(key),
             root_main_constraint: options.root_main_constraint,
             adaptation_guide: options.adaptation_guide,
+            root_setup_mode: options.root_setup_mode,
             root_source_contract: Some(final_source_contract),
             precommitted_source_contracts,
             level_zero_is_root: true,

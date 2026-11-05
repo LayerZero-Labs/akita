@@ -19,6 +19,8 @@
 //! per element. The descriptor is therefore a whole number of words.
 
 #[cfg(test)]
+mod sis_modulus_profile_tag_tests;
+#[cfg(test)]
 mod tests;
 mod transcript_grinding_binding;
 

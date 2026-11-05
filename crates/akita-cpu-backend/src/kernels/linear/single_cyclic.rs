@@ -22,35 +22,36 @@ pub(crate) fn mat_vec_mul_ntt_single_i8<F: Field + CanonicalEncoding, const D: u
         log_basis,
         "for single predecomposed digit mat-vec",
     )?;
-    Ok(if let Some(base) = slot.q32_base() {
-        let neg = base
-            .negacyclic()
-            .ok_or_else(|| AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into()))?;
-        let rows: Vec<&[_]> = (0..num_rows)
-            .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-            .collect();
-        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())?
-    } else if let Some(base) = slot.q64_base() {
-        let neg = base
-            .negacyclic()
-            .ok_or_else(|| AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into()))?;
-        let rows: Vec<&[_]> = (0..num_rows)
-            .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-            .collect();
-        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())?
-    } else if let Some(base) = slot.q128_base() {
-        let neg = base
-            .negacyclic()
-            .ok_or_else(|| AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into()))?;
-        let rows: Vec<&[_]> = (0..num_rows)
-            .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-            .collect();
-        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())?
-    } else {
-        return Err(AkitaError::InvalidSetup(
-            "signed-i8 matvec requires a base-profile NTT cache".into(),
-        ));
-    })
+    macro_rules! run_base {
+        ($base:expr) => {{
+            let base = $base;
+            let domain = base.negacyclic().ok_or_else(|| {
+                AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
+            })?;
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &domain[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            return mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params());
+        }};
+    }
+    if FieldCrtBases::<F>::Q32 {
+        if let Some(base) = slot.q32_base() {
+            run_base!(base);
+        }
+    }
+    if FieldCrtBases::<F>::Q64 {
+        if let Some(base) = slot.q64_base() {
+            run_base!(base);
+        }
+    }
+    if FieldCrtBases::<F>::Q128 {
+        if let Some(base) = slot.q128_base() {
+            run_base!(base);
+        }
+    }
+    Err(AkitaError::InvalidSetup(
+        "signed-i8 matvec requires a base-profile NTT cache".into(),
+    ))
 }
 
 /// Cyclic-domain variant of [`mat_vec_mul_ntt_single_i8`].
@@ -69,35 +70,36 @@ pub(crate) fn mat_vec_mul_ntt_single_i8_cyclic<F: Field + CanonicalEncoding, con
         log_basis,
         "for cyclic single predecomposed digit mat-vec",
     )?;
-    Ok(if let Some(base) = slot.q32_base() {
-        let cyc = base
-            .cyclic()
-            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-        let rows: Vec<&[_]> = (0..num_rows)
-            .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-            .collect();
-        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())?
-    } else if let Some(base) = slot.q64_base() {
-        let cyc = base
-            .cyclic()
-            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-        let rows: Vec<&[_]> = (0..num_rows)
-            .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-            .collect();
-        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())?
-    } else if let Some(base) = slot.q128_base() {
-        let cyc = base
-            .cyclic()
-            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-        let rows: Vec<&[_]> = (0..num_rows)
-            .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-            .collect();
-        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())?
-    } else {
-        return Err(AkitaError::InvalidSetup(
-            "cyclic NTT domain not prepared".into(),
-        ));
-    })
+    macro_rules! run_base {
+        ($base:expr) => {{
+            let base = $base;
+            let domain = base
+                .cyclic()
+                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &domain[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            return mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params());
+        }};
+    }
+    if FieldCrtBases::<F>::Q32 {
+        if let Some(base) = slot.q32_base() {
+            run_base!(base);
+        }
+    }
+    if FieldCrtBases::<F>::Q64 {
+        if let Some(base) = slot.q64_base() {
+            run_base!(base);
+        }
+    }
+    if FieldCrtBases::<F>::Q128 {
+        if let Some(base) = slot.q128_base() {
+            run_base!(base);
+        }
+    }
+    Err(AkitaError::InvalidSetup(
+        "cyclic NTT domain not prepared".into(),
+    ))
 }
 
 pub(super) fn mat_vec_mul_single_i8_with_params<

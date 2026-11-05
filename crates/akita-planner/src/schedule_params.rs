@@ -29,6 +29,7 @@ pub(crate) fn direct_setup_scan_work_elements(
         .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan work overflow".into()))
 }
 
+use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
@@ -44,7 +45,6 @@ use akita_params::{
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 use akita_params::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use crate::{InnerBasisSource, PlannerPolicy};
 
@@ -605,7 +605,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
-    &'a (dyn Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError> + Sync);
+    &'a (dyn Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError> + Sync);
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 

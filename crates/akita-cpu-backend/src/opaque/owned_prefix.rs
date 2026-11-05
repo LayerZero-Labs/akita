@@ -1,5 +1,6 @@
 //! Validated conversion from portable setup artifacts to current-owner handles.
 use super::owned::{CommitmentHandle, CommittedSource, OwnedPolynomials};
+use crate::commitment::{CommitmentExecutor, DenseType, PolynomialType, PortableStatePolicy};
 use crate::{CpuBackend, DensePoly};
 use akita_error::AkitaError;
 use akita_params::sis::{CommittedSourceClass, CommittedSourceContract};
@@ -151,7 +152,7 @@ where
             parameters: id.commitment_profile,
             producer_contract,
             public: Commitment::new(public_commitment),
-            retained: artifact.hint.clone(),
+            retained: Some(artifact.hint.clone()),
         });
         Ok(PreparedSetupPrefix {
             public: artifact.verifier_slot(),
@@ -172,6 +173,52 @@ where
         let cached = self.setup_prefix_material(id)?;
 
         self.issue_setup_prefix_handle(id, cached)
+    }
+
+    /// Extension seam: retain a separately scoped public coefficient prefix.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// This method does not populate the ordinary slot-id cache. The caller
+    /// authenticates the supplied coefficients at its setup-preparation boundary.
+    pub fn prepare_setup_prefix_from_coefficients(
+        &self,
+        id: &SetupPrefixSlotId,
+        coefficients: Vec<F>,
+    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError> {
+        let prepared = self.prepared()?;
+        if coefficients.len() != id.n_prefix()? {
+            return Err(AkitaError::InvalidInput(
+                "setup prefix source must fill its committed domain".into(),
+            ));
+        }
+        crate::setup::setup_prefix::validate_setup_prefix_commitment(
+            prepared.expanded.shared_matrix().num_field_elements(),
+            id,
+        )?;
+        let polynomial =
+            DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
+        let executor = CommitmentExecutor::cpu(
+            self,
+            prepared,
+            &prepared.expanded,
+            vec![PolynomialType::Dense(DenseType::Coefficients)],
+            PortableStatePolicy,
+        )?;
+        let artifact = crate::setup::setup_prefix::commit_setup_prefix_source(
+            &prepared.expanded,
+            &executor,
+            id,
+            &polynomial,
+        )?;
+        self.issue_setup_prefix_handle(
+            id,
+            Arc::new(CachedSetupPrefix {
+                artifact,
+                source: OnceLock::from(Arc::new(OwnedPolynomials {
+                    polynomials: vec![polynomial],
+                })),
+            }),
+        )
     }
 
     /// Validate portable artifacts and issue handles owned by this backend.
@@ -216,7 +263,7 @@ where
                         expected.coeffs() != actual.coeffs()
                             || (actual.ring_dim() != 0 && actual.ring_dim() != expected.ring_dim())
                     })
-                || slot.commitment_handle.committed.retained != artifact.hint
+                || slot.commitment_handle.committed.ordinary_retained()? != &artifact.hint
             {
                 return Err(AkitaError::InvalidSetup(
                     "setup prefix artifact differs from its committed source".into(),
@@ -373,3 +420,6 @@ mod tests {
 
 #[cfg(test)]
 mod cache_tests;
+
+#[cfg(test)]
+mod scoped_tests;

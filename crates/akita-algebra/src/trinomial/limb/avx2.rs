@@ -39,12 +39,21 @@ pub(super) unsafe fn mul(
 }
 
 #[inline(always)]
-unsafe fn reduce_one(a: __m256i, shift: __m128i, bias: __m256i, p: __m256i) -> __m256i {
+unsafe fn reduce_one(
+    a: __m256i,
+    normalization: &NormalizationRegisters,
+    p: __m256i,
+    round: __m256i,
+) -> __m256i {
     // SAFETY: Called only within this backend's feature-enabled entries.
     unsafe {
-        // Domain construction proves B4+bias < i32::MAX and q=2^(31-k).
-        // Therefore floor((a*q+2^30)/2^31) = (a+2^(k-1)) >> k exactly.
-        let t = _mm256_sra_epi32(_mm256_add_epi32(a, bias), shift);
+        let t = if normalization.power_of_two {
+            // Domain construction proves B4+bias < i32::MAX and q=2^(31-k).
+            // Therefore floor((a*q+2^30)/2^31) = (a+2^(k-1)) >> k exactly.
+            _mm256_sra_epi32(_mm256_add_epi32(a, normalization.bias), normalization.shift)
+        } else {
+            rounded_quotient(a, normalization.quotient, normalization.quotient, round)
+        };
         _mm256_sub_epi32(a, _mm256_mullo_epi32(t, p))
     }
 }
@@ -73,10 +82,16 @@ pub(super) unsafe fn weights(w: &PackedTwiddles) -> (__m256i, __m256i, __m256i) 
     }
 }
 
-pub(super) struct ButterflyRegisters {
-    omega: (__m256i, __m256i, __m256i),
+struct NormalizationRegisters {
     shift: __m128i,
     bias: __m256i,
+    quotient: __m256i,
+    power_of_two: bool,
+}
+
+pub(super) struct ButterflyRegisters {
+    omega: (__m256i, __m256i, __m256i),
+    normalization: NormalizationRegisters,
     p: __m256i,
     half: __m256i,
     round: __m256i,
@@ -99,8 +114,12 @@ impl ButterflyRegisters {
                     _mm256_set1_epi32(w.quotient),
                     _mm256_set1_epi32(w.quotient),
                 ),
-                shift: _mm_cvtsi32_si128((31 - domain.one.quotient.trailing_zeros()) as i32),
-                bias: _mm256_set1_epi32(1 << ((31 - domain.one.quotient.trailing_zeros()) - 1)),
+                normalization: NormalizationRegisters {
+                    shift: _mm_cvtsi32_si128((31 - domain.one.quotient.trailing_zeros()) as i32),
+                    bias: _mm256_set1_epi32(1 << ((31 - domain.one.quotient.trailing_zeros()) - 1)),
+                    quotient: _mm256_set1_epi32(domain.one.quotient),
+                    power_of_two: (domain.one.quotient as u32).is_power_of_two(),
+                },
                 p: _mm256_set1_epi32(domain.prime() as i32),
                 half: _mm256_set1_epi32((domain.prime() / 2) as i32),
                 round: _mm256_set1_epi64x(1 << 30),
@@ -122,14 +141,10 @@ pub(super) unsafe fn triple<const INVERSE: bool, const NORMALIZE: bool>(
     // obey B0..B4; inverse inputs are centered and obey I. Every transient
     // add/subtract fits i32, and each inverse level restores centered h.
     unsafe {
-        let ButterflyRegisters {
-            omega,
-            shift,
-            bias,
-            p,
-            half,
-            round,
-        } = *registers;
+        let omega = registers.omega;
+        let p = registers.p;
+        let half = registers.half;
+        let round = registers.round;
         if !INVERSE {
             b = mul(b, r, p, round);
             c = mul(c, r2, p, round);
@@ -143,9 +158,9 @@ pub(super) unsafe fn triple<const INVERSE: bool, const NORMALIZE: bool>(
             o1 = center(mul(o1, r, p, round), p, half);
             o2 = center(mul(o2, r2, p, round), p, half);
         } else if NORMALIZE {
-            o0 = reduce_one(o0, shift, bias, p);
-            o1 = reduce_one(o1, shift, bias, p);
-            o2 = reduce_one(o2, shift, bias, p);
+            o0 = reduce_one(o0, &registers.normalization, p, round);
+            o1 = reduce_one(o1, &registers.normalization, p, round);
+            o2 = reduce_one(o2, &registers.normalization, p, round);
         }
         (o0, o1, o2)
     }

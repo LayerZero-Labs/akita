@@ -242,7 +242,7 @@ mod tests {
             SisModulusProfileId::Q128OffsetA7F7,
             PREFIX_D,
             3,
-            &jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(PREFIX_D)
+            &akita_params::FoldChallengeDistribution::production_for_ring_dim(PREFIX_D)
                 .expect("D=64 has a production challenge configuration"),
             1,
             1,
@@ -326,7 +326,7 @@ mod tests {
                 ),
             },
             opening: akita_params::GroupOpeningPlan::evaluation_trace(
-                jolt_crypto::challenge::SparseChallengeConfig::pm1_only(0),
+                akita_params::FoldChallengeDistribution::pm1_only(0),
                 1,
                 1,
                 1,

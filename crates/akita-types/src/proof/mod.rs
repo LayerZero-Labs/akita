@@ -70,7 +70,8 @@ pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges, Openi
 #[cfg(feature = "prover")]
 pub use fold_draw::PreviewFoldDraw;
 pub use fold_draw::{
-    FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
+    FoldChallengeDraw, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw,
+    VerifierFoldDraw,
 };
 
 #[cfg(test)]

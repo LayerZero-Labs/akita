@@ -1,22 +1,17 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::commitment::CommitmentExecutionPlan;
-#[cfg(test)]
-use crate::commitment::SetupPrefixSlot;
-#[cfg(test)]
 use crate::commitment::{
-    CommitmentExecutor, CommitmentSource, CommitmentStatePolicy, IntoPortableCommitmentState,
+    CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
+    IntoPortableCommitmentState, SetupPrefixSlot,
 };
 #[cfg(test)]
 use crate::opaque::DensePoly;
 use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
-#[cfg(test)]
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
 use jolt_algebra::checked;
 #[cfg(test)]
 use jolt_algebra::CyclotomicRing;
-#[cfg(test)]
 use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(test)]
 use std::sync::Arc;
@@ -86,12 +81,31 @@ where
     SP::State: IntoPortableCommitmentState<F>,
 {
     validate_setup_prefix_commitment(expanded.shared_matrix().num_field_elements(), id)?;
-    executor.validate_setup(expanded)?;
-    let commitment_profile = &id.commitment_profile;
     let source =
-        DensePoly::from_setup_prefix(Arc::clone(expanded), commitment_profile.group.num_vars())?;
+        DensePoly::from_setup_prefix(Arc::clone(expanded), id.commitment_profile.group.num_vars())?;
+    commit_setup_prefix_source(expanded, executor, id, &source)
+}
+
+/// Extension seam: commit a validated prefix source with the canonical
+/// commitment executor.
+/// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+///
+/// The caller validates `id` with [`validate_setup_prefix_commitment`] against
+/// the length of `source`.
+pub(crate) fn commit_setup_prefix_source<F, SP>(
+    expanded: &AkitaExpandedSetup<F>,
+    executor: &CommitmentExecutor<'_, F, SP>,
+    id: &SetupPrefixSlotId,
+    source: &dyn CommitmentSource<F>,
+) -> Result<SetupPrefixSlot<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding + 'static,
+    SP: CommitmentStatePolicy<F>,
+    SP::State: IntoPortableCommitmentState<F>,
+{
+    executor.validate_setup(expanded)?;
     let plan = CommitmentExecutionPlan::for_setup_prefix(id)?;
-    let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+    let sources: [&dyn CommitmentSource<F>; 1] = [source];
     executor.preflight_portable_export(&plan, &sources)?;
     let output = executor.execute_full(&plan, &sources)?;
     let (terminal_payload, prover_state) = output.into_parts();
@@ -160,6 +174,7 @@ mod tests {
         CpuOuterCommitOperation, NttExecutionRequirements,
     };
     use crate::AkitaProverSetup;
+    use akita_params::FoldChallengeDistribution;
     use akita_params::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
         CompressionChainPlan, InnerCommitMatrixParams, OpeningClaimsLayout,
@@ -184,7 +199,7 @@ mod tests {
             2,
             3,
             2,
-            SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+            FoldChallengeDistribution::production_for_ring_dim(ring_dimension)
                 .expect("production challenge"),
         )
         .with_decomp(

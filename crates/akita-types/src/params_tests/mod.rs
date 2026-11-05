@@ -1,3 +1,4 @@
+use akita_params::FoldChallengeDistribution;
 use akita_params::layout::params::*;
 use akita_params::test_fixtures::{
     sample_layout_lp, sample_multi_group_root_params, sample_params_only,

@@ -3,22 +3,27 @@
 #![cfg(feature = "labinius")]
 
 use akita_algebra::MinusTrinomial;
-use akita_challenges::{BinaryChallengeDraw, BinaryChallengeSampler};
+use akita_challenges::BinaryChallengeSampler;
+use akita_types::FoldDraw;
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
     lowered::{coefficient_weights, LoweredChallenges, LoweredPublic, LoweredRootLayout},
     AdmittedRootSetup,
 };
 use akita_params::sis::labinius::LabiniusRootProfile;
+use akita_types::proof::AkitaSetupSeed;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime64Offset59};
-use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use std::{hint::black_box, time::Duration};
 
 struct Draw;
-impl BinaryChallengeDraw for Draw {
-    fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-        Ok([0x53; 32])
+impl FoldDraw for Draw {
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![0x53; len])
     }
 }
 
@@ -38,7 +43,7 @@ fn pair<F: Field + CanonicalEncoding, E: ExtField<F>>(criterion: &mut Criterion,
     let layout =
         LoweredRootLayout::new::<F, E, _, _>(setup, admitted.shape()).expect("layout admits");
     let fold = BinaryChallengeSampler::new(setup.profile().clone())
-        .sample_challenges(&mut Draw, b"weights", setup.columns())
+        .sample_challenges(&mut Draw, setup.columns())
         .expect("fold samples");
     // The commitment rows alone: the matrix pass dominates, and neither the
     // parity row nor the prime row scans the matrix.

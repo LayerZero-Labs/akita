@@ -552,9 +552,18 @@ impl<F: MetalField> OneHotWorkspace<'_, F> {
         };
         let mut batch = Batch::new(device)?;
         for (params, grid_threads) in &dispatches {
-            // SAFETY: the matrix, hot-index and output (or partial) buffers were sized above for
-            // `params`: every shape and encoded width is validated before the workspace is
-            // (re)allocated, and the kernel bounds its fields by `params.fields`.
+            // SAFETY: each dispatch is `segments * rows * block_groups` full
+            // threadgroups of `lanes * D / COEFFS_PER_THREAD` threads, with
+            // `lanes <= MAX_LANES`. A threadgroup reads A words of row `row < rows` at
+            // position `p < positions` (column `p * digits < columns`), below the
+            // checked `matrix_len`; `hot` words `hot_offset + chunk` only for
+            // `chunk < chunks`, inside this source's range of `hot`; and staged entries
+            // below `TILE_POSITIONS * D` in `a_tile`. It writes the output coefficients
+            // `out_offset + segment * len + (block * rows + row) * D + k` for its own
+            // blocks `block < blocks` and `k < D`, below `(segment + 1) * len`: the
+            // `segments * len` partials when segments > 1, else `out` of length `len`.
+            // No two threads write the same word, and the threadgroup barriers order
+            // the tile and staging writes before every read.
             unsafe {
                 batch.dispatch_unchecked(
                     pipeline,
@@ -569,8 +578,9 @@ impl<F: MetalField> OneHotWorkspace<'_, F> {
             }?;
         }
         if let (Some(partials), Some(combine_pipeline)) = (partials, combine_pipeline) {
-            // SAFETY: `akita_onehot_combine` returns for `i >= len`; `partials` holds `segments x
-            // len` elements and `out` holds `len`.
+            // SAFETY: thread `i < len` reads `partials[s * len + i]` for
+            // `s < segments`, below `partials.len() = segments * len`, and writes only
+            // `out[i]`, with `out.len() = len`. Threads past `len` return at once.
             unsafe {
                 batch.dispatch_unchecked(
                     combine_pipeline,

@@ -29,6 +29,7 @@ fn sample_encoding_has_three_digits_and_plain_bit_width_ranges() {
     assert_eq!(encoding.image_digit_count(), 7);
     assert_eq!(encoding.image_digit_slots(), 8);
     assert_eq!(encoding.image_offset(), 8 * (16u128.pow(7) - 1) / 15);
+    // Three A rows round up to four.
     assert_eq!(1 << encoding.image_table_log_len(), 8 * 1_024 * 256 * 4);
     assert_eq!(1 << encoding.prime_table_log_len(), 1_024 * 256);
     assert_eq!(encoding.a_carry_len(), 3 * 648);

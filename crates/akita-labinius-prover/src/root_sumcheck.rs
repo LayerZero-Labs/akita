@@ -6,12 +6,13 @@
 use akita_error::AkitaError;
 use akita_labinius_verifier::channel::ClearChannel;
 use akita_labinius_verifier::root_sumcheck::{
-    bind_root_sumcheck_instance, product_shape, root_instance, RootSumcheckInstance,
+    bind_root_sumcheck_instance, product_shape, RootSumcheckInstance,
 };
-use akita_sumcheck::{FusedRounds, SumcheckKernel};
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use akita_sumcheck::{
+    prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
+};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{prove_single, ProverRoundContext};
 
 /// Product instance for `sum_x Y(x) * K_Y(x)` of two field tables over the
 /// challenge field: a table of field elements and its public weights. The
@@ -57,42 +58,18 @@ impl<F: Field> ProductSumcheck<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ProductSumcheck<F> {
+impl<F: Field> SumcheckInstanceProver<F> for ProductSumcheck<F> {
     fn num_rounds(&self) -> usize {
-        Self::num_rounds(self)
-    }
-
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        claim: F,
-    ) -> Result<UnivariatePoly<F>, AkitaError> {
-        Ok(self.compute_round_univariate(round, claim))
-    }
-
-    fn bind_challenge(&mut self, round: usize, challenge: F) -> Result<(), AkitaError> {
-        self.ingest_challenge(round, challenge);
-        Ok(())
-    }
-}
-
-impl<F: Field> ProductSumcheck<F> {
-    /// Number of rounds, one per table variable.
-    pub fn num_rounds(&self) -> usize {
         self.rounds
     }
-
-    /// The instance's claimed sum.
-    pub fn input_claim(&self) -> F {
+    fn degree_bound(&self) -> usize {
+        2
+    }
+    fn input_claim(&self) -> F {
         self.claim
     }
 
-    /// The round polynomial of the next unbound variable.
-    pub fn compute_round_univariate(
-        &mut self,
-        _round: usize,
-        _previous_claim: F,
-    ) -> UnivariatePoly<F> {
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: F) -> UnivariatePoly<F> {
         let mut values = [F::zero(); 3];
         for (y, ky) in self.y.chunks_exact(2).zip(self.ky.chunks_exact(2)) {
             for (node, value) in values.iter_mut().enumerate() {
@@ -103,8 +80,7 @@ impl<F: Field> ProductSumcheck<F> {
         UnivariatePoly::from_evals(&values)
     }
 
-    /// Bind the next unbound variable to `challenge`.
-    pub fn ingest_challenge(&mut self, _round: usize, challenge: F) {
+    fn ingest_challenge(&mut self, _round: usize, challenge: F) {
         if self.next_round >= self.rounds {
             return;
         }
@@ -129,14 +105,16 @@ pub fn prove_product_rounds<F, E, C>(
 ) -> Result<(Vec<E>, E), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    C: ProverRoundContext<E, Error = AkitaError> + ClearChannel,
+    E: ExtField<F>,
+    C: SumcheckProverChannel<E> + ClearChannel,
 {
     let num_vars = instance.num_rounds();
     let shape = product_shape(num_vars)?;
     bind_root_sumcheck_instance(channel, RootSumcheckInstance::Product, invocation, num_vars)?;
-    let sumcheck = root_instance(shape, invocation, instance.input_claim());
-    let reduction =
-        prove_single::<F, E, AkitaError, C>(&mut FusedRounds(instance), &sumcheck, channel)?;
-    Ok((reduction.challenges, reduction.output_claim))
+    prove_sumcheck::<F, E, C, _>(
+        &mut InfallibleSumcheck(instance),
+        channel,
+        shape,
+        invocation,
+    )
 }

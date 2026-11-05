@@ -1,3 +1,5 @@
+mod ordinary_prefix_bytes;
+
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
@@ -41,7 +43,7 @@ impl CommitmentConfig for WrongModulusProfileConfig {
 
     fn ring_challenge_config(
         d: usize,
-    ) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError> {
+    ) -> Result<akita_params::FoldChallengeDistribution, AkitaError> {
         Cfg::ring_challenge_config(d)
     }
 

@@ -4,7 +4,7 @@ use akita_algebra::binary::{
     field_switch::{embed_source, SwitchField},
     BinaryField162,
 };
-use akita_algebra::trinomial::{PlusTrinomial, TrinomialModulus, TrinomialRing};
+use jolt_algebra::ring::{PlusTrinomial, TrinomialModulus, TrinomialRing};
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
 use akita_error::AkitaError;
 use jolt_algebra::checked;

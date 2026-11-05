@@ -475,8 +475,8 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) challenge_order: akita_params::ChallengeFieldOrder,
     pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
-    pub(crate) ring_challenge_config: &'a (dyn Fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>
-             + Sync),
+    pub(crate) ring_challenge_config:
+        &'a (dyn Fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError> + Sync),
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<&'a SetupFieldBudget>,
     pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,
@@ -489,6 +489,9 @@ pub(crate) struct SuffixCtx<'a> {
     /// Approved scalar schedule whose structural suffix choices guide adapted
     /// planning. All length-, rank-, and security-derived values are rebuilt.
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
+    /// Extension seam: restrict a caller-selected root setup edge without
+    /// changing canonical planning; <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub(crate) root_setup_mode: Option<akita_params::SetupContributionMode>,
     pub(crate) root_source_contract: Option<akita_params::sis::CommittedSourceContract>,
     pub(crate) precommitted_source_contracts: &'a [akita_params::sis::CommittedSourceContract],
     pub(crate) level_zero_is_root: bool,

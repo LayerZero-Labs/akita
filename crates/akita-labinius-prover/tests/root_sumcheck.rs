@@ -3,24 +3,20 @@
 mod common;
 
 use akita_algebra::poly::multilinear_eval;
-use akita_error::AkitaError;
 use akita_labinius_prover::root_sumcheck::{prove_product_rounds, ProductSumcheck};
 use akita_labinius_verifier::{
     channel::{self, RootChallengeChannel, RootSumcheckProverChannel, RootSumcheckVerifierChannel},
     grinding::RootGrindingPlan,
     root_sumcheck::{
         bind_root_sumcheck_instance, combined_input_claim, combined_shape, combined_terminal,
-        product_shape, product_terminal, root_instance, verify_combined_rounds,
-        verify_product_rounds, RootSumcheckInstance,
+        product_shape, product_terminal, verify_combined_rounds, verify_product_rounds,
+        RootSumcheckInstance,
     },
 };
-use akita_sumcheck::{FusedRounds, SumcheckKernel};
+use akita_sumcheck::{prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver};
 use common::combined::CombinedRootSumcheck;
 use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_sumcheck::{
-    prove_single, ProverRoundContext, SumcheckRole, SumcheckSite, VerifierRoundContext,
-};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 type F = Prime128Offset275;
@@ -141,15 +137,15 @@ fn rounds_match_the_brute_force_definition() {
         let plan =
             RootGrindingPlan::sumcheck_rounds::<F, F>(&[(INVOCATION, product_shape(n).unwrap())])
                 .unwrap();
-        let mut state = channel::new_prover::<common::TestSponge>().unwrap();
-        let mut prover = RootSumcheckProverChannel::<F, common::TestSponge>::new(&mut state);
+        let mut state = channel::new_prover();
+        let mut prover = RootSumcheckProverChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut prover, plan.clone()).unwrap();
         let (rho, _) =
             prove_product_rounds::<F, F, _>(&mut instance, &mut prover, INVOCATION).unwrap();
         RootChallengeChannel::<F>::finish_schedule(&mut prover).unwrap();
         let proof = channel::finish_prover(state);
-        let mut state = channel::new_verifier::<common::TestSponge>(&proof).unwrap();
-        let mut verifier = RootSumcheckVerifierChannel::<F, common::TestSponge>::new(&mut state);
+        let mut state = channel::new_verifier(&proof);
+        let mut verifier = RootSumcheckVerifierChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut verifier, plan).unwrap();
         let replay = verify_product_rounds::<F, F, _>(&mut verifier, INVOCATION, n, claim).unwrap();
         RootChallengeChannel::<F>::finish_schedule(&mut verifier).unwrap();
@@ -164,18 +160,23 @@ fn rounds_match_the_brute_force_definition() {
 
 #[test]
 fn unscheduled_adapters_reject_the_first_round_challenge() {
-    let mut state = channel::new_prover::<common::TestSponge>().unwrap();
-    let mut prover = RootSumcheckProverChannel::<F, common::TestSponge>::new(&mut state);
-    let first = SumcheckSite {
-        invocation: INVOCATION,
-        round: 0,
-        role: SumcheckRole::Challenge,
-    };
-    assert!(ProverRoundContext::<F>::challenge(&mut prover, first).is_err());
+    let mut state = channel::new_prover();
+    let mut prover = RootSumcheckProverChannel::<F>::new(&mut state);
+    assert!(akita_sumcheck::SumcheckProverChannel::<F>::round_challenge(
+        &mut prover,
+        INVOCATION,
+        0,
+    )
+    .is_err());
 
-    let mut state = channel::new_verifier::<common::TestSponge>(&[]).unwrap();
-    let mut verifier = RootSumcheckVerifierChannel::<F, common::TestSponge>::new(&mut state);
-    assert!(VerifierRoundContext::<F>::challenge(&mut verifier, first).is_err());
+    let mut state = channel::new_verifier(&[]);
+    let mut verifier = RootSumcheckVerifierChannel::<F>::new(&mut state);
+    assert!(akita_sumcheck::SumcheckVerifierChannel::<F>::round_challenge(
+        &mut verifier,
+        INVOCATION,
+        0,
+    )
+    .is_err());
 }
 
 // Test-only cheating path. It evaluates the original field table directly and
@@ -186,25 +187,26 @@ struct CheatingCombined {
     prefix: Vec<F>,
 }
 
-impl SumcheckKernel<F> for CheatingCombined {
+impl SumcheckInstanceProver<F> for CheatingCombined {
     fn num_rounds(&self) -> usize {
         self.f.tau.len()
     }
-    fn round_polynomial(
-        &mut self,
-        _round: usize,
-        claim: F,
-    ) -> Result<UnivariatePoly<F>, AkitaError> {
-        let values: Vec<_> = (0..=ALPHABET as usize + 1)
+    fn degree_bound(&self) -> usize {
+        ALPHABET as usize + 1
+    }
+    fn input_claim(&self) -> F {
+        self.f.beta * self.f.s
+    }
+    fn compute_round_univariate(&mut self, _round: usize, claim: F) -> UnivariatePoly<F> {
+        let values: Vec<_> = (0..=self.degree_bound())
             .map(|t| brute_round(&self.f, &self.prefix, F::from_u64(t as u64)))
             .collect();
         let mut coefficients = UnivariatePoly::from_evals(&values).into_coefficients();
         coefficients[1] += claim - values[0] - values[1];
-        Ok(UnivariatePoly::new(coefficients))
+        UnivariatePoly::new(coefficients)
     }
-    fn bind_challenge(&mut self, _round: usize, r: F) -> Result<(), AkitaError> {
+    fn ingest_challenge(&mut self, _round: usize, r: F) {
         self.prefix.push(r);
-        Ok(())
     }
 }
 
@@ -235,23 +237,23 @@ fn a_digit_outside_the_alphabet_fails_the_terminal_check() {
             f,
             prefix: Vec::new(),
         };
-        let mut state = channel::new_prover::<common::TestSponge>().unwrap();
-        let mut prover = RootSumcheckProverChannel::<F, common::TestSponge>::new(&mut state);
+        let mut state = channel::new_prover();
+        let mut prover = RootSumcheckProverChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut prover, plan.clone()).unwrap();
         bind_root_sumcheck_instance(&mut prover, RootSumcheckInstance::Combined, INVOCATION, 2)
             .unwrap();
-        let claim = cheat.f.beta * cheat.f.s;
-        prove_single::<F, F, AkitaError, _>(
-            &mut FusedRounds(&mut cheat),
-            &root_instance(shape, INVOCATION, claim),
+        prove_sumcheck::<F, F, _, _>(
+            &mut InfallibleSumcheck(&mut cheat),
             &mut prover,
+            shape,
+            INVOCATION,
         )
         .unwrap();
         RootChallengeChannel::<F>::finish_schedule(&mut prover).unwrap();
         let proof = channel::finish_prover(state);
         let f = &cheat.f;
-        let mut state = channel::new_verifier::<common::TestSponge>(&proof).unwrap();
-        let mut verifier = RootSumcheckVerifierChannel::<F, common::TestSponge>::new(&mut state);
+        let mut state = channel::new_verifier(&proof);
+        let mut verifier = RootSumcheckVerifierChannel::<F>::new(&mut state);
         RootChallengeChannel::<F>::schedule(&mut verifier, plan).unwrap();
         let replay =
             verify_combined_rounds::<F, F, _>(&mut verifier, INVOCATION, 2, f.beta, f.s).unwrap();

@@ -50,5 +50,8 @@ pub use protocol::{
 pub use protocol::{prove_masked_prefix, ResidualOpening};
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 
+#[cfg(feature = "labinius-trinomial")]
+#[doc(hidden)]
+pub mod binary_field_switch;
 mod setup_batch;
 pub use setup_batch::prove_setup_batch;

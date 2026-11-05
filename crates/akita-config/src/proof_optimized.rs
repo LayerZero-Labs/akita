@@ -51,17 +51,16 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
-/// [`jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim`].
+/// [`akita_params::FoldChallengeDistribution::production_for_ring_dim`].
 /// Offline planning and artifact admission call this hook with each
 /// schedule-selected A dimension. The flat public matrix has no generation
 /// dimension.
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
-) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError> {
-    let cfg = jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(d)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}"))
-        })?;
+) -> Result<akita_params::FoldChallengeDistribution, AkitaError> {
+    let cfg = akita_params::FoldChallengeDistribution::production_for_ring_dim(d).ok_or_else(
+        || AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}")),
+    )?;
     cfg.validate_for_ring_dim(d)
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(cfg)
@@ -172,7 +171,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<jolt_crypto::challenge::SparseChallengeConfig, akita_error::AkitaError> {
+            ) -> Result<akita_params::FoldChallengeDistribution, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 

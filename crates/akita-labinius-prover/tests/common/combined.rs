@@ -1,16 +1,19 @@
 //! Independent dense combined sumcheck for tests and benchmark baselines.
 
 use akita_error::AkitaError;
+
+use jolt_algebra::checked;
 use akita_labinius_verifier::channel::ClearChannel;
 use akita_labinius_verifier::root_sumcheck::{
     alphabet_polynomial, bind_root_sumcheck_instance, combined_input_claim, combined_shape,
-    root_instance, RootSumcheckInstance,
+    RootSumcheckInstance,
 };
-use akita_sumcheck::{FusedRounds, SumcheckKernel};
-use jolt_algebra::checked;
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use akita_sumcheck::{
+    prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
+};
+use akita_transcript::ChallengeCodec;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{prove_single, ProverRoundContext};
 
 /// Combined alphabet-and-linear-relation instance over the coefficient field.
 ///
@@ -80,7 +83,7 @@ impl<F: Field> CombinedRootSumcheck<F> {
             }
         }
 
-        let width = checked::sum([shape.degree, 1]).ok_or_else(invalid)?;
+        let width = checked::sum([shape.degree_bound(), 1]).ok_or_else(invalid)?;
         let lut_len =
             checked::product([alphabet_size, alphabet_size, width]).ok_or_else(invalid)?;
         let mut digit_pair_values = Vec::new();
@@ -105,7 +108,7 @@ impl<F: Field> CombinedRootSumcheck<F> {
             equality_prefix: F::one(),
             beta,
             claim: combined_input_claim(beta, s),
-            degree: shape.degree,
+            degree: shape.degree_bound(),
             next_round: 0,
             digits: Some(digits),
             digit_pair_values,
@@ -122,41 +125,18 @@ impl<F: Field> CombinedRootSumcheck<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CombinedRootSumcheck<F> {
+impl<F: Field> SumcheckInstanceProver<F> for CombinedRootSumcheck<F> {
     fn num_rounds(&self) -> usize {
-        Self::num_rounds(self)
-    }
-
-    fn round_polynomial(
-        &mut self,
-        round: usize,
-        claim: F,
-    ) -> Result<UnivariatePoly<F>, AkitaError> {
-        Ok(self.compute_round_univariate(round, claim))
-    }
-
-    fn bind_challenge(&mut self, round: usize, challenge: F) -> Result<(), AkitaError> {
-        self.ingest_challenge(round, challenge);
-        Ok(())
-    }
-}
-
-impl<F: Field> CombinedRootSumcheck<F> {
-    pub(crate) fn num_rounds(&self) -> usize {
         self.tau.len()
     }
-    pub(crate) fn degree_bound(&self) -> usize {
+    fn degree_bound(&self) -> usize {
         self.degree
     }
-    pub(crate) fn input_claim(&self) -> F {
+    fn input_claim(&self) -> F {
         self.claim
     }
 
-    pub(crate) fn compute_round_univariate(
-        &mut self,
-        _round: usize,
-        _previous_claim: F,
-    ) -> UnivariatePoly<F> {
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: F) -> UnivariatePoly<F> {
         let Some(&tau) = self.tau.get(self.next_round) else {
             return UnivariatePoly::zero();
         };
@@ -204,7 +184,7 @@ impl<F: Field> CombinedRootSumcheck<F> {
         UnivariatePoly::from_evals(&values[..width])
     }
 
-    pub(crate) fn ingest_challenge(&mut self, _round: usize, challenge: F) {
+    fn ingest_challenge(&mut self, _round: usize, challenge: F) {
         let Some(&tau) = self.tau.get(self.next_round) else {
             return;
         };
@@ -241,8 +221,8 @@ pub(crate) fn prove_combined_rounds<F, E, C>(
 ) -> Result<(Vec<E>, E), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    C: ProverRoundContext<E, Error = AkitaError> + ClearChannel,
+    E: ExtField<F> + ChallengeCodec,
+    C: SumcheckProverChannel<E> + ClearChannel,
 {
     let num_vars = instance.num_rounds();
     let shape = combined_shape(num_vars)?;
@@ -252,8 +232,10 @@ where
         invocation,
         num_vars,
     )?;
-    let sumcheck = root_instance(shape, invocation, instance.input_claim());
-    let reduction =
-        prove_single::<F, E, AkitaError, C>(&mut FusedRounds(instance), &sumcheck, channel)?;
-    Ok((reduction.challenges, reduction.output_claim))
+    prove_sumcheck::<F, E, C, _>(
+        &mut InfallibleSumcheck(instance),
+        channel,
+        shape,
+        invocation,
+    )
 }

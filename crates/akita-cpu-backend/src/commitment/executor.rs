@@ -394,7 +394,6 @@ where
     }
 
     /// Validate a complete portable-export route before commitment arithmetic.
-    #[cfg(test)]
     pub(crate) fn preflight_portable_export(
         &self,
         plan: &CommitmentExecutionPlan,
@@ -772,6 +771,7 @@ mod tests {
         PolynomialTypeSelection, PortableStatePolicy, StateOwnerCapability,
     };
     use crate::{AkitaProverSetup, DensePoly};
+    use akita_params::FoldChallengeDistribution;
     use akita_params::{
         CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
     };
@@ -790,7 +790,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -928,7 +928,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -1062,7 +1062,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -1357,7 +1357,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -1412,7 +1412,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();

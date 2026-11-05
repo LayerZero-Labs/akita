@@ -3,13 +3,13 @@
 mod verifier_view;
 
 use crate::audit::ScheduleAdmission;
+use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{
     digest_descriptor_bytes, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
     ScheduleRowDigest, AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
 use akita_params::{ScheduleLookupKey, ScheduleLookupOrderKey};
-use jolt_crypto::challenge::SparseChallengeConfig;
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -172,7 +172,7 @@ impl ValidatedScheduleCatalog {
         family_name: impl Into<String>,
         rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<Self, AkitaError> {
         Self::try_new_admitting(
             family_name,
@@ -194,7 +194,7 @@ impl ValidatedScheduleCatalog {
         family_name: impl Into<String>,
         rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
         admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
         let family_name = family_name.into();
@@ -216,6 +216,23 @@ impl ValidatedScheduleCatalog {
                 ResolvedScheduleRow::try_new_admitting(profiles, schedule, policy, admission)?;
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
             resolved.push(row);
+        }
+        Self::from_resolved_rows(family_name, resolved, policy, admission)
+    }
+
+    /// Extension seam: assemble explicitly audited rows without changing the
+    /// ordinary artifact decoder; <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub(crate) fn from_resolved_rows(
+        family_name: String,
+        mut resolved: Vec<ResolvedScheduleRow>,
+        policy: &PlannerPolicy,
+        admission: ScheduleAdmission,
+    ) -> Result<Self, AkitaError> {
+        validate_family_name(&family_name)?;
+        if resolved.is_empty() || resolved.len() > MAX_TRUSTED_CATALOG_ROWS {
+            return Err(AkitaError::InvalidSetup(
+                "trusted catalog row count is outside limits".into(),
+            ));
         }
         resolved.sort_by_key(|row| row.selection().row_digest);
         let mut rows_by_key = resolved
@@ -279,7 +296,7 @@ impl ValidatedScheduleCatalog {
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<Self, AkitaError> {
         Self::from_artifact_bytes_admitting(
             bytes,
@@ -301,7 +318,7 @@ impl ValidatedScheduleCatalog {
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
         admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
         if bytes.is_empty() || bytes.len() > MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES {
@@ -383,6 +400,9 @@ impl ValidatedScheduleCatalog {
     /// Encode this validated catalog as the canonical versioned artifact.
     pub fn to_artifact_bytes(&self) -> Result<Vec<u8>, AkitaError> {
         self.validate_complete()?;
+        for row in &self.rows_by_digest {
+            row.require_ordinary_artifact()?;
+        }
         let artifact = ScheduleCatalogArtifactRefV1 {
             magic: ARTIFACT_MAGIC,
             version: ARTIFACT_VERSION,
@@ -432,7 +452,7 @@ impl ValidatedScheduleCatalog {
         &self,
         expected_family_name: &str,
         policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<(), AkitaError> {
         if self.family_name != expected_family_name {
             return Err(AkitaError::InvalidSetup(format!(
@@ -890,11 +910,11 @@ fn catalog_digest(
     digest_descriptor_bytes(&bytes)
 }
 
-fn validate_schedule_challenge_hooks(
+pub(crate) fn validate_schedule_challenge_hooks(
     schedule: &FoldSchedule,
-    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    ring_challenge_config: &impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
 ) -> Result<(), AkitaError> {
-    let validate = |actual: SparseChallengeConfig,
+    let validate = |actual: FoldChallengeDistribution,
                     method: akita_params::OpeningMethod,
                     ring_dimension: usize,
                     uses_l2: bool,
@@ -902,14 +922,14 @@ fn validate_schedule_challenge_hooks(
         let expected = match method {
             akita_params::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
-            } => SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension)
+            } => FoldChallengeDistribution::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} uses unsupported challenge subring D={challenge_subring_dimension}"
                     ))
                 })?,
             akita_params::OpeningMethod::EvaluationTrace if uses_l2 => {
-                jolt_crypto::challenge::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
+                jolt_crypto::challenge::selective_l2_challenge_config(ring_dimension).map(akita_params::FoldChallengeDistribution::SignedSparse).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "{position} has no selective L2 challenge config for D={ring_dimension}"
                     ))
@@ -985,6 +1005,30 @@ mod tests {
     struct TestRawArtifact<'a> {
         #[serde(borrow)]
         rows: Vec<&'a RawValue>,
+    }
+
+    #[test]
+    fn signed_sparse_selector_preserves_legacy_json_and_postcard_bytes() {
+        for sparse in [
+            akita_params::FoldChallengeDistribution::pm1_only(0),
+            akita_params::FoldChallengeDistribution::pm1_only(3),
+            jolt_crypto::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+            akita_params::FoldChallengeDistribution::production_for_ring_dim(128).unwrap(),
+        ] {
+            let family = FoldChallengeDistribution::SignedSparse(sparse);
+            let old_json = serde_json::to_vec(&sparse).unwrap();
+            assert_eq!(serde_json::to_vec(&family).unwrap(), old_json);
+            assert_eq!(
+                serde_json::from_slice::<FoldChallengeDistribution>(&old_json).unwrap(),
+                family,
+            );
+            let old_postcard = postcard::to_allocvec(&sparse).unwrap();
+            assert_eq!(postcard::to_allocvec(&family).unwrap(), old_postcard);
+            assert_eq!(
+                postcard::from_bytes::<FoldChallengeDistribution>(&old_postcard).unwrap(),
+                family,
+            );
+        }
     }
 
     #[test]

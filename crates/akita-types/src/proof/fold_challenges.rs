@@ -1,6 +1,6 @@
 //! Canonical method-aware fold-challenge dispatch shared by prover and verifier.
 
-use crate::{FoldChallengeDrawDomain, FoldDraw};
+use crate::{FoldChallengeDraw, FoldChallengeDrawDomain, FoldDraw};
 use akita_error::AkitaError;
 use jolt_algebra::{ExtField, Field};
 use jolt_crypto::challenge::Challenges;
@@ -60,7 +60,7 @@ where
                 params.inner_commit_matrix_params().ring_dimension(),
                 challenge_subring_dimension,
             )?;
-            if family.config() != geometry.fold_challenge_config() {
+            if family.distribution() != geometry.fold_challenge_config() {
                 return Err(AkitaError::InvalidSetup(
                     "coefficient-packing challenge config is not the audited production family"
                         .into(),

@@ -22,6 +22,11 @@ pub use fields::{
     PRIME64_OFFSET_23703_MODULUS,
 };
 
+pub mod adjoint;
+pub mod image;
+pub mod module_map;
+pub mod signed;
+
 mod limb;
 pub use limb::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
 
@@ -36,7 +41,7 @@ mod sealed {
 ///
 /// The sealed implementations ensure a ring cannot be instantiated with an
 /// arbitrary middle coefficient.
-pub trait TrinomialModulus: sealed::Sealed + Copy + fmt::Debug + Eq {
+pub trait TrinomialModulus: sealed::Sealed + Copy + fmt::Debug + Eq + Send + Sync {
     /// Middle coefficient in `X^D + middle * X^(D/2) + 1`.
     const MIDDLE_COEFFICIENT: i8;
 

@@ -24,9 +24,9 @@ use akita_algebra::{
 };
 use akita_challenges::BinaryChallengeSampler;
 use akita_error::AkitaError;
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_sumcheck::VerifierRoundContext;
-use jolt_transcript::Sponge;
+use akita_sumcheck::SumcheckVerifierChannel;
+use akita_transcript::ChallengeCodec;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Replay one root reduction and discharge the committed-table evaluations.
 /// Oracle errors reject; the channel is left open for a surrounding protocol.
@@ -52,7 +52,7 @@ use jolt_transcript::Sponge;
 /// statement. The channel receives and checks the site's proof-of-work nonce
 /// before the challenge; a missing, non-canonical, out-of-range or failing
 /// nonce rejects.
-pub fn verify_root_reduction<H, F, E, const D: usize, M, O, S>(
+pub fn verify_root_reduction<'proof, H, F, E, const D: usize, M, O, S>(
     admitted: &AdmittedRootSetup<D, M>,
     statement: &RootStatement<'_, H, E>,
     oracle: &mut O,
@@ -61,10 +61,10 @@ pub fn verify_root_reduction<H, F, E, const D: usize, M, O, S>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootVerifierOracle<E>,
-    S: RootChallengeChannel<E> + VerifierRoundContext<E, Error = AkitaError>,
+    S: RootChallengeChannel<E> + SumcheckVerifierChannel<'proof, E>,
 {
     let layout = bind_root_statement::<H, F, E, D, M, S>(
         admitted,
@@ -99,12 +99,7 @@ where
     let mut sampler = BinaryChallengeSampler::new(setup.profile().clone());
     // The nonce only selects the challenges; the digit alphabet check on the
     // committed response is what binds the prover.
-    let fold = channel.fold_challenges(
-        &mut sampler,
-        b"akita/labinius/root-fold/v1",
-        setup.columns(),
-        &mut 0,
-    )?;
+    let fold = channel.fold_challenges(&mut sampler, setup.columns(), &mut 0)?;
     oracle.bind_response(&layout, channel)?;
     let mut ka = zero_vec(layout.encoding().a_carry_len())?;
     exchange_root_auxiliary(
@@ -217,7 +212,7 @@ where
 }
 
 /// Verify an entire standalone root proof, rejecting truncation and trailing bytes.
-pub fn verify_root_reduction_bytes<H, F, E, const D: usize, M, O, Sp: Sponge>(
+pub fn verify_root_reduction_bytes<H, F, E, const D: usize, M, O>(
     admitted: &AdmittedRootSetup<D, M>,
     statement: &RootStatement<'_, H, E>,
     oracle: &mut O,
@@ -226,17 +221,47 @@ pub fn verify_root_reduction_bytes<H, F, E, const D: usize, M, O, Sp: Sponge>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootVerifierOracle<E>,
 {
-    let mut state = channel::new_root_verifier::<Sp>(proof)?;
+    let mut state = channel::new_root_verifier(proof);
     let claims = verify_root_reduction::<H, F, E, D, M, O, _>(
         admitted,
         statement,
         oracle,
-        &mut RootSumcheckVerifierChannel::<F, Sp>::new(&mut state),
+        &mut RootSumcheckVerifierChannel::<F>::new(&mut state),
     )?;
     channel::finish_verifier(state)?;
     Ok(claims)
+}
+
+/// Verify one root reduction on a borrowed native session without requiring EOF.
+///
+/// The same public protocol/version/setup identity precedes all its challenges.
+/// A failed opening permanently invalidates the caller's verifier session.
+///
+pub fn verify_root_reduction_in_session<H, F, E, const D: usize, M, O>(
+    admitted: &AdmittedRootSetup<D, M>,
+    statement: &RootStatement<'_, H, E>,
+    oracle: &mut O,
+    session: &mut akita_transcript::VerifierChannel<'_>,
+) -> Result<RootEvaluationClaims<E>, AkitaError>
+where
+    H: SwitchField,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + ChallengeCodec,
+    M: TrinomialModulus,
+    O: RootVerifierOracle<E>,
+{
+    let result = (|| {
+        channel::bind_root_context(session, &admitted.identity_bytes::<H>()?)?;
+        verify_root_reduction::<H, F, E, D, M, O, _>(
+            admitted,
+            statement,
+            oracle,
+            &mut RootSumcheckVerifierChannel::<F>::new(session),
+        )
+    })();
+    akita_transcript::ProofChannel::guard(session, result)
 }

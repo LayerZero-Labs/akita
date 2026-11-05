@@ -1,6 +1,5 @@
-use crate::{FoldChallengeDrawDomain, FoldChallengeFamily};
+use crate::{FoldChallengeDistribution, FoldChallengeDrawDomain, FoldChallengeFamily};
 use akita_error::AkitaError;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use crate::descriptor_bytes::push_usize;
 use crate::schedule::GroupCommitPhaseParams;
@@ -106,7 +105,9 @@ pub struct GroupOpeningPlan {
     /// Procedure used to reduce and open the group's coefficients.
     pub opening_method: OpeningMethod,
     /// Sparse fold-challenge family certified for this group's A ring or subring.
-    pub fold_challenge_config: SparseChallengeConfig,
+    /// Extension seam: challenge selection for binary source groups
+    /// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub fold_challenge_config: FoldChallengeDistribution,
     /// Opening basis used by the shared D matrix for fresh `e_hat` digits.
     pub log_basis_open: u32,
     /// Gadget decomposition depth for fresh `e_hat` values.
@@ -119,7 +120,7 @@ impl GroupOpeningPlan {
     /// Build the opening plan used by every schedule before subring packing.
     #[must_use]
     pub const fn evaluation_trace(
-        fold_challenge_config: SparseChallengeConfig,
+        fold_challenge_config: FoldChallengeDistribution,
         log_basis_open: u32,
         num_digits_open: usize,
         num_digits_fold: usize,
@@ -232,7 +233,7 @@ impl GroupOpenPhaseParams {
         num_digits_fold: usize,
         policy: PrecommittedGroupAdmissionPolicy,
         opening_method: OpeningMethod,
-        fold_challenge_config: SparseChallengeConfig,
+        fold_challenge_config: FoldChallengeDistribution,
         log_basis_open: u32,
     ) -> Result<Self, AkitaError> {
         Self::admit_with_setup_natural_len(
@@ -253,7 +254,7 @@ impl GroupOpenPhaseParams {
         num_digits_fold: usize,
         policy: PrecommittedGroupAdmissionPolicy,
         opening_method: OpeningMethod,
-        fold_challenge_config: SparseChallengeConfig,
+        fold_challenge_config: FoldChallengeDistribution,
         log_basis_open: u32,
     ) -> Result<Self, AkitaError> {
         if let Some(natural_len) = setup_natural_len {
@@ -508,11 +509,7 @@ impl GroupOpenPhaseParams {
             OpeningMethod::EvaluationTrace => {
                 let rejection =
                     matches!(matrix.security_route(), InnerCommitSecurityRoute::L2 { .. })
-                        .then(|| {
-                            jolt_crypto::challenge::selective_l2_operator_norm_rejection(
-                                d_a, &config,
-                            )
-                        })
+                        .then(|| config.operator_norm_rejection(d_a))
                         .flatten();
                 FoldChallengeFamily::new(
                     FoldChallengeDrawDomain::EvaluationTrace,
@@ -591,7 +588,7 @@ impl GroupOpenPhaseParams {
 
     #[inline]
     #[must_use]
-    pub fn fold_challenge_config(&self) -> SparseChallengeConfig {
+    pub fn fold_challenge_config(&self) -> FoldChallengeDistribution {
         self.opening.fold_challenge_config
     }
 

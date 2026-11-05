@@ -5,8 +5,8 @@
 //! `L∞` bucket ready to feed [`super::ajtai_key::min_secure_rank`]. The folded witness `z`
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
+use crate::FoldChallengeDistribution;
 use akita_error::AkitaError;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use super::ajtai_key::{
     ceil_supported_linf_bound, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
@@ -176,7 +176,7 @@ pub const TERMINAL_RESPONSE_WIRE_LINF_LIMIT: u128 = i16::MAX as u128;
 /// against another's challenge mass is not a valid bound.
 pub fn certified_terminal_response_linf_cap(
     inner_commit_matrix: &super::ajtai_key::InnerCommitMatrixParams,
-    fold_challenge_config: &SparseChallengeConfig,
+    fold_challenge_config: &FoldChallengeDistribution,
 ) -> Result<u128, AkitaError> {
     let table_key = inner_commit_matrix.sis_table_key().ok_or_else(|| {
         AkitaError::InvalidSetup(
@@ -230,7 +230,7 @@ pub fn rounded_up_role_a_inf_norm(
     sis_modulus_profile: SisModulusProfileId,
     d: usize,
     log_basis_response: u32,
-    fold_challenge_config: &SparseChallengeConfig,
+    fold_challenge_config: &FoldChallengeDistribution,
     fold_decomposed_digits: usize,
     num_response_chunks: usize,
 ) -> Option<u128> {
@@ -268,7 +268,7 @@ impl FoldChallengeNorms {
     /// Build the `beta_inf` envelope norms for one fold level from its config.
     #[inline]
     #[must_use]
-    pub fn new(fold_challenge_config: &SparseChallengeConfig) -> Self {
+    pub fn new(fold_challenge_config: &FoldChallengeDistribution) -> Self {
         Self {
             infinity_norm: fold_challenge_config.infinity_norm() as u128,
             l1_norm: fold_challenge_config.l1_norm() as u128,
@@ -556,11 +556,15 @@ mod tests {
         use jolt_crypto::challenge::{
             SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
+        use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
-        let fold_challenge_config = SparseChallengeConfig {
-            count_pm1: D64_PRODUCTION_PM1_COUNT,
-            count_pm2: D64_PRODUCTION_PM2_COUNT,
-        };
+        let fold_challenge_config =
+            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+                count_pm1: D64_PRODUCTION_PM1_COUNT,
+                count_pm2: D64_PRODUCTION_PM2_COUNT,
+            });
         // One-hot committed root (`log_commit_bound == 1`); `log_open_bound`
         // sets `field_bits = 128` for a realistic digit plan.
         let decomposition = DecompositionParams {
@@ -625,7 +629,7 @@ mod tests {
             (128, SisModulusProfileId::Q128OffsetA7F7, 32_505_732),
             (1024, SisModulusProfileId::Q64Offset59, 16_777_152),
         ] {
-            let challenge = SparseChallengeConfig::production_for_ring_dim(d).unwrap();
+            let challenge = FoldChallengeDistribution::production_for_ring_dim(d).unwrap();
             let exact_bucket = rounded_up_role_a_inf_norm(
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisTableDigest::CURRENT,
@@ -654,11 +658,15 @@ mod tests {
         use jolt_crypto::challenge::{
             SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
+        use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
-        let fold_challenge_config = SparseChallengeConfig {
-            count_pm1: D64_PRODUCTION_PM1_COUNT,
-            count_pm2: D64_PRODUCTION_PM2_COUNT,
-        };
+        let fold_challenge_config =
+            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+                count_pm1: D64_PRODUCTION_PM1_COUNT,
+                count_pm2: D64_PRODUCTION_PM2_COUNT,
+            });
         // One-hot committed root (`log_commit_bound == 1`).
         let decomposition = DecompositionParams {
             log_basis: 3,
@@ -714,11 +722,15 @@ mod tests {
         use jolt_crypto::challenge::{
             SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
+        use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
-        let fold_challenge_config = SparseChallengeConfig {
-            count_pm1: D64_PRODUCTION_PM1_COUNT,
-            count_pm2: D64_PRODUCTION_PM2_COUNT,
-        };
+        let fold_challenge_config =
+            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+                count_pm1: D64_PRODUCTION_PM1_COUNT,
+                count_pm2: D64_PRODUCTION_PM2_COUNT,
+            });
         let challenge = FoldChallengeNorms::new(&fold_challenge_config);
         let witness = FoldWitnessNorms::bounded(3, 64);
         let decomposition = DecompositionParams {
@@ -762,11 +774,15 @@ mod tests {
         use jolt_crypto::challenge::{
             SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
         };
+        use crate::FoldChallengeDistribution;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM1_COUNT;
+        use jolt_crypto::challenge::D64_PRODUCTION_PM2_COUNT;
 
-        let fold_challenge_config = SparseChallengeConfig {
-            count_pm1: D64_PRODUCTION_PM1_COUNT,
-            count_pm2: D64_PRODUCTION_PM2_COUNT,
-        };
+        let fold_challenge_config =
+            FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+                count_pm1: D64_PRODUCTION_PM1_COUNT,
+                count_pm2: D64_PRODUCTION_PM2_COUNT,
+            });
         // Dense recursive witness path (`is_root = false` ⇒ `is_onehot = false`).
         let decomposition = DecompositionParams {
             log_basis: 3,
@@ -824,7 +840,7 @@ mod tests {
         let d = 64;
         let log_basis = 3;
         let fold_digits = 2;
-        let challenge = SparseChallengeConfig::production_for_ring_dim(d).unwrap();
+        let challenge = FoldChallengeDistribution::production_for_ring_dim(d).unwrap();
         let challenge_l1 = FoldChallengeNorms::new(&challenge).l1_norm;
         let per_chunk_difference = balanced_digit_interval_diameter(log_basis, fold_digits);
 

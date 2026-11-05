@@ -43,11 +43,17 @@ name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
  "akita-error",
+ "akita-params",
+ "akita-transcript",
+ "akita-types",
  "criterion",
  "jolt-algebra",
- "jolt-transcript",
+ "jolt-crypto",
  "keccak 0.1.6",
  "num-bigint 0.5.1",
+ "postcard",
+ "serde",
+ "serde_json",
  "shake",
  "smallvec",
 ]
@@ -72,8 +78,10 @@ name = "akita-cpu-backend"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
+ "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-labinius-prover",
  "akita-params",
  "akita-prover",
  "akita-serialization",
@@ -105,6 +113,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-labinius-pcs"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-cpu-backend",
+ "akita-error",
+ "akita-labinius-prover",
+ "akita-labinius-verifier",
+ "akita-params",
+ "akita-pcs",
+ "akita-planner",
+ "akita-prover",
+ "akita-schedules",
+ "akita-serialization",
+ "akita-transcript",
+ "akita-types",
+ "akita-verifier",
+ "jolt-algebra",
+ "jolt-transcript",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "akita-labinius-prover"
 version = "0.1.0"
 dependencies = [
@@ -114,12 +148,12 @@ dependencies = [
  "akita-labinius-verifier",
  "akita-params",
  "akita-sumcheck",
+ "akita-transcript",
  "akita-types",
  "criterion",
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
- "jolt-sumcheck",
  "jolt-transcript",
  "rand 0.8.8",
  "rayon",
@@ -134,11 +168,11 @@ dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-params",
+ "akita-sumcheck",
+ "akita-transcript",
  "akita-types",
  "jolt-algebra",
  "jolt-crypto",
- "jolt-sumcheck",
- "jolt-transcript",
  "rayon",
 ]
 
@@ -172,9 +206,11 @@ dependencies = [
  "jolt-crypto",
  "jolt-transcript",
  "jolt-zk",
+ "num-bigint 0.5.1",
  "rand 0.8.8",
  "serde",
  "sha3",
+ "shake",
 ]
 
 [[package]]
@@ -215,6 +251,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "spongefish",
  "sysinfo",
  "tracing",
  "tracing-chrome",
@@ -231,6 +268,7 @@ dependencies = [
  "akita-params",
  "akita-schedules",
  "akita-sis-estimator",
+ "akita-types",
  "jolt-algebra",
  "jolt-crypto",
  "libm",
@@ -341,6 +379,7 @@ name = "akita-types"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
+ "akita-challenges",
  "akita-error",
  "akita-params",
  "akita-serialization",

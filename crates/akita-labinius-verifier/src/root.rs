@@ -10,7 +10,9 @@ pub use oracle::{
     bind_transparent_image, check_transparent_evaluations, exchange_transparent_prime_opening,
     RootEvaluationClaims, RootProverOracle, RootVerifierOracle, TransparentRootVerifierOracle,
 };
-pub use verify::{verify_root_reduction, verify_root_reduction_bytes};
+pub use verify::{
+    verify_root_reduction, verify_root_reduction_bytes, verify_root_reduction_in_session,
+};
 pub use wire::root_reduction_wire_size;
 
 use crate::{

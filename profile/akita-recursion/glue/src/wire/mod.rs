@@ -214,6 +214,7 @@ where
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
+        self.verifier_setup.ensure_no_prefix_contexts()?;
         Self::validate_blob_header_bounds(
             self.transcript_domain.len(),
             usize::try_from(self.num_vars).map_err(|_| {

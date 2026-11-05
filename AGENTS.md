@@ -33,7 +33,9 @@ scripts/check-crate-deps.sh akita-setup
 scripts/check-crate-deps.sh akita-metal
 scripts/check-crate-deps.sh akita-labinius-verifier
 scripts/check-crate-deps.sh akita-labinius-prover
+scripts/check-crate-deps.sh akita-labinius-pcs
 scripts/check-shared-field-identity.sh
+scripts/check-jolt-pins-on-main.sh
 scripts/check-external-schedule-artifacts.sh
 cargo machete --with-metadata
 typos

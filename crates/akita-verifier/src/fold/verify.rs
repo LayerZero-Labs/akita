@@ -12,7 +12,6 @@ use akita_transcript::VerifierChannel;
 use akita_types::setup_claims::transcript::bind_outer_statement;
 use akita_types::{
     CommittedGroup, FpExtEncoding, GrindingReplay, GroupBatchStatement, OpeningClaims, PendingEof,
-    PolynomialGroupClaims,
 };
 
 use crate::{AkitaVerifier, SetupPolicy};
@@ -47,8 +46,8 @@ where
         let mut state = akita_transcript::new_verifier_channel(session, proof);
         let pending_len = setup_policy.pending_len();
         let result = self
-            .verify_on_state(&mut state, statement, basis, &mut setup_policy)
-            .and_then(|pending| pending.check_eof(state));
+            .verify_on_state(&mut state, statement, basis, &mut setup_policy, |_| Ok(()))
+            .and_then(|(pending, ())| pending.check_eof(state));
         setup_policy.settle(pending_len, result.is_ok());
         result.map(|_accepted| ())
     }
@@ -87,19 +86,27 @@ where
         mut setup_policy: SetupPolicy<'_, '_, Cfg::ExtField>,
     ) -> Result<PendingEof, AkitaError> {
         let pending_len = setup_policy.pending_len();
-        let result = self.verify_on_state(state, statement, basis, &mut setup_policy);
+        let result = self.verify_on_state(state, statement, basis, &mut setup_policy, |_| Ok(()));
         setup_policy.settle(pending_len, result.is_ok());
-        result
+        result.map(|(pending, ())| pending)
     }
 
     /// Replay Akita's messages on `state`, poisoning it on any error.
-    fn verify_on_state(
+    ///
+    /// Extension seam: `output` runs only after the complete opening verifies,
+    /// on the authenticated statement, without adding transcript messages. Its
+    /// failure also poisons `state`.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>
+    pub(super) fn verify_on_state<R>(
         &self,
         state: &mut VerifierChannel<'_>,
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
         setup_policy: &mut SetupPolicy<'_, '_, Cfg::ExtField>,
-    ) -> Result<PendingEof, AkitaError> {
+        output: impl FnOnce(
+            &OpeningClaims<'_, Cfg::ExtField, &akita_types::CommittedGroup<Cfg::Field>>,
+        ) -> Result<R, AkitaError>,
+    ) -> Result<(PendingEof, R), AkitaError> {
         let result = (|| {
             if let SetupPolicy::Check(Some(accumulator)) = setup_policy {
                 if !accumulator.pending.is_empty() || accumulator.advice.is_some() {
@@ -155,7 +162,8 @@ where
                 SuffixVerifierState::from_root(root, schedule.root_fold().output_witness_len),
                 setup_policy,
             )?;
-            grinding.finish()
+            let pending = grinding.finish()?;
+            Ok((pending, output(&raw_claims)?))
         })();
         if result.is_err() {
             let _ = akita_transcript::reject(state);
@@ -182,15 +190,11 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let final_descriptor = *final_group.commitment().profile();
         for group in claims.groups() {
-            let committed = group.commitment();
-            let descriptor = committed.profile();
-            descriptor.validate_frozen_precommit(Cfg::decomposition().field_bits())?;
-            let plan = descriptor.outer_compression_plan()?;
-            if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
-                return Err(AkitaError::InvalidInput(
-                    "commitment length does not match its compression chain".to_string(),
-                ));
-            }
+            super::admission::validate_group_payload(
+                group.commitment(),
+                group.kind(),
+                Cfg::decomposition().field_bits(),
+            )?;
         }
         let batch_profile = CommittedGroupBatchProfile {
             final_group: final_descriptor,
@@ -245,6 +249,7 @@ where
             schedule,
             basis,
             batch_level,
+            |plan| claims.root_grinding_plan(plan, schedule),
         )?;
         Ok(OpeningPlan {
             schedule,
@@ -272,14 +277,8 @@ impl OpeningPlan<'_> {
         let raw_groups = claims
             .groups()
             .iter()
-            .map(|group| {
-                PolynomialGroupClaims::new(
-                    group.point().to_vec(),
-                    group.evaluations().to_vec(),
-                    *group.commitment(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|group| group.map_commitment(|&commitment| commitment))
+            .collect();
         OpeningClaims::from_groups(raw_groups)
     }
 }

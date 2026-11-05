@@ -172,7 +172,7 @@ the strict no-wrap condition `eta < q`. Thus `eta = q - 1` is valid and
 `eta = q` is rejected.
 
 The checked-in staged artifact uses the same
-`Quantum128BitADPS16` policy and `akita-infinity-width-v4` boundary evaluator as
+`Quantum169BitADPS16` policy and `akita-infinity-width-v4` boundary evaluator as
 the production infinity table. It contains one source label, the bounded-weight
 challenge over the degree-162 scalar component with a 12-bit response
 diameter. The exact collision bound is:

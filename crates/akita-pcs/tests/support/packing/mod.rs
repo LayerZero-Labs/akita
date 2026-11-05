@@ -1,4 +1,5 @@
 //! Checked packing catalogs for root and setup-prefixed successor roundtrips.
+use akita_params::FoldChallengeDistribution;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::ScheduleLookupKey;
@@ -133,7 +134,7 @@ where
         Base::decomposition()
     }
 
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         Base::ring_challenge_config(d)
     }
 
@@ -181,7 +182,7 @@ where
         Base::decomposition()
     }
 
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+    fn ring_challenge_config(d: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         Base::ring_challenge_config(d)
     }
 

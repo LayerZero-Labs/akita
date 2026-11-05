@@ -7,12 +7,13 @@
 use std::sync::Arc;
 
 use akita_algebra::offset_eq::{
-    eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
-    EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
-};
+        eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+        EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
+    };
+
+use jolt_algebra::fft::field_pow;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
-use jolt_algebra::fft::field_pow;
 use jolt_algebra::Field;
 
 use crate::{

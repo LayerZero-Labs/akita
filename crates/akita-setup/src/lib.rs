@@ -6,6 +6,12 @@
 
 mod recursive_prefixes;
 
+#[cfg(feature = "labinius")]
+pub use akita_params::binary_setup::{
+    derive_centered_q_matrix, q_rejection_threshold, SetupStreamLabel, SetupStreamModulus,
+    SetupStreamRing, SetupStreamRole, TypedSetupStream, BINARY_SETUP_P,
+};
+
 use akita_config::SetupRequirements;
 use akita_cpu_backend::AkitaProverSetup;
 #[cfg(feature = "disk-persistence")]

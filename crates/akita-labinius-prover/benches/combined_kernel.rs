@@ -18,7 +18,7 @@
 //!
 //! ```text
 //! cargo bench -p akita-labinius-prover --no-default-features \
-//!     --features labinius,parallel --bench combined_kernel
+//!     --features labinius,parallel,transcript-blake2b --bench combined_kernel
 //! ```
 //!
 //! `RAYON_NUM_THREADS` selects the worker count. `COMBINED_KERNEL_RUNS`
@@ -36,6 +36,7 @@ use std::{
 
 use akita_labinius_prover::combined_kernel::CombinedRootKernel;
 use akita_labinius_verifier::root_sumcheck::combined_terminal;
+use akita_sumcheck::SumcheckInstanceProver;
 use jolt_algebra::{Ext2, Field, Prime128Offset275, Prime64Offset59};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 

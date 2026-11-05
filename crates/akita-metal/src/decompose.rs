@@ -117,9 +117,11 @@ where
     };
     let mut out = DeviceDigitPlanes::zeroed(metal, digits, log_basis)?;
     let mut batch = Batch::new(metal.device())?;
-    // SAFETY: `akita_decompose` returns for `index >= coefficients`; `count` is a whole number of
-    // degree-`ring_degree` rings and `out` holds `count x levels` digits, the planes each
-    // coefficient writes.
+    // SAFETY: thread `index < count` reads `coefficients[index]` and writes
+    // the plane words `(ring * levels + level) * ring_degree + coefficient` for
+    // `level < levels`, all below `count * levels = digits`, the length of
+    // `out`. `ring_degree` is a power of two below 2^32, so the kernel's shift
+    // and mask compute exactly that index. No two threads write the same word.
     unsafe {
         batch.dispatch_unchecked(
             pipeline,

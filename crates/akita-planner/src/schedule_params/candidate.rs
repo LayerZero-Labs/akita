@@ -9,7 +9,7 @@ use akita_schedules::planner_support::{
 pub(crate) struct AbCommitmentCandidateRequest<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) fold_policy: &'a dyn HonestFoldPolicy,
-    pub(crate) ring_challenge_cfg: &'a SparseChallengeConfig,
+    pub(crate) ring_challenge_cfg: &'a FoldChallengeDistribution,
     pub(crate) challenge_dimension: usize,
     pub(crate) dimensions: CommitmentRingDims,
     pub(crate) payload_mode: akita_params::CommitmentPayloadMode,
@@ -104,7 +104,7 @@ pub(crate) struct AbCommitmentCandidate {
 pub(super) struct InnerCommitmentCandidateRequest<'a> {
     pub(super) policy: &'a PlannerPolicy,
     pub(super) fold_policy: &'a dyn HonestFoldPolicy,
-    pub(super) ring_challenge_cfg: &'a SparseChallengeConfig,
+    pub(super) ring_challenge_cfg: &'a FoldChallengeDistribution,
     pub(super) challenge_dimension: usize,
     pub(super) dimensions: CommitmentRingDims,
     pub(super) num_claims: usize,

@@ -1,0 +1,352 @@
+//! Adversarial test backend; production exposes no witness mutation operation.
+
+use super::F;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_cpu_backend::CpuBackend;
+use akita_error::AkitaError;
+use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
+use akita_prover::backend::*;
+use akita_types::binary_source::{
+    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryRootWitnessRequest,
+    BinaryTerminalClaim, PrimePlaneManifest,
+};
+use akita_types::native_root_relation::NativeRootWeights;
+use akita_types::{AkitaSetupDescriptor, Commitment};
+use jolt_algebra::{Field, Ring, Zero};
+use jolt_poly::UnivariatePoly;
+use std::any::Any;
+use std::sync::{Arc, Mutex};
+
+type E = F;
+type NativeBackend = CpuBackend<F, F>;
+type C = <NativeBackend as ProverHandleFamily<F, F>>::CommitmentHandle;
+type W = <NativeBackend as ProverHandleFamily<F, F>>::WitnessHandle;
+type M = <NativeBackend as ProverHandleFamily<F, F>>::CommitmentMaterialHandle;
+type Session = <NativeBackend as ProofScopeConsumer>::ProofSessionHandle;
+type Stage2 = <NativeBackend as ProverHandleFamily<F, F>>::Stage2SessionHandle;
+
+#[path = "delegation.rs"]
+mod delegation;
+#[path = "fault_witness.rs"]
+mod fault_witness;
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Fault {
+    ForeignCommitment,
+    ForeignPartials,
+    Image,
+    Response,
+    Partials,
+    ParityCarry,
+    ValueCarry,
+    Padding,
+    PrimePlane,
+}
+
+impl Fault {
+    pub(super) const ALL: [Self; 6] = [
+        Self::Image,
+        Self::Response,
+        Self::Partials,
+        Self::ParityCarry,
+        Self::ValueCarry,
+        Self::Padding,
+    ];
+
+    /// No root row reads a padding address, so an in-range digit there leaves
+    /// the public relation and every reading unchanged. The range check, the
+    /// successor and its norm checks still bound the committed digit.
+    pub(super) fn is_accepted(self) -> bool {
+        matches!(self, Self::Padding)
+    }
+
+    fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
+        let segment = match self {
+            Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
+            Self::PrimePlane => plan.prime_segment().unwrap(),
+            Self::Response => 0,
+            Self::Image => 1,
+            Self::Partials => 2,
+            Self::ParityCarry => 3,
+            Self::ValueCarry => 4,
+            Self::Padding => {
+                return (0..plan.repacking().domain_len())
+                    .find(|&address| plan.repacking().is_padding_address(address).unwrap())
+                    .unwrap()
+            }
+        };
+        plan.repacking()
+            .coefficient_address(segment, 0, 0, 0)
+            .unwrap()
+    }
+}
+
+struct FaultPreparation {
+    native: Box<dyn Any + Send + Sync>,
+    manifest: BinaryCommittedGroupManifest,
+    claim: Option<BinaryTerminalClaim>,
+    prime: PrimePlaneManifest,
+    plan: BinaryRootWitnessPlan,
+}
+
+pub(super) struct FaultBackend {
+    inner: Arc<NativeBackend>,
+    seed: [u8; 32],
+    words: Vec<u128>,
+    fault: Fault,
+    digits: Mutex<Option<Vec<i8>>>,
+}
+
+impl FaultBackend {
+    /// Complete an adversarial opening with its deliberately false public oracle.
+    pub(super) fn prove_prime_fault(
+        &self,
+        setup: &akita_cpu_backend::AkitaProverSetup<F>,
+        schedules: &TrustedScheduleCatalog<super::BinaryTestSuffix>,
+        prefixes: &akita_prover::SetupPrefixProverRegistry<F, C>,
+        data: akita_prover::SelectedProverOpeningData<'_, F, C, F>,
+        prover: &mut akita_transcript::ProverChannel,
+    ) -> Result<(), AkitaError> {
+        let resolved = schedules.resolve_selection(data.selection())?;
+        let mut registry = akita_prover::BackendRegistry::<super::BinaryTestSuffix>::new()?;
+        let root = registry.register(self, prefixes)?;
+        let mut route =
+            akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+        akita_prover::batched_prove_embedded::<super::BinaryTestSuffix, _>(
+            setup.expanded.descriptor(),
+            schedules,
+            &registry,
+            data,
+            prover,
+            akita_params::BasisMode::Lagrange,
+            &mut route,
+        )
+    }
+
+    pub(super) fn new(
+        inner: Arc<NativeBackend>,
+        seed: [u8; 32],
+        words: Vec<u128>,
+        fault: Fault,
+    ) -> Self {
+        Self {
+            inner,
+            seed,
+            words,
+            fault,
+            digits: Mutex::new(None),
+        }
+    }
+
+    fn prepare_fault_root_group(
+        &self,
+        session: &Session,
+        context: &ProofContext,
+        handle: &C,
+        request: &dyn Any,
+    ) -> Result<(Vec<F>, Box<dyn Any + Send + Sync>), AkitaError> {
+        let (mut payload, native) = self
+            .inner
+            .prepare_root_group(session, context, handle, request)?;
+        if request.is::<akita_types::binary_source::BinaryFieldSwitchSourceRequest>()
+            || request.is::<akita_types::binary_source::BinaryProjectionRequest>()
+        {
+            return Ok((payload, native));
+        }
+        let request = request
+            .downcast_ref::<BinaryRootWitnessRequest<C>>()
+            .unwrap();
+        if matches!(self.fault, Fault::ForeignPartials) {
+            let foreign = fault_witness::foreign_partial_payload(
+                &request.manifest,
+                request.claim.as_ref().unwrap(),
+                &self.words,
+                &self.seed,
+            )?;
+            assert_ne!(
+                payload, foreign,
+                "foreign U must have a distinct D commitment"
+            );
+            payload = foreign;
+        }
+        assert!(
+            request.ordinary.is_none(),
+            "fault injection uses the binary-only fixture"
+        );
+        Ok((
+            payload,
+            Box::new(FaultPreparation {
+                native,
+                manifest: request.manifest.clone(),
+                claim: request.claim.clone(),
+                prime: request.prime.clone(),
+                plan: request.plan.clone(),
+            }),
+        ))
+    }
+
+    fn build_fault_root_group(
+        &self,
+        session: &Session,
+        context: &ProofContext,
+        preparation: &dyn Any,
+        challenges: &jolt_crypto::challenge::Challenges,
+        logical_len: usize,
+        destination_ring_dimension: usize,
+    ) -> Result<Option<W>, AkitaError> {
+        let preparation = preparation.downcast_ref::<FaultPreparation>().unwrap();
+        if self
+            .inner
+            .build_root_group(
+                session,
+                context,
+                preparation.native.as_ref(),
+                challenges,
+                logical_len,
+                destination_ring_dimension,
+            )?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let mut digits = fault_witness::reconstruct(
+            &preparation.manifest,
+            preparation.claim.as_ref(),
+            &preparation.prime,
+            &preparation.plan,
+            &self.seed,
+            &self.words,
+            challenges,
+        )?;
+        digits.truncate(logical_len);
+        if !matches!(
+            self.fault,
+            Fault::ForeignCommitment | Fault::ForeignPartials
+        ) {
+            let address = self.fault.address(&preparation.plan);
+            let old = digits[address];
+            digits[address] = if old == 3 { 2 } else { old + 1 };
+            assert_ne!(digits[address], old);
+            assert!((-4..=3).contains(&digits[address]));
+        }
+        *self.digits.lock().unwrap() = Some(digits.clone());
+        self.inner
+            .import_root_witness(session, context, digits, destination_ring_dimension)
+            .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn begin_fault_root_relation(
+        &self,
+        witness: &W,
+        weights: NativeRootWeights<F>,
+        negative_binary_weights: Vec<(usize, F)>,
+        claim: F,
+        stage1_point: &[F],
+        range_image_evaluation: F,
+        batching: F,
+    ) -> Result<Stage2, AkitaError> {
+        // A malicious prover is allowed to use an incorrect public oracle. Make
+        // its own sumcheck consistent so it emits a complete proof; the real
+        // verifier must detect the wrong relation at its final oracle check.
+        assert!(negative_binary_weights.is_empty());
+        let mut table = weights.materialize()?;
+        let state = self.digits.lock().unwrap();
+        let digits = state.as_ref().unwrap();
+        let actual = table
+            .iter()
+            .zip(digits)
+            .fold(F::zero(), |sum, (&weight, &digit)| {
+                sum + weight * F::from_i64(i64::from(digit))
+            });
+        match self.fault {
+            Fault::ForeignCommitment | Fault::ForeignPartials => {}
+            Fault::Padding => assert_eq!(
+                actual, claim,
+                "no root row may read the mutated padding address"
+            ),
+            _ => assert_ne!(
+                actual, claim,
+                "the selected mutation must violate the public relation"
+            ),
+        }
+        let anchor = digits.iter().position(|&digit| digit != 0).unwrap();
+        let value = F::from_i64(i64::from(digits[anchor]));
+        table[anchor] += (claim - actual) * value.inverse().unwrap();
+        let terms = table
+            .into_iter()
+            .enumerate()
+            .filter(|(_, weight)| !weight.is_zero())
+            .collect();
+        let weights = NativeRootWeights::new(weights.table_len(), terms, weights.claim())?;
+        self.inner.begin_root_relation(
+            witness,
+            weights,
+            negative_binary_weights,
+            claim,
+            stage1_point,
+            range_image_evaluation,
+            batching,
+        )
+    }
+}
+
+/// Exercise the actual native root carry constructor on a frontend terminal.
+pub(super) fn authenticate_terminal(
+    manifest: &BinaryCommittedGroupManifest,
+    claim: &BinaryTerminalClaim,
+    source: &[u128],
+    challenges: &jolt_crypto::challenge::Challenges,
+) -> Result<(), AkitaError> {
+    let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
+    fault_witness::reconstruct(
+        manifest,
+        Some(claim),
+        &PrimePlaneManifest::new(manifest.descriptor(), &[])?,
+        &plan,
+        &[53; 32],
+        source,
+        challenges,
+    )?;
+    Ok(())
+}
+
+/// Check the verifier's terminal relation on the honest authenticated digits.
+/// A false received terminal must fail even if its frontend multiplier is zero.
+pub(super) fn authenticate_terminal_relation(
+    manifest: &BinaryCommittedGroupManifest,
+    honest: &BinaryTerminalClaim,
+    received: &BinaryTerminalClaim,
+    source: &[u128],
+    challenges: &jolt_crypto::challenge::Challenges,
+) -> Result<(), AkitaError> {
+    let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
+    let digits = fault_witness::reconstruct(
+        manifest,
+        Some(honest),
+        &PrimePlaneManifest::new(manifest.descriptor(), &[])?,
+        &plan,
+        &[53; 32],
+        source,
+        challenges,
+    )?;
+    let weights = received.relation_weights(
+        manifest.descriptor(),
+        plan.repacking(),
+        akita_types::binary_source::BinaryEvaluationSegments {
+            response: 0,
+            partials: 2,
+            parity_carry: 3,
+            value_carry: 4,
+        },
+        challenges,
+        F::from_u64(1),
+        [F::from_u64(1); 2],
+        u128::MAX - 274,
+    )?;
+    let table = digits
+        .into_iter()
+        .map(|digit| F::from_i64(i64::from(digit)))
+        .collect::<Vec<_>>();
+    weights.check_table(&table)
+}

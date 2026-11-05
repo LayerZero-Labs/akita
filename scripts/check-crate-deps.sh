@@ -54,6 +54,10 @@ else
     akita-labinius-prover)
       forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal)
       ;;
+    akita-labinius-pcs)
+      # Offline artifact generation may opt into the planner; ordinary loading may not.
+      forbidden=(akita-metal jolt-metal)
+      ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2
       exit 2
@@ -114,6 +118,24 @@ if [ "${pkg}" = "akita-prover" ]; then
     echo "backend transfer readers or codecs leaked into generic prover code" >&2
     exit 1
   fi
+fi
+
+if [ "${pkg}" = "akita-labinius-pcs" ]; then
+  # The union covers every runtime feature combination, including future features.
+  runtime_features="$(cargo metadata --format-version 1 --no-deps | python3 -c '
+import json
+import sys
+package = next(package for package in json.load(sys.stdin)["packages"]
+               if package["name"] == "akita-labinius-pcs")
+print(",".join(sorted(set(package["features"]) - {"labinius-catalog-gen"})))
+')"
+  for features in transcript-keccak labinius,transcript-keccak "$runtime_features"; do
+    runtime_tree="$(cargo tree -p "$pkg" --edges normal --no-default-features --features "$features")"
+    if grep -qE '(^|[[:space:]])akita-planner([[:space:]]|$)' <<<"$runtime_tree"; then
+      echo "planner dependency found in runtime LaBinius PCS ($features)" >&2
+      exit 1
+    fi
+  done
 fi
 
 if [ "${pkg}" = "akita-verifier" ]; then

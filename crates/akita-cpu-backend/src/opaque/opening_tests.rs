@@ -597,7 +597,7 @@ mod extension_challenges {
                     2,
                     1,
                     1,
-                    jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(D).unwrap(),
+                    akita_params::FoldChallengeDistribution::production_for_ring_dim(D).unwrap(),
                 )
                 // A setup prefix is committed at the full field width.
                 .with_decomp(

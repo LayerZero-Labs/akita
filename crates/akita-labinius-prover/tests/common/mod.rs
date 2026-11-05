@@ -7,7 +7,8 @@ use akita_algebra::{
     binary::{field_switch::SwitchField, BinaryField128, BinaryField192},
     MinusTrinomial, TrinomialModulus,
 };
-use akita_challenges::{BinaryChallengeDraw, BinaryChallengeProfile, BinaryScalarRing};
+use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
+use akita_types::FoldDraw;
 use akita_error::AkitaError;
 use akita_labinius_prover::{
     commit_binary_clear, lowered::encode_image, prove_root_reduction_bytes,
@@ -22,8 +23,9 @@ use akita_labinius_verifier::{
 use akita_params::sis::labinius::{
     LabiniusCommitmentModulus, LabiniusRingDegree, LabiniusRootProfile,
 };
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field, Prime128Offset275};
-use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
+use akita_transcript::ChallengeCodec;
+use akita_types::proof::AkitaSetupSeed;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Prime128Offset275};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::marker::PhantomData;
 
@@ -59,16 +61,14 @@ impl TestHost for BinaryField192 {
     }
 }
 
-/// The sponge the tests run on: Blake2b, or Keccak with `keccak-test-sponge`.
-#[cfg(not(feature = "keccak-test-sponge"))]
-pub(crate) type TestSponge = jolt_transcript::Blake2b512;
-#[cfg(feature = "keccak-test-sponge")]
-pub(crate) type TestSponge = jolt_transcript::Keccak;
-
 pub(crate) struct FixedDraw;
-impl BinaryChallengeDraw for FixedDraw {
-    fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-        Ok([0x53; 32])
+impl FoldDraw for FixedDraw {
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![0x53; len])
     }
 }
 
@@ -139,9 +139,8 @@ pub(crate) fn host_mle<H: SwitchField>(source: &[H::Source], point: &[H]) -> H {
         })
 }
 
-/// The shipped profile at sixteen cells. The matrix is the reduced public
-/// prefix of the Akita setup stream over `Prime128Offset275` for every proof
-/// field pair: a 64-bit stream fails the derivation-bias check.
+/// The shipped profile at sixteen cells. The matrix uses the typed exact
+/// q-uniform setup stream independently of the proof field pair.
 pub(crate) fn admitted(log_fold_width: u32, seed: u8) -> Admitted {
     Admitted::derive::<Prime128Offset275>(
         PROFILE,
@@ -198,9 +197,7 @@ pub(crate) struct RootCase<T: TestHost, F, E> {
     base: PhantomData<F>,
 }
 
-impl<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>
-    RootCase<T, F, E>
-{
+impl<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> RootCase<T, F, E> {
     pub(crate) fn new(admitted: Admitted, mode: RootOpeningMode) -> Self {
         let setup = admitted.setup();
         let (source, point, value) = data::<T>(setup.source_len(), setup.num_vars());
@@ -254,7 +251,7 @@ impl<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode
     }
 
     pub(crate) fn prove(&self) -> Result<(Vec<u8>, RootEvaluationClaims<E>), AkitaError> {
-        prove_root_reduction_bytes::<T, F, E, _, _, _, TestSponge>(
+        prove_root_reduction_bytes::<T, F, E, _, _, _>(
             &self.admitted,
             &self.source,
             &self.commitment,
@@ -264,7 +261,7 @@ impl<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode
     }
 
     pub(crate) fn verify(&self, proof: &[u8]) -> Result<RootEvaluationClaims<E>, AkitaError> {
-        verify_root_reduction_bytes::<T, F, E, _, _, _, TestSponge>(
+        verify_root_reduction_bytes::<T, F, E, _, _, _>(
             &self.admitted,
             &self.statement(self.mode),
             &mut TransparentRootVerifierOracle::<F, E>::new(&self.image),

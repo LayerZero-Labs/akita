@@ -3,6 +3,10 @@ use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec, RoleLaneWeig
 use super::*;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
+use jolt_algebra::ring::scalar_powers;
+use jolt_crypto::challenge::Challenges;
+use akita_params::FoldChallengeDistribution;
+use jolt_crypto::challenge::SparseChallenge;
 use akita_params::{
     dyadic_block_ranges, gadget_row_scalars, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
     OpeningClaimsLayout, RingRole, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
@@ -62,7 +66,7 @@ fn test_scalar(value: u128) -> F {
 
 fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: CommitmentRingDims) {
     params.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(role_dims.d_a())
+        FoldChallengeDistribution::production_for_ring_dim(role_dims.d_a())
             .expect("test ring has a production challenge");
     let inner_bound = akita_params::sis::rounded_up_role_a_inf_norm(
         params.inner().matrix.security_policy(),
@@ -125,7 +129,7 @@ fn retarget_precommitted_test_role_dims(
 ) {
     let group = params.preceding_group_mut_for_test(group_id).unwrap();
     group.opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
+        FoldChallengeDistribution::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
     let inner_bound = akita_params::sis::rounded_up_role_a_inf_norm(
         group.profile.inner.matrix.security_policy(),
@@ -228,7 +232,7 @@ fn test_inputs_for_group_sizes(
         n_a,
         n_b,
         n_d,
-        SparseChallengeConfig::production_for_ring_dim(TEST_D)
+        FoldChallengeDistribution::production_for_ring_dim(TEST_D)
             .expect("test ring has a production challenge"),
     )
     .with_decomp(

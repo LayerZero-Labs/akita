@@ -1,14 +1,14 @@
+use akita_types::FoldDraw;
 use akita_error::AkitaError;
-use jolt_algebra::checked;
 use num_bigint::BigUint;
 
 use super::position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
 use super::xof::{IndexedXofPrefix, XofCursor};
-use super::BinaryChallengeDraw;
 
 use super::{BinaryChallenge, BinaryChallengeFamily, BinaryChallengeProfile, INLINE_BINARY_WEIGHT};
 
-const TRANSCRIPT_DOMAIN: &[u8] = b"akita/labinius/binary-challenge/v2";
+/// Width of the transcript message one binary challenge batch decodes.
+pub const BINARY_CHALLENGE_SEED_LEN: usize = 32;
 
 /// Reusable exact sampler for one binary challenge profile.
 pub struct BinaryChallengeSampler {
@@ -47,45 +47,28 @@ impl BinaryChallengeSampler {
         &self.profile
     }
 
-    /// Sample `count` challenges from one domain-separated transcript draw.
+    /// Sample `count` challenges from one 32-byte transcript message.
     ///
-    /// Every challenge uses an independently indexed SHAKE256 substream. The
-    /// bounded-weight sampler rejects out-of-range integers without a retry cap,
-    /// so it has no sampler-failure probability to add to the fold budget.
-    pub fn sample_challenges<D: BinaryChallengeDraw>(
+    /// The draw absorbs nothing: the caller's transcript position binds the
+    /// profile and count. Every challenge uses an independently indexed
+    /// SHAKE256 substream of the message. The bounded-weight sampler rejects
+    /// out-of-range integers without a retry cap, so it has no
+    /// sampler-failure probability to add to the fold budget.
+    pub fn sample_challenges<D: FoldDraw>(
         &mut self,
         draw: &mut D,
-        label: &[u8],
         count: usize,
     ) -> Result<Vec<BinaryChallenge>, AkitaError> {
-        let count_u64 = u64::try_from(count)
-            .map_err(|_| AkitaError::InvalidInput("binary challenge count exceeds u64".into()))?;
-        let label_len = u64::try_from(label.len())
-            .map_err(|_| AkitaError::InvalidInput("binary challenge label exceeds u64".into()))?;
-        let context_len = checked::sum([
-            TRANSCRIPT_DOMAIN.len(),
-            8,
-            label.len(),
-            8,
-            self.profile.identity_bytes().len(),
-        ])
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("binary challenge transcript context is too large".into())
-        })?;
-        let mut context = Vec::new();
-        context.try_reserve_exact(context_len).map_err(|_| {
-            AkitaError::InvalidInput("binary challenge transcript context is too large".into())
-        })?;
-        context.extend_from_slice(TRANSCRIPT_DOMAIN);
-        context.extend_from_slice(&label_len.to_le_bytes());
-        context.extend_from_slice(label);
-        context.extend_from_slice(&count_u64.to_le_bytes());
-        context.extend_from_slice(self.profile.identity_bytes());
-        let seed = draw.absorb_and_squeeze(&context)?;
-        self.sample_from_seed(&seed, count)
+        draw.draw_message(BINARY_CHALLENGE_SEED_LEN, |message| {
+            let seed = message.try_into().map_err(|_| {
+                AkitaError::Internal("binary challenge message has the wrong width".into())
+            })?;
+            self.sample_from_seed(seed, count).map(Some)
+        })?
+        .ok_or_else(|| AkitaError::Internal("binary challenge decoding cannot exhaust".into()))
     }
 
-    fn sample_from_seed(
+    pub(crate) fn sample_from_seed(
         &mut self,
         seed: &[u8; 32],
         count: usize,
@@ -229,21 +212,20 @@ fn uniform_biguint_below(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_transcript::{
-        Blake2b512, Channel, ProtocolId, ProverTranscript, Sponge, VerifierTranscript,
-    };
+    use akita_types::{ProverFoldDraw, VerifierFoldDraw};
+    use akita_transcript::{new_prover_channel, new_verifier_channel};
     use shake::digest::{ExtendableOutput, Update, XofReader};
     use shake::Shake256;
 
     struct TestDraw;
 
-    impl BinaryChallengeDraw for TestDraw {
-        fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-            let mut xof = Shake256::default();
-            xof.update(payload);
-            let mut seed = [0u8; 32];
-            xof.finalize_xof().read(&mut seed);
-            Ok(seed)
+    impl FoldDraw for TestDraw {
+        fn draw_message<T>(
+            &mut self,
+            len: usize,
+            decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+        ) -> Result<Option<T>, AkitaError> {
+            decode(&vec![0x42; len])
         }
     }
 
@@ -306,28 +288,11 @@ mod tests {
         let sample = |profile: BinaryChallengeProfile| {
             let mut draw = TestDraw;
             let mut sampler = BinaryChallengeSampler::new(profile);
-            sampler
-                .sample_challenges(&mut draw, b"binary-fold", 4)
-                .unwrap()
+            sampler.sample_challenges(&mut draw, 4).unwrap()
         };
         let first = sample(bounded_profile.clone());
         assert_eq!(first, sample(bounded_profile));
         assert_ne!(first, sample(fixed_profile));
-    }
-
-    /// Draws a batch seed from a live transcript: absorb the context as a
-    /// public byte string, then squeeze the seed.
-    struct ChannelDraw<'a, C>(&'a mut C);
-
-    impl<C: Channel> BinaryChallengeDraw for ChannelDraw<'_, C> {
-        fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-            self.0.public_bytes(payload);
-            Ok(self.0.challenge_bytes())
-        }
-    }
-
-    fn protocol<H: Sponge>() -> ProtocolId {
-        ProtocolId::new::<H>("binary-fold/session")
     }
 
     #[test]
@@ -337,48 +302,30 @@ mod tests {
             46,
         )
         .unwrap();
-        let proof_message = [9u8, 8, 7];
-        let mut prover =
-            ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), b"binary-fold/instance");
-        prover.send_bytes(&proof_message);
+        let mut prover = new_prover_channel(b"binary-fold/session");
         let expected = BinaryChallengeSampler::new(profile.clone())
-            .sample_challenges(&mut ChannelDraw(&mut prover), b"binary-fold", 8)
+            .sample_challenges(&mut ProverFoldDraw::new(&mut prover, 2, 3), 8)
             .unwrap();
-        let proof = prover.finish();
+        let proof = prover.narg_string().to_vec();
 
-        let mut verifier = VerifierTranscript::<Blake2b512>::new(
-            &protocol::<Blake2b512>(),
-            b"binary-fold/instance",
-            &proof,
-        );
-        assert_eq!(
-            verifier.receive_bytes(proof_message.len()).unwrap(),
-            proof_message
-        );
-        let actual = BinaryChallengeSampler::new(profile.clone())
-            .sample_challenges(&mut ChannelDraw(&mut verifier), b"binary-fold", 8)
+        let mut verifier = new_verifier_channel(b"binary-fold/session", &proof);
+        let actual = BinaryChallengeSampler::new(profile)
+            .sample_challenges(&mut VerifierFoldDraw::new(&mut verifier, 2, 3), 8)
             .unwrap();
         assert_eq!(actual, expected);
-        verifier.finish().unwrap();
-
-        let mut wrong_label = VerifierTranscript::<Blake2b512>::new(
-            &protocol::<Blake2b512>(),
-            b"binary-fold/instance",
-            &proof,
-        );
-        wrong_label.receive_bytes(proof_message.len()).unwrap();
-        let changed = BinaryChallengeSampler::new(profile)
-            .sample_challenges(&mut ChannelDraw(&mut wrong_label), b"other-fold", 8)
-            .unwrap();
-        assert_ne!(changed, expected);
+        verifier.check_eof().unwrap();
     }
 
     #[test]
     fn draw_failure_is_returned_before_sampling() {
         struct FailingDraw;
 
-        impl BinaryChallengeDraw for FailingDraw {
-            fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
+        impl FoldDraw for FailingDraw {
+            fn draw_message<T>(
+                &mut self,
+                _len: usize,
+                _decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+            ) -> Result<Option<T>, AkitaError> {
                 Err(AkitaError::InvalidProof)
             }
         }
@@ -386,11 +333,7 @@ mod tests {
         let profile =
             BinaryChallengeProfile::fixed_weight(super::super::BinaryScalarRing::Cyclotomic243, 47)
                 .unwrap();
-        let result = BinaryChallengeSampler::new(profile).sample_challenges(
-            &mut FailingDraw,
-            b"binary-fold",
-            4,
-        );
+        let result = BinaryChallengeSampler::new(profile).sample_challenges(&mut FailingDraw, 4);
         assert!(matches!(result, Err(AkitaError::InvalidProof)));
     }
 

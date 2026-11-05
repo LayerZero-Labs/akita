@@ -19,6 +19,7 @@ akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-feat
 akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", default-features = false, optional = true }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
+akita-types = { version = "0.1.0", path = "../akita-types", optional = true, default-features = false }
 libm = "0.2"
 rayon = { version = "1.10", optional = true }
 
@@ -29,18 +30,26 @@ transcript-blake2b = [
   "akita-schedules/transcript-blake2b",
   "akita-params/transcript-blake2b",
   "akita-sis-estimator?/transcript-blake2b",
+  "akita-types?/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-config?/transcript-keccak",
   "akita-schedules/transcript-keccak",
   "akita-params/transcript-keccak",
   "akita-sis-estimator?/transcript-keccak",
+  "akita-types?/transcript-keccak",
 ]
 # Generates every family, the zero-knowledge ones included.
 catalog-gen = ["dep:akita-config", "zk", "akita-config/zk"]
 catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
+labinius-trinomial = [
+  "dep:akita-types",
+  "akita-types/labinius-trinomial",
+  "akita-params/labinius-trinomial",
+  "akita-schedules/labinius-trinomial",
+]
 dev-protocol = ["akita-params/dev-protocol"]
 # Completes each search state's successors on rayon's pool; the selected
 # schedule is the same with or without it.

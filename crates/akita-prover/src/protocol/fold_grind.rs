@@ -19,7 +19,7 @@ use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
-use akita_types::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
+use akita_types::{FoldChallengeDraw, PreviewFoldDraw, ProverFoldDraw};
 use jolt_algebra::Unreduced;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
 
@@ -489,6 +489,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_params::FoldChallengeDistribution;
     use akita_params::SisModulusProfileId;
     use jolt_crypto::challenge::SparseChallengeConfig;
 
@@ -519,7 +520,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+            FoldChallengeDistribution::production_for_ring_dim(128).unwrap(),
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
@@ -527,7 +528,7 @@ mod tests {
             challenge_subring_dimension: 64,
         };
         params.own_group_mut().opening.fold_challenge_config =
-            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+            FoldChallengeDistribution::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
         let challenges = draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 2)
@@ -565,7 +566,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+            FoldChallengeDistribution::production_for_ring_dim(128).unwrap(),
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
@@ -574,8 +575,8 @@ mod tests {
         };
 
         for config in [
-            SparseChallengeConfig::pm1_only(0),
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(0),
+            FoldChallengeDistribution::pm1_only(1),
         ] {
             params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();

@@ -89,8 +89,21 @@ where
     /// differs from the residual commitment's.
     fn successor_payload_len(&self, level: u32, image_len: usize) -> Result<usize, AkitaError>;
 
+    /// Runs `replay`, a path only the clear verifier admits (the binary
+    /// root), on the clear grinding replay.
+    ///
+    /// # Errors
+    ///
+    /// `replay`'s error; a masked replay returns
+    /// [`AkitaError::UnsupportedSchedule`].
+    #[cfg(feature = "labinius-trinomial")]
+    fn clear_replay<R>(
+        &mut self,
+        replay: impl FnOnce(&mut VerifierGrinding<'_, '_>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError>;
+
     /// Receives the digest of a terminal `t` state's last block
-    /// (`akita_types::receive_field_digest`), sent under `dev-protocol`.
+    /// (`akita_types::receive_field_digest`).
     ///
     /// # Errors
     ///
@@ -221,6 +234,14 @@ where
 
     fn successor_payload_len(&self, _: u32, image_len: usize) -> Result<usize, AkitaError> {
         Ok(image_len)
+    }
+
+    #[cfg(feature = "labinius-trinomial")]
+    fn clear_replay<R>(
+        &mut self,
+        replay: impl FnOnce(&mut VerifierGrinding<'_, '_>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        replay(self)
     }
 
     fn receive_field_digest(

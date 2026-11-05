@@ -83,15 +83,16 @@ where
 pub(crate) fn selected_crt_i8_capacity_profile<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<CrtI8CapacityProfile, AkitaError> {
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => {
+        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => {
             capacity_profile_from_params::<F, _, Q32_NUM_PRIMES, D>(&params, "Q32/2xi32", 32)
         }
-        ProtocolCrtNttParams::Q64(params) => {
+        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => {
             capacity_profile_from_params::<F, _, Q64_NUM_PRIMES, D>(&params, "Q64/3xi32", 32)
         }
-        ProtocolCrtNttParams::Q128(params) => {
+        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => {
             capacity_profile_from_params::<F, _, Q128_NUM_PRIMES, D>(&params, "Q128/6xi32", 32)
         }
+        _ => Err(FieldCrtBases::<F>::unselectable_base()),
     }
 }
 

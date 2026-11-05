@@ -1,6 +1,6 @@
-//! Streaming XOF cursor used by the signed-sparse fold-challenge sampler.
+//! Streaming XOF cursor used by the binary challenge sampler.
 //!
-//! Every fold coordinate gets a fresh indexed SHAKE256 stream. A sampler may
+//! Every binary challenge coordinate gets a fresh indexed SHAKE256 stream. A sampler may
 //! reset this cursor between coordinates and reuse its small squeeze buffer.
 //!
 //! The cursor's `next_*` helpers use bitmask rejection sampling, so every

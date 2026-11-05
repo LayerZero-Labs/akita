@@ -11,7 +11,8 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use akita_algebra::binary::BinaryField128;
-use akita_challenges::{BinaryChallengeDraw, BinaryChallengeSampler};
+use akita_challenges::BinaryChallengeSampler;
+use akita_types::FoldDraw;
 use akita_error::AkitaError;
 use akita_labinius_prover::fold_kernel::fold_integer as kernel;
 use akita_labinius_verifier::endpoint::fold_integer as reference;
@@ -24,9 +25,13 @@ const COLUMNS: usize = 256;
 const ROOT_ROWS: usize = 16_384;
 
 struct SeedDraw;
-impl BinaryChallengeDraw for SeedDraw {
-    fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-        Ok([0x53; 32])
+impl FoldDraw for SeedDraw {
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![0x53; len])
     }
 }
 
@@ -45,7 +50,7 @@ fn benchmarks(criterion: &mut Criterion) {
         .challenge_profile()
         .expect("first root challenge profile is valid");
     let challenges = BinaryChallengeSampler::new(profile.clone())
-        .sample_challenges(&mut SeedDraw, b"fold-kernel-benchmark", COLUMNS)
+        .sample_challenges(&mut SeedDraw, COLUMNS)
         .expect("benchmark challenge draw is valid");
     let mut rng = StdRng::seed_from_u64(0x215_197);
     let source = (0..ROWS * COLUMNS)

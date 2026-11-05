@@ -74,9 +74,10 @@ pub(crate) fn digit_relation_rows_streamed_prover_bounds<
         }};
     }
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => run!(params),
-        ProtocolCrtNttParams::Q64(params) => run!(params),
-        ProtocolCrtNttParams::Q128(params) => run!(params),
+        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => run!(params),
+        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => run!(params),
+        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => run!(params),
+        _ => Err(FieldCrtBases::<F>::unselectable_base()),
     }
 }
 

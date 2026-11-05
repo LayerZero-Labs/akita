@@ -16,23 +16,24 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
-akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false }
+akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false, features = [
+  "prover",
+] }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
-  "transcript-blake2b",
-] }
+
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 
 [dev-dependencies]
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
   "lattice",
 ] }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
@@ -57,6 +58,7 @@ harness = false
 required-features = ["labinius"]
 
 [features]
+default = ["transcript-keccak"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -70,11 +72,19 @@ labinius = [
   "akita-params/labinius-sis",
   "akita-labinius-verifier/labinius",
 ]
-# Run the tests on Keccak instead of Blake2b; the protocol is generic over
-# the sponge.
-keccak-test-sponge = [
-  "jolt-transcript/transcript-keccak",
-  "akita-labinius-verifier/keccak-test-sponge",
+transcript-blake2b = [
+  "akita-transcript/transcript-blake2b",
+  "akita-sumcheck/transcript-blake2b",
+  "akita-challenges/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+  "akita-labinius-verifier/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-transcript/transcript-keccak",
+  "akita-sumcheck/transcript-keccak",
+  "akita-challenges/transcript-keccak",
+  "akita-params/transcript-keccak",
+  "akita-labinius-verifier/transcript-keccak",
 ]
 
 [lints]

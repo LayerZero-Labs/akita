@@ -44,19 +44,17 @@ pub use commitment::BinaryClearCommitment;
 pub use frontend::BinaryEvaluationClaim;
 pub use profile::BinaryClearSetup;
 pub use root::{
-    verify_root_reduction, verify_root_reduction_bytes, RootEvaluationClaims, RootProverOracle,
-    RootVerifierOracle,
+    verify_root_reduction, verify_root_reduction_bytes, verify_root_reduction_in_session,
+    RootEvaluationClaims, RootProverOracle, RootVerifierOracle,
 };
 pub use statement::{PrimeClaim, RootOpeningMode, RootStatement};
 
-use akita_algebra::{
-    binary::{field_switch::SwitchField, BinaryField162 as B},
-    trinomial::TrinomialModulus,
-};
+use akita_algebra::binary::{field_switch::SwitchField, BinaryField162 as B};
+
+use jolt_algebra::ring::trinomial::TrinomialModulus;
 use akita_challenges::BinaryChallengeSampler;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
-use jolt_transcript::Sponge;
 
 /// Bind the full public statement before any frontend challenges.
 pub fn bind_statement<H: SwitchField, const D: usize, M: TrinomialModulus, S: ClearChannel>(
@@ -127,12 +125,7 @@ pub fn verify_binary_clear<H: SwitchField, const D: usize, M: TrinomialModulus, 
     let mut sampler = BinaryChallengeSampler::new(setup.profile().clone());
     // The nonce only selects the challenges; the interval check on the clear
     // response is what binds the prover.
-    let challenges = channel.fold_challenges(
-        &mut sampler,
-        b"akita/labinius/clear-fold/v1",
-        setup.columns(),
-        &mut 0,
-    )?;
+    let challenges = channel.fold_challenges(&mut sampler, setup.columns(), &mut 0)?;
     let mut response = Vec::new();
     response
         .try_reserve_exact(setup.scalar_rows())
@@ -143,19 +136,14 @@ pub fn verify_binary_clear<H: SwitchField, const D: usize, M: TrinomialModulus, 
 }
 
 /// Verify one complete proof byte string, rejecting truncation and trailing bytes.
-pub fn verify_binary_clear_bytes<
-    H: SwitchField,
-    const D: usize,
-    M: TrinomialModulus,
-    Sp: Sponge,
->(
+pub fn verify_binary_clear_bytes<H: SwitchField, const D: usize, M: TrinomialModulus>(
     setup: &BinaryClearSetup<D, M>,
     commitment: &BinaryClearCommitment,
     point: &[H],
     value: H,
     proof: &[u8],
 ) -> Result<(), AkitaError> {
-    let mut channel = channel::new_verifier::<Sp>(proof)?;
+    let mut channel = channel::new_verifier(proof);
     verify_binary_clear(setup, commitment, point, value, &mut channel)?;
     channel::finish_verifier(channel)
 }

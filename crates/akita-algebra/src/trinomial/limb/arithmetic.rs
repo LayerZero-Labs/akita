@@ -57,11 +57,12 @@ impl Arithmetic {
     #[inline(always)]
     pub(super) fn center(self, value: i64) -> i32 {
         let p = i64::from(self.prime);
-        const PRIMES: [u32; 4] = super::TrinomialLimbDomain::ADMITTED_PRIMES;
-        const RECIPROCALS: [i64; 4] = {
-            let mut result = [0; 4];
+        const PRIMES: [u32; super::TrinomialLimbDomain::ADMITTED_PRIMES.len()] =
+            super::TrinomialLimbDomain::ADMITTED_PRIMES;
+        const RECIPROCALS: [i64; PRIMES.len()] = {
+            let mut result = [0; PRIMES.len()];
             let mut index = 0;
-            while index < 4 {
+            while index < PRIMES.len() {
                 let p = PRIMES[index] as u128;
                 result[index] = (((1u128 << 64) + p / 2) / p) as i64;
                 index += 1;
@@ -73,6 +74,7 @@ impl Arithmetic {
             prime if prime == PRIMES[1] => RECIPROCALS[1],
             prime if prime == PRIMES[2] => RECIPROCALS[2],
             prime if prime == PRIMES[3] => RECIPROCALS[3],
+            prime if prime == PRIMES[4] => RECIPROCALS[4],
             _ => 0,
         };
         let residue = if reciprocal == 0 {
@@ -82,8 +84,8 @@ impl Arithmetic {
             // (including MIN), |v|<=2^63. Rounding v*M/2^64 to q therefore
             // gives |q-v/p|<=1/2+1/4=3/4, so |v-q*p|<=3p/4<p.
             // This covers the ENTIRE checkpoint interval h+128*(p-1)^2,
-            // not just dot products. M<2^40 makes v*M+2^63 fit i128, and
-            // |q|<2^39 fits i64. q*p can exceed i64 near its endpoints;
+            // not just dot products. M<2^41 makes v*M+2^63 fit i128, and
+            // |q|<2^40 fits i64. q*p can exceed i64 near its endpoints;
             // wrapping reconstructs the exact small signed residue modulo
             // 2^64. One correction below then yields the unique centered value.
             let quotient =

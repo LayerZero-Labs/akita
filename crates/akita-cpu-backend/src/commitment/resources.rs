@@ -485,6 +485,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_params::FoldChallengeDistribution;
     use akita_params::{CommittedGroupParams, SisModulusProfileId};
     use jolt_crypto::challenge::SparseChallengeConfig;
 
@@ -496,7 +497,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
@@ -562,7 +563,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::pm1_only(1),
+            FoldChallengeDistribution::pm1_only(1),
         )
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();

@@ -1,12 +1,18 @@
 use akita_error::AkitaError;
+use akita_params::FoldChallengeDistribution;
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
-use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
+use jolt_crypto::challenge::{Challenges, SparseChallenge};
 
 pub(super) fn validate_packing_challenge_weights(
     challenges: &Challenges,
-    config: &SparseChallengeConfig,
+    config: &FoldChallengeDistribution,
 ) -> Result<(), AkitaError> {
+    let config = config.signed_sparse().ok_or_else(|| {
+        AkitaError::InvalidInput(
+            "coefficient-packing requires the signed-sparse challenge family".into(),
+        )
+    })?;
     let validate = |challenge: &SparseChallenge| {
         let mut count_pm1 = 0usize;
         let mut count_pm2 = 0usize;

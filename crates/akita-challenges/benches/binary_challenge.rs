@@ -1,23 +1,21 @@
 //! Offline microbenchmarks for the opt-in binary challenge families.
 
-use akita_challenges::{
-    BinaryChallengeDraw, BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing,
-};
+use akita_challenges::{BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing};
+
+use akita_types::FoldDraw;
 use akita_error::AkitaError;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use shake::digest::{ExtendableOutput, Update, XofReader};
-use shake::Shake256;
 use std::hint::black_box;
 
 struct BenchmarkDraw;
 
-impl BinaryChallengeDraw for BenchmarkDraw {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Result<[u8; 32], AkitaError> {
-        let mut xof = Shake256::default();
-        xof.update(payload);
-        let mut root = [0u8; 32];
-        xof.finalize_xof().read(&mut root);
-        Ok(root)
+impl FoldDraw for BenchmarkDraw {
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        decode(&vec![0x5c; len])
     }
 }
 
@@ -51,7 +49,7 @@ fn bench_binary_challenge(c: &mut Criterion) {
                 b.iter(|| {
                     black_box(
                         sampler
-                            .sample_challenges(&mut BenchmarkDraw, b"bench/binary-batch", count)
+                            .sample_challenges(&mut BenchmarkDraw, count)
                             .unwrap(),
                     )
                 });

@@ -18,9 +18,11 @@
 //! The table stored in `relation_lane_weights` is exactly this lane weight.
 //! This is the quotient-lift oracle. Reduced evaluation instead compiles the
 //! complete ordinary-plus-compression relation weight `p(address)` over the
-//! padded flat domain. The sumcheck engine folds either representation through
-//! `RelationWeightOracle` while the witness and structured-linear terms keep
-//! the same coefficient/lane geometry.
+//! padded flat domain. A caller may instead keep that weight in a structured
+//! form behind `StructuredRelationWeights`, which serves the coefficient rounds
+//! and hands over a dense table at the lane transition. The sumcheck engine
+//! folds every representation through `RelationWeightOracle` while the witness
+//! and structured-linear terms keep the same coefficient/lane geometry.
 //!
 //! If
 //!
@@ -108,6 +110,7 @@ enum WitnessState<E: Field> {
 enum CoefficientRelation<E: Field> {
     Factored(RelationWeightFactorization<E>),
     ReducedDense(DenseRelationWeights<E>),
+    Structured(Box<dyn StructuredRelationWeights<E>>),
 }
 
 /// State required to serve exactly one kind of Stage 2 round.
@@ -395,7 +398,9 @@ pub(crate) use evaluation_trace::{
 use lane_product::LaneProduct;
 pub(crate) use prepared_linear_lane::PreparedLinearLane;
 use quotient_prefix::{CoefficientRelationMoments, CompactQuotientPrefix};
-pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
+pub(crate) use weight_oracle::{
+    DenseRelationWeights, RelationWeightOracle, StructuredRelationWeights,
+};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
@@ -408,7 +413,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 ..
             } => Some(weights),
             Phase::Coefficient {
-                relation: CoefficientRelation::ReducedDense(_),
+                relation: CoefficientRelation::ReducedDense(_) | CoefficientRelation::Structured(_),
                 ..
             }
             | Phase::Lane { .. } => None,

@@ -1,4 +1,8 @@
 use super::*;
+use jolt_algebra::ring::scalar_powers;
+use jolt_crypto::challenge::Challenges;
+use akita_params::FoldChallengeDistribution;
+use jolt_crypto::challenge::SparseChallenge;
 use akita_params::{
     CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout,
     OuterCommitMatrixParams, RingOpeningPoint, SisModulusProfileId,
@@ -17,8 +21,8 @@ type MixedF = Prime128OffsetA7F7;
 const D_INNER: usize = 128;
 const D_PROJECTED: usize = 64;
 
-fn fold_challenge_config() -> SparseChallengeConfig {
-    SparseChallengeConfig::pm1_only(1)
+fn fold_challenge_config() -> FoldChallengeDistribution {
+    FoldChallengeDistribution::pm1_only(1)
 }
 
 struct MixedRelationFixture {

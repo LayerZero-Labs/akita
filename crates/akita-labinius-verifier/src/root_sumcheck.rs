@@ -7,17 +7,16 @@
 //!
 //! Claims, round messages and challenges are elements of the challenge field
 //! `E`. The base field `F` only fixes their transcript encoding: canonical
-//! base coordinates. Rounds run on `jolt-sumcheck`'s single-instance driver.
+//! base coordinates, as in `akita_sumcheck`.
 
 use crate::channel::ClearChannel;
 use akita_error::AkitaError;
-use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
 use jolt_algebra::checked;
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_sumcheck::{
-    verify_single, SingleFormat, SingleInstance, SingleReduction, SumcheckStatement,
-    VerifierRoundContext,
+use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
+use akita_sumcheck::{
+    verify_sumcheck_rounds, SumcheckRoundResult, SumcheckShape, SumcheckVerifierChannel,
 };
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Stored digits of either committed table lie in `[0, DIGIT_ALPHABET)`.
 const DIGIT_ALPHABET: u64 = 1 << LABINIUS_BALANCED_LOG_BASIS;
@@ -70,41 +69,21 @@ pub fn alphabet_polynomial<F: Field>(w: F) -> F {
 ///
 /// The round degree is the alphabet polynomial's degree plus one for the
 /// equality factor.
-pub fn combined_shape(num_vars: usize) -> Result<SumcheckStatement, AkitaError> {
+pub fn combined_shape(num_vars: usize) -> Result<SumcheckShape, AkitaError> {
     checked::pow2(num_vars).ok_or_else(|| {
         AkitaError::InvalidInput("combined root table length overflows usize".into())
     })?;
-    Ok(SumcheckStatement {
-        num_vars,
-        degree: DIGIT_ALPHABET as usize + 1,
-    })
+    SumcheckShape::new(num_vars, DIGIT_ALPHABET as usize + 1)
+        .map_err(|_| AkitaError::InvalidInput("invalid combined root sumcheck shape".into()))
 }
 
 /// Checked public grammar for a product instance over a field table.
-pub fn product_shape(num_vars: usize) -> Result<SumcheckStatement, AkitaError> {
+pub fn product_shape(num_vars: usize) -> Result<SumcheckShape, AkitaError> {
     checked::pow2(num_vars).ok_or_else(|| {
         AkitaError::InvalidInput("product root table length overflows usize".into())
     })?;
-    Ok(SumcheckStatement {
-        num_vars,
-        degree: 2,
-    })
-}
-
-/// The single-instance sumcheck of `shape` with `input_claim` at
-/// `invocation`: compressed rounds of `shape.degree` wire coefficients.
-pub fn root_instance<E>(
-    shape: SumcheckStatement,
-    invocation: u32,
-    input_claim: E,
-) -> SingleInstance<E> {
-    SingleInstance {
-        input_claim,
-        rounds: shape.num_vars,
-        degree: shape.degree,
-        format: SingleFormat::Compressed,
-        invocation,
-    }
+    SumcheckShape::new(num_vars, 2)
+        .map_err(|_| AkitaError::InvalidInput("invalid product root sumcheck shape".into()))
 }
 
 /// Claimed combined sum for the linear claim `s`: `c_pub - y_Y` on the
@@ -142,17 +121,17 @@ pub fn product_terminal<F: Field>(table_eval: F, weight_eval: F) -> F {
 }
 
 /// Replay combined rounds; the caller must check the returned terminal claim.
-pub fn verify_combined_rounds<F, E, C>(
+pub fn verify_combined_rounds<'proof, F, E, C>(
     channel: &mut C,
     invocation: u32,
     num_vars: usize,
     beta: E,
     s: E,
-) -> Result<SingleReduction<E>, AkitaError>
+) -> Result<SumcheckRoundResult<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    C: VerifierRoundContext<E, Error = AkitaError> + ClearChannel,
+    E: ExtField<F>,
+    C: SumcheckVerifierChannel<'proof, E> + ClearChannel,
 {
     let shape = combined_shape(num_vars)?;
     bind_root_sumcheck_instance(
@@ -161,26 +140,23 @@ where
         invocation,
         num_vars,
     )?;
-    verify_single::<F, E, AkitaError, C>(
-        &root_instance(shape, invocation, combined_input_claim(beta, s)),
-        channel,
-    )
+    verify_sumcheck_rounds::<F, E, C>(channel, invocation, combined_input_claim(beta, s), shape)
 }
 
 /// Replay product rounds for the linear claim `claim = <table, weights>`; the
 /// caller must check the returned terminal claim.
-pub fn verify_product_rounds<F, E, C>(
+pub fn verify_product_rounds<'proof, F, E, C>(
     channel: &mut C,
     invocation: u32,
     num_vars: usize,
     claim: E,
-) -> Result<SingleReduction<E>, AkitaError>
+) -> Result<SumcheckRoundResult<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
-    C: VerifierRoundContext<E, Error = AkitaError> + ClearChannel,
+    E: ExtField<F>,
+    C: SumcheckVerifierChannel<'proof, E> + ClearChannel,
 {
     let shape = product_shape(num_vars)?;
     bind_root_sumcheck_instance(channel, RootSumcheckInstance::Product, invocation, num_vars)?;
-    verify_single::<F, E, AkitaError, C>(&root_instance(shape, invocation, claim), channel)
+    verify_sumcheck_rounds::<F, E, C>(channel, invocation, claim, shape)
 }

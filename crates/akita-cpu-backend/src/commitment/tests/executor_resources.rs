@@ -5,6 +5,7 @@ use crate::commitment::{
 };
 use crate::opaque::NttCacheOwnerId;
 use crate::AkitaProverSetup;
+use akita_params::FoldChallengeDistribution;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use jolt_algebra::Prime64Offset59;
 use jolt_crypto::challenge::SparseChallengeConfig;
@@ -61,7 +62,7 @@ fn stage_registration_skips_streamed_slots() {
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        FoldChallengeDistribution::pm1_only(1),
     )
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();

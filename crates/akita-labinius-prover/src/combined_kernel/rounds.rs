@@ -2,6 +2,7 @@
 //! bytes, class moments on four packed bytes, and pairs evaluated directly.
 
 use akita_error::AkitaError;
+
 use jolt_algebra::checked;
 use jolt_algebra::Field;
 #[cfg(feature = "parallel")]

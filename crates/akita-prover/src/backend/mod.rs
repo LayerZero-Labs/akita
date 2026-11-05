@@ -42,17 +42,19 @@ pub use opening::{
     EorGroupRequest, GroupOpeningRequest, OpaqueEorKernel, OpaqueOpeningKernel, PreparedEor,
 };
 pub use plans::{
-    EvaluationTraceDescription, FoldProbeGeometry, PhysicalL2WeightRequest, RelationWeightRequest,
-    Stage2OpeningDescription, ValidatedFoldAcceptancePlan, ValidatedFoldProbePlan,
-    ValidatedRecursiveGroupOpeningPlan, ValidatedRecursiveWitnessCommitPlan,
-    ValidatedRecursiveWitnessPlan, ValidatedRelationSessionPlan, ValidatedRelationWitnessPlan,
-    ValidatedStage1Plan, ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan,
-    WitnessCommitmentParameters,
+    EvaluationTraceDescription, FoldProbeGeometry, PhysicalL2WeightRequest, RelationCompiler,
+    RelationWeightRequest, Stage2OpeningDescription, ValidatedFoldAcceptancePlan,
+    ValidatedFoldProbePlan, ValidatedRecursiveGroupOpeningPlan,
+    ValidatedRecursiveWitnessCommitPlan, ValidatedRecursiveWitnessPlan,
+    ValidatedRelationSessionPlan, ValidatedRelationWitnessPlan, ValidatedStage1Plan,
+    ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan, WitnessCommitmentParameters,
 };
 #[cfg(feature = "zk")]
 pub use residual::{ResidualExportKernel, ResidualWitness};
 pub use scope::{ProofScope, ProofScopeConsumer, ProofScopeId};
-pub use stage3::{OpaqueStage3Kernel, Stage3Request};
+#[cfg(feature = "labinius-trinomial")]
+pub use stage3::TypedStage3Request;
+pub use stage3::{FactoredStage3Request, OpaqueStage3Kernel, Stage3Request};
 pub use traits::{
     DigitRangeSteps, OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel,
     OpaqueRelationWitnessKernel, OpaqueResourceReleaseKernel, OpaqueStage1Kernel,
@@ -105,5 +107,7 @@ where
 {
 }
 
+#[cfg(feature = "labinius-trinomial")]
+pub use plans::NativeRootRelationRequest;
 mod setup_batch;
 pub use setup_batch::{SetupBatchBackend, SetupBatchKernel, SetupBatchRequest};

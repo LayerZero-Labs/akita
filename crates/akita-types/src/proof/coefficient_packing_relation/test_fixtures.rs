@@ -1,6 +1,9 @@
 //! Coefficient-packing relation fixtures shared by the akita-types tests and
 //! the verifier's compact-factor tests.
 
+use jolt_crypto::challenge::Challenges;
+use akita_params::FoldChallengeDistribution;
+use jolt_crypto::challenge::SparseChallenge;
 use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
 use jolt_crypto::challenge::{Challenges, SparseChallenge, SparseChallengeConfig};
 
@@ -47,7 +50,7 @@ where
     Base: Field + CanonicalEncoding + Ring,
     Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
 {
-    let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+    let config = FoldChallengeDistribution::production_for_ring_dim(s).unwrap();
     let mut params = CommittedGroupParams::params_only(profile, d_a, 2, 2, 2, 2, config)
         .with_decomp(positions_per_block, live_positions, 2, 2, 2)
         .unwrap();
@@ -129,9 +132,9 @@ where
             positions: (0..config.weight())
                 .map(|term| ((term + challenge) % s) as u32)
                 .collect(),
-            coeffs: (0..config.count_pm1)
+            coeffs: (0..config.signed_sparse().unwrap().count_pm1)
                 .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
-                .chain((0..config.count_pm2).map(|_| 2))
+                .chain((0..config.signed_sparse().unwrap().count_pm2).map(|_| 2))
                 .collect(),
         })
         .collect();
@@ -295,9 +298,9 @@ pub fn coefficient_packing_multigroup_fixture() -> CoefficientPackingMultigroupF
                     positions: (0..config.weight())
                         .map(|term| ((term + challenge) % 64) as u32)
                         .collect(),
-                    coeffs: (0..config.count_pm1)
+                    coeffs: (0..config.signed_sparse().unwrap().count_pm1)
                         .map(|_| 1)
-                        .chain((0..config.count_pm2).map(|_| 2))
+                        .chain((0..config.signed_sparse().unwrap().count_pm2).map(|_| 2))
                         .collect(),
                 })
                 .collect(),

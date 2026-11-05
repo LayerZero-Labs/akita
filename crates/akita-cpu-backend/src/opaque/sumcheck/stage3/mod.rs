@@ -5,13 +5,18 @@
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
 //! `setup_index_weight(i) * alpha(y)` table.
 
+#[cfg(test)]
+mod factored_tests;
 pub(super) mod product_table;
 #[cfg(test)]
 mod session_tests;
+pub(crate) mod structured;
+#[cfg(all(test, feature = "labinius-trinomial"))]
+mod structured_tests;
 pub(super) mod utils;
 
 use crate::opaque::OperationBinding;
-use crate::opaque::{CpuBackend, OpaqueStage3Kernel, Stage3Request};
+use crate::opaque::{CpuBackend, FactoredStage3Request, OpaqueStage3Kernel, Stage3Request};
 use akita_algebra::eq_poly::EqPolynomial;
 use jolt_algebra::ring::scalar_powers;
 use jolt_poly::UnivariatePoly;
@@ -163,6 +168,83 @@ where
         ))
     }
 
+    /// Extension seam: attach an admitted alternate setup table to the same
+    /// rectangular product and linear session used by ordinary Stage 3.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    fn begin_factored_stage3(
+        &self,
+        request: FactoredStage3Request<'_, F, E, Self::ProofSessionHandle>,
+    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        if !request.index_factor.len().is_power_of_two()
+            || !request.coefficient_factor.len().is_power_of_two()
+        {
+            return Err(AkitaError::InvalidInput(
+                "factored setup-product factors must have nonempty power-of-two lengths".into(),
+            ));
+        }
+        let expected_len = jolt_algebra::checked::product([
+            request.index_factor.len(),
+            request.coefficient_factor.len(),
+        ])
+        .ok_or_else(|| AkitaError::InvalidInput("factored setup-product size overflow".into()))?;
+        if request.coefficients.len() != expected_len {
+            return Err(AkitaError::InvalidInput(
+                "factored setup-product table length differs from its factors".into(),
+            ));
+        }
+        let (binding, lease) = self.stage3_binding(request.session, request.level)?;
+        let setup = SetupProductSumcheck::new(
+            SetupProductSource::Owned(request.coefficients),
+            request.index_factor.len(),
+            request.index_factor,
+            request.coefficient_factor,
+        )?;
+        Ok((
+            setup.input_claim(),
+            CpuStage3Session {
+                binding,
+                lease,
+                setup: Stage3Setup::Bound(setup),
+            },
+        ))
+    }
+
+    /// Extension seam: run the factored one-coefficient product on the
+    /// committed typed prefix, with its weight kept in its live blocks.
+    /// <https://github.com/LayerZero-Labs/akita/issues/285>.
+    #[cfg(feature = "labinius-trinomial")]
+    fn begin_typed_stage3(
+        &self,
+        request: akita_prover::backend::TypedStage3Request<
+            '_,
+            E,
+            Self::ProofSessionHandle,
+            <Self as akita_prover::backend::ProverHandleFamily<F, E>>::CommitmentHandle,
+        >,
+    ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        let (binding, lease) = self.stage3_binding(request.session, request.level)?;
+        let committed = &request.prefix.committed;
+        if request.prefix.owner != self.owner_id()
+            || committed.source.retained_coefficients().is_none()
+        {
+            return Err(AkitaError::InvalidInput(
+                "typed Stage 3 needs a prefix handle that retains its table".into(),
+            ));
+        }
+        let setup = SetupProductSumcheck::structured(
+            SetupProductSource::Retained(Arc::new(CommittedSetupTable(Arc::clone(committed)))),
+            Box::new(request.weights),
+        )?;
+        Ok((
+            setup.input_claim(),
+            CpuStage3Session {
+                binding,
+                lease,
+                setup: Stage3Setup::Bound(setup),
+            },
+        ))
+    }
+
     fn stage3_round_polynomial(
         &self,
         session: &mut Self::Stage3SessionHandle,
@@ -201,6 +283,47 @@ where
             return Err(AkitaError::InvalidInput("unbound setup batch".into()));
         };
         setup.folded_table_value()
+    }
+}
+
+impl<F, E> CpuBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + 'static,
+    E: Field + Ring + MulBaseUnreduced<F> + FpExtEncoding<F> + AkitaSerialize + 'static,
+{
+    /// Operation binding of a factored Stage 3 session at `level`.
+    fn stage3_binding(
+        &self,
+        session: &<Self as akita_prover::backend::ProofScopeConsumer>::ProofSessionHandle,
+        level: u32,
+    ) -> Result<(OperationBinding, crate::opaque::ScopeLease), AkitaError> {
+        let proof = session.validate_owner(self.owner())?;
+        let context = crate::opaque::ProofContext::new(
+            self.owner_id(),
+            self.owner().setup_digest(),
+            proof.scope_id(),
+            level,
+        );
+        let binding = self.binding(session, &context)?;
+        let lease = binding.scope_lease().clone();
+        Ok((binding, lease))
+    }
+}
+
+/// The table of a committed setup prefix, read in place.
+#[cfg(feature = "labinius-trinomial")]
+struct CommittedSetupTable<F: Field + CanonicalEncoding, E: Field>(
+    Arc<crate::opaque::owned::CommittedSource<F, E>>,
+);
+
+#[cfg(feature = "labinius-trinomial")]
+impl<F: Field + CanonicalEncoding, E: Field> product_table::RetainedSetupTable<F>
+    for CommittedSetupTable<F, E>
+{
+    fn coefficients(&self) -> &[F] {
+        // Admission checks that the source retains its table; an empty table
+        // fails every later length check.
+        self.0.source.retained_coefficients().unwrap_or(&[])
     }
 }
 

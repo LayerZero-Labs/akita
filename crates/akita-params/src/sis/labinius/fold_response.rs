@@ -43,9 +43,10 @@
 //! [`FOLD_RESPONSE_NONCE_BITS`](crate::FOLD_RESPONSE_NONCE_BITS).
 
 use akita_challenges::BinaryChallengeProfile;
+
+use jolt_crypto::challenge::SparseChallengeConfig;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use super::LabiniusRingDegree;
 use crate::sis::{
@@ -99,7 +100,9 @@ impl LabiniusFoldResponse {
                 "LaBinius fold response scalar/commitment degree mismatch".into(),
             ));
         }
-        let sparse = SparseChallengeConfig::pm1_only(challenge.weight_cap());
+        let sparse = crate::FoldChallengeDistribution::SignedSparse(
+            SparseChallengeConfig::pm1_only(challenge.weight_cap()),
+        );
         let norms = FoldChallengeNorms::new(&sparse);
         let gamma = u128::from(challenge.multiplication_linf_operator_bound());
         let monomial_gain = gamma

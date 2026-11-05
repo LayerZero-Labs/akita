@@ -67,6 +67,42 @@ where
     })
 }
 
+/// Extension seam: replay a singleton Stage 3 transcript for an authenticated
+/// public prefix identity and check its terminal product against the caller's
+/// weight. <https://github.com/LayerZero-Labs/akita/issues/285>.
+#[cfg(feature = "labinius-trinomial")]
+pub(crate) fn verify_stage3_session<F, E>(
+    rounds: usize,
+    encoded_slot: &[u8],
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    level: u32,
+    weight: impl FnOnce(&[E]) -> Result<E, AkitaError>,
+) -> Result<SetupSumcheckReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + AkitaSerialize + ChallengeCodec,
+{
+    let shape = akita_sumcheck::SumcheckShape::new(rounds, SETUP_SUMCHECK_DEGREE)?;
+    akita_types::stage3_public_slot(grinding, level, encoded_slot)?;
+    let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_params::SumcheckProtocol::Stage3,
+        level,
+        0,
+    );
+    let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(&mut channel, 0, claim, shape)?;
+    let setup_prefix_eval = akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
+    if replay.output_claim != setup_prefix_eval * weight(&replay.challenges)? {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(SetupSumcheckReplay {
+        claim,
+        setup_prefix_eval,
+        challenges: replay.challenges,
+    })
+}
+
 /// Check Stage 3 in either setup mode; the successor authenticates its endpoint.
 ///
 /// The setup contribution is evaluated at the Stage 2 point with its
@@ -161,6 +197,11 @@ where
     let selected_slot_id = selected_prefix.slot_id().ok_or_else(|| {
         AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
     })?;
+    if setup.prefix_context(&selected_slot_id).is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "ordinary Stage 3 cannot consume a scoped setup prefix".into(),
+        ));
+    }
     let slot = setup.prefix_slots().get(&selected_slot_id).ok_or_else(|| {
         AkitaError::InvalidSetup(
             "planned setup-prefix slot is missing from verifier setup".to_string(),

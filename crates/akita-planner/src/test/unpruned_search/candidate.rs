@@ -136,6 +136,7 @@ pub(super) fn terminal(
         };
     if let Some(l2_challenge) =
         jolt_crypto::challenge::selective_l2_challenge_config(terminal_params.d_a())
+            .map(akita_params::FoldChallengeDistribution::SignedSparse)
     {
         let fold_basis = 1usize
             .checked_shl(params.open().digits.log_basis)

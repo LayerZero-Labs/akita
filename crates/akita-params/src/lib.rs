@@ -1,5 +1,7 @@
 //! Akita parameter geometry, sizing, schedules, and security policy.
 
+#[cfg(feature = "labinius-sis")]
+pub mod binary_setup;
 pub mod commitment_slicing;
 pub mod compression;
 pub mod config;
@@ -12,9 +14,11 @@ pub use dispatch::{
     outer_opening_min_ring_d, protocol_dispatch_tier, protocol_dispatch_tier_for_sis_profile,
     validate_role_dims_for_field, ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
-pub use fold_family::{FoldChallengeDrawDomain, FoldChallengeFamily};
+pub use fold_family::{FoldChallengeDistribution, FoldChallengeDrawDomain, FoldChallengeFamily};
 pub mod golomb_rice;
 pub mod layout;
+#[cfg(feature = "labinius-trinomial")]
+pub mod ordinary_source;
 pub mod proof_size;
 mod ring_relation_mode;
 pub mod schedule;
@@ -62,15 +66,18 @@ pub use layout::{
     DigitRangePlan, FlatBooleanDomain, FlatMatrix, GadgetDigits, GroupOpenPhaseParams,
     GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningClaimsLayout, OpeningMethod,
     OuterRoleParams, PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
-    RelationAddressGeometry, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
-    RelationRowGeometry, RelationWitnessGeometry, RingMatrixView, RingOpeningPoint, RingRole,
-    RoleParams, SetupMatrixCapacity, SetupPrefixSlotId, SetupProjectionGeometry, Stage1StageShape,
-    SubringCoefficientPackingGeometry, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponseShape, DEV_PROTOCOL, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SCHEDULE_ARTIFACT_SET, SCHEDULE_CATALOG_SNAPSHOT,
-    SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE, STAGE2_SUMCHECK_DEGREE,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS, TERMINAL_BLOCK_DIGEST_BYTES,
+    RelationAddressGeometry, RelationGroupRows, RelationPolynomial, RelationPolynomialKind,
+    RelationRhsLayout, RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
+    RingMatrixView, RingOpeningPoint, RingRole, RoleParams, SetupMatrixCapacity, SetupPrefixSlotId,
+    SetupProjectionGeometry, Stage1StageShape, SubringCoefficientPackingGeometry,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape, DEV_PROTOCOL,
+    EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
+    SCHEDULE_ARTIFACT_SET, SCHEDULE_CATALOG_SNAPSHOT, SETUP_PREFIX_CONTENT_TAG,
+    SETUP_SUMCHECK_DEGREE, STAGE2_SUMCHECK_DEGREE, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_COMMITMENT_RING_DIMS, TERMINAL_BLOCK_DIGEST_BYTES,
 };
+#[cfg(feature = "labinius-trinomial")]
+pub use layout::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
 pub use proof_size::{nonterminal_level_layout, NonterminalLevelLayout};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{

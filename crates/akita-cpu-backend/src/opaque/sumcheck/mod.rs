@@ -8,7 +8,7 @@ pub(crate) mod digit_range;
 mod physical_l2_norm;
 mod prefix_lookup;
 pub(crate) mod relation_range_image;
-mod stage3;
+pub(crate) mod stage3;
 
 // --- Shared helpers ------------------------------------------------------
 

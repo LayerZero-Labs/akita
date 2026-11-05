@@ -1,0 +1,443 @@
+use super::*;
+use akita_types::PreviewFoldDraw;
+use akita_types::ProverFoldDraw;
+use akita_params::{
+    DigitRangePlan, FlatBooleanDomain, GrindingSite, NextWitnessBindingPolicy,
+    SetupContributionMode,
+};
+use akita_types::binary_source::{
+    binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
+    binary_root_statement, BinaryProjectionRequest, BinaryProjectionRows, BinaryRootPublic,
+};
+use akita_types::opening_claims::GroupClaimKind;
+use akita_types::GrindingReplay;
+use jolt_algebra::AdditiveGroup;
+
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+pub(super) fn prove_root<Cfg, B>(
+    expanded: &akita_types::AkitaSetupDescriptor,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
+    backend: &B,
+    claims: &akita_types::OpeningClaims<'_, Cfg::ExtField, akita_types::Commitment<Cfg::Field>>,
+    _digests: &[akita_transcript::CommitmentDigest],
+    layout: &OpeningClaimsLayout,
+    handles: &[B::CommitmentHandle],
+    schedule: &FoldSchedule,
+    proof_session: &B::ProofSessionHandle,
+    grinding: &mut akita_types::ProverGrinding<'_>,
+    basis: BasisMode,
+    _handoff: &mut super::registry::FoldHandoff<'_, '_, '_, Cfg>,
+) -> Result<
+    ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
+    AkitaError,
+>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<Cfg::Field>
+        + AkitaSerialize
+        + 'static,
+    B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
+{
+    if !(1..=2).contains(&claims.num_groups())
+        || handles.len() != claims.num_groups()
+        || Cfg::ExtField::DEGREE != 1
+        || basis != BasisMode::Lagrange
+    {
+        return Err(AkitaError::InvalidInput(
+            "unsupported binary root group geometry".into(),
+        ));
+    }
+    let _level_span = tracing::info_span!("binary_root_level").entered();
+    let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
+    let GroupClaimKind::Binary {
+        manifest,
+        claim,
+        prime,
+    } = group.kind()
+    else {
+        return Err(AkitaError::InvalidProof);
+    };
+    let next = schedule
+        .recursive_folds
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
+    if next.predecessor_setup_contribution_mode() != SetupContributionMode::Recursive {
+        return Err(AkitaError::InvalidInput(
+            "binary root requires a typed setup-prefix successor".into(),
+        ));
+    }
+    let ordinary_group = claims.groups().get(1);
+    let ordinary_profile = if let Some(ordinary) = ordinary_group {
+        if ordinary.kind() != &GroupClaimKind::Ordinary || ordinary.evaluations().len() != 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        Some(schedule.root.params.group_params(layout, 1)?.profile)
+    } else {
+        None
+    };
+    let logical_len = schedule.root.output_witness_len;
+    let ordinary_statement = ordinary_group
+        .zip(ordinary_profile)
+        .map(|(ordinary, profile)| {
+            let compression = profile.outer_compression_plan()?;
+            let dimension = compression
+                .maps()
+                .last()
+                .ok_or(AkitaError::InvalidProof)?
+                .ring_dimension();
+            Ok::<_, AkitaError>((
+                dimension,
+                ordinary.commitment().rows().coeffs(),
+                ordinary.point(),
+                ordinary.evaluations(),
+            ))
+        })
+        .transpose()?;
+    binary_root_statement::<Cfg::Field, Cfg::ExtField, _>(
+        grinding.state_mut(),
+        manifest,
+        claim.as_ref(),
+        prime,
+        group.commitment().rows().coeffs(),
+        ordinary_statement,
+    )?;
+    let context = backend.proof_context(proof_session, 0)?;
+    let span = tracing::info_span!("binary_root_field_switch").entered();
+    let terminal = if let Some(claim) = claim {
+        Some({
+            let (_, source) = backend.prepare_root_group(
+                proof_session,
+                &context.for_group(0),
+                handles.first().ok_or(AkitaError::InvalidProof)?,
+                &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
+                    manifest: manifest.as_ref().clone(),
+                    polynomial: *claim.polynomial(),
+                },
+            )?;
+            let carriers = source.downcast_ref::<Vec<u128>>().ok_or_else(|| {
+                AkitaError::Internal("backend field-switch source type mismatch".into())
+            })?;
+            crate::binary_field_switch::prove_field_switch(
+                manifest.descriptor(),
+                claim,
+                carriers,
+                grinding.state_mut(),
+            )?
+        })
+    } else {
+        None
+    };
+    drop(span);
+    let public = BinaryRootPublic::new(
+        manifest,
+        terminal.as_ref(),
+        prime,
+        expanded,
+        logical_len,
+        next.params.d_a(),
+        ordinary_profile,
+    )?;
+
+    let request = akita_types::binary_source::BinaryRootWitnessRequest {
+        manifest: manifest.as_ref().clone(),
+        claim: terminal,
+        prime: prime.clone(),
+        plan: public.plan().clone(),
+        ordinary: ordinary_profile
+            .map(|profile| {
+                Ok::<_, AkitaError>((
+                    profile,
+                    handles.get(1).ok_or(AkitaError::InvalidProof)?.clone(),
+                ))
+            })
+            .transpose()?,
+    };
+    let span = tracing::info_span!("binary_root_d_commitment").entered();
+    let (d_payload, preparation) = backend.prepare_root_group(
+        proof_session,
+        &context.for_group(0),
+        handles.first().ok_or(AkitaError::InvalidProof)?,
+        &request,
+    )?;
+    drop(span);
+    if d_payload.len() != 128 {
+        return Err(AkitaError::InvalidProof);
+    }
+    akita_transcript::send_field_group(
+        grinding.state_mut(),
+        akita_types::FoldSite::OpeningPayload {
+            level: 0,
+            ring_dimension: 64,
+        }
+        .id()?,
+        &d_payload,
+    )?;
+    let columns = manifest.descriptor().index_map().columns();
+    let owners = manifest.descriptor().polynomials().len();
+    let site = GrindingSite::FoldResponse { level: 0 };
+    let span = tracing::info_span!("binary_root_response_build").entered();
+    let mut accepted = None;
+    for nonce in 0..akita_params::FOLD_RESPONSE_ATTEMPTS {
+        let mut preview = grinding.preview_fold_response(site, nonce)?;
+        let work = preview.take_work()?;
+        let challenges =
+            binary_root_challenges(&mut PreviewFoldDraw::new(&mut preview), columns, owners)?;
+        if let Some(witness) = backend.build_root_group(
+            proof_session,
+            &context,
+            preparation.as_ref(),
+            &challenges,
+            logical_len,
+            next.params.d_a(),
+        )? {
+            accepted = Some((work, challenges, witness));
+            break;
+        }
+    }
+    let (work, preview_challenges, witness) = accepted
+        .ok_or_else(|| AkitaError::InvalidInput("binary response rejection exhausted".into()))?;
+    drop(span);
+    grinding.commit_fold_response(site, work)?;
+    let challenges = binary_root_challenges(
+        &mut ProverFoldDraw::new(grinding.state_mut(), 0, 0),
+        columns,
+        owners,
+    )?;
+    if challenges != preview_challenges {
+        return Err(AkitaError::Internal(
+            "binary response preview disagrees with replay".into(),
+        ));
+    }
+    grinding.record_fold_challenges(
+        0,
+        0,
+        jolt_algebra::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
+    )?;
+    let span = tracing::info_span!("binary_root_outgoing_commit").entered();
+    let committed = fold::commit_next_witness::<Cfg::Field, Cfg::ExtField, B, _>(
+        backend,
+        grinding,
+        0,
+        fold::FoldSuccessorParams::Recursive(next),
+        logical_len,
+        NextWitnessBindingPolicy::OuterPayload,
+        witness,
+        &mut fold::RawPayload,
+    )?;
+    drop(span);
+    let mut witness = committed.witness_handle;
+    let span = tracing::info_span!("binary_root_projections").entered();
+    let bounds = public.plan().projection_bounds();
+    let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
+    let (_, residual) = backend.prepare_root_group(
+        proof_session,
+        &context.for_group(0),
+        handles.first().ok_or(AkitaError::InvalidProof)?,
+        &BinaryProjectionRequest {
+            challenges: challenges.clone(),
+        },
+    )?;
+    let residual = residual
+        .downcast_ref::<Vec<[i128; 648]>>()
+        .ok_or_else(|| AkitaError::Internal("backend projection residual type mismatch".into()))?;
+    let projected_values = binary_projection_values(
+        grinding.state_mut(),
+        bounds,
+        &projections.project(residual, bounds)?,
+    )?;
+    drop(span);
+    let alpha = grinding
+        .grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::RingSwitchAlpha { level: 0 })?;
+    let domain = FlatBooleanDomain::new(
+        logical_len,
+        public.plan().repacking().domain_len().trailing_zeros() as usize,
+    )?;
+    if domain.domain_len() != public.plan().repacking().domain_len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let tau0 = grinding.grinded_ext_challenges::<Cfg::ExtField>(
+        GrindingSite::Tau0Point { level: 0 },
+        domain.num_vars(),
+    )?;
+    let batches = binary_root_batch_challenges::<Cfg::ExtField, _>(grinding, public.batch_count())?;
+    let payload = group
+        .commitment()
+        .rows()
+        .coeffs()
+        .iter()
+        .copied()
+        .map(Cfg::ExtField::lift_base)
+        .collect::<Vec<_>>();
+    let d_payload = d_payload
+        .into_iter()
+        .map(Cfg::ExtField::lift_base)
+        .collect::<Vec<_>>();
+    let ordinary_payload = ordinary_group.map(|ordinary| {
+        ordinary
+            .commitment()
+            .rows()
+            .coeffs()
+            .iter()
+            .copied()
+            .map(Cfg::ExtField::lift_base)
+            .collect::<Vec<_>>()
+    });
+    let ordinary_claim = ordinary_group
+        .zip(ordinary_payload.as_ref())
+        .map(|(group, payload)| {
+            Ok::<_, AkitaError>((
+                group.point(),
+                *group
+                    .evaluations()
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?,
+                payload.as_slice(),
+            ))
+        })
+        .transpose()?;
+    let mu = batches
+        .get(..7)
+        .ok_or(AkitaError::InvalidProof)?
+        .try_into()
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let rho = projections.batch(&mu)?;
+    let matrix =
+        akita_types::binary_source::binary_root_matrix(&expanded.setup_seed.seed, manifest)?;
+    let span = tracing::info_span!("binary_root_relation_compile").entered();
+    let (relation, negative_binary_weights) = public.relation(
+        &challenges,
+        alpha,
+        &batches,
+        &rho,
+        &projected_values,
+        &payload,
+        &d_payload,
+        ordinary_claim,
+        Some(akita_types::binary_source::BinaryAOperand {
+            matrix: &matrix,
+            canonical: |x: &Cfg::ExtField| {
+                x.degree_one_base().and_then(|base| base.to_u128_checked())
+            },
+        }),
+    )?;
+    drop(matrix);
+    let authentication = public.authentication_batches(&batches)?.map(<[_]>::to_vec);
+    drop(batches);
+    drop(span);
+    let relation_claim = relation.claim();
+    let span = tracing::info_span!("binary_root_stage1").entered();
+    let range = DigitRangePlan::new(8)?;
+    let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
+    let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B, _>(
+        backend, session, range, domain, tau0, None, grinding, 0,
+    )?;
+    drop(span);
+    let gamma =
+        grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
+    let span = tracing::info_span!("binary_root_stage2").entered();
+    if relation.table_len() != domain.domain_len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let session = backend.begin_root_relation(
+        &witness,
+        relation,
+        negative_binary_weights,
+        relation_claim,
+        &stage1.point,
+        stage1.range_image_evaluation,
+        gamma,
+    )?;
+    let stage2 = fold::sumcheck::prove_stage2_session::<Cfg::Field, Cfg::ExtField, B, _>(
+        backend,
+        session,
+        grinding,
+        0,
+        domain.num_vars(),
+        relation_claim + gamma * stage1.range_image_evaluation,
+    )?;
+    akita_types::stage2_w_eval::<Cfg::Field, Cfg::ExtField, _>(
+        grinding,
+        0,
+        stage2.witness_evaluation,
+    )?;
+    drop(span);
+    let span = tracing::info_span!("binary_root_stage3").entered();
+    let prefix = next
+        .params
+        .setup_prefix()
+        .and_then(|p| p.slot_id())
+        .ok_or_else(|| AkitaError::InvalidInput("binary root has no typed prefix slot".into()))?;
+    let prepared_prefix = prefix_slots.get(&prefix).ok_or_else(|| {
+        AkitaError::InvalidInput("binary root typed prefix was not prepared".into())
+    })?;
+    let phase = tracing::info_span!("binary_root_stage3_layout").entered();
+    let typed = akita_types::binary_source::BinaryTypedPrefix::new(
+        manifest,
+        claim.is_some(),
+        prime.planes().len(),
+        next.params.d_a(),
+    )?;
+    let product = akita_types::binary_source::BinaryAProduct::new(
+        public.plan(),
+        &rho,
+        &stage2.challenges,
+        prefix.n_prefix()?,
+    )?;
+    drop(phase);
+    // A, B and D share one weight over the typed prefix. It stays in live
+    // 64-cell blocks: the six in-block rounds read only those blocks, and the
+    // remaining rounds run on the one-cell block values.
+    let phase = tracing::info_span!("binary_root_stage3_weights").entered();
+    let weights = typed.prover_weight_blocks(
+        &product,
+        &stage2.challenges,
+        alpha,
+        [&authentication[0], &authentication[1]],
+        prefix.n_prefix()?,
+    )?;
+    drop(phase);
+    let phase = tracing::info_span!("binary_root_stage3_begin").entered();
+    // The table is the one the prefix preparation committed.
+    let (claim, session) = backend.begin_typed_stage3(crate::backend::TypedStage3Request {
+        session: proof_session,
+        level: 0,
+        prefix: &prepared_prefix.commitment_handle,
+        weights,
+    })?;
+    drop(phase);
+    akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
+    akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
+    let phase = tracing::info_span!("binary_root_stage3_rounds").entered();
+    let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B, _>(
+        backend,
+        session,
+        claim,
+        prefix.n_prefix()?.trailing_zeros() as usize,
+        grinding,
+        0,
+    )?;
+    drop(phase);
+    backend.advance_witness_level(&mut witness)?;
+    drop(span);
+    Ok(ProveLevelOutput {
+        next_state: SuffixProverState {
+            witness_handle: witness,
+            commitment_material: committed.commitment_material_handle,
+            public: FoldPublicState {
+                level: 1,
+                binding: committed.binding,
+                sumcheck_challenges: stage2.challenges,
+                opening: stage2.witness_evaluation,
+                setup_prefix_opening: Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
+            },
+        },
+    })
+}

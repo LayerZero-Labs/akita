@@ -15,22 +15,8 @@ use common::{admitted, clear_setup, clear_setup_with, data, TestHost, Q};
 fn roundtrip<H: TestHost, const D: usize, M: TrinomialModulus>(setup: &BinaryClearSetup<D, M>) {
     let (source, point, claim) = data::<H>(setup.source_len(), setup.num_vars());
     let commitment = commit_binary_clear::<H, D, M>(setup, &source).unwrap();
-    let proof = prove_binary_clear_bytes::<_, _, _, common::TestSponge>(
-        setup,
-        &source,
-        &commitment,
-        &point,
-        claim,
-    )
-    .unwrap();
-    verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-        setup,
-        &commitment,
-        &point,
-        claim,
-        &proof,
-    )
-    .unwrap();
+    let proof = prove_binary_clear_bytes(setup, &source, &commitment, &point, claim).unwrap();
+    verify_binary_clear_bytes(setup, &commitment, &point, claim, &proof).unwrap();
 }
 
 #[test]
@@ -58,14 +44,7 @@ fn tampered_openings_and_statements_reject() {
     let setup = clear_setup::<648, MinusTrinomial>(2, 2, 8);
     let (source, point, claim) = data::<H>(setup.source_len(), setup.num_vars());
     let commitment = commit_binary_clear::<H, 648, MinusTrinomial>(&setup, &source).unwrap();
-    let proof = prove_binary_clear_bytes::<_, _, _, common::TestSponge>(
-        &setup,
-        &source,
-        &commitment,
-        &point,
-        claim,
-    )
-    .unwrap();
+    let proof = prove_binary_clear_bytes(&setup, &source, &commitment, &point, claim).unwrap();
     let rejects = |name: &str, result: Result<(), AkitaError>| {
         assert!(result.is_err(), "accepted {name}");
     };
@@ -78,13 +57,7 @@ fn tampered_openings_and_statements_reject() {
         changed[position] ^= 1;
         rejects(
             &format!("flipped byte {position}"),
-            verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-                &setup,
-                &commitment,
-                &point,
-                claim,
-                &changed,
-            ),
+            verify_binary_clear_bytes(&setup, &commitment, &point, claim, &changed),
         );
     }
     let mut extended = proof.clone();
@@ -96,13 +69,7 @@ fn tampered_openings_and_statements_reject() {
     ] {
         rejects(
             name,
-            verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-                &setup,
-                &commitment,
-                &point,
-                claim,
-                bytes,
-            ),
+            verify_binary_clear_bytes(&setup, &commitment, &point, claim, bytes),
         );
     }
 
@@ -135,31 +102,18 @@ fn tampered_openings_and_statements_reject() {
     ] {
         rejects(
             name,
-            verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-                setup, commitment, point, claim, &proof,
-            ),
+            verify_binary_clear_bytes(setup, commitment, point, claim, &proof),
         );
     }
     rejects(
         "short point",
-        verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-            &setup,
-            &commitment,
-            &point[1..],
-            claim,
-            &proof,
-        ),
+        verify_binary_clear_bytes(&setup, &commitment, &point[1..], claim, &proof),
     );
 
     // The prover refuses a false claim and a matrix that is not reduced.
-    assert!(prove_binary_clear_bytes::<_, _, _, common::TestSponge>(
-        &setup,
-        &source,
-        &commitment,
-        &point,
-        claim + H::ONE
-    )
-    .is_err());
+    assert!(
+        prove_binary_clear_bytes(&setup, &source, &commitment, &point, claim + H::ONE).is_err()
+    );
     let mut unreduced = setup.matrix().to_vec();
     unreduced[0] = Q;
     assert!(clear_setup_with::<648, MinusTrinomial>(unreduced, 2, 2, 8).is_err());
@@ -205,26 +159,13 @@ fn fold_response_nonce_is_searched_replayed_and_bounded() {
         .rev()
         .map(|bound| {
             let setup = within(&wide, bound);
-            let proof = prove_binary_clear_bytes::<_, _, _, common::TestSponge>(
-                &setup,
-                &source,
-                &commitment,
-                &point,
-                claim,
-            )
-            .unwrap();
+            let proof =
+                prove_binary_clear_bytes(&setup, &source, &commitment, &point, claim).unwrap();
             (setup, proof)
         })
         .find(|(_, proof)| (1..0x80).contains(&proof[nonce_at]))
         .expect("no interval forced a rejection");
-    verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-        &setup,
-        &commitment,
-        &point,
-        claim,
-        &proof,
-    )
-    .unwrap();
+    verify_binary_clear_bytes(&setup, &commitment, &point, claim, &proof).unwrap();
     let nonce = proof[nonce_at];
     for (name, replacement) in [
         ("a rejected candidate", vec![nonce - 1]),
@@ -235,13 +176,7 @@ fn fold_response_nonce_is_searched_replayed_and_bounded() {
         changed.splice(nonce_at..=nonce_at, replacement);
         assert!(
             matches!(
-                verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-                    &setup,
-                    &commitment,
-                    &point,
-                    claim,
-                    &changed
-                ),
+                verify_binary_clear_bytes(&setup, &commitment, &point, claim, &changed),
                 Err(AkitaError::InvalidProof)
             ),
             "accepted {name}"
@@ -252,13 +187,7 @@ fn fold_response_nonce_is_searched_replayed_and_bounded() {
     let (source, point, claim) = data::<H>(setup.source_len(), setup.num_vars());
     let commitment = commit_binary_clear::<H, 162, PlusTrinomial>(&setup, &source).unwrap();
     assert!(matches!(
-        prove_binary_clear_bytes::<_, _, _, common::TestSponge>(
-            &setup,
-            &source,
-            &commitment,
-            &point,
-            claim
-        ),
+        prove_binary_clear_bytes(&setup, &source, &commitment, &point, claim),
         Err(AkitaError::InvalidInput(_))
     ));
 }

@@ -96,6 +96,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             zk: None,
             root_main_constraint: None,
             adaptation_guide: None,
+            root_setup_mode: None,
             query_prefix_count: 0,
         },
     )
@@ -112,6 +113,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             zk: None,
             root_main_constraint: None,
             adaptation_guide: None,
+            root_setup_mode: None,
             query_prefix_count: 0,
         },
     )

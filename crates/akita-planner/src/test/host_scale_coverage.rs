@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 type RingChallengeConfig =
-    fn(usize) -> Result<jolt_crypto::challenge::SparseChallengeConfig, AkitaError>;
+    fn(usize) -> Result<akita_params::FoldChallengeDistribution, AkitaError>;
 
 struct Shape {
     label: String,

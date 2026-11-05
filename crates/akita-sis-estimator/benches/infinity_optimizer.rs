@@ -387,12 +387,16 @@ fn format_case_label(
     )
 }
 
+/// Extension seam: q24 benchmark label match-arm registration for
+/// <https://github.com/LayerZero-Labs/akita/issues/285>.
 fn family_label(family: AkitaModulusProfileId) -> &'static str {
     match family {
         AkitaModulusProfileId::Q32Offset99 => "q32",
         AkitaModulusProfileId::Q64Offset59 => "q64",
         #[cfg(feature = "labinius-sis")]
         AkitaModulusProfileId::Q25Plus14561 => "q25-labinius",
+        #[cfg(feature = "labinius-sis")]
+        AkitaModulusProfileId::Q24Minus2523807 => "q24",
         AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
         AkitaModulusProfileId::Q128Offset275 => "q128_offset275",
     }

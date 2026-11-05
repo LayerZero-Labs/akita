@@ -10,15 +10,15 @@
 
 use akita_algebra::binary::{field_switch::SwitchField, BinaryField162};
 use akita_error::AkitaError;
+use jolt_algebra::checked;
 use akita_params::{
-    grind_bits_for_loss, multilinear_point_loss_factor, nonce_max_bytes,
-    polynomial_identity_loss_factor, powers_batch_loss_factor,
+    multilinear_point_loss_factor, polynomial_identity_loss_factor, powers_batch_loss_factor,
     sis::labinius::{LabiniusRootEncoding, LabiniusRootShape},
     ChallengeFieldOrder, GRINDING_NONCE_SLACK_BITS, MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
 };
-use jolt_algebra::checked;
+use akita_sumcheck::SumcheckShape;
+use akita_transcript::nonce_max_bytes;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
-use jolt_sumcheck::SumcheckStatement;
 
 use crate::{
     root_sumcheck::{combined_shape, product_shape},
@@ -137,7 +137,7 @@ fn push_run(
     order: ChallengeFieldOrder,
     multiplicity: usize,
 ) -> Result<(), AkitaError> {
-    let grind_bits = grind_bits_for_loss(loss_factor, order).map_err(|_| {
+    let grind_bits = order.grind_bits(loss_factor).map_err(|_| {
         AkitaError::InvalidSetup(
             "LaBinius challenge field is too small for the root reduction's challenges".into(),
         )
@@ -241,7 +241,7 @@ where
         push_run(
             runs,
             RootGrindingSite::Round { invocation },
-            polynomial_identity_loss_factor(combined_shape(num_vars)?.degree)?,
+            polynomial_identity_loss_factor(combined_shape(num_vars)?.degree_bound())?,
             order,
             num_vars,
         )?;
@@ -258,7 +258,7 @@ where
         push_run(
             runs,
             RootGrindingSite::Round { invocation: 2 },
-            polynomial_identity_loss_factor(product_shape(num_vars)?.degree)?,
+            polynomial_identity_loss_factor(product_shape(num_vars)?.degree_bound())?,
             order,
             num_vars,
         )?;
@@ -330,7 +330,7 @@ impl RootGrindingPlan {
     /// `instances`, in replay order. Each invocation's checked shape fixes
     /// its round count and degree bound; both combined and product instances
     /// use the reduction's round loss function and exact challenge-field order.
-    pub fn sumcheck_rounds<F, E>(instances: &[(u32, SumcheckStatement)]) -> Result<Self, AkitaError>
+    pub fn sumcheck_rounds<F, E>(instances: &[(u32, SumcheckShape)]) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
@@ -345,9 +345,9 @@ impl RootGrindingPlan {
             push_run(
                 &mut runs,
                 RootGrindingSite::Round { invocation },
-                polynomial_identity_loss_factor(shape.degree)?,
+                polynomial_identity_loss_factor(shape.degree_bound())?,
                 order,
-                shape.num_vars,
+                shape.num_rounds(),
             )?;
         }
         Ok(Self { runs })

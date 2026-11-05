@@ -179,10 +179,13 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
             .ok_or_else(|| shape_overflow(rows))?;
         let pipeline = metal.pipeline(&ring_degree_kernel(template, D))?;
         let mut batch = Batch::new(metal.device())?;
-        // SAFETY: `rows` checked that `data` is a whole number of `K x D` rings, and the grid
-        // launches `D / 2` lanes per `(element, prime)` row, so every butterfly stays inside its
-        // row; `primes` and `tables` hold `K` primes and `K x 7 x D` table words, indexed by the
-        // row's prime.
+        // SAFETY: `rows` makes `data` exactly `rows` (element, prime) rows of D
+        // words, and the grid is `rows` full threadgroups of D/2 lanes. Lane `lane`
+        // of row `row` reads and writes `data[row * D + lane]` and
+        // `data[row * D + lane + D/2]`, and reads `primes[row % K]` and words below
+        // D of each table in prime `row % K`'s block of the `[K][7][D]` tables.
+        // Lanes share only the threadgroup array, whose accesses the barriers in
+        // `ntt.h` order.
         unsafe {
             batch.dispatch_unchecked(
                 pipeline,

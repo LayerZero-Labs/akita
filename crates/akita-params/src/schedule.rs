@@ -106,7 +106,9 @@ pub struct TerminalFoldParams {
     /// Response basis and depth this terminal fold was planned against.
     pub fold: crate::GadgetDigits,
     /// Fold-challenge family for the terminal response.
-    pub fold_challenge_config: jolt_crypto::challenge::SparseChallengeConfig,
+    /// Extension seam: challenge selection for binary source groups
+    /// tracked by <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub fold_challenge_config: crate::FoldChallengeDistribution,
     /// Shape of the clear terminal response payload.
     pub response_shape: TerminalResponseShape,
     /// Witness field length entering the terminal fold.
@@ -222,13 +224,11 @@ impl TerminalFoldParams {
     pub fn fold_challenge_family(&self) -> Result<crate::FoldChallengeFamily, AkitaError> {
         let rejection = match self.response_l2_sq_cap() {
             Some(_) => Some(
-                jolt_crypto::challenge::selective_l2_operator_norm_rejection(
-                    self.d_a(),
-                    &self.fold_challenge_config,
-                )
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
-                })?,
+                self.fold_challenge_config
+                    .operator_norm_rejection(self.d_a())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
+                    })?,
             ),
             None => None,
         };
@@ -754,7 +754,7 @@ struct OpeningExecutionGroup<'a> {
     /// this admission check meant to impose.
     opening_method: OpeningMethod,
     inner_commit_matrix: &'a crate::InnerCommitMatrixParams,
-    fold_challenge_config: jolt_crypto::challenge::SparseChallengeConfig,
+    fold_challenge_config: crate::FoldChallengeDistribution,
     /// Encoding the committing fold actually used for this group.
     ///
     /// Carried explicitly rather than read from `params`: a group's own
@@ -839,7 +839,7 @@ fn validate_level_opening_execution(
         else {
             continue;
         };
-        let expected = jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(
+        let expected = crate::FoldChallengeDistribution::production_for_ring_dim(
             challenge_subring_dimension,
         )
         .ok_or_else(|| {

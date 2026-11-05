@@ -249,7 +249,7 @@ where
             context.fold_level() as usize,
         )?;
         let mut material = CpuCommitmentMaterialHandle::from_state(
-            handle.committed.retained.clone(),
+            handle.committed.ordinary_retained()?.clone(),
             &plan,
             parameters.group.num_polynomials(),
         )?;

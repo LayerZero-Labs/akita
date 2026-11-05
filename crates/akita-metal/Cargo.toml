@@ -35,6 +35,19 @@ criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 rayon = "1.10"
 
+[features]
+default = ["transcript-keccak"]
+# akita-types and akita-cpu-backend need exactly one transcript backend;
+# forward the choice.
+transcript-blake2b = [
+  "akita-types/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-types/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
+]
+
 [[bench]]
 name = "ntt"
 harness = false

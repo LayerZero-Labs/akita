@@ -2,13 +2,14 @@
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
 use akita_error::AkitaError;
-use akita_params::FlatMatrix;
+use akita_params::{FlatMatrix, SetupPrefixSlotId};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, TrustedBytes, Valid, Validate,
 };
 use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_crypto::lattice::{check_public_matrix_prefix, PublicMatrixSeed};
 use jolt_crypto::CryptoError;
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -76,6 +77,8 @@ pub struct AkitaVerifierSetup<F: Field> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     prefix_slots: SetupPrefixVerifierRegistry<F>,
+    /// Trusted installation identities for separately scoped prefix streams.
+    prefix_contexts: BTreeMap<SetupPrefixSlotId, Vec<u8>>,
 }
 
 impl<F: Field> AkitaVerifierSetup<F> {
@@ -87,6 +90,52 @@ impl<F: Field> AkitaVerifierSetup<F> {
     /// Borrow the public setup-prefix commitment metadata.
     pub fn prefix_slots(&self) -> &SetupPrefixVerifierRegistry<F> {
         &self.prefix_slots
+    }
+
+    /// Extension seam: preserve a trusted prefix's transient stream identity.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// Installation has the same trust boundary as [`Self::from_parts`]: the
+    /// caller authenticates both the prefix commitment and its context. Context
+    /// bytes must be nonempty and at most 256 KiB, and the slot must exist.
+    /// Contexts survive cloning. A setup carrying a context cannot be serialized;
+    /// prepare its scoped prefixes again after loading the ordinary setup.
+    pub fn with_prefix_context(
+        mut self,
+        id: SetupPrefixSlotId,
+        context: Vec<u8>,
+    ) -> Result<Self, AkitaError> {
+        if self.prefix_slots.get(&id).is_none()
+            || context.is_empty()
+            || context.len() > (1 << 18)
+            || self.prefix_contexts.contains_key(&id)
+        {
+            return Err(AkitaError::InvalidInput(
+                "prefix context requires an existing unscoped slot and 1..=262144 bytes".into(),
+            ));
+        }
+        self.prefix_contexts.insert(id, context);
+        Ok(self)
+    }
+
+    /// Extension seam: refuse an encoding that would drop scoped prefix identities.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// Every encoder of this setup calls this before writing, including one
+    /// that writes the matrix and prefix registry as separate fields.
+    pub fn ensure_no_prefix_contexts(&self) -> Result<(), SerializationError> {
+        if self.prefix_contexts.is_empty() {
+            return Ok(());
+        }
+        Err(SerializationError::InvalidData(
+            "verifier setup has transient prefix contexts; prepare scoped prefixes again after loading the ordinary setup".into(),
+        ))
+    }
+
+    /// Extension seam: inspect the trusted identity installed for a scoped prefix.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    pub fn prefix_context(&self, id: &SetupPrefixSlotId) -> Option<&[u8]> {
+        self.prefix_contexts.get(id).map(Vec::as_slice)
     }
 
     /// Construct verifier setup state from expanded setup and structurally checked prefix metadata.
@@ -107,6 +156,7 @@ impl<F: Field> AkitaVerifierSetup<F> {
         Ok(Self {
             expanded,
             prefix_slots,
+            prefix_contexts: BTreeMap::new(),
         })
     }
 }
@@ -434,6 +484,7 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
         writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.ensure_no_prefix_contexts()?;
         let mut writer = writer;
         self.expanded.serialize_with_mode(&mut writer, compress)?;
         self.prefix_slots.serialize_with_mode(writer, compress)
@@ -540,7 +591,7 @@ mod tests {
                 ),
             },
             opening: akita_params::GroupOpeningPlan::evaluation_trace(
-                jolt_crypto::challenge::SparseChallengeConfig::pm1_only(0),
+                akita_params::FoldChallengeDistribution::pm1_only(0),
                 1,
                 1,
                 1,
@@ -599,6 +650,7 @@ mod tests {
                 ),
             ),
             prefix_slots,
+            prefix_contexts: BTreeMap::new(),
         };
 
         let mut bytes = Vec::new();
@@ -608,6 +660,20 @@ mod tests {
 
         assert_eq!(decoded.prefix_slots.len(), 1);
         assert_eq!(decoded, setup);
+
+        let mut expected_bytes = Vec::new();
+        setup
+            .expanded
+            .serialize_compressed(&mut expected_bytes)
+            .unwrap();
+        setup
+            .prefix_slots
+            .serialize_compressed(&mut expected_bytes)
+            .unwrap();
+        assert_eq!(
+            bytes, expected_bytes,
+            "ordinary setup bytes must stay unchanged"
+        );
 
         for suffix in [0, 0xa5] {
             let mut suffixed = bytes.clone();
@@ -631,6 +697,69 @@ mod tests {
     }
 
     #[test]
+    fn verifier_setup_prefix_context_survives_clone_and_rejects_serialization() {
+        use crate::proof::{RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
+        let descriptor = seed([7u8; 32]);
+        let matrix = derive_public_matrix_prefix::<F>(2 * D, &descriptor.setup_seed);
+        let expanded = Arc::new(
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                descriptor.clone(),
+                matrix,
+            ),
+        );
+        let params = prefix_commitment_params(64, 64);
+        let outer = &params.profile.outer.matrix;
+        let payload = akita_params::CompressionChainPlan::for_complete_source(
+            outer.sis_modulus_profile(),
+            outer.output_rank() * outer.ring_dimension(),
+        )
+        .unwrap()
+        .terminal_coefficients();
+        let id = akita_params::scheduled_setup_prefix(63, params)
+            .slot_id()
+            .unwrap();
+        let mut prefixes = SetupPrefixVerifierRegistry::new(descriptor.setup_seed.clone());
+        prefixes
+            .insert(SetupPrefixVerifierSlot {
+                id: id.clone(),
+                commitment: SetupPrefixPublicCommitment {
+                    rows: vec![RingVec::from_coeffs(vec![F::zero(); payload])],
+                },
+            })
+            .unwrap();
+        let ordinary = AkitaVerifierSetup::from_parts(expanded.clone(), prefixes).unwrap();
+        assert!(ordinary.prefix_context(&id).is_none());
+        assert!(ordinary
+            .clone()
+            .with_prefix_context(id.clone(), Vec::new())
+            .is_err());
+        assert!(ordinary
+            .clone()
+            .with_prefix_context(id.clone(), vec![0; (1 << 18) + 1])
+            .is_err());
+        let absent = AkitaVerifierSetup::from_parts(
+            expanded,
+            SetupPrefixVerifierRegistry::new(descriptor.setup_seed),
+        )
+        .unwrap();
+        assert!(absent.with_prefix_context(id.clone(), vec![1]).is_err());
+        let context = b"typed source identity".to_vec();
+        let scoped = ordinary
+            .with_prefix_context(id.clone(), context.clone())
+            .unwrap();
+        assert_eq!(scoped.clone().prefix_context(&id), Some(context.as_slice()));
+        assert!(scoped.clone().with_prefix_context(id, context).is_err());
+        for compress in [Compress::Yes, Compress::No] {
+            let mut bytes = Vec::new();
+            assert!(scoped.serialize_with_mode(&mut bytes, compress).is_err());
+            assert!(
+                bytes.is_empty(),
+                "reject before writing an unscoped representation"
+            );
+        }
+    }
+
+    #[test]
     fn borrowed_verifier_setup_matches_decode_and_rejects_misalignment() {
         let setup_seed = seed([7u8; 32]);
         let shared_matrix = FlatMatrix::from_flat_data(
@@ -645,6 +774,7 @@ mod tests {
                 ),
             ),
             prefix_slots,
+            prefix_contexts: BTreeMap::new(),
         };
         let mut bytes = Vec::new();
         setup.serialize_uncompressed(&mut bytes).expect("serialize");
@@ -736,6 +866,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
+            prefix_contexts: BTreeMap::new(),
         };
 
         let mut bytes = Vec::new();
@@ -760,6 +891,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
+            prefix_contexts: BTreeMap::new(),
         };
 
         let mut bytes = Vec::new();

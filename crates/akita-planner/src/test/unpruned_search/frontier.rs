@@ -112,7 +112,7 @@ pub(super) fn retain(
 fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
     // The terminal fold must be priceable, so draw from the production family.
     let challenge =
-        SparseChallengeConfig::production_for_ring_dim(64).expect("production d = 64 family");
+        FoldChallengeDistribution::production_for_ring_dim(64).expect("production d = 64 family");
     let mut params = CommittedGroupParams::params_only(
         akita_params::SisModulusProfileId::Q32Offset99,
         64,

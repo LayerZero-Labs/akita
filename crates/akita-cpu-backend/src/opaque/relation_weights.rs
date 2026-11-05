@@ -11,7 +11,6 @@ mod reduced_dense;
 #[path = "relation_weights/setup_columns.rs"]
 mod setup_columns;
 mod stage2;
-pub(crate) use stage2::compile_stage2_weights;
 
 pub(crate) enum RelationWeightDescription<E: Field> {
     QuotientFactored(RelationWeightFactorization<E>),

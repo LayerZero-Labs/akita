@@ -65,6 +65,7 @@ fn independently_enumerated_l2_candidates(
     };
     let Some(l2_challenge) =
         jolt_crypto::challenge::selective_l2_challenge_config(request.dimensions.d_a())
+            .map(akita_params::FoldChallengeDistribution::SignedSparse)
     else {
         return Ok(Vec::new());
     };

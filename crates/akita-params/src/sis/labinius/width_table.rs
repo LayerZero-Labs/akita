@@ -15,7 +15,7 @@ pub enum LabiniusWidthCutoff {
     SearchCap,
 }
 
-/// A certified admission cell under quantum 128-bit ADPS16.
+/// A certified admission cell under quantum 169-bit ADPS16.
 ///
 /// A search-cap cell certifies a lower bound on the secure width, not its
 /// exact cutoff. Acceptance at the cap and the stated prefix-monotonic

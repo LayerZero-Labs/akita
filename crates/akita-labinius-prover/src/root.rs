@@ -12,7 +12,7 @@ use akita_algebra::{binary::field_switch::SwitchField, TrinomialModulus};
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
     channel::{
-        finish_prover, new_root_prover, FoldSearchChannel, RootChallengeChannel,
+        bind_root_context, finish_prover, new_root_prover, FoldSearchChannel, RootChallengeChannel,
         RootSumcheckProverChannel,
     },
     codec::{exchange_binary, exchange_extension},
@@ -27,9 +27,9 @@ use akita_labinius_verifier::{
     AdmittedRootSetup, BinaryClearCommitment, RootStatement,
 };
 use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_sumcheck::ProverRoundContext;
-use jolt_transcript::Sponge;
+use akita_sumcheck::SumcheckProverChannel;
+use akita_transcript::ChallengeCodec;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use tracing::info_span;
 
 use crate::{
@@ -81,10 +81,10 @@ pub fn prove_root_reduction<H, F, E, const D: usize, M, O, S>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootProverOracle<E>,
-    S: RootChallengeChannel<E> + FoldSearchChannel + ProverRoundContext<E, Error = AkitaError>,
+    S: RootChallengeChannel<E> + FoldSearchChannel + SumcheckProverChannel<E>,
 {
     let setup = admitted.setup();
     if source.len() != setup.source_len() {
@@ -125,20 +125,15 @@ where
         None => None,
     };
     let (fold, response) = info_span!("root_fold").in_scope(|| {
-        crate::search_fold_response(
-            setup,
-            b"akita/labinius/root-fold/v1",
-            channel,
-            |challenges| {
-                fold_integer::<H>(
-                    source,
-                    setup.scalar_rows(),
-                    setup.columns(),
-                    challenges,
-                    setup.profile(),
-                )
-            },
-        )
+        crate::search_fold_response(setup, channel, |challenges| {
+            fold_integer::<H>(
+                source,
+                setup.scalar_rows(),
+                setup.columns(),
+                challenges,
+                setup.profile(),
+            )
+        })
     })?;
     let digits =
         info_span!("root_encode_witness").in_scope(|| encode_witness(&layout, &response))?;
@@ -322,7 +317,7 @@ where
 }
 
 /// Create and finish a root session, returning proof bytes and opening claims.
-pub fn prove_root_reduction_bytes<H, F, E, const D: usize, M, O, Sp: Sponge>(
+pub fn prove_root_reduction_bytes<H, F, E, const D: usize, M, O>(
     admitted: &AdmittedRootSetup<D, M>,
     source: &[H::Source],
     commitment: &BinaryClearCommitment,
@@ -332,12 +327,12 @@ pub fn prove_root_reduction_bytes<H, F, E, const D: usize, M, O, Sp: Sponge>(
 where
     H: SwitchField,
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + CanonicalDecode,
+    E: ExtField<F> + ChallengeCodec,
     M: TrinomialModulus,
     O: RootProverOracle<E>,
 {
-    let mut state = new_root_prover::<Sp>()?;
-    let mut channel = RootSumcheckProverChannel::<F, Sp>::new(&mut state);
+    let mut state = new_root_prover();
+    let mut channel = RootSumcheckProverChannel::<F>::new(&mut state);
     let claims = prove_root_reduction::<H, F, E, D, M, O, _>(
         admitted,
         source,
@@ -347,4 +342,35 @@ where
         &mut channel,
     )?;
     Ok((finish_prover(state), claims))
+}
+
+/// Prove one root reduction on a borrowed native session, leaving it open.
+///
+/// The protocol version and admitted setup/profile identity are absorbed as
+/// public data before any reduction challenge. The oracle must authenticate
+/// every returned table evaluation on this same session.
+pub fn prove_root_reduction_in_session<H, F, E, const D: usize, M, O>(
+    admitted: &AdmittedRootSetup<D, M>,
+    source: &[H::Source],
+    commitment: &BinaryClearCommitment,
+    statement: &RootStatement<'_, H, E>,
+    oracle: &mut O,
+    session: &mut akita_transcript::ProverChannel,
+) -> Result<RootEvaluationClaims<E>, AkitaError>
+where
+    H: SwitchField,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + ChallengeCodec,
+    M: TrinomialModulus,
+    O: RootProverOracle<E>,
+{
+    bind_root_context(session, &admitted.identity_bytes::<H>()?)?;
+    prove_root_reduction::<H, F, E, D, M, O, _>(
+        admitted,
+        source,
+        commitment,
+        statement,
+        oracle,
+        &mut RootSumcheckProverChannel::<F>::new(session),
+    )
 }

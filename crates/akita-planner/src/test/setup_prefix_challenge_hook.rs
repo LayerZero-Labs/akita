@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_params::FoldChallengeDistribution;
 use akita_config::proof_optimized::fp128::OneHotMultiChunk;
 use akita_config::{
     policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
@@ -13,7 +14,7 @@ use jolt_crypto::challenge::SparseChallengeConfig;
 fn replace_evaluation_trace_challenge(
     group: &mut GroupOpenPhaseParams,
     ring_dimension: usize,
-    replacement: SparseChallengeConfig,
+    replacement: FoldChallengeDistribution,
 ) {
     if group.opening.opening_method == OpeningMethod::EvaluationTrace
         && group.profile.inner.matrix.ring_dimension() == ring_dimension
@@ -29,7 +30,7 @@ fn replace_evaluation_trace_challenge(
 fn replace_schedule_evaluation_trace_challenges(
     schedule: &mut FoldSchedule,
     ring_dimension: usize,
-    replacement: SparseChallengeConfig,
+    replacement: FoldChallengeDistribution,
 ) {
     let mut root_precommitted = schedule.root.params.precommitted_groups().to_vec();
     for group in &mut root_precommitted {
@@ -101,11 +102,12 @@ fn catalog_binding_revalidates_recursive_setup_prefix_challenge_hook() {
         .expect("evaluation-trace setup prefix");
     let ring_dimension = target_prefix.profile.inner.matrix.ring_dimension();
     let actual = target_prefix.opening.fold_challenge_config;
-    assert!(actual.count_pm1 >= 2);
-    let replacement = SparseChallengeConfig {
-        count_pm1: actual.count_pm1 - 2,
-        count_pm2: actual.count_pm2 + 1,
-    };
+    assert!(actual.signed_sparse().unwrap().count_pm1 >= 2);
+    let replacement =
+        FoldChallengeDistribution::SignedSparse(jolt_crypto::challenge::SparseChallengeConfig {
+            count_pm1: actual.signed_sparse().unwrap().count_pm1 - 2,
+            count_pm2: actual.signed_sparse().unwrap().count_pm2 + 1,
+        });
     assert_eq!(replacement.l1_norm(), actual.l1_norm());
     assert_ne!(replacement, actual);
     replacement

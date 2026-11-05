@@ -8,9 +8,15 @@
 //! config dispatch stay with the scheme crate until the verifier-facing
 //! config boundary is extracted.
 
+mod admission;
+#[cfg(feature = "labinius-trinomial")]
+mod binary_root;
 mod challenges;
 #[cfg(feature = "zk")]
 mod masked_prefix;
+mod ordinary_root;
+#[cfg(feature = "labinius-trinomial")]
+mod prime_readings;
 mod relation_instance;
 mod root;
 mod suffix;

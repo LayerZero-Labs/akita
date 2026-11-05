@@ -1,6 +1,6 @@
-//! Distinct-position sampling for sparse ring fold challenges.
+//! Distinct-position sampling for binary challenge supports.
 //!
-//! Fisher-Yates partial shuffle helpers shared by the signed-sparse sampler.
+//! Fisher-Yates partial shuffle helpers for the binary challenge sampler.
 
 use super::xof::XofCursor;
 use akita_error::AkitaError;
@@ -9,7 +9,7 @@ use akita_error::AkitaError;
 ///
 /// Public API functions reject `D` above this with an error before reaching
 /// the sampling internals.
-pub(crate) const MAX_STACK_RING_DIM: usize = 2048;
+const MAX_STACK_RING_DIM: usize = 2048;
 
 /// Largest stack array used by one concrete sampler tier.
 const MAX_STACK_TIER_RING_DIM: usize = 2048;
@@ -214,7 +214,7 @@ mod tests {
     fn sparse_virtual_permutation_matches_dense_partial_fisher_yates() {
         for (universe, weight) in [(128usize, 7usize), (256, 23), (1024, 16), (2048, 14)] {
             let seed = [universe.trailing_zeros() as u8; 32];
-            let prefix = super::super::xof::IndexedXofPrefix::new(&seed).unwrap();
+            let prefix = crate::binary::xof::IndexedXofPrefix::new(&seed).unwrap();
             let mut dense_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut sparse_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut dense = vec![0u32; weight];

@@ -658,7 +658,7 @@ mod tests {
             2,
             4,
             3,
-            jolt_crypto::challenge::SparseChallengeConfig::production_for_ring_dim(D)
+            akita_params::FoldChallengeDistribution::production_for_ring_dim(D)
                 .expect("D128 challenge"),
         )
         .with_decomp(64, (1usize << NUM_VARIABLES) / D, 2, 2, 2)

@@ -94,8 +94,9 @@ fn check_prime(test: &support::GpuTest, library: &ShaderLibrary, prime: NttPrime
     let mut out = DeviceBuffer::<i32>::zeroed(device, lhs.len() * OPS).expect("output");
     {
         let mut batch = Batch::new(device).expect("batch");
-        // SAFETY: every thread below `count` reads one element of each input
-        // and writes its `OPS` results into `out`, which holds `count x OPS`.
+        // SAFETY: thread `i < count = lhs.len()` reads index `i` of the three
+        // `count`-word inputs and `prime[0]`, and writes only `out[i * OPS..(i + 1) * OPS]`,
+        // inside the `count * OPS`-word output.
         unsafe {
             batch.dispatch_unchecked(
                 library.pipeline("akita_test_mont_ops").expect("pipeline"),

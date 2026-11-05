@@ -4,6 +4,9 @@ use crate::relation::evaluation::PreparedDirectRelation;
 use crate::relation::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
+use jolt_crypto::challenge::Challenges;
+use akita_params::FoldChallengeDistribution;
+use jolt_crypto::challenge::SparseChallenge;
 use akita_error::AkitaError;
 use akita_params::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
@@ -122,7 +125,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         N_A,
         N_B,
         N_D,
-        SparseChallengeConfig::production_for_ring_dim(A_D)
+        FoldChallengeDistribution::production_for_ring_dim(A_D)
             .ok_or_else(|| AkitaError::InvalidSetup("missing benchmark fold challenge".into()))?,
     )
     .with_decomp(

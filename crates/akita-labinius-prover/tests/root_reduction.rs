@@ -12,8 +12,8 @@ use akita_labinius_prover::{
 };
 use akita_labinius_verifier::{
     admitted::field_characteristic,
-    channel::{self, RootChallengeChannel, RootSumcheckVerifierChannel},
-    grinding::{RootGrindingPlan, RootGrindingSite},
+    channel::{self, RootSumcheckVerifierChannel},
+    grinding::RootGrindingPlan,
     lowered::{
         coefficient_weights, prime_row_weights, LoweredChallenges, LoweredPrime, LoweredPublic,
         LoweredRootLayout,
@@ -21,13 +21,11 @@ use akita_labinius_verifier::{
     root::{root_reduction_wire_size, verify_root_reduction_bytes, TransparentRootVerifierOracle},
     verify_binary_clear_bytes, PrimeClaim, RootOpeningMode, RootStatement,
 };
+use akita_transcript::ChallengeCodec;
 use common::{admitted, Admitted, FixedDraw, RootCase, TestHost};
 use jolt_algebra::{
-    CanonicalDecode, CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime32Offset99,
-    Prime64Offset59,
+    CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime32Offset99, Prime64Offset59,
 };
-use jolt_transcript::{grinding_predicate_accepts, Channel, Fork, FORK_SEED_LEN};
-use std::num::NonZeroU8;
 
 type H = BinaryField128;
 type P128 = Prime128Offset275;
@@ -41,7 +39,7 @@ const MODES: [RootOpeningMode; 3] = [
 
 /// The root reduction in every opening mode over the base field `F` and the
 /// challenge field `E`, after the clear opening of the same binary claim.
-fn complete<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>() {
+fn complete<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>() {
     for (log_fold_width, mode) in [1, 0]
         .into_iter()
         .flat_map(|log| MODES.map(|mode| (log, mode)))
@@ -49,7 +47,7 @@ fn complete<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + Canonica
         let case = RootCase::<T, F, E>::new(admitted(log_fold_width, 0x31), mode);
         let setup = case.admitted.setup();
         if mode == RootOpeningMode::Binary {
-            let clear = prove_binary_clear_bytes::<_, _, _, common::TestSponge>(
+            let clear = prove_binary_clear_bytes(
                 setup,
                 &case.source,
                 &case.commitment,
@@ -57,14 +55,8 @@ fn complete<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + Canonica
                 case.value,
             )
             .unwrap();
-            verify_binary_clear_bytes::<_, _, _, common::TestSponge>(
-                setup,
-                &case.commitment,
-                &case.point,
-                case.value,
-                &clear,
-            )
-            .unwrap();
+            verify_binary_clear_bytes(setup, &case.commitment, &case.point, case.value, &clear)
+                .unwrap();
         }
         let (proof, claims) = case.prove().unwrap();
         assert!(case.verify(&proof).unwrap() == claims);
@@ -100,7 +92,7 @@ fn every_opening_mode_verifies_for_both_hosts_and_field_pairs() {
     complete::<BinaryField192, P64, Ext2<P64>>();
 }
 
-fn plan<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(
+fn plan<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(
     case: &RootCase<T, F, E>,
 ) -> RootGrindingPlan {
     RootGrindingPlan::new::<T, F, E>(case.admitted.shape(), case.layout.encoding(), case.mode)
@@ -112,7 +104,7 @@ fn plan<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDec
 /// length is read from the proof. Both exercised challenge fields have fewer
 /// than `2^128` elements, so every challenge-field site needs work and carries
 /// a nonce.
-fn regions<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(
+fn regions<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(
     case: &RootCase<T, F, E>,
     proof: &[u8],
 ) -> Vec<(&'static str, usize, usize)> {
@@ -195,7 +187,7 @@ fn regions<T: TestHost, F: Field + CanonicalEncoding, E: ExtField<F> + Canonical
         .collect()
 }
 
-fn tampered<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(mode: RootOpeningMode) {
+fn tampered<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(mode: RootOpeningMode) {
     let case = RootCase::<H, F, E>::new(admitted(1, 0x31), mode);
     let (binary, prime) = (mode.has_binary(), mode.has_prime());
     let (proof, _) = case.prove().unwrap();
@@ -272,12 +264,7 @@ fn tampered<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(mode
     // another digit of the alphabet, which encodes a different residue.
     let verify = |admitted: &Admitted, statement: RootStatement<'_, H, E>, image: &[u8]| {
         let mut oracle = TransparentRootVerifierOracle::<F, E>::new(image);
-        verify_root_reduction_bytes::<H, F, E, _, _, _, common::TestSponge>(
-            admitted,
-            &statement,
-            &mut oracle,
-            &proof,
-        )
+        verify_root_reduction_bytes::<H, F, E, _, _, _>(admitted, &statement, &mut oracle, &proof)
     };
     let honest = case.statement(mode);
     let mut wrong_point = case.point.clone();
@@ -373,11 +360,11 @@ fn tampered<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(mode
 /// opposite errors in two columns of the prime left opening that cancel in
 /// the value claim. The production prover cannot prove a false row, because
 /// its sumcheck refuses a false sum, so no rejecting proof exists to replay.
-fn prime_row<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>() {
+fn prime_row<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>() {
     let case = RootCase::<H, F, E>::new(admitted(1, 0x31), RootOpeningMode::Prime);
     let (setup, layout) = (case.admitted.setup(), &case.layout);
     let fold = BinaryChallengeSampler::new(setup.profile().clone())
-        .sample_challenges(&mut FixedDraw, b"prime row", setup.columns())
+        .sample_challenges(&mut FixedDraw, setup.columns())
         .unwrap();
     let response =
         fold_integer::<H>(&case.source, setup.scalar_rows(), 2, &fold, setup.profile()).unwrap();
@@ -457,92 +444,159 @@ fn tampered_reductions_and_statements_reject_in_every_mode_on_both_field_pairs()
     }
 }
 
-/// A nonce outside its search range rejects even when it clears the
-/// predicate, and so does an in-range nonce that fails it; the first in-range
-/// winner of the same site is accepted.
-#[test]
-fn proof_of_work_nonce_outside_its_range_rejects() {
-    let case = RootCase::<H, P128, P128>::new(admitted(1, 0x31), RootOpeningMode::Binary);
-    let plan = plan(&case);
-    let alpha = plan
-        .runs()
-        .iter()
-        .find(|run| run.site() == RootGrindingSite::Alpha)
-        .unwrap();
-    let target = NonZeroU8::new(alpha.grind_bits()).unwrap();
-    // The transcript's own grinding: squeeze a seed, try nonces on its forks.
-    // Every proof below starts from the same fresh state, so shares the seed.
-    let seed: [u8; FORK_SEED_LEN] = channel::new_root_prover::<common::TestSponge>()
-        .unwrap()
-        .challenge_bytes();
-    let wins = |nonce: u32| {
-        grinding_predicate_accepts(
-            &Fork::<common::TestSponge>::new(&seed, nonce).squeeze(),
-            target,
-        )
-    };
-    let range = 1u32 << alpha.nonce_bits();
-    for (nonce, accepted) in [
-        ((0..).find(|&nonce| wins(nonce)).unwrap(), true),
-        ((range..).find(|&nonce| wins(nonce)).unwrap(), false),
-        ((0..range).find(|&nonce| !wins(nonce)).unwrap(), false),
-    ] {
-        let mut state = channel::new_root_prover::<common::TestSponge>().unwrap();
-        assert_eq!(state.challenge_bytes::<FORK_SEED_LEN>(), seed);
-        state.send_nonce(nonce);
-        let proof = channel::finish_prover(state);
-        let mut state = channel::new_root_verifier::<common::TestSponge>(&proof).unwrap();
-        let mut verifier = RootSumcheckVerifierChannel::<P128, common::TestSponge>::new(&mut state);
-        RootChallengeChannel::<P128>::schedule(&mut verifier, plan.clone()).unwrap();
-        let challenge: Result<P128, _> = verifier.field_challenge(RootGrindingSite::Alpha);
-        assert_eq!(challenge.is_ok(), accepted, "nonce {nonce}");
-    }
-}
-
 /// Digest of the complete proof bytes in `mode` over the base field `F` and
 /// the challenge field `E`.
-#[cfg(not(feature = "keccak-test-sponge"))]
-fn proof_digest<F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode>(
+#[cfg(feature = "transcript-blake2b")]
+fn proof_digest<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(
     mode: RootOpeningMode,
 ) -> String {
     use jolt_algebra::Ring;
     let case = RootCase::<H, F, E>::new(admitted(1, 0x31), mode);
-    let values: Vec<P128> = case
-        .prove()
-        .unwrap()
-        .0
+    let (proof, claims) = case.prove().unwrap();
+    assert!(case.verify(&proof).unwrap() == claims);
+    let values: Vec<P128> = proof
         .iter()
         .map(|&byte| P128::from_u64(u64::from(byte)))
         .collect();
-    akita_types::field_digest::<common::TestSponge, P128>(&values)
+    akita_transcript::field_digest(&values)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
 /// One pinned digest of the complete proof bytes per opening mode and shipped
-/// field pair. The prime claim is the cell claim of `RootCase`.
-#[cfg(not(feature = "keccak-test-sponge"))]
+/// field pair, using exact q-uniform setup. All three modes are opt-in root
+/// reductions; Prime selects a cell claim on the same binary-source setup.
+#[cfg(feature = "transcript-blake2b")]
 #[test]
 fn shipped_mode_and_field_pair_proof_bytes_are_pinned() {
     for (mode, p128, p64x2) in [
         (
             RootOpeningMode::Binary,
-            "677df3eaba1ef8e06715f19a5b4fa711bd2f0afbf520213765f5f0b43737db0a",
-            "bd1dcf5c7b36cbb7ee401c1da9fffa159d8c07f54d047892f77537bffe0633ad",
+            "a8b1a5923c337c9719663af10e16d62b12e997256d30cd2edac986d508d7dd03",
+            "d1adb5b5bc5a438b2b8f3a401bc9016366419e92bf204279306283fe98a897de",
         ),
         (
             RootOpeningMode::Prime,
-            "02d6bbf20c0203d8c10e1bfe253f2d2818db0a798658a2aba3724fa9c94e6995",
-            "4b79e591f76a9a6dacdfecc8959aa02bf0a58045ff0cc26cc576102e78b2235a",
+            "0bc6f5774fcf012d161689ded2306c501b7a1f5100832db1bb8f806e75537b71",
+            "21993d5c5068dff95960421401a8f0faf52b64afcb9e0d49eacdba72f769a935",
         ),
         (
             RootOpeningMode::Both,
-            "75fb6ed8d4b8d038c5d41ad51b81792fe222a79571c650c75a146c77f6644232",
-            "573f571a307b07db6346c2c79aa61f27cb67264697f92c252412abb156af35b9",
+            "d38991349b3cd099bbdbaf77ba32bb585888cbc7c678398d4d708d8f9f938b7e",
+            "b6d67729dfe217dea73b4ea856206a096692cde65ad93d7be0b283455a8be521",
         ),
     ] {
         assert_eq!(proof_digest::<P128, P128>(mode), p128, "{mode:?}");
         assert_eq!(proof_digest::<P64, Ext2<P64>>(mode), p64x2, "{mode:?}");
     }
+}
+
+/// A native borrowed reduction consumes only its own messages. Every opening
+/// mode replays on both shipped field pairs and leaves a following message for
+/// the surrounding protocol.
+fn borrowed_root<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>() {
+    use akita_labinius_prover::{prove_root_reduction_in_session, TransparentRootProverOracle};
+    use akita_labinius_verifier::root::verify_root_reduction_in_session;
+    use akita_transcript::{new_prover_channel, new_verifier_channel, ProverTranscript};
+    use jolt_transcript::BytesMsg;
+
+    for mode in MODES {
+        let case = RootCase::<H, F, E>::new(admitted(1, 0x31), mode);
+        let (standalone, _) = case.prove().unwrap();
+        case.verify(&standalone).unwrap();
+        let prove = |prefix: &[u8]| {
+            let mut session = new_prover_channel(b"root-composition-test");
+            session.public_message(&BytesMsg(prefix));
+            let claims = prove_root_reduction_in_session::<H, F, E, _, _, _>(
+                &case.admitted,
+                &case.source,
+                &case.commitment,
+                &case.statement(mode),
+                &mut TransparentRootProverOracle::<F, E>::new(&case.image),
+                &mut session,
+            )
+            .unwrap();
+            session.public_message(&BytesMsg(b"suffix"));
+            let final_challenge: [u8; 32] = session.verifier_message();
+            ProverTranscript::send(&mut session, &BytesMsg(final_challenge.to_vec()));
+            (session.narg_string().to_vec(), claims, final_challenge)
+        };
+        let (proof, claims, challenge) = prove(b"prefix");
+        let (_, other_claims, _) = prove(b"changed prefix");
+        assert_ne!(claims.response_point, other_claims.response_point);
+        let replay = |proof: &[u8], session: &[u8], prefix: &[u8], suffix: &[u8]| {
+            let mut state = new_verifier_channel(session, proof);
+            state.public_message(&BytesMsg(prefix));
+            let actual = verify_root_reduction_in_session::<H, F, E, _, _, _>(
+                &case.admitted,
+                &case.statement(mode),
+                &mut TransparentRootVerifierOracle::<F, E>::new(&case.image),
+                &mut state,
+            )?;
+            assert_eq!(actual, claims);
+            state.public_message(&BytesMsg(suffix));
+            let expected: [u8; 32] = state.verifier_message();
+            let received = state
+                .prover_message::<BytesMsg>()
+                .map_err(|_| AkitaError::InvalidProof)?;
+            if received.0 != expected || expected != challenge {
+                return Err(AkitaError::InvalidProof);
+            }
+            state.check_eof().map_err(|_| AkitaError::InvalidProof)
+        };
+        let valid = |bytes: &[u8]| replay(bytes, b"root-composition-test", b"prefix", b"suffix");
+        valid(&proof).unwrap();
+        for (session, prefix, suffix) in [
+            (
+                b"wrong session".as_slice(),
+                b"prefix".as_slice(),
+                b"suffix".as_slice(),
+            ),
+            (
+                b"root-composition-test".as_slice(),
+                b"wrong prefix".as_slice(),
+                b"suffix".as_slice(),
+            ),
+            (
+                b"root-composition-test".as_slice(),
+                b"prefix".as_slice(),
+                b"wrong suffix".as_slice(),
+            ),
+        ] {
+            assert!(replay(&proof, session, prefix, suffix).is_err());
+        }
+        // Replay the same reduction under a mismatched root identity, while
+        // keeping the outer session and its prefix identical.
+        let mut identity = case.admitted.identity_bytes::<H>().unwrap();
+        identity[0] ^= 1;
+        let mut state = new_verifier_channel(b"root-composition-test", &proof);
+        state.public_message(&BytesMsg(b"prefix"));
+        channel::bind_root_context(&mut state, &identity).unwrap();
+        assert!(
+            akita_labinius_verifier::root::verify_root_reduction::<H, F, E, _, _, _, _>(
+                &case.admitted,
+                &case.statement(mode),
+                &mut TransparentRootVerifierOracle::<F, E>::new(&case.image),
+                &mut RootSumcheckVerifierChannel::<F>::new(&mut state),
+            )
+            .is_err()
+        );
+        assert!(valid(&proof[..proof.len() - 33]).is_err());
+        for name in ["fold nonce", "alpha nonce", "response round"] {
+            let (_, start, _) = regions(&case, &proof)
+                .into_iter()
+                .find(|region| region.0 == name)
+                .unwrap();
+            let mut corrupted = proof.clone();
+            corrupted[start] ^= 1;
+            assert!(valid(&corrupted).is_err(), "accepted corrupt {name}");
+        }
+    }
+}
+
+#[test]
+fn borrowed_root_reductions_replay_and_leave_the_session_open() {
+    borrowed_root::<P128, P128>();
+    borrowed_root::<P64, Ext2<P64>>();
 }

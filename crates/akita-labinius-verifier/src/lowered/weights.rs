@@ -14,13 +14,11 @@
 
 use super::{signed_field, zero_vec, LoweredPublic, LoweredRootLayout};
 use crate::BinaryClearSetup;
-use akita_algebra::trinomial::{
-    shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial, TrinomialModulus,
-};
 use akita_algebra::{offset_eq::eq_eval_at_index, EqPolynomial};
+use jolt_algebra::ring::{shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial, TrinomialModulus};
 use akita_error::AkitaError;
-use akita_types::{RelationPolynomialKind, TrinomialSign};
 use jolt_algebra::checked;
+use akita_types::{RelationPolynomialKind, TrinomialSign};
 use jolt_algebra::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

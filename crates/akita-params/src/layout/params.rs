@@ -4,9 +4,9 @@
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
+use crate::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use jolt_algebra::CanonicalEncoding;
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::opening_layout::OpeningClaimsLayout;

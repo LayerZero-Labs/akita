@@ -89,5 +89,4 @@ pub(crate) use source::{OneHotRepresentation, OneHotType, ShortNormRepresentatio
 #[cfg(test)]
 pub(crate) use state_policy::{NoRetainedStatePolicy, PortableCommitmentState};
 
-#[cfg(test)]
 pub(crate) use state_policy::IntoPortableCommitmentState;

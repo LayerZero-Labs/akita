@@ -195,7 +195,7 @@ where
         };
         // One backend proves every masked level, so a committed successor
         // stays where it is: no handoff.
-        let mut level = root::prove_root_with::<Cfg, B, _>(
+        let mut level = ordinary_root::prove_root_with::<Cfg, B, _>(
             expanded,
             prefixes,
             backend,

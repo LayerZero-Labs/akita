@@ -1,6 +1,7 @@
 //! Shared candidate-construction helpers.
 
 use crate::runtime::PlannerPolicy;
+use akita_params::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::{
     min_secure_l2_rank, min_secure_rank, projected_role_ring_count,
@@ -8,7 +9,6 @@ use akita_params::sis::{
     sis_l2_table_key_for_collision_sq, FoldChallengeNorms, SisTableKey,
 };
 use akita_params::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRole};
-use jolt_crypto::challenge::SparseChallengeConfig;
 
 /// Exact public geometry that may admit one selective physical-L2 A matrix.
 #[derive(Clone, Copy, Debug)]
@@ -20,7 +20,7 @@ pub struct SelectiveL2CandidateGeometry<'a> {
     pub ring_dimension: usize,
     pub fold_basis: usize,
     pub fold_digit_count: usize,
-    pub fold_challenge_config: &'a SparseChallengeConfig,
+    pub fold_challenge_config: &'a FoldChallengeDistribution,
     /// Planner-frozen response cap. Artifact validation and resolved
     /// schedule audit replay this exact public value instead of rerunning an
     /// offline response model.
@@ -60,14 +60,13 @@ pub fn selective_l2_inner_matrix(
             geometry.fold_digit_count,
         )?,
     };
-    let challenge_mass = jolt_crypto::challenge::selective_l2_operator_norm_rejection(
-        geometry.ring_dimension,
-        geometry.fold_challenge_config,
-    )
-    .map_or_else(
-        || FoldChallengeNorms::new(geometry.fold_challenge_config).l1_norm,
-        |rejection| u128::from(rejection.threshold),
-    );
+    let challenge_mass = geometry
+        .fold_challenge_config
+        .operator_norm_rejection(geometry.ring_dimension)
+        .map_or_else(
+            || FoldChallengeNorms::new(geometry.fold_challenge_config).l1_norm,
+            |rejection| u128::from(rejection.threshold),
+        );
     let collision_l2_sq =
         role_a_collision_l2_sq_for_response_bound(challenge_mass, response_l2_sq_cap)
             .ok_or_else(|| AkitaError::InvalidSetup("L2 collision bound overflow".into()))?;
@@ -205,7 +204,9 @@ mod tests {
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         };
-        let challenge = jolt_crypto::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let challenge = akita_params::FoldChallengeDistribution::SignedSparse(
+            jolt_crypto::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+        );
 
         let candidate = selective_l2_inner_matrix(
             &policy,
@@ -263,7 +264,9 @@ mod tests {
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         };
-        let challenge = jolt_crypto::challenge::D128_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let challenge = akita_params::FoldChallengeDistribution::SignedSparse(
+            jolt_crypto::challenge::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+        );
         let basis_eight = selective_l2_inner_matrix(
             &policy,
             SelectiveL2CandidateGeometry {

@@ -14,11 +14,13 @@
 )]
 
 mod a_carry;
+mod a_remainders;
 mod parity;
 mod prime;
 mod witness;
 
 pub use a_carry::a_relation_carry;
-pub use parity::parity_quotient_and_carry;
-pub use prime::prime_left_opening;
+pub use a_remainders::matrix_remainders_limb;
+pub use parity::{binary_weighted_integer_convolution, parity_quotient_and_carry};
+pub use prime::{prime_left_opening, weighted_source_bits};
 pub use witness::{encode_image, encode_witness};

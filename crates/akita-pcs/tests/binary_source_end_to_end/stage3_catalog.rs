@@ -1,0 +1,169 @@
+//! A selected root-offloading catalog for the binary-source fixtures.
+
+use super::{BinaryTestSuffix, CommitmentConfig, TrustedScheduleCatalog};
+use akita_config::policy_of;
+use akita_params::{
+    ChunkedWitnessCfg, PolynomialGroupLayout, ScheduleLookupKey, SetupContributionMode,
+};
+use akita_schedules::{RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog};
+use std::sync::LazyLock;
+
+fn artifact_path() -> std::path::PathBuf {
+    let directory = if akita_params::DEV_PROTOCOL {
+        "schedules-binary-source-stage3-dev"
+    } else {
+        "schedules-binary-source-stage3"
+    };
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../artifacts")
+        .join(directory)
+        .join(format!("{}.aks", BinaryTestSuffix::schedule_family_name()))
+}
+
+pub(super) fn catalog() -> TrustedScheduleCatalog<BinaryTestSuffix> {
+    static CATALOG: LazyLock<TrustedScheduleCatalog<BinaryTestSuffix>> = LazyLock::new(load);
+    CATALOG.clone()
+}
+
+fn load() -> TrustedScheduleCatalog<BinaryTestSuffix> {
+    let path = artifact_path();
+    if std::env::var("AKITA_REGENERATE_STAGE3_CATALOG").as_deref() == Ok("1") {
+        let catalog = build();
+        std::fs::create_dir_all(path.parent().expect("artifact directory"))
+            .expect("create fixture artifact directory");
+        std::fs::write(
+            path,
+            catalog
+                .catalog()
+                .to_artifact_bytes()
+                .expect("encode fixture"),
+        )
+        .expect("write regenerated fixture artifact");
+        return catalog;
+    }
+    TrustedScheduleCatalog::from_artifact_bytes(
+        &std::fs::read(path).expect("root-offloaded fixture artifact"),
+        ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("root-offloaded fixture catalog")
+}
+
+fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
+    let chunking = ChunkedWitnessCfg::default_non_chunked();
+    let policy = policy_of::<BinaryTestSuffix>(chunking);
+    assert!(policy.recursive_setup_planning);
+    let mut direct_policy = policy;
+    direct_policy.recursive_setup_planning = false;
+    direct_policy.selection_policy = SelectionPolicyId::for_policy(false);
+    direct_policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
+    let directory = if akita_params::DEV_PROTOCOL {
+        "schedules-labinius-dev"
+    } else {
+        "schedules-labinius"
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../artifacts")
+        .join(directory)
+        .join("labinius_fp128_digits_b4.aks");
+    let direct = ValidatedScheduleCatalog::from_artifact_bytes(
+        &std::fs::read(path).expect("direct fixture artifact"),
+        "labinius_fp128_digits_b4",
+        &direct_policy,
+        BinaryTestSuffix::ring_challenge_config,
+    )
+    .expect("direct fixture catalog");
+    let singleton = |vars| ScheduleLookupKey::single(PolynomialGroupLayout::singleton(vars));
+    let carrier = direct.resolve_key(&singleton(23)).expect("carrier row");
+    let mixed_key = ScheduleLookupKey {
+        final_group: PolynomialGroupLayout::singleton(18),
+        precommitteds: vec![carrier.profiles().final_group],
+        root_accumulated_setup_prefix_len: 0,
+    };
+    let cached = std::fs::read(artifact_path()).ok().map(|bytes| {
+        ValidatedScheduleCatalog::from_artifact_bytes(
+            &bytes,
+            BinaryTestSuffix::schedule_family_name(),
+            &policy,
+            BinaryTestSuffix::ring_challenge_config,
+        )
+        .expect("previous selected fixture catalog")
+    });
+    // The larger singleton is only a commitment producer for the mixed root.
+    let mut rows = vec![(carrier.profiles().clone(), carrier.schedule().clone())];
+    for key in [singleton(18), mixed_key] {
+        if key.precommitteds.is_empty() {
+            if let Some(row) = cached
+                .as_ref()
+                .and_then(|catalog| catalog.resolve_key(&key).ok())
+            {
+                rows.push((row.profiles().clone(), row.schedule().clone()));
+                continue;
+            }
+        }
+        let baseline = direct.resolve_key(&key).expect("original fixture row");
+        let contract = BinaryTestSuffix::committed_source_contract().expect("fixture contract");
+        let planned = akita_planner::find_schedule_with_root_setup_mode(
+            &key,
+            contract,
+            &vec![contract; key.precommitteds.len()],
+            &policy,
+            BinaryTestSuffix::ring_challenge_config,
+            SetupContributionMode::Recursive,
+            (!key.precommitteds.is_empty()).then_some(&baseline.schedule().root.params),
+        )
+        .expect("root-offloaded fixture schedule");
+        let prefix = planned.schedule.recursive_folds[0]
+            .params
+            .setup_prefix()
+            .expect("selected root prefix");
+        assert!(prefix.n_prefix().expect("prefix domain") >= 4096);
+        eprintln!(
+            "stage3 catalog groups={} root_output={} prefix={} folds={}",
+            1 + key.precommitteds.len(),
+            planned.schedule.root.output_witness_len,
+            prefix.n_prefix().expect("prefix domain"),
+            planned.schedule.recursive_folds.len() + 2,
+        );
+        let root_slot = prefix.slot_id().expect("selected root slot");
+        assert!(planned.schedule.recursive_folds.iter().skip(1).all(|fold| {
+            fold.params
+                .setup_prefix()
+                .and_then(|prefix| prefix.slot_id())
+                .is_none_or(|slot| slot != root_slot)
+        }));
+        let profiles = akita_params::CommittedGroupBatchProfile {
+            final_group: planned.schedule.root.params.own_group().profile,
+            precommitteds: key.precommitteds.clone(),
+        };
+        rows.push((profiles, planned.schedule));
+    }
+    let catalog = ValidatedScheduleCatalog::try_new(
+        BinaryTestSuffix::schedule_family_name(),
+        rows,
+        &policy,
+        BinaryTestSuffix::ring_challenge_config,
+    )
+    .expect("root-offloaded fixture catalog");
+    TrustedScheduleCatalog::new(catalog, chunking).expect("root-offloaded fixture binding")
+}
+
+#[test]
+fn stage3_catalog_consumes_each_selected_root_prefix() {
+    let catalog = catalog();
+    let mut offloaded_roots = 0;
+    for row in catalog.catalog().rows() {
+        if row.schedule().recursive_folds[0]
+            .params
+            .setup_prefix()
+            .is_some()
+        {
+            offloaded_roots += 1;
+        }
+        akita_config::required_setup_prefix_slot_ids_for_schedule(
+            row.schedule(),
+            &row.profiles().opening_layout().unwrap(),
+        )
+        .expect("all scheduled prefixes have matching producer footprints");
+    }
+    assert_eq!(offloaded_roots, 2);
+}
