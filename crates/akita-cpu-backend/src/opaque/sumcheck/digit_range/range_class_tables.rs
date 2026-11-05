@@ -52,6 +52,13 @@ impl<E: Field + Ring, const LANES: usize> ProductNodeTable<E, LANES> {
         Ok(Self { rows })
     }
 
+    /// Multiply one lane of every class row by `factor`.
+    pub(super) fn scale_lane(&mut self, lane: usize, factor: E) {
+        for row in &mut self.rows {
+            row[lane] *= factor;
+        }
+    }
+
     #[inline(always)]
     #[cfg(test)]
     pub(super) fn row(&self, class: RangeImageClass) -> [E; LANES] {
@@ -123,6 +130,11 @@ impl<E: Field + Ring + Fold, const LANES: usize> FoldedProductPairTable<E, LANES
     #[inline(always)]
     pub(super) fn row_by_pair_index(&self, pair_index: usize) -> [E; LANES] {
         self.rows[pair_index]
+    }
+
+    /// Number of ordered pairs of ordered class pairs.
+    pub(super) fn quartet_class_count(&self) -> usize {
+        self.ordered_pair_count * self.ordered_pair_count
     }
 }
 

@@ -122,6 +122,10 @@ pub(super) fn accumulate_equality_weighted_values<E: Field + Unreduced, const N:
 /// more on scaling its classes than on multiplying each entry's weight.
 const MIN_BLOCK_ENTRIES_PER_CLASS: usize = 8;
 
+/// Class count above which every task keeping its own weight per class would
+/// outgrow the cache; larger class counts are split into class ranges.
+const MAX_REPLICATED_CLASS_COUNT: usize = 1 << 12;
+
 /// Sum class-indexed values over a split-equality round.
 ///
 /// Equivalent to [`accumulate_equality_weighted_values`] with
@@ -131,17 +135,42 @@ const MIN_BLOCK_ENTRIES_PER_CLASS: usize = 8;
 /// traversal costs at most one multiplication per entry instead of `N`. When
 /// blocks are long relative to `class_count` the per-entry work is additions
 /// only: a block's inner weights are binned by class and the bins are scaled by
-/// the block's outer weight.
+/// the block's outer weight. Above [`MAX_REPLICATED_CLASS_COUNT`] classes the
+/// work is split by class range instead; see
+/// [`accumulate_partitioned_class_values`].
 pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize>(
     first: &[E],
     second: &[E],
     explicit_count: usize,
     class_count: usize,
     class_at: impl Fn(usize) -> usize + Sync,
-    class_values: impl Fn(usize) -> [E; N],
+    class_values: impl Fn(usize) -> [E; N] + Sync,
     default_values: [E; N],
 ) -> [E; N] {
     debug_assert!(explicit_count <= first.len() * second.len());
+    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+        .and_then(|suffix| suffix.weight_from(explicit_count))
+        .expect("split equality and exact prefix were validated at construction");
+    let partitions = super::super::parallel_tasks(2);
+    if class_count > MAX_REPLICATED_CLASS_COUNT && partitions > 1 {
+        if let (Ok(explicit_count), Ok(_)) =
+            (u32::try_from(explicit_count), u32::try_from(class_count))
+        {
+            let mut values = accumulate_partitioned_class_values(
+                first,
+                second,
+                explicit_count,
+                class_count,
+                partitions,
+                &class_at,
+                &class_values,
+            );
+            for (value, default) in values.iter_mut().zip(default_values) {
+                *value += suffix_weight * default;
+            }
+            return values;
+        }
+    }
     let block_count = explicit_count.div_ceil(first.len());
     let task_count = super::super::parallel_tasks(2).min(block_count).max(1);
     let blocks_per_task = block_count.div_ceil(task_count).max(1);
@@ -180,9 +209,6 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
             left
         }
     );
-    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
-        .and_then(|suffix| suffix.weight_from(explicit_count))
-        .expect("split equality and exact prefix were validated at construction");
     let mut values = default_values.map(|default| suffix_weight * default);
     for (class, weight) in class_weights.into_iter().enumerate() {
         if weight.is_zero() {
@@ -195,9 +221,165 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
     values
 }
 
+/// Coarse class buckets that [`accumulate_partitioned_class_values`] counts
+/// to balance its class ranges.
+const PARTITION_BUCKETS: usize = 1 << 16;
+
+/// Classes per task of the class-value pass in
+/// [`accumulate_partitioned_class_values`].
+const CLASS_VALUE_CHUNK: usize = 1 << 12;
+
+/// Entries of task `task` when `explicit_count` entries split into
+/// `partitions` contiguous runs of equal length, the last one shorter.
+///
+/// The endpoints are computed in `u64`: a run's rounded end can pass
+/// `u32::MAX` even though every entry index fits `u32`.
+fn task_entry_range(explicit_count: u32, partitions: usize, task: usize) -> core::ops::Range<u32> {
+    let total = u64::from(explicit_count);
+    let per_task = total.div_ceil(partitions.max(1) as u64).max(1);
+    let start = total.min((task as u64).saturating_mul(per_task));
+    let end = total.min(start.saturating_add(per_task));
+    // Both ends are at most `explicit_count`.
+    start as u32..end as u32
+}
+
+/// Explicit part of [`accumulate_equality_weighted_class_values`] for many
+/// classes, split into `partitions` contiguous class ranges.
+///
+/// Classes can be far from uniform, so the ranges are balanced by entry
+/// count: each task counts the entries of one stretch per coarse class bucket,
+/// and the range boundaries fall where the running count crosses an equal
+/// share. Each task then sorts its entries, as class and index, into the
+/// ranges, and each range totals the equality weight of its entries in its
+/// own slice of one weight table. Class counts and entry counts must fit
+/// `u32`. Finally every nonzero class's values are multiplied once, in
+/// equal chunks of classes.
+fn accumulate_partitioned_class_values<E: Field, const N: usize>(
+    first: &[E],
+    second: &[E],
+    explicit_count: u32,
+    class_count: usize,
+    partitions: usize,
+    class_at: &(impl Fn(usize) -> usize + Sync),
+    class_values: &(impl Fn(usize) -> [E; N] + Sync),
+) -> [E; N] {
+    let partitions = partitions.max(1);
+    let bucket_width = class_count.div_ceil(PARTITION_BUCKETS).max(1);
+    let bucket_count = class_count.div_ceil(bucket_width);
+    let task_entries = |task: usize| task_entry_range(explicit_count, partitions, task);
+    let task_counts: Vec<Vec<u32>> = cfg_into_iter!(0..partitions)
+        .map(|task| {
+            let mut counts = vec![0u32; bucket_count];
+            for index in task_entries(task) {
+                counts[class_at(index as usize) / bucket_width] += 1;
+            }
+            counts
+        })
+        .collect();
+    // `range_ends[p]` is one past the last bucket of class range `p`.
+    let mut bucket_ranges = vec![0usize; bucket_count];
+    let mut range_ends = vec![bucket_count; partitions];
+    let mut running = 0u64;
+    let mut range = 0usize;
+    for (bucket, partition) in bucket_ranges.iter_mut().enumerate() {
+        while range + 1 < partitions
+            && running * partitions as u64 >= (range as u64 + 1) * u64::from(explicit_count)
+        {
+            range_ends[range] = bucket;
+            range += 1;
+        }
+        *partition = range;
+        running += task_counts
+            .iter()
+            .map(|counts| u64::from(counts[bucket]))
+            .sum::<u64>();
+    }
+    let bucket_ranges = &bucket_ranges;
+    // Each entry keeps its class, so the weight pass reads its entries in
+    // order instead of revisiting the class source at scattered indices.
+    let sorted: Vec<Vec<Vec<(u32, u32)>>> = cfg_into_iter!(0..partitions)
+        .map(|task| {
+            let mut ranges = vec![Vec::new(); partitions];
+            for index in task_entries(task) {
+                let class = class_at(index as usize);
+                ranges[bucket_ranges[class / bucket_width]].push((class as u32, index));
+            }
+            ranges
+        })
+        .collect();
+    let mut weights = vec![E::zero(); class_count];
+    let mut slices = Vec::with_capacity(partitions);
+    let mut rest = weights.as_mut_slice();
+    let mut first_class = 0usize;
+    for &end_bucket in &range_ends {
+        let end_class = class_count.min(end_bucket * bucket_width).max(first_class);
+        let (slice, tail) = rest.split_at_mut(end_class - first_class);
+        slices.push((first_class, slice));
+        rest = tail;
+        first_class = end_class;
+    }
+    let sorted = &sorted;
+    cfg_into_iter!(slices)
+        .enumerate()
+        .for_each(|(partition, (first_class, weights))| {
+            for &(class, index) in sorted.iter().flat_map(|ranges| &ranges[partition]) {
+                let index = index as usize;
+                weights[class as usize - first_class] +=
+                    second[index / first.len()] * first[index % first.len()];
+            }
+        });
+    cfg_chunks!(weights, CLASS_VALUE_CHUNK)
+        .enumerate()
+        .map(|(chunk, weights)| {
+            let mut values = [E::zero(); N];
+            for (offset, &weight) in weights.iter().enumerate() {
+                if weight.is_zero() {
+                    continue;
+                }
+                let class_values = class_values(chunk * CLASS_VALUE_CHUNK + offset);
+                for (value, class_value) in values.iter_mut().zip(class_values) {
+                    *value += weight * class_value;
+                }
+            }
+            values
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .fold([E::zero(); N], |mut sum, values| {
+            for (sum, value) in sum.iter_mut().zip(values) {
+                *sum += value;
+            }
+            sum
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::MAX_TREE_STAGE_Q_DEGREE;
+
+    #[test]
+    fn task_entry_ranges_cover_every_entry_near_u32_max() {
+        for (explicit_count, partitions) in [
+            (u32::MAX - 7, 16),
+            (u32::MAX, 16),
+            (u32::MAX, 7),
+            (u32::MAX, 1),
+            (5, 16),
+            (0, 4),
+        ] {
+            let mut next = 0u32;
+            for task in 0..partitions {
+                let range = task_entry_range(explicit_count, partitions, task);
+                assert_eq!(range.start, next, "count {explicit_count}, task {task}");
+                assert!(range.start <= range.end);
+                next = range.end;
+            }
+            assert_eq!(
+                next, explicit_count,
+                "count {explicit_count}, {partitions} tasks"
+            );
+        }
+    }
     use super::*;
     use jolt_field::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
 
@@ -247,6 +429,50 @@ mod tests {
                 }
             }
             assert_eq!(actual, expected);
+
+            // Many classes split into class ranges balanced by entry count,
+            // including empty ranges and one class holding most entries.
+            for (class_count, partitions, skewed) in [
+                (rows.len(), 1, false),
+                (rows.len(), 3, false),
+                (rows.len(), 4, true),
+                (5, 8, false),
+                (5, 8, true),
+            ] {
+                let class_rows = &rows[..class_count];
+                let class_at = |index: usize| {
+                    if skewed && index % 4 != 3 {
+                        class_count / 2
+                    } else {
+                        (index * 5 + 2) % class_count
+                    }
+                };
+                let mut partitioned = accumulate_partitioned_class_values(
+                    &first,
+                    &second,
+                    u32::try_from(explicit_pair_count).unwrap(),
+                    class_count,
+                    partitions,
+                    &class_at,
+                    &|class| class_rows[class],
+                );
+                let suffix_weight = SplitEqualitySuffixMass::new(&first, &second)
+                    .and_then(|suffix| suffix.weight_from(explicit_pair_count))
+                    .unwrap();
+                for (value, default) in partitioned.iter_mut().zip(default) {
+                    *value += suffix_weight * default;
+                }
+                assert_eq!(
+                    partitioned,
+                    accumulate_equality_weighted_values(
+                        &first,
+                        &second,
+                        explicit_pair_count,
+                        |index| class_rows[class_at(index)],
+                        default,
+                    )
+                );
+            }
 
             // Few classes bin each block; many classes weight each entry.
             for class_count in [1, 3, 4, rows.len()] {

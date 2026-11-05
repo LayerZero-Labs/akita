@@ -3,7 +3,6 @@
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
 use super::exact_prefix::ExactPrefixLayout;
-#[cfg(test)]
 use super::range_class_tables::product_coefficients;
 use super::range_class_tables::{
     FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
@@ -20,6 +19,12 @@ use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
+
+/// The second round sums over quartet classes once quartets outnumber them
+/// this many times. It evaluates every occurring class once and passes over
+/// the quartets three times, so near parity the per-quartet rescan is
+/// cheaper: `word` at N=2^22 has 70,112 quartets for 2^16 classes.
+const QUARTETS_PER_QUARTET_CLASS: usize = 2;
 
 struct CompactProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,
@@ -361,6 +366,9 @@ pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize
     pair_layout: ExactPrefixLayout,
     quartet_layout: ExactPrefixLayout,
     parent_weights: Vec<E>,
+    /// First lane of each parent whose weight was folded into its node values,
+    /// with the inverse weight that recovers the lane's child claim.
+    prescaled_lanes: Vec<(usize, E)>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
     interpolation: RoundInterpolation<E>,
@@ -398,7 +406,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
                 "range-product implementation lane count: expected {expected_lanes}, actual {LANES}"
             )));
         }
-        let nodes = {
+        let mut nodes = {
             let _span = tracing::info_span!(
                 "digit_range_build_node_table",
                 stage_index,
@@ -408,6 +416,24 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
             .entered();
             ProductNodeTable::new(plan, leaf_polynomials, stage_index)?
         };
+        // A parent's product is linear in each of its lanes, and every later
+        // table is a fold of the node rows, so scaling a parent's first lane
+        // by its weight once replaces the weight multiplication in every
+        // round. The final child claim of that lane is unscaled exactly. A
+        // non-invertible weight keeps its per-round multiplication.
+        let mut parent_weights = parent_weights;
+        let mut prescaled_lanes = Vec::new();
+        for (parent_index, weight) in parent_weights.iter_mut().enumerate() {
+            if *weight == E::one() {
+                continue;
+            }
+            if let Some(inverse) = weight.inverse() {
+                let lane = parent_index * arity.degree();
+                nodes.scale_lane(lane, *weight);
+                prescaled_lanes.push((lane, inverse));
+                *weight = E::one();
+            }
+        }
         let pair_coefficients = {
             let _span = tracing::info_span!(
                 "digit_range_build_pair_coefficients",
@@ -432,6 +458,7 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
                 pair_coefficients,
             }),
             parent_weights,
+            prescaled_lanes,
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
             interpolation: RoundInterpolation::new().ok_or_else(|| {
@@ -448,7 +475,12 @@ impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, L
     pub(super) fn final_child_claims(&self) -> Result<Vec<E>, AkitaError> {
         self.product_table
             .final_value()
-            .map(|claims| claims.to_vec())
+            .map(|mut claims| {
+                for &(lane, inverse_weight) in &self.prescaled_lanes {
+                    claims[lane] *= inverse_weight;
+                }
+                claims.to_vec()
+            })
             .ok_or_else(|| AkitaError::Internal("product stage was not fully folded".into()))
     }
 }
@@ -513,6 +545,43 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                     )
                     .entered();
                     *coefficients
+                } else if source.quartet_count()
+                    >= QUARTETS_PER_QUARTET_CLASS.saturating_mul(folded_pairs.quartet_class_count())
+                {
+                    let _span = tracing::info_span!(
+                        "digit_range_product_initial_round",
+                        round = self.rounds_completed,
+                        kernel_strategy = "quartet-class-weights",
+                    )
+                    .entered();
+                    // Every quartet class's coefficients are computed at most
+                    // once, for the classes that occur.
+                    let pair_class_count = source.class_count() * source.class_count();
+                    accumulate_equality_weighted_class_values(
+                        equality_prefix_weights,
+                        equality_suffix_weights,
+                        source.quartet_count(),
+                        folded_pairs.quartet_class_count(),
+                        |quartet_index| {
+                            let (left_pair, right_pair) =
+                                source.ordered_pair_indices_for_quartet(quartet_index);
+                            left_pair * pair_class_count + right_pair
+                        },
+                        |quartet| {
+                            product_coefficients(
+                                folded_pairs.row_by_pair_index(quartet / pair_class_count),
+                                folded_pairs.row_by_pair_index(quartet % pair_class_count),
+                                self.arity,
+                                &self.parent_weights,
+                            )
+                        },
+                        product_coefficients(
+                            folded_pairs.row_by_pair_index(0),
+                            folded_pairs.row_by_pair_index(0),
+                            self.arity,
+                            &self.parent_weights,
+                        ),
+                    )
                 } else {
                     let _span = tracing::info_span!(
                         "digit_range_product_initial_round",
@@ -728,7 +797,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
             .entered();
             let fold_context = E::precompute(challenge);
             table
-                .fold_in_place(|left, right| {
+                .fold(|left, right| {
                     std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
                 })
                 .expect("validated exact-prefix product state can fold");
@@ -774,6 +843,179 @@ mod tests {
         }
         assert_eq!(prover.final_child_claims().unwrap().len(), 2);
         assert!(ProductArity::new(3).is_none());
+    }
+
+    #[test]
+    fn prescaled_parent_lanes_preserve_rounds_and_child_claims() {
+        use crate::sources::packed_digits::PackedSignedDigits;
+        use akita_params::FlatBooleanDomain;
+        use jolt_field::{One, Zero};
+        type F = Prime128Offset275;
+        let plan = DigitRangePlan::new(64).unwrap();
+        let num_vars = 6;
+        let digits = (0..50)
+            .map(|index| i8::try_from((index * 37 + 11) % 64).unwrap() - 32)
+            .collect::<Vec<_>>();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(digits),
+            FlatBooleanDomain::new(50, num_vars).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let equality_point = (0..num_vars)
+            .map(|index| F::from_u64(index as u64 * 5 + 7))
+            .collect::<Vec<_>>();
+        let leaf_coeffs = plan.leaf_coeffs::<F>();
+        let weight = F::from_u64(19);
+        // The true claim and every round are affine in the second parent's
+        // weight. Weights one and zero keep their per-round multiplication;
+        // `weight` is folded into the node table and unscaled in the child
+        // claims.
+        let run = |second_weight: F| {
+            let mut prover = ClassIndexedProductSubcheckProver::<F, 8>::new(
+                source.clone(),
+                plan,
+                &leaf_coeffs,
+                1,
+                vec![F::one(), second_weight],
+                &equality_point,
+                F::zero(),
+            )
+            .unwrap();
+            // The stage's true input claim, from its full round-0 polynomial.
+            let first_round = {
+                let ProductTableState::Compact(CompactProductState {
+                    source,
+                    pair_coefficients,
+                    ..
+                }) = &prover.product_table
+                else {
+                    panic!("a new product stage starts compact");
+                };
+                let (first, second) = prover.split_eq.remaining_eq_tables();
+                accumulate_equality_weighted_values(
+                    first,
+                    second,
+                    source.pair_count(),
+                    |pair_index| {
+                        pair_coefficients
+                            .coefficients_by_pair_index(source.ordered_pair_index(pair_index))
+                    },
+                    pair_coefficients.coefficients_by_pair_index(0),
+                )
+            };
+            let mut claim =
+                first_round[0] + prover.current_tau() * first_round[1..].iter().copied().sum::<F>();
+            let mut rounds = Vec::new();
+            for round in 0..num_vars {
+                let tau = prover.current_tau();
+                let poly = prover.compute_round_eq_factored(round, claim);
+                if round == 0 {
+                    assert_eq!(
+                        poly,
+                        OmittedConstantPoly::from_q_coefficients(first_round.to_vec())
+                    );
+                }
+                let challenge = F::from_u64(round as u64 * 13 + 2);
+                let constant = claim - tau * poly.nonconstant_term_sum_at_one();
+                claim = constant + poly.evaluate_nonconstant_terms(challenge);
+                rounds.push(poly.into_coefficients());
+                prover.ingest_challenge(round, challenge);
+            }
+            (rounds, prover.final_child_claims().unwrap())
+        };
+        let (unweighted_rounds, unweighted_claims) = run(F::zero());
+        let (unit_rounds, unit_claims) = run(F::one());
+        let (weighted_rounds, weighted_claims) = run(weight);
+        assert_eq!(weighted_claims, unweighted_claims);
+        assert_eq!(unit_claims, unweighted_claims);
+        for ((weighted, unweighted), unit) in weighted_rounds
+            .iter()
+            .zip(&unweighted_rounds)
+            .zip(&unit_rounds)
+        {
+            let expected = unweighted
+                .iter()
+                .zip(unit)
+                .map(|(&zero, &one)| zero + weight * (one - zero))
+                .collect::<Vec<_>>();
+            assert_eq!(weighted, &expected);
+        }
+    }
+
+    #[test]
+    fn quartet_class_weights_match_per_quartet_second_round() {
+        use crate::sources::packed_digits::PackedSignedDigits;
+        use akita_params::FlatBooleanDomain;
+        type F = Prime128Offset275;
+        // Basis 32 has sixteen classes, so 2^16 quartet classes; enough
+        // quartets select the class-weight round, split into class ranges.
+        let plan = DigitRangePlan::new(32).unwrap();
+        let num_vars = 20;
+        let live_len = 600_001;
+        let digits = (0..live_len)
+            .map(|index| i8::try_from(((index * 2_654_435_761usize) >> 7) % 32).unwrap() - 16)
+            .collect::<Vec<_>>();
+        let source = CompactDigitSource::new(
+            PackedSignedDigits::from_i8_digits_auto(digits),
+            FlatBooleanDomain::new(live_len, num_vars).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let equality_point = (0..num_vars)
+            .map(|index| F::from_u64(index as u64 * 5 + 7))
+            .collect::<Vec<_>>();
+        let leaf_coeffs = plan.leaf_coeffs::<F>();
+        let mut prover = ClassIndexedProductSubcheckProver::<F, 4>::new(
+            source,
+            plan,
+            &leaf_coeffs,
+            0,
+            vec![F::from_u64(1)],
+            &equality_point,
+            F::from_u64(3),
+        )
+        .unwrap();
+        prover.ingest_challenge(0, F::from_u64(41));
+        let ProductTableState::FirstChallengeFolded(FirstChallengeFoldedProductState {
+            source,
+            folded_pairs,
+            cached_second_round_coefficients: None,
+        }) = &prover.product_table
+        else {
+            panic!("sixteen classes defer the second round without a quartet table");
+        };
+        assert!(
+            source.quartet_count()
+                >= QUARTETS_PER_QUARTET_CLASS * folded_pairs.quartet_class_count()
+        );
+        let (first, second) = prover.split_eq.remaining_eq_tables();
+        let expected = accumulate_equality_weighted_values(
+            first,
+            second,
+            source.quartet_count(),
+            |quartet_index| {
+                let (left_pair, right_pair) =
+                    source.ordered_pair_indices_for_quartet(quartet_index);
+                product_coefficients(
+                    folded_pairs.row_by_pair_index(left_pair),
+                    folded_pairs.row_by_pair_index(right_pair),
+                    prover.arity,
+                    &prover.parent_weights,
+                )
+            },
+            product_coefficients(
+                folded_pairs.row_by_pair_index(0),
+                folded_pairs.row_by_pair_index(0),
+                prover.arity,
+                &prover.parent_weights,
+            ),
+        );
+        let actual = prover.compute_round_eq_factored(1, F::from_u64(3));
+        assert_eq!(
+            actual,
+            OmittedConstantPoly::from_q_coefficients(expected.to_vec())
+        );
     }
 
     fn check_interpolated_rounds<E: Field + Ring + Unreduced, const LANES: usize>(
