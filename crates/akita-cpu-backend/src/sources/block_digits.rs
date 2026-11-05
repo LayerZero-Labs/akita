@@ -85,6 +85,11 @@ pub(crate) trait BlockDigits<const D: usize>: Sync {
         Self: 'a;
 
     fn num_rings(&self) -> usize;
+    /// The rings that may hold a nonzero digit: every later ring is the
+    /// source's zero extension. A public length, never read from values.
+    fn stored_rings(&self) -> usize {
+        self.num_rings()
+    }
     fn scratch(&self, shape: DigitShape, max_rings: usize) -> Self::Scratch;
     fn digit_abs_bound(&self, shape: DigitShape) -> u64;
     fn i8_digit_span(&self, shape: DigitShape) -> Option<I8DigitSpan>;

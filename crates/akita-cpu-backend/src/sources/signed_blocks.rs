@@ -501,6 +501,9 @@ where
     fn num_rings(&self) -> usize {
         self.num_rings
     }
+    fn stored_rings(&self) -> usize {
+        self.len.div_ceil(D)
+    }
     fn scratch(&self, shape: DigitShape, max_rings: usize) -> Self::Scratch {
         SignedScratch::new(shape, max_rings)
     }
