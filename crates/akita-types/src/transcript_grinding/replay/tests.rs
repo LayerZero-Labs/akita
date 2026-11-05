@@ -531,6 +531,23 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     verifier.finish().unwrap().check_eof(state).unwrap();
 }
 
+/// A public check rejects in the verifier's replay and is skipped by the
+/// counting replay, which runs over arbitrary bytes and gives no verdict.
+#[test]
+fn public_checks_reject_unless_counting() {
+    let plan = plan();
+    let mut state = new_verifier_channel(b"public-check", &[]);
+    let mut verifier = VerifierGrinding::new(&mut state, &plan);
+    assert_eq!(verifier.check_public(true), Ok(()));
+    assert_eq!(verifier.check_public(false), Err(AkitaError::InvalidProof));
+    #[cfg(feature = "zk")]
+    {
+        let mut state = new_verifier_channel(b"public-check", &[]);
+        let mut counting = CountingGrinding::new(&mut state, &plan);
+        assert_eq!(counting.check_public(false), Ok(()));
+    }
+}
+
 /// A dense multilinear table summed by a degree-1 sumcheck, binding its top
 /// variable first.
 struct DenseSum(Vec<F>);
