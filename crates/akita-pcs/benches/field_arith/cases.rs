@@ -1,4 +1,4 @@
-use jolt_field::{
+use jolt_algebra::{
     Fp32, Fp32Packing, Fp64, Prime128Offset275, Prime31Offset19, Prime32Offset99, Prime40Offset195,
     Prime48Offset59, Prime56Offset27, Prime64Offset59, WithPacking,
 };

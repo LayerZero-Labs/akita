@@ -2,7 +2,7 @@ use super::PhysicalBWeightTerm;
 use akita_algebra::row_batch::WeightedRowBatch;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::{ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{ExtField, Field, MulBaseUnreduced};
 
 #[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {

@@ -19,7 +19,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use akita_types::RingVec;
-use jolt_field::Prime64Offset59;
+use jolt_algebra::Prime64Offset59;
 use std::any::{Any, TypeId};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

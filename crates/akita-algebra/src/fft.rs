@@ -5,7 +5,7 @@
 //!
 //! # Setting
 //!
-//! The protocol prime [`jolt_field::Prime128OffsetA7F7`] is pseudo-Mersenne, so
+//! The protocol prime [`jolt_algebra::Prime128OffsetA7F7`] is pseudo-Mersenne, so
 //! `p − 1` is not a power of two; each is instead chosen so it carries
 //! a large **smooth factor** — a product of small primes:
 //!
@@ -60,7 +60,7 @@
 //! FFT — see [`SmoothDomain::coset_forward`]
 //! and [`SmoothDomain::rs_extend_batch`].
 
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use jolt_algebra::{CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
 
 /// Field with a precomputed primitive root of a supported smooth subgroup.
 ///

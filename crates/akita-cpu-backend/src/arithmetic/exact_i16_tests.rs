@@ -9,7 +9,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_params::sis::compute_num_digits_field_width;
 use akita_types::{NttCacheKey, NttTransformDomain};
-use jolt_field::{CanonicalEncoding, One, Ring};
+use jolt_algebra::{CanonicalEncoding, One, Ring};
 
 #[test]
 fn recursive_commit_selects_exact_i16_from_inner_basis() {

@@ -365,12 +365,12 @@ mod tests {
     fn proof_session_drop_and_finish_require_the_owning_capability() {
         use akita_prover::backend::ProofScopeConsumer;
         let backend = crate::CpuBackend::<
-            jolt_field::Prime128OffsetA7F7,
-            jolt_field::Prime128OffsetA7F7,
+            jolt_algebra::Prime128OffsetA7F7,
+            jolt_algebra::Prime128OffsetA7F7,
         >::for_arithmetic_tests();
         let foreign = crate::CpuBackend::<
-            jolt_field::Prime128OffsetA7F7,
-            jolt_field::Prime128OffsetA7F7,
+            jolt_algebra::Prime128OffsetA7F7,
+            jolt_algebra::Prime128OffsetA7F7,
         >::for_arithmetic_tests();
         let a = backend.owner().begin_scope().unwrap();
         let b = backend.owner().begin_scope().unwrap();

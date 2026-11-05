@@ -7,7 +7,7 @@ use akita_params::{
 use akita_types::{
     relation_rhs_coeff_len, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables,
 };
-use jolt_field::{Ext2, ExtField, Prime64Offset59, Zero};
+use jolt_algebra::{Ext2, ExtField, Prime64Offset59, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;

@@ -2,7 +2,7 @@
 use crate::opaque::ComputeBackendSetup;
 use akita_error::AkitaError;
 use akita_types::AkitaExpandedSetup;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 /// A single operation context: a backend plus its validated prepared setup.
 ///

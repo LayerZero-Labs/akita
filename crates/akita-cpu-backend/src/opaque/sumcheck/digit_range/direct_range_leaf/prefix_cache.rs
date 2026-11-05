@@ -11,7 +11,7 @@ use crate::opaque::sumcheck::digit_range::range_poly::RangePoly;
 use crate::opaque::sumcheck::prefix_lookup::*;
 use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
-use jolt_field::{Field, Ring, Unreduced, Zero};
+use jolt_algebra::{Field, Ring, Unreduced, Zero};
 use jolt_poly::OmittedConstantPoly;
 use jolt_poly::UnivariatePoly;
 

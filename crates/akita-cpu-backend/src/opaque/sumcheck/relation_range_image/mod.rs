@@ -90,9 +90,9 @@ use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver,
 };
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Ring, Zero};
-use jolt_field::{Fold, Unreduced};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{Field, Ring, Zero};
+use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::UnivariatePoly;
 use std::mem;
 

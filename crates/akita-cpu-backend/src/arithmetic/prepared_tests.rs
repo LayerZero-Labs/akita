@@ -7,7 +7,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_params::MAX_I8_LOG_BASIS;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use akita_types::{NttCacheKey, NttTransformDomain};
-use jolt_field::Prime64Offset59;
+use jolt_algebra::Prime64Offset59;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 

@@ -2,7 +2,7 @@
 
 use crate::descriptor_bytes::{digest_descriptor_bytes, push_usize, DescriptorDigest};
 use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Per-group opening geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

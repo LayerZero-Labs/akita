@@ -14,7 +14,7 @@ use akita_params::{
     SetupMatrixCapacity, SisModulusProfileId,
 };
 use akita_types::RingVec;
-use jolt_field::Fp64;
+use jolt_algebra::Fp64;
 
 type F = Fp64<4294967197>;
 // A compressed q32 image needs a ring dimension divisible by the first

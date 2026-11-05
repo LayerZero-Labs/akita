@@ -13,7 +13,7 @@ use akita_types::{
     CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
     ReducedCompressionRelationWeights, RingRelationGroupOpeningView,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.

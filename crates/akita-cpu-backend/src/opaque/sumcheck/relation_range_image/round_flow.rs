@@ -331,11 +331,11 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59};
 
     #[test]
     fn round_hooks_after_completion_panic() {
-        use jolt_field::{One, Prime128Offset275 as E};
+        use jolt_algebra::{One, Prime128Offset275 as E};
         use std::panic::{catch_unwind, AssertUnwindSafe};
         for compute in [true, false] {
             let mut prover = RelationRangeImageProver::<E>::new_virtual_only(
@@ -396,7 +396,7 @@ mod tests {
 #[cfg(test)]
 mod round_message_tests {
     use super::*;
-    use jolt_field::{One, Prime128Offset275};
+    use jolt_algebra::{One, Prime128Offset275};
 
     type E = Prime128Offset275;
 

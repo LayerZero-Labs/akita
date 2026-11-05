@@ -19,8 +19,8 @@ use akita_types::{
     PreparedCoefficientFunctional, PreparedRelationAddress,
 };
 #[cfg(test)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 pub(crate) struct SetupSumcheckReplay<E: Field> {
     /// This fold's Stage 2 setup answer, before combining inherited claims.
@@ -208,7 +208,7 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: Field,
-    E: ExtField<F> + jolt_field::MulBaseUnreduced<F>,
+    E: ExtField<F> + jolt_algebra::MulBaseUnreduced<F>,
 {
     if source_rows > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
@@ -272,7 +272,7 @@ mod tests {
     use super::*;
 
     use akita_types::AkitaSetupDescriptor;
-    use jolt_field::{MulBaseUnreduced, Prime128OffsetA7F7, Ring};
+    use jolt_algebra::{MulBaseUnreduced, Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
     const RING_D: usize = 64;
@@ -339,7 +339,7 @@ mod tests {
             SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery,
         };
         use akita_types::{ProverGrinding, VerifierGrinding};
-        use jolt_field::One;
+        use jolt_algebra::One;
         use jolt_poly::UnivariatePoly;
 
         struct ConstantClaim(F);

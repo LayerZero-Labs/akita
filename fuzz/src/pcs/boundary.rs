@@ -12,7 +12,7 @@ use akita_cpu_backend::{DensePoly, GroupContext, OneHotPoly};
 use akita_error::AkitaError;
 use akita_params::OpeningScheduleSelection;
 use akita_types::{OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{CanonicalEncoding, Field, One, Zero};
+use jolt_algebra::{CanonicalEncoding, Field, One, Zero};
 use std::sync::Arc;
 
 #[track_caller]

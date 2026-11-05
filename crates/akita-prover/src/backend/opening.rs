@@ -6,7 +6,7 @@ use jolt_poly::UnivariatePoly;
 
 use akita_error::AkitaError;
 use akita_params::OpeningClaimsLayout;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub struct EorGroupRequest<'a, E: Field, C, W> {
     pub source: OpeningSource<'a, C, W>,

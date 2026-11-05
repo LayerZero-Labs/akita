@@ -10,7 +10,7 @@ use akita_params::{
     field_modulus, r_decomp_levels, CommittedGroupParams, RelationQuotientPlan, RelationRhsLayout,
     RingRelationMode, WitnessLayout,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// One nonempty canonical compression-owned range of final witness coefficients.
 #[derive(Clone, Debug, PartialEq, Eq)]

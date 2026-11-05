@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 fn rho_for_required(required: usize) -> Vec<F> {
     let bits = required.next_power_of_two().trailing_zeros() as usize;

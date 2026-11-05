@@ -12,8 +12,8 @@ use akita_challenges::SparseChallenge;
 use akita_error::{checked, AkitaError};
 use akita_params::WitnessLayout;
 #[cfg(test)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 
 impl<F, E> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
@@ -21,9 +21,9 @@ impl<F, E> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
 where
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: ExtField<F>
-        + jolt_field::Unreduced
-        + jolt_field::Fold
-        + jolt_field::MulBaseUnreduced<F>
+        + jolt_algebra::Unreduced
+        + jolt_algebra::Fold
+        + jolt_algebra::MulBaseUnreduced<F>
         + Send
         + Sync
         + 'static,
@@ -821,7 +821,7 @@ where
 #[cfg(test)]
 mod shape_tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128OffsetA7F7;
 
     #[test]
     fn view_constructor_rejects_rounded_ring_extent_overflow() {

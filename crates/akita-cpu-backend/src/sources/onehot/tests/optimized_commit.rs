@@ -298,8 +298,8 @@ fn benchmark_sweep_case<F, const D: usize>(
 #[test]
 #[ignore = "manual one hot sweep benchmark"]
 fn benchmark_production_sweep_matrix() {
-    type F32 = jolt_field::Prime32Offset99;
-    type F64 = jolt_field::Prime64Offset59;
+    type F32 = jolt_algebra::Prime32Offset99;
+    type F64 = jolt_algebra::Prime64Offset59;
     type F128 = Prime128Offset275;
     // Root one-hot shapes of the Fp32 and Fp64 CI profiles.
     benchmark_sweep_case::<F32, 2048>("fp32_root", 256, 64, 64, 1, 1);

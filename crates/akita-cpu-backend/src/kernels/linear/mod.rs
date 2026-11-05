@@ -10,8 +10,8 @@ use akita_algebra::{
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
 use akita_error::AkitaError;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::array::from_fn;
 use std::mem::size_of;
 use std::ops::Range;

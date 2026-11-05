@@ -11,7 +11,7 @@ mod policy;
 use crate::layout::{CommitmentRingDims, RingRole};
 use crate::sis::SisModulusProfileId;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(crate) use policy::role_ring_dimensions_for_tier;
 pub use policy::{
@@ -185,7 +185,7 @@ pub fn validate_role_dims_for_field<F: Field + CanonicalEncoding>(
 mod tests {
     use super::*;
     use crate::dispatch_for_field;
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn protocol_dispatch_tier_classifies_fields() {

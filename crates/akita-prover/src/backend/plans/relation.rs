@@ -1,7 +1,7 @@
 //! Public mathematical requests for backend-owned Stage 2 compilation.
 use akita_error::AkitaError;
 use akita_types::{EvaluationTraceGroupParameters, EvaluationTraceInputs, FpExtEncoding};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// The public relation and challenge history defining its setup contribution.
 pub struct RelationWeightRequest<'a, F: Field, E: Field> {

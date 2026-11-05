@@ -1,5 +1,5 @@
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// A range-leaf polynomial whose degree is structurally at most four.
 pub(super) enum SmallPoly<E: Field> {
@@ -42,7 +42,7 @@ impl<E: Field> SmallPoly<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Prime128Offset275 as F, Zero};
+    use jolt_algebra::{Prime128Offset275 as F, Zero};
 
     #[test]
     fn rejects_coefficients_beyond_quartic() {

@@ -1,7 +1,7 @@
 //! Session construction, canonical Akita proof atoms and diagnostic site records.
 
 use akita_error::{narrowing::usize_to_u64, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_transcript::{
     protocol_tag, BytesMsg, ChallengeCodec, DigestHash, DigestHasher, Shake128, DIGEST_HASH,
     TAG_BYTES,

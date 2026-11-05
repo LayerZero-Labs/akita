@@ -14,7 +14,7 @@ mod stage3;
 
 use std::ops::AddAssign;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Parallel task count: `per_thread` tasks for each Rayon worker, or one task
 /// without `parallel`.

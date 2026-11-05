@@ -142,7 +142,7 @@ mod tests {
         q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
         Q64_PRIMES,
     };
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     fn assert_split_i16_matvec<F, const K: usize, const D: usize>(
         wide_params: CrtNttParamSet<i32, K, D>,

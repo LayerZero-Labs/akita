@@ -10,7 +10,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{Ring, Zero};
+use jolt_algebra::{Ring, Zero};
 
 #[test]
 fn independent_runtime_catalogs_prove_verify_and_reject_each_other() {

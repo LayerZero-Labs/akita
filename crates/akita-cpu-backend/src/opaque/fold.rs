@@ -9,8 +9,8 @@ use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_params::gadget_row_scalars;
 use akita_types::RingMultiplierOpeningPoint;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
 #[inline]
@@ -312,7 +312,7 @@ impl<F: Field> CpuAcceptedFold<F> {
         log_basis: u32,
     ) -> Result<CyclotomicRing<F, D>, AkitaError>
     where
-        F: CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring,
+        F: CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_algebra::Ring,
     {
         self.ensure_ring_dim::<D>()?;
         let (z, remainder) = self.global.centered_coeffs_flat().as_chunks::<D>();
@@ -357,7 +357,7 @@ where
 impl<F, E, const D: usize> FoldRelationKernel<CpuAcceptedFold<F>, F, D>
     for crate::opaque::CpuBackend<F, E>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_algebra::Ring,
 {
     fn a_relation_from_fold(
         &self,
@@ -614,7 +614,7 @@ where
         num_chunks: usize,
     ) -> Self
     where
-        F: akita_serialization::AkitaSerialize + jolt_field::Ring,
+        F: akita_serialization::AkitaSerialize + jolt_algebra::Ring,
     {
         let response_coefficients = global.centered_coeffs_flat().len();
         Self {
@@ -764,7 +764,11 @@ pub(crate) fn cpu_fold_probe<S, F, B, const D: usize>(
     plan: &ValidatedFoldProbePlan<'_>,
 ) -> Result<FoldProbeOutcome<CpuAcceptedFold<F>>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring + 'static,
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + jolt_algebra::Ring
+        + 'static,
     B: OpeningBatchKernel<S, F, D>,
 {
     let batch_plan = match plan.geometry() {
@@ -845,7 +849,11 @@ where
 
 impl<S, F, E, const D: usize> FoldResponseKernel<S, F, D> for crate::opaque::CpuBackend<F, E>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring + 'static,
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + jolt_algebra::Ring
+        + 'static,
     crate::opaque::CpuBackend<F, E>: OpeningBatchKernel<S, F, D>,
 {
     fn probe(

@@ -121,7 +121,7 @@ mod tests {
     use akita_algebra::ntt::tables::{
         q128_primes, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES,
     };
-    use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn q128_digit_capacity_matches_expected_scale() {

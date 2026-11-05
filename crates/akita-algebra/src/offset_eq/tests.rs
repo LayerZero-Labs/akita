@@ -1,7 +1,7 @@
 use super::*;
 use crate::eq_poly::EqPolynomial;
 use crate::Field;
-use jolt_field::{Fp64, One, Ring, Zero};
+use jolt_algebra::{Fp64, One, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;

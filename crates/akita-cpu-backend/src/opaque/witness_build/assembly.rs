@@ -12,7 +12,7 @@ use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, CommittedGroupParams};
 use akita_serialization::AkitaSerialize;
 use akita_types::{RingRelationInstance, RingVec};
-use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, Field, Ring};
 
 pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
     inner: Vec<crate::opaque::OpaqueInnerRelationState<F>>,
@@ -50,7 +50,7 @@ pub(crate) fn begin_cpu_recursive_witness<F, E>(
 >
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
-    E: jolt_field::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
+    E: jolt_algebra::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
 {
     let ctx = OperationCtx::new(
         backend,

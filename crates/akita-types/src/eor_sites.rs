@@ -7,7 +7,7 @@ use akita_transcript::{
     exchange_extension_group, public_extensions, ChallengeCodec, ProtocolSiteId,
     SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const STAGE_OPENINGS: u32 = 1;
 const STAGE_PARTIALS: u32 = 2;
@@ -155,7 +155,7 @@ mod tests {
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

@@ -2,11 +2,11 @@ use super::*;
 use crate::opaque::CpuBackend;
 use crate::opaque::OpeningBatchKernel;
 use akita_challenges::{Challenges, SparseChallenge};
-use jolt_field::{One, Ring};
+use jolt_algebra::{One, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-type F = jolt_field::Prime128Offset275;
+type F = jolt_algebra::Prime128Offset275;
 const D: usize = 4;
 static BATCH_CALLS: AtomicUsize = AtomicUsize::new(0);
 static SOURCE_TRAVERSALS: AtomicUsize = AtomicUsize::new(0);

@@ -1,6 +1,6 @@
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 enum OpaquePreparedGroupOpeningKind<F: Field, E: Field> {

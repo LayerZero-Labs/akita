@@ -3,7 +3,7 @@ use akita_cpu_backend::CommitmentHandle;
 use akita_params::OpeningScheduleSelection;
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 #[allow(clippy::type_complexity)]
 pub(super) fn prover_claims<'a, Cfg>(

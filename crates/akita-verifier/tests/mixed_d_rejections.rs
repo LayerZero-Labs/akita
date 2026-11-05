@@ -8,8 +8,8 @@ use akita_params::{
     TerminalFoldParams, TerminalResponseShape,
 };
 use akita_types::RingView;
-use jolt_field::Prime128OffsetA7F7 as F;
-use jolt_field::Zero;
+use jolt_algebra::Prime128OffsetA7F7 as F;
+use jolt_algebra::Zero;
 
 #[test]
 fn role_dims_accept_either_b_d_order_below_a() {

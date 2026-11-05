@@ -5,7 +5,7 @@ pub(super) use akita_prover::backend::*;
 use akita_types::{
     RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint, SubringCoefficientPackingTables,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::ops::Range;
 #[derive(Debug, Clone, Copy)]
 pub enum OpeningFoldPlan<'a, F: Field> {

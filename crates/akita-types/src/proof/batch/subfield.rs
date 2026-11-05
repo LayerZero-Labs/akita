@@ -3,7 +3,7 @@
 use crate::{embed_subfield, FpExtEncoding, SubfieldParams};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::{ExtField, Field};
+use jolt_algebra::{ExtField, Field};
 
 /// A validated pair of compact ring-subfield multiplier vectors.
 ///

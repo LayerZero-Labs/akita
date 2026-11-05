@@ -3,8 +3,8 @@
 use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{ExtField, Field, Ring};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{ExtField, Field, Ring};
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
@@ -424,7 +424,7 @@ impl Challenges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128Offset275;
+    use jolt_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
 
@@ -560,7 +560,7 @@ mod sampled_family_tests {
 #[cfg(test)]
 mod signed_evaluation_tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128OffsetA7F7 as F;
     #[test]
     fn sampled_signed_batches_match_the_sparse_polynomial() {
         let config = SparseChallengeConfig {
@@ -594,7 +594,7 @@ mod signed_evaluation_tests {
 #[cfg(test)]
 mod embedding_view_tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128OffsetA7F7 as F;
     #[test]
     fn checked_embeddings_are_lazy_composable_and_preserve_public_values() {
         let config = SparseChallengeConfig {

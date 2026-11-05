@@ -46,7 +46,7 @@ unsafe fn biased_words_neon(values: uint32x4_t, constants: &U32BiasConstants) ->
 unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
+    params: &BalancedDecomposePow2Params<impl jolt_algebra::Field + CanonicalEncoding>,
     base: usize,
     constants: &U32BiasConstants,
 ) {
@@ -117,7 +117,7 @@ unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
 pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_neon(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
+    params: &BalancedDecomposePow2Params<impl jolt_algebra::Field + CanonicalEncoding>,
 ) {
     debug_assert!(canonical.len().is_multiple_of(4));
     debug_assert_eq!(out.len(), canonical.len() * params.levels);
@@ -147,7 +147,7 @@ pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_neon(
 unsafe fn balanced_decompose_u32_blocks_neon<const WORDS: usize>(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
+    params: &BalancedDecomposePow2Params<impl jolt_algebra::Field + CanonicalEncoding>,
     constants: &U32BiasConstants,
 ) {
     let width = canonical.len();

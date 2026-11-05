@@ -13,7 +13,7 @@ use akita_params::RelationAddressGeometry;
 #[cfg(test)]
 use akita_params::{CommitmentRingDims, RingRole};
 use akita_types::PreparedRelationAddress;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::sync::Arc;
 
 pub(super) struct PreparedRolePoint<E: Field> {
@@ -256,8 +256,8 @@ impl<E: Field> PreparedReducedRelationPoint<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
-    use jolt_field::{One, Ring, Zero};
+    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::{One, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 

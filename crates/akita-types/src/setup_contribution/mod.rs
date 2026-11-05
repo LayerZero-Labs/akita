@@ -10,7 +10,7 @@
 
 use akita_error::{checked, AkitaError};
 use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 mod coefficient_functional;
 mod geometry;

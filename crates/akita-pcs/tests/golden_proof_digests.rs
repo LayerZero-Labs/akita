@@ -29,7 +29,7 @@ use akita_config::proof_optimized::fp64;
 use akita_cpu_backend::{CommitOutput, CpuBackend, CpuSource, GroupContext};
 use akita_serialization::AkitaSerialize;
 use common::*;
-use jolt_field::{ExtField, Ring};
+use jolt_algebra::{ExtField, Ring};
 
 /// Digests under the current protocol (v8).
 const CURRENT_PROTOCOL: &[&str] = &[
@@ -46,7 +46,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn digest_line<Base: jolt_field::Field>(
+fn digest_line<Base: jolt_algebra::Field>(
     row: &str,
     commitments: &[&CommittedGroup<Base>],
     proof: &[u8],

@@ -4,7 +4,7 @@ pub use super::recursive::opening::{
 };
 pub use super::recursive::{DigitRangeProver, LowBasisRangeCheckProver};
 use crate::opaque::RootOpeningSource;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Opaque recursive-witness input for standalone benchmarks.
 pub struct RecursiveWitnessBenchmark {

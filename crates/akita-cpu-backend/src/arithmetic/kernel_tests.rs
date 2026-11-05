@@ -285,7 +285,7 @@ fn cpu_ring_switch_relation_rows_use_distinct_open_and_outer_bases() {
 #[test]
 fn recursive_raw_commit_matches_schoolbook_across_decode_batches() {
     use akita_algebra::CyclotomicRing;
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
 
     let prepared = prepared();
     let width = 17;

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{PreparedRelationAddress, SetupContributionPlan};
 use akita_params::{CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
-use jolt_field::{One, Prime128OffsetA7F7};
+use jolt_algebra::{One, Prime128OffsetA7F7};
 
 mod prepare;
 

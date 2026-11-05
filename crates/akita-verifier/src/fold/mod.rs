@@ -31,7 +31,7 @@ use akita_transcript::FIELD_DIGEST_BYTES;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, RingVec};
 use challenges::derive_multi_group_stage1_challenges;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use relation_instance::{assemble_relation_instance, validate_fold_payloads};
 
 /// Setup behavior selected once after this fold's Stage 2 rounds.

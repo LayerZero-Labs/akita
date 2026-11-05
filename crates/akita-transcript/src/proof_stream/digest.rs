@@ -1,7 +1,7 @@
 //! Digests of field values that the verifier recomputes instead of receiving.
 
 use akita_error::AkitaError;
-use jolt_field::CanonicalEncoding;
+use jolt_algebra::CanonicalEncoding;
 use jolt_transcript::{protocol_tag, DigestHasher, TAG_BYTES};
 use sha3::Digest;
 use spongefish::Encoding;

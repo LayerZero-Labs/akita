@@ -63,7 +63,7 @@ ntt-inline = ["akita-algebra/ntt-inline"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
-  "jolt-field/parallel",
+  "jolt-algebra/parallel",
   "akita-prover/parallel",
   "akita-cpu-backend/parallel",
   "akita-setup/parallel",
@@ -110,7 +110,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8f0f5b9edf4ef1b1b837a282357f1061c833dc62", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -125,8 +125,8 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8f0f5b9edf4ef1b1b837a282357f1061c833dc62", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8f0f5b9edf4ef1b1b837a282357f1061c833dc62", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [

@@ -13,8 +13,8 @@ use akita_types::{
     },
     AkitaExpandedSetup, FpExtEncoding, GrindingReplay, GrindingSumcheckVerifier, VerifierGrinding,
 };
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Verify a reduction, leaving exactly the returned setup evaluation unresolved.
 pub fn verify_setup_batch_deferred<F, E>(

@@ -6,7 +6,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_error::AkitaError;
 use akita_params::CommittedGroupParams;
 use akita_types::{DigitBlocks, RingVec};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 enum ConsumerOpeningKind<F: Field> {
     EvaluationTrace {
@@ -164,7 +164,7 @@ pub(super) fn prepare_group_opening_witness<F, E, const D: usize>(
 ) -> Result<PreparedGroupWitnessOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: jolt_field::ExtField<F>,
+    E: jolt_algebra::ExtField<F>,
 {
     let (opening, public) =
         handle.relation_opening::<D>(level, opening_batch, geometry, group_index, group_dims)?;

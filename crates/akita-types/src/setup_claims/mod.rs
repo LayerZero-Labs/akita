@@ -7,7 +7,7 @@ use crate::{AkitaExpandedSetup, AkitaSetupSeed, FpExtEncoding};
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch::field_modulus_be_bytes;
 use akita_serialization::{AkitaSerialize, Valid};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 pub use query::{SetupQuery, SetupWeightTerm};
 
 /// Exact flat setup polynomial; the rectangular split is intentionally not its identity.

@@ -19,7 +19,9 @@ use akita_types::{
     SetupPrefixVerifierRegistry,
 };
 use akita_verifier::{AkitaVerifier, SetupClaimAccumulator, SetupClaimAdvice, SetupPolicy};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, One, PseudoMersenne, Ring};
+use jolt_algebra::{
+    CanonicalEncoding, ExtField, Field, MulBaseUnreduced, One, PseudoMersenne, Ring,
+};
 
 struct Advice<'a, F: Field, E: Field> {
     backend: &'a CpuBackend<F, E>,
@@ -69,10 +71,10 @@ where
         + PseudoMersenne
         + AkitaSerialize
         + Valid
-        + jolt_field::Unreduced
-        + jolt_field::WithCommitAccumulator,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field> + Ring + AkitaSerialize + jolt_field::Fold,
-    <Cfg::Field as jolt_field::Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
+        + jolt_algebra::Unreduced
+        + jolt_algebra::WithCommitAccumulator,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + Ring + AkitaSerialize + jolt_algebra::Fold,
+    <Cfg::Field as jolt_algebra::Unreduced>::Wide: From<Cfg::Field> + jolt_algebra::AdditiveGroup,
 {
     const SESSION: &[u8] = b"integrated-outer-setup";
     let catalog =

@@ -1,6 +1,6 @@
 use rand::{rngs::StdRng, SeedableRng};
 
-use jolt_field::{
+use jolt_algebra::{
     pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, One, Prime128Offset275,
     Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenne, Ring, Zero, PRIME_OFFSET_MAX,
     PRIME_OFFSET_SPECS,

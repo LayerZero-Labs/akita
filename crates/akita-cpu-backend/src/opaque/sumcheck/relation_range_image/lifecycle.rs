@@ -491,7 +491,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 #[cfg(test)]
 mod final_witness_tests {
     use super::*;
-    use jolt_field::{One, Prime128Offset275 as E};
+    use jolt_algebra::{One, Prime128Offset275 as E};
 
     fn prover() -> RelationRangeImageProver<E> {
         RelationRangeImageProver::new_virtual_only(

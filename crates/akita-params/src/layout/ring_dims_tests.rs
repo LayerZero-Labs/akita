@@ -168,7 +168,7 @@ fn rejects_sub_d64_commitment_matrix_dimensions() {
 
 #[test]
 fn reduced_residue_oracle_tracks_every_admitted_commitment_dimension() {
-    use jolt_field::{
+    use jolt_algebra::{
         Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
     };
 

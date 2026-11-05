@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::CyclotomicRing;
 use core::mem::size_of;
-use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
+use jolt_algebra::{Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
 
 fn flat_zeros<F: Field, const D: usize>(len: usize) -> akita_params::FlatMatrix<F> {
     akita_params::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])

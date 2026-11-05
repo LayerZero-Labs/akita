@@ -1,6 +1,6 @@
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::marker::PhantomData;
 use std::ops::Range;
 

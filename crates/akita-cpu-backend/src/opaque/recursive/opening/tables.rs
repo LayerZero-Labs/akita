@@ -170,7 +170,7 @@ impl<E: Field + Unreduced + Fold> ExtensionOpeningReductionGroup<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{One, Prime128Offset275 as E, Ring};
+    use jolt_algebra::{One, Prime128Offset275 as E, Ring};
 
     #[test]
     fn group_rejects_empty_members() {

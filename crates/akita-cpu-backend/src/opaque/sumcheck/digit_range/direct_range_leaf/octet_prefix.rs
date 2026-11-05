@@ -546,7 +546,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
 #[cfg(test)]
 mod histogram_tests {
     use super::*;
-    use jolt_field::{Prime128Offset275, Prime32Offset99};
+    use jolt_algebra::{Prime128Offset275, Prime32Offset99};
 
     #[test]
     fn prefix_constructor_rejects_short_equality_point() {

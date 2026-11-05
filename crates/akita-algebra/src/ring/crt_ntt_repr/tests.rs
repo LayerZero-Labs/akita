@@ -1,4 +1,4 @@
-use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;

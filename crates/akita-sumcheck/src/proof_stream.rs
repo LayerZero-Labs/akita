@@ -8,7 +8,7 @@ use akita_transcript::{
     exchange_extension_group, extension_slots, public_extensions, ProtocolSiteId, ProverChannel,
     VerifierChannel,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 use std::slice;
 
@@ -351,7 +351,7 @@ mod tests {
         ext_challenge, new_prover_channel, new_verifier_channel, send_field_group,
         SITE_FAMILY_SUMCHECK,
     };
-    use jolt_field::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
+    use jolt_algebra::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
     use jolt_poly::UnivariatePoly;
 
     struct DenseInstance {

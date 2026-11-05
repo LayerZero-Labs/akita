@@ -36,7 +36,7 @@ use akita_types::DigitRangeEqualityPoint;
 use class_indexed_product::ClassIndexedProductSubcheckProver;
 use class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use compact_digit_source::CompactDigitSource;
-use jolt_field::{Field, Ring};
+use jolt_algebra::{Field, Ring};
 use small_poly::SmallPoly;
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;

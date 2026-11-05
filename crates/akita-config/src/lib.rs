@@ -13,7 +13,7 @@ use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey
 use akita_schedules::PlannerPolicy;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::ChallengeCodec;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -492,7 +492,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{FpExt4, Prime32Offset99};
+    use jolt_algebra::{FpExt4, Prime32Offset99};
 
     type Base = Prime32Offset99;
     type BaseExt = FpExt4<Base>;

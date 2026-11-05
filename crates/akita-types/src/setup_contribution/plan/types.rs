@@ -4,7 +4,7 @@ use akita_params::{
     CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
     SetupProjectionGeometry, WitnessLayout,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::{ops::Range, sync::Arc};
 
 #[derive(Clone)]

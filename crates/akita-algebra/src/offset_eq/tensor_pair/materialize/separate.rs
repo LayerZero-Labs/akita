@@ -99,7 +99,7 @@ impl<F: Field> SeparatedResidual<F> {
 mod tests {
     use super::*;
     use crate::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
-    use jolt_field::{Fp64, One, Ring, Zero};
+    use jolt_algebra::{Fp64, One, Ring, Zero};
 
     type F = Fp64<4294967197>;
 

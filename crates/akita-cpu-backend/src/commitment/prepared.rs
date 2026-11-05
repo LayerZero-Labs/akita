@@ -6,7 +6,7 @@ use super::{
     StageDimensionCapabilities, StageResources, StateOwnerCapability,
 };
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 pub(super) struct PreparedStage<'a, F, O: ?Sized>

@@ -5,8 +5,8 @@
 //! truncated.
 
 use criterion::Criterion;
-use jolt_field::WithPacking;
-use jolt_field::{FpExt4, Prime31Offset19, Prime32Offset99};
+use jolt_algebra::WithPacking;
+use jolt_algebra::{FpExt4, Prime31Offset19, Prime32Offset99};
 
 use super::arithmetic::bench_arithmetic_case;
 use super::cases::Mersenne31;

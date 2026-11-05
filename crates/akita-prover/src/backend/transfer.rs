@@ -1,7 +1,7 @@
 //! Typed successor exchange. Backends and bridges own packet representations.
 use super::{OpaqueProverConsumer, RecursiveWitnessManifest, ValidatedSuccessorHandoffPlan};
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Backend-independent identity and geometry of a committed successor.
 #[derive(Clone, Debug, Eq, PartialEq)]

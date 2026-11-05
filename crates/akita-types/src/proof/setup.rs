@@ -7,8 +7,8 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, TrustedBytes, Valid, Validate,
 };
 #[allow(unused_imports)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 use rand_core::{CryptoRng, RngCore};
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
@@ -107,7 +107,7 @@ pub struct AkitaExpandedSetup<F: Field> {
 ///
 /// ```compile_fail
 /// use akita_types::AkitaVerifierSetup;
-/// use jolt_field::Prime32Offset99;
+/// use jolt_algebra::Prime32Offset99;
 /// fn replace(setup: &mut AkitaVerifierSetup<Prime32Offset99>,
 ///            other: AkitaVerifierSetup<Prime32Offset99>) {
 ///     setup.expanded = other.expanded;
@@ -116,7 +116,7 @@ pub struct AkitaExpandedSetup<F: Field> {
 ///
 /// ```compile_fail
 /// use akita_types::AkitaVerifierSetup;
-/// use jolt_field::Prime32Offset99;
+/// use jolt_algebra::Prime32Offset99;
 /// fn replace(setup: &mut AkitaVerifierSetup<Prime32Offset99>,
 ///            other: AkitaVerifierSetup<Prime32Offset99>) {
 ///     setup.prefix_slots = other.prefix_slots;
@@ -709,8 +709,8 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> Akit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Zero;
-    use jolt_field::{
+    use jolt_algebra::Zero;
+    use jolt_algebra::{
         Fp32, Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
     };
 

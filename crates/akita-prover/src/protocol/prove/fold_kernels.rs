@@ -109,7 +109,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fp32, One};
+    use jolt_algebra::{Fp32, One};
 
     type TestF = Fp32<251>;
 

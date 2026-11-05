@@ -12,7 +12,7 @@ internal-consistency failures use their own error variants.
 ## In scope
 
 - `akita-verifier`
-- Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `jolt-field` paths
+- Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `jolt-algebra` paths
 - `akita-config` policy validation and trusted artifact binding used by `batched_verify`
 - `akita-schedules` trusted artifact decoding, row identity, row resolution,
   and canonical resolved-row audit paths

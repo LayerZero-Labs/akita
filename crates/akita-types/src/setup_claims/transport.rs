@@ -4,7 +4,7 @@ use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily, EqPairTenso
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch::{ntt_max_ring_d, protocol_dispatch_tier};
 use akita_serialization::AkitaDeserialize;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 fn invalid() -> AkitaError {
     AkitaError::InvalidInput("invalid canonical setup statement".into())

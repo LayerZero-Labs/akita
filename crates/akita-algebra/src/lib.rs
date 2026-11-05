@@ -5,7 +5,7 @@
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
 //! - Cyclotomic ring and backend arithmetic structure
 //!
-//! Concrete fields and field packing live in `jolt-field`. Sparse
+//! Concrete fields and field packing live in `jolt-algebra`. Sparse
 //! Fiat–Shamir challenge representations and samplers live in
 //! `akita-challenges`.
 
@@ -24,10 +24,10 @@ pub mod split_eq;
 // Flat re-exports for convenience.
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use fft::SmoothFftField;
-pub use jolt_field::{
+pub use jolt_algebra::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
-pub use jolt_field::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
+pub use jolt_algebra::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
 pub use ntt::tables;
 pub use ntt::{
     CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth, RADIX_BITS,

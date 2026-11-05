@@ -16,7 +16,7 @@ use akita_params::{basis_weights, BasisMode};
 use akita_types::{
     prepare_evaluation_trace_group_parameters, EvaluationTraceInputs, FpExtEncoding,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// One chunk's compact E-segment geometry, shared by every claim in its group.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -520,7 +520,7 @@ mod tests {
         WitnessLayout,
     };
     use akita_types::{PreparedOpeningPoint, RelationRangeImagePlan, RingMultiplierOpeningPoint};
-    use jolt_field::Zero;
+    use jolt_algebra::Zero;
 
     #[test]
     fn unit_tensor_segments_match_separate_unit_contractions() {
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type F = jolt_field::Prime128OffsetA7F7;
+        type F = jolt_algebra::Prime128OffsetA7F7;
         type E = F;
         const D: usize = 128;
         const NUM_VARIABLES: usize = 16;

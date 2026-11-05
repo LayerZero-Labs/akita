@@ -1,7 +1,7 @@
 use super::exact_prefix::SplitEqualitySuffixMass;
-use jolt_field::solinas::parallel::*;
-use jolt_field::Unreduced;
-use jolt_field::{Field, Zero};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::Unreduced;
+use jolt_algebra::{Field, Zero};
 
 /// Sum `N` products over the explicit pairs of a split-equality round.
 ///
@@ -199,7 +199,7 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
 mod tests {
     use super::super::MAX_TREE_STAGE_Q_DEGREE;
     use super::*;
-    use jolt_field::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
+    use jolt_algebra::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
 
     fn check_blocked_accumulation<E: Field + Ring + Unreduced>() {
         // Inner tables below, at and above the block-binning threshold for

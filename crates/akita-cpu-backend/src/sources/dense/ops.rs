@@ -12,8 +12,8 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_types::SubfieldMultiplierOpeningPoint;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Reject a digit shape the dense fold kernels cannot run, before any cache
 /// build or decomposition setup can panic on it.

@@ -14,7 +14,7 @@ use akita_types::{
     RingRelationGroupOpeningView, RingRelationInstance, SetupContributionGroupInputs,
     SetupContributionPlan,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::Arc;
 
 pub(crate) mod evaluation;
