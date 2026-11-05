@@ -153,3 +153,52 @@ fn verifier_catalog_view_carries_several_rows_once() {
     view.resolve_selection(first).unwrap();
     view.resolve_selection(second).unwrap();
 }
+
+#[cfg(feature = "prevalidated-catalog")]
+#[test]
+fn prevalidated_view_matches_audited_view_and_rejects_changed_bytes() {
+    let chunking = akita_params::ChunkedWitnessCfg::default_non_chunked();
+    let full = checked_in_catalog::<fp128::Dense>(chunking);
+    let selection = full.rows().next().unwrap().selection();
+    let bytes = full.to_verifier_view(&[selection]).unwrap();
+    let record =
+        TrustedScheduleCatalog::<fp128::Dense>::prevalidate_verifier_view(&bytes, chunking)
+            .unwrap();
+    let cached = TrustedScheduleCatalog::<fp128::Dense>::from_prevalidated_verifier_view(
+        &bytes,
+        &record.as_view(),
+        chunking,
+    )
+    .unwrap();
+    let audited =
+        TrustedScheduleCatalog::<fp128::Dense>::from_verifier_view(&bytes, chunking).unwrap();
+    assert_eq!(format!("{cached:?}"), format!("{audited:?}"));
+    assert_eq!(cached.to_verifier_view(&[selection]).unwrap(), bytes);
+    for index in 0..bytes.len() {
+        let mut changed = bytes.clone();
+        changed[index] ^= 1;
+        assert!(
+            TrustedScheduleCatalog::<fp128::Dense>::from_prevalidated_verifier_view(
+                &changed,
+                &record.as_view(),
+                chunking,
+            )
+            .is_none()
+        );
+    }
+    assert!(
+        TrustedScheduleCatalog::<fp128::OneHot>::from_prevalidated_verifier_view(
+            &bytes,
+            &record.as_view(),
+            chunking,
+        )
+        .is_none()
+    );
+    assert!(
+        TrustedScheduleCatalog::<fp128::Dense>::prevalidate_verifier_view(
+            &bytes[..bytes.len() - 1],
+            chunking,
+        )
+        .is_err()
+    );
+}

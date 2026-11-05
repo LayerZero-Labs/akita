@@ -127,3 +127,8 @@ pub use setup_contribution::{
     PreparedCoefficientFunctional, ReducedRoleCoefficientState, SetupIndexWeightMle,
 };
 pub mod setup_claims;
+
+#[cfg(feature = "l2-terminal-quotient")]
+mod terminal_quotient;
+#[cfg(feature = "l2-terminal-quotient")]
+pub use terminal_quotient::{terminal_a_row_quotients, terminal_quotient_len};

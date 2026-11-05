@@ -9,6 +9,9 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
+l2-terminal-quotient = ["akita-params/l2-terminal-quotient"]
+prevalidated-catalog = []
+digest-nozero = ["prevalidated-catalog"]
 default = ["transcript-keccak"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

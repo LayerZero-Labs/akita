@@ -63,9 +63,18 @@ pub const PROTOCOL_VERSION: u32 = 8;
 /// Naming the digest hash keeps a proof made under one selection from
 /// verifying under the other. The tag does not name the sponge: a different
 /// sponge is a different hash function and already changes every output.
+#[cfg(not(feature = "l2-terminal-quotient"))]
 pub const PROTOCOL_TAG: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
     DigestHash::Sha3_256 => b"akita-pcs/transcript/v8/sha3".as_slice(),
     DigestHash::Keccak256 => b"akita-pcs/transcript/v8/keccak".as_slice(),
+});
+
+/// Domain-separated v8 terminal quotient grammar. This tag also applies
+/// inside the caller's transcript; no independent session is introduced.
+#[cfg(feature = "l2-terminal-quotient")]
+pub const PROTOCOL_TAG: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
+    DigestHash::Sha3_256 => b"akita-pcs/v8-l2tq1/sha3".as_slice(),
+    DigestHash::Keccak256 => b"akita-pcs/v8-l2tq1/keccak".as_slice(),
 });
 
 /// Spongefish session tag of a standalone Akita proof.

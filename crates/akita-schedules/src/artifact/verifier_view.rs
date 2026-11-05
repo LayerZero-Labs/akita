@@ -9,6 +9,11 @@
 //! gets the same identity as the full catalog; Akita itself binds only the
 //! selected row.
 
+#[cfg(feature = "prevalidated-catalog")]
+mod prevalidated;
+#[cfg(feature = "prevalidated-catalog")]
+pub use prevalidated::{PrevalidatedVerifierRecord, PrevalidatedVerifierView};
+
 use super::{
     catalog_digest, policy_digest, AkitaError, CatalogCoverage, PlannerPolicy,
     ScheduleCatalogArtifactRowV1, SparseChallengeConfig, ValidatedScheduleCatalog,

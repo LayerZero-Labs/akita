@@ -990,3 +990,6 @@ mod independent_commitment_tests {
         assert_eq!(profile.outer.digits.log_basis, 3);
     }
 }
+
+#[cfg(feature = "prevalidated-catalog")]
+mod prevalidated;

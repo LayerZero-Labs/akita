@@ -7,6 +7,7 @@ use jolt_field::{CanonicalEncoding, Field};
 use crate::prepared_cache::{TerminalNttCache, TERMINAL_I16_LOG_BASIS};
 
 /// Compute the terminal prepared negacyclic matrix product for signed-i16 rings.
+#[cfg_attr(feature = "l2-terminal-quotient", allow(dead_code))]
 pub(super) fn centered_rows<F, const D: usize>(
     terminal_ntt: &TerminalNttCache,
     num_rows: usize,

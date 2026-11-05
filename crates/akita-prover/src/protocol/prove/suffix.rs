@@ -127,6 +127,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prove_terminal_suffix<F, E, B>(
+    #[cfg(feature = "l2-terminal-quotient")] setup: &akita_types::AkitaSetupDescriptor,
     backend: &B,
     grinding: &mut akita_types::ProverGrinding<'_>,
     level: usize,
@@ -205,6 +206,8 @@ where
     )?
     .into_coeffs();
     let t_sent_len = scheduled.split_last_t_block(&t_sent)?.0.len();
+    #[cfg(feature = "l2-terminal-quotient")]
+    let t_last = t_sent[t_sent_len..].to_vec();
     t_sent.truncate(t_sent_len);
     let t_sent = akita_types::RingVec::from_coeffs(t_sent);
 
@@ -372,7 +375,12 @@ where
         akita_types::FoldSite::TerminalZPayload { level: fold_level }.id()?,
         z_payload,
         group.z_payload_bytes,
-    )
+    )?;
+    #[cfg(feature = "l2-terminal-quotient")]
+    super::terminal_quotient::send::<F, E>(
+        grinding, fold_level, scheduled, z_payload, &t_last, setup,
+    )?;
+    Ok(())
 }
 #[allow(clippy::too_many_arguments)]
 fn prepare_suffix<F, E, B>(

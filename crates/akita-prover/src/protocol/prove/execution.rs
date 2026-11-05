@@ -200,6 +200,8 @@ where
         let (witness_handle, commitment_material) =
             resident.into_pair::<B::WitnessHandle, B::CommitmentMaterialHandle>(id)?;
         suffix::prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B>(
+            #[cfg(feature = "l2-terminal-quotient")]
+            request.setup,
             self.backend,
             grinding,
             public.level,

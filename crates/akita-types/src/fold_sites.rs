@@ -44,6 +44,15 @@ pub enum FoldSite {
     TerminalEDigest { level: u32 },
     /// Terminal `z` response payload.
     TerminalZPayload { level: u32 },
+    /// Previously digested last commitment block disclosed for the certificate.
+    #[cfg(feature = "l2-terminal-quotient")]
+    TerminalLastT { level: u32 },
+    /// High coefficients of the unreduced terminal products.
+    #[cfg(feature = "l2-terminal-quotient")]
+    TerminalQuotient { level: u32 },
+    /// Extension-field checks sampled after the complete certificate.
+    #[cfg(feature = "l2-terminal-quotient")]
+    TerminalQuotientPoints { level: u32 },
 }
 
 impl FoldSite {
@@ -92,6 +101,12 @@ impl FoldSite {
             Self::NextWitnessInnerStateDigest { level } => site(SITE_FAMILY_NEXT_WITNESS, level, 3),
             Self::TerminalEFields { level } => site(SITE_FAMILY_TERMINAL, level, 1),
             Self::TerminalEDigest { level } => site(SITE_FAMILY_TERMINAL, level, 3),
+            #[cfg(feature = "l2-terminal-quotient")]
+            Self::TerminalLastT { level } => site(SITE_FAMILY_TERMINAL, level, 4),
+            #[cfg(feature = "l2-terminal-quotient")]
+            Self::TerminalQuotient { level } => site(SITE_FAMILY_TERMINAL, level, 5),
+            #[cfg(feature = "l2-terminal-quotient")]
+            Self::TerminalQuotientPoints { level } => site(SITE_FAMILY_TERMINAL, level, 6),
             Self::TerminalZPayload { level } => ProtocolSiteId {
                 round: 3,
                 ..site(SITE_FAMILY_TERMINAL, level, 0)

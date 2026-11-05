@@ -324,6 +324,8 @@ where
         };
     }
     verify_terminal_suffix(
+        #[cfg(feature = "l2-terminal-quotient")]
+        setup.expanded().shared_matrix().as_field_slice(),
         terminal_ntt,
         grinding,
         u32::try_from(schedule.recursive_folds.len() + 1).map_err(|_| AkitaError::InvalidProof)?,

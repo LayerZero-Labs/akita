@@ -23,7 +23,7 @@ use crate::prepared_cache::TerminalNttCache;
 /// and `−v[k + D − position]` below it. A challenge coefficient `c` enters as
 /// `|c|` unit terms with the sign of `c`. The terms are generated lazily from
 /// the validated challenges, so no per-term storage is allocated.
-fn sparse_challenge_dot<'a, F, const D: usize>(
+pub(super) fn sparse_challenge_dot<'a, F, const D: usize>(
     challenges: &[SparseChallenge],
     values: impl Iterator<Item = &'a CyclotomicRing<F, D>> + Clone,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
@@ -202,6 +202,7 @@ struct ARowSides<F: Field, const D: usize> {
     a_z: Vec<CyclotomicRing<F, D>>,
 }
 
+#[cfg(not(feature = "l2-terminal-quotient"))]
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
 fn a_row_sides<F, const D: usize>(
     terminal_ntt: &TerminalNttCache,
@@ -255,6 +256,7 @@ where
 /// before that challenge was drawn. Returns the complete `e`.
 #[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
 pub(crate) fn verify_terminal_ring_relations<F>(
+    #[cfg(feature = "l2-terminal-quotient")] a_products: &RingVec<F>,
     terminal_ntt: &TerminalNttCache,
     challenges: &Challenges,
     multiplier: &RingMultiplierOpeningPoint<F>,
@@ -265,6 +267,8 @@ pub(crate) fn verify_terminal_ring_relations<F>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
+    #[cfg(feature = "l2-terminal-quotient")]
+    let _ = terminal_ntt;
     let witness = terminal_response;
     if witness.layout.ring_dimension != params.d_a() || witness.layout.groups.len() != 1 {
         return Err(AkitaError::InvalidProof);
@@ -348,6 +352,7 @@ where
                 return Err(AkitaError::InvalidProof);
             }
             let n_a = params.inner.matrix.output_rank();
+            #[cfg(not(feature = "l2-terminal-quotient"))]
             let n_a_cols = params.inner.matrix.input_width();
             let num_positions = params.blocks.positions_per_block;
             let num_digits_inner = params.inner.digits.num_digits;
@@ -414,14 +419,33 @@ where
                     Ok::<_, AkitaError>((folded, reduced))
                 },
                 || {
-                    a_row_sides::<F, D_A>(
-                        terminal_ntt,
-                        t,
-                        z_centered,
-                        sent_challenges,
-                        n_a,
-                        n_a_cols,
-                    )
+                    #[cfg(not(feature = "l2-terminal-quotient"))]
+                    {
+                        a_row_sides::<F, D_A>(
+                            terminal_ntt,
+                            t,
+                            z_centered,
+                            sent_challenges,
+                            n_a,
+                            n_a_cols,
+                        )
+                    }
+                    #[cfg(feature = "l2-terminal-quotient")]
+                    {
+                        let a_z = a_products.as_ring_slice::<D_A>()?.to_vec();
+                        if a_z.len() != n_a {
+                            return Err(AkitaError::InvalidProof);
+                        }
+                        let t_partials = (0..n_a)
+                            .map(|row| {
+                                sparse_challenge_dot(
+                                    sent_challenges,
+                                    t.iter().skip(row).step_by(n_a),
+                                )
+                            })
+                            .collect::<Result<Vec<_>, AkitaError>>()?;
+                        Ok(ARowSides { t_partials, a_z })
+                    }
                 }
             );
             let (folded, reduced) = consistency?;
