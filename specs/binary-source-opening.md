@@ -2815,8 +2815,10 @@ The byte-preserving costs that remain are:
 - **About 1 ms outside every span**, mostly the suffix folds' Stage 1 replay
   and challenge derivation, which are ordinary-protocol code.
 - **The binary root's relation evaluation** is now bounded by its largest
-  family, the parity rows (0.6 ms). Splitting families further did not pay
-  (above).
+  family. In the shapes with a word claim that is the parity rows (0.6 ms).
+  `prime5` has no word claim, so it compiles no terminal or parity rows; its
+  largest family is the prime planes (0.8 ms at the base). Splitting families
+  further did not pay (above).
 
 A protocol change would buy more. The three candidates in
 [Verifier protocol-change candidates](#verifier-protocol-change-candidates),
