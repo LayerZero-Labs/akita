@@ -241,41 +241,27 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
             EqPairTensorWeights::Unit | EqPairTensorWeights::BitProduct(_) => {
                 for coordinate_bit in 0..axis_bits {
                     charge_work(work, 2)?;
-                    let factors = axis.bit_factors(coordinate_bit).ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "aligned tensor axis bit factors are absent".into(),
-                        )
-                    })?;
-                    let mut bit_sum = F::zero();
-                    for (coordinate, weight) in factors.into_iter().enumerate() {
-                        let mut term = weight;
-                        if axis.left_stride != 0 {
-                            let bit = axis.left_stride.trailing_zeros() as usize + coordinate_bit;
-                            term *= basis_bit_factor::<F, LEFT_MONOMIAL>(
-                                left_challenges.get(bit).copied(),
-                                coordinate,
-                            )
-                            .ok_or_else(|| {
-                                AkitaError::Internal(
-                                    "aligned left factored-axis bit exceeds equality arity".into(),
-                                )
-                            })?;
-                        }
-                        if axis.right_stride != 0 {
-                            let bit = axis.right_stride.trailing_zeros() as usize + coordinate_bit;
-                            term *= basis_bit_factor::<F, RIGHT_MONOMIAL>(
-                                right_challenges.get(bit).copied(),
-                                coordinate,
-                            )
-                            .ok_or_else(|| {
-                                AkitaError::Internal(
-                                    "aligned right factored-axis bit exceeds equality arity".into(),
-                                )
-                            })?;
-                        }
-                        bit_sum += term;
-                    }
-                    axis_value *= bit_sum;
+                    let left = if axis.left_stride == 0 {
+                        None
+                    } else {
+                        let bit = axis.left_stride.trailing_zeros() as usize + coordinate_bit;
+                        Some(*left_challenges.get(bit).ok_or_else(|| {
+                            AkitaError::Internal("aligned left bit exceeds equality arity".into())
+                        })?)
+                    };
+                    let right = if axis.right_stride == 0 {
+                        None
+                    } else {
+                        let bit = axis.right_stride.trailing_zeros() as usize + coordinate_bit;
+                        Some(*right_challenges.get(bit).ok_or_else(|| {
+                            AkitaError::Internal("aligned right bit exceeds equality arity".into())
+                        })?)
+                    };
+                    axis_value *= axis.contract_bit::<LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                        coordinate_bit,
+                        left,
+                        right,
+                    )?;
                 }
             }
             EqPairTensorWeights::Dense(weights) => {

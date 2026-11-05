@@ -115,22 +115,17 @@ pub fn eval_boolean_pair_tensor_families<
             let mut factor = E::one();
             for bit in 0..bits {
                 charge_work(&mut work, 2)?;
-                let w = axis.bit_factors(bit).ok_or_else(|| {
-                    AkitaError::Internal("peeled tensor axis bit factors are absent".into())
-                })?;
                 let l = if axis.left_stride == 0 {
-                    [E::one(); 2]
-                } else if LEFT_MONOMIAL {
-                    [E::one(), left[lb + bit]]
+                    None
                 } else {
-                    [E::one() - left[lb + bit], left[lb + bit]]
+                    Some(left[lb + bit])
                 };
                 let r = if axis.right_stride == 0 {
-                    [E::one(); 2]
+                    None
                 } else {
-                    [E::one() - right[rb + bit], right[rb + bit]]
+                    Some(right[rb + bit])
                 };
-                factor *= w[0] * l[0] * r[0] + w[1] * l[1] * r[1];
+                factor *= axis.contract_bit::<LEFT_MONOMIAL, false>(bit, l, r)?;
             }
             family.scalar *= factor;
             if axis.left_stride == 1 {
