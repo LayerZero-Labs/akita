@@ -867,12 +867,11 @@ mod tests {
             .collect::<Vec<_>>();
         let leaf_coeffs = plan.leaf_coeffs::<F>();
         let weight = F::from_u64(19);
-        // The rounds are affine in the second parent's weight and the claim,
-        // so a claim affine in the weight gives rounds affine in the weight.
-        // Weights one and zero keep their per-round multiplication; `weight`
-        // is folded into the node table and unscaled in the child claims.
+        // The true claim and every round are affine in the second parent's
+        // weight. Weights one and zero keep their per-round multiplication;
+        // `weight` is folded into the node table and unscaled in the child
+        // claims.
         let run = |second_weight: F| {
-            let claim = F::from_u64(3) + second_weight * F::from_u64(29);
             let mut prover = ClassIndexedProductSubcheckProver::<F, 8>::new(
                 source.clone(),
                 plan,
@@ -880,17 +879,48 @@ mod tests {
                 1,
                 vec![F::one(), second_weight],
                 &equality_point,
-                claim,
+                F::zero(),
             )
             .unwrap();
+            // The stage's true input claim, from its full round-0 polynomial.
+            let first_round = {
+                let ProductTableState::Compact(CompactProductState {
+                    source,
+                    pair_coefficients,
+                    ..
+                }) = &prover.product_table
+                else {
+                    panic!("a new product stage starts compact");
+                };
+                let (first, second) = prover.split_eq.remaining_eq_tables();
+                accumulate_equality_weighted_values(
+                    first,
+                    second,
+                    source.pair_count(),
+                    |pair_index| {
+                        pair_coefficients
+                            .coefficients_by_pair_index(source.ordered_pair_index(pair_index))
+                    },
+                    pair_coefficients.coefficients_by_pair_index(0),
+                )
+            };
+            let mut claim =
+                first_round[0] + prover.current_tau() * first_round[1..].iter().copied().sum::<F>();
             let mut rounds = Vec::new();
             for round in 0..num_vars {
-                rounds.push(
-                    prover
-                        .compute_round_eq_factored(round, claim)
-                        .into_coefficients(),
-                );
-                prover.ingest_challenge(round, F::from_u64(round as u64 * 13 + 2));
+                let tau = prover.current_tau();
+                let poly = prover.compute_round_eq_factored(round, claim);
+                if round == 0 {
+                    assert_eq!(
+                        poly,
+                        OmittedConstantPoly::from_q_coefficients(first_round.to_vec())
+                    );
+                }
+                let challenge = F::from_u64(round as u64 * 13 + 2);
+                let constant = claim - tau * poly.nonconstant_term_sum_at_one();
+                claim = constant + poly.evaluate_nonconstant_terms(challenge);
+                rounds.push(poly.into_coefficients());
+                prover.ingest_challenge(round, challenge);
             }
             (rounds, prover.final_child_claims().unwrap())
         };
