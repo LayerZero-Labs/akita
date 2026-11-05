@@ -38,7 +38,7 @@ fn signed_block_opening_and_packing_match_field_dense() {
     )
     .and_then(akita_types::SubringCoefficientPackingTables::new)
     .unwrap();
-    for len in [128, 71] {
+    for len in [128, 71, 40, 0] {
         let i8_values = (0..len).map(|i| (i % 13) as i8 - 6).collect::<Vec<_>>();
         let i16_values = i8_values.iter().copied().map(i16::from).collect::<Vec<_>>();
         let decoder = Decoder {

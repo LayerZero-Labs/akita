@@ -232,10 +232,12 @@ where
     let full_len = checked::product([source.num_rings(), D]).ok_or_else(|| {
         AkitaError::InvalidInput("coefficient-packing source extent overflow".into())
     })?;
+    let live_positions = live_coeff_len.div_ceil(D);
     if live_coeff_len == full_len {
         coefficient_packing_partials_from_position_source::<F, E, _, D>(
             fused_weights,
             source_num_vars,
+            live_positions,
             |position| source.values(position),
             |_, coefficient, values| values.coeff(coefficient),
         )
@@ -243,6 +245,7 @@ where
         coefficient_packing_partials_from_position_source::<F, E, _, D>(
             fused_weights,
             source_num_vars,
+            live_positions,
             |position| source.values(position),
             |position, coefficient, values| {
                 let flat_index = position * D + coefficient;

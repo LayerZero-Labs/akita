@@ -422,6 +422,8 @@ pub(crate) fn element_partitioned_decompose_fold<S: BlockDigits<D>, const D: usi
     let digit_abs_bound = source.digit_abs_bound(shape);
     let window_span = source.i8_digit_span(shape).filter(|_| gathers_windows());
     let position_tile = position_tile_len(num_positions_per_block);
+    // Rings past the stored ones are zero and add nothing to the fold.
+    let stored_end = source.stored_rings();
     chunk_ranges
         .iter()
         .map(|range| {
@@ -476,10 +478,12 @@ pub(crate) fn element_partitioned_decompose_fold<S: BlockDigits<D>, const D: usi
                     };
                     for prepared in &plans {
                         let start = prepared.block_start + elem_start;
-                        if start >= ring_end {
+                        let end = (prepared.block_start + elem_end)
+                            .min(ring_end)
+                            .min(stored_end);
+                        if start >= end {
                             continue;
                         }
-                        let end = (prepared.block_start + elem_end).min(ring_end);
                         accumulator.accumulate::<S>(
                             source,
                             &mut digit_scratch,
