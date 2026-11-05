@@ -2,8 +2,8 @@
 //!
 //! Every stage-3 message is public in both modes: the setup-product claim and
 //! the prefix evaluation depend only on the public setup and public
-//! challenges, so they go through [`Channel::exchange_public_all`], never
-//! `PrivateChannel`.
+//! challenges, so they go through [`exchange_public_extension_group`], never
+//! a private exchange.
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
