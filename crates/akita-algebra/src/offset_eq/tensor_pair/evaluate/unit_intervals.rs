@@ -1,4 +1,5 @@
 //! Exact unit-stride intervals via shared binary-addition contractions.
+use super::unit_intervals_cache::Memo;
 use super::{basis_bit_factor, basis_pair_factors, charge_work, checked_axis_offset, EqPairSeed};
 use crate::Field;
 use akita_error::AkitaError;
@@ -8,14 +9,18 @@ fn high_eval<F: Field, const MONOMIAL: bool>(
     point: &[F],
     bit: usize,
     index: usize,
-    cache: &mut [BTreeMap<usize, F>],
+    cache: &mut [Memo<F>],
     work: &mut usize,
 ) -> Result<F, AkitaError> {
     let Some(&challenge) = point.get(bit) else {
         return Ok(if index == 0 { F::one() } else { F::zero() });
     };
-    if let Some(value) = cache.get(bit).and_then(|m| m.get(&index)) {
-        return Ok(*value);
+    if let Some(value) = cache
+        .get(bit)
+        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?
+        .get(index, work)?
+    {
+        return Ok(value);
     }
     charge_work(work, 1)?;
     let high = high_eval::<F, MONOMIAL>(point, bit + 1, index >> 1, cache, work)?;
@@ -25,7 +30,7 @@ fn high_eval<F: Field, const MONOMIAL: bool>(
     cache
         .get_mut(bit)
         .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?
-        .insert(index, value);
+        .insert(index, value, work)?;
     Ok(value)
 }
 
@@ -90,10 +95,8 @@ pub(super) fn eval<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bo
         factors.push([a, b, c, d]);
     }
     let mut low_cache = (0..=bits).map(|_| BTreeMap::new()).collect::<Vec<_>>();
-    let mut left_cache = (0..left.len()).map(|_| BTreeMap::new()).collect::<Vec<_>>();
-    let mut right_cache = (0..right.len())
-        .map(|_| BTreeMap::new())
-        .collect::<Vec<_>>();
+    let mut left_cache = (0..left.len()).map(|_| Memo::new()).collect::<Vec<_>>();
+    let mut right_cache = (0..right.len()).map(|_| Memo::new()).collect::<Vec<_>>();
     let mut out = F::zero();
     for seed in seeds {
         checked_axis_offset(seed.left_offset, 1, len - 1, "left")?;
