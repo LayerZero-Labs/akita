@@ -21,6 +21,7 @@ use akita_params::{RelationPolynomial, RelationRowGeometry};
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
 use akita_types::native_root_relation::{binary_commitment_group, NativeRootGroup};
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, One, Prime128Offset275, Prime128OffsetA7F7, Ring};
 
 use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
@@ -377,11 +378,10 @@ fn dimensions(
             "binary matrix does not match descriptor source rows",
         ));
     }
+    let bound = i128::from(Q24_CENTERED_BOUND);
     if matrix
         .iter()
-        .flatten()
-        .flatten()
-        .any(|&x| x < -i128::from(Q24_CENTERED_BOUND) || x > i128::from(Q24_CENTERED_BOUND))
+        .any(|row| cfg_iter!(row).any(|element| element.iter().any(|&x| x < -bound || x > bound)))
     {
         return Err(invalid(
             "binary matrix coefficient is not centered modulo q24",
@@ -418,11 +418,11 @@ fn relation_bound(
         }
     }
     let (low, high) = BINARY_RESPONSE_INTERVAL;
-    if response
-        .iter()
-        .flatten()
-        .any(|&x| x < i128::from(low) || x > i128::from(high))
-    {
+    if cfg_iter!(response).any(|element| {
+        element
+            .iter()
+            .any(|&x| x < i128::from(low) || x > i128::from(high))
+    }) {
         return Err(invalid("binary response exceeds its four-digit interval"));
     }
     (source_rows as u128)

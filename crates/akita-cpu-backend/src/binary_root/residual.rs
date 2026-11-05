@@ -18,8 +18,7 @@ use akita_algebra::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimb
 use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
 use akita_types::binary_source::BinarySourceDescriptor;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use jolt_field::solinas::parallel::*;
 
 /// q24 and the largest admitted primes below `2^28` and `2^27`.
 const PRIMES: [u32; 3] = [Q24, 268_433_353, 134_217_649];
@@ -63,9 +62,11 @@ impl BinaryRootRelation {
         };
         let matrix = matrix
             .iter()
-            .map(|row| row.iter().map(narrow).collect::<Result<Vec<_>, _>>())
+            .map(|row| cfg_iter!(row).map(narrow).collect::<Result<Vec<_>, _>>())
             .collect::<Result<Vec<_>, _>>()?;
-        let response = response.iter().map(narrow).collect::<Result<Vec<_>, _>>()?;
+        let response = cfg_iter!(response)
+            .map(narrow)
+            .collect::<Result<Vec<_>, _>>()?;
         let embedded = embedded.iter().map(narrow).collect::<Result<Vec<_>, _>>()?;
         let images = images
             .iter()
