@@ -6,10 +6,7 @@
 
 use crate::instance::*;
 use akita_config::proof_optimized::fp128;
-use akita_config::{
-    derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig,
-    ResolvedScheduleRow,
-};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, ResolvedScheduleRow};
 use akita_error::AkitaError;
 use akita_params::zk::AdmittedZkSchedule;
 use akita_params::{ChunkedWitnessCfg, CompressionChainPlan};
@@ -227,7 +224,7 @@ pub(crate) fn row_response_num_vars<C: CommitmentConfig<Field = F, ExtField = F>
 }
 
 /// The response proof's schedule family.
-pub(crate) type ResponseCfg = RecursiveCommitmentConfig<fp128::ResponseDigits>;
+pub(crate) type ResponseCfg = fp128::ResponseDigits;
 
 /// Rank of the pad commitment `A_p` and of `A_D`, the Σ-protocol's binding
 /// commitment to `V`. Harness parameters: W6 sizes both for Jolt.

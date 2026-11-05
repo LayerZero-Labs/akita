@@ -1668,8 +1668,10 @@ The remaining tests:
   with their rows in both catalog snapshots: `fp128_dense_zk` (14:1, the
   precommit producer and the single-group statement), `fp128_onehot_recursive_zk`
   (the 36:1 headline, and 31:1 beside a 14:1 hiding precommit), and the
-  clear response family `fp128_response_digits_recursive` (one row per
-  end-to-end statement's `e`). W5d's rows priced the residual at its honest
+  clear response family `fp128_response_digits` (one row per
+  end-to-end statement's `e`; direct-only since P4, because recursive setup
+  planning's envelope-first selection kept a one-fold, 2.3x larger row at
+  `ν = 24`). W5d's rows priced the residual at its honest
   bounds (A41); W5e re-priced them at the Σ radius and regenerated all
   three families (§5.5.2): the response rows are now `ν = 24` (single
   group, was 23) and `ν = 27` (multi-group and headline), and no

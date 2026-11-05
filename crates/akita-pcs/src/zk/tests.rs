@@ -8,7 +8,6 @@ use super::rows::BatchWeights;
 use super::*;
 use akita_config::policy_of;
 use akita_config::proof_optimized::fp128::ResponseDigits;
-use akita_config::recursive_commitment::RecursiveCommitmentConfig;
 use akita_params::{ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams};
 use akita_schedules::ValidatedScheduleCatalog;
 use jolt_algebra::cfg_into_iter;
@@ -24,7 +23,7 @@ use akita_sumcheck::multilinear_eval;
 use jolt_zk::whiteout::{CompressedImage, CompressedTarget};
 use rand::RngCore;
 
-type Cfg = RecursiveCommitmentConfig<ResponseDigits>;
+type Cfg = ResponseDigits;
 
 /// `A` written out, read in uneven ranges that cross the end of `e` and the
 /// chains' window. The ranges must agree with one fill of the whole table.
