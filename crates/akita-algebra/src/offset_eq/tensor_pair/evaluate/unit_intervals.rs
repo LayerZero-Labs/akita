@@ -15,16 +15,23 @@ fn high_eval<F: Field, const MONOMIAL: bool>(
     let Some(&challenge) = point.get(bit) else {
         return Ok(if index == 0 { F::one() } else { F::zero() });
     };
-    let (memo, suffix_cache) = cache
-        .split_first_mut()
-        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?;
-    memo.get_or_compute(index, work, |work| {
-        charge_work(work, 1)?;
-        let high = high_eval::<F, MONOMIAL>(point, bit + 1, index >> 1, suffix_cache, work)?;
-        let factor = basis_bit_factor::<F, MONOMIAL>(Some(challenge), index & 1)
-            .ok_or_else(|| AkitaError::Internal("interval high bit factor is absent".into()))?;
-        Ok(high * factor)
-    })
+    if let Some(value) = cache
+        .get(bit)
+        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?
+        .get(index, work)?
+    {
+        return Ok(value);
+    }
+    charge_work(work, 1)?;
+    let high = high_eval::<F, MONOMIAL>(point, bit + 1, index >> 1, cache, work)?;
+    let factor = basis_bit_factor::<F, MONOMIAL>(Some(challenge), index & 1)
+        .ok_or_else(|| AkitaError::Internal("interval high bit factor is absent".into()))?;
+    let value = high * factor;
+    cache
+        .get_mut(bit)
+        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?
+        .insert(index, value, work)?;
+    Ok(value)
 }
 
 /// Sum the low `bits` free left coordinates and their shifted right coordinates,
@@ -151,9 +158,7 @@ pub(super) fn eval<
                 left,
                 block_bits,
                 l >> block_bits,
-                left_cache.get_mut(block_bits..).ok_or_else(|| {
-                    AkitaError::Internal("interval left cache range is absent".into())
-                })?,
+                &mut left_cache,
                 work,
             )?;
             let rh = r >> block_bits;
@@ -169,9 +174,7 @@ pub(super) fn eval<
                     right,
                     block_bits,
                     high_index,
-                    right_cache.get_mut(block_bits..).ok_or_else(|| {
-                        AkitaError::Internal("interval right cache range is absent".into())
-                    })?,
+                    &mut right_cache,
                     work,
                 )?;
                 right_value += weight * high;

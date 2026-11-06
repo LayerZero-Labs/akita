@@ -1,6 +1,5 @@
 use super::unit_intervals;
 use super::{basis_eval_at_index, EqPairSeed};
-use akita_error::AkitaError;
 use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
 fn differential<const LM: bool, const RM: bool, const STATES: usize>() {
@@ -120,21 +119,16 @@ fn power_two_right_intervals_match_dense_and_memo_charges_collisions() {
     let mut memo = super::unit_intervals_cache::Memo::new();
     let mut work = 0;
     for key in (0..2048).map(|i| i * 127) {
-        memo.get_or_compute(key, &mut work, |_| Ok(F::from_u64(key as u64)))
+        memo.insert(key, F::from_u64(key as u64), &mut work)
             .unwrap();
     }
     for key in (0..2048).map(|i| i * 127) {
         assert_eq!(
-            memo.get_or_compute(key, &mut work, |_| Err(AkitaError::InvalidProof))
-                .unwrap(),
-            F::from_u64(key as u64)
+            memo.get(key, &mut work).unwrap(),
+            Some(F::from_u64(key as u64))
         );
     }
-    assert!(memo
-        .get_or_compute(usize::MAX, &mut work, |_| Err(AkitaError::InvalidProof))
-        .is_err());
+    assert_eq!(memo.get(usize::MAX, &mut work).unwrap(), None);
     work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
-    assert!(memo
-        .get_or_compute(0, &mut work, |_| Ok(F::zero()))
-        .is_err());
+    assert!(memo.get(0, &mut work).is_err());
 }

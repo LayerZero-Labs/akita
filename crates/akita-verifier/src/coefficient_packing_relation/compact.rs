@@ -1,6 +1,6 @@
 use akita_algebra::offset_eq::{
-    eval_affine_digit_intervals, eval_boolean_pair_tensor_families, EqPairTensorAxis,
-    EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
+    eq_eval_at_index, eval_affine_digit_intervals, eval_boolean_pair_tensor_families,
+    EqPairTensorAxis, EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
 };
 use akita_error::AkitaError;
 use jolt_field::solinas::parallel::*;
@@ -118,20 +118,15 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
         let (coefficient_point, _) = point
             .split_at_checked(coefficient_bits)
             .ok_or(AkitaError::InvalidProof)?;
-        let powers = self
+        Ok(self
             .coefficient_weights
             .get(..coefficient_len)
-            .ok_or(AkitaError::InvalidProof)?;
-        // These are the validated group's immutable powers [1, alpha, ...].
-        // A power-of-two prefix separates into one factor per index bit:
-        // sum_i alpha^i eq(r,i) = product_b (1-r_b + r_b alpha^(2^b)).
-        // This identity also holds at Boolean points and at alpha = 0 or 1.
-        let mut evaluation = E::one();
-        for (bit, &challenge) in coefficient_point.iter().enumerate() {
-            let power = *powers.get(1usize << bit).ok_or(AkitaError::InvalidProof)?;
-            evaluation *= E::one() + challenge * (power - E::one());
-        }
-        Ok(evaluation)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter()
+            .enumerate()
+            .fold(E::zero(), |sum, (coefficient, &weight)| {
+                sum + weight * eq_eval_at_index(coefficient_point, coefficient)
+            }))
     }
 
     fn validate_point(&self, point: &[E]) -> Result<(), AkitaError> {
