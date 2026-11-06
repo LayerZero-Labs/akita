@@ -1800,12 +1800,14 @@ up to 2^84).
 - `B(D) = 8(16^D − 1)/15`, the magnitude of the D-digit balanced radix-16
   certified box `𝓑_cert` (its negative end; the positive end is smaller),
   the largest response coefficient on any segment of `s`;
-- `D = 10`, the Σ regime of jolt `whiteout-sigma.md` §5.1. Every Gaussian
+- `D = 8`, the Σ regime of jolt `whiteout-sigma.md` §5.2 (α = 2^9; it was
+  `D = 10` under §5.1's α = 2^17). Every Gaussian
   segment of one Σ instance has the same digit count (one width), and public
   segments have fewer, so `B_M = B(D)` for both residual matrices.
 
-At `D = 10`: `B = 586,406,201,480 ≈ 2^39.09` and `R_Σ =
-248,636,229,427,520 ≈ 2^47.82`. jolt-zk owns both the formula and `D`:
+At `D = 8`: `B = 2,290,649,224 ≈ 2^31.09` and `R_Σ =
+971,235,270,976 ≈ 2^39.82` (at `D = 10` they were 2^39.09 and 2^47.82).
+The Σ-binding table is generated at this radius. jolt-zk owns both the formula and `D`:
 `jolt_zk::whiteout::BINDING_RESPONSE_DIGITS` and
 `jolt_zk::whiteout::binding_collision_radius()`, and `SigmaParams` rejects a
 table whose response digits exceed `BINDING_RESPONSE_DIGITS`
@@ -2009,7 +2011,7 @@ planner's search domain, not of the protocol:
    `R_64`-linear, preserves coefficient norms, and turns multiplication by a
    challenge `c` into multiplication by `c(Y^2)`, which has the same ℓ1 norm.
    So `‖(c − c′)v‖_∞ ≤ 2κ₁‖v‖_∞` holds verbatim, `Γ_Δ = 106` and
-   `R_Σ = 8κ₁B(10) ≈ 2^47.82` are unchanged, and the binding reduction of
+   `R_Σ = 8κ₁B(8) ≈ 2^39.82` are unchanged, and the binding reduction of
    `05_security.tex:31-46` applies to the `R_128` matrices as stated.
    `ResidualShape::new` already accepts any `d_A = d_B` that is a multiple
    of 64. The paper itself chooses larger rings for these matrices
