@@ -62,5 +62,5 @@ continue to use the CPU path without compiling or loading Metal-only code.
 - `book/src/roadmap/compute-backends.md`
 - `crates/akita-prover/src/backend/`
 - `crates/akita-cpu-backend/src/arithmetic/`
-- `crates/akita-algebra/src/ntt/`
+- `jolt-algebra/src/ntt/`
 - `crates/akita-prover/src/kernels/`

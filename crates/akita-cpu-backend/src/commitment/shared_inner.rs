@@ -1,7 +1,8 @@
 //! Immutable sharing of equal setup-prefix inner ring commitments.
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Compress, SerializationError};
 use akita_types::RingVec;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field};
 use std::{
     borrow::Cow,

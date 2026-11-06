@@ -4,8 +4,9 @@ use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, pr
 use akita_algebra::eq_poly::EqPolynomial;
 use jolt_poly::UnivariatePoly;
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_sumcheck::SumcheckKernel;
+use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, MulBaseUnreduced, Ring, Zero};
 use std::sync::Arc;

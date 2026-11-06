@@ -1,7 +1,8 @@
 use super::{DenseLeftTensorView, ResidualTerms};
 use crate::offset_eq::{eq_eval_at_index, OffsetEqWindow};
 use crate::Field;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 pub(super) struct SeparatedResidual<F: Field> {
     origin: usize,

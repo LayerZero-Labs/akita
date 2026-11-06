@@ -5,7 +5,8 @@ use crate::{
     CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
     PolynomialGroupLayout,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 /// Physical coefficient representation authenticated by a commitment.
 ///

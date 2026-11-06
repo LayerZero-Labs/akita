@@ -100,7 +100,7 @@ where
                     root_layout
                 } else if context.fold_level() as usize == schedule.recursive_folds.len() + 1 {
                     let num_vars =
-                        akita_error::checked::ceil_log2(schedule.terminal.input_witness_len)
+                        jolt_algebra::checked::ceil_log2(schedule.terminal.input_witness_len)
                             .ok_or_else(|| {
                                 AkitaError::Internal("terminal EOR witness arity overflow".into())
                             })?;

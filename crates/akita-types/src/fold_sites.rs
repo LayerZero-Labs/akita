@@ -5,11 +5,12 @@
 //! Both roles name a site through [`FoldSite`] and convert it with
 //! [`FoldSite::id`].
 
-use akita_error::{narrowing::usize_to_u32, AkitaError};
+use akita_error::AkitaError;
 use akita_transcript::{
     ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
     SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_TERMINAL,
 };
+use jolt_algebra::narrowing::usize_to_u32;
 
 /// One fold-owned proof-stream site.
 ///

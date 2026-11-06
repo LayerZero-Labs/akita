@@ -80,7 +80,7 @@ impl RecursiveWitnessManifest {
 
     /// Boolean-hypercube arity of the padded logical witness.
     pub fn num_vars(self) -> Result<usize, AkitaError> {
-        akita_error::checked::ceil_log2(self.logical_len)
+        jolt_algebra::checked::ceil_log2(self.logical_len)
             .ok_or_else(|| AkitaError::InvalidInput("recursive witness length overflow".into()))
     }
 }

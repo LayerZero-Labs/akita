@@ -27,7 +27,7 @@ Bases through \(L=8\) fit in `i8`. Bases from \(L=9\) through \(L=16\) fit
 in `i16`. The NTT cache selector receives the resulting absolute coefficient
 bound directly. It does not infer the bound from a label such as `L10`.
 
-**Code:** `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs` and
+**Code:** `jolt-algebra/src/ring/cyclotomic/decomposition.rs` and
 `crates/akita-types/src/ntt_cache/`.
 
 ## CRT and NTT representation
@@ -131,10 +131,10 @@ the same matrix under 12289, or under the 30 bit prime 1073707009 when base plus
 residues, and returns canonical protocol field elements. The tail does not
 change setup bytes, proof bytes, transcript bytes, or setup digests.
 
-**Code:** `crates/akita-algebra/src/ntt/ifma52.rs`,
-`crates/akita-algebra/src/ntt/ifma52/x86.rs`,
+**Code:** `jolt-algebra/src/ntt/ifma52.rs`,
+`jolt-algebra/src/ntt/ifma52/x86.rs`,
 `crates/akita-types/src/ntt_cache/exact.rs`, and, for the tail transforms,
-`crates/akita-algebra/src/ntt/avx/transform.rs`.
+`jolt-algebra/src/ntt/avx/transform.rs`.
 
 ## Accumulation capacity and chunking
 
@@ -164,7 +164,7 @@ profile and add the 12289 tail when needed. On eligible AVX-512IFMA hosts, the
 selector may use the 50 bit u64 profiles described above. These are different
 storage choices for the same centered CRT contract.
 
-**Code:** `crates/akita-algebra/src/ntt/crt.rs`,
+**Code:** `jolt-algebra/src/ntt/crt.rs`,
 `crates/akita-types/src/ntt_cache/`, and
 `docs/crt-ntt-capacity-profile.md`.
 
@@ -298,11 +298,11 @@ coset-major order.
 This flow reuses one `SmoothDomain` and one workspace across all cosets. It
 returns only the `k(B-1)` evaluations on the additional cosets; the original
 subgroup evaluations are not repeated. The smooth FFT and Reed--Solomon
-extension are exported arithmetic utilities currently exercised by unit tests
-and `crates/akita-pcs/benches/fft_smooth.rs`. The production prover and verifier
-do not call this encoding path.
+extension are exported arithmetic utilities exercised by `jolt-algebra`'s unit
+tests and its `fft_smooth` benchmark. The production prover and verifier do not
+call this encoding path.
 
-**Code:** `crates/akita-algebra/src/fft.rs`.
+**Code:** `jolt-algebra/src/fft.rs`.
 
 ## Further reading
 

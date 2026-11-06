@@ -88,7 +88,7 @@ impl<'a, const D: usize> ValidatedRotationChallenges<'a, D> {
         }
         let challenges = ValidatedSparseChallenges::<D>::new(challenges, challenges.len(), 1)?;
         for challenge in challenges.iter() {
-            akita_error::narrowing::usize_to_u32(
+            jolt_algebra::narrowing::usize_to_u32(
                 challenge.challenge().positions.len(),
                 "rotation challenge support",
             )?;

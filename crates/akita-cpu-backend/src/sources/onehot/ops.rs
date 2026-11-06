@@ -300,7 +300,7 @@ impl<E: Field> PackingWeightAccessor<E>
 
     #[inline(always)]
     fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
-        let index = akita_error::checked::mul_add(
+        let index = jolt_algebra::checked::mul_add(
             position,
             self.tables().point().geometry().subring_embedding_stride(),
             low_index,
@@ -593,7 +593,7 @@ where
     let fused_len =
         crate::arithmetic::coefficient_packing::FusedPackingWeights::<E>::required_len(tables)?;
     let should_prepare =
-        akita_error::checked::sum(source.polys.iter().map(|poly| poly.indices.len()))
+        jolt_algebra::checked::sum(source.polys.iter().map(|poly| poly.indices.len()))
             .is_some_and(|max_hot| max_hot >= fused_len);
     if should_prepare {
         let weights = crate::arithmetic::coefficient_packing::FusedPackingWeights::new(tables)?;

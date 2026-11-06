@@ -7,7 +7,8 @@
 use crate::field_modulus;
 use crate::sis::compression::{min_compression_secure_rank, COMPRESSION_SIS_COEFF_LINF_BOUND};
 use crate::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, Field};
 
 mod chain;

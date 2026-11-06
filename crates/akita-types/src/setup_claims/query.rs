@@ -15,8 +15,9 @@ use akita_algebra::{
     poly::multilinear_eval,
     ring::{evaluate_power_sequence_mle, scalar_powers},
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
+use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;

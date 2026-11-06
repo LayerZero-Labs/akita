@@ -13,7 +13,8 @@
 //! bit `k` of `b` equals `x[k]`. In other words, `r[0]` corresponds to the
 //! **least-significant bit** (bit 0) and `r[n-1]` to the MSB.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use crate::Field;
 use std::marker::PhantomData;

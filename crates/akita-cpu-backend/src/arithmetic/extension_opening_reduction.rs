@@ -5,8 +5,9 @@
 //! prover's witness, column-partial and equality-factor tables.
 
 use akita_algebra::{EqPolynomial, SplitEqEvals};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::tensor_opening_split;
+use jolt_algebra::checked;
 use jolt_algebra::{ExtField, Field, MulBaseUnreduced, Unreduced, Zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

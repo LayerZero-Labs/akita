@@ -13,9 +13,10 @@
 //! source-model envelope. The response multiplier then has a distribution-free
 //! Markov interpretation once that envelope bounds the conditional mean.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
 use akita_params::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
+use jolt_algebra::checked;
 use std::cell::RefCell;
 use std::collections::HashMap;
 

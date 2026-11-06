@@ -336,10 +336,11 @@ where
         let challenges = group_source.challenges;
         let total_blocks = challenges.len();
         let challenge_lanes = {
-            let lane_count = akita_error::checked::product([total_blocks, lane_alpha_powers.len()])
-                .ok_or_else(|| {
-                    AkitaError::Internal("relation challenge lane count overflow".into())
-                })?;
+            let lane_count =
+                jolt_algebra::checked::product([total_blocks, lane_alpha_powers.len()])
+                    .ok_or_else(|| {
+                        AkitaError::Internal("relation challenge lane count overflow".into())
+                    })?;
             let mut lanes = Vec::with_capacity(lane_count);
             for index in 0..total_blocks {
                 let evaluation = challenges.eval_at_pows::<F, E>(index, &group_alpha_pows_a)?;

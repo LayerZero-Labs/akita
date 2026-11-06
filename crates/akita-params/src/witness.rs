@@ -7,7 +7,8 @@
 
 use std::ops::Range;
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use crate::{
     CommitmentRingDims, CommittedGroupParams, CompressionMapPlan, OpeningClaimsLayout,

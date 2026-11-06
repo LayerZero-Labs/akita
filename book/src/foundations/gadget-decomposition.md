@@ -353,7 +353,7 @@ The main code path is:
    digit count for each protocol role.
 3. The generated schedule stores the selected counts in
    `CommittedGroupParams`.
-4. `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs` performs the
+4. `jolt-algebra/src/ring/cyclotomic/decomposition.rs` performs the
    coefficient decomposition and rebuilding operation.
 5. `crates/akita-cpu-backend/src/kernels/linear/decompose.rs` uses the packed `i8`
    kernel. Wider inner decompositions use
@@ -364,7 +364,7 @@ The main code path is:
 Supporting limits live in these files:
 
 - `crates/akita-params/src/signed_digit.rs` selects `i8` or `i16` storage.
-- `crates/akita-algebra/src/ring/crt_ntt_repr/lut.rs` prepares signed `i8`
+- `jolt-algebra/src/ring/crt_ntt_repr/lut.rs` prepares signed `i8`
   digits for the CRT and NTT commitment path.
 - `crates/akita-schedules/src/runtime.rs` validates schedule basis ranges.
 - `crates/akita-config/src/proof_optimized.rs` defines the production search
@@ -419,7 +419,7 @@ A code review or security audit can follow the mechanism in this order.
 The focused regression tests are in
 `crates/akita-params/src/sis/decomposition_digits.rs`,
 `crates/akita-params/src/sis/committed_source.rs`, and
-`crates/akita-algebra/src/ring/cyclotomic/tests.rs`. The Stage 1 range topology
+`jolt-algebra/src/ring/cyclotomic/tests.rs`. The Stage 1 range topology
 tests live in `crates/akita-types/src/proof/stage1.rs`. Together, these tests
 cover the asymmetric field boundary, the exact positive reach, the
 intersection of declared and representable source ranges, supported range

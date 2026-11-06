@@ -792,8 +792,9 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 }
                 if let Some(tail) = tail {
                     neg.mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
+                        .map_err(AkitaError::from)
                 } else {
-                    neg.mat_vec_i16(num_rows, rhs)
+                    neg.mat_vec_i16(num_rows, rhs).map_err(AkitaError::from)
                 }
             }
             Self::Q64 {
@@ -818,7 +819,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                         "signed-i16 matvec exceeds prepared IFMA52 capacity".into(),
                     ));
                 }
-                neg.mat_vec_i16(num_rows, rhs)
+                neg.mat_vec_i16(num_rows, rhs).map_err(AkitaError::from)
             }
             Self::Q128 {
                 neg,
@@ -843,13 +844,13 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                     ));
                 }
                 match tail {
-                    None => neg.mat_vec_i16(num_rows, rhs),
-                    Some(Q128Ifma52Tail::I16(tail)) => {
-                        neg.mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
-                    }
-                    Some(Q128Ifma52Tail::I32(tail)) => {
-                        neg.mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
-                    }
+                    None => neg.mat_vec_i16(num_rows, rhs).map_err(AkitaError::from),
+                    Some(Q128Ifma52Tail::I16(tail)) => neg
+                        .mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
+                        .map_err(AkitaError::from),
+                    Some(Q128Ifma52Tail::I32(tail)) => neg
+                        .mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
+                        .map_err(AkitaError::from),
                 }
             }
             Self::Limbs(neg) => neg.mat_vec_i16(log_basis, num_rows, rhs),
@@ -1006,8 +1007,9 @@ where
             rhs,
             &tail.params,
         )
+        .map_err(AkitaError::from)
     } else {
-        CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, width, rhs, params)
+        CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, width, rhs, params).map_err(AkitaError::from)
     }
 }
 

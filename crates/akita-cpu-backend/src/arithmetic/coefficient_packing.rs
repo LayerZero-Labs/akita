@@ -1,8 +1,9 @@
 //! Shared checked construction for coefficient-packing backend kernels.
 
 use crate::opaque::SubringCoefficientPackingPlan;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
+use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{AdditiveGroup, ExtField, Field, MulBaseUnreduced, Unreduced};
 

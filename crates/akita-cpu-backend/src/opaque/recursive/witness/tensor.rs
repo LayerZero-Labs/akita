@@ -5,8 +5,9 @@ use crate::arithmetic::extension_opening_reduction::{
     tensor_column_partials_split_fold, TensorColumnSource,
 };
 use akita_algebra::SplitEqEvals;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::tensor_opening_split;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};

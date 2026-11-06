@@ -136,7 +136,9 @@ impl<E: Field> SetupContributionPlan<E> {
             if ratio == 1 {
                 Ok(None)
             } else {
-                scalar_powers_with_stride(alpha, base_ring_dim, ratio).map(Some)
+                scalar_powers_with_stride(alpha, base_ring_dim, ratio)
+                    .map(Some)
+                    .map_err(AkitaError::from)
             }
         };
         Ok([

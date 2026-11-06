@@ -260,8 +260,8 @@ impl DecomposeFoldBatchPlan<'_> {
         }
         let challenges_per_poly =
             declared_challenges_per_poly.unwrap_or_else(|| challenges.len() / num_polys);
-        let expected =
-            akita_error::checked::product([num_polys, challenges_per_poly]).ok_or_else(|| {
+        let expected = jolt_algebra::checked::product([num_polys, challenges_per_poly])
+            .ok_or_else(|| {
                 AkitaError::InvalidInput("batched decompose_fold challenge count overflow".into())
             })?;
         if challenges.len() != expected {

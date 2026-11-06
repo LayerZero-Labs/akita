@@ -194,7 +194,7 @@ where
     let instance = request.relation;
     if parameters.payload_mode.is_compressed()
         && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
-        && akita_error::checked::product([
+        && jolt_algebra::checked::product([
             request.opening_source_len,
             request.opening_ring_dimension,
         ])

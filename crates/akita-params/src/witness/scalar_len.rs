@@ -77,7 +77,7 @@ impl WitnessLayout {
                 .and_then(|n| n.checked_add(e_len))
                 .and_then(|n| n.checked_add(t_len))
                 .and_then(|len| {
-                    akita_error::checked::align_up(
+                    jolt_algebra::checked::align_up(
                         len,
                         if num_chunks > 1 {
                             lp.successor_block_len.unwrap_or(1)

@@ -11,10 +11,11 @@ use crate::commitment::{
 use crate::opaque::DensePoly;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 #[cfg(test)]
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
+use jolt_algebra::checked;
 #[cfg(test)]
 use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(test)]

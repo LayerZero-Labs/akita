@@ -3,9 +3,10 @@
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::CommittedGroup;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::layout::opening_layout::{OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_params::{GrindingSite, OpeningScheduleSelection};
+use jolt_algebra::checked;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Public claims and commitment payload for one polynomial group.

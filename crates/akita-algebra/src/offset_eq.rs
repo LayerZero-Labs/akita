@@ -5,7 +5,8 @@
 //! carries from arbitrary physical offsets. [`eq_eval_at_index`] is the scalar
 //! equality primitive shared by the kernel and direct callers.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use crate::Field;
 use jolt_algebra::solinas::parallel::*;

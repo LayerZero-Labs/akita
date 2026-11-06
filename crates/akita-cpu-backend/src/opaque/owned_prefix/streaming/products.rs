@@ -1,8 +1,9 @@
 use super::{PrefixSource, Shape};
 use akita_algebra::{ring::cyclotomic::BalancedDecomposePow2Params, CyclotomicRing};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::FlatMatrix;
 use akita_types::{prepare_ntt_cache, NttCacheMode};
+use jolt_algebra::checked;
 #[allow(unused_imports)]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, Field};

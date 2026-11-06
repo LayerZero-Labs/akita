@@ -1,10 +1,11 @@
 use crate::opaque::CommitInnerPlan;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{
     validate_setup_prefix_domain, CommitmentPayloadMode, CommitmentSliceGeometry,
     CommittedGroupParams, CompressionChainPlan, GroupCommitPhaseParams, RingRelationMode,
     SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
 };
+use jolt_algebra::checked;
 
 /// Checked B-stage arithmetic plan.
 #[derive(Debug, Clone, PartialEq, Eq)]

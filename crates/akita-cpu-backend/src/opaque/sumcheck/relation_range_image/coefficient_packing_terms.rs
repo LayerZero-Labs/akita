@@ -2,8 +2,9 @@
 
 use std::ops::Range;
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::CoefficientPackingGroupSemantics;
+use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::Field;
 

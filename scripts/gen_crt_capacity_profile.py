@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import functools
+import json
 import math
 import pathlib
 import re
+import subprocess
 import sys
 
 PROFILES = [
@@ -129,12 +132,41 @@ def fmt_primes(values: list[int]) -> str:
     return ", ".join(str(value) for value in values)
 
 
-def rust_ntt_path(filename: str) -> pathlib.Path:
-    return (
-        pathlib.Path(__file__).resolve().parents[1]
-        / "crates/akita-algebra/src/ntt"
-        / filename
+def cargo_metadata(*extra: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", *extra],
+        cwd=pathlib.Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
     )
+
+
+@functools.cache
+def jolt_algebra_ntt_dir() -> pathlib.Path:
+    # The NTT tables live in jolt-algebra; resolve the exact source Cargo
+    # builds Akita against. Prefer the local cache and fall back to a fetch.
+    completed = cargo_metadata("--offline")
+    if completed.returncode != 0:
+        completed = cargo_metadata()
+    if completed.returncode != 0:
+        raise RuntimeError(f"cargo metadata failed:\n{completed.stderr}")
+    manifests = sorted(
+        {
+            package["manifest_path"]
+            for package in json.loads(completed.stdout)["packages"]
+            if package["name"] == "jolt-algebra"
+        }
+    )
+    if len(manifests) != 1:
+        raise RuntimeError(
+            f"expected exactly one jolt-algebra package, found {len(manifests)}: {manifests}"
+        )
+    return pathlib.Path(manifests[0]).parent / "src/ntt"
+
+
+def rust_ntt_path(filename: str) -> pathlib.Path:
+    return jolt_algebra_ntt_dir() / filename
 
 
 def extract_rust_prime_const(filename: str, name: str) -> list[int]:

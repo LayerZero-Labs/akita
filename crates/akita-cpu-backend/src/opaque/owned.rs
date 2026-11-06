@@ -471,7 +471,7 @@ impl<F: Field, E> CpuBackend<F, E> {
 impl<F: Field + CanonicalEncoding> SourceCoefficients<F> for crate::DensePoly<F> {
     fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
         let len =
-            akita_error::checked::pow2(RootPolyMeta::<F>::num_vars(self)).ok_or_else(|| {
+            jolt_algebra::checked::pow2(RootPolyMeta::<F>::num_vars(self)).ok_or_else(|| {
                 AkitaError::Internal("dense source coefficient extent overflow".into())
             })?;
         if let Some(full) = self.field_coeffs().get(..len) {
@@ -487,7 +487,7 @@ impl<F: Field + CanonicalEncoding, I: crate::OneHotIndex> SourceCoefficients<F>
     for crate::OneHotPoly<F, I>
 {
     fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
-        let len = akita_error::checked::product([self.onehot_k(), self.indices().len()])
+        let len = jolt_algebra::checked::product([self.onehot_k(), self.indices().len()])
             .ok_or_else(|| {
                 AkitaError::Internal("one-hot source coefficient extent overflow".into())
             })?;

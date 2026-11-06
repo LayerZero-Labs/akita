@@ -1,5 +1,5 @@
 use super::*;
-use akita_error::checked;
+use jolt_algebra::checked;
 use std::collections::HashMap;
 use std::sync::Arc;
 

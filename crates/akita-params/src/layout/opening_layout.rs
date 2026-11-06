@@ -1,7 +1,8 @@
 //! Layout-only opening geometry shared by planning, sizing, and claims.
 
 use crate::descriptor_bytes::{digest_descriptor_bytes, push_usize, DescriptorDigest};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 use jolt_algebra::Field;
 
 /// Per-group opening geometry.
