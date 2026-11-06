@@ -11,7 +11,7 @@ use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial, ResidueKernelPoint};
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole, BINARY_SETUP_P};
+use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
 use akita_params::RelationPolynomial;
 use jolt_field::Field;
 
@@ -21,7 +21,6 @@ use super::super::{
     BinaryRootPublic, BinaryRootWitnessPlan, BinarySourceDescriptor, BinaryTerminalClaim,
     OrdinaryNativeRootPlan, PrimePlaneManifest, BINARY_DIGIT_COMMITMENT_DEGREE,
     BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS, CANONICAL_IMAGE_WINDOW,
-    PRIME_PLANE_DIGITS,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
@@ -329,7 +328,7 @@ pub(crate) fn prime_plane_weights<E: Field>(
     alpha: E,
     batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
-    if E::from_u128(BINARY_SETUP_P) != E::zero()
+    if E::from_u128(manifest.field_profile().modulus()) != E::zero()
         || batches.len()
             != checked::product([manifest.planes().len(), 2]).ok_or(AkitaError::InvalidProof)?
     {
@@ -349,7 +348,7 @@ pub(crate) fn prime_plane_weights<E: Field>(
         (
             plane_segment,
             checked::product([manifest.planes().len(), columns]),
-            PRIME_PLANE_DIGITS,
+            manifest.field_profile().prime_plane_digits(),
             RelationPolynomial::plus_trinomial(162)?,
         ),
     ] {
@@ -368,7 +367,8 @@ pub(crate) fn prime_plane_weights<E: Field>(
     let scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
     let term_count = checked::sum([
         checked::product([scalar_rows, 162, 4]).ok_or(AkitaError::InvalidProof)?,
-        checked::product([columns, 162, PRIME_PLANE_DIGITS]).ok_or(AkitaError::InvalidProof)?,
+        checked::product([columns, 162, manifest.field_profile().prime_plane_digits()])
+            .ok_or(AkitaError::InvalidProof)?,
     ])
     .and_then(|count| checked::product([manifest.planes().len(), count]))
     .ok_or(AkitaError::InvalidProof)?;

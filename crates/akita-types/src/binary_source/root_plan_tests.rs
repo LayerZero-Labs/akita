@@ -349,7 +349,6 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
     use akita_params::binary_setup::BinaryFieldProfile;
     use jolt_field::{Ext2, Prime64Offset59};
     type E = Ext2<Prime64Offset59>;
-    let ordinary_carrier = carrier_profile(BinaryFieldProfile::P128);
     let setup = AkitaSetupDescriptor {
         max_num_vars: 0,
         max_num_batched_polys: 0,
@@ -358,6 +357,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
     };
     for field_profile in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
         let carrier = carrier_profile(field_profile);
+        let ordinary_carrier = carrier;
         let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
         let profiles =
             BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, field_profile).unwrap();
@@ -391,7 +391,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                 )
                 .unwrap()
             });
-            let prime = PrimePlaneManifest::new(
+            let prime = PrimePlaneManifest::with_field_profile(
                 &descriptor,
                 (planes > 0).then(|| PrimeGroupClaim {
                     point: vec![0; 11],
@@ -400,6 +400,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                         value: 0,
                     }],
                 }),
+                field_profile,
             )
             .unwrap();
             let public = BinaryRootPublic::new(

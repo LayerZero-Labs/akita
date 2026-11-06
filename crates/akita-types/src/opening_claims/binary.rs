@@ -37,7 +37,11 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         if let Some(claim) = &claim {
             claim.validate(manifest.descriptor())?;
         }
-        let prime = crate::binary_source::PrimePlaneManifest::new(manifest.descriptor(), primes)?;
+        let prime = crate::binary_source::PrimePlaneManifest::with_field_profile(
+            manifest.descriptor(),
+            primes,
+            manifest.field_profile(),
+        )?;
         if claim.is_none() && prime.planes().is_empty() {
             return Err(AkitaError::InvalidInput(
                 "binary group has no claims".into(),

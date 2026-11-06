@@ -44,6 +44,11 @@ where
         claim.validate(manifest.descriptor())?;
     }
     prime.validate(manifest.descriptor())?;
+    if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
+        return Err(AkitaError::InvalidInput(
+            "prime plane profile mismatch".into(),
+        ));
+    }
     let mut messages = vec![(3, manifest.canonical_bytes())];
     if let Some(claim) = claim {
         messages.push((4, claim.canonical_bytes()));

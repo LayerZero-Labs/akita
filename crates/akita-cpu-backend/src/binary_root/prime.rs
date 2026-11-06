@@ -2,33 +2,30 @@
 
 use akita_algebra::ring::trinomial::module_map::unpack_signed_components;
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::BINARY_SETUP_P;
-use akita_types::binary_source::{BinarySourceDescriptor, PrimePlaneManifest, PRIME_PLANE_DIGITS};
+use akita_params::binary_setup::BinaryFieldProfile;
+use akita_types::binary_source::{BinarySourceDescriptor, PrimePlaneManifest};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field};
-
-/// Digits of one plane column: [`PRIME_PLANE_DIGITS`] rows of 162 coefficients.
-const COLUMN_DIGITS: usize = PRIME_PLANE_DIGITS * 162;
 
 /// Build the committed prime planes before drawing column fold challenges.
 ///
 /// Sources are polynomial/column/ring-row ordered. Returned natural digits
 /// are polynomial/column/digit/coefficient ordered. Each coefficient is first
-/// reduced modulo the proof prime and centered; 43 balanced digits cover that
-/// entire centered interval. Canonical nonnegative residues do not all fit the
-/// positive endpoint of that digit interval.
+/// reduced modulo the selected proof prime and centered; the profile digit
+/// depth covers that entire centered interval.
 pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
     descriptor: &BinarySourceDescriptor,
     manifest: &PrimePlaneManifest,
     sources: &[[i128; 648]],
 ) -> Result<Vec<i8>, AkitaError> {
-    if F::from_u128(BINARY_SETUP_P) != F::zero() || F::from_u128(BINARY_SETUP_P - 1) != -F::one() {
+    if akita_params::field_modulus::<F>()? != manifest.field_profile().modulus() {
         return Err(AkitaError::InvalidSetup(
             "prime plane field differs from the proof prime".into(),
         ));
     }
     manifest.validate(descriptor)?;
+    let column_digits_len = manifest.field_profile().prime_plane_digits() * 162;
     let columns = descriptor.index_map().columns();
     let scalar_rows = checked::exact_div(descriptor.index_map().padded_carriers(), columns)
         .ok_or(AkitaError::InvalidProof)?;
@@ -41,8 +38,13 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
             actual: sources.len(),
         });
     }
-    let width = checked::product([manifest.planes().len(), columns, PRIME_PLANE_DIGITS, 162])
-        .ok_or(AkitaError::InvalidProof)?;
+    let width = checked::product([
+        manifest.planes().len(),
+        columns,
+        manifest.field_profile().prime_plane_digits(),
+        162,
+    ])
+    .ok_or(AkitaError::InvalidProof)?;
     let mut digits = Vec::new();
     digits
         .try_reserve_exact(width)
@@ -73,9 +75,9 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
                 }
             }
             let address = checked::mul_add(plane, columns, column)
-                .and_then(|x| checked::product([x, COLUMN_DIGITS]))
+                .and_then(|x| checked::product([x, column_digits_len]))
                 .ok_or(AkitaError::InvalidProof)?;
-            let column_digits = checked::range(address, COLUMN_DIGITS)
+            let column_digits = checked::range(address, column_digits_len)
                 .and_then(|range| digits.get_mut(range))
                 .ok_or(AkitaError::InvalidProof)?;
             write_prime_column(column_digits, &partial)?;
@@ -92,12 +94,13 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
     manifest: &PrimePlaneManifest,
     sources: &[u128],
 ) -> Result<Vec<i8>, AkitaError> {
-    if F::from_u128(BINARY_SETUP_P) != F::zero() || F::from_u128(BINARY_SETUP_P - 1) != -F::one() {
+    if akita_params::field_modulus::<F>()? != manifest.field_profile().modulus() {
         return Err(AkitaError::InvalidSetup(
             "prime plane field differs from the proof prime".into(),
         ));
     }
     manifest.validate(descriptor)?;
+    let column_digits_len = manifest.field_profile().prime_plane_digits() * 162;
     let index = descriptor.index_map();
     let columns = index.columns();
     let expected = checked::product([descriptor.polynomials().len(), index.padded_carriers()])
@@ -108,14 +111,20 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
             actual: sources.len(),
         });
     }
-    let width = checked::product([manifest.planes().len(), columns, PRIME_PLANE_DIGITS, 162])
-        .ok_or(AkitaError::InvalidProof)?;
+    let width = checked::product([
+        manifest.planes().len(),
+        columns,
+        manifest.field_profile().prime_plane_digits(),
+        162,
+    ])
+    .ok_or(AkitaError::InvalidProof)?;
     let mut digits = Vec::new();
     digits
         .try_reserve_exact(width)
         .map_err(|_| AkitaError::InvalidProof)?;
     digits.resize(width, 0);
-    let plane_width = checked::product([columns, COLUMN_DIGITS]).ok_or(AkitaError::InvalidProof)?;
+    let plane_width =
+        checked::product([columns, column_digits_len]).ok_or(AkitaError::InvalidProof)?;
     let Some(prime) = manifest.claim() else {
         return Ok(digits);
     };
@@ -145,7 +154,7 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
         }
         // Columns own disjoint digit windows, so the parallel form writes the
         // same digits.
-        cfg_chunks_mut!(plane_digits, COLUMN_DIGITS)
+        cfg_chunks_mut!(plane_digits, column_digits_len)
             .zip(cfg_chunks!(partials, 162))
             .try_for_each(|(column_digits, partial)| write_prime_column(column_digits, partial))?;
     }
@@ -153,18 +162,23 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
 }
 
 /// Write the balanced base-8 digits of one plane column's coefficients into
-/// `column_digits`: digit-major, [`PRIME_PLANE_DIGITS`] rows of 162.
+/// `column_digits`: digit-major, with the selected profile depth and 162 coefficients.
 fn write_prime_column<F: Field + CanonicalEncoding>(
     column_digits: &mut [i8],
     partial: &[F],
 ) -> Result<(), AkitaError> {
-    if column_digits.len() != COLUMN_DIGITS || partial.len() != 162 {
+    let modulus = akita_params::field_modulus::<F>()?;
+    let field = [BinaryFieldProfile::P128, BinaryFieldProfile::P64]
+        .into_iter()
+        .find(|field| field.modulus() == modulus)
+        .ok_or_else(|| AkitaError::InvalidSetup("unsupported prime plane field".into()))?;
+    if column_digits.len() != field.prime_plane_digits() * 162 || partial.len() != 162 {
         return Err(AkitaError::InvalidProof);
     }
     for (coefficient, value) in partial.iter().copied().enumerate() {
         let canonical = value.to_u128_checked().ok_or(AkitaError::InvalidProof)?;
-        let mut centered = if canonical > BINARY_SETUP_P / 2 {
-            -i128::try_from(BINARY_SETUP_P - canonical).map_err(|_| AkitaError::InvalidProof)?
+        let mut centered = if canonical > modulus / 2 {
+            -i128::try_from(modulus - canonical).map_err(|_| AkitaError::InvalidProof)?
         } else {
             i128::try_from(canonical).map_err(|_| AkitaError::InvalidProof)?
         };
@@ -185,7 +199,7 @@ fn write_prime_column<F: Field + CanonicalEncoding>(
         }
         if centered != 0 {
             return Err(AkitaError::Internal(
-                "centered prime coefficient exceeds 43 balanced digits".into(),
+                "centered prime coefficient exceeds its balanced digit depth".into(),
             ));
         }
     }
@@ -195,6 +209,9 @@ fn write_prime_column<F: Field + CanonicalEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_params::binary_setup::BINARY_SETUP_P;
+    use akita_types::binary_source::PRIME_PLANE_DIGITS;
+    const COLUMN_DIGITS: usize = PRIME_PLANE_DIGITS * 162;
     use akita_types::binary_source::{
         BinaryCommitmentProfiles, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
     };
@@ -275,5 +292,85 @@ mod tests {
         }
         assert!(write_prime_column(&mut digits[1..], &partial).is_err());
         assert!(write_prime_column(&mut digits, &partial[1..]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod p64_tests {
+    use super::*;
+    use akita_types::binary_source::{
+        BinaryCommitmentProfiles, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
+    };
+    use jolt_field::{One, Prime64Offset59 as F, Ring, Zero};
+
+    #[test]
+    fn p64_prime_centered_endpoints_and_packed_planes_roundtrip() {
+        let field = BinaryFieldProfile::P64;
+        let modulus = field.modulus();
+        let mut partial = vec![F::zero(); 162];
+        for (slot, value) in
+            partial
+                .iter_mut()
+                .zip([0, 1, modulus - 1, modulus / 2, modulus / 2 + 1])
+        {
+            *slot = F::from_u128(value);
+        }
+        let mut digits = vec![0; 22 * 162];
+        write_prime_column(&mut digits, &partial).unwrap();
+        for (i, value) in partial.iter().enumerate() {
+            let mut integer = 0i128;
+            let mut power = 1i128;
+            for lane in digits.chunks_exact(162) {
+                assert!((-4..=3).contains(&lane[i]));
+                integer += power * i128::from(lane[i]);
+                power *= 8;
+            }
+            let canonical = value.to_u128_checked().unwrap();
+            let centered = if canonical > modulus / 2 {
+                -((modulus - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+            assert_eq!(integer, centered);
+            assert_eq!(F::from_i128(integer), *value);
+        }
+        let descriptor = BinarySourceDescriptor::new(
+            BinaryIndexMap::new(128, 4, 4, 1).unwrap(),
+            vec![[1; 32]],
+            BinaryCommitmentProfiles {
+                a: [2; 32],
+                b: [3; 32],
+            },
+        )
+        .unwrap();
+        let manifest = PrimePlaneManifest::with_field_profile(
+            &descriptor,
+            Some(PrimeGroupClaim {
+                point: vec![2; 10],
+                evaluations: vec![PrimePlaneClaim {
+                    polynomial: 0,
+                    value: 0,
+                }],
+            }),
+            field,
+        )
+        .unwrap();
+        let words = [u128::MAX, 0x1234_5678, 1 << 127, 0];
+        let mut source = [0i128; 648];
+        for (row, word) in words.iter().enumerate() {
+            for c in 0..128 {
+                source[4 * c + row] = ((word >> c) & 1) as i128 * if c % 2 == 0 { 1 } else { -1 };
+            }
+        }
+        assert_eq!(
+            prime_plane_digits::<F>(&descriptor, &manifest, &[source]).unwrap(),
+            packed_prime_plane_digits::<F>(&descriptor, &manifest, &words).unwrap()
+        );
+        let wrong = PrimePlaneManifest::new(&descriptor, manifest.claim().cloned()).unwrap();
+        assert!(matches!(
+            prime_plane_digits::<F>(&descriptor, &wrong, &[source]),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert_eq!(F::from_u128(modulus - 1), -F::one());
     }
 }

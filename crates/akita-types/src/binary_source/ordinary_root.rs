@@ -2,14 +2,17 @@
 
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::BINARY_SETUP_P;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
+    SisModulusProfileId,
 };
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275};
+use jolt_field::{
+    cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275, Prime64Offset59,
+};
 
 use super::paired_offset_eq_sum;
 use crate::native_root_relation::{
@@ -39,12 +42,22 @@ pub struct OrdinaryNativeRootPlan {
 
 impl OrdinaryNativeRootPlan {
     pub fn new(profile: GroupCommitPhaseParams, first_segment: usize) -> Result<Self, AkitaError> {
-        profile.validate_frozen_precommit(128)?;
+        let field = match profile.inner.matrix.sis_modulus_profile() {
+            SisModulusProfileId::Q128Offset275 => BinaryFieldProfile::P128,
+            SisModulusProfileId::Q64Offset59 => BinaryFieldProfile::P64,
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "unsupported mixed root field".into(),
+                ))
+            }
+        };
+        profile
+            .validate_frozen_precommit(profile.inner.matrix.sis_modulus_profile().field_bits())?;
         if profile.group.num_polynomials() != 1
             || profile.inner.digits.num_digits != 1
             || profile.inner.digits.log_basis < 3
             || profile.outer.digits.log_basis != 3
-            || profile.inner.matrix.sis_modulus_profile().modulus() != BINARY_SETUP_P
+            || profile.outer.matrix.sis_modulus_profile().modulus() != field.modulus()
         {
             return Err(AkitaError::InvalidSetup(
                 "mixed root requires one ordinary small coefficient source and base-eight image digits".into(),
@@ -92,7 +105,10 @@ impl OrdinaryNativeRootPlan {
         let compression = profile.outer_compression_plan()?;
         let first = compression.maps().first().ok_or(AkitaError::InvalidProof)?;
         let second = compression.maps().get(1).ok_or(AkitaError::InvalidProof)?;
-        if compression.maps().len() != 2 || compression.field_bits() != 128 {
+        if compression.maps().len() != 2
+            || compression.field_bits()
+                != profile.inner.matrix.sis_modulus_profile().field_bits() as usize
+        {
             return Err(AkitaError::InvalidSetup(
                 "mixed root compression geometry is unsupported".into(),
             ));
@@ -275,7 +291,7 @@ impl OrdinaryNativeRootPlan {
             || point.len() != self.profile.group.num_vars()
             || batches.len() != self.linear_batch_count
             || payload.len() != self.compression.terminal_coefficients()
-            || E::from_u128(BINARY_SETUP_P) != E::zero()
+            || E::from_u128(self.profile.inner.matrix.sis_modulus_profile().modulus()) != E::zero()
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -300,8 +316,8 @@ impl OrdinaryNativeRootPlan {
                 "mixed root exceeds the admitted setup prefix".into(),
             ));
         }
-        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed);
-        let matrix = matrix.as_field_slice();
+        let matrix = self.setup_coefficients::<E>(required, setup)?;
+        let matrix = matrix.as_slice();
         let table_len = repacking.domain_len();
         let lanes = |offset| {
             checked::sum([self.first_segment, offset])
@@ -474,7 +490,11 @@ impl OrdinaryNativeRootPlan {
             }
         }
         translated(
-            f_lanes.bit_copies(first.input_coefficients(), image.len())?,
+            f_lanes.bit_copies(
+                first.input_coefficients(),
+                image.len(),
+                self.compression.field_bits(),
+            )?,
             vec![(0, image)],
             None,
         )?;
@@ -497,7 +517,11 @@ impl OrdinaryNativeRootPlan {
             power *= alpha;
         }
         translated(
-            h_lanes.bit_copies(second.input_coefficients(), output.len())?,
+            h_lanes.bit_copies(
+                second.input_coefficients(),
+                output.len(),
+                self.compression.field_bits(),
+            )?,
             vec![(0, output)],
             None,
         )?;
@@ -593,6 +617,46 @@ impl OrdinaryNativeRootPlan {
         NativeRootWeights::structured(table_len, terms, families, claim)
     }
 
+    /// Derive ordinary setup in its declared base field before lifting to the
+    /// testing field. Sampling extension coefficients would change the matrix.
+    fn setup_coefficients<E: Field>(
+        &self,
+        required: usize,
+        setup: &AkitaSetupDescriptor,
+    ) -> Result<Vec<E>, AkitaError> {
+        fn derive<F: Field + CanonicalEncoding, E: Field>(
+            required: usize,
+            setup: &AkitaSetupDescriptor,
+        ) -> Result<Vec<E>, AkitaError> {
+            let matrix = derive_public_matrix_prefix::<F>(required, &setup.setup_seed);
+            let source = matrix.as_field_slice();
+            let mut coefficients = Vec::new();
+            coefficients
+                .try_reserve_exact(source.len())
+                .map_err(|_| AkitaError::InvalidProof)?;
+            coefficients.resize(source.len(), E::zero());
+            cfg_chunks_mut!(coefficients, LIFT_CHUNK)
+                .zip(cfg_chunks!(source, LIFT_CHUNK))
+                .try_for_each(|(target, source)| {
+                    for (slot, coefficient) in target.iter_mut().zip(source) {
+                        *slot = coefficient
+                            .to_u128_checked()
+                            .map(E::from_u128)
+                            .ok_or(AkitaError::InvalidProof)?;
+                    }
+                    Ok::<_, AkitaError>(())
+                })?;
+            Ok(coefficients)
+        }
+        match self.profile.inner.matrix.sis_modulus_profile() {
+            SisModulusProfileId::Q128Offset275 => derive::<Prime128Offset275, E>(required, setup),
+            SisModulusProfileId::Q64Offset59 => derive::<Prime64Offset59, E>(required, setup),
+            _ => Err(AkitaError::InvalidSetup(
+                "unsupported mixed root field".into(),
+            )),
+        }
+    }
+
     fn maps(&self) -> Result<[CompressionMapPlan; 2], AkitaError> {
         match self.compression.maps() {
             &[first, second] => Ok([first, second]),
@@ -605,45 +669,24 @@ impl OrdinaryNativeRootPlan {
 ///
 /// Entry `(row, column)` is the degree-`degree` ring at flat offset
 /// `(row * width + column) * degree` of the ordinary setup prefix. The
-/// coefficients are converted once into one buffer, in parallel under
-/// `parallel`; [`Self::ring`] copies one entry out.
-struct RoleRings<E> {
-    coefficients: Vec<E>,
+/// prefix is lifted once into the testing field, in parallel under `parallel`,
+/// and every role borrows it; [`Self::ring`] copies one entry out.
+struct RoleRings<'a, E> {
+    coefficients: &'a [E],
     width: usize,
     degree: usize,
 }
 
-/// Coefficients one parallel task converts.
-const ROLE_CHUNK: usize = 1 << 13;
+/// Coefficients one parallel task lifts.
+const LIFT_CHUNK: usize = 1 << 13;
 
-impl<E: Field> RoleRings<E> {
-    fn new(
-        matrix: &[Prime128Offset275],
-        rows: usize,
-        width: usize,
-        degree: usize,
-    ) -> Result<Self, AkitaError> {
+impl<'a, E: Field> RoleRings<'a, E> {
+    fn new(matrix: &'a [E], rows: usize, width: usize, degree: usize) -> Result<Self, AkitaError> {
         let len = checked::product([rows, width, degree]).ok_or(AkitaError::InvalidProof)?;
-        let source = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
+        let coefficients = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
         if degree == 0 {
             return Err(AkitaError::InvalidProof);
         }
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(len)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        coefficients.resize(len, E::zero());
-        cfg_chunks_mut!(coefficients, ROLE_CHUNK)
-            .zip(cfg_chunks!(source, ROLE_CHUNK))
-            .try_for_each(|(target, source)| {
-                for (slot, coefficient) in target.iter_mut().zip(source) {
-                    *slot = coefficient
-                        .to_u128_checked()
-                        .map(E::from_u128)
-                        .ok_or(AkitaError::InvalidProof)?;
-                }
-                Ok::<_, AkitaError>(())
-            })?;
         Ok(Self {
             coefficients,
             width,
@@ -737,7 +780,7 @@ impl ContiguousLanes {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    /// One copy per bit of a 128-bit negative-binary recomposition.
+    /// One copy per bit of the selected negative-binary recomposition.
     ///
     /// Bit `i` of input coefficient `c` sits at flat coefficient
     /// `i * coefficients + c`, with scale `2^i`.
@@ -745,12 +788,13 @@ impl ContiguousLanes {
         &self,
         coefficients: usize,
         used: usize,
+        bits: usize,
     ) -> Result<Vec<(usize, E)>, AkitaError> {
         if used > coefficients {
             return Err(AkitaError::InvalidProof);
         }
         let mut scale = E::one();
-        (0..128)
+        (0..bits)
             .map(|bit| {
                 let first =
                     checked::product([bit, coefficients]).ok_or(AkitaError::InvalidProof)?;

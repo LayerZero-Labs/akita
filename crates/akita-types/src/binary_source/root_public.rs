@@ -92,6 +92,11 @@ impl BinaryRootPublic {
             claim.validate(manifest.descriptor())?;
         }
         prime.validate(manifest.descriptor())?;
+        if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
+            return Err(AkitaError::InvalidInput(
+                "prime plane profile mismatch".into(),
+            ));
+        }
         let domain_len = witness_commitment_domain_len(logical_len, destination_ring_dimension)?;
         let mut plan = BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),

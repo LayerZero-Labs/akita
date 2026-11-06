@@ -24,6 +24,14 @@ pub enum BinaryFieldProfile {
 }
 
 impl BinaryFieldProfile {
+    /// Balanced base-eight depth covering every centered base coordinate.
+    pub const fn prime_plane_digits(self) -> usize {
+        match self {
+            Self::P128 => 43,
+            Self::P64 => 22,
+        }
+    }
+
     /// Exact base characteristic, also used for canonical payload residues.
     pub const fn modulus(self) -> u128 {
         match self {
