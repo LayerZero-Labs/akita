@@ -134,6 +134,8 @@ The selected root uses ordinary Stage 1 range-image checking and one fused
 Stage 2. Typed Stage 3 authenticates its setup contributions. After the root,
 bounded coefficients are repacked into an ordinary power-of-two negacyclic
 witness. This is authenticated coefficient repacking, not a ring homomorphism.
+For the extension beyond the current one-binary-group root, see
+[binary-source-multigroup.md](binary-source-multigroup.md).
 
 The final design replaces the A quotient by seven linked integer projections,
 reduces parity kernels before checking them, and commits both parity carries K
