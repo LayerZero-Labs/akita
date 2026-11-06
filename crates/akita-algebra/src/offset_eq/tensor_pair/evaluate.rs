@@ -155,11 +155,7 @@ pub(super) fn eval_unfactored_tensor_families<
     Ok(acc)
 }
 
-fn try_eval_aligned_family<
-    F: Field,
-    const LEFT_MONOMIAL: bool,
-    const RIGHT_MONOMIAL: bool,
->(
+fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     family: &EqPairTensorFamily<F>,
