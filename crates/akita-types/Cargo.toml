@@ -9,6 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
+spongefish = { version = "=0.8.0", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -32,6 +33,9 @@ tracing = "0.1"
 [features]
 default = ["transcript-keccak"]
 test-support = ["akita-params/test-support"]
+# The masked channels and the counting replay of a zero-knowledge opening's
+# masked levels (`specs/whiteout-akita.md` §4.4–4.5).
+zk = ["akita-error/zk", "akita-params/zk"]
 # Prover-side grinding replay, which searches on a copy of the sponge state.
 prover = ["akita-transcript/prover", "akita-challenges/prover"]
 transcript-blake2b = [

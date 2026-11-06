@@ -48,6 +48,7 @@ pub fn find_native_root_schedule(
         level_zero_is_root: true,
         relation_traversal_order: RelationTraversalOrder::Canonical,
         relation_mode_filter: RelationModeFilter::All,
+        zk: None,
     };
     let state = SuffixState {
         level: 1,
@@ -89,6 +90,7 @@ pub fn find_native_root_schedule(
         // The native root has its own typed A prefix and never batches setup.
         root_accumulated_setup_prefix_len: 0,
         root,
+        zk: None,
         recursive_folds: best
             .folds
             .to_vec()

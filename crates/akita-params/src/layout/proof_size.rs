@@ -8,6 +8,9 @@ use crate::{PolynomialGroupLayout, TerminalResponseShape};
 /// Degree bound for one witness factor times one transparent reduction factor.
 pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
 
+/// Degree bound for the fused stage-2 relation/range-image sumcheck.
+pub const STAGE2_SUMCHECK_DEGREE: usize = 3;
+
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
 

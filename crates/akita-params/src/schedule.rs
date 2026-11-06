@@ -403,7 +403,7 @@ impl FoldSuccessor<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
 pub struct FoldSchedule {
     /// Largest inherited setup-prefix domain aggregated by the offloaded root; zero is empty.
     #[serde(default)]
@@ -411,6 +411,38 @@ pub struct FoldSchedule {
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,
     pub terminal: TerminalFoldParams,
+    /// Zero-knowledge cut: `Some` masks the levels up to its cut. Clear
+    /// schedules carry `None`, which neither the text artifact encoding nor
+    /// the descriptor bytes record.
+    ///
+    /// Extension seam: Whiteout zero knowledge (akita#120).
+    #[serde(default)]
+    pub zk: Option<crate::zk::ZkOpeningSchedule>,
+}
+
+/// Text formats omit a clear schedule's `zk`, so clear JSON catalog rows keep
+/// their bytes. Binary formats such as postcard carry no field names and
+/// cannot skip a field the decoder still reads, so they always carry it.
+impl serde::Serialize for FoldSchedule {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let omit_unset = serializer.is_human_readable();
+        let mut state = serializer.serialize_struct("FoldSchedule", 5)?;
+        state.serialize_field(
+            "root_accumulated_setup_prefix_len",
+            &self.root_accumulated_setup_prefix_len,
+        )?;
+        state.serialize_field("root", &self.root)?;
+        state.serialize_field("recursive_folds", &self.recursive_folds)?;
+        state.serialize_field("terminal", &self.terminal)?;
+        if omit_unset && self.zk.is_none() {
+            state.skip_field("zk")?;
+        } else {
+            state.serialize_field("zk", &self.zk)?;
+        }
+        state.end()
+    }
 }
 
 /// Borrowed nonterminal step used to encode a checked planner candidate

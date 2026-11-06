@@ -65,7 +65,7 @@ pub(crate) fn fold_witness_linf_grind_union_ln(
 /// This is the failure target `2^-security_bits / masked_folds` of a fold whose
 /// response is probed once. Every term is bounded above in checked integer
 /// arithmetic: `ln(x) <= ceil(log2 x) · ln(2)` and `ln(2) <= 71/100`.
-fn fold_witness_linf_one_shot_union_ln(
+pub(crate) fn fold_witness_linf_one_shot_union_ln(
     num_fold_coeffs: u128,
     security_bits: u32,
     masked_folds: u32,
@@ -181,7 +181,7 @@ impl FoldWitnessLinfCapConfig {
     /// Sizing inputs for a fold whose response is probed once, with failure
     /// probability at most `2^-security_bits / masked_folds` over all
     /// `num_fold_coeffs` physical response coefficients.
-    pub(crate) fn one_shot_for_fold_coeffs(
+    pub fn one_shot_for_fold_coeffs(
         fold_challenge_config: &FoldChallengeDistribution,
         num_fold_coeffs: usize,
         security_bits: u32,

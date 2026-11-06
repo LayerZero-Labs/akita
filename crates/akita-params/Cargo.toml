@@ -9,6 +9,12 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
+  "lattice",
+] }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", features = [
+  "whiteout",
+], optional = true }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
@@ -33,6 +39,9 @@ labinius-sis = ["akita-challenges/labinius-challenges", "dep:keccak"]
 dev-protocol = []
 default = ["transcript-keccak"]
 test-support = []
+# Whiteout zero-knowledge sizing helpers and the Σ-binding SIS table. Compiles
+# the `zk` modules only; it selects nothing (docs/branches.md rule 3).
+zk = ["dep:jolt-zk"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",
