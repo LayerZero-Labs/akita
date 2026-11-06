@@ -4,9 +4,9 @@ use crate::runtime::PlannerPolicy;
 use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::sis::{
-    min_secure_l2_rank, projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
-    rounded_up_collision_inf_norm, sis_l2_table_key_for_collision_sq, FoldChallengeNorms,
-    SisTableKey,
+    min_secure_l2_rank, min_secure_rank, projected_role_ring_count,
+    role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
+    sis_l2_table_key_for_collision_sq, FoldChallengeNorms, SisTableKey,
 };
 use akita_params::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRole};
 
@@ -138,6 +138,26 @@ pub fn projected_collision_role_price(
         sis_key_at_dimension(policy, role, role_dimension, coeff_linf_bound),
         physical_width,
     ))
+}
+
+/// The smallest module rank at which a commitment to `width` ring columns of
+/// range-checked radix-`2^log_basis` digits, at ring dimension `d`, is
+/// Module-SIS hard at the digits' collision bound: the planner's own price of
+/// a D-role digit commitment ([`projected_collision_role_price`], then
+/// [`min_secure_rank`]). `None` if `policy`'s table has no such rank.
+///
+/// A stable entry point for commitments priced outside the planner, such as
+/// jolt's Whiteout `A_D` (`specs/whiteout-akita.md` §5.1).
+#[must_use]
+pub fn digit_commitment_min_rank(
+    policy: &PlannerPolicy,
+    d: usize,
+    width: usize,
+    log_basis: u32,
+) -> Option<usize> {
+    let (key, width) =
+        projected_collision_role_price(policy, SisMatrixRole::Open, d, d, width, log_basis)?;
+    min_secure_rank(key, u64::try_from(width).ok()?)
 }
 
 #[cfg(test)]

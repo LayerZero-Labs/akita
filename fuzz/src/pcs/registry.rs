@@ -178,11 +178,19 @@ mod tests {
         let artifact_targets: BTreeSet<_> =
             crate::targets::artifact::FAMILIES.into_iter().collect();
         assert_eq!(registered, artifact_targets);
+        // The zero-knowledge and response catalogs load only through
+        // `ZkCommitmentConfig`; this registry covers the clear catalogs.
+        const ZERO_KNOWLEDGE_FAMILIES: [&str; 3] = [
+            "fp128_dense_zk",
+            "fp128_onehot_recursive_zk",
+            "fp128_response_digits",
+        ];
         let shipped: BTreeSet<_> = std::fs::read_dir(crate::env::artifacts_dir())
             .expect("shipped artifact directory")
             .map(|entry| entry.expect("artifact entry").path())
             .filter(|path| path.extension().is_some_and(|extension| extension == "aks"))
             .map(|path| path.file_stem().unwrap().to_str().unwrap().to_owned())
+            .filter(|name| !ZERO_KNOWLEDGE_FAMILIES.contains(&name.as_str()))
             .collect();
         assert_eq!(
             registered
