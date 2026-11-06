@@ -1,7 +1,7 @@
 //! Typed exact setup streams for explicitly selected binary source groups.
 //!
 //! These streams do not change the ordinary public-field stream. Coefficients
-//! of the q matrix and coefficients of P setup matrices have independent domains.
+//! of the q matrix and coefficients of prime setup matrices have independent domains.
 
 use akita_error::{checked, AkitaError};
 use jolt_field::cfg_chunks_mut;
@@ -11,6 +11,104 @@ use keccak::{Backend, BackendClosure, Keccak, ParState1600, State1600, PLEN};
 
 /// Characteristic of the scalar field used by binary source groups.
 pub const BINARY_SETUP_P: u128 = u128::MAX - 274;
+/// Characteristic of the paired p64/E64 binary profile.
+pub const BINARY_SETUP_P64: u64 = u64::MAX - 58;
+
+/// Paired base and challenge fields. Defining a profile does not admit its root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinaryFieldProfile {
+    /// Legacy P128 base field with degree-one challenges.
+    P128,
+    /// Base p = 2^64 - 59 and E64 = F_p[u]/(u^2 - 2), basis (1,u).
+    P64,
+}
+
+impl BinaryFieldProfile {
+    /// Exact base characteristic, also used for canonical payload residues.
+    pub const fn modulus(self) -> u128 {
+        match self {
+            Self::P128 => BINARY_SETUP_P,
+            Self::P64 => BINARY_SETUP_P64 as u128,
+        }
+    }
+
+    /// Extension degree of testing challenges over the base field.
+    pub const fn extension_degree(self) -> usize {
+        match self {
+            Self::P128 => 1,
+            Self::P64 => 2,
+        }
+    }
+
+    /// Exact challenge order; p64 uses (64,2,p), never (128,1,p).
+    pub fn challenge_order(self) -> Result<crate::ChallengeFieldOrder, AkitaError> {
+        crate::ChallengeFieldOrder::from_field(
+            match self {
+                Self::P128 => 128,
+                Self::P64 => 64,
+            },
+            self.extension_degree(),
+            self.modulus(),
+        )
+    }
+
+    /// Validate the field pair and reject unfinished roots before any protocol work.
+    pub fn admit_root(self, modulus: u128, degree: usize) -> Result<(), AkitaError> {
+        if modulus != self.modulus() || degree != self.extension_degree() {
+            return Err(AkitaError::InvalidSetup(
+                "binary root field profile mismatch".into(),
+            ));
+        }
+        if self == Self::P64 {
+            return Err(AkitaError::UnsupportedSchedule(
+                "p64/E64 binary root is not yet supported".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Least admitted B or D rank for its actual degree-64 digit width.
+    /// The legacy profile retains its frozen two rows, including its identities.
+    pub fn digit_commitment_rank(
+        self,
+        role: SetupStreamRole,
+        columns: usize,
+    ) -> Result<usize, AkitaError> {
+        let matrix_role = match role {
+            SetupStreamRole::ImageCommitment => crate::sis::SisMatrixRole::Outer,
+            SetupStreamRole::WitnessCommitment => crate::sis::SisMatrixRole::Open,
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "invalid binary digit setup role".into(),
+                ))
+            }
+        };
+        if columns == 0 {
+            return Err(AkitaError::InvalidSetup("empty binary digit setup".into()));
+        }
+        if self == Self::P128 {
+            return Ok(2);
+        }
+        use crate::sis::{
+            min_secure_rank, SisModulusProfileId, SisTableDigest, SisTableKey,
+            DEFAULT_SIS_SECURITY_POLICY,
+        };
+        let width = u64::try_from(columns)
+            .map_err(|_| AkitaError::InvalidSetup("binary digit width exceeds u64".into()))?;
+        min_secure_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q64Offset59,
+                role: matrix_role,
+                ring_dimension: 64,
+                coeff_linf_bound: 7,
+            },
+            width,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("binary digit width exceeds admitted ranks".into()))
+    }
+}
 const MAX_REJECTION_ATTEMPTS: usize = 256;
 const MAX_MATERIALIZED_BYTES: usize = 1 << 27;
 /// Bytes absorbed and squeezed per SHAKE256 permutation.
@@ -52,11 +150,23 @@ pub enum SetupStreamModulus {
     Q(u32),
     /// Exact canonical residues in P = 2^128 - 275.
     Prime128Offset275,
+    /// Exact canonical residues in p = 2^64 - 59 (eight-byte candidates).
+    Prime64Offset59,
+}
+
+impl SetupStreamModulus {
+    /// Versioned sampler identity. The q-valued A stream retains its v1 domain.
+    pub const fn domain(self) -> &'static [u8] {
+        match self {
+            Self::Prime64Offset59 => b"akita/binary-source/setup/shake256/v2",
+            _ => SETUP_DOMAIN,
+        }
+    }
 }
 
 /// Identity of one independently sampled matrix-entry coefficient stream.
 ///
-/// Fixed layout: domain `akita/binary-source/setup/shake256/v1`, 32-byte
+/// Fixed layout: the versioned [`SetupStreamModulus::domain`], 32-byte
 /// seed, role:u8, group:u64, level:u32, rank:u32, row:u32, column:u64,
 /// ring:u8, degree:u32, coefficient-domain:u8, modulus:u128. All integers
 /// are little endian. Coefficient position is the sequential XOF position;
@@ -329,9 +439,10 @@ impl TypedSetupStream {
         let (tag, modulus, q_threshold) = match label.modulus {
             SetupStreamModulus::Q(q) => (1u8, u128::from(q), q_rejection_threshold(q)?),
             SetupStreamModulus::Prime128Offset275 => (2u8, BINARY_SETUP_P, 0),
+            SetupStreamModulus::Prime64Offset59 => (3u8, u128::from(BINARY_SETUP_P64), 0),
         };
         let squeeze = ShakeSqueeze::new(&[
-            SETUP_DOMAIN,
+            label.modulus.domain(),
             seed,
             &[label.role as u8],
             &label.group.to_le_bytes(),
@@ -380,10 +491,31 @@ impl TypedSetupStream {
         ))
     }
 
-    /// Draw an exact canonical P residue by accepting precisely candidates < P.
+    /// Draw a canonical p64 base residue, rejecting u64 candidates at or above p.
+    /// A coordinate has at most 256 attempts; exhaustion is a typed setup error.
+    pub fn sample_p64(&mut self) -> Result<u64, AkitaError> {
+        if self.modulus != SetupStreamModulus::Prime64Offset59 {
+            return Err(AkitaError::InvalidSetup(
+                "non-p64 setup stream requested as p64".into(),
+            ));
+        }
+        for _ in 0..MAX_REJECTION_ATTEMPTS {
+            let mut bytes = [0u8; 8];
+            self.squeeze.read(&mut bytes);
+            let candidate = u64::from_le_bytes(bytes);
+            if candidate < BINARY_SETUP_P64 {
+                return Ok(candidate);
+            }
+        }
+        Err(AkitaError::InvalidSetup(
+            "p64 setup rejection budget exhausted".into(),
+        ))
+    }
+
+    /// Draw a canonical residue in the selected prime, accepting candidates below it.
     ///
     /// # Errors
-    /// Rejects a q stream or exhaustion of 256 rejection candidates.
+    /// Rejects a q stream or exhaustion of 256 rejection candidates per residue.
     pub fn sample_p(&mut self) -> Result<u128, AkitaError> {
         let mut output = [0u128];
         self.fill_p(&mut output)?;
@@ -392,14 +524,19 @@ impl TypedSetupStream {
 
     /// Fill `output` with consecutive [`Self::sample_p`] draws.
     ///
-    /// The candidates for the whole slice are squeezed in one read; only a
-    /// rejection reads further candidates. The accepted values, the stream
-    /// position afterwards and the per-draw rejection budget are exactly those
-    /// of `output.len()` successive `sample_p` calls.
+    /// P128 candidates are squeezed in blocks; p64 uses eight bytes per
+    /// candidate. Both preserve the accepted values, stream position and
+    /// per-draw rejection budget of `output.len()` successive `sample_p` calls.
     ///
     /// # Errors
     /// Rejects a q stream or exhaustion of 256 consecutive rejection candidates.
     pub fn fill_p(&mut self, output: &mut [u128]) -> Result<(), AkitaError> {
+        if self.modulus == SetupStreamModulus::Prime64Offset59 {
+            for slot in output {
+                *slot = u128::from(self.sample_p64()?);
+            }
+            return Ok(());
+        }
         self.require_p()?;
         let mut draws = PDraws::new(output);
         while !draws.done() {
@@ -410,9 +547,8 @@ impl TypedSetupStream {
     }
 
     /// Fill each output from its own stream, exactly as [`Self::fill_p`] on
-    /// each stream would. The two streams squeeze through paired
-    /// permutations, which halves the permutation work where the backend
-    /// permutes two states per call.
+    /// each stream would. P128 streams use paired permutations where the
+    /// backend supports them; p64 streams retain their separate reads.
     ///
     /// # Errors
     /// Rejects a q stream or exhaustion of either stream's rejection budget.
@@ -422,6 +558,12 @@ impl TypedSetupStream {
         second: &mut Self,
         second_output: &mut [u128],
     ) -> Result<(), AkitaError> {
+        if first.modulus == SetupStreamModulus::Prime64Offset59
+            && second.modulus == SetupStreamModulus::Prime64Offset59
+        {
+            first.fill_p(first_output)?;
+            return second.fill_p(second_output);
+        }
         first.require_p()?;
         second.require_p()?;
         let mut first_draws = PDraws::new(first_output);
