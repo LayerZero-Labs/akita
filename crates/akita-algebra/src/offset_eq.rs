@@ -1048,14 +1048,11 @@ where
     // Combine: out += Σ_carry (Σ_pos bucket[pos] * eq_low_hi[(pos+carry) mod window]) * summaries[carry].
     for (carry, summary) in summaries.iter().enumerate() {
         let mut phi = template.zero_like();
-        for pos in 0..window {
-            let shifted = pos + carry;
-            if shifted < window {
-                phi.add_scaled(&bucket0[pos], eq_low_hi[shifted]);
-            } else {
-                phi.add_scaled(&bucket1[pos], eq_low_hi[shifted - window]);
-            }
-        }
+        let split = window
+            .checked_sub(carry)
+            .ok_or_else(|| AkitaError::InvalidInput("affine carry exceeds window".into()))?;
+        phi.add_scaled_batch(&bucket0[..split], &eq_low_hi[carry..]);
+        phi.add_scaled_batch(&bucket1[split..], &eq_low_hi[..carry]);
         out.add(&phi.multiply(summary));
     }
     Ok(true)
