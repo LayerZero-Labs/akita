@@ -8,7 +8,7 @@ pub(crate) mod config;
 mod native_catalog;
 
 use crate::metrics;
-use akita_config::TrustedScheduleCatalog;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::checked;
 use akita_params::binary_setup::BinaryFieldProfile;
@@ -36,6 +36,11 @@ use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type OwnedGroupClaims<C> = PolynomialGroupClaims<
+    'static,
+    <C as CommitmentConfig>::ExtField,
+    CommittedGroup<<C as CommitmentConfig>::Field>,
+>;
 const PROTOCOL: &[u8] = b"binary-source-full-size-v1";
 
 #[derive(Serialize, Deserialize)]
@@ -390,7 +395,7 @@ fn groups<C: MeasurementConfig>(
     claims: &claims::Claims,
     descriptor: &akita_types::binary_source::BinarySourceDescriptor,
     commitments: &[CommittedGroup<C::Field>],
-) -> Result<Vec<PolynomialGroupClaims<'static, C::ExtField, CommittedGroup<C::Field>>>> {
+) -> Result<Vec<OwnedGroupClaims<C>>> {
     let binary = commitments.first().ok_or("missing binary commitment")?;
     let mut groups = vec![PolynomialGroupClaims::new_binary_planes(
         binary.clone(),
