@@ -91,8 +91,9 @@ It does not preserve binary-root proof or persisted-setup compatibility.
   Any admitted E64 prime claim accounts for both coordinate planes.
 - [ ] B/D ranks cover their actual widths under the q64 table.
   The outgoing witness, typed prefix and ordinary suffix are repriced.
-- [ ] The full security ledger enforces the extraction-address admission limit
-  below and includes all algebraic, retry, setup and binding losses.
+- [ ] The grinding plan prices the column challenges with the proof of work
+  below. The full security ledger includes all algebraic, retry, setup and
+  binding losses.
 - [ ] The evidence script passes under `python3 -I`.
   Protocol mutations and malformed-input tests reject with typed errors.
 
@@ -550,6 +551,9 @@ Paths without a crate prefix in this table are under
 | `crates/akita-cpu-backend/src/binary_root.rs`, `binary_root/residual.rs` | Residual helpers include concrete P128 return values alongside exact integer computation. | Keep integer residuals for quotient production and embed into the selected base/extension fields explicitly. |
 | `ordinary_root.rs`, `ordinary_root_reference.rs`, `reference_weights.rs` | Ordinary/reference setup and weights use concrete P128 matrices or P guards. | Use the selected p64 ordinary profile and compare canonical and optimized E64 relations. |
 | `typed_prefix.rs`, `typed_prefix_weights.rs`, `a_product.rs` | Generic F/E interfaces are orchestrated only by the admitted degree-one root. | Test base setup coefficients with E64 factors, claims and successor consumption. Bind changed layouts and ranks in the prefix identity. |
+| `crates/akita-types/src/proof/commitment/binary.rs` | `new_binary` requires the P128 proof modulus and the constant payload length `BINARY_COMMITTED_PAYLOAD_COEFFICIENTS`. | Require the selected p64 profile. Size the payload from the manifest's admitted B rank. |
+| `crates/akita-types/src/proof/commitment/wire.rs`, `crates/akita-verifier/src/fold/admission.rs` | Validation and deserialization compare binary payloads with the same constant rank-two length. | Derive the expected payload length from the manifest's admitted B rank. |
+| `crates/akita-cpu-backend/src/opaque/binary_ordinary.rs` | Signed source decoding, reached from `opaque/binary_source.rs`, subtracts canonical coefficients from `BINARY_SETUP_P`. Over p64, a valid coefficient -1 is encoded as p-1 and would fail the signed-width check. | Decode signed values against the selected field modulus. |
 
 The canonical relation compiler remains the source of truth.
 Do not add a parallel p64 compiler with duplicated bounds.
@@ -663,37 +667,53 @@ Such repetition is not part of this approved projection schedule.
 A full-proof repetition would have to cover all deficient tests and retain
 the fixed-commitment premises.
 
-#### Extraction-address admission limit
+#### Column-challenge proof of work
 
 The current weight-46 column-challenge family has support size
 
 ```text
 S46 = sum_(j=0..46) binom(162,j)
     = 107,268,495,235,892,251,993,000,716,928,106,195,079,952
+floor(S46 / 2^128) = 315
 I = s*C
-extraction-address term = I/S46
-256/S46 <= 2^-128 < 512/S46
-2^-117 < (4096*256)/S46 <= 2^-116.
+extraction-address term per response candidate = I/S46
 ```
 
-Admission must bound `I/S46` by the allocation for this event in the full
-security ledger.
-For an allocation of `2^-128`, a power-of-two value of I must satisfy
-`I <= 256`.
-At `C = 256`, even two owners fail that allocation.
-This is a necessary limit for that event, not a sufficient whole-protocol
-admission rule.
-The 4096-owner descriptor cap is not a 128-bit security admission.
-E64 batching does not repair this limit.
+For one response candidate, the term is at most `2^-128` exactly when
+`I <= 315`. One owner at `C = 256` meets it. Two owners at `C = 256` do not.
 
-A stronger column-challenge family or a proved repeated-extraction construction
-needs separate approval and analysis.
-For scale, weight 57 is the smallest weight whose support covers
-`2^20 * 2^128`; weight 77 covers `2^20 * 2^140`.
-They would change Gamma to 114 and 154 and the q-SIS radius to 1,867,320 and
-2,522,520 respectively.
-They require new carry, response, unit, SIS and retry analysis.
-They are not substituted into this spec's arithmetic tables.
+The binary root prices this site with the fold proof of work that
+[transcript grinding](transcript-grinding.md) already applies to sparse fold
+challenges. After the prover absorbs a response nonce candidate, it runs one
+`FoldChallengeWork` proof of work before the column challenges are squeezed.
+Its bit count is
+
+```text
+g = least g with I * 2^128 <= S46 * 2^g
+```
+
+compared in exact integers.
+
+| I | Example | g |
+| ---: | --- | ---: |
+| at most 315 | one owner at `C = 256` | 0 |
+| 512 | two owners at `C = 256` | 1 |
+| 1,024 | four owners at `C = 256` | 2 |
+| 1,048,576 | 4,096 owners at `C = 256` | 12 |
+
+Under the classical random-oracle bound of that spec,
+`sum_i q_i * 2^-g_i * L_i / |E_i|`, this event then costs at most `2^-128`
+per query. The count q includes every response candidate the prover tries.
+A zero-bit site emits no nonce. A nonzero site adds one canonical LEB128
+nonce of at most `ceil((g+7)/7)` bytes, which is 3 bytes at g = 12.
+The honest prover spends about `2^g` check squeezes per response candidate.
+The current root has no work entry at this site. The grinding plan gains one
+entry, and its digest changes.
+
+This pricing replaces any cap on I for this event. The 4096-owner descriptor
+cap stays a resource limit. E64 batching does not affect this term. The full
+security ledger still adds every other algebraic, retry, setup, binding and
+hash term.
 
 ### Alternatives Considered
 
@@ -740,8 +760,12 @@ The stages below describe future changes; this spec commit changes no Rust.
 1. **Define the paired field profile and identities.** Touch
    `crates/akita-params/src/binary_setup.rs` and `binary_setup/tests.rs`;
    `crates/akita-types/src/binary_source/commitment_manifest.rs`,
-   `root_transcript.rs`, `authentication.rs` and `grinding.rs`.
+   `root_transcript.rs`, `authentication.rs` and `grinding.rs`;
+   `crates/akita-types/src/proof/commitment/binary.rs` and `wire.rs`;
+   `crates/akita-verifier/src/fold/admission.rs`.
    Define the p64 setup sampler, rank admission and versioned identities.
+   Size binary commitment payloads from the manifest's admitted B rank at
+   construction, validation and deserialization.
    Audit base payload encodings and the `(64,2,p)` challenge order.
    Add degree-two profile checks to
    `crates/akita-prover/src/protocol/prove/binary_root.rs` and
@@ -777,12 +801,14 @@ The stages below describe future changes; this spec commit changes no Rust.
 5. **Migrate prime and mixed profiles.** Touch
    `crates/akita-types/src/binary_source/prime.rs`, `prime_plan.rs`,
    `prime_weights.rs`, `ordinary_root.rs`, `ordinary_root_reference.rs` and
-   `agreement.rs`; `crates/akita-cpu-backend/src/binary_root/prime.rs`;
+   `agreement.rs`; `crates/akita-cpu-backend/src/binary_root/prime.rs` and
+   `opaque/binary_ordinary.rs`;
    `crates/akita-pcs/tests/binary_source_end_to_end/prime_plane.rs` and
    `crates/akita-cpu-backend/src/binary_root_mixed_tests.rs`.
    Use 22 digits per base coordinate and the new unit proof.
    Gate any E64 claim API on explicit two-plane resource accounting.
    Select the actual p64 ordinary compression/norm contract.
+   Decode signed ordinary sources against the selected field modulus.
 6. **Admit and measure the complete schedule.** Touch
    `crates/akita-types/src/binary_source/grinding.rs`,
    `crates/akita-pcs/examples/binary_source_full_size.rs` and its
@@ -790,18 +816,16 @@ The stages below describe future changes; this spec commit changes no Rust.
    `crates/akita-pcs/tests/binary_source_end_to_end/byte_contract.rs`,
    `compatibility.rs` and `statement_binding.rs`.
    Generate the selected p64 catalog and induced setup instances.
-   Enforce the owner/address limit and complete security ledger before
-   production admission. Record complete size and timing results.
+   Price the column-challenge proof of work and complete the security ledger
+   before production admission. Record complete size and timing results.
    Update the owning Book pages and spec lifecycle in the implementing PRs.
 
 ### Open questions
 
 - Which p64 catalog and successor schedules cover the intended word, prime and
   mixed shapes? Complete proof bytes, time and memory remain unmeasured.
-- What complete security allocation and owner cap will production admit?
-  Weight 46 cannot cover all 4096 owners at `C = 256` with a `2^-128`
-  extraction-address allocation. The q24, B/D, suffix and setup instances need
-  certification under that allocation.
+- What complete security allocation will production admit? The q24, B/D,
+  suffix and setup instances need certification under that allocation.
 - Will the prime API remain base-field-only or admit E64 points and values?
   E64 support requires two coordinate planes and an explicit cap decision.
 - Will B and D keep a shared rank or expose separate ranks?
