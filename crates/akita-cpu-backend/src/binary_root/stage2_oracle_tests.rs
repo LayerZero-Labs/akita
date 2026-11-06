@@ -117,7 +117,6 @@ mod p64 {
         BinaryTerminalClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
     };
     use jolt_field::{Ext2, ExtField, One, Prime64Offset59, Ring, Zero};
-    use jolt_poly::UnivariatePolynomial;
     type F = Prime64Offset59;
     type E = Ext2<F>;
 
@@ -431,7 +430,7 @@ mod p64 {
         let mut previous = weights.claim() + gamma * range_image_evaluation;
         for round in 0..variables {
             let polynomial = session.round_polynomial(round, previous).unwrap();
-            assert!(polynomial.degree() <= 3);
+            assert!(polynomial.coefficients().len() <= 4);
             assert_eq!(
                 polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()),
                 previous
