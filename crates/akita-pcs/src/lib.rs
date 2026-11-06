@@ -77,6 +77,8 @@ pub use jolt_algebra::{
     PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use scheme::AkitaCommitmentScheme;
+#[cfg(any(test, feature = "zk"))]
+pub mod zk;
 
 pub use akita_prover::{
     batched_prove, batched_prove_embedded, BackendId, BackendRegistry, FixedFoldRoute,

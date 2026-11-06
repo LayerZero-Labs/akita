@@ -225,6 +225,7 @@ dependencies = [
  "akita-schedules",
  "akita-serialization",
  "akita-setup",
+ "akita-sumcheck",
  "akita-transcript",
  "akita-types",
  "akita-verifier",
@@ -232,8 +233,10 @@ dependencies = [
  "ark-ff 0.6.0",
  "criterion",
  "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-zk",
  "libc",
  "num-bigint 0.5.1",
  "p3-baby-bear",
@@ -251,6 +254,7 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]
@@ -1321,6 +1325,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-dit"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "jolt-field"
 version = "0.1.0"
 source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
@@ -1450,12 +1462,14 @@ source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c3
 dependencies = [
  "jolt-claims",
  "jolt-crypto",
+ "jolt-dit",
  "jolt-field",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-utils",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",

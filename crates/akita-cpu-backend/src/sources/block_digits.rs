@@ -4,12 +4,13 @@ use crate::sources::packed_digits::PackedSignedDigitView;
 use crate::sources::poly_helpers::{
     I8DigitSpan, NarrowKernel, ShiftScratch, SignedDigitBasis, ValidatedSparseChallenge, WidePlan,
 };
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_params::SignedDigitKernel;
+use jolt_algebra::lift_ct;
+use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, Field};
+use jolt_crypto::challenge::SparseChallenge;
 use std::ops::Range;
 
 pub(crate) mod evaluate;
@@ -21,24 +22,32 @@ pub(crate) struct DigitShape {
 }
 
 pub(crate) trait RingValues<F: Field, const D: usize> {
+    /// Whether readers may skip zero coefficients. Signed values are a
+    /// secret witness's (Whiteout's response digits,
+    /// `specs/whiteout-akita.md` §6.6), so they are lifted without a branch on
+    /// their sign and never skipped.
+    const SKIPS_ZEROS: bool;
     fn coeff(&self, k: usize) -> F;
 }
 
 impl<F: Field, const D: usize> RingValues<F, D> for &[F; D] {
+    const SKIPS_ZEROS: bool = true;
     fn coeff(&self, k: usize) -> F {
         self[k]
     }
 }
 
 impl<F: Field, const D: usize> RingValues<F, D> for [i8; D] {
+    const SKIPS_ZEROS: bool = false;
     fn coeff(&self, k: usize) -> F {
-        F::from_i8(self[k])
+        lift_ct(i64::from(self[k]))
     }
 }
 
 impl<F: Field, const D: usize> RingValues<F, D> for [i16; D] {
+    const SKIPS_ZEROS: bool = false;
     fn coeff(&self, k: usize) -> F {
-        F::from_i16(self[k])
+        lift_ct(i64::from(self[k]))
     }
 }
 

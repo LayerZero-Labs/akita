@@ -72,6 +72,8 @@ pub use setup_requirements::{validate_setup_capacity_metadata, SetupRequirements
 pub mod test_support;
 mod transcript_binding;
 mod transcript_grinding_plan;
+#[cfg(feature = "zk")]
+mod zk_commitment;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionSchedule;
 use akita_schedules::ScheduleAdmission;
@@ -82,7 +84,11 @@ pub use akita_schedules::{
 pub use proof_optimized::{ensure_prover_schedule_fits_setup, verifier_schedule_fits_setup};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
-pub use transcript_grinding_plan::derive_transcript_grinding_plan;
+pub use transcript_grinding_plan::{
+    derive_digit_range_grinding_plan, derive_transcript_grinding_plan,
+};
+#[cfg(feature = "zk")]
+pub use zk_commitment::ZkCommitmentConfig;
 
 /// Derive the schedule policy from fixed cryptographic policy and runtime chunking.
 ///

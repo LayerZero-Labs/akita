@@ -1,9 +1,9 @@
 use crate::arithmetic::requirements::RoutedNttRequirement;
 #[cfg(test)]
 use crate::AkitaProverSetup;
-use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(test)]
 use std::sync::Arc;
@@ -153,6 +153,10 @@ where
     ) -> Result<Vec<CompressionRowsProducts<F, D>>, AkitaError>;
 
     /// Exact-shape negacyclic-only compression products for reduced evaluation.
+    ///
+    /// Must run in time and with memory addresses independent of the digits:
+    /// a Σ attempt compresses its secret `t_D` this way before its accept bit
+    /// (`specs/whiteout-akita.md` §6.6).
     fn compression_negacyclic_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,

@@ -234,6 +234,39 @@ impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW8
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w8r3";
 }
 
+/// Dense preset for balanced radix-16 digits, the centered range `[-8, 7]`
+/// (a signed bit width of 4): the committed vector `e` of Whiteout's
+/// response proof (`specs/whiteout-akita.md` §6.1), and the response
+/// opening's schedule family.
+///
+/// The family is direct-only. Recursive setup planning ranks the padded
+/// setup envelope before proof bytes, and at `ν = 18..=22` and `ν = 24` every
+/// multi-fold response row needs one more setup power of two, so it keeps a
+/// one-fold row whose proof is 2.0--3.4x larger. Direct planning is never
+/// larger in bytes for `ν = 18..=28`.
+#[cfg(feature = "zk")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ResponseDigits;
+
+#[cfg(feature = "zk")]
+impl_proof_optimized_preset!(
+    ResponseDigits,
+    Field,
+    Field,
+    akita_params::SisModulusProfileId::Q128OffsetA7F7,
+    128,
+    4,
+    source = balanced_digits,
+    schedule_family = "fp128_response_digits",
+    ring_dimension_schedule = akita_schedules::RingDimensionSchedule {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
+        potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
+        potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
+    }
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
