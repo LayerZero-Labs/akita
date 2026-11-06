@@ -56,7 +56,12 @@ fn compare_baseline(proof: &[u8], log: usize, shape: &str) {
     });
     let expected = entries
         .next()
-        .unwrap_or_else(|| panic!("missing reference pin for {key} {shape} in {}", pin.display()))
+        .unwrap_or_else(|| {
+            panic!(
+                "missing reference pin for {key} {shape} in {}",
+                pin.display()
+            )
+        })
         .collect::<Vec<_>>();
     assert!(
         entries.next().is_none(),

@@ -15,10 +15,10 @@ pub(crate) struct P64;
 pub(crate) trait MeasurementConfig:
     CommitmentConfig<
     Field: AkitaDeserialize<Context = ()>
-        + Unreduced<Wide: From<Self::Field> + AdditiveGroup>
-        + PseudoMersenne
-        + WithCommitAccumulator
-        + 'static,
+               + Unreduced<Wide: From<Self::Field> + AdditiveGroup>
+               + PseudoMersenne
+               + WithCommitAccumulator
+               + 'static,
     ExtField: FpExtEncoding<Self::Field> + Unreduced + Fold + Ring + AkitaSerialize + 'static,
 >
 {
