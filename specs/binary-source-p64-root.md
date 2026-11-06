@@ -303,13 +303,14 @@ Use the existing A/T adjoint with the explicit vector rho.
 Its entries no longer come from combinations of q-valued J rows.
 
 For P64 prime claims, let
-`H_other = 2*[word] + r_B + r_D + O + 2*planes`.
+`H_other = 2*[word] + r_B + r_D + O + 2*claims`.
 Here `[word]` is one when the word frontend is selected and zero otherwise.
 The values r_B and r_D are the B and D authentication ranks.
 O counts the selected ordinary linear rows and negative-bit addresses.
 Here `planes = 2*claims`, with at most one prime point per group and at most
-one claimed value per committed polynomial. Each plane has an independent
-ring-identity batch and each output coordinate has an independent reading batch.
+one claimed value per committed polynomial. Each claim has one independent
+ring-identity batch and one independent reading batch. These are two identities
+over E64; the two physical planes enter with canonical basis weights 1 and u.
 The relation batch has `a + H_other` independent coordinates instead of
 `7 + H_other`.
 This changes the number of challenge coordinates, not the number of Stage 2
@@ -450,17 +451,33 @@ A profile's decoder rejects the other profile's tag and coordinate shape.
 Each P64 claim owns two EP planes, ordered by polynomial and then coordinate.
 The single shared point has E64 coordinates. For row tensor weights `e_r`,
 write `EP_b = sum_r e_r*T_rb` in E64. Commit the two base coordinates of
-EP_b separately, each with 22 centered base-eight digits. Authenticate each
-coordinate's ring identity against the complete response. The reading is
-`sum_b col_b * <omega, EP_b> = value` in E64, using `u^2 = 2`.
-Batch its two coordinate equations independently over E64. Row, column and
-coefficient point coordinates can all have nonzero u coordinates.
+EP_b separately, each with 22 centered base-eight digits. Recombine them as
+`EP_b = EP0_b + u*EP1_b`. Each claim contributes exactly two Stage 2 rows:
+
+```text
+sum_r e_r V_r = rem_Phi(sum_b c_b (EP0_b + u*EP1_b))  tested at alpha
+sum_b h_b sum_s omega_s (EP0_b[s] + u*EP1_b[s]) = value.
+```
+
+Each row is one identity over E64 with one independent batch coefficient.
+Compute the row tensor e_r, column tensor h_b and coefficient tensor omega_s
+with native extension arithmetic. The prover extracts both base coordinates
+of the row tensor to construct the planes. Row, column and coefficient point
+coordinates can all have nonzero u coordinates.
+
+This follows Akita's [subring coefficient packing](subring-coefficient-packing.md#partial-opening):
+the physical layout uses base-coordinate arrays while the
+[scalar opening](subring-coefficient-packing.md#scalar-opening-equation) and
+[packing consistency](subring-coefficient-packing.md#packing-consistency-quotient)
+each remain one identity over E, with coordinate t weighted by beta_t = u^t.
+Physical plane count controls storage and D sizing; claim count controls the
+two independent Stage 2 batches.
 
 At most one point per group and one value per committed polynomial are allowed.
 For s committed polynomials, at most s claims and 2s coordinate planes are
 admitted. D's compact width, label and independent rank use this actual plane
 count through the manifest. A claim with even a base-valued P64 point still
-owns two planes. E64 challenges are used for both coordinate equations.
+owns two planes. E64 challenges are used for both identities per claim.
 
 #### Agreement and units
 

@@ -435,7 +435,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
             let other = 2 * usize::from(word)
                 + manifest.b_rows()
                 + manifest.d_label(word, planes).unwrap().rank as usize
-                + 2 * planes
+                + 2 * prime.claim().map_or(0, |claim| claim.evaluations.len())
                 + ordinary
                     .as_ref()
                     .map_or(0, OrdinaryNativeRootPlan::linear_batch_count)

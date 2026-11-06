@@ -481,7 +481,7 @@ fn p64_prime_structured_and_reference_weights_match_over_e64() {
         segment,
         &challenges,
         ext(0),
-        &[ext(1), ext(2), ext(3), ext(4)],
+        &[ext(1), ext(2)],
     )
     .unwrap();
     weights.check_table(&table).unwrap();
@@ -493,7 +493,7 @@ fn p64_prime_structured_and_reference_weights_match_over_e64() {
         segment,
         &challenges,
         ext(0),
-        &[ext(1), ext(2), ext(3), ext(4)],
+        &[ext(1), ext(2)],
     )
     .unwrap();
     let mut dense = vec![E::zero(); repacking.domain_len()];
@@ -561,4 +561,209 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
         ),
         Err(AkitaError::InvalidSetup(_))
     ));
+}
+
+#[test]
+fn p64_native_tensors_and_readings_match_naive_evaluation() {
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
+    type E = Ext2<Base>;
+    let source = descriptor();
+    let point = (0..11)
+        .map(|i| E::from_base_fn(|c| Base::from_u64((19 + 7 * i + 13 * c) as u64)))
+        .collect::<Vec<_>>();
+    // Direct products of equality factors, without the tensor constructor.
+    let naive = |point: &[E], index: usize| {
+        point
+            .iter()
+            .enumerate()
+            .fold(E::one(), |weight, (bit, &x)| {
+                weight
+                    * if index >> bit & 1 == 0 {
+                        E::one() - x
+                    } else {
+                        x
+                    }
+            })
+    };
+    let coefficient =
+        |row: usize, column: usize, k: usize| ((row * 17 + column * 11 + k * 3) % 5) as i128 - 2;
+    let mut value = E::zero();
+    for row in 0..4 {
+        for column in 0..2 {
+            for k in 0..162 {
+                value += naive(&point, k + 256 * (column + 2 * row))
+                    * E::from_i128(coefficient(row, column, k));
+            }
+        }
+    }
+    assert_ne!(value.base_coefficient(1), Base::zero());
+    let coordinates =
+        |v: E| std::array::from_fn::<_, 2, _>(|c| v.base_coefficient(c).to_u128_checked().unwrap());
+    let claim = PrimeGroupClaim {
+        point: point
+            .iter()
+            .copied()
+            .map(|v| coordinates(v).into())
+            .collect(),
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: coordinates(value).into(),
+        }],
+    };
+    let tensors = claim.weights::<Base>(&source).unwrap();
+    for (c, (rows, columns, omega)) in tensors.iter().enumerate() {
+        for (weights, axes) in [
+            (rows, &point[9..]),
+            (columns, &point[8..9]),
+            (omega, &point[..8]),
+        ] {
+            for (index, &weight) in weights.iter().enumerate() {
+                assert_eq!(weight, naive(axes, index).base_coefficient(c));
+            }
+        }
+    }
+    let manifest =
+        PrimePlaneManifest::with_field_profile(&source, Some(claim), BinaryFieldProfile::P64)
+            .unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, false, 2)
+            .unwrap();
+    let repacking = plan.repacking();
+    let segment = plan.prime_segment().unwrap();
+    let mut natural = repacking
+        .segments()
+        .iter()
+        .map(|s| vec![0i8; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()])
+        .collect::<Vec<_>>();
+    let digits = |mut integer: i128, depth: usize| {
+        let mut digits = Vec::new();
+        for _ in 0..depth {
+            let remainder = integer.rem_euclid(8);
+            let digit = if remainder >= 4 {
+                remainder - 8
+            } else {
+                remainder
+            };
+            digits.push(digit as i8);
+            integer = (integer - digit) / 8;
+        }
+        assert_eq!(integer, 0);
+        digits
+    };
+    for row in 0..4 {
+        for k in 0..162 {
+            let packed =
+                (coefficient(row, 0, k) + coefficient(row, 1, k)) * if k % 2 == 0 { 1 } else { -1 };
+            for (digit, value) in digits(packed, 4).into_iter().enumerate() {
+                natural[0][digit * 648 + 4 * k + row] = value;
+            }
+        }
+    }
+    let modulus = BinaryFieldProfile::P64.modulus();
+    for column in 0..2 {
+        for k in 0..162 {
+            let partial = (0..4).fold(E::zero(), |sum, row| {
+                sum + naive(&point[9..], row) * E::from_i128(coefficient(row, column, k))
+            });
+            for (c, canonical) in coordinates(partial).into_iter().enumerate() {
+                let centered = if canonical > modulus / 2 {
+                    -((modulus - canonical) as i128)
+                } else {
+                    canonical as i128
+                };
+                for (digit, value) in digits(centered, 22).into_iter().enumerate() {
+                    natural[segment][((c * 2 + column) * 22 + digit) * 162 + k] = value;
+                }
+            }
+        }
+    }
+    let table = repacking
+        .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+        .unwrap()
+        .into_iter()
+        .map(|v| E::from_i128(i128::from(v)))
+        .collect::<Vec<_>>();
+    let challenges = Challenges::from_sparse(
+        (0..4)
+            .map(|_| SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        2,
+        2,
+    )
+    .unwrap();
+    let ext = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + 31 * i + 43 * c) as u64));
+    let batches = [ext(1), ext(2)];
+    let weights = prime_plane_relation_weights(
+        &source,
+        &manifest,
+        repacking,
+        0,
+        segment,
+        &challenges,
+        ext(0),
+        &batches,
+    )
+    .unwrap();
+    weights.check_table(&table).unwrap();
+    assert_eq!(weights.claim(), batches[1] * value);
+    for isolated in [[batches[0], E::zero()], [E::zero(), batches[1]]] {
+        prime_plane_relation_weights(
+            &source,
+            &manifest,
+            repacking,
+            0,
+            segment,
+            &challenges,
+            ext(0),
+            &isolated,
+        )
+        .unwrap()
+        .check_table(&table)
+        .unwrap();
+    }
+    // Physical coordinate planes do not each introduce two independent rows.
+    assert!(matches!(
+        prime_plane_relation_weights(
+            &source,
+            &manifest,
+            repacking,
+            0,
+            segment,
+            &challenges,
+            ext(0),
+            &[ext(1), ext(2), ext(3), ext(4)],
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
+    let dense = weights.materialize().unwrap();
+    for c in 0..2 {
+        let basis = E::from_base_fn(|i| Base::from_bool(i == c));
+        for column in 0..2 {
+            for k in 0..162 {
+                let product = basis * naive(&point[8..9], column) * naive(&point[..8], k);
+                let reading = product * batches[1];
+                let alpha_power = (0..k).fold(E::one(), |power, _| power * ext(0));
+                let address = repacking
+                    .coefficient_address(segment, c * 2 + column, 0, k)
+                    .unwrap();
+                assert_eq!(dense[address], reading - basis * batches[0] * alpha_power);
+            }
+        }
+    }
+    let reference = crate::binary_source::root_public::reference::prime_plane_weights(
+        &source,
+        &manifest,
+        repacking,
+        0,
+        segment,
+        &challenges,
+        ext(0),
+        &batches,
+    )
+    .unwrap();
+    assert_eq!(reference.materialize().unwrap(), dense);
+    assert_eq!(reference.claim(), weights.claim());
 }

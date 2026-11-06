@@ -13,7 +13,7 @@ use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
 use akita_params::RelationPolynomial;
-use jolt_field::Field;
+use jolt_field::{ExtField, Field};
 
 use super::super::authentication::{setup_entry, validate_digit_commitment_label};
 use super::super::{
@@ -318,7 +318,7 @@ pub(crate) fn terminal_weights<E: Field>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prime_plane_weights<E: Field>(
+pub(crate) fn prime_plane_weights<F: Field, E: ExtField<F>>(
     descriptor: &BinarySourceDescriptor,
     manifest: &PrimePlaneManifest,
     repacking: &RootCoefficientRepacking,
@@ -328,9 +328,15 @@ pub(crate) fn prime_plane_weights<E: Field>(
     alpha: E,
     batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
-    if E::from_u128(manifest.field_profile().modulus()) != E::zero()
+    if F::from_u128(manifest.field_profile().modulus()) != F::zero()
+        || (manifest.field_profile() == akita_params::binary_setup::BinaryFieldProfile::P64
+            && E::DEGREE != 2)
         || batches.len()
-            != checked::product([manifest.planes().len(), 2]).ok_or(AkitaError::InvalidProof)?
+            != checked::product([
+                manifest.claim().map_or(0, |claim| claim.evaluations.len()),
+                2,
+            ])
+            .ok_or(AkitaError::InvalidProof)?
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -376,27 +382,38 @@ pub(crate) fn prime_plane_weights<E: Field>(
     terms
         .try_reserve_exact(term_count)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let coordinates = manifest
-        .claim()
-        .ok_or(AkitaError::InvalidProof)?
-        .weights::<E>(descriptor)?;
+    manifest.validate(descriptor)?;
+    let claim = manifest.claim().ok_or(AkitaError::InvalidProof)?;
+    let (rows, column_weights, omega) = claim.field_weights::<F, E>(descriptor)?;
+    let degree = manifest.field_profile().extension_degree();
     let mut target = E::zero();
-    for (plane_index, claim) in manifest.planes().iter().enumerate() {
-        let (rows, _, _) = coordinates
-            .get(claim.coordinate)
-            .ok_or(AkitaError::InvalidProof)?;
-        let batch_index = checked::product([plane_index, 2]).ok_or(AkitaError::InvalidProof)?;
+    for (index, value) in claim.evaluations.iter().enumerate() {
+        let batch = *batches.get(2 * index + 1).ok_or(AkitaError::InvalidProof)?;
+        target += batch
+            * E::from_base_fn(|i| {
+                F::from_u128(value.value.coordinates().get(i).copied().unwrap_or(0))
+            });
+    }
+    for (plane_index, plane) in manifest.planes().iter().enumerate() {
+        let batch_index =
+            checked::product([plane_index / degree, 2]).ok_or(AkitaError::InvalidProof)?;
         let relation_batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
         let reading_batch = *batches
-            .get(checked::sum([batch_index, 1]).ok_or(AkitaError::InvalidProof)?)
+            .get(batch_index + 1)
             .ok_or(AkitaError::InvalidProof)?;
+        let basis = E::from_base_fn(|i| F::from_bool(i == plane.coordinate));
+        let response_batch = if plane.coordinate == 0 {
+            relation_batch
+        } else {
+            E::zero()
+        };
         for (row, row_weight) in rows.iter().copied().enumerate() {
             if row_weight == E::zero() {
                 continue;
             }
-            let element = checked::mul_add(claim.polynomial, ring_rows, row / 4)
+            let element = checked::mul_add(plane.polynomial, ring_rows, row / 4)
                 .ok_or(AkitaError::InvalidProof)?;
-            let mut power = relation_batch * row_weight;
+            let mut power = response_batch * row_weight;
             for coefficient in 0..162 {
                 let packed =
                     checked::mul_add(coefficient, 4, row % 4).ok_or(AkitaError::InvalidProof)?;
@@ -411,7 +428,7 @@ pub(crate) fn prime_plane_weights<E: Field>(
             }
         }
         for column in 0..columns {
-            let challenge_index = checked::mul_add(claim.polynomial, columns, column)
+            let challenge_index = checked::mul_add(plane.polynomial, columns, column)
                 .ok_or(AkitaError::InvalidProof)?;
             let multiplier = scalar_challenges
                 .get(challenge_index)
@@ -423,25 +440,9 @@ pub(crate) fn prime_plane_weights<E: Field>(
             let element =
                 checked::mul_add(plane_index, columns, column).ok_or(AkitaError::InvalidProof)?;
             for (coefficient, relation) in kernel.into_iter().enumerate() {
-                let degree = manifest.field_profile().extension_degree();
-                let mut reading = E::zero();
-                for (c, (_, column_weights, _)) in coordinates.iter().enumerate() {
-                    for (o, (_, _, omega)) in coordinates.iter().enumerate() {
-                        let power = claim.coordinate + c + o;
-                        let output = power % degree;
-                        let batch_index = plane_index
-                            .checked_sub(claim.coordinate)
-                            .and_then(|first| checked::sum([first, output]))
-                            .and_then(|index| checked::mul_add(2, index, 1))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
-                        reading += batch
-                            * E::from_u64(1 << (power / degree))
-                            * column_weights[column]
-                            * omega[coefficient];
-                    }
-                }
-                let weight = reading - relation_batch * relation;
+                let product = *column_weights.get(column).ok_or(AkitaError::InvalidProof)?
+                    * *omega.get(coefficient).ok_or(AkitaError::InvalidProof)?;
+                let weight = basis * (reading_batch * product - relation_batch * relation);
                 terms.extend(repacking.coefficient_weights(
                     plane_segment,
                     element,
@@ -450,7 +451,6 @@ pub(crate) fn prime_plane_weights<E: Field>(
                 )?);
             }
         }
-        target += reading_batch * E::from_u128(claim.value);
     }
     NativeRootWeights::new(repacking.domain_len(), terms, target)
 }
@@ -589,7 +589,7 @@ pub(crate) fn plan_weights<E: Field>(
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub(crate) fn root_relation<E: Field>(
+pub(crate) fn root_relation<F: Field, E: ExtField<F>>(
     public: &BinaryRootPublic,
     challenges: &Challenges,
     alpha: E,
@@ -635,7 +635,14 @@ pub(crate) fn root_relation<E: Field>(
         .ok_or(AkitaError::InvalidProof)?;
     let prime_rows = checked::range(
         negative_bits.end,
-        checked::product([2, public.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+        checked::product([
+            2,
+            public
+                .prime
+                .claim()
+                .map_or(0, |claim| claim.evaluations.len()),
+        ])
+        .ok_or(AkitaError::InvalidProof)?,
     )
     .ok_or(AkitaError::InvalidProof)?;
     let algebra = plan_weights(
@@ -648,7 +655,7 @@ pub(crate) fn root_relation<E: Field>(
         batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
     )?;
     let prime_weights = if let Some(segment) = public.plan.prime_segment() {
-        Some(prime_plane_weights(
+        Some(prime_plane_weights::<F, E>(
             public.manifest.descriptor(),
             &public.prime,
             public.plan.repacking(),

@@ -1,7 +1,10 @@
 use super::BinarySourceDescriptor;
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BinaryFieldProfile;
-use jolt_field::Field;
+use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring};
+
+pub(super) type E64 = Ext2<Prime64Offset59>;
 
 /// Number of balanced base-eight digits for a centered prime coefficient.
 /// The interval contains `[-(P-1)/2, (P-1)/2]` for `P = 2^128-275`.
@@ -95,6 +98,37 @@ impl PrimeGroupClaim {
             .zip(omega)
             .map(|((r, c), o)| (r, c, o))
             .collect())
+    }
+
+    /// Native row, column and coefficient tensors for the two field identities.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn field_weights<F: Field, E: ExtField<F>>(
+        &self,
+        descriptor: &BinarySourceDescriptor,
+    ) -> Result<(Vec<E>, Vec<E>, Vec<E>), AkitaError> {
+        let coordinates = self.weights::<F>(descriptor)?;
+        if coordinates.len() > E::DEGREE {
+            return Err(AkitaError::InvalidProof);
+        }
+        let (rows, columns, omega) = coordinates.first().ok_or(AkitaError::InvalidProof)?;
+        let mut native = (
+            vec![E::zero(); rows.len()],
+            vec![E::zero(); columns.len()],
+            vec![E::zero(); omega.len()],
+        );
+        for (coordinate, (rows, columns, omega)) in coordinates.iter().enumerate() {
+            let basis = E::from_base_fn(|i| F::from_bool(i == coordinate));
+            for (target, source) in [
+                (&mut native.0, rows),
+                (&mut native.1, columns),
+                (&mut native.2, omega),
+            ] {
+                for (target, &value) in target.iter_mut().zip(source) {
+                    *target += basis * E::lift_base(value);
+                }
+            }
+        }
+        Ok(native)
     }
 
     fn validate(
@@ -302,45 +336,61 @@ impl PrimePlaneManifest {
     }
 }
 
-// Coordinate arithmetic in E64, performed over E so the same compiler accepts
-// base setup fields and extension sumcheck fields without an integer lift.
+/// Native E64 tensor of the public claim point, before coordinate extraction.
+/// The same constructor supplies EP row weights and public reading products.
+pub(super) fn e64_tensor(point: &[PrimeClaimValue]) -> Result<Vec<E64>, AkitaError> {
+    let point = point
+        .iter()
+        .map(|value| {
+            if !value.validate(BinaryFieldProfile::P64) {
+                return Err(AkitaError::InvalidInput(
+                    "noncanonical E64 prime point".into(),
+                ));
+            }
+            let PrimeClaimValue::Extension([c0, c1]) = *value else {
+                return Err(AkitaError::InvalidProof);
+            };
+            Ok(E64::from_base_fn(|i| {
+                Prime64Offset59::from_u128(if i == 0 { c0 } else { c1 })
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    EqPolynomial::evals(&point)
+}
+
 fn tensor<E: Field>(
     point: &[PrimeClaimValue],
     field: BinaryFieldProfile,
 ) -> Result<Vec<Vec<E>>, AkitaError> {
-    let count = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
-    let degree = field.extension_degree();
-    let mut weights = vec![Vec::new(); degree];
-    for coordinate in &mut weights {
-        coordinate
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        coordinate.push(E::zero());
-    }
-    weights[0][0] = E::one();
-    for coordinate in point {
-        let c = coordinate.coordinates();
-        let c0 = E::from_u128(*c.first().ok_or(AkitaError::InvalidProof)?);
-        let c1 = E::from_u128(c.get(1).copied().unwrap_or(0));
-        let old_len = weights[0].len();
-        for index in 0..old_len {
-            let a = weights[0][index];
-            let b = if degree == 2 {
-                weights[1][index]
-            } else {
-                E::zero()
-            };
-            let product0 = a * c0 + E::from_u64(2) * b * c1;
-            weights[0][index] = a - product0;
-            weights[0].push(product0);
-            if degree == 2 {
-                let product1 = a * c1 + b * c0;
-                weights[1][index] = b - product1;
-                weights[1].push(product1);
-            }
+    match field {
+        BinaryFieldProfile::P128 => {
+            let point = point
+                .iter()
+                .map(|value| match value {
+                    PrimeClaimValue::Base(value) => Ok(E::from_u128(*value)),
+                    PrimeClaimValue::Extension(_) => Err(AkitaError::InvalidProof),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(vec![EqPolynomial::evals(&point)?])
+        }
+        BinaryFieldProfile::P64 => {
+            let weights = e64_tensor(point)?;
+            (0..2)
+                .map(|coordinate| {
+                    weights
+                        .iter()
+                        .map(|value| {
+                            value
+                                .base_coefficient(coordinate)
+                                .to_u128_checked()
+                                .map(E::from_u128)
+                                .ok_or(AkitaError::InvalidProof)
+                        })
+                        .collect()
+                })
+                .collect()
         }
     }
-    Ok(weights)
 }
 
 #[cfg(test)]
