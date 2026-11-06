@@ -5,8 +5,8 @@ use crate::GrindingReplay;
 use akita_challenges::{
     Challenges, FoldChallengeDistribution, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw,
 };
-use akita_error::AkitaError;
-use akita_params::GrindingSite;
+use akita_error::{checked, AkitaError};
+use akita_params::{binary_setup::BINARY_SETUP_P64, GrindingSite};
 use akita_transcript::{
     ext_challenges, ChallengeCodec, ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT,
 };
@@ -147,6 +147,98 @@ where
     result.map(|()| challenges)
 }
 
+/// P64 order-seven relation coordinates, including one independent E64 weight
+/// per natural residual coefficient. P128 retains its separate frozen draw.
+/// Both base coordinates are sampled canonically with at most 256 attempts.
+/// The distinct public domain tag and diagnostic site identify this draw.
+pub fn binary_root_p64_batch_challenges<F, E, G>(
+    grinding: &mut G,
+    count: usize,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    G: GrindingReplay,
+{
+    if akita_params::field_modulus::<F>()? != u128::from(BINARY_SETUP_P64) || E::DEGREE != 2 {
+        return Err(AkitaError::InvalidInput(
+            "binary p64 batching requires the paired quadratic field".into(),
+        ));
+    }
+    grinding.grind_query(GrindingSite::Tau1Point { level: 0 })?;
+    let result = (|| {
+        let channel = grinding.state_mut();
+        let site = ProtocolSiteId {
+            family: SITE_FAMILY_ROOT_STATEMENT,
+            stage: 7,
+            ..ProtocolSiteId::default()
+        };
+        akita_transcript::public_bytes(channel, site, b"binary p64 independent coefficient batch")?;
+        p64_batch_from_blocks::<F, E>(count, || {
+            channel.context(akita_transcript::ProtocolContextRecord::new(
+                site.to_bytes(),
+                akita_transcript::ProtocolMessageKind::Challenge as u32,
+                0,
+                0,
+                32,
+            ));
+            super::challenge_block(channel)
+        })
+    })();
+    if result.is_err() {
+        grinding.poison();
+    }
+    result
+}
+
+fn p64_batch_from_blocks<F: Field, E: ExtField<F>>(
+    count: usize,
+    mut block: impl FnMut() -> Result<[u8; 32], AkitaError>,
+) -> Result<Vec<E>, AkitaError> {
+    checked::product([count, 2]).ok_or(AkitaError::InvalidProof)?;
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(count)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let mut bytes = [0; 32];
+    let mut offset = 32;
+    for _ in 0..count {
+        let mut coordinates = [F::zero(); 2];
+        for coordinate in &mut coordinates {
+            let mut accepted = None;
+            for _ in 0..256 {
+                if offset == 32 {
+                    bytes = block()?;
+                    offset = 0;
+                }
+                let candidate = u64::from_le_bytes(
+                    bytes
+                        .get(offset..offset + 8)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .try_into()
+                        .map_err(|_| AkitaError::InvalidProof)?,
+                );
+                offset += 8;
+                if candidate < BINARY_SETUP_P64 {
+                    accepted = Some(F::from_u64(candidate));
+                    break;
+                }
+            }
+            *coordinate = accepted.ok_or_else(|| {
+                AkitaError::InvalidInput("binary p64 coordinate rejection exhausted".into())
+            })?;
+        }
+        result.push(E::from_base_fn(|index| {
+            if index == 0 {
+                coordinates[0]
+            } else {
+                coordinates[1]
+            }
+        }));
+    }
+    Ok(result)
+}
+
 /// The fold challenge family of the binary root's single fold.
 pub(crate) fn binary_root_family() -> Result<FoldChallengeFamily, AkitaError> {
     FoldChallengeFamily::new(
@@ -165,4 +257,68 @@ pub fn binary_root_challenges(
 ) -> Result<Challenges, AkitaError> {
     draw.draw_fold_challenges(&binary_root_family()?, columns, polynomials)?
         .ok_or_else(|| AkitaError::Internal("binary root family has no rejection".into()))
+}
+
+#[cfg(test)]
+mod p64_tests {
+    use super::*;
+    use jolt_field::{Ext2, Prime64Offset59, Ring};
+    type F = Prime64Offset59;
+    type E = Ext2<F>;
+
+    #[test]
+    fn binary_source_p64_batch_rejects_noncanonical_candidates_and_keeps_both_coordinates() {
+        let mut calls = 0;
+        let values = p64_batch_from_blocks::<F, E>(2, || {
+            calls += 1;
+            Ok(if calls == 1 {
+                [BINARY_SETUP_P64, u64::MAX, BINARY_SETUP_P64 - 1, 3]
+            } else {
+                [4, 5, 6, 7]
+            }
+            .map(u64::to_le_bytes)
+            .concat()
+            .try_into()
+            .unwrap())
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(
+            values,
+            vec![
+                E::from_base_fn(|i| F::from_u64([BINARY_SETUP_P64 - 1, 3][i])),
+                E::from_base_fn(|i| F::from_u64([4, 5][i]))
+            ]
+        );
+    }
+
+    #[test]
+    fn binary_source_p64_batch_caps_each_coordinate_at_256_attempts() {
+        for coordinate in 0..2 {
+            let mut calls = 0;
+            let result = p64_batch_from_blocks::<F, E>(1, || {
+                calls += 1;
+                let mut words = [u64::MAX; 4];
+                if calls == 1 && coordinate == 1 {
+                    words[0] = 1;
+                }
+                Ok(words.map(u64::to_le_bytes).concat().try_into().unwrap())
+            });
+            assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+            assert_eq!(calls, (256usize + coordinate).div_ceil(4));
+        }
+        // The 256th attempt is accepted, rather than rejecting one attempt early.
+        let mut calls = 0;
+        let values = p64_batch_from_blocks::<F, E>(1, || {
+            calls += 1;
+            let words = match calls {
+                64 => [u64::MAX, u64::MAX, u64::MAX, 7],
+                65 => [9; 4],
+                _ => [u64::MAX; 4],
+            };
+            Ok(words.map(u64::to_le_bytes).concat().try_into().unwrap())
+        })
+        .unwrap();
+        assert_eq!(values, vec![E::from_base_fn(|i| F::from_u64([7, 9][i]))]);
+    }
 }

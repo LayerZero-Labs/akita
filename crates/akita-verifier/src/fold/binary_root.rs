@@ -13,7 +13,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
 use akita_types::binary_source::{
     binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
-    binary_root_statement, BinaryProjectionRows, BinaryRootPublic,
+    binary_root_p64_batch_challenges, binary_root_statement, BinaryProjectionRows,
+    BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{
@@ -148,9 +149,13 @@ where
     }
     let num_vars = domain_len.trailing_zeros() as usize;
 
-    let payload_len =
-        akita_error::checked::product([manifest.b_rows(), manifest.b_ring_dimension()])
-            .ok_or(AkitaError::InvalidProof)?;
+    let payload_len = akita_error::checked::product([
+        manifest
+            .d_label(claim.is_some(), prime.planes().len())?
+            .rank as usize,
+        manifest.b_ring_dimension(),
+    ])
+    .ok_or(AkitaError::InvalidProof)?;
     let d_payload = akita_transcript::receive_field_group::<F>(
         grinding.state_mut(),
         akita_types::FoldSite::OpeningPayload {
@@ -184,14 +189,26 @@ where
     )
     .map(RingVec::from_coeffs)?;
     let bounds = public.plan().projection_bounds();
-    let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
-    let projected_values = binary_projection_values(grinding.state_mut(), bounds, &[0; 7])?;
+    let projections = if bounds.quotient().is_none() {
+        Some(BinaryProjectionRows::draw(grinding.state_mut(), bounds)?)
+    } else {
+        None
+    };
+    let projected_values = if projections.is_some() {
+        binary_projection_values(grinding.state_mut(), bounds, &[0; 7])?.to_vec()
+    } else {
+        Vec::new()
+    };
     let alpha = grinding.grinded_ext_challenge::<E>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let tau0 =
         grinding.grinded_ext_challenges::<E>(GrindingSite::Tau0Point { level: 0 }, num_vars)?;
     let batches = {
         let _span = tracing::info_span!("binary_root_tau1_draw").entered();
-        binary_root_batch_challenges::<E, _>(grinding, public.batch_count())?
+        if bounds.quotient().is_some() {
+            binary_root_p64_batch_challenges::<F, E, _>(grinding, public.batch_count())?
+        } else {
+            binary_root_batch_challenges::<E, _>(grinding, public.batch_count())?
+        }
     };
     let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
     let ordinary_payload = ordinary.map(|group| lift(group.commitment().rows().coeffs()));
@@ -208,12 +225,16 @@ where
             ))
         })
         .transpose()?;
-    let mu = batches
-        .get(..7)
-        .ok_or(AkitaError::InvalidProof)?
-        .try_into()
-        .map_err(|_| AkitaError::InvalidProof)?;
-    let rho = projections.batch(&mu)?;
+    let rho = match &projections {
+        Some(projections) => projections.batch(
+            &batches
+                .get(..7)
+                .ok_or(AkitaError::InvalidProof)?
+                .try_into()
+                .map_err(|_| AkitaError::InvalidProof)?,
+        )?,
+        None => Vec::new(),
+    };
     let span = tracing::info_span!("binary_root_relation_compile").entered();
     let (relation, negative_bits) = public.relation(
         &challenges,

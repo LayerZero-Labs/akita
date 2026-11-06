@@ -1,6 +1,6 @@
 //! Bounded q24 root witnesses using the canonical trinomial relation kernel.
 //!
-//! The proof field is `2^128-275`, which has no degree-648 smooth transform.
+//! The selected proof field need not have a degree-648 smooth transform.
 //! Convolution uses the existing kernel over an auxiliary smooth field, with
 //! a checked integer no-wrap bound, then embeds the recovered integers into
 //! the proof field. A q-divisible residual is retained explicitly: it is never
@@ -22,7 +22,7 @@ use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVA
 use akita_types::native_root_relation::{binary_commitment_group, NativeRootGroup};
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field, One, Prime128Offset275, Prime128OffsetA7F7, Ring};
+use jolt_field::{CanonicalEncoding, Field, One, Prime128OffsetA7F7, Ring};
 
 use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
 
@@ -323,12 +323,9 @@ impl BinaryRootRelation {
 
     /// Embed an integer residual row into the actual proof field.
     /// Its q-divisibility must still be authenticated by the caller's lane.
-    pub fn residual_in_proof_field(
-        &self,
-        row: usize,
-    ) -> Result<[Prime128Offset275; D], AkitaError> {
+    pub fn residual_in_proof_field<E: Field>(&self, row: usize) -> Result<[E; D], AkitaError> {
         let row = self.rows.get(row).ok_or(AkitaError::InvalidProof)?;
-        Ok(row.remainder.map(Prime128Offset275::from_i128))
+        Ok(row.remainder.map(E::from_i128))
     }
 
     /// Assemble typed public A rows against successor segments 0 and 1.

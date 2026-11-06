@@ -386,14 +386,31 @@ impl<E: Field> DigitAuthenticationWeights<E> {
             }
             let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
             kernel.field_kernel_into(&equality, &mut reduced)?;
-            let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
             let mut sum = E::zero();
-            for (&batch, entry) in self.row_batches.iter().zip(&entries) {
-                sum += batch
-                    * entry
-                        .iter()
-                        .zip(&reduced)
-                        .fold(E::zero(), |acc, (&m, &k)| acc + E::from_u128(m) * k);
+            if self.label.rank == 2 {
+                let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
+                for (&batch, entry) in self.row_batches.iter().zip(&entries) {
+                    sum += batch
+                        * entry
+                            .iter()
+                            .zip(&reduced)
+                            .fold(E::zero(), |acc, (&m, &k)| acc + E::from_u128(m) * k);
+                }
+            } else {
+                for (row, &batch) in self.row_batches.iter().enumerate() {
+                    let entry = setup_entry::<E>(
+                        &self.seed,
+                        self.label,
+                        u32::try_from(row).map_err(|_| AkitaError::InvalidProof)?,
+                        column,
+                    )?;
+                    sum += batch
+                        * entry
+                            .coefficients()
+                            .iter()
+                            .zip(&reduced)
+                            .fold(E::zero(), |acc, (&m, &k)| acc + m * k);
+                }
             }
             Ok(sum)
         };
@@ -410,11 +427,25 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         kernel: &ResidueKernelPoint<E>,
         column: usize,
     ) -> Result<[E; BINARY_DIGIT_COMMITMENT_DEGREE], AkitaError> {
-        let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
         let mut combined = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-        for (&batch, entry) in self.row_batches.iter().zip(&entries) {
-            for (sum, &value) in combined.iter_mut().zip(entry) {
-                *sum += batch * E::from_u128(value);
+        if self.label.rank == 2 {
+            let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
+            for (&batch, entry) in self.row_batches.iter().zip(&entries) {
+                for (sum, &value) in combined.iter_mut().zip(entry) {
+                    *sum += batch * E::from_u128(value);
+                }
+            }
+        } else {
+            for (row, &batch) in self.row_batches.iter().enumerate() {
+                let entry = setup_entry::<E>(
+                    &self.seed,
+                    self.label,
+                    u32::try_from(row).map_err(|_| AkitaError::InvalidProof)?,
+                    column,
+                )?;
+                for (sum, &value) in combined.iter_mut().zip(entry.coefficients()) {
+                    *sum += batch * value;
+                }
             }
         }
         let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
