@@ -139,16 +139,71 @@ impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
                     h.get(i as usize).copied().unwrap_or_else(F::zero)
                 }
             };
-            for residue in 0..width {
-                for lane in 0..lanes {
-                    let mut no_carry_sum = F::zero();
-                    let mut carry_sum = F::zero();
-                    for (j, &digit_lane) in digits[..period].iter().enumerate() {
-                        let offset = (residue + lane * digits.len() + j) as isize;
-                        no_carry_sum += digit_lane * at(offset);
-                        carry_sum += digit_lane * at(offset - width as isize);
+            let factored = (lanes >= 4).then(|| A::scalar_bit_factors(low)).flatten();
+            if let Some((root, factors)) = factored {
+                let len = width + (lanes - 1) * digits.len();
+                let mut no_carry = vec![F::zero(); len];
+                let mut carry = vec![F::zero(); len];
+                for t in 0..len {
+                    for (j, &digit) in digits[..period].iter().enumerate() {
+                        let offset = (t + j) as isize;
+                        let n = at(offset);
+                        let c = at(offset - width as isize);
+                        if digit == F::one() {
+                            no_carry[t] += n;
+                            carry[t] += c;
+                        } else {
+                            no_carry[t] = digit.mul_add(n, no_carry[t]);
+                            carry[t] = digit.mul_add(c, carry[t]);
+                        }
                     }
-                    fold(residue, lane, no_carry_sum, carry_sum);
+                }
+                for (bit, [lo, hi]) in factors.into_iter().enumerate() {
+                    let shift = digits.len() << bit;
+                    let remaining = no_carry.len() - shift;
+                    for table in [&mut no_carry, &mut carry] {
+                        for t in 0..remaining {
+                            let a = if lo == F::one() {
+                                table[t]
+                            } else {
+                                lo * table[t]
+                            };
+                            let b = if hi == F::one() {
+                                table[t + shift]
+                            } else {
+                                hi * table[t + shift]
+                            };
+                            table[t] = a + b;
+                        }
+                        table.truncate(remaining);
+                    }
+                }
+                let scaled = |values: Vec<F>| {
+                    values
+                        .into_iter()
+                        .map(|v| {
+                            let mut out = root.zero_like();
+                            out.add_scaled(&root, v);
+                            out
+                        })
+                        .collect()
+                };
+                tables = Tables::Folded {
+                    no_carry: scaled(no_carry),
+                    carry: scaled(carry),
+                };
+            } else {
+                for residue in 0..width {
+                    for lane in 0..lanes {
+                        let mut no_carry_sum = F::zero();
+                        let mut carry_sum = F::zero();
+                        for (j, &digit_lane) in digits[..period].iter().enumerate() {
+                            let offset = (residue + lane * digits.len() + j) as isize;
+                            no_carry_sum += digit_lane * at(offset);
+                            carry_sum += digit_lane * at(offset - width as isize);
+                        }
+                        fold(residue, lane, no_carry_sum, carry_sum);
+                    }
                 }
             }
         } else {
@@ -392,6 +447,62 @@ mod tests {
         out
     }
 
+    #[test]
+    fn factored_lane_windows_match_the_literal_sum() {
+        for point_kind in 0..3 {
+            let point = (0..15)
+                .map(|i| {
+                    F::from_u64(match point_kind {
+                        0 => i + 3,
+                        1 => 0,
+                        _ => 1,
+                    })
+                })
+                .collect::<Vec<_>>();
+            for pairs in [
+                [[2, 3], [5, 7], [11, 13]],
+                [[0, 3], [5, 0], [0, 13]],
+                [[0, 0], [5, 7], [11, 13]],
+            ] {
+                let low = (0..8)
+                    .map(|i| {
+                        pairs
+                            .iter()
+                            .enumerate()
+                            .fold(F::one(), |v, (b, p)| v * F::from_u64(p[(i >> b) & 1]))
+                    })
+                    .collect::<Vec<_>>();
+                for period in [1, 2, 4] {
+                    let digits = (0..7)
+                        .flat_map(|d| {
+                            (0..period).map(move |j| {
+                                F::from_u64(3u64.pow(d as u32)) * F::from_u64(j as u64 + 1)
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    let prepared = prepare(&point, &digits, &low);
+                    let high = (0..100).map(|i| F::from_u64(i + 17)).collect::<Vec<_>>();
+                    for base in [0, 1, 31, 129] {
+                        let mut expected = F::zero();
+                        for row in 0..7 {
+                            for (lane, &lw) in low.iter().enumerate() {
+                                for (d, &dw) in digits.iter().enumerate() {
+                                    expected += high[row + 3]
+                                        * lw
+                                        * dw
+                                        * eq_eval_at_index(
+                                            &point,
+                                            base + (row * 8 + lane) * digits.len() + d,
+                                        );
+                                }
+                            }
+                        }
+                        assert_eq!(rows(&prepared, base, 3, 7, &high), expected);
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn prepared_windows_match_general_and_literal_oracles() {
         for point_kind in 0..3 {

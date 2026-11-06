@@ -36,6 +36,12 @@ pub trait AffineWeight<F: Field>: Clone + Send + Sync {
         false
     }
 
+    /// A checked scalar-bit factorization of a bounded power-of-two vector.
+    /// Returns its common outer factor and one scalar pair per index bit.
+    fn scalar_bit_factors(_weights: &[Self]) -> Option<(Self, Vec<[F; 2]>)> {
+        None
+    }
+
     /// Multiply two outer factors.
     fn multiply(&self, rhs: &Self) -> Self;
 }
@@ -111,6 +117,35 @@ impl<F: Field, A: AffineWeight<F>> AffineWeightSource<F, A> for AffineWeightProd
 }
 
 impl<F: Field> AffineWeight<F> for F {
+    fn scalar_bit_factors(weights: &[Self]) -> Option<(Self, Vec<[F; 2]>)> {
+        if !weights.len().is_power_of_two() || weights.len() > super::MAX_PREPARED_STRIDE {
+            return None;
+        }
+        let pivot = weights.iter().position(|w| !w.is_zero())?;
+        let root = *weights.get(pivot)?;
+        let inverse = root.inverse()?;
+        let mut factors = Vec::new();
+        for bit in 0..weights.len().trailing_zeros() {
+            let other = *weights.get(pivot ^ (1usize << bit))? * inverse;
+            factors.push(if pivot & (1usize << bit) == 0 {
+                [F::one(), other]
+            } else {
+                [other, F::one()]
+            });
+        }
+        let mut values = vec![root];
+        for &[lo, hi] in &factors {
+            let old = values.len();
+            values.resize(2 * old, F::zero());
+            for i in 0..old {
+                let v = values[i];
+                values[i + old] = if hi == F::one() { v } else { v * hi };
+                values[i] = if lo == F::one() { v } else { v * lo };
+            }
+        }
+        (values == weights).then_some((root, factors))
+    }
+
     fn zero_like(&self) -> Self {
         Self::zero()
     }
