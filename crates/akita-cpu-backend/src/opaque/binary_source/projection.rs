@@ -45,29 +45,34 @@ where
         .lock()
         .ok()
         .and_then(|mut accepted| accepted.take())
-        .filter(|(challenges, _)| challenges == &request.challenges)
-        .map(|(_, response)| response);
-    let response = match accepted {
-        Some(response) => response,
-        None => fold_packed(
-            source.manifest.descriptor(),
-            &source.sources,
-            &request.challenges,
-            family,
-        )?
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("accepted binary response exceeds its interval".into())
-        })?,
+        .filter(|accepted| accepted.challenges == request.challenges);
+    let (response, cached_residuals) = match accepted {
+        Some(accepted) => (accepted.response, accepted.residuals),
+        None => (
+            fold_packed(
+                source.manifest.descriptor(),
+                &source.sources,
+                &request.challenges,
+                family,
+            )?
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("accepted binary response exceeds its interval".into())
+            })?,
+            None,
+        ),
     };
     let span = tracing::info_span!("binary_root_residual_rows").entered();
-    let residuals = crate::binary_root::BinaryRootRelation::remainders(
-        source.manifest.descriptor(),
-        &source.matrix,
-        &response,
-        &source.images,
-        &request.challenges,
-        family,
-    )?;
+    let residuals = match cached_residuals {
+        Some(residuals) => residuals,
+        None => crate::binary_root::BinaryRootRelation::remainders(
+            source.manifest.descriptor(),
+            &source.matrix,
+            &response,
+            &source.images,
+            &request.challenges,
+            family,
+        )?,
+    };
     drop(span);
     binding
         .scope_lease()

@@ -6,8 +6,8 @@ use akita_params::{
 };
 use akita_types::binary_source::{
     binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
-    binary_root_statement, BinaryProjectionRequest, BinaryProjectionRows, BinaryProjectionWitness,
-    BinaryRootPublic,
+    binary_root_p64_batch_challenges, binary_root_statement, BinaryProjectionRequest,
+    BinaryProjectionRows, BinaryProjectionWitness, BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
@@ -171,7 +171,15 @@ where
         &request,
     )?;
     drop(span);
-    if d_payload.len() != 128 {
+    if d_payload.len()
+        != akita_error::checked::product([
+            manifest
+                .d_label(claim.is_some(), prime.planes().len())?
+                .rank as usize,
+            manifest.b_ring_dimension(),
+        ])
+        .ok_or(AkitaError::InvalidProof)?
+    {
         return Err(AkitaError::InvalidProof);
     }
     akita_transcript::send_field_group(
@@ -238,7 +246,11 @@ where
     let mut witness = committed.witness_handle;
     let span = tracing::info_span!("binary_root_projections").entered();
     let bounds = public.plan().projection_bounds();
-    let projections = BinaryProjectionRows::draw(grinding.state_mut(), bounds)?;
+    let projections = if bounds.quotient().is_none() {
+        Some(BinaryProjectionRows::draw(grinding.state_mut(), bounds)?)
+    } else {
+        None
+    };
     let (_, residual) = backend.prepare_root_group(
         proof_session,
         &context.for_group(0),
@@ -250,11 +262,15 @@ where
     let witness_a = residual
         .downcast::<BinaryProjectionWitness>()
         .map_err(|_| AkitaError::Internal("backend projection residual type mismatch".into()))?;
-    let projected_values = binary_projection_values(
-        grinding.state_mut(),
-        bounds,
-        &projections.project(&witness_a.residuals, bounds)?,
-    )?;
+    let projected_values = match &projections {
+        Some(projections) => binary_projection_values(
+            grinding.state_mut(),
+            bounds,
+            &projections.project(&witness_a.residuals, bounds)?,
+        )?
+        .to_vec(),
+        None => Vec::new(),
+    };
     drop(span);
     let alpha = grinding
         .grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::RingSwitchAlpha { level: 0 })?;
@@ -269,7 +285,14 @@ where
         GrindingSite::Tau0Point { level: 0 },
         domain.num_vars(),
     )?;
-    let batches = binary_root_batch_challenges::<Cfg::ExtField, _>(grinding, public.batch_count())?;
+    let batches = if bounds.quotient().is_some() {
+        binary_root_p64_batch_challenges::<Cfg::Field, Cfg::ExtField, _>(
+            grinding,
+            public.batch_count(),
+        )?
+    } else {
+        binary_root_batch_challenges::<Cfg::ExtField, _>(grinding, public.batch_count())?
+    };
     let payload = group
         .commitment()
         .rows()
@@ -305,12 +328,16 @@ where
             ))
         })
         .transpose()?;
-    let mu = batches
-        .get(..7)
-        .ok_or(AkitaError::InvalidProof)?
-        .try_into()
-        .map_err(|_| AkitaError::InvalidProof)?;
-    let rho = projections.batch(&mu)?;
+    let rho = match &projections {
+        Some(projections) => projections.batch(
+            &batches
+                .get(..7)
+                .ok_or(AkitaError::InvalidProof)?
+                .try_into()
+                .map_err(|_| AkitaError::InvalidProof)?,
+        )?,
+        None => Vec::new(),
+    };
     let span = tracing::info_span!("binary_root_relation_compile").entered();
     let (relation, negative_binary_weights) = public.relation(
         &challenges,

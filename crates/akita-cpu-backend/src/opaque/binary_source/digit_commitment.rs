@@ -1,7 +1,7 @@
 //! Public digit commitments through signed 16-bit limb products.
 //!
 //! [`binary_public_digit_commitment`] multiplies every setup entry, 64
-//! canonical residues below `P = 2^128 - 275`, by its chunk of balanced
+//! canonical residues of the selected base field, by its chunk of balanced
 //! digits in `Z[X]/(X^64 + 1)` with exact 192-bit integer additions. Here a
 //! residue `a` is read as eight little-endian 16-bit limbs `a_j`, shifted to
 //! signed limbs `s_j = a_j - 2^15`, so `a = sum_j 2^(16 j) s_j + H` with
@@ -12,7 +12,7 @@
 //! `L_j[k] = sum_t c_k[t] s_j[t]` and the digit sum `Z[k] = sum_t c_k[t]`.
 //! Both are exact `i32` sums over at most [`BLOCK_COLUMNS`] columns, and the
 //! payload adds their combination in the field. That is the reference
-//! payload's integer modulo `P`, so the payload is identical.
+//! payload's integer modulo the selected prime, so the payload is identical.
 
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::SetupStreamLabel;
@@ -46,8 +46,9 @@ pub(super) fn digit_commitment<F: Field>(
     digits: &[i8],
 ) -> Result<Vec<F>, AkitaError> {
     let rows = validate_digit_commitment_label::<F>(label)?;
-    if digits.is_empty() {
-        // The reference rejects the empty table with its own message.
+    if digits.is_empty() || rows != 2 {
+        // The paired limb kernel handles rank two. Other admitted ranks use
+        // the canonical commitment; it also rejects an empty table.
         return binary_public_digit_commitment(seed, label, 0, digits);
     }
     let piece = checked::product([PIECE_COLUMNS, DEGREE]).ok_or(AkitaError::InvalidProof)?;
@@ -276,6 +277,29 @@ mod tests {
             ring: SetupStreamRing::Negacyclic,
             degree: DEGREE as u32,
             modulus: SetupStreamModulus::Prime128Offset275,
+        }
+    }
+
+    #[test]
+    fn binary_root_p64_payload_matches_reference_at_every_admitted_rank() {
+        use jolt_field::Prime64Offset59;
+        let seed = [23; 32];
+        let digits = (0..1000)
+            .map(|index| (index % 8) as i8 - 4)
+            .collect::<Vec<_>>();
+        for rank in 1..=5 {
+            let label = SetupStreamLabel {
+                modulus: SetupStreamModulus::Prime64Offset59,
+                rank,
+                ..label()
+            };
+            let payload = digit_commitment::<Prime64Offset59>(&seed, label, &digits).unwrap();
+            assert_eq!(payload.len(), rank as usize * DEGREE);
+            assert_eq!(
+                payload,
+                binary_public_digit_commitment::<Prime64Offset59>(&seed, label, 0, &digits)
+                    .unwrap()
+            );
         }
     }
 

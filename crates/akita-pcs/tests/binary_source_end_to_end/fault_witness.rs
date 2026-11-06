@@ -68,7 +68,7 @@ pub(super) fn reconstruct(
             &partials,
             &response.response,
             challenges,
-            u128::MAX - 274,
+            manifest.field_profile().modulus(),
         )?;
         native.extend([partials, evaluation.parity_digits, evaluation.value_digits]);
     }
@@ -76,6 +76,14 @@ pub(super) fn reconstruct(
         native.push(akita_cpu_backend::binary_root::prime_plane_digits::<F>(
             descriptor, prime, &sources,
         )?);
+    }
+    if let Some(bounds) = plan.projection_bounds().quotient() {
+        let residuals = response
+            .rows
+            .iter()
+            .map(|row| row.remainder)
+            .collect::<Vec<_>>();
+        native.push(BinaryRootRelation::quotient_digits(&residuals, bounds)?);
     }
     plan.repacking()
         .repack(&native.iter().map(Vec::as_slice).collect::<Vec<_>>())
@@ -137,4 +145,85 @@ pub(super) fn foreign_partial_payload(
         0,
         &partials,
     )
+}
+
+#[test]
+fn p64_fault_table_changes_k_independently_of_response_and_image() {
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{BinaryIndexMap, BinarySourceDescriptor};
+    use jolt_field::{Ext2, ExtField, Prime64Offset59};
+    type E = Ext2<Prime64Offset59>;
+    let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
+    let descriptor = BinarySourceDescriptor::new(
+        index,
+        vec![[1; 32]],
+        akita_types::binary_source::BinaryCommitmentProfiles {
+            a: [2; 32],
+            b: [3; 32],
+        },
+    )
+    .unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
+            .unwrap();
+    let segment = plan.quotient_segment().unwrap();
+    let mut natural = plan
+        .repacking()
+        .segments()
+        .iter()
+        .map(|shape| {
+            vec![0i8; shape.elements * shape.digits * shape.geometry.polynomial_modulus_dimension()]
+        })
+        .collect::<Vec<_>>();
+    let mut residuals = [[0i128; 648]; 3];
+    residuals[0][0] = -4 * i128::from(BINARY_SOURCE_Q);
+    residuals[2][647] = 3 * i128::from(BINARY_SOURCE_Q);
+    natural[segment] = BinaryRootRelation::quotient_digits(
+        &residuals,
+        plan.projection_bounds().quotient().unwrap(),
+    )
+    .unwrap();
+    let table = plan
+        .repacking()
+        .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+        .unwrap();
+    let weights = [
+        E::from_base_fn(|i| Prime64Offset59::from_u64([17, 19][i])),
+        E::from_base_fn(|i| Prime64Offset59::from_u64([23, 29][i])),
+    ];
+    let evaluate = |table: &[i8]| {
+        let table = table
+            .iter()
+            .map(|&digit| E::from_i64(i64::from(digit)))
+            .collect::<Vec<_>>();
+        [(0, 0), (2, 647)].into_iter().zip(weights).fold(
+            E::zero(),
+            |sum, ((row, coefficient), weight)| {
+                sum + weight
+                    * (E::from_i128(residuals[row][coefficient])
+                        - E::from_u64(u64::from(BINARY_SOURCE_Q))
+                            * plan
+                                .repacking()
+                                .recompose_coefficient(&table, segment, row, coefficient)
+                                .unwrap())
+            },
+        )
+    };
+    assert_eq!(evaluate(&table), E::zero());
+    for (row, coefficient, delta) in [(0, 0, 1), (2, 647, -1)] {
+        let mut altered = table.clone();
+        let address = plan
+            .repacking()
+            .coefficient_address(segment, row, 0, coefficient)
+            .unwrap();
+        altered[address] += delta;
+        assert!((-4..=3).contains(&altered[address]));
+        assert_ne!(evaluate(&altered), E::zero());
+        for untouched in [0, 1] {
+            assert_eq!(
+                extract(plan.repacking(), &table, untouched),
+                extract(plan.repacking(), &altered, untouched)
+            );
+        }
+    }
 }

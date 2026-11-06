@@ -164,3 +164,86 @@ fn projection_orchestrators_fix_witness_then_rows_then_outputs_then_batches() {
         );
     }
 }
+
+/// Only the scheduled Tau1 site is consumed at this isolated order-seven
+/// boundary. Complete PCS admission remains gated until the typed prefix.
+struct BatchReplay<S> {
+    state: S,
+    queries: usize,
+    poisoned: bool,
+}
+impl<S: ProofChannel> akita_types::GrindingReplay for BatchReplay<S> {
+    type State = S;
+    fn state_mut(&mut self) -> &mut S {
+        &mut self.state
+    }
+    fn poison(&mut self) {
+        self.poisoned = true;
+    }
+    fn grind_query(&mut self, site: akita_params::GrindingSite) -> Result<(), AkitaError> {
+        assert_eq!(site, akita_params::GrindingSite::Tau1Point { level: 0 });
+        self.queries += 1;
+        Ok(())
+    }
+}
+
+#[test]
+fn p64_dense_batches_replay_both_coordinates_after_the_outgoing_commitment() {
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{binary_root_p64_batch_challenges, BinaryRootWitnessPlan};
+    use jolt_field::{Ext2, ExtField, Prime64Offset59};
+    type Base = Prime64Offset59;
+    type Extension = Ext2<Base>;
+    let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
+    let profiles =
+        BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, BinaryFieldProfile::P64)
+            .unwrap();
+    let descriptor = BinarySourceDescriptor::new(index, vec![[1; 32]], profiles).unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
+            .unwrap();
+    // Fixture: two word rows, rank-two B and rank-one word-only D.
+    let count = plan.coefficient_batch_count().unwrap() + 2 + 2 + 1;
+    let run = |commitment: u8| {
+        let mut prover = BatchReplay {
+            state: new_prover_channel(b"binary-p64-batch-fixation"),
+            queries: 0,
+            poisoned: false,
+        };
+        prover.state.exchange(&mut [commitment; 16]).unwrap();
+        let batch =
+            binary_root_p64_batch_challenges::<Base, Extension, _>(&mut prover, count).unwrap();
+        assert_eq!(batch.len(), count);
+        assert_eq!(prover.queries, 1);
+        assert!(!prover.poisoned);
+        let proof = prover.state.narg_string();
+        // No J rows or y messages: the isolated boundary sends only the
+        // order-five commitment stand-in and draws its independent weights.
+        assert_eq!(proof.len(), 16);
+        let mut verifier = BatchReplay {
+            state: new_verifier_channel(b"binary-p64-batch-fixation", proof),
+            queries: 0,
+            poisoned: false,
+        };
+        let mut received = [0; 16];
+        verifier.state.exchange(&mut received).unwrap();
+        assert_eq!(received, [commitment; 16]);
+        assert_eq!(
+            binary_root_p64_batch_challenges::<Base, Extension, _>(&mut verifier, count).unwrap(),
+            batch
+        );
+        verifier.state.check_eof().unwrap();
+        assert_eq!(verifier.queries, 1);
+        assert!(!verifier.poisoned);
+        assert!(batch
+            .iter()
+            .all(|value| value.base_coefficient(1) != Base::zero()));
+        batch
+    };
+    let baseline = run(0);
+    let changed = run(1);
+    assert!(baseline.iter().zip(changed).all(|(a, b)| *a != b));
+    assert!(BinaryFieldProfile::P64
+        .admit_root(BinaryFieldProfile::P64.modulus(), 2)
+        .is_err());
+}

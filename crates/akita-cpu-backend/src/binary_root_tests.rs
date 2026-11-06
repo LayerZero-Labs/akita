@@ -2,7 +2,7 @@ use super::*;
 use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use akita_types::native_root_relation::NativeRootRelation;
-use jolt_field::Ring;
+use jolt_field::{Prime128Offset275, Ring};
 
 struct SeedDraw;
 impl FoldDraw for SeedDraw {
@@ -160,7 +160,7 @@ fn q24_root_matches_integer_fold_division_and_coefficient_repacking() {
             assert!(remainder.iter().all(|&x| x % i128::from(Q24) == 0));
             assert_eq!(
                 relation
-                    .residual_in_proof_field(polynomial * 2 + row)
+                    .residual_in_proof_field::<Prime128Offset275>(polynomial * 2 + row)
                     .unwrap(),
                 remainder.map(Prime128Offset275::from_i128)
             );
@@ -350,3 +350,85 @@ mod projection;
 
 #[path = "binary_root/evaluation_tests.rs"]
 mod evaluation_tests;
+
+#[test]
+fn binary_root_p64_quotient_digits_are_exact_bounded_and_complete() {
+    use akita_types::binary_source::BinaryQuotientBounds;
+    use jolt_field::{Ext2, Prime64Offset59};
+    type E = Ext2<Prime64Offset59>;
+    let bounds = BinaryQuotientBounds::new(1, 2).unwrap();
+    let mut input = fixture();
+    let relation = build(&input).unwrap();
+    let residuals = BinaryRootRelation::remainders(
+        &input.descriptor,
+        &input.matrix,
+        &relation.response,
+        &input.images,
+        &input.challenges,
+        FoldChallengeDistribution::BinaryRoot,
+    )
+    .unwrap();
+    assert_eq!(
+        residuals,
+        relation
+            .rows
+            .iter()
+            .map(|row| row.remainder)
+            .collect::<Vec<_>>()
+    );
+    let digits = BinaryRootRelation::quotient_digits(&residuals, &bounds).unwrap();
+    for (row, (residual, digits)) in residuals
+        .iter()
+        .zip(digits.chunks_exact(bounds.digits * D))
+        .enumerate()
+    {
+        assert_eq!(
+            relation.residual_in_proof_field::<E>(row).unwrap(),
+            residual.map(E::from_i128)
+        );
+        for (coefficient, &value) in residual.iter().enumerate() {
+            let quotient: i128 = digits
+                .chunks_exact(D)
+                .rev()
+                .fold(0, |value, lane| 8 * value + i128::from(lane[coefficient]));
+            assert_eq!(quotient * i128::from(Q24), value);
+        }
+    }
+    let mut residuals = [[0i128; D]; 3];
+    for (slot, quotient) in residuals[0].iter_mut().zip([
+        -4,
+        3,
+        -1,
+        1,
+        -(bounds.quotient_floor as i128),
+        bounds.quotient_floor as i128,
+    ]) {
+        *slot = quotient * i128::from(Q24);
+    }
+    let digits = BinaryRootRelation::quotient_digits(&residuals, &bounds).unwrap();
+    assert_eq!(&digits[..4], &[-4, 3, -1, 1]);
+    assert!(digits.iter().all(|digit| (-4..=3).contains(digit)));
+    let shallow = BinaryQuotientBounds {
+        digits: bounds.digits - 1,
+        ..bounds
+    };
+    assert!(BinaryRootRelation::quotient_digits(&residuals, &shallow).is_err());
+    residuals[0][0] += 1;
+    assert!(matches!(
+        BinaryRootRelation::quotient_digits(&residuals, &bounds),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    residuals[0][0] = bounds.residual_bound as i128 + 1;
+    assert!(BinaryRootRelation::quotient_digits(&residuals, &bounds).is_err());
+    let value = input.images[0][0].centered();
+    input.images[0][0] = Q24Image::from_centered(value + 1).unwrap();
+    assert!(BinaryRootRelation::remainders(
+        &input.descriptor,
+        &input.matrix,
+        &relation.response,
+        &input.images,
+        &input.challenges,
+        FoldChallengeDistribution::BinaryRoot,
+    )
+    .is_err());
+}

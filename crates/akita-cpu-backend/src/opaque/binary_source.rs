@@ -26,17 +26,19 @@ use import::BinarySourceInput;
 const SOURCE_RING_DEGREE: usize = 648;
 const MAX_BINARY_SOURCE_MATERIAL_BYTES: usize = 1 << 27;
 
-/// The accepted fold challenges and the response they fold the source into.
-type AcceptedResponse = (
-    akita_challenges::Challenges,
-    Vec<[i128; SOURCE_RING_DEGREE]>,
-);
+/// Accepted fold challenges, response and the P64 residual used to produce K.
+struct AcceptedResponse {
+    challenges: akita_challenges::Challenges,
+    response: Vec<[i128; SOURCE_RING_DEGREE]>,
+    residuals: Option<Vec<[i128; SOURCE_RING_DEGREE]>>,
+}
 
 /// Immutable private source and q24 image hint. Neither table is a public payload.
 ///
 /// `accepted` is a private cache, not source material: the root build leaves
-/// its response there and the projection takes it back when the challenges
-/// agree. The response is a function of the sources and challenges alone.
+/// its response there and relation preparation takes it back when challenges
+/// agree. P64 also caches the exact residual fixed before the outgoing
+/// commitment. Both are functions of the private source and accepted fold.
 #[derive(Clone)]
 pub(super) struct BinarySourceStorage {
     manifest: BinaryCommittedGroupManifest,
@@ -100,7 +102,7 @@ where
         input: BinarySourceInput,
     ) -> Result<SourceHandle<F, E>, AkitaError> {
         manifest.validate_carrier(&carrier_profile)?;
-        if akita_params::field_modulus::<F>()? != akita_params::binary_setup::BINARY_SETUP_P
+        if akita_params::field_modulus::<F>()? != manifest.field_profile().modulus()
             || carrier_profile.group.num_polynomials() != manifest.descriptor().polynomials().len()
         {
             return Err(AkitaError::InvalidInput(
@@ -322,6 +324,7 @@ where
         || handle.committed.retained.is_some()
         || plan.descriptor() != manifest.descriptor()
         || plan.rank() != manifest.a_rank()
+        || plan.field_profile() != manifest.field_profile()
         || plan.repacking().destination_ring_dimension() != destination_ring
         || plan.repacking().domain_len() != domain_len
     {
@@ -329,12 +332,14 @@ where
             "native root request differs from its admitted commitment".into(),
         ));
     }
-    let mut expected_plan = akita_types::binary_source::BinaryRootWitnessPlan::new(
+    let mut expected_plan = akita_types::binary_source::BinaryRootWitnessPlan::for_profile(
         manifest.descriptor(),
         manifest.a_rank(),
         destination_ring,
-    )?
-    .with_prime_planes(claim.is_some(), request.prime.planes().len())?;
+        manifest.field_profile(),
+        claim.is_some(),
+        request.prime.planes().len(),
+    )?;
     let ordinary_segments = if let Some((profile, ordinary_handle)) = &request.ordinary {
         if root_layout.num_groups() != 2
             || schedule.root.params.group_params(&root_layout, 1)?.profile != *profile
@@ -345,7 +350,9 @@ where
         }
         let ordinary_plan = akita_types::binary_source::OrdinaryNativeRootPlan::new(
             *profile,
-            expected_plan.repacking().segments().len(),
+            expected_plan
+                .quotient_segment()
+                .unwrap_or(expected_plan.repacking().segments().len()),
         )?;
         expected_plan = expected_plan.with_ordinary(&ordinary_plan)?;
         let ordinary_context = context.for_group(1);
@@ -383,11 +390,15 @@ where
         .unwrap_or_default();
     drop(span);
     let span = tracing::info_span!("binary_root_prime_digits").entered();
-    let prime_digits = crate::binary_root::prime::packed_prime_plane_digits::<F>(
-        manifest.descriptor(),
-        &request.prime,
-        &source.sources,
-    )?;
+    let prime_digits = if request.prime.planes().is_empty() {
+        Vec::new()
+    } else {
+        crate::binary_root::prime::packed_prime_plane_digits::<F>(
+            manifest.descriptor(),
+            &request.prime,
+            &source.sources,
+        )?
+    };
     drop(span);
     let span = tracing::info_span!("binary_root_d_payload").entered();
     let mut d_digits = partials.clone();
@@ -397,10 +408,7 @@ where
     d_digits.extend_from_slice(&prime_digits);
     let payload = digit_commitment::<F>(
         &source.setup_seed,
-        akita_params::binary_setup::SetupStreamLabel {
-            role: akita_params::binary_setup::SetupStreamRole::WitnessCommitment,
-            ..manifest.b_label()
-        },
+        manifest.d_label(claim.is_some(), request.prime.planes().len())?,
         &d_digits,
     )?;
     drop(span);
@@ -479,14 +487,45 @@ where
                 &preparation.partials,
                 &response,
                 challenges,
-                akita_params::binary_setup::BINARY_SETUP_P,
+                source.manifest.field_profile().modulus(),
             )
         })
         .transpose()?;
     drop(span);
-    if let Ok(mut accepted) = source.accepted.lock() {
-        *accepted = Some((challenges.clone(), response));
-    }
+    // P64 fixes K before committing the outgoing witness. Retain exactly the
+    // residual used here for the later relation preparation; P128 keeps its
+    // existing response-only cache and computes residuals after J is drawn.
+    let residuals = preparation
+        .plan
+        .projection_bounds()
+        .quotient()
+        .map(|_| {
+            crate::binary_root::BinaryRootRelation::remainders(
+                source.manifest.descriptor(),
+                &source.matrix,
+                &response,
+                &source.images,
+                challenges,
+                akita_challenges::FoldChallengeDistribution::BinaryRoot,
+            )
+        })
+        .transpose()?;
+    let quotient_digits = residuals
+        .as_ref()
+        .zip(preparation.plan.projection_bounds().quotient())
+        .map(|(residuals, bounds)| {
+            crate::binary_root::BinaryRootRelation::quotient_digits(residuals, bounds)
+        })
+        .transpose()?;
+    *source
+        .accepted
+        .lock()
+        .map_err(|_| AkitaError::Internal("binary accepted response cache poisoned".into()))? =
+        Some(AcceptedResponse {
+            challenges: challenges.clone(),
+            response,
+            residuals,
+        });
     let span = tracing::info_span!("binary_root_repack").entered();
     let mut natural: Vec<&[i8]> = vec![&response_digits, &source.image_digits];
     if let Some(evaluation) = &evaluation {
@@ -500,6 +539,7 @@ where
         natural.push(&preparation.prime_digits);
     }
     natural.extend(preparation.ordinary_segments.iter().map(Vec::as_slice));
+    natural.extend(quotient_digits.as_deref());
     let mut digits = preparation.plan.repacking().repack(&natural)?;
     if logical_len > digits.len()
         || digits

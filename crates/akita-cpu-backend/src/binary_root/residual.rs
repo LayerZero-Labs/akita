@@ -17,7 +17,7 @@ use akita_algebra::ring::trinomial::image::{Q24Image, Q24};
 use akita_algebra::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
-use akita_types::binary_source::BinarySourceDescriptor;
+use akita_types::binary_source::{BinaryQuotientBounds, BinarySourceDescriptor};
 use jolt_field::solinas::parallel::*;
 
 /// q24 and the largest admitted primes below `2^28` and `2^27`.
@@ -28,6 +28,52 @@ const ROW_CHUNK: usize = 128;
 type Coefficients = [i32; D];
 
 impl BinaryRootRelation {
+    /// Exact coefficient quotients of the accepted integer residual, in owner,
+    /// A-row, digit, coefficient order. These digits enter the order-five
+    /// outgoing witness, never the order-three D commitment.
+    pub fn quotient_digits(
+        residuals: &[[i128; D]],
+        bounds: &BinaryQuotientBounds,
+    ) -> Result<Vec<i8>, AkitaError> {
+        if residuals.is_empty() || bounds.digits == 0 {
+            return Err(invalid(
+                "binary quotient requires residuals and digit depth",
+            ));
+        }
+        let len = checked::product([residuals.len(), bounds.digits, D])
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut digits = Vec::new();
+        digits
+            .try_reserve_exact(len)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        digits.resize(len, 0);
+        for (row, output) in residuals
+            .iter()
+            .zip(digits.chunks_exact_mut(bounds.digits * D))
+        {
+            for (coefficient, &residual) in row.iter().enumerate() {
+                if residual.unsigned_abs() > bounds.residual_bound
+                    || residual % i128::from(Q24) != 0
+                {
+                    return Err(invalid(
+                        "binary quotient residual is outside its bound or not divisible by q24",
+                    ));
+                }
+                let mut quotient = residual / i128::from(Q24);
+                for lane in output.chunks_exact_mut(D) {
+                    let residue = quotient.rem_euclid(8);
+                    let digit = if residue >= 4 { residue - 8 } else { residue };
+                    *lane.get_mut(coefficient).ok_or(AkitaError::InvalidProof)? = digit as i8;
+                    quotient = (quotient - digit) / 8;
+                }
+                if quotient != 0 {
+                    return Err(invalid("binary quotient exceeds its balanced digit depth"));
+                }
+            }
+        }
+        Ok(digits)
+    }
+
     /// The residual remainders `rem_Psi(sum_j A_ij z_j - sum_c iota(c_c) T_ci)`
     /// in polynomial/matrix-row order, without quotients.
     ///
