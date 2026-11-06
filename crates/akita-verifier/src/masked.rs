@@ -407,6 +407,7 @@ impl<F: Field, B> ResidualClaim<F, B> {
 /// masked level lowers into three products and one auxiliary slot
 /// (`specs/whiteout-akita.md` §4.4).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use = "the masked prefix's stage checks hold only once its rows are checked"]
 pub struct MaskedPrefix<F, B> {
     checks: Vec<MaskedCheck<F>>,
     claim: ResidualClaim<F, B>,

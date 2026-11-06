@@ -42,9 +42,13 @@ where
     ///
     /// `statement` supplies the commitments, points and schedule selection;
     /// its evaluations are not read. The claims are `openings`, affine forms
-    /// over the pads in group order. The caller must already have absorbed
-    /// the masked statement claims those forms are built from into
-    /// `state`, before this call: the replay binds none of them.
+    /// over the pads in group order.
+    ///
+    /// WARNING: this replay binds neither the pad commitment nor the masked
+    /// statement claims the forms are built from. The caller must absorb
+    /// both into `state` before this call, the pad commitment first. Jolt's
+    /// Whiteout opening does this before it calls here. A caller that skips
+    /// it leaves the claims unbound by the transcript.
     ///
     /// The cut level sends u_a as its compression under `compression`, the
     /// response proof's chain (`specs/whiteout-akita.md` A47); the
@@ -89,6 +93,12 @@ where
     /// (`CommittedPadsView::counting`). Afterwards `view.used()` counts the
     /// masked messages' pads, and [`MaskedPrefix::shape`] the auxiliary slots
     /// and operands.
+    ///
+    /// WARNING: this is not a verifier. It reads no proof-of-work nonce, and
+    /// every public check passes (`CountingGrinding::check_public`), so it
+    /// accepts any bytes that decode. Soundness comes only from
+    /// [`verify_masked_prefix`](Self::verify_masked_prefix) on the proof
+    /// itself. Use the result only for the pad layout.
     ///
     /// `state` must read zero bytes, long enough for the prefix; never a
     /// proof's bytes. The layout is
