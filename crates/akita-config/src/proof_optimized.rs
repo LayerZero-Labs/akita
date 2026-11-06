@@ -141,19 +141,20 @@ macro_rules! impl_proof_optimized_preset {
             akita_params::sis::CommittedSourceClass::BalancedSignedDigit
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedule_family = $family_name:literal, ring_dimension_schedule = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $family_name, ring_dimension_schedule = $mode);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedule_family = $family_name:literal, $(zk_schedule_family = $zk_family_name:literal,)? ring_dimension_schedule = $mode:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $family_name, [$($zk_family_name)?], ring_dimension_schedule = $mode);
     };
     (@options ring_dimension_schedule = $mode:expr) => {
         impl_proof_optimized_preset!(@ring_dimension_schedule $mode);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, $family_name:literal, $($options:tt)*) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, $family_name:literal, [$($zk_family_name:literal)?], $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             fn schedule_family_name() -> &'static str {
                 $family_name
             }
+            $(const ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> = Some($zk_family_name);)?
             impl_proof_optimized_preset!(@options $($options)*);
 
             fn decomposition() -> akita_params::DecompositionParams {

@@ -14,6 +14,10 @@ pub struct RecursiveCommitmentConfig<Cfg>(PhantomData<Cfg>);
 pub trait RecursiveScheduleConfig: CommitmentConfig {
     /// Stable family identity for the recursive companion artifact.
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str;
+
+    /// Family of the recursive companion's zero-knowledge schedules, if any
+    /// (the recursive adapter's [`CommitmentConfig::ZK_SCHEDULE_FAMILY_NAME`]).
+    const RECURSIVE_ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> = None;
 }
 
 impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> {
@@ -22,6 +26,7 @@ impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfi
 
     const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
         Cfg::RING_DIMENSION_SCHEDULE;
+    const ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> = Cfg::RECURSIVE_ZK_SCHEDULE_FAMILY_NAME;
 
     fn schedule_family_name() -> &'static str {
         Cfg::RECURSIVE_SCHEDULE_FAMILY_NAME

@@ -143,7 +143,8 @@ impl AlgebraSection {
 ///
 /// The set comes from the commitment configuration (`zk = Cfg::IS_ZK`),
 /// never from a Cargo feature, so a clear configuration binds `zk = false` in
-/// every build. Deserialization compares the decoded set against the set the
+/// every build and a clear verifier rejects a zero-knowledge proof at the
+/// descriptor. Deserialization compares the decoded set against the set the
 /// caller expects, passed as the context.
 ///
 /// Extension seam: zero knowledge (akita#120). Every configuration on `main` is clear.

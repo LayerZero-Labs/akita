@@ -153,3 +153,26 @@ fn verifier_catalog_view_carries_several_rows_once() {
     view.resolve_selection(first).unwrap();
     view.resolve_selection(second).unwrap();
 }
+
+/// Zero-knowledge rows carry fields that clear JSON rows omit; the binary
+/// view must still encode them so the positional decoder reads them back.
+#[cfg(feature = "zk")]
+#[test]
+fn verifier_catalog_view_carries_zero_knowledge_rows() {
+    type Zk = akita_config::ZkCommitmentConfig<fp128::Dense>;
+    let full = checked_in_catalog::<Zk>(ChunkedWitnessCfg::default_non_chunked());
+    let selected = full.rows().next().unwrap();
+    assert!(selected.schedule().zk.is_some());
+    let bytes = full.to_verifier_view(&[selected.selection()]).unwrap();
+    let view = TrustedScheduleCatalog::<Zk>::from_verifier_view(
+        &bytes,
+        ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .unwrap();
+    assert_eq!(
+        view.resolve_selection(selected.selection())
+            .unwrap()
+            .schedule(),
+        selected.schedule()
+    );
+}

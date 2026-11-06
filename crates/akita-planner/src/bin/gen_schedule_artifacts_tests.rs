@@ -124,11 +124,12 @@ fn every_grouped_artifact_precommit_has_a_shipped_scalar_producer() {
             let path = artifact_dir.join(format!("{}.aks", family.family_name()));
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-            let catalog = akita_schedules::ValidatedScheduleCatalog::from_artifact_bytes(
+            let catalog = akita_schedules::ValidatedScheduleCatalog::from_artifact_bytes_admitting(
                 &bytes,
                 family.family_name(),
                 &(family.policy)(),
                 family.ring_challenge_config,
+                (family.admission)().unwrap(),
             )
             .unwrap_or_else(|error| panic!("failed to load {}: {error}", family.family_name()));
             (family.family_name(), catalog)

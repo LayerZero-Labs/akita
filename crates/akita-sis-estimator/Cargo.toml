@@ -48,6 +48,10 @@ name = "infinity_optimizer"
 harness = false
 
 [[example]]
+name = "sigma_binding_width_table"
+required-features = ["zk"]
+
+[[example]]
 name = "labinius_infinity_width_table"
 required-features = ["labinius-sis"]
 
