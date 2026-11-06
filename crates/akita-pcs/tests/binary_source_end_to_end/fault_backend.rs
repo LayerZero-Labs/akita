@@ -4,6 +4,7 @@ use super::{E, F};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
 use akita_types::binary_source::{
@@ -60,7 +61,7 @@ impl Fault {
         matches!(self, Self::Padding)
     }
 
-    fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
+    pub(super) fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
         let segment = match self {
             Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
             Self::PrimePlane => plan.prime_segment().unwrap(),
@@ -84,6 +85,9 @@ impl Fault {
 
 struct FaultPreparation {
     native: Box<dyn Any + Send + Sync>,
+    manifest: BinaryCommittedGroupManifest,
+    claim: Option<BinaryTerminalClaim>,
+    prime: PrimePlaneManifest,
     plan: BinaryRootWitnessPlan,
 }
 
@@ -167,10 +171,19 @@ impl FaultBackend {
             );
             payload = foreign;
         }
+        if request.manifest.field_profile() == BinaryFieldProfile::P128 {
+            assert!(
+                request.ordinary.is_none(),
+                "P128 fault fixtures are binary-only"
+            );
+        }
         Ok((
             payload,
             Box::new(FaultPreparation {
                 native,
+                manifest: request.manifest.clone(),
+                claim: request.claim.clone(),
+                prime: request.prime.clone(),
                 plan: request.plan.clone(),
             }),
         ))
@@ -197,7 +210,18 @@ impl FaultBackend {
         else {
             return Ok(None);
         };
-        let mut digits = honest.coefficients_for_test();
+        let mut digits = match preparation.manifest.field_profile() {
+            BinaryFieldProfile::P128 => fault_witness::reconstruct(
+                &preparation.manifest,
+                preparation.claim.as_ref(),
+                &preparation.prime,
+                &preparation.plan,
+                &self.seed,
+                &self.words,
+                challenges,
+            )?,
+            BinaryFieldProfile::P64 => honest.coefficients_for_test(),
+        };
         digits.truncate(logical_len);
         if !matches!(
             self.fault,
@@ -229,11 +253,22 @@ impl FaultBackend {
         // A malicious prover is allowed to use an incorrect public oracle. Make
         // its own sumcheck consistent so it emits a complete proof; the real
         // verifier must detect the wrong relation at its final oracle check.
-        // K and prime-digit faults leave the ordinary negative-bit predicates
-        // intact, so their contribution remains zero in a mixed witness.
         let mut table = weights.materialize()?;
         let state = self.digits.lock().unwrap();
         let digits = state.as_ref().unwrap();
+        let negative_contribution = negative_binary_weights.iter().fold(
+            E::zero(),
+            |sum, &(address, weight)| {
+                let digit = E::from_i64(i64::from(digits[address]));
+                assert!(matches!(digits[address], -1 | 0));
+                sum + weight * digit * (digit + E::from_u64(1))
+            },
+        );
+        assert_eq!(
+            negative_contribution,
+            E::zero(),
+            "the forged linear oracle must preserve every ordinary negative-bit predicate"
+        );
         let actual = table
             .iter()
             .zip(digits)

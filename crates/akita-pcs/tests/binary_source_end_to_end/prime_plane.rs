@@ -537,11 +537,10 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
                 "completed adversarial {fault:?} prime proof: {} bytes",
                 malformed.len()
             );
-            rejects(
-                "completed false prime witness",
-                &malformed,
-                public,
-                primes.clone(),
+            assert_eq!(
+                verify(&malformed, public, primes.clone()),
+                Err(AkitaError::InvalidProof),
+                "completed {fault:?} prime forgery must fail proof verification"
             );
         }
     }

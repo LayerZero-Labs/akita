@@ -229,20 +229,38 @@ fn p64_prime_statement_changes_the_first_challenge_on_both_sides() {
     let payload = vec![Base::one(); manifest.payload_coefficients().unwrap()];
     let prime = PrimeGroupClaim {
         point: vec![2; 11],
-        evaluations: vec![PrimePlaneClaim { polynomial: 0, value: 7 }],
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: 7,
+        }],
     };
     let first = |payload: &[Base], prime: PrimeGroupClaim| {
         let prime = PrimePlaneManifest::with_field_profile(
-            manifest.descriptor(), Some(prime), BinaryFieldProfile::P64,
-        ).unwrap();
+            manifest.descriptor(),
+            Some(prime),
+            BinaryFieldProfile::P64,
+        )
+        .unwrap();
         let mut prover = new_prover_channel(b"p64-order-zero-binding");
         let mut verifier = new_verifier_channel(b"p64-order-zero-binding", &[]);
         binary_root_statement::<Base, Extension, _>(
-            &mut prover, &manifest, None, &prime, payload, None,
-        ).unwrap();
+            &mut prover,
+            &manifest,
+            None,
+            &prime,
+            payload,
+            None,
+        )
+        .unwrap();
         binary_root_statement::<Base, Extension, _>(
-            &mut verifier, &manifest, None, &prime, payload, None,
-        ).unwrap();
+            &mut verifier,
+            &manifest,
+            None,
+            &prime,
+            payload,
+            None,
+        )
+        .unwrap();
         let sent: [u8; 32] = prover.verifier_message();
         let received: [u8; 32] = verifier.verifier_message();
         assert_eq!(sent, received);

@@ -283,8 +283,11 @@ An explicitly selected binary commitment can open one word claim, one base-prime
 point, or both, optionally alongside one ordinary Q64Offset59 group. Its base
 field is p=2^64-59 and its testing field is the quadratic extension with u²=2.
 The public PCS resolves an explicitly admitted native catalog row before running
-this root. Ordinary artifact loading does not admit it, and production admission
-remains refused. Enabling the extension alone does not select it.
+this root. Native-root catalog selection is the execution admission boundary;
+ordinary artifact loading does not admit it. There is no separate production
+gate. Production use additionally requires closing the extraction, query-budget,
+setup/hash-model and induced SIS obligations described in the security chapter.
+Enabling the extension alone does not select it.
 
 The root commits balanced base-eight digits of each integer quotient K=R/q
 with the accepted response. The common range proof bounds those digits; one

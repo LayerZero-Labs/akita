@@ -34,7 +34,7 @@ where
     manifest.validate()?;
     manifest
         .field_profile()
-        .admit_root(akita_params::field_modulus::<F>()?, E::DEGREE, true)?;
+        .check_field_pair(akita_params::field_modulus::<F>()?, E::DEGREE)?;
     if binary_commitment.len() != manifest.payload_coefficients()? {
         return Err(AkitaError::InvalidInput(
             "binary root payload shape mismatch".into(),

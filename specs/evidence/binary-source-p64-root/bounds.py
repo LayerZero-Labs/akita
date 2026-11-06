@@ -251,12 +251,23 @@ assert 5*22*162*256 == 4_561_920 and 5*22*256*256 == 7_208_960
 widths = [296,76_306,4_030_488,106_021_444,1_826_815_994]
 def rank(width):
     return next(i+1 for i,w in enumerate(widths) if width <= w)
-for m,c,n in cases:
+for c,n,t,b_expected,d_expected in [
+    (2,1,1,486,117),
+    (2,5,5,2430,583),
+    (2,4096,5,1_990_656,21_293),
+    (256,1,1,62_208,14_904),
+    (256,5,5,311_040,74_520),
+    (256,10,5,622_080,77_760),
+    (256,4096,5,254_803_968,2_725_488),
+]:
+    assert 0 <= t <= n
     bw = n*c*3*8*648//64
-    dw = ceildiv(5*22*162*c+n*162*c,64)
-    print('B_D',m,c,n,'Bwidth/rank',bw,rank(bw),'D5wordwidth/rank',dw,rank(dw))
+    dw = ceildiv(t*22*162*c+n*162*c,64)
+    assert (bw,dw) == (b_expected,d_expected)
+    print('B_D',c,n,t,'Bwidth/rank',bw,rank(bw),'Dwordwidth/rank',dw,rank(dw))
+assert rank(117) == 1 and rank(14_904) == 2
 assert rank(62_208) == 2 and rank(254_803_968) == 5
-assert rank(71_928) == 2 and rank(77_760) == 3
+assert rank(74_520) == 2 and rank(77_760) == 3
 
 # Layout costs for word-only root, before optional ordinary preimages.
 for m,c,n in cases:

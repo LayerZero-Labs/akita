@@ -78,9 +78,11 @@ impl ResolvedScheduleRow {
         Ok(())
     }
 
-    /// Whether trusted preprocessing explicitly admitted a research native root.
-    /// Ordinary artifact decoding cannot create this capability. It certifies
-    /// geometry and suffix checks, not production security of the native root.
+    /// Whether this row uses an explicitly validated native-root transition.
+    /// The PCS reads this only after resolving a trusted catalog selection.
+    /// Ordinary artifact decoding cannot create native rows. This checks geometry
+    /// and the suffix; production use also requires the open security-ledger items.
+    /// There is no separate runtime production-admission gate.
     pub const fn is_native_root(&self) -> bool {
         !self.canonical_root_transition
     }

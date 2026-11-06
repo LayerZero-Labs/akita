@@ -15,11 +15,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
         if let Some(super::GroupClaimKind::Binary { manifest, .. }) =
             self.groups().first().map(|group| group.kind())
         {
-            manifest.field_profile().admit_root(
-                manifest.field_profile().modulus(),
-                manifest.field_profile().extension_degree(),
-                research_native,
-            )?;
+            manifest.field_profile().admit_root(research_native)?;
             let next = schedule.recursive_folds.first().ok_or_else(|| {
                 AkitaError::InvalidSetup("binary root requires an ordinary successor".into())
             })?;

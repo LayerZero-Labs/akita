@@ -18,9 +18,9 @@ The current seven integer projections do not fit the smaller characteristic.
 Replace them with committed coefficient quotients and independent extension-field
 batching. Keep the rank-three degree-648 commitment modulo q and the
 GF(2^128) word claim. This spec approves the protocol design.
-Production security admission remains refused. The research implementation now
-selects P64 through explicitly admitted native catalog rows. Linux catalog
-artifacts, reference pins, complete measurements and validation remain pending;
+Production security is not established. The research implementation selects P64
+through explicitly admitted native catalog rows, the sole execution boundary.
+Linux catalogs, reference pins, complete measurements and validation remain pending;
 this record stays active until that evidence and the admission obligations below
 are resolved.
 
@@ -442,7 +442,9 @@ Word U adds `s*162*C` compact digits before division into degree-64 columns.
 A base-field prime claim keeps one plane per separable claim.
 An admitted E64 claim needs two base-coordinate EP planes, each with 22 digits.
 Its reading uses extension arithmetic.
-The current `PrimePlaneClaim` API carries base residues.
+The current `PrimePlaneClaim` API carries base residues and admits at most one
+plane per distinct owner at the shared point: `t <= s` for t planes and s owners.
+Repeated owner indices and more planes than owners are rejected.
 Supporting E64 points and values therefore needs an API and layout change.
 Count both coordinate planes against the resource cap, or enlarge and reprice
 the cap explicitly.
@@ -489,21 +491,24 @@ Use the widths
 
 ```text
 B_columns = s*C*3*8*648/64
-D_columns = ceil((5*22*162*C + s*162*C)/64)
+D_columns = ceil((t*22*162*C + s*162*C)/64), 0 <= t <= s
 ```
 
-for five base planes plus all-owner word U.
+for t base planes plus all-owner word U. Each row below is admitted by the
+single-point plane-count contract; five planes require at least five owners.
 
-| Geometry; owners | B columns | Minimum B rank | D columns | Minimum D rank |
+| Geometry; owners; planes | B columns | Minimum B rank | D columns | Minimum D rank |
 | --- | ---: | ---: | ---: | ---: |
-| Fixture; 1 | 486 | 2 | 562 | 2 |
-| Fixture; 4096 | 1,990,656 | 3 | 21,293 | 2 |
-| Envelope; 1 | 62,208 | 2 | 71,928 | 2 |
-| Envelope; 10 | 622,080 | 3 | 77,760 | 3 |
-| Envelope; 4096 | 254,803,968 | 5 | 2,725,488 | 3 |
+| Fixture; 1; 1 | 486 | 2 | 117 | 1 |
+| Fixture; 5; 5 | 2,430 | 2 | 583 | 2 |
+| Fixture; 4096; 5 | 1,990,656 | 3 | 21,293 | 2 |
+| Envelope; 1; 1 | 62,208 | 2 | 14,904 | 2 |
+| Envelope; 5; 5 | 311,040 | 3 | 74,520 | 2 |
+| Envelope; 10; 5 | 622,080 | 3 | 77,760 | 3 |
+| Envelope; 4096; 5 | 254,803,968 | 5 | 2,725,488 | 3 |
 
-Rank two covers both single-owner geometries, including five base planes.
-It does not cover every larger-owner B or D width.
+The single-owner fixture needs B rank two and D rank one; the single-owner
+envelope needs rank two for both. Rank two does not cover every larger-owner width.
 Each role must meet its minimum rank.
 A shared-rank implementation must select the maximum of the two minima.
 An uncompressed rank-r base payload occupies `64*r*8 = 512r` bytes.
@@ -678,6 +683,17 @@ catalog supplies the exact outgoing physical span, the typed prefix footprint,
 the ordinary producer (when selected), and the complete suffix. Ordinary catalog
 artifacts cannot admit P64 roots. Missing selections return typed errors; field,
 rank, strict lift, prefix identity, range and suffix checks remain mandatory.
+Native-root catalog rows are the execution admission boundary for both P64 and
+P128 native roots; there is no separate runtime production gate or research flag.
+A caller selecting a validated native catalog can execute P64. Production use
+additionally requires closing the ledger obligations below.
+
+The measurement preset deliberately retains `fp128::DenseBounded` search
+geometry, basis ranges and decomposition basis for both fields, to compare the
+root migration within a fixed degree-64 suffix search space. P64 overrides the
+modulus to Q64Offset59 and the opening bound to 64 bits; all suffix candidates
+are audited against that field. These measurements are not a benchmark of the
+canonical `fp64::Dense` adaptive search, whose suffix dimensions include 128.
 
 For one selected row let r be the outgoing domain's log size, k the typed setup
 prefix domain's log size, n the word carrier log size, I=s*C, and e=p^2.
@@ -716,9 +732,9 @@ Do not also add an envelope `Q*max(rate)` for those same queries. A plan's
 one-replay structural query count is not an adversarial query bound, especially
 for the indexed SHAKE columns and the blockwise coefficient sampler.
 
-Production remains refused until the fixed-witness checkpoint, independently
+Production use requires the fixed-witness checkpoint, independently
 programmable indexed column streams, full-tree debits, extraction branching and
-cost, query budget and every induced SIS certificate are established together.
+cost, query budget and every induced SIS certificate to be established together.
 A local 128-bit per-query grinding target is not a whole-proof 128-bit claim.
 Linux timing, byte pins and mutation tests provide implementation evidence only.
 

@@ -505,7 +505,10 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
                 .and_then(|eof| eof)
                 .unwrap_or_else(|error| panic!("{fault:?} was rejected: {error}"));
         } else {
-            assert!(outcome.is_err(), "{fault:?} was accepted");
+            assert!(
+                matches!(outcome, Err(AkitaError::InvalidProof)),
+                "{fault:?} must fail proof verification with InvalidProof: {outcome:?}"
+            );
         }
     };
     if let Some(fault) = authentication_fault {

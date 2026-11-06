@@ -558,8 +558,11 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 
 ## Research p64 binary admission
 
-P64 native catalog admission authorizes research execution, not a production
-security claim. For a fixed authenticated digit witness, each integer defect
+Native-root catalog rows are the P64 execution admission boundary; there is no
+separate runtime production gate. Production use additionally requires closing
+the open extraction, query-budget, setup/hash-model and all induced SIS obligations.
+Native catalog validation alone does not establish a production security claim.
+For a fixed authenticated digit witness, each integer defect
 R-qK has magnitude strictly below p. A nonzero defect therefore survives in
 E64, and one independent common coefficient batch loses it with probability at
 most 1/p². This is already slightly greater than 2^-128. Ring switching, range
