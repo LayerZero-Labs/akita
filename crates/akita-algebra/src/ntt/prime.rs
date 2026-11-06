@@ -347,6 +347,17 @@ impl<W: PrimeWidth> NttPrime<W> {
         W::wide_shift(W::wide_sub(c, tp))
     }
 
+    /// Reduce at most six raw Montgomery products. For p < R/4,
+    /// |sum| < 6p² and |sum - t*p| < 6p² + R*p/2 < R²/2.
+    /// The signed numerator therefore fits i64 for either sealed width.
+    /// The quotient lies in (-2p, 2p), so the ordinary range reducer applies.
+    #[inline]
+    pub(crate) fn reduce_dot(self, sum: i64) -> MontCoeff<W> {
+        let t = W::from_i64(sum).wrapping_mul(self.pinv).to_i64();
+        let value = (sum - t * self.p.to_i64()) >> W::R_LOG;
+        self.reduce_range(MontCoeff::from_raw(W::from_i64(value)))
+    }
+
     /// Conditionally subtract `p` if `a >= p` (branchless).
     ///
     /// Input may be in `(-2p, 2p)` during butterflies. Both i16 and i32 paths
@@ -529,6 +540,30 @@ mod tests {
         }
         for p in [2_i32, 1073707008, 94391809, 2013265921] {
             assert!(catch_unwind(|| NttPrime::new(p)).is_err(), "p={p}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod dot_bound_tests {
+    use super::*;
+    #[test]
+    fn six_product_signed_numerators_reduce_exactly_at_the_bounds() {
+        for p in [12289i64, 104857601, 998244353, 1073479681] {
+            let prime = NttPrime::<i32>::new(p as i32);
+            for count in 0..=I32_LAZY_DOT_BATCH {
+                for sign in [-1i64, 1] {
+                    for magnitude in [0, 1, p / 2, p - 1] {
+                        let sum = sign * count as i64 * magnitude * magnitude;
+                        let result = prime.reduce_dot(sum).raw() as i128;
+                        assert_eq!(
+                            (result * (1i128 << 32) - i128::from(sum)) % i128::from(p),
+                            0
+                        );
+                        assert!(result.abs() < i128::from(p));
+                    }
+                }
+            }
         }
     }
 }

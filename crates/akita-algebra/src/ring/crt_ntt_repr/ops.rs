@@ -259,8 +259,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
-        for (lhs, rhs) in lhs.iter().zip(rhs) {
-            self.add_assign_pointwise_mul(lhs, rhs, params);
+        for k in 0..K {
+            let prime = params.primes[k];
+            for i in 0..D {
+                let sum = lhs
+                    .iter()
+                    .zip(rhs)
+                    .map(|(l, r)| l.limbs[k][i].raw().to_i64() * r.limbs[k][i].raw().to_i64())
+                    .sum();
+                let dot = prime.reduce_dot(sum);
+                self.limbs[k][i] = prime.reduce_range(MontCoeff::from_raw(
+                    self.limbs[k][i].raw().wrapping_add(dot.raw()),
+                ));
+            }
         }
     }
 
@@ -422,6 +433,26 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                     digits.len(),
                     prime,
                 );
+                #[cfg(not(any(
+                    target_arch = "aarch64",
+                    target_arch = "x86",
+                    target_arch = "x86_64",
+                    all(feature = "ntt-inline", target_arch = "riscv64")
+                )))]
+                for i in 0..D {
+                    let sum = (0..digits.len())
+                        .map(|product| {
+                            matrix_row[column_start + product].limbs[k][i]
+                                .raw()
+                                .to_i64()
+                                * scratch[product][i].raw().to_i64()
+                        })
+                        .sum();
+                    let dot = prime.reduce_dot(sum);
+                    acc.limbs[k][i] = prime.reduce_range(MontCoeff::from_raw(
+                        acc.limbs[k][i].raw().wrapping_add(dot.raw()),
+                    ));
+                }
             }
         }
     }
