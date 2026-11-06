@@ -8,7 +8,11 @@ use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
     SisModulusProfileId,
 };
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset275, Prime64Offset59};
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{
+    cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275, Prime64Offset59,
+};
 
 use super::paired_offset_eq_sum;
 use crate::native_root_relation::{
@@ -624,16 +628,25 @@ impl OrdinaryNativeRootPlan {
             required: usize,
             setup: &AkitaSetupDescriptor,
         ) -> Result<Vec<E>, AkitaError> {
-            derive_public_matrix_prefix::<F>(required, &setup.setup_seed)
-                .as_field_slice()
-                .iter()
-                .map(|value| {
-                    value
-                        .to_u128_checked()
-                        .map(E::from_u128)
-                        .ok_or(AkitaError::InvalidProof)
-                })
-                .collect()
+            let matrix = derive_public_matrix_prefix::<F>(required, &setup.setup_seed);
+            let source = matrix.as_field_slice();
+            let mut coefficients = Vec::new();
+            coefficients
+                .try_reserve_exact(source.len())
+                .map_err(|_| AkitaError::InvalidProof)?;
+            coefficients.resize(source.len(), E::zero());
+            cfg_chunks_mut!(coefficients, LIFT_CHUNK)
+                .zip(cfg_chunks!(source, LIFT_CHUNK))
+                .try_for_each(|(target, source)| {
+                    for (slot, coefficient) in target.iter_mut().zip(source) {
+                        *slot = coefficient
+                            .to_u128_checked()
+                            .map(E::from_u128)
+                            .ok_or(AkitaError::InvalidProof)?;
+                    }
+                    Ok::<_, AkitaError>(())
+                })?;
+            Ok(coefficients)
         }
         match self.profile.inner.matrix.sis_modulus_profile() {
             SisModulusProfileId::Q128Offset275 => derive::<Prime128Offset275, E>(required, setup),
@@ -656,26 +669,24 @@ impl OrdinaryNativeRootPlan {
 ///
 /// Entry `(row, column)` is the degree-`degree` ring at flat offset
 /// `(row * width + column) * degree` of the ordinary setup prefix. The
-/// coefficients are lifted once into the testing field; [`Self::ring`] copies
-/// one entry out.
-struct RoleRings<E> {
-    coefficients: Vec<E>,
+/// prefix is lifted once into the testing field, in parallel under `parallel`,
+/// and every role borrows it; [`Self::ring`] copies one entry out.
+struct RoleRings<'a, E> {
+    coefficients: &'a [E],
     width: usize,
     degree: usize,
 }
 
-impl<E: Field> RoleRings<E> {
-    fn new(matrix: &[E], rows: usize, width: usize, degree: usize) -> Result<Self, AkitaError> {
+/// Coefficients one parallel task lifts.
+const LIFT_CHUNK: usize = 1 << 13;
+
+impl<'a, E: Field> RoleRings<'a, E> {
+    fn new(matrix: &'a [E], rows: usize, width: usize, degree: usize) -> Result<Self, AkitaError> {
         let len = checked::product([rows, width, degree]).ok_or(AkitaError::InvalidProof)?;
-        let source = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
+        let coefficients = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
         if degree == 0 {
             return Err(AkitaError::InvalidProof);
         }
-        let mut coefficients = Vec::new();
-        coefficients
-            .try_reserve_exact(len)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        coefficients.extend_from_slice(source);
         Ok(Self {
             coefficients,
             width,
