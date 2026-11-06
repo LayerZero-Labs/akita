@@ -797,7 +797,7 @@ mod tests {
                 policy.exact_threshold(per_attempt),
                 policy.exact_threshold(one_shot)
             ),
-            (Some(2_254), Some(5_866))
+            (Some(2_254), Some(5_879))
         );
     }
 }

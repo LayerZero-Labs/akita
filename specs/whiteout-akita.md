@@ -17,9 +17,11 @@ implements and why it is sound and zero knowledge.
 level 0. The paper's witness w_j is the output witness of level j − 1. This
 note uses levels except when it quotes the paper. The cut is defined once:
 
-> `cut_level = k − 1 = 1` (`akita_params::zk::ZK_CUT_LEVEL`).
+> `cut_level = k − 1 = 2` (`akita_params::zk::ZK_CUT_LEVEL`).
 
-It is validated schedule data, and k = 2 is the only supported value.
+It is validated schedule data, and k = 3 is the only supported value. The cut
+was k = 2 before §5.5; the measurements of §5.2 predate the move and are
+given at k = 2, and §5.5 gives the k = 3 rows.
 
 ## Decision
 
@@ -229,8 +231,11 @@ at least the paper's and δ_fold only shrinks.
 The extra digits are applied before `rounded_up_role_a_inf_norm`, so the A
 matrix is re-priced at the enlarged range, as Lemma
 `wo:lem:randomized-base` requires for each schedule. The schedule audit
-recomputes the A bound from `num_digits_fold`. At k = 2 the re-priced A
-ranks for levels 0 and 1 equal the clear ranks, as paper §6.2 states.
+recomputes the A bound from `num_digits_fold`. At every masked level of the
+clear 36:1 row (levels 0, 1 and 2 at k = 3), re-pricing that row's fixed
+geometry with the one-shot digit ranges keeps each level's A rank, as paper
+§6.2 states. The zero-knowledge row is not part of that comparison: the
+planner plans it separately, with its own geometry and ranks.
 
 ### 2.3 The failure budget
 
@@ -243,15 +248,15 @@ so the union over all witness responses is
 Σ_ℓ W_ℓ · 2^−136 / ((cut_level + 1) · W_ℓ) = 2^−136 = δ_fold.
 ```
 
-A single-group level has `masked_folds = 2`, so each such fold fails with
-probability at most 2^−137. Theorem `wo:thm:zk` charges 2δ_fold ≤ 2^−135.
+A single-group level has `masked_folds = 3`, so each such fold fails with
+probability at most 2^−136/3 < 2^−137.5. Theorem `wo:thm:zk` charges 2δ_fold ≤ 2^−135.
 The paper's 2^−950 figure is per fold.
 
 At the headline level-1 shape the one-shot range meets
 `2N·exp(−reach²/2σ²) ≤ 2^−137`, checked in exact rational arithmetic with
-`ln 2 < 6932/10000`. The headline root's one-hot thresholds are 564 per
-attempt and 1469 one-shot; both fit its four base-8 digits (positive reach
-1755).
+`ln 2 < 6932/10000`. The headline root's one-hot thresholds, under the
+K = 16 source chunk, are 2,254 per attempt and 5,879 one shot at k = 3
+(5,866 at k = 2: a third rather than a half of the budget per level).
 
 The planner prices masked fold responses at the clear nonce width. That
 overcounts by at most two bytes per level and affects ranking only.
@@ -519,7 +524,8 @@ A must be re-priced (§2.6.5).
 - **T_att** is unchanged: it counts Σ attempts.
 - **ΔQ.** Per masked fold and candidate: the grind search (< 2^(g+7)) plus
   the squeeze (≤ 2^8 permutations); counting permutations over-counts oracle
-  queries. With N = 2^12, two masked folds and g ≤ 10:
+  queries. With N = 2^12, two masked folds (this design predates the k = 3
+  cut; a third fold adds one more term to ΔQ) and g ≤ 10:
 
   ```text
   ΔQ ≤ 2·2^12·(2^17 + 2^8) < 2^30.1,    T_att·ΔQ/2^ν ≈ 2^−218.5.
@@ -713,7 +719,7 @@ depends on witness data through the setup prefix.
 (cut_level + 1) · W_ℓ }` (§2.3). A setup prefix is sized for the same
 per-response target but is not counted in W_ℓ: its overflow is a public
 event, so it costs completeness (at most 2^−137 per masked level), not zero
-knowledge. Single-group levels keep `masked_folds = 2`. The sizing inputs
+knowledge. Single-group levels keep `masked_folds = 3`. The sizing inputs
 (`MaskedFoldSizing::for_group`) are per group:
 
 - the root's own group: the root source contract;
@@ -799,7 +805,7 @@ hiding handles.
 
 ### 4.1 The cut and admission
 
-`cut_level = 1` (k = 2). `ZkOpeningSchedule { prefix, cut }` holds the root
+`cut_level = 2` (k = 3). `ZkOpeningSchedule { prefix, cut }` holds the root
 plus the recursive folds up to `cut_level` and the cut parameters.
 `ZkOpeningSchedule::admit(schedule, root_source, claim_extension_degree)`
 enforces paper Def. `wo:def:source-cutoff` in release, each failure a typed
@@ -821,13 +827,18 @@ error:
   inner digit plane, and both matrices binding at the Σ radius (§5.1);
 - levels after `cut_level + 1` carry no randomness in any group.
 
+Admission lets level 0 offload its setup into level 1 and level 1 into
+level 2; the search never plans the second (§5.3). `validate_cut` accepts
+`cut_level = 2` only, so a k = 2 schedule is refused like any other cut.
+
 A trusted clear catalog rejects any row with a cut or with randomness, with
 distinct errors. The planner's masked path skips every candidate admission
 would refuse.
 
 The masked levels exclude the reduced-evaluation relation because the
-masked stage checks (§4.3) are written for the quotient relation, and with
-the cut fixed at 1 no test reaches a reduced-evaluation masked level. The
+masked stage checks (§4.3) are written for the quotient relation. The
+planner's masked and residual levels take only quotient-relation
+candidates, at evaluation-trace levels too (§5.5). The
 rows of §4.2 assume b = 8 and E = F; admission enforces both.
 
 ### 4.2 Transcript of a masked level
@@ -915,8 +926,9 @@ In the Stage-2 row, B collects both w(w+1) sites (the virtual term
 `batch·eq·w(w+1)` and the binary term `bb·binW·w(w+1)`), and R collects every
 w × public term (relation weight, packing, trace and the setup claim). Both
 are public. That is 3 products, 1 auxiliary slot and 3 operand pads (ri, u,
-w_eval) per masked level; at k = 2, 6 products, 2 auxiliary slots, 6
-operand pads and one affine cut row. These are the paper's counts (paper §6.1).
+w_eval) per masked level; at k = 3, 9 products, 3 auxiliary slots, 9
+operand pads and one affine cut row. These are the paper's per-level counts
+(paper §6.1, which gives 6 products and 2 auxiliary slots at its k = 2).
 
 **Recorded, then lowered.** The rows domain needs the masked auxiliary
 values, which jolt sends after the cut, so the masked verifier cannot push
@@ -1192,7 +1204,7 @@ lookup.
 
 **No terminal at or after the cut.** `LevelMasking::allows_terminal` drops
 terminal candidates at a masked level and at the level after the cut. With a
-Σ-bound residual a terminal at level 1 would otherwise be cheaper, and only
+Σ-bound residual a terminal after the cut would otherwise be cheaper, and only
 `admit` would catch it.
 
 **The other matrices the Σ-protocol touches** are jolt's. A_p commits to
@@ -1278,7 +1290,8 @@ matrices) is 0.37×, 0.54× and 0.63×, and the headline's w_k falls from
 10.75M to 8.40M coefficients because the planner re-selects level 1. The
 modeled bytes count raw u_a (1,280 coefficients); the proof sends
 `cm(u_a)` (§5.4). The single-group statement's e has ν = 23; the
-multi-group statement and the headline have ν = 27.
+multi-group statement and the headline have ν = 27. These figures are at
+k = 2; §5.5 gives the rows at k = 3.
 
 d = 256 would cut residual work further (rank 5), but it needs the
 presets' B search domain, today `{64, 128}`, to grow, and that domain is a
@@ -1288,17 +1301,18 @@ the monotone ceiling has no correctness role beyond bounding the search.
 
 ### 5.3 The cut level is never offloaded
 
-The priced search drops the offloaded edge into the cut level
-(`CutOffload::Direct`): the cut level never consumes a setup prefix outside
-the test-support entry `find_zk_schedule_offloading_at_cut_for_test`.
+Every zero-knowledge search drops the offloaded edge into the cut level
+(`ZkSearch::forbids_offload_from`): the cut level never consumes a setup
+prefix. This is a fixed rule of `ZkSearch`, the test-support entry
+`find_zk_schedule_offloading_the_root_for_test` included.
 
 - *Why.* A setup prefix at the cut level puts the parent's response and
   inner digits into w_k. w_k is the residual commitment's input, so it
   becomes part of the Σ-protocol's private vector s and of the response
   vector e. The planner's objective (setup first, then proof bytes and work)
   prices none of that.
-- *What happens without it.* The `R_128` residual makes the offload win on
-  setup from 35 variables. The 36:1 row then has w_k = 36.86M coefficients
+- *What happens without it* (measured at k = 2). The `R_128` residual makes
+  the offload win on setup from 35 variables. The 36:1 row then has w_k = 36.86M coefficients
   and e with ν = 29, which jolt-zk's `MAX_RESPONSE_NUM_VARS = 27` refuses:
   the row cannot be proved, though nothing unsound is accepted.
 - *Enforcement.* `the_priced_search_never_offloads_into_the_cut_level` pins
@@ -1307,12 +1321,15 @@ the test-support entry `find_zk_schedule_offloading_at_cut_for_test`.
   zero-knowledge row's e against the bound through jolt-zk's own response
   layout. The bound counts the pads, so it depends on the statement; it is a
   test over the checked-in rows, not a plan-time rejection.
-- *Masked Stage 3 at the cut stays supported.* The forced entry removes the
-  direct edge into the cut level and nothing else (the offloaded edge must
-  still lower the first direct setup, which it does at 31:1), and its rows
-  pass the same `admit`, Σ radius included. The multi-group test instance
-  plans its 31:1 + 14:1 row with it, so the masked Stage 3 of §4.6 is proved
-  end to end. Production rows do not use it.
+- *Masked Stage 3 at the cut.* `admit` still accepts it, but no search
+  plans it and no test proves it.
+- *Masked Stage 3 below the cut.* The test-support entry
+  (`RootOffload::Forced`) removes the direct root edge and nothing else (the
+  offloaded edge must still lower the first direct setup, which it does at
+  31:1), and its rows pass the same `admit`, Σ radius included. The
+  multi-group test instance plans its 31:1 + 14:1 row with it, so level 0's
+  Stage 3 and a level-1 setup prefix (§4.6) are proved end to end. The
+  priced search plans the same shape for the 36:1 headline.
 
 ### 5.4 The compressed residual commitment
 
@@ -1395,9 +1412,73 @@ the compression and read only its `payload_len`; `ClaimReplay::successor_payload
 returns it at the cut, after checking the image length against
 `ResidualGeometry::commitment_len`. `ResidualClaim::commitment` is
 `cm(u_a)`. The root sends its successor raw: `prove_masked_prefix` refuses
-a cut at level 0, and admission pins `ZK_CUT_LEVEL = 1`.
+a cut at level 0, and admission pins `ZK_CUT_LEVEL = 2`.
 `BackendCompression` is the response prover's compression on any CPU
 backend, public under `test-support` only.
+
+### 5.5 The cut at k = 3
+
+`ZK_CUT_LEVEL = 2`: levels 0, 1 and 2 are masked and level 3 holds the
+residual commitment. `validate_cut` accepts this one value, so a k = 2
+schedule is refused like any other cut. The per-level rules of §4.1 are
+unchanged; only their range grows.
+
+**Why.** At k = 2 the cut level is level 1, which Akita always folds by
+coefficient packing. The residual w_k is then level 1's output, before the
+evaluation-trace folds shrink the witness. One more masked fold divides w_k
+by about 2.2–2.9 at the one-hot rows, and with it the Σ-protocol's private
+vector s and response vector e (jolt's `specs/whiteout-sigma.md`).
+
+**Planner rules.** At k = 2 neither masked level reached the
+evaluation-trace search, so two gaps there were latent:
+
+- `derive_recursive_candidate_views`, the combined terminal and fold search
+  for an evaluation-trace level, bypassed `derive_fold_candidates` and with
+  it the zero-knowledge restrictions (the ℓ∞ route, the quotient relation,
+  base 8, a single chunk, the residual's base 16 and d_A = d_B). A level
+  whose `LevelMasking` allows no terminal now takes `derive_fold_candidates`
+  directly.
+- `append_selective_l2_candidates` skipped masked levels but not the level
+  after the cut, so the residual level could take an ℓ2 inner matrix below
+  its Σ-binding rank. It now runs at clear levels only: the Σ-binding table
+  prices the ℓ∞ route alone.
+
+Before either fix the search produced rows that `admit` refused (masked
+under reduced evaluation, an open basis other than 8, an `A_a` of rank 2
+below its Σ-binding rank 8); `admit` itself is unchanged.
+
+**Offloads.** The cut level is never offloaded (§5.3), a fixed rule of
+`ZkSearch` rather than an option. Level 0 may offload into masked level 1,
+and the priced search does so at the 36:1 headline. The test-support entry
+`find_zk_schedule_offloading_the_root_for_test` (`RootOffload::Forced`)
+drops the direct root edge, so the 31:1 + 14:1 proving instance and the
+37:1 + 14:1 planning tests get level 0's Stage 3 and a level-1 setup prefix,
+the shape the headline plans. Forcing the edge into the cut instead, as at
+k = 2, would force level 1 into level 2; the search could satisfy that only
+with a root whose output was 3.2G coefficients (against 30M at k = 2), and
+the proving tests would run for hours.
+
+**One-shot budget.** Each witness response at a masked level gets
+`2^−136 / (3·W_ℓ)` (§2.3, §3.4), so the frozen one-shot headline threshold
+moves from 5,866 to 5,879 digits; the per-attempt threshold is unchanged.
+
+**Rows** (default set; w_k is the cut level's output in coefficients):
+
+| row | levels | w_k, k = 2 → 3 | setup fields | first direct | modeled bytes |
+|---|---|---|---|---|---|
+| dense 14:1 | 7 → 8 | 494,784 → 450,752 | 1,885,440 → 1,512,576 | 32,768 | 98,521 → 99,233 |
+| one-hot 31:1 + 14:1 | 8 → 8 | 4,050,496 → 1,399,872 | 6,964,480 → 4,194,304 | 4,194,304 | 104,727 → 102,753 |
+| one-hot 36:1 | 8 → 9 | 9,733,056 → 4,422,720 | 22,555,520 → 33,554,432 | 33,554,432 → 8,388,608 | 106,113 → 107,598 |
+
+The dev set's modeled bytes move identically. Every clear row is unchanged.
+The smaller residual shrinks the response vector e: its rows are now ν = 23
+(single-group end-to-end statement), ν = 25 (multi-group one) and ν = 26
+(headline), replacing 23 and 27; the 31:1 + 14:1 catalog row gives ν = 24.
+The masked level 2 runs the quotient relation at d = 64; the residual stays
+at d = 128 (§5.2). The 36:1 headline's level 1 consumes level 0's setup.
+
+**Not done.** The paper's δ_LHL slice count and knowledge-error ledger at
+k = 3 are not recomputed here.
 
 ## 6. The response proof
 
@@ -1561,7 +1642,8 @@ opening error are separate.
 | binary constraint | `Σ_j eq(τ, j)·1_{I_bin}(j)·e_j(e_j + 1) = 0` at τ | multilinear in τ | ν/q |
 | fused sumcheck | `A·E + B·E(E + 1)` | degree 3, ν rounds | 3ν/q |
 
-At the headline (ν = 27, ⌈log₂ m⌉ ≤ 27, ⌈log₂ n_×⌉ ≤ 10) the explicit
+At ν = 27 (jolt-zk's `MAX_RESPONSE_NUM_VARS`, above every checked-in row;
+the headline's is 26), ⌈log₂ m⌉ ≤ 27 and ⌈log₂ n_×⌉ ≤ 10, the explicit
 rows sum to at most
 
 ```text
@@ -1661,12 +1743,12 @@ in both artifact sets and catalog snapshots:
 - `fp128_onehot_recursive_zk`: the 36:1 headline, and 31:1 beside a 14:1
   hiding precommit (as Jolt commits untrusted advice);
 - `fp128_response_digits`, clear: one row per end-to-end statement's e
-  (ν = 23 and 27).
+  (ν = 23, 25 and 26).
 
 `schedule-planner-cost.tsv` carries the zero-knowledge rows, so the
 schedule-artifact drift job covers them. CI `test-zk` runs the workspace
 tests with `zk`, the end-to-end gating tests with akita-pcs's
-`test-support` and `logging`, and the feature-tree check of §1.1;
+`test-support` and `logging-transcript` (beside `transcript-keccak`), and the feature-tree check of §1.1;
 `test-dev-protocol` also runs `tests/masked_prefix.rs`.
 
 ## 8. Security summary, mapped to the paper
@@ -1704,8 +1786,10 @@ Clear invariance: `golden_proof_digests` and the byte-identity dump hold
   (`one_shot_headline_balanced_fold_meets_the_per_fold_target`). The
   balanced cap is pinned as the least integer meeting the closed form, with
   one and two witness windows, and the headline root's one-hot thresholds
-  are frozen (564, 1469). The re-priced A ranks at the masked levels equal
-  the clear ranks (`one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels`).
+  are frozen (2,254 per attempt, 5,879 one shot). Re-pricing the clear
+  headline row's fixed geometry with the one-shot digit ranges keeps the
+  clear A rank at every masked level
+  (`one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels`).
 - `ZkOpeningSchedule::admit` rejects each violation of §4.1 and §3.4 with its
   own error: an ℓ2 route at a masked level; a precommitted group with no or
   wrong randomness; a setup prefix with randomness; short fold digits in a
@@ -1893,8 +1977,8 @@ the padding test of §6.4.
   paper authors; not built.
 - **Paper items still open:** d_A = d_B for the residual, the box envelope,
   and ⊥ after T_att.
-- **Not exercised.** Product stages, extension-field claims and k > 2;
-  admission rejects all three. The headline 36:1 row is planned and
+- **Not exercised.** Product stages, extension-field claims and any k other
+  than 3; admission rejects all three. The headline 36:1 row is planned and
   admitted but not proved here; its sizes are modeled. The one-hot Chernoff
   solve reaching 2^−137 within its λ grid is checked only on the headline
   shapes; elsewhere the deterministic fallback applies with δ = 0.

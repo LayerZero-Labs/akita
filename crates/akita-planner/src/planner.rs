@@ -900,25 +900,26 @@ pub fn find_zk_schedule(
         ring_challenge_config,
         super::schedule_params::ZkSearch {
             schedule: zk,
-            cut_offload: super::schedule_params::CutOffload::Direct,
+            root_offload: super::schedule_params::RootOffload::Priced,
         },
     )
 }
 
-/// [`find_zk_schedule`] whose cut level consumes the root's setup as a
-/// setup prefix: the search drops the direct edge into the cut level and
-/// keeps every other rule (the offloaded edge must still lower the first
-/// direct setup). Test support only: the result is a legitimate statement
-/// (it passes the same [`akita_params::zk::ZkOpeningSchedule::admit`]), but
-/// [`find_zk_schedule`] never plans it, so a test can prove a masked
-/// Stage 3 at the cut (`specs/whiteout-akita.md` §5.3).
+/// [`find_zk_schedule`] whose masked level 1 consumes the root's setup as a
+/// setup prefix: the search drops the direct root edge and keeps every
+/// other rule (the offloaded edge must still lower the first direct setup).
+/// Test support only: the result is a legitimate statement (it passes the
+/// same [`akita_params::zk::ZkOpeningSchedule::admit`]), and
+/// [`find_zk_schedule`] plans the same shape from 36 variables, so a test
+/// can prove a masked Stage 3 at an affordable size
+/// (`specs/whiteout-akita.md` §5.3).
 ///
 /// # Errors
 ///
 /// As [`find_zk_schedule`]; [`AkitaError::UnsupportedSchedule`] when no
-/// admissible row offloads at the cut.
+/// admissible row offloads the root.
 #[cfg(all(feature = "zk", feature = "test-support"))]
-pub fn find_zk_schedule_offloading_at_cut_for_test(
+pub fn find_zk_schedule_offloading_the_root_for_test(
     key: &ScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
@@ -937,7 +938,7 @@ pub fn find_zk_schedule_offloading_at_cut_for_test(
         ring_challenge_config,
         super::schedule_params::ZkSearch {
             schedule: zk,
-            cut_offload: super::schedule_params::CutOffload::Forced,
+            root_offload: super::schedule_params::RootOffload::Forced,
         },
     )
 }
