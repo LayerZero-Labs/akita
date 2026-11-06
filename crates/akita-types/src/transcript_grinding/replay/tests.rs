@@ -390,6 +390,51 @@ fn grinding_preview_rejects_exhausted_plan_without_mutating_replay() {
     prover.finish().unwrap();
 }
 
+/// A replay stopped after level 0 of a two-level plan ends at a cut at level 0,
+/// but not at a cut at level 1, and not before it consumed level 0.
+#[test]
+fn finish_through_requires_exactly_the_levels_up_to_the_cut() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let batch = |level| {
+        GrindingRun::proof_of_work(GrindingSite::EvaluationBatch { level }, 3, order).unwrap()
+    };
+    let plan = GrindingPlan::new(vec![batch(0), batch(1)], order).unwrap();
+    let replay_level_0 = |cut_level| {
+        let mut state = new_prover_channel(b"finish-through");
+        let mut prover = ProverGrinding::new(&mut state, &plan);
+        prover
+            .grinded_ext_challenge::<F>(GrindingSite::EvaluationBatch { level: 0 })
+            .unwrap();
+        prover.finish_through(cut_level)
+    };
+    assert!(replay_level_0(0).is_ok());
+    assert!(matches!(
+        replay_level_0(1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+
+    let mut state = new_prover_channel(b"finish-through");
+    let proof = {
+        let mut prover = ProverGrinding::new(&mut state, &plan);
+        prover
+            .grinded_ext_challenge::<F>(GrindingSite::EvaluationBatch { level: 0 })
+            .unwrap();
+        prover.finish_through(0).unwrap();
+        state.narg_string().to_vec()
+    };
+    let mut state = new_verifier_channel(b"finish-through", &proof);
+    assert!(matches!(
+        VerifierGrinding::new(&mut state, &plan).finish_through(0),
+        Err(AkitaError::InvalidProof)
+    ));
+    let mut state = new_verifier_channel(b"finish-through", &proof);
+    let mut verifier = VerifierGrinding::new(&mut state, &plan);
+    verifier
+        .grinded_ext_challenge::<F>(GrindingSite::EvaluationBatch { level: 0 })
+        .unwrap();
+    verifier.finish_through(0).unwrap();
+}
+
 #[test]
 fn grinding_finish_rejects_unconsumed_plan() {
     let plan = plan();
