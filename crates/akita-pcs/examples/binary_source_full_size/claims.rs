@@ -4,7 +4,7 @@ use akita_algebra::binary::BinaryField128;
 use akita_error::{checked, AkitaError};
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
-    PrimePlaneClaim,
+    PrimeGroupClaim, PrimePlaneClaim,
 };
 use jolt_field::{CanonicalEncoding, One, Ring, Zero};
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub(super) struct Claims {
     pub word_point: Option<Vec<[u8; 16]>>,
     pub word_value: [u8; 16],
-    pub primes: Vec<(Vec<u128>, u128)>,
+    pub prime: Option<(Vec<u128>, u128)>,
 }
 
 pub(super) fn descriptor(log_carriers: usize) -> Result<BinarySourceDescriptor, AkitaError> {
@@ -41,9 +41,9 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
     let mut result = Claims {
         word_point: None,
         word_value: [0; 16],
-        primes: Vec::new(),
+        prime: None,
     };
-    if shape != "five-prime-claims" {
+    {
         let point = (0..log)
             .map(|axis| (31 + axis as u128 * 17).to_le_bytes())
             .collect::<Vec<_>>();
@@ -60,17 +60,10 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         result.word_value = (u128::from(low) | (u128::from(high) << 64)).to_le_bytes();
         result.word_point = Some(point);
     }
-    let planes = if shape == "binary-claim" {
-        0
-    } else if shape == "five-prime-claims" {
-        5
-    } else {
-        1
-    };
-    for plane in 0..planes {
+    if shape != "binary-claim" {
         let arity = checked::sum([8, log]).ok_or(AkitaError::InvalidProof)?;
         let point = (0..arity)
-            .map(|axis| 19 + axis as u128 * 7 + plane as u128 * 13)
+            .map(|axis| 19 + axis as u128 * 7)
             .collect::<Vec<_>>();
         let mut bit_weights = vec![F::one()];
         for &r in point.get(..8).ok_or(AkitaError::InvalidProof)? {
@@ -115,7 +108,7 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
             .ok_or(AkitaError::InvalidProof)?
             .to_u128_checked()
             .ok_or(AkitaError::InvalidProof)?;
-        result.primes.push((point, value));
+        result.prime = Some((point, value));
     }
     Ok(result)
 }
@@ -134,16 +127,13 @@ impl Claims {
             .map(|point| BinaryWordClaim::new(descriptor, [29; 32], point.clone(), self.word_value))
             .transpose()
     }
-    pub(super) fn prime(&self) -> Vec<PrimePlaneClaim> {
-        self.primes
-            .iter()
-            .enumerate()
-            .map(|(plane, (point, value))| PrimePlaneClaim {
+    pub(super) fn prime(&self) -> Option<PrimeGroupClaim> {
+        self.prime.as_ref().map(|(point, value)| PrimeGroupClaim {
+            point: point.clone(),
+            evaluations: vec![PrimePlaneClaim {
                 polynomial: 0,
-                point: point.clone(),
-                tensor_component: (plane % 4) as u8,
                 value: *value,
-            })
-            .collect()
+            }],
+        })
     }
 }

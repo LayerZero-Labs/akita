@@ -302,7 +302,7 @@ pub(super) fn authenticate_terminal(
     fault_witness::reconstruct(
         manifest,
         Some(claim),
-        &PrimePlaneManifest::new(manifest.descriptor(), &[])?,
+        &PrimePlaneManifest::new(manifest.descriptor(), None)?,
         &plan,
         &[53; 32],
         source,
@@ -324,7 +324,7 @@ pub(super) fn authenticate_terminal_relation(
     let digits = fault_witness::reconstruct(
         manifest,
         Some(honest),
-        &PrimePlaneManifest::new(manifest.descriptor(), &[])?,
+        &PrimePlaneManifest::new(manifest.descriptor(), None)?,
         &plan,
         &[53; 32],
         source,

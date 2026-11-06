@@ -10,6 +10,12 @@
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
+The measurement rows below record the earlier multi-point statement. Current
+prime claims use one point per group and one plane per claimed polynomial,
+with shared row, column and coefficient weights; see
+[binary-source-opening.md](binary-source-opening.md#prime-evaluation-planes).
+The change only narrows the statement and retains the same equations.
+
 ## Summary
 
 The binary root proves its fused relation and range-image sumcheck (Stage 2)
@@ -50,7 +56,7 @@ is the serial conversion of the `2^n` compact digits into field elements when
 the prover enters its lane phase in round 0. The 32 sumcheck rounds take
 91 ms; round 0 alone takes 17.4 ms.
 
-The 2^22 `five-prime-claims` shape spends 584 ms materializing and 592 ms in Stage 2.
+At 2^22, the removed multi-point shape spends 584 ms materializing and 592 ms in Stage 2.
 
 ## How Stage 2 reads the weight
 
@@ -228,7 +234,7 @@ At 2^22 `binary-and-prime-claims` (`n = 25`, block 256):
 ## Expected gains
 
 These are estimates from the cost model and the profile above; measurements
-follow below. All four shapes have `n = 25` at 2^22 except `five-prime-claims` (`n = 26`).
+follow below. All four shapes have `n = 25` at 2^22 except the removed multi-point shape (`n = 26`).
 
 | Shape | Weights today → structured (ms) | Stage 2 today → structured (ms) | Complete proving |
 | --- | --- | --- | --- |
@@ -350,7 +356,7 @@ What these measurements showed:
   under 0.1 ms, because round 0 reads the packed digits.
 - **Profile build.** The profile build is the larger remaining part, and the
   authentication family dominates it: 52 ms (`binary-claim`), 76 ms (`binary-and-prime-claims`) and
-  170 ms (`five-prime-claims`) at 2^22. Its setup columns have no shared structure, so
+  170 ms (the removed multi-point shape) at 2^22. Its setup columns have no shared structure, so
   its own rows are as dense as the table over the authenticated region. The
   build is bound by weighing the setup entries, which runs in parallel
   batches; streaming into the profiles is not the bottleneck. A synthetic
@@ -360,7 +366,7 @@ What these measurements showed:
   The dense table and the dense field-element witness of round 0 no longer
   exist together.
 - **Against the estimates.** Complete proving gains match the estimates for
-  `binary-and-prime-claims` and `five-prime-claims`. The weight build is slower than estimated:
+  `binary-and-prime-claims` and the removed multi-point shape. The weight build is slower than estimated:
   authentication costs what it did in the dense build, and the cost model
   undercounted it.
 - **The 0.4–0.8 s target.** Complete proving at 2^22 `binary-and-prime-claims` was about

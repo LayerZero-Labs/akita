@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
-//! Ordinary Stage 1 digit-range session at the size of the `five-prime-claims` first
-//! suffix fold: 19,017,216 balanced base-64 digits on a 2^25 domain.
+//! Ordinary Stage 1 digit-range session for the `binary-and-prime-claims` first
+//! suffix fold: 17,269,248 balanced base-64 digits on a 2^25 domain.
 
 use akita_cpu_backend::standalone::digit_range_session;
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -9,7 +9,7 @@ use jolt_field::Prime128Offset275 as F;
 use std::hash::{Hash, Hasher};
 use std::hint::black_box;
 
-const LIVE_DIGITS: usize = 19_017_216;
+const LIVE_DIGITS: usize = 17_269_248;
 const NUM_VARS: usize = 25;
 const RING_VARIABLES: usize = 9;
 

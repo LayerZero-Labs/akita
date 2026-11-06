@@ -64,7 +64,6 @@ pub(super) fn main() -> Result<()> {
             "binary-claim",
             "binary-and-prime-claims",
             "binary-and-prime-claims-plus-ordinary",
-            "five-prime-claims",
         ]
         .contains(&shape.as_str())
     {
@@ -208,7 +207,10 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let typed = BinaryTypedPrefix::new(
         &manifest,
         claims.word(&descriptor)?.is_some(),
-        claims.prime().len(),
+        claims
+            .prime()
+            .as_ref()
+            .map_or(0, |prime| prime.evaluations.len()),
         schedule.recursive_folds[0].params.d_a(),
     )?;
     let later = schedule
@@ -295,7 +297,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         )?;
     }
     akita_transcript::finish_proof_ranges(&prover);
-    metrics::proof(prover.narg_string(), log, shape != "five-prime-claims")?;
+    metrics::proof(prover.narg_string(), log, true)?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
     prover.public_message(&BytesMsg(b"application-suffix"));
     let fixture = Fixture {

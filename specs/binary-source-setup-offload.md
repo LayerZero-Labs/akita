@@ -13,7 +13,10 @@
 > **Accepted and implemented.** The opening spec,
 > [binary-source-opening.md](binary-source-opening.md), describes the current
 > protocol and records the measurements. This note keeps the argument.
-> Sections 1 and 2 describe the protocol before the change.
+> Sections 1 and 2 describe the protocol before the change. Measurement rows
+> retain the earlier multi-point statement. Current prime claims have one
+> shared point per group and one plane per claimed polynomial; this narrows
+> the statement while retaining the same equations.
 
 ## Summary
 
@@ -23,9 +26,9 @@ change, the verifier evaluated both authentication rows at the Stage 2 point
 `r` by reading every B/D setup column. One column is 2 rows of 64
 coefficients, each squeezed from SHAKE256, so the read is linear in the setup:
 62,208 image columns plus 28,512 opening columns at 2^22 `binary-and-prime-claims`, and
-62,208 plus 139,320 at 2^22 `five-prime-claims`. After the byte-preserving speedups
+62,208 plus 139,320 for the removed multi-point shape at 2^22. After the byte-preserving speedups
 earlier on this branch, the read still cost 28.0 ms of a 43.2 ms verification
-at 2^22 `binary-and-prime-claims`, and 58.3 ms of 72.3 ms at 2^22 `five-prime-claims`.
+at 2^22 `binary-and-prime-claims`, and 58.3 ms of 72.3 ms for the removed multi-point shape at 2^22.
 
 The typed A product already avoids this cost. Its setup lives in a typed setup
 prefix that setup preparation commits. Stage 3 reduces its contribution to one
@@ -42,7 +45,7 @@ Online verification reads no setup entry.
 The change adds no sumcheck, no batching challenge and no proof field. It
 enlarges the typed prefix only where the A padding cannot hold the pieces:
 from 2^24 to 2^25 cells at 2^22 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`, and
-to 2^26 for `five-prime-claims` at both sizes. At 2^22 `binary-claim` and at 2^23 `binary-claim`,
+to 2^26 for the removed multi-point shape at both sizes. At 2^22 `binary-claim` and at 2^23 `binary-claim`,
 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`, the prefix domain is unchanged. Each
 added Stage 3 round adds `2/P = 2^-127` of interactive error, 32 bytes of
 round message and the round's scheduled grinding nonce. The prover now builds
@@ -212,7 +215,7 @@ length is 2^24 at 2^22 and 2^25 at 2^23, as before the change.
 | 2^23 | five-prime-claims | 25,795,584 | 16,252,928 | 9,542,656 | 43,097,088 | 2^25 | 2^26 |
 
 At 2^22 `binary-and-prime-claims` the digit cells exceed the A padding by 3,485,696 cells,
-so no placement keeps the 2^24 domain. At 2^22 `five-prime-claims` they exceed it by
+so no placement keeps the 2^24 domain. At 2^22 the removed multi-point shape they exceed it by
 17,669,120 cells, and the A tensor plus all digit cells (42,572,800) exceed
 2^25, so no placement keeps 2^25.
 
@@ -367,8 +370,8 @@ the weight. Measured times are in the opening spec.
 grinding nonce, which is one byte at the measured schedules. The claim and the
 prefix evaluation are unchanged at 32 bytes. Predicted level-0 change: none at
 2^22 `binary-claim` and at 2^23 `binary-claim`, `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`; +33
-bytes at 2^22 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`; +66 at 2^22 `five-prime-claims`;
-+33 at 2^23 `five-prime-claims`. Where `k' > k`, the successor folds also open a larger
+bytes at 2^22 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`; +66 for the removed multi-point shape at 2^22;
++33 for the removed multi-point shape at 2^23. Where `k' > k`, the successor folds also open a larger
 prefix, which changes their schedule. Everywhere, the prefix values change,
 and the successors' Golomb–Rice-coded tail responses
 ([`tail_segments.rs`](../crates/akita-types/src/proof/tail_segments.rs))
@@ -451,7 +454,7 @@ host before and after it:
 | 2^22 | binary-claim | 24 | 5,206,458,368 → 5,189,353,472 |
 | 2^22 | five-prime-claims | 26 | 10,007,166,976 → 10,012,590,080 |
 
-Removing a 256 MiB (`binary-claim`) or 1 GiB (`five-prime-claims`) Stage 3 table changed the
+Removing a 256 MiB (`binary-claim`) or 1 GiB (the removed multi-point shape) Stage 3 table changed the
 process peak by less than 20 MB. Whole-process peak RSS cannot attribute the
 peak to a phase, in part because the allocator may retain freed memory, so
 which phase sets the peak is unmeasured. Where `k' > k` the growth is
@@ -466,7 +469,7 @@ source of the growth has not been located.
 This removes the SHAKE derivation but not the linear pass. The verifier would
 still compute `<M_{row,c}, K(e_c)>` for every column. It would also hold
 `columns * 2 * 64 * 16` bytes: 185,794,560 bytes at 2^22 `binary-and-prime-claims`
-(90,720 columns) and 412,729,344 bytes at 2^22 `five-prime-claims` (201,528 columns).
+(90,720 columns) and 412,729,344 bytes for the removed multi-point shape at 2^22 (201,528 columns).
 Rejected.
 
 ### 9.2 Structured B/D setup
@@ -491,11 +494,11 @@ The first implementation placed every copy after the A tensor in blocks of
 `2^e` columns. It is simpler: no regions, one aligned base per block. It
 always enlarges the prefix, because the A tensor alone already fills a power
 of two: 2^24 → 2^25 at 2^22 `binary-claim`, `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`,
-2^24 → 2^26 at 2^22 `five-prime-claims`, and 2^25 → 2^26 at every 2^23 shape. Measured at
+2^24 → 2^26 for the removed multi-point shape at 2^22, and 2^25 → 2^26 at every 2^23 shape. Measured at
 full size, it removed the B/D derivation as intended (verification 15.5 ms to
 17.7 ms for the three binary-only shapes at both sizes). But the larger prefix
 doubled the prover's peak RSS at 2^22 `binary-and-prime-claims` (5.06 GB to 10.35 GB),
-added 1,673 bytes there (87,805 to 89,478) and 9,344 bytes at 2^22 `five-prime-claims`,
+added 1,673 bytes there (87,805 to 89,478) and 9,344 bytes for the removed multi-point shape at 2^22,
 and raised verifier RSS by 42 to 80 MB at 2^22, because the successor folds
 open the larger prefix. Packing into the A padding keeps the verifier gain.
 It restores the 2^24 and 2^25 domains wherever the digit cells fit.

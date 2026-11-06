@@ -2,7 +2,8 @@
 use super::*;
 use akita_challenges::{FoldDraw, ProverFoldDraw, VerifierFoldDraw};
 use akita_types::binary_source::{
-    binary_root_challenges, binary_root_statement, PrimePlaneClaim, PrimePlaneManifest,
+    binary_root_challenges, binary_root_statement, PrimeGroupClaim, PrimePlaneClaim,
+    PrimePlaneManifest,
 };
 use jolt_field::CanonicalEncoding;
 
@@ -42,12 +43,14 @@ fn equality(point: &[u128], index: usize) -> F {
         })
 }
 
-fn claim(words: &[u128], polynomial: usize, component: u8, point_id: usize) -> PrimePlaneClaim {
-    let point = (0..11)
-        .map(|axis| 19 + axis as u128 * 7 + point_id as u128 * 13)
-        .collect::<Vec<_>>();
+fn prime_point() -> Vec<u128> {
+    (0..11).map(|axis| 19 + axis as u128 * 7).collect()
+}
+
+fn claim(words: &[u128], polynomial: usize) -> PrimePlaneClaim {
+    let point = prime_point();
     // Only 128 coefficients are live. Coefficients 128..162 and 162..256
-    // are zero. Every scalar row participates; the component is an identity tag.
+    // are zero. Every scalar row participates at the shared point.
     let value = words.iter().enumerate().fold(F::zero(), |sum, (i, word)| {
         let carrier_weight = equality(&point[8..], i);
         (0..128).fold(sum, |sum, bit| {
@@ -60,8 +63,6 @@ fn claim(words: &[u128], polynomial: usize, component: u8, point_id: usize) -> P
     });
     PrimePlaneClaim {
         polynomial,
-        point,
-        tensor_component: component,
         value: value.to_u128_checked().unwrap(),
     }
 }
@@ -71,17 +72,17 @@ fn prime_plane_prime_only() {
     init_rayon_pool();
     run_on_large_stack(|| {
         fixture(false, false, 1, 1, true);
-        fixture(false, false, 2, 1, false);
-        fixture(false, false, 5, 1, true);
+        fixture(false, false, 2, 2, false);
+        fixture(false, false, 5, 5, true);
     });
 }
 
 #[test]
-fn prime_plane_word_and_one_two_five_planes() {
+fn prime_plane_word_and_several_polynomials() {
     init_rayon_pool();
     run_on_large_stack(|| {
         for planes in [1, 2, 5] {
-            fixture(false, true, planes, 1, false);
+            fixture(false, true, planes, planes, false);
         }
     });
 }
@@ -91,14 +92,14 @@ fn prime_plane_mixed_ordinary_group() {
     init_rayon_pool();
     run_on_large_stack(|| {
         for planes in [1, 2, 5] {
-            fixture(true, true, planes, 1, false);
-            fixture(true, false, planes, 1, false);
+            fixture(true, true, planes, planes, false);
+            fixture(true, false, planes, planes, false);
         }
     });
 }
 
 #[test]
-fn prime_plane_several_polynomials_do_not_share() {
+fn prime_plane_several_polynomials_at_one_point() {
     init_rayon_pool();
     run_on_large_stack(|| {
         fixture(false, true, 0, 2, false);
@@ -114,11 +115,13 @@ fn projection_two_polynomials_and_prime_plane_rejects_y_mutations() {
 }
 
 fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: bool) {
-    let layout = PolynomialGroupLayout::new(if mixed { 23 } else { 18 }, owners);
-    let catalog = if owners == 1 {
-        test_catalog()
+    let (layout, catalog) = if owners == 1 {
+        (
+            PolynomialGroupLayout::new(if mixed { 23 } else { 18 }, owners),
+            test_catalog(),
+        )
     } else {
-        multiple_owner_catalog(layout)
+        multiple_owner_catalog(owners, mixed)
     };
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
     let carrier = scheme
@@ -147,7 +150,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             .clone()
     };
     let setup = scheme
-        .setup_prover(if mixed { 23 } else { 18 }, owners + usize::from(mixed))
+        .setup_prover(layout.num_vars().max(18), owners + usize::from(mixed))
         .unwrap();
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone()).unwrap());
     let descriptor = descriptor(owners);
@@ -186,15 +189,47 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         .unwrap();
     assert_eq!(packed_bytes, logical_bytes);
     let word_claim = word.then(|| honest_claim(&descriptor, &words[0]));
-    let primes = (0..planes)
-        .map(|plane| {
-            let owner = plane % owners;
-            let point_id = plane / owners;
-            claim(&words[owner], owner, (point_id % 4) as u8, point_id)
-        })
-        .collect::<Vec<_>>();
-    let checked = PrimePlaneManifest::new(&descriptor, &primes).unwrap();
+    let primes = (planes > 0).then(|| PrimeGroupClaim {
+        point: prime_point(),
+        evaluations: (0..planes)
+            .map(|owner| claim(&words[owner], owner))
+            .collect(),
+    });
+    let checked = PrimePlaneManifest::new(&descriptor, primes.clone()).unwrap();
     assert_eq!(checked.planes().len(), planes);
+    if word && planes == 1 && owners == 1 && !mixed {
+        assert!(
+            PolynomialGroupClaims::<F, _>::new_binary_planes(commitment.clone(), None, None)
+                .is_err()
+        );
+        for mutation in 0..7 {
+            let mut bad = primes.clone().unwrap();
+            match mutation {
+                0 => bad.evaluations.clear(),
+                1 => bad.evaluations.push(bad.evaluations[0].clone()),
+                2 => bad.evaluations[0].polynomial = owners,
+                3 => bad.evaluations[0].value = akita_params::binary_setup::BINARY_SETUP_P,
+                4 => bad.point[0] = akita_params::binary_setup::BINARY_SETUP_P,
+                5 => {
+                    bad.point.pop();
+                }
+                _ => {
+                    let mut extra = bad.evaluations[0].clone();
+                    extra.value ^= 1;
+                    bad.evaluations.push(extra);
+                }
+            }
+            assert!(
+                PolynomialGroupClaims::<F, _>::new_binary_planes(
+                    commitment.clone(),
+                    word_claim.clone(),
+                    Some(bad)
+                )
+                .is_err(),
+                "mutation {mutation}"
+            );
+        }
+    }
     let (ordinary, ordinary_handle, ordinary_point, ordinary_value) = if mixed {
         let coefficients = (0..1usize << 18)
             .map(|i| F::from_u64((i & 1) as u64))
@@ -266,7 +301,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             &prefixes.get(&first_prefix).unwrap().public,
         )
         .unwrap();
-    let prove = |primes: Vec<PrimePlaneClaim>, handle| {
+    let prove = |primes: Option<PrimeGroupClaim>, handle| {
         let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
             commitment.clone(),
             word_claim.clone(),
@@ -348,7 +383,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         proof.len()
     );
     let verifier = scheme.verifier(verifier_setup).unwrap();
-    let verify = |bytes: &[u8], commitment: &CommittedGroup<F>, primes: Vec<PrimePlaneClaim>| {
+    let verify = |bytes: &[u8], commitment: &CommittedGroup<F>, primes: Option<PrimeGroupClaim>| {
         let binary = PolynomialGroupClaims::<F, _>::new_binary_planes(
             commitment.clone(),
             word_claim.clone(),
@@ -400,15 +435,15 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     let no_a_reads = akita_types::binary_source::BinaryAReadGuard::forbid();
     verify(&proof, &commitment, primes.clone()).unwrap();
     drop(no_a_reads);
-    if planes == 1 {
-        let mut duplicated = primes.clone();
-        duplicated.push(primes[0].clone());
-        let duplicate = prove(duplicated, committed.private_handle.clone());
+    if planes > 1 {
+        let mut reordered = primes.clone().unwrap();
+        reordered.evaluations.reverse();
+        let reordered_proof = prove(Some(reordered), committed.private_handle.clone());
         assert_eq!(
-            proof, duplicate.0,
-            "identical requests must share one plane and canonical statement"
+            proof, reordered_proof.0,
+            "polynomial ordering changed proof bytes"
         );
-        assert_eq!(continuation, duplicate.1);
+        assert_eq!(continuation, reordered_proof.1);
     }
     if !mutations {
         return;
@@ -416,7 +451,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     let rejects = |label: &str,
                    bytes: &[u8],
                    commitment: &CommittedGroup<F>,
-                   primes: Vec<PrimePlaneClaim>| {
+                   primes: Option<PrimeGroupClaim>| {
         let result = catch_unwind(AssertUnwindSafe(|| verify(bytes, commitment, primes)));
         assert!(result.is_ok(), "{label} caused verifier panic");
         assert!(result.unwrap().is_err(), "{label} accepted");
@@ -430,18 +465,16 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     projection::mutate_values(&proof, successor_coefficients, word, owners, |bytes| {
         rejects("projection output", bytes, &commitment, primes.clone());
     });
-    for index in 0..primes.len() {
-        let mut altered = primes.clone();
-        altered[index].value ^= 1;
-        rejects("prime value", &proof, &commitment, altered);
-        for coordinate in 0..primes[index].point.len() {
-            let mut altered = primes.clone();
-            altered[index].point[coordinate] ^= 1;
-            rejects("prime coordinate", &proof, &commitment, altered);
-        }
-        let mut altered = primes.clone();
-        altered[index].tensor_component = (altered[index].tensor_component + 1) % 4;
-        rejects("tensor component", &proof, &commitment, altered);
+    let prime = primes.as_ref().unwrap();
+    for index in 0..prime.evaluations.len() {
+        let mut altered = prime.clone();
+        altered.evaluations[index].value ^= 1;
+        rejects("prime value", &proof, &commitment, Some(altered));
+    }
+    for coordinate in 0..prime.point.len() {
+        let mut altered = prime.clone();
+        altered.point[coordinate] ^= 1;
+        rejects("prime coordinate", &proof, &commitment, Some(altered));
     }
     // The prime-only D payload is the first prover message. Alter one field
     // coefficient of its EP commitment without disturbing its framing.
@@ -455,7 +488,10 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     );
     let mut foreign_words = words.clone();
     foreign_words[0][0] ^= 1;
-    assert_ne!(claim(&foreign_words[0], 0, 0, 0).value, primes[0].value);
+    assert_ne!(
+        claim(&foreign_words[0], 0).value,
+        prime.evaluations[0].value
+    );
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
     let source = backend
         .import_binary_source(manifest, carrier, foreign_words)
@@ -518,32 +554,36 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
 }
 
 #[test]
-fn prime_plane_caps_and_owner_sharing() {
+fn prime_plane_rejects_a_second_value_for_the_same_polynomial() {
     let descriptor = descriptor(2);
-    let one = claim(&WORDS, 0, 0, 0);
-    let duplicate = PrimePlaneManifest::new(&descriptor, &[one.clone(), one.clone()]).unwrap();
-    assert_eq!(duplicate.assignments(), &[0, 0]);
-    let mut other_owner = one.clone();
-    other_owner.polynomial = 1;
+    let one = claim(&WORDS, 0);
+    for value in [one.value, one.value ^ 1] {
+        let primes = PrimeGroupClaim {
+            point: prime_point(),
+            evaluations: vec![
+                one.clone(),
+                PrimePlaneClaim {
+                    polynomial: 0,
+                    value,
+                },
+            ],
+        };
+        assert!(matches!(
+            PrimePlaneManifest::new(&descriptor, Some(primes)),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+    let primes = PrimeGroupClaim {
+        point: prime_point(),
+        evaluations: vec![one, claim(&WORDS, 1)],
+    };
     assert_eq!(
-        PrimePlaneManifest::new(&descriptor, &[one, other_owner])
+        PrimePlaneManifest::new(&descriptor, Some(primes))
             .unwrap()
             .planes()
             .len(),
         2
     );
-    let distinct = (0..6).map(|i| claim(&WORDS, 0, 0, i)).collect::<Vec<_>>();
-    assert!(matches!(
-        PrimePlaneManifest::new(&descriptor, &distinct),
-        Err(AkitaError::InvalidInput(_))
-    ));
-    let components = (0..6)
-        .map(|i| claim(&WORDS, i / 4, (i % 4) as u8, 0))
-        .collect::<Vec<_>>();
-    assert!(matches!(
-        PrimePlaneManifest::new(&descriptor, &components),
-        Err(AkitaError::InvalidInput(_))
-    ));
 }
 
 struct FirstSqueeze<D> {
@@ -575,9 +615,12 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
         .profiles()
         .final_group;
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
-    let claim = claim(&WORDS, 0, 0, 0);
-    let first = |claim: PrimePlaneClaim| {
-        let planes = PrimePlaneManifest::new(&descriptor, &[claim]).unwrap();
+    let claim = PrimeGroupClaim {
+        point: prime_point(),
+        evaluations: vec![claim(&WORDS, 0), claim(&WORDS, 1)],
+    };
+    let first = |claim: PrimeGroupClaim| {
+        let planes = PrimePlaneManifest::new(&descriptor, Some(claim)).unwrap();
         let mut prover = new_prover_channel(b"prime-plane-binding");
         let mut verifier = new_verifier_channel(b"prime-plane-binding", &[]);
         binary_root_statement::<F, F, _>(
@@ -615,14 +658,20 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
     };
     let baseline = first(claim.clone());
     let mut altered = claim.clone();
-    altered.polynomial = 1;
-    assert_ne!(baseline, first(altered), "polynomial did not bind");
-    let mut altered = claim.clone();
-    altered.tensor_component = 1;
-    assert_ne!(baseline, first(altered), "component did not bind");
-    let mut altered = claim.clone();
-    altered.value ^= 1;
-    assert_ne!(baseline, first(altered), "value did not bind");
+    altered.evaluations.remove(0);
+    assert_ne!(
+        baseline,
+        first(altered.clone()),
+        "polynomial list did not bind"
+    );
+    let one_owner = first(altered.clone());
+    altered.evaluations[0].polynomial = 0;
+    assert_ne!(one_owner, first(altered), "polynomial did not bind");
+    for index in 0..claim.evaluations.len() {
+        let mut altered = claim.clone();
+        altered.evaluations[index].value ^= 1;
+        assert_ne!(baseline, first(altered), "value {index} did not bind");
+    }
     for coordinate in 0..claim.point.len() {
         let mut altered = claim.clone();
         altered.point[coordinate] ^= 1;
@@ -634,36 +683,138 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
     }
 }
 
+/// Select a real schedule with capacity for every claimed polynomial's plane.
 fn multiple_owner_catalog(
-    layout: PolynomialGroupLayout,
-) -> TrustedScheduleCatalog<BinaryTestSuffix> {
+    owners: usize,
+    mixed: bool,
+) -> (
+    PolynomialGroupLayout,
+    TrustedScheduleCatalog<BinaryTestSuffix>,
+) {
     let chunking = ChunkedWitnessCfg::default_non_chunked();
     let policy = akita_config::policy_of::<BinaryTestSuffix>(chunking);
-    let schedule = akita_planner::find_schedule_with_root_setup_mode(
-        &ScheduleLookupKey::single(layout),
-        BinaryTestSuffix::committed_source_contract().unwrap(),
-        &[],
-        &policy,
-        BinaryTestSuffix::ring_challenge_config,
-        akita_params::SetupContributionMode::Recursive,
-        None,
-    )
-    .unwrap()
-    .schedule;
-    let profiles = akita_params::CommittedGroupBatchProfile {
-        final_group: akita_params::GroupCommitPhaseParams::try_from_params(
-            layout,
-            &schedule.root.params,
+    let contract = BinaryTestSuffix::committed_source_contract().unwrap();
+    // Reuse the admitted ordinary fixture whose native degrees fit this root.
+    let ordinary = mixed.then(|| {
+        let catalog = test_catalog();
+        let carrier = catalog
+            .resolve_key(&ScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(23),
+            ))
+            .unwrap()
+            .profiles()
+            .final_group;
+        let row = catalog
+            .resolve_key(&ScheduleLookupKey {
+                final_group: PolynomialGroupLayout::singleton(18),
+                precommitteds: vec![carrier],
+                root_accumulated_setup_prefix_len: 0,
+            })
+            .unwrap();
+        (
+            row.profiles().final_group,
+            row.schedule().root.params.clone(),
         )
-        .unwrap(),
-        precommitteds: Vec::new(),
-    };
-    let catalog = akita_schedules::ValidatedScheduleCatalog::try_new(
-        BinaryTestSuffix::schedule_family_name(),
-        [(profiles, schedule)],
-        &policy,
-        BinaryTestSuffix::ring_challenge_config,
-    )
-    .unwrap();
-    TrustedScheduleCatalog::new(catalog, chunking).unwrap()
+    });
+    for vars in 18..=26 {
+        let layout = PolynomialGroupLayout::new(vars, owners);
+        let producer = akita_planner::find_schedule_with_root_setup_mode(
+            &ScheduleLookupKey::single(layout),
+            contract,
+            &[],
+            &policy,
+            BinaryTestSuffix::ring_challenge_config,
+            akita_params::SetupContributionMode::Recursive,
+            None,
+        )
+        .unwrap()
+        .schedule;
+        let producer_profile = producer.root.params.own_group().profile;
+        let key = if let Some((ordinary, _)) = &ordinary {
+            ScheduleLookupKey {
+                final_group: ordinary.group,
+                precommitteds: vec![producer_profile],
+                root_accumulated_setup_prefix_len: 0,
+            }
+        } else {
+            ScheduleLookupKey::single(layout)
+        };
+        let root = if let Some((_, ordinary)) = &ordinary {
+            akita_planner::find_schedule_with_root_setup_mode(
+                &key,
+                contract,
+                &[contract],
+                &policy,
+                BinaryTestSuffix::ring_challenge_config,
+                akita_params::SetupContributionMode::Recursive,
+                Some(ordinary),
+            )
+            .unwrap()
+            .schedule
+        } else {
+            producer.clone()
+        };
+        let first = &root.recursive_folds[0].params;
+        let Some(prefix) = first.setup_prefix() else {
+            continue;
+        };
+        let manifest =
+            BinaryCommittedGroupManifest::new(descriptor(owners), 0, &producer_profile).unwrap();
+        let typed = BinaryTypedPrefix::new(&manifest, true, owners, first.d_a()).unwrap();
+        let plan = akita_types::binary_source::BinaryRootWitnessPlan::new(
+            manifest.descriptor(),
+            manifest.a_rank(),
+            first.d_a(),
+        )
+        .unwrap()
+        .with_prime_planes(true, owners)
+        .unwrap();
+        let plan = if let Some((ordinary, _)) = &ordinary {
+            let ordinary = akita_types::binary_source::OrdinaryNativeRootPlan::new(
+                *ordinary,
+                plan.repacking().segments().len(),
+            )
+            .unwrap();
+            plan.with_ordinary(&ordinary).unwrap()
+        } else {
+            plan
+        };
+        if prefix.n_prefix().unwrap() < typed.domain_len
+            || root.root.output_witness_len < plan.repacking().natural_end().unwrap()
+            || akita_params::witness_commitment_domain_len(
+                root.root.output_witness_len,
+                first.d_a(),
+            )
+            .unwrap()
+                < plan.repacking().domain_len()
+        {
+            continue;
+        }
+        let producer_profiles = akita_params::CommittedGroupBatchProfile {
+            final_group: producer_profile,
+            precommitteds: Vec::new(),
+        };
+        let mut rows = vec![(producer_profiles, producer)];
+        if ordinary.is_some() {
+            rows.push((
+                akita_params::CommittedGroupBatchProfile {
+                    final_group: root.root.params.own_group().profile,
+                    precommitteds: key.precommitteds,
+                },
+                root,
+            ));
+        }
+        let catalog = akita_schedules::ValidatedScheduleCatalog::try_new(
+            BinaryTestSuffix::schedule_family_name(),
+            rows,
+            &policy,
+            BinaryTestSuffix::ring_challenge_config,
+        )
+        .unwrap();
+        return (
+            layout,
+            TrustedScheduleCatalog::new(catalog, chunking).unwrap(),
+        );
+    }
+    panic!("no fixture schedule holds the multi-polynomial binary root");
 }

@@ -75,43 +75,33 @@ fn windows_are_exact_and_off_by_one_is_rejected() {
     }
 }
 #[test]
-fn prime_cap_counts_owners_and_components_and_reuses_duplicates() {
+fn prime_planes_are_bounded_by_the_committed_polynomial_count() {
     let s = source();
-    let mut claims: Vec<_> = (0..5)
-        .map(|i| PrimePlaneClaim {
-            polynomial: 0,
-            point: vec![i; 11],
-            tensor_component: 0,
-            value: 0,
-        })
-        .collect();
+    let mut claim = PrimeGroupClaim {
+        point: vec![0; 11],
+        evaluations: vec![
+            PrimePlaneClaim {
+                polynomial: 0,
+                value: 0,
+            },
+            PrimePlaneClaim {
+                polynomial: 1,
+                value: 0,
+            },
+        ],
+    };
     assert_eq!(
-        PrimePlaneManifest::new(&s, &claims).unwrap().planes().len(),
-        5
+        PrimePlaneManifest::new(&s, Some(claim.clone()))
+            .unwrap()
+            .planes()
+            .len(),
+        2
     );
-    claims.push(claims[2].clone());
-    assert_eq!(
-        PrimePlaneManifest::new(&s, &claims).unwrap().assignments(),
-        &[0, 1, 2, 3, 4, 2]
-    );
-    claims.push(PrimePlaneClaim {
+    claim.evaluations.push(PrimePlaneClaim {
         polynomial: 0,
-        point: vec![5; 11],
-        tensor_component: 0,
         value: 0,
     });
-    assert!(PrimePlaneManifest::new(&s, &claims).is_err());
-    claims.pop();
-    claims[5].polynomial = 1;
-    assert!(PrimePlaneManifest::new(&s, &claims).is_err());
-    claims[5].polynomial = 0;
-    claims[5].tensor_component = 1;
-    assert!(PrimePlaneManifest::new(&s, &claims).is_err());
-    claims.truncate(1);
-    claims[0].point[0] = u128::MAX - 274;
-    assert!(PrimePlaneManifest::new(&s, &claims).is_err());
-    claims[0].point.pop();
-    assert!(PrimePlaneManifest::new(&s, &claims).is_err());
+    assert!(PrimePlaneManifest::new(&s, Some(claim)).is_err());
 }
 struct Token(SourceAgreementBinding);
 impl SourceAgreementProof for Token {

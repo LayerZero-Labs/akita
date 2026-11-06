@@ -15,7 +15,9 @@
 > protocol and its measurements; this note keeps the argument. The Summary and
 > Sections 1–6 describe the protocol before the change, and their code
 > citations are at commit `8f69246`. The padding-point rule was not
-> implemented.
+> implemented. The shape and measurement rows also predate the single-point
+> prime statement: current groups have one shared point and one plane per
+> claimed polynomial. Those historical rows retain their original values.
 
 ## Summary
 
@@ -70,7 +72,7 @@ Each symbol is defined once and used with this meaning throughout.
 | `gamma` | The Stage 2 batching scalar. |
 | `r` | The Stage 2 output point in `F^n`. |
 
-Current shape sizes (C=256, rank three, one polynomial, first successor degree
+Historical shape sizes (C=256, rank three, one polynomial, first successor degree
 512), reproduced exactly from the code's segment rules. The columns match the
 opening spec's layout table:
 

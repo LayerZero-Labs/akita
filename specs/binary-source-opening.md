@@ -98,7 +98,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding>
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
         word: Option<BinaryWordClaim>,
-        primes: Vec<PrimePlaneClaim>,
+        primes: Option<PrimeGroupClaim>,
     ) -> Result<Self, AkitaError>;
 }
 ```
@@ -149,7 +149,7 @@ identify the state transitions of the binary source opening contract.
 
 | Order | Implemented action | Fixed before the next challenge |
 | --- | --- | --- |
-| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the optional word claim, every unique prime plane's polynomial, canonical P point, tensor-component tag and value, and any ordinary point/value. | The complete public statement. |
+| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the optional word claim, the single canonical P point once followed by polynomial/value pairs in polynomial order, and any ordinary point/value. | The complete public statement. |
 | 2 | If a word claim is selected, send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
 | 3 | Commit the selected U table and every EP plane in one ordinary D payload. U uses one digit; EP coefficients use 43 centered balanced digits. | The complete D payload precedes all column challenges. |
 | 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
@@ -977,55 +977,54 @@ discharged by a binary terminal alone.
 
 ## Prime evaluation planes
 
-The default-off feature also exposes
+The default-off feature exposes
 `PolynomialGroupClaims::new_binary_planes(commitment, word, primes)`, where
-`word: Option<BinaryWordClaim>` and `primes: Vec<PrimePlaneClaim>`. The existing
-`new_binary` constructor retains its word-only behavior. A group must contain
-at least one word or prime claim. Every prime claim contains:
+`word: Option<BinaryWordClaim>` and `primes: Option<PrimeGroupClaim>`.
+The existing `new_binary` constructor retains its word-only behavior. A group
+must contain a word claim or a prime claim. As in the ordinary grouped opening,
+the prime claim has one point for the whole group, at most one claimed value
+per committed polynomial, and one evaluation plane per claimed polynomial:
 
 ```rust
+pub struct PrimeGroupClaim {
+    pub point: Vec<u128>,
+    pub evaluations: Vec<PrimePlaneClaim>,
+}
 pub struct PrimePlaneClaim {
     pub polynomial: usize,
-    pub point: Vec<u128>,
-    pub tensor_component: u8,
     pub value: u128,
 }
 ```
 
 The polynomial index names its owner in the committed descriptor. Coordinates
-and value must be canonical residues strictly less than
-`P = 340282366920938463463374607431768211181`. Their transcript encoding is
-16-byte little endian, with fixed-width counts and owner indices. The point has
-`n + 8` coordinates: eight low scalar-coefficient bits, then the low carrier
-column bits, then scalar-row bits. Natural scalar coefficients occupy indices
-0 through 161; indices 162 through 255 are virtual zero. Signed ring packing is
-undone before this reading, so an honest payload reads as its unsigned bits.
+and values must be canonical residues strictly less than
+`P = 340282366920938463463374607431768211181`. The point has `n + 8`
+coordinates: eight low scalar-coefficient bits, then low carrier-column bits,
+then scalar-row bits. Natural scalar coefficients occupy indices 0 through
+161; indices 162 through 255 are virtual zero. Signed ring packing is undone
+before this reading, so an honest payload reads as its unsigned bits.
 
-The tensor component is a caller-owned decomposition tag from 0 through 3.
-It is bound and counts toward plane identity; it does not impose an extra row
-mask or change equality weights. One separable point reads all scalar rows in
-one plane. This API does not infer arbitrary nonseparable coefficient weights
-from a tag and supplies no application reduction or fusion helper.
+`PrimePlaneManifest` validates the single point and the nonempty value list.
+It rejects repeated polynomial indices even when their values agree, indices
+outside the descriptor, wrong point dimensions, and noncanonical coordinates
+or values with `AkitaError::InvalidInput`. It orders values by polynomial
+index. The committed descriptor's polynomial count bounds plane allocations;
+there is no separate plane quota or request-sharing step.
 
-`PrimePlaneManifest` is the single admission boundary. It permits at most five
-unique `(polynomial, point, tensor_component)` planes in the entire binary
-group, hence at most five distinct points. Different polynomials never share a
-plane. Exact duplicate requests share the first occurrence and do not change
-order-zero bytes, D, witness size, or proof bytes. Conflicting values for the
-same functional are invalid. A sixth plane, including one distinguished only
-by a component tag or owner, returns `AkitaError::InvalidInput`; it cannot
-increase a proof-controlled allocation. Input request lists are also limited
-to 4096 entries before deduplication.
-
-For each unique plane, split its point into coefficient, column and row
-coordinates. Let `omega_s = eq(rho_coeff,s)`, `h_b = eq(rho_col,b)` and
-`e_r = eq(rho_row,r)`, all in P. The prover constructs
+Split the shared point once into coefficient, column and row coordinates.
+Compute `omega_s = eq(rho_coeff,s)`, `h_b = eq(rho_col,b)` and
+`e_r = eq(rho_row,r)`, all in P, once per opening. For each claimed polynomial
+the prover constructs its own EP plane using these same tables:
 
 ```text
 EP_b(Z) = sum_r e_r src_(r,b)(Z) mod P
 sum_r e_r V_r(Z) = rem_Phi(sum_b c_b(Z) EP_b(Z)) mod P
 v_P = sum_b h_b sum_(s=0..161) omega_s EP_b[s] mod P.
 ```
+
+This change only narrows the statement: each remaining equation is the one
+already specified, now with a single shared point. It does not change the
+algebraic identities or their error accounting.
 
 The response V uses **all four balanced response digits**, with the signed
 packing undone. Reading its low digit here would authenticate a different
@@ -1034,9 +1033,11 @@ identity is tested after reduced scalar multiplication and ring switching;
 the scalar reading is a separate linear equation. Each receives an independent
 row-batching coefficient at order 7 and joins the existing fused Stage 2.
 
-At order 0, the canonical manifest and all unique prime claims are public
-messages before any challenge. At order 3, D commits the compact natural-digit
-concatenation of U, if selected, followed by all EP planes in first-occurrence
+At order 0, the canonical manifest binds the shared point once, then the
+`(polynomial, value)` list in polynomial order, before any challenge. Counts
+and polynomial indices use little-endian u64; coordinates and values use
+16-byte little-endian residues. At order 3, D commits the compact natural-digit
+concatenation of U, if selected, followed by all EP planes in polynomial
 order. Within EP the order is plane, column, digit, natural coefficient. There
 is no inter-plane degree-64 padding: only the final D chunk is padded. D is
 fixed before the order-4 nonce and indexed column challenges. At order 5, those
@@ -1090,14 +1091,14 @@ pub fn batched_verify_readings_embedded(
     session_id: [u8; 32],
     group_id: [u8; 32],
 ) -> Result<
-    (PendingEof, BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>),
+    (PendingEof, BinaryOpening<Option<BinaryWordClaim>, Option<PrimeGroupClaim>>),
     AkitaError,
 >;
 ```
 
 This method constructs the existing conditional-agreement result only after
-the complete grouped opening and suffix verify. It returns unique authenticated
-prime claims in manifest order and the optional word reading. The terminal
+the complete grouped opening and suffix verify. It returns the authenticated single-point
+prime claim with values in polynomial order and the optional word reading. The terminal
 prime digest binds the commitment payload, source descriptor and canonical prime claims using a
 domain-separated encoding. Session and group identifiers name context already
 authenticated by the caller for this exact committed source. The method adds no transcript messages, preserves
@@ -1109,7 +1110,7 @@ checker nor an application helper. The caller checks final proof exhaustion.
 
 `akita_planner::prime_planes::price_binary_root_planes` is behind the planner's
 default-off `labinius-trinomial` feature. It uses the verifier's canonical
-witness plan, including every unique plane, optional word views, and optional
+witness plan, including one plane per claimed polynomial, optional word views, and optional
 ordinary preimages. It reports compact D digits/columns, physical segment
 widths, the next power-of-two domain, ordinary ring-element count, and an
 existing-table D rank lookup. It neither selects an extension nor changes
@@ -1125,21 +1126,25 @@ pub fn price_binary_root_planes(
 ) -> Result<BinaryPrimePlanePrice, AkitaError>;
 ```
 
-At C=256, one plane contributes `43*162*256 = 1,783,296` natural digits and
-`43*256*256 = 2,818,048` physical cells. Five planes contribute 8,916,480 natural
-digits and 14,090,240 physical cells. The compact degree-64 D widths are:
+At C=256, one plane contributes `43*162*256 = 1,783,296` natural digits
+and `43*256*256 = 2,818,048` physical cells. With `p` committed polynomials
+and `m <= p` prime values, D has `27,864*m` prime-only columns, or
+`27,864*m + 648*p` columns with the word views. The current layouts when
+every polynomial is claimed are:
 
-| Planes | Prime-only D columns | With U D columns |
+| Polynomials and planes | Prime-only D columns | With word views D columns |
 | --- | ---: | ---: |
 | 1 | 27,864 | 28,512 |
-| 2 | 55,728 | 56,376 |
-| 5 | 139,320 | 139,968 |
+| 2 | 55,728 | 57,024 |
+| 5 | 139,320 | 142,560 |
 
-For the C=2 fixture, five planes add 69,660 natural digits and 110,080 physical
-cells; D has 1,089 prime-only columns or 1,094 with U. The canonical plan
-contains no KA segment. The following complete totals were measured through
-`price_binary_root_planes` at rank three with one polynomial and no ordinary
-preimages; each row gives prime-only and word-plus-prime physical cells.
+For C=2, five polynomials claimed at the shared point add 69,660 natural
+prime digits and 110,080 physical prime cells; D has 1,089 prime-only columns
+or 1,114 with the word views. The canonical plan contains no KA segment.
+
+The following historical complete totals were measured through
+`price_binary_root_planes` at rank three with one polynomial, multiple points
+and no ordinary preimages; each row gives prime-only and word-plus-prime physical cells.
 
 | Geometry | Planes | Prime-only cells | With word cells | Minimum domain | Ordinary degree-64 elements |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -1150,7 +1155,7 @@ preimages; each row gives prime-only and word-plus-prime physical cells.
 | N=2^23, C=256 | 2 | 45,481,984 | 45,551,360 | 67,108,864 | 1,048,576 |
 | N=2^23, C=256 | 5 | 53,936,128 | 54,005,504 | 67,108,864 | 1,048,576 |
 
-The small N=8, C=2 word-plus-prime fixture has 79,616, 101,632 and
+The historical small N=8, C=2 word-plus-prime fixture had 79,616, 101,632 and
 167,680 cells for one, two and five planes respectively; their domains are
 131,072, 131,072 and 262,144. Optional ordinary preimages add their canonical
 segment widths before rounding the domain. At the two large geometries, Z
@@ -1175,11 +1180,13 @@ At C=256, the elementary `I/|S46|` term is `2^-128.300278309` for one
 owner, `2^-127.300278309` for two, and `2^-125.978350214` for five.
 Consequently the inequality `I/|S46| <= 2^-128` already fails for two
 owners at that geometry. The experimental multi-polynomial tests do not
-constitute production admission or change the sampler. Prime planes on one
-owner do not introduce extra column challenges; the plane cap does not grant
-each owner an independent security budget.
+constitute production admission or change the sampler. Each owner has at most one prime plane. Plane counts do not grant owners
+independent security budgets.
 
 ## Measured proof sizes
+
+These are historical measurements from before the single-point statement
+cutover; the old multi-point selections are no longer accepted.
 
 The eight-carrier, C=2 fixtures retain their existing source and suffix geometry.
 The following complete grouped proofs were measured from the 29 end-to-end
@@ -1220,7 +1227,7 @@ their full digests. Before the offload, after the v8 merge, they were 81,002,
 81,030 and 81,092 bytes. The fixture also pins the 2,518 typed-prefix identity
 bytes and their digest. The identity bytes did not change in the v8 merge; the
 digest did, because v8 hashes instance descriptors with SHA3-256 rather than
-Blake2b-256. Duplicate prime requests also produce identical proof bytes.
+Blake2b-256. At that revision, duplicate prime requests also produced identical proof bytes.
 
 Several-polynomial measurements use two source polynomials, still sharing one
 projection set, one typed prefix, and one Stage 3:
@@ -1237,9 +1244,8 @@ projection set, one typed prefix, and one Stage 3:
 The full-size measurement target is experimental and makes no security claim.
 The benchmark geometries are N=2^22 and N=2^23 carriers, C=256, rank three,
 and the proof field `2^128-275`. The smoke geometry uses N=2^10 and C=2 to
-exercise the same opening without the fixed C=256 image-table cost. The host
-inspected for this work is an Apple M4 Max with 16 physical cores and
-68,719,476,736 bytes of RAM (64 GiB).
+exercise the same opening without the fixed C=256 image-table cost. The historical campaigns below used an Apple M4 Max with 16 physical cores
+and 68,719,476,736 bytes of RAM (64 GiB).
 For the mixed smoke shape, the ordinary group retains 2^18 coefficients,
 matching the existing mixed opening fixture;
 the two benchmark sizes use N ordinary coefficients.
@@ -1253,7 +1259,7 @@ enables `labinius-trinomial` and the offline plane planner. It accepts:
 scripts/binary-source-full-size.sh --log-carriers 10 --shape binary-and-prime-claims-plus-ordinary
 scripts/binary-source-full-size.sh --log-carriers 22 --shape binary-and-prime-claims
 scripts/binary-source-full-size.sh --log-carriers 23 --shape binary-and-prime-claims --dev-protocol
-scripts/binary-source-full-size.sh --log-carriers 22 --shape five-prime-claims --plan-only
+scripts/binary-source-full-size.sh --log-carriers 22 --shape binary-and-prime-claims --plan-only
 ```
 
 Every shape commits one binary polynomial of N carriers and differs only in
@@ -1264,7 +1270,6 @@ the claims it opens:
 | `binary-claim` | One binary word claim over GF(2^128) |
 | `binary-and-prime-claims` | One binary word claim and one prime evaluation plane |
 | `binary-and-prime-claims-plus-ordinary` | The same two claims, plus an ordinary group of max(N, 2^18) coefficients with one evaluation claim |
-| `five-prime-claims` | Five prime evaluation planes at different points, and no word claim |
 
 `--plan-only` performs layout reconciliation without
 committing or proving and must not be reported as an opening measurement.
@@ -1281,10 +1286,33 @@ artifact, and loads that artifact for verification with ordinary prover setup.
 Explicit native-root admission (`ValidatedScheduleCatalog::try_new_native_root`)
 and explicit setup-prefix preparation run only at N=2^22 and N=2^23. The
 prover and verifier kernels are shared, so the smoke run checks the opening
-but not those two full-size harness paths. Its proof is 82,308 bytes and is
-pinned. After the v8 merge and before the B/D setup offload it was 82,298
+but not those two full-size harness paths. Its single-point proof is 82,312
+bytes and is pinned. The pre-cutover proof was 82,308 bytes. After the v8
+merge and before the B/D setup offload it was 82,298
 bytes. Before the v8 merge, with the offload, it was 87,366 bytes in the
 current protocol and 82,285 bytes in the dev protocol.
+
+### Single-point statement measurements
+
+The 2^22 `binary-and-prime-claims` shape was run three times before and after
+this cutover, using `scripts/binary-source-full-size.sh` in release mode on the
+shared 10-core, 24 GB Mac. The baseline protocol code is `549f86d5d`; the
+single-point implementation is `31e0f9c40`. Each run used a separate prover
+and parallel verifier process, matched its digest pin, verified the opening
+and checked the caller's transcript continuation. Times below are the
+`prove_complete_opening` and `verify_complete_opening` wall spans in run order.
+They exclude the driver's build and cold preparation; shared-machine timing
+variation remains visible.
+
+| Statement | Prove ms, three runs | Parallel verify ms, three runs | Proof bytes in every run |
+| --- | --- | --- | ---: |
+| Before | 1,286.161 / 1,411.725 / 1,269.874 | 10.432 / 9.905 / 9.863 | 84,392 |
+| One shared point | 1,702.606 / 1,272.248 / 1,249.050 | 10.874 / 9.798 / 10.372 | 84,437 |
+
+The two `binary-claim` pins at 2^22 and 2^23 reproduce unchanged, with
+verification passing. Only prime-bearing shapes were re-pinned. All five
+remaining prime-bearing rows, including the mixed 2^10 smoke shape, passed
+verification with their new pins.
 
 ### Proof digest pins
 
@@ -1292,10 +1320,12 @@ current protocol and 82,285 bytes in the dev protocol.
 pins the proof size and Blake2b-256 digest of every full-size and smoke shape.
 The driver fails when a proof differs from its row. The dev protocol now equals
 the current protocol, so the file has one row per `(log_carriers, shape)` and
-`--dev-protocol` checks the same row. The `--dev-protocol` smoke reproduces the
-82,308-byte pin.
+`--dev-protocol` checks the same row. Before the single-point cutover, the
+`--dev-protocol` smoke reproduced the 82,308-byte pin.
 
-The current pins were re-captured from driver runs at `237eb5a13`. That commit
+The single-point prime pins were re-captured at `31e0f9c40`; the two
+`binary-claim` rows reproduce unchanged. The pre-cutover pins were
+re-captured from driver runs at `237eb5a13`. That commit
 merges the v8 port of the prover-speed pass into the B/D setup offload. Before
 re-pinning, each new proof was compared with the v8 pin it replaces, which has
 no offload. The offload had to change it the way it changed the pre-v8
@@ -1366,6 +1396,9 @@ chronology of the pins superseded by that deletion, and what they
 established, is in the appendix.
 
 ### Results after the v8 merge
+
+The following benchmark campaigns are historical. Rows for the removed shape
+record the earlier multi-point statement and are retained for comparison.
 
 These rows measure `237eb5a13`: the B/D setup offload, the prover-speed pass
 and protocol v8 together. One executable (SHA-256
@@ -1641,8 +1674,8 @@ Where the typed prefix grows to 2^25 at N=2^22 (`binary-and-prime-claims` and
 `binary-and-prime-claims-plus-ordinary`), the successor schedule changes the way it does at
 N=2^23, whose prefix was already 2^25: Stage 1 grows from 11,043 to 14,357
 bytes, Physical L2 shrinks from 4,293 to 2,754 bytes, and Stage 3 grows from
-824 to 857 bytes (one round). At 2^26 (`five-prime-claims` at both sizes) Stage 1 reaches
-20,891 bytes. N=2^22 `binary-claim` and the N=2^23 shapes other than `five-prime-claims` keep
+824 to 857 bytes (one round). At 2^26 (the removed multi-point shape at both sizes) Stage 1 reaches
+20,891 bytes. N=2^22 `binary-claim` and the N=2^23 shapes other than the removed multi-point shape keep
 their partitions except for value-dependent coding in the other category.
 
 Each final current-protocol run selected six ordinary recursive folds and
@@ -2058,8 +2091,8 @@ from 204.7 to 112.0 ms and from 188.5 to 97.2 ms.
   and later run on the dense index state of `2^(k'-6)` entries.
 - Stage 3 no longer sets the live-heap peak of complete proving. The peak is
   now Stage 2's `RelationRangeImageProver::fold_round`: 1.52, 2.28 and
-  3.81 GB at N=2^22 for `binary-claim`, `binary-and-prime-claims` and `five-prime-claims`. At `binary-and-prime-claims`
-  and `five-prime-claims` the cold verifier setup peaks slightly higher, at 2.34 and
+  3.81 GB at N=2^22 for `binary-claim`, `binary-and-prime-claims` and the removed multi-point shape. At `binary-and-prime-claims`
+  and the removed multi-point shape the cold verifier setup peaks slightly higher, at 2.34 and
   3.93 GB.
 - The cold prefix preparation and verifier setup still take 250–350 ms at
   N=2^22 for the prime shapes. They already use about twelve cores. They
@@ -2237,7 +2270,7 @@ What remains at N=2^22 `binary-and-prime-claims`, about 1.3 s against the 0.4–
 - **D commitment, 62 ms.** The D payload (25 ms) costs about 5.9 µs of CPU
   per setup entry. Its SHAKE256 setup streams probably dominate it; that is
   inferred from the per-entry cost, not profiled. The prime digits take 20 ms and the row partials
-  take 17 ms serially. At `five-prime-claims` the D commitment is 243 ms, of which the D
+  take 17 ms serially. At the removed multi-point shape the D commitment is 243 ms, of which the D
   payload is 140 ms and the prime digits 101 ms. The prime-plane weight visit
   takes 362 ms serially there but is part of weight materialization.
 - **Smaller serial spans.** Evaluation witness (20 ms), repacking (12 ms),
@@ -2284,7 +2317,7 @@ was shared and loaded, so only figures from the same rounds are compared.
 
 The gain comes from the spans this pass targeted. At 2^22 `binary-and-prime-claims` the
 relation compile falls from 255.5 to 161.3 ms and the D commitment from 151.0
-to 86.4 ms. At `five-prime-claims` the D commitment falls from 415.0 to 216.3 ms. At
+to 86.4 ms. At the removed multi-point shape the D commitment falls from 415.0 to 216.3 ms. At
 `binary-and-prime-claims-plus-ordinary` the relation compile falls from 167.5 to 140.3 ms.
 Stage 2 and Stage 3 run the base's code in both executables. Stage 3 CPU
 time agrees within 2.5%. Stage 2 uses 2.5–6.3% more CPU time in this head at
@@ -2421,7 +2454,7 @@ on one thread, sampling the setup coefficients from their SHAKE streams takes
 20.6 ms of the 73.3 ms commitment, so the integer negacyclic digit products are
 about 72% and SHAKE about 28%. Rewriting the products as 16-bit limbs in i32
 lanes brought the commitment to 64.7 ms, a 12% gain. That is worth about 12 ms
-at `five-prime-claims` and 2.5 ms at `binary-and-prime-claims`, so the rewrite was not kept.
+at the removed multi-point shape and 2.5 ms at `binary-and-prime-claims`, so the rewrite was not kept.
 
 #### Third-pass results
 
@@ -2469,7 +2502,7 @@ The ordinary suffix is unchanged: its Stage 2 sumchecks take 85.5 ms, its
 `RingRelationProver::prepare` 58.3 ms, of which fold grinding is 45.9 ms, and
 its Stage 1 sumchecks 48.0 ms.
 
-Peak RSS rises 13–14% at `binary-claim`, `binary-and-prime-claims` and `five-prime-claims`, 2% at
+Peak RSS rises 13–14% at `binary-claim`, `binary-and-prime-claims` and the removed multi-point shape, 2% at
 `binary-and-prime-claims-plus-ordinary` and 22% at 2^23. Live heap does not: the prove-phase
 live-heap peak is identical in base and head, 1,516, 1,565, 1,996 and 2,009 MB
 for the four 2^22 shapes and 2,961 MB at 2^23. The difference is freed memory
@@ -2493,7 +2526,7 @@ the suffix. No root span above 10 ms is still serial. The largest are:
 - the Stage 2 sumcheck rounds after the profiles, at about 72 ms;
 - the D commitment at 39 ms: payload 21 ms and prime digits 16 ms.
 
-At `five-prime-claims` the D commitment is 179 ms, of which the payload is 100 ms and the
+At the removed multi-point shape the D commitment is 179 ms, of which the payload is 100 ms and the
 prime digits 78 ms; they already run at 15 and 10 cores. The suffix's six ordinary
 folds run at 12–14 cores. A further gain there needs a different algorithm,
 not more threads, and the fold-grinding acceptance rule and nonce order fix
@@ -2506,7 +2539,7 @@ A protocol change could buy the following; none is made here:
   digit chunk as integers. Arithmetic is about 72% of the D payload. A commitment modulus with a
   64-point negacyclic transform, or a limb-prime path like the direct A
   adjoint's, would cut most of that share: at most about 70 ms of the
-  `five-prime-claims` payload and 15 ms at `binary-and-prime-claims`.
+  the removed multi-point shape's payload and 15 ms at `binary-and-prime-claims`.
 - Setup entries come from one SHAKE stream each. A setup derived from fewer,
   longer streams would cut the SHAKE share of the D payload, about 28%, and
   part of the authentication emission.
@@ -2529,11 +2562,11 @@ runs below, as base → second pass → this head:
 
 - *Authentication profile fill.* The authentication family still emits
   through `ProfileBuilder::add_lanes`: 140.2 → 153.4 → 60.7 ms, and 175.3 →
-  195.8 → 85.7 ms at `five-prime-claims`.
+  195.8 → 85.7 ms at the removed multi-point shape.
 - *Recomposed profile fill.* Direct A, the image and the prime planes still
   add one element's profile per task through `ProfileBuilder::add_shared`.
   The prime-plane emission takes 19.6 → 19.8 → 4.6 ms, and 91.3 → 90.4 →
-  10.8 ms at `five-prime-claims`. The direct A emission takes 14.2 → 14.1 → 5.6 ms and
+  10.8 ms at the removed multi-point shape. The direct A emission takes 14.2 → 14.1 → 5.6 ms and
   the image emission 20.4 → 16.7 → 13.1 ms.
 - *D row partials.* `binary_root_row_partials` takes 17.4 → 17.8 → 5.1 ms.
 - *Direct A adjoint.* The relation compile still calls `apply_integer_rows`:
@@ -2619,7 +2652,7 @@ the median wall time in ms, with process CPU time in parentheses.
 | ›› coefficient-packing partials | 13.3 (166) | 17.4 (242) | 18.6 (258) | 29.5 (406) |
 | Prover peak RSS (bytes) | 2,484,502,528 | 3,687,809,024 | 4,013,096,960 | 5,810,634,752 |
 
-The first suffix fold dominates the suffix. In medians of three, at `five-prime-claims`
+The first suffix fold dominates the suffix. In medians of three, at the removed multi-point shape
 its Stage 1 sumcheck takes 209.5 ms of the six folds' 283.6 ms, its Stage 2
 sumcheck 98.4 ms of 137.0 ms, and its `RingRelationProver::prepare` 102.4 ms
 of 117.9 ms. At `binary-and-prime-claims` the same three take 67.7, 53.0 and 96.7 ms.
@@ -2631,7 +2664,7 @@ What the largest suffix spans spend their time on:
   balanced base-128 digits under challenges of weight 41 with coefficients
   of magnitude one or two. Each digit plane adds 41 shifted copies of itself
   into an `i16` accumulator held in memory, so every term loads and stores
-  the whole accumulator. At `binary-claim` and `five-prime-claims` the digits are base 1,024 and
+  the whole accumulator. At `binary-claim` and the removed multi-point shape the digits are base 1,024 and
   run through the same loop on `i16` planes.
 - **Stage 1 compact digit source.** The class pairs of the Stage 1 leaf are
   derived by one serial pass over every packed digit.
@@ -2714,12 +2747,12 @@ reproduced their pins. 2^23 ran last. Each cell is the median of three.
 | 2^23 | `binary-and-prime-claims` | 1,127.5 → 1,084.0 | 736.8 → 726.9 | 390.7 → 350.3 | 11,782 → 11,346 | 4,633,804,800 → 3,536,830,464 | 7.26–9.56 |
 
 `binary-claim` and `binary-and-prime-claims` now prove inside the 0.4–0.8 s target;
-`binary-and-prime-claims-plus-ordinary` is 6 ms above it and `five-prime-claims` is not near it. At
-`five-prime-claims` the individual runs were 1,241.3, 1,229.4 and 1,387.5 ms for the base
+`binary-and-prime-claims-plus-ordinary` is 6 ms above it and the removed multi-point shape is not near it. At
+the removed multi-point shape the individual runs were 1,241.3, 1,229.4 and 1,387.5 ms for the base
 and 1,254.1, 1,223.2 and 1,437.6 ms for the head. Its root level rose
 33.7 ms although the only change there, the residual rows, fell 6.3 ms;
 spans no change touches rose with it, such as authentication emission
-(76.2 → 80.2 ms) and Stage 3 (69.6 → 78.8 ms). The `five-prime-claims` difference is
+(76.2 → 80.2 ms) and Stage 3 (69.6 → 78.8 ms). The removed multi-point shape difference is
 load noise. Its suffix gained 21 ms. Verification is unchanged: 9.4, 11.0,
 16.2 and 10.6 ms at 2^22 and 11.8 ms at 2^23 for the base, within 0.3 ms for
 the head.
@@ -2741,7 +2774,7 @@ Spans at 2^22 from the same runs, base → head:
 | › first fold's `DensePoly::decompose_fold` | 13.7 → 12.4 | 60.1 → 36.6 | 61.3 → 37.2 | 54.7 → 50.6 |
 | Stage 1 compact digit source | 0.4 → 0.4 | 16.0 → 1.9 | 15.5 → 2.1 | 17.1 → 2.2 |
 
-The first fold gains less at `five-prime-claims` and `binary-claim` than at `binary-and-prime-claims` because
+The first fold gains less at the removed multi-point shape and `binary-claim` than at `binary-and-prime-claims` because
 their planes are base-1,024 `i16` digits under challenges of weight 19, so the
 per-term loop they replace is shorter.
 
@@ -2769,15 +2802,15 @@ These are the largest spans at 2^22 that this pass did not reduce:
   once per fold took 8.3 ms, because one counter per class is one dependency
   chain. Advancing the six class counters in lockstep took 2.44–2.68 ms.
 - **Setup-derived weights.** Authentication emission (23–80 ms), the D
-  payload (up to 107 ms at `five-prime-claims`) and the suffix's relation-lane setup
+  payload (up to 107 ms at the removed multi-point shape) and the suffix's relation-lane setup
   columns (23–42 ms) expand B and D setup entries from SHAKE streams on every
   proof. In a sample profile of the `binary-and-prime-claims` emission, 56% of the samples
   are in the SHAKE permutation and 20% in the residue kernel. Caching the
   expanded entries would trade that time for memory of the setup's size.
-- **`five-prime-claims` D commitment, 180–185 ms.** Its D payload and prime digits were
+- **The removed multi-point shape's D commitment, 180–185 ms.** Its D payload and prime digits were
   not changed in this pass. The third pass measured the payload at about 72%
   integer products and 28% SHAKE.
-- **`five-prime-claims` suffix Stage 1 sumchecks, 277–299 ms,** of which the first fold
+- **The removed multi-point shape's suffix Stage 1 sumchecks, 277–299 ms,** of which the first fold
   takes about 210 ms. Its class-indexed product and leaf rounds already run
   factored kernels; this pass found no byte-preserving change there.
 - **Smaller spans.** These are root Stage 3 rounds (36–65 ms), the suffix
@@ -2791,7 +2824,7 @@ measured:
 
 - **A cheaper setup generator** for the B and D setup columns would remove
   most of the SHAKE share above. From the sample shares, that is about 40 ms
-  of authentication emission and about 30 ms of D payload at `five-prime-claims`, and
+  of authentication emission and about 30 ms of D payload at the removed multi-point shape, and
   about 25 ms in all at `binary-and-prime-claims`.
 - **`binary-claim`'s first-fold digit basis and challenge weight for the binary-and-prime-claims
   shapes.** At `binary-claim` the first fold uses base-1,024 digits and challenges of
@@ -2837,7 +2870,7 @@ and within 2% single-threaded.
 
 Per-verification span times at `737c6a6f5`, in milliseconds. The columns are
 the four shapes at N=2^22 (`binary-claim`, `binary-and-prime-claims`, `binary-and-prime-claims-plus-ordinary`,
-`five-prime-claims`), `binary-and-prime-claims` at N=2^23, and the smoke run, `binary-and-prime-claims-plus-ordinary` at
+the removed multi-point shape), `binary-and-prime-claims` at N=2^23, and the smoke run, `binary-and-prime-claims-plus-ordinary` at
 N=2^10. Indentation is the measured span tree; spans with no parent were
 opened on Rayon workers and are placed under the span that spawned them.
 
@@ -2987,7 +3020,7 @@ reduced the ordinary root compile from 3.33 to 2.74 ms single-threaded and from
 One further change was measured and dropped: splitting the parity-row and
 prime-plane evaluations into Rayon tasks within each family. It made both
 families slower in wall time (N=2^22 `binary-and-prime-claims`, parity rows 0.57 → 0.68 ms,
-`five-prime-claims` prime planes 0.84 → 1.26 ms) and parallel verification slower by up
+the removed multi-point shape's prime planes 0.84 → 1.26 ms) and parallel verification slower by up
 to 0.9 ms. The families already run beside one another and beside Stage 3,
 and the added tasks are too small to repay their scheduling.
 
@@ -3067,7 +3100,7 @@ The byte-preserving costs that remain are:
   and challenge derivation, which are ordinary-protocol code.
 - **The binary root's relation evaluation** is now bounded by its largest
   family. In the shapes with a word claim that is the parity rows (0.6 ms).
-  `five-prime-claims` has no word claim, so it compiles no terminal or parity rows; its
+  the removed multi-point shape has no word claim, so it compiles no terminal or parity rows; its
   largest family is the prime planes (0.8 ms at the base). Splitting families
   further did not pay (above).
 
@@ -3094,14 +3127,14 @@ not a measurement.
 
 A fifth byte-preserving pass starts from `31aa471a2`, the fourth pass. It
 targets the two shapes still above 0.8 s of complete proving at N=2^22:
-`five-prime-claims` first, then `binary-and-prime-claims-plus-ordinary`.
+the removed multi-point shape first, then `binary-and-prime-claims-plus-ordinary`.
 
 The base was proved three times per shape at N=2^22 in isolated processes
 with `BINARY_SOURCE_CATALOG_CACHE`, after one warm-up run per shape,
 alternating the two shapes. All runs reproduced their pins. The machine was
 shared: other sessions' test runs held 4–11 cores, and one-minute loads were
 8.46–10.18. Complete proving is therefore slower than in the fourth pass's
-results (1,640 against 1,254 ms at `five-prime-claims`, 944 against 806 ms at
+results (1,640 against 1,254 ms at the removed multi-point shape, 944 against 806 ms at
 `binary-and-prime-claims-plus-ordinary`). The interleaved base runs behind the first change
 below, at loads of 5.9–15.2, took 1,290 and 834 ms. Only interleaved pairs
 are compared. Logs are `$CARGO_TARGET_DIR/p5/logs/base-22-<shape>-p<run>.txt`.
@@ -3175,12 +3208,12 @@ fold rounds, are listed once, under the root.
 | › coefficient-packing partials | 36.9 (415) | 26.4 (274) |
 | Prover peak RSS (bytes) | 5,805,326,336 | 3,313,369,088 |
 
-The first suffix fold dominates the suffix. In medians of three, at `five-prime-claims`
+The first suffix fold dominates the suffix. In medians of three, at the removed multi-point shape
 its Stage 1 sumcheck takes 277.9 ms, its Stage 2 sumcheck 122.2 ms and its
 `RingRelationProver::prepare` 120.0 ms. At `binary-and-prime-claims-plus-ordinary` they take
 67.5, 58.9 and 85.2 ms.
 
-One `five-prime-claims` proof was sampled at 1 ms with the system `sample` tool. Where
+One proof of the removed multi-point shape was sampled at 1 ms with the system `sample` tool. Where
 the time of the largest spans goes:
 
 - **D payload: arithmetic.** Of the samples in the digit commitment, which
@@ -3216,7 +3249,7 @@ Candidate changes, with the expected gain at N=2^22:
 | `binary-and-prime-claims-plus-ordinary` translated lanes, parity rows and compact quotient prefix | weight profiles | `binary-and-prime-claims-plus-ordinary` | 5–15 |
 
 A cache of expanded setup entries would hold 139,320 columns × 2 rows × 64
-coefficients of 16 bytes at `five-prime-claims`, 285 MB, which is 5% of the base peak
+coefficients of 16 bytes at the removed multi-point shape, 285 MB, which is 5% of the base peak
 RSS on its own; it is not pursued. The response fold is not retried: the
 profile shows nothing the fourth pass did not.
 
@@ -3266,7 +3299,7 @@ Three candidates were measured or examined and not kept:
 - **An in-place `fold_evals_in_place`.** The allocating parallel fold was
   4.11 ms against 4.45 ms for an in-place wave fold over a full 2^22 fold
   chain, so the allocation is not the cost.
-- **The quartet coefficient table for the second product round at `five-prime-claims`.**
+- **The quartet coefficient table for the second product round at the removed multi-point shape.**
   Its first fold has 32 digit classes, so the table would hold 2^20 entries of
   five coefficients, as many as the quartets it replaces.
 - **Product folds fused into the next round.** The fold and the round are
@@ -3279,7 +3312,7 @@ Three candidates were measured or examined and not kept:
 Base `31aa471a2` and head `c1e710606` were proved alternately, three times
 each per configuration, in isolated processes with a cached catalog. All 48
 runs reproduced their pins and verified with matching caller transcript
-continuation. The first round at `binary-and-prime-claims-plus-ordinary`, `five-prime-claims` and 2^23
+continuation. The first round at `binary-and-prime-claims-plus-ordinary`, the removed multi-point shape and 2^23
 ran while other sessions pushed one-minute loads to 12; it reproduced its
 pins but was rerun in the same order, 2^23 last, and the table uses the
 rerun. Each cell is the median of three. The suffix columns are the six
@@ -3295,7 +3328,7 @@ ordinary Stage 1 and Stage 2 sumchecks and the six
 | 2^23 | `binary-and-prime-claims` | 993.8 → 944.2 | 659.3 → 627.5 | 99.8 → 98.9 | 95.1 → 93.2 | 72.1 → 73.0 | 11,419 → 11,112 | 4,620,402,688 → 4,559,323,136 | 6.77–9.77 |
 
 `binary-claim`, `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary` now prove inside the
-0.4–0.8 s target; `five-prime-claims` does not. The `five-prime-claims` runs were 1,504.8, 1,321.3
+0.4–0.8 s target; the removed multi-point shape does not. The removed multi-point shape runs were 1,504.8, 1,321.3
 and 1,168.9 ms for the base and 1,339.4, 1,137.5 and 1,093.7 ms for the head;
 its root level, where every change sits, fell 160 ms. The third `binary-and-prime-claims`
 run of each binary (895.5 and 878.8 ms) met a load spike. Verification is
@@ -3322,46 +3355,46 @@ At 2^23 `binary-and-prime-claims` the D commitment fell 53.7 → 32.6 ms and aut
 
 #### Fifth-pass remainder
 
-At `five-prime-claims` the head still spends about 390 ms in the first suffix fold: in
+At the removed multi-point shape the head still spends about 390 ms in the first suffix fold: in
 the median run, 202 ms of Stage 1, 104 ms of Stage 2 and 88 ms of
 `prepare`. The largest remaining spans:
 
-- **`five-prime-claims` suffix Stage 1, 276 ms.** Its second product round rescans the
+- **The removed multi-point shape's suffix Stage 1, 276 ms.** Its second product round rescans the
   quartets with the arity-four product kernel, because the first fold's
   32 digit classes are too many for the quartet coefficient table. The
   materialized rounds and the folds between them are arithmetic at 9–10
   cores.
-- **Relation fold rounds, root and suffix, 96 ms at `five-prime-claims`,** and their
+- **Relation fold rounds, root and suffix, 96 ms at the removed multi-point shape,** and their
   dense round terms, 68 ms. Their allocating fold is already faster than an
   in-place one.
 - **Authentication emission, 20–71 ms.** In a sample of the head at
-  `five-prime-claims`, 37% of its samples are the paired SHAKE permutation, 23% the
+  the removed multi-point shape, 37% of its samples are the paired SHAKE permutation, 23% the
   residue kernel, 18% the field combination of the two rows and 9% the
   per-stream absorb, which still permutes alone. Pairing the absorb would
   save about 3 ms.
-- **`five-prime-claims` prime digits, 56 ms.** Most of it is now the parallel subset
+- **The removed multi-point shape's prime digits, 56 ms.** Most of it is now the parallel subset
   sums of `weighted_source_bits`: about 16 field additions per source word
   per plane. Accumulating them as unreduced integers would need a
   field-specific path through that generic labinius-prover boundary;
   inferred gain 15–25 ms, not measured.
 - **The response fold, 52–68 ms, and root Stage 3, 46–76 ms,** are
   unchanged.
-- **`DensePoly::decompose_fold`, 47 ms at `five-prime-claims`.** Nearly all of it is the
+- **`DensePoly::decompose_fold`, 47 ms at the removed multi-point shape.** Nearly all of it is the
   vectorized balanced decomposition kernel.
 
 A cache of the D setup columns would let authentication reuse the entries
 the D payload already expanded. It would hold the D share of the 285 MB
-estimated above at `five-prime-claims`; it is not pursued. No change needed a
+estimated above at the removed multi-point shape; it is not pursued. No change needed a
 verifier-side edit.
 
 What a protocol change would buy, inferred from these profiles and not
 measured:
 
 - **A cheaper setup generator.** SHAKE is about 37% of authentication
-  emission at `five-prime-claims`, so replacing it would save about 25 ms there, plus
+  emission at the removed multi-point shape, so replacing it would save about 25 ms there, plus
   the SHAKE share of the 37 ms D payload, which this pass did not separate
   from its limb products.
-- **A smaller first-fold digit basis at `five-prime-claims`.** With eight digit classes
+- **A smaller first-fold digit basis at the removed multi-point shape.** With eight digit classes
   instead of 32, the second product round would use the quartet coefficient
   table, which takes 6 ms at `binary-and-prime-claims-plus-ordinary`. This changes the proof
   bytes and the planner's security accounting.
@@ -3373,10 +3406,10 @@ measured:
 ### Sixth prover pass
 
 A sixth byte-preserving pass starts from `016f466b7`, the fifth pass. Its
-target is `five-prime-claims`, the one shape still above 0.8 s of complete proving at
+target is the removed multi-point shape, the one shape still above 0.8 s of complete proving at
 N=2^22, and within it the first ordinary suffix fold.
 
-The base was proved three times at N=2^22 `five-prime-claims` in isolated processes with
+The base was proved three times for the removed multi-point shape at N=2^22 in isolated processes with
 `BINARY_SOURCE_CATALOG_CACHE`, after one warm-up run. All runs reproduced
 their pin. One-minute loads were 5.21–6.15. Each cell is the median wall time
 in ms, with process CPU time in parentheses.
@@ -3492,7 +3525,7 @@ time as follows:
 - **Memory traffic.** At the machine's multiplication rate the rounds need
   at most 53 GB/s; none of them is bandwidth-bound.
 
-Candidate changes, with the expected gain at N=2^22 `five-prime-claims`:
+Candidate changes, with the expected gain at the removed multi-point shape at N=2^22:
 
 | Candidate | Spans reduced | Expected gain (ms) |
 | --- | --- | ---: |
@@ -3543,17 +3576,17 @@ is the same field element.
 
 **Quartet-class second round.** After the first challenge, a quartet's
 second-round coefficients depend only on its pair of folded class pairs. At
-`five-prime-claims` the 4,754,304 quartets fall into 981,064 of the 2^20 quartet
+the removed multi-point shape the 4,754,304 quartets fall into 981,064 of the 2^20 quartet
 classes. The round now sums each class's equality weight, then multiplies
 each nonzero class weight by that class's coefficients once. Above 4,096
 classes, the classes split into ranges that hold equal numbers of quartets:
-`five-prime-claims`'s digits are skewed, and a split into equal class ranges gave one
+the removed multi-point shape's digits are skewed, and a split into equal class ranges gave one
 of 16 ranges 1.64 M quartets. Each range fills its own slice of one weight
 table. This is the exact field sum of the rescan, reordered. At `binary-claim`,
 70,112 quartets fall into 2^16 classes, and there the rescan is faster. The
 class round therefore runs only when quartets outnumber classes twice over.
-Of the second rounds probed at 2^22, in `binary-claim`, `binary-and-prime-claims` and `five-prime-claims`,
-only `five-prime-claims`'s first fold qualifies.
+Of the second rounds probed at 2^22, in `binary-claim`, `binary-and-prime-claims` and the removed multi-point shape,
+only the removed multi-point shape's first fold qualifies.
 
 Measured and not kept:
 
@@ -3563,8 +3596,8 @@ Measured and not kept:
   to its first rounds (3.9 → 18.3). Stage 1 went from 214.6 to 218.2 ms.
 - **Deferred-reduction slot sums in `weighted_source_bits`.** The slots
   summed as unreduced 128-bit products and reduced once per column. A scratch
-  kernel at the `five-prime-claims` plane shape (16,384 rows, 256 columns) ran 8.6 →
-  6.9 ms per plane at a load of 1.7. In the prover, `five-prime-claims` prime digits
+  kernel at the removed multi-point shape's plane shape (16,384 rows, 256 columns) ran 8.6 →
+  6.9 ms per plane at a load of 1.7. In the prover, the removed multi-point shape's prime digits
   measured 71.0 → 72.4 ms at loads 6–10, so the change did not pay. Tiling
   columns to keep a group's 256 subset sums in L1 was no faster in the
   scratch kernel: 8.6 ms untiled, 8.6–11.5 ms for tiles of 4–16 columns.
@@ -3591,10 +3624,10 @@ and Stage 2 sumchecks and the six `RingRelationProver::prepare` calls.
 | 2^23 | `binary-and-prime-claims` | 936.9 → 917.1 | 621.9 → 622.5 | 98.7 → 76.7 | 94.5 → 93.5 | 71.9 → 72.2 | 11,083 → 10,871 | 4,621,647,872 → 4,625,219,584 | 3.61–3.96 |
 
 Every gain sits in suffix Stage 1. The other columns move within their run
-spread: one head `five-prime-claims` Stage 2 run took 148.9 ms, the other two 141.4 and
-134.1. `five-prime-claims` still proves above the 0.8 s target. The head runs were
+spread: one Stage 2 run of the removed multi-point shape at head took 148.9 ms, the other two 141.4 and
+134.1. The removed multi-point shape still proves above the 0.8 s target. The head runs were
 1,016.2, 1,024.2 and 1,004.0 ms. Peak RSS rises by at most 0.45%, at
-`five-prime-claims`, where the out-of-place folds and the class weights hold one more
+the removed multi-point shape, where the out-of-place folds and the class weights hold one more
 table at a time. Verification was not remeasured; no verifier code changed.
 
 Stage 1 spans at 2^22 from the same runs, base → head:
@@ -3610,12 +3643,12 @@ Stage 1 spans at 2^22 from the same runs, base → head:
 At 2^23 `binary-and-prime-claims` the first fold's Stage 1 fell 50.8 → 39.4 ms and the
 product folds 19.3 → 8.7 ms.
 
-The first fold's Stage 1 at `five-prime-claims` now runs at 1.74 times the 84 ms
+The first fold's Stage 1 at the removed multi-point shape now runs at 1.74 times the 84 ms
 multiplication bound above, against 2.18 times for the base in the same runs.
 
 #### Sixth-pass remainder
 
-At `five-prime-claims` the head spends 514 ms in the binary root level and 146 ms in
+At the removed multi-point shape the head spends 514 ms in the binary root level and 146 ms in
 Stage 1 of the first suffix fold. The largest remaining spans:
 
 - **Root Stage 2, 111 ms beyond its 81 ms of weight profiles.** It is a
@@ -3634,7 +3667,7 @@ Stage 1 of the first suffix fold. The largest remaining spans:
 
 What a protocol change would buy, without making one:
 
-- **A base-16 first fold at `five-prime-claims`.** In the `digit_range` bench, a
+- **A base-16 first fold at the removed multi-point shape.** In the `digit_range` bench, a
   session of 19,017,216 base-16 digits takes 42.8 ms against 125.7 ms for
   base 64, measured. A base-16 decomposition of the same values needs 1.5
   times the digits, so the session would take about 64 ms, inferred; about
@@ -3735,7 +3768,7 @@ following canonical repacking counts with `price_binary_root_planes`. Natural di
 virtual coefficient tails; physical cells
 include those tails but exclude final power-of-two padding. These counts
 agree with the design's section 12.1; its five-plane row additionally includes
-a word claim, unlike the `five-prime-claims` harness shape.
+a word claim, unlike removed multi-point harness shape.
 
 | N | Shape | Natural digits | Physical cells | Minimum domain | Padding cells |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -3799,7 +3832,7 @@ bytes; the measured proofs use the corrected rank/coefficient padding, the
 typed prefix that also holds the B/D setup, and the exact native-root
 transition. Their similar total sizes do not validate the original suffix
 estimate or its individual message assumptions. Section 12.1's five-plane row
-also includes a word claim, whereas the harness's `five-prime-claims` shape does not.
+also includes a word claim, whereas the harness's removed multi-point shape does not.
 
 The pre-v8 dev-protocol `binary-and-prime-claims` proofs were 84,423 and 84,576 bytes:
 differences of **-4,610** and **-4,949** bytes from those design estimates, and
@@ -3856,7 +3889,8 @@ evaluation and the dense table on nineteen small shapes. Sixteen use the
 end-to-end geometry of 8 padded carriers and 2 columns, which has one response
 quad. Without the mixed ordinary group they cover the word claim with zero,
 one, two or five prime planes, prime-only claims with two or three planes, word
-widths 128 and 8, one and two owners, and extra zero rings. With the mixed
+widths 128 and 8, up to five owners, and extra zero rings. Each plane now has
+a distinct owner at the one shared point. With the mixed
 group they cover zero, one, two or five planes beside the word claim, and one,
 two or five prime-only planes. Three more use 32 carriers and 2 columns, or 64
 carriers and 4 columns, which have four response quads. No tested shape
@@ -3869,10 +3903,9 @@ reaches a production-size geometry.
   the same call.
 - **Prime planes.** Four signed power sums of the low block and one
   shifted-remainder kernel per 162-coefficient low-block slot serve every
-  plane. Planes of one polynomial read the same response elements and the same
-  challenge supports, so their relation rows combine before the high factors
-  and the support dot products (signed additions of kernel entries) are taken
-  once per polynomial, column and slot.
+  plane. The shared point also supplies one row, column and coefficient weight
+  table. Each claimed polynomial has one plane and its own challenge supports;
+  support dot products are taken once per polynomial, column and slot.
 - **Parity rows.** Rows are answered by Four Russians subset sums.
 - **Terminal partial columns.** The partial-column rows of one owner form one
   family (`PartialColumnWeights`). Per column the verifier adds the bits and
@@ -3896,7 +3929,7 @@ Before the offload, the verifier derived 2 × (62,208 + 28,512) = 181,440
 SHAKE256 ring entries at N=2^22 `binary-and-prime-claims` and evaluated one residue kernel
 per setup column. After the byte-preserving speedups that span
 (`root_weights_evaluate_authentication`) still took 28.0 ms of 43.2 ms; at
-N=2^22 `five-prime-claims` it took 58.3 of 72.3 ms. The offload removes it (comparison
+the removed multi-point shape at N=2^22 it took 58.3 of 72.3 ms. The offload removes it (comparison
 table in the appendix). The mixed shape's ordinary root still derives its
 setup matrix during verification. In the single-threaded median runs that
 derivation (`derive_public_matrix_prefix`) takes 2.4 ms at N=2^22 and 4.8 ms
@@ -3950,7 +3983,7 @@ extended row.
 
 Before the v8 merge, the N=2^23 `binary-and-prime-claims` prover peak in the offload
 campaign was 10,190,553,088 bytes in the current protocol and 10,190,028,800
-bytes in the dev protocol. The largest measured peak, N=2^23 dev `five-prime-claims`, was
+bytes in the dev protocol. The largest measured peak, the removed multi-point shape at N=2^23 (dev), was
 10,594,435,072 bytes. Against the tables before the B/D setup offload
 (appendix), the prover peak rose in every shape. Where the prefix domain does
 not grow, it rose by 0.14 GB (N=2^22 `binary-claim`) to 0.69 GB (N=2^23
@@ -3971,7 +4004,7 @@ the offload, the median was 8,056,356,864 bytes; the v8 merge's single run
 without the prover-speed pass, which planned its catalog in the proving
 process, peaked at 9,986,932,736 bytes. With the offload after the v8 merge, the
 median was 8,595,046,400 bytes. The largest peak after the v8 merge was
-10,705,600,512 bytes, at N=2^23 `five-prime-claims` in the first campaign, which
+10,705,600,512 bytes, at the removed multi-point shape at N=2^23 in the first campaign, which
 planned its catalog in the proving process. All are below one sixth of the
 68,719,476,736-byte host. Peak RSS includes cold preparation in each isolated
 process. These values establish memory fit for this fixture; they do
@@ -4238,7 +4271,7 @@ restriction discussed below; it produced no proof or verifier measurement.
 Its planning and error-path spans are not successful opening timings.
 
 Their proof bytes, atoms and stage partitions equal the final rows. Their
-digests are the `binary-and-prime-claims`, `binary-claim` and `five-prime-claims` pins described above.
+digests are the `binary-and-prime-claims`, `binary-claim` and the removed multi-point shape's pins described above.
 
 The measured inclusive phase times below are nanoseconds. None was taken below
 one-minute load 4. Each row records the complete `uptime` load triple before
@@ -4614,7 +4647,7 @@ equality only between the source it was captured from and later sources:
   at N=2^23) come from the native-admission source `4fc40d2db`. They predate
   the parity (`082dd6278`), buffer-lifetime (`b17e9a2e2`), fixture-buffering
   (`2b8854e14`) and adjoint-scratch (`ae173d73c`) changes. The `binary-claim` and
-  `five-prime-claims` pins (`56aed7ed4`) come from the saved `4fc40d2db` baseline
+  the removed multi-point shape's pins (`56aed7ed4`) come from the saved `4fc40d2db` baseline
   executable.
 - The current-protocol `binary-and-prime-claims-plus-ordinary` pins (`e74bfada5`) follow the
   B-slice repair. They were captured with that repair applied before it was
@@ -4663,7 +4696,7 @@ pin was 82,308 bytes and the current-protocol smoke pin 87,337 bytes.
 
 The prefix domain was 2^24 at N=2^22 and 2^25 at N=2^23 for every shape. The
 recursive output chains of N=2^22 `binary-and-prime-claims`, `binary-and-prime-claims-plus-ordinary` and
-`five-prime-claims`, and of N=2^23 `five-prime-claims`, were:
+the removed multi-point shape, and of the removed multi-point shape at N=2^23, were:
 
 | N | Shape | Successive recursive output cells |
 | --- | --- | --- |
@@ -4735,7 +4768,7 @@ The one-minute load before each of the three verification runs:
 
 With the speedups alone, B/D authentication (`root_weights_evaluate_authentication`)
 was still 28.0 of 43.2 ms at N=2^22 `binary-and-prime-claims` and 58.3 of 72.3 ms at
-N=2^22 `five-prime-claims`. After the offload that span is gone, and the binary-only
+the removed multi-point shape at N=2^22. After the offload that span is gone, and the binary-only
 shapes verify in 14.9–17.5 ms at both sizes. The mixed shape's remaining
 time is the ordinary root's flat-term construction
 (`binary_root_weights_ordinary`: 85.9 ms at N=2^22 and 160.7 ms at N=2^23),
@@ -4743,10 +4776,10 @@ which the offload does not touch.
 
 Verifier peak RSS follows the selected prefix, not the B/D work. Where the
 prefix domain grows (N=2^22 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary` from 2^24
-to 2^25, `five-prime-claims` to 2^26), the successor folds and their prepared setup grow
-with it. Against the speedups build, RSS rises by 42 MB (`five-prime-claims`) to 80 MB
+to 2^25, the removed multi-point shape to 2^26), the successor folds and their prepared setup grow
+with it. Against the speedups build, RSS rises by 42 MB (the removed multi-point shape) to 80 MB
 (`binary-and-prime-claims`) at N=2^22. Where it does not grow (N=2^22 `binary-claim`, and N=2^23
-except `five-prime-claims`), RSS is within 2 MB of the speedups build. N=2^23 `five-prime-claims` drops by
+except the removed multi-point shape), RSS is within 2 MB of the speedups build. the removed multi-point shape at N=2^23 drops by
 31 MB under its different successor schedule.
 
 ### Verification before the verifier speedups

@@ -11,8 +11,6 @@ pub const CANONICAL_IMAGE_WINDOW: (i32, i32) = (-7_126_704, 7_126_704);
 pub const ENFORCED_IMAGE_WINDOW: (i32, i32) = (-9_586_980, 7_190_235);
 /// Four balanced base-eight response digits, inclusive.
 pub const BINARY_RESPONSE_INTERVAL: (i32, i32) = (-2340, 1755);
-/// Maximum distinct points and maximum polynomial/tensor planes per group.
-pub const PRIME_POINT_CAP: usize = 5;
 /// Bounded wire manifest size; schedule admission may impose a smaller limit.
 pub const MAX_BINARY_POLYNOMIALS: usize = 4096;
 
@@ -97,7 +95,8 @@ impl BinarySourceDescriptor {
         ] {
             out.extend_from_slice(&value.to_le_bytes());
         }
-        out.push(PRIME_POINT_CAP as u8);
+        // Reserved v1 byte. Retained so word-only statements keep their bytes.
+        out.push(5);
         out.extend_from_slice(&self.profiles.a);
         out.extend_from_slice(&self.profiles.b);
         for id in &self.polynomials {
@@ -146,9 +145,9 @@ impl BinarySourceDescriptor {
                 return Err(bad());
             }
         }
-        let mut cap = [0];
-        reader.read_exact(&mut cap)?;
-        if cap != [PRIME_POINT_CAP as u8] {
+        let mut reserved = [0];
+        reader.read_exact(&mut reserved)?;
+        if reserved != [5] {
             return Err(bad());
         }
         let mut profiles = BinaryCommitmentProfiles {

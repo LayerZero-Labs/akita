@@ -7,8 +7,8 @@ use akita_params::{
 };
 use akita_schedules::{RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog};
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimePlaneClaim,
-    PrimePlaneManifest,
+    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimeGroupClaim,
+    PrimePlaneClaim, PrimePlaneManifest,
 };
 
 pub(super) fn plan(
@@ -20,25 +20,18 @@ pub(super) fn plan(
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
     let descriptor = claims::descriptor(log)?;
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, carrier)?;
-    let word = shape != "five-prime-claims";
-    let planes = if shape == "binary-claim" {
-        0
-    } else if shape == "five-prime-claims" {
-        5
-    } else {
-        1
-    };
+    let word = true;
+    let planes = usize::from(shape != "binary-claim");
     let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
     let prime = PrimePlaneManifest::new(
         &descriptor,
-        &(0..planes)
-            .map(|plane| PrimePlaneClaim {
+        (planes > 0).then(|| PrimeGroupClaim {
+            point: vec![2; arity],
+            evaluations: vec![PrimePlaneClaim {
                 polynomial: 0,
-                point: vec![plane as u128 + 2; arity],
-                tensor_component: (plane % 4) as u8,
                 value: 0,
-            })
-            .collect::<Vec<_>>(),
+            }],
+        }),
     )?;
     let price = akita_planner::prime_planes::price_binary_root_planes(
         &manifest, word, &prime, dimension, ordinary,

@@ -91,7 +91,7 @@ impl BinaryRootPublic {
         if let Some(claim) = claim {
             claim.validate(manifest.descriptor())?;
         }
-        super::PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
+        prime.validate(manifest.descriptor())?;
         let domain_len = witness_commitment_domain_len(logical_len, destination_ring_dimension)?;
         let mut plan = BinaryRootWitnessPlan::new(
             manifest.descriptor(),

@@ -1,4 +1,4 @@
-use super::{BinarySourceDescriptor, PRIME_POINT_CAP};
+use super::BinarySourceDescriptor;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BINARY_SETUP_P;
 use jolt_field::Field;
@@ -7,25 +7,27 @@ use jolt_field::Field;
 /// The interval contains `[-(P-1)/2, (P-1)/2]` for `P = 2^128-275`.
 pub const PRIME_PLANE_DIGITS: usize = 43;
 
-/// One prime-field tensor-component reading of a committed polynomial.
-///
-/// Coordinates and value are canonical residues modulo `2^128-275`. The point
-/// order is eight low coefficient bits, low carrier-column bits, then scalar-row
-/// bits. The tensor component is the caller's decomposition tag in `0..4`;
-/// it distinguishes requests but does not change the separable equality weights.
-/// One plane reads the full source at its point. No general nonseparable weight
-/// functional is inferred from the tag. Virtual coefficients 162..255 are zero.
-/// Different polynomials never share a plane; identical requests do.
+/// One claimed polynomial value at the group's prime-field point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimePlaneClaim {
     pub polynomial: usize,
-    pub point: Vec<u128>,
-    pub tensor_component: u8,
     pub value: u128,
 }
 
-impl PrimePlaneClaim {
-    /// Expand the public scalar-row, carrier-column and coefficient weights.
+/// One prime-field opening point and at most one value per committed polynomial.
+///
+/// Coordinates and values are canonical residues modulo `2^128-275`. The point
+/// order is eight low coefficient bits, low carrier-column bits, then scalar-row
+/// bits. Virtual coefficients 162..255 are zero. Each claimed polynomial owns
+/// one evaluation plane, as in an ordinary grouped opening.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrimeGroupClaim {
+    pub point: Vec<u128>,
+    pub evaluations: Vec<PrimePlaneClaim>,
+}
+
+impl PrimeGroupClaim {
+    /// Expand the shared scalar-row, carrier-column and coefficient weights.
     #[allow(clippy::type_complexity)]
     pub fn weights<E: Field>(
         &self,
@@ -44,95 +46,87 @@ impl PrimePlaneClaim {
         let arity = checked::ceil_log2(descriptor.index_map().padded_carriers())
             .and_then(|n| checked::sum([n, 8]))
             .ok_or(AkitaError::InvalidProof)?;
-        if self.polynomial >= descriptor.polynomials().len() || self.tensor_component >= 4 {
-            return Err(AkitaError::InvalidInput(
-                "invalid prime plane owner or component".into(),
-            ));
+        if self.evaluations.is_empty() || self.evaluations.len() > descriptor.polynomials().len() {
+            return Err(AkitaError::InvalidInput("invalid prime value count".into()));
         }
         if self.point.len() != arity {
             return Err(AkitaError::InvalidInput(
                 "prime point dimension differs from the source".into(),
             ));
         }
-        if self.value >= BINARY_SETUP_P || self.point.iter().any(|&x| x >= BINARY_SETUP_P) {
-            return Err(AkitaError::InvalidInput(
-                "noncanonical prime point or value".into(),
-            ));
+        if self.point.iter().any(|&x| x >= BINARY_SETUP_P) {
+            return Err(AkitaError::InvalidInput("noncanonical prime point".into()));
+        }
+        for (index, claim) in self.evaluations.iter().enumerate() {
+            if claim.polynomial >= descriptor.polynomials().len() || claim.value >= BINARY_SETUP_P {
+                return Err(AkitaError::InvalidInput(
+                    "invalid prime owner or value".into(),
+                ));
+            }
+            if self
+                .evaluations
+                .iter()
+                .take(index)
+                .any(|earlier| earlier.polynomial == claim.polynomial)
+            {
+                return Err(AkitaError::InvalidInput(
+                    "duplicate prime polynomial value".into(),
+                ));
+            }
         }
         Ok(())
     }
 }
 
-/// Checked assignment of each request to its first-occurrence plane.
+/// Checked single-point statement, with evaluation planes in polynomial order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimePlaneManifest {
-    planes: Vec<PrimePlaneClaim>,
-    assignments: Vec<usize>,
+    claim: Option<PrimeGroupClaim>,
 }
 impl PrimePlaneManifest {
-    /// Enforce five distinct points and five total polynomial/tensor planes.
-    /// Duplicate functionals with different claimed values are invalid input.
     pub fn new(
         source: &BinarySourceDescriptor,
-        claims: &[PrimePlaneClaim],
+        mut claim: Option<PrimeGroupClaim>,
     ) -> Result<Self, AkitaError> {
-        if claims.len() > 4096 {
-            return Err(AkitaError::InvalidInput(
-                "too many prime plane requests".into(),
-            ));
-        }
-        let mut planes: Vec<PrimePlaneClaim> = Vec::new();
-        let mut assignments = Vec::new();
-        assignments
-            .try_reserve_exact(claims.len())
-            .map_err(|_| AkitaError::InvalidInput("prime request allocation failed".into()))?;
-        for claim in claims {
+        if let Some(claim) = &mut claim {
             claim.validate(source)?;
-            if let Some(plane) = planes.iter().position(|p| {
-                p.polynomial == claim.polynomial
-                    && p.point == claim.point
-                    && p.tensor_component == claim.tensor_component
-            }) {
-                if planes.get(plane).ok_or(AkitaError::InvalidProof)?.value != claim.value {
-                    return Err(AkitaError::InvalidInput(
-                        "duplicate prime functional has conflicting values".into(),
-                    ));
-                }
-                assignments.push(plane);
-            } else {
-                if planes.len() == PRIME_POINT_CAP {
-                    return Err(AkitaError::InvalidInput(
-                        "prime group exceeds its five-plane cap".into(),
-                    ));
-                }
-                assignments.push(planes.len());
-                planes.push(claim.clone());
-            }
+            claim
+                .evaluations
+                .sort_unstable_by_key(|value| value.polynomial);
         }
-        Ok(Self {
-            planes,
-            assignments,
-        })
-    }
-    pub fn planes(&self) -> &[PrimePlaneClaim] {
-        &self.planes
-    }
-    pub fn assignments(&self) -> &[usize] {
-        &self.assignments
+        Ok(Self { claim })
     }
 
-    /// Order-zero encoding of the unique planes, in first-occurrence order.
-    /// Duplicate requests do not alter the transcript or authenticated witness.
+    /// Revalidate against the commitment's descriptor without copying the claim.
+    pub fn validate(&self, source: &BinarySourceDescriptor) -> Result<(), AkitaError> {
+        if let Some(claim) = &self.claim {
+            claim.validate(source)?;
+        }
+        Ok(())
+    }
+
+    pub fn claim(&self) -> Option<&PrimeGroupClaim> {
+        self.claim.as_ref()
+    }
+
+    pub fn planes(&self) -> &[PrimePlaneClaim] {
+        self.claim.as_ref().map_or(&[], |claim| &claim.evaluations)
+    }
+
+    /// Order zero binds the shared point once, then polynomial/value pairs.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = b"AkitaPrimePlanes\x01".to_vec();
-        bytes.extend_from_slice(&(self.planes.len() as u64).to_le_bytes());
-        for plane in &self.planes {
+        let mut bytes = b"AkitaPrimePlanes\x02".to_vec();
+        let point = self
+            .claim
+            .as_ref()
+            .map_or(&[][..], |claim| claim.point.as_slice());
+        bytes.extend_from_slice(&(point.len() as u64).to_le_bytes());
+        for coordinate in point {
+            bytes.extend_from_slice(&coordinate.to_le_bytes());
+        }
+        bytes.extend_from_slice(&(self.planes().len() as u64).to_le_bytes());
+        for plane in self.planes() {
             bytes.extend_from_slice(&(plane.polynomial as u64).to_le_bytes());
-            bytes.extend_from_slice(&(plane.point.len() as u64).to_le_bytes());
-            for coordinate in &plane.point {
-                bytes.extend_from_slice(&coordinate.to_le_bytes());
-            }
-            bytes.push(plane.tensor_component);
             bytes.extend_from_slice(&plane.value.to_le_bytes());
         }
         bytes
