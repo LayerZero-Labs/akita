@@ -91,8 +91,8 @@ It does not preserve binary-root proof or persisted-setup compatibility.
   Any admitted E64 prime claim accounts for both coordinate planes.
 - [ ] B/D ranks cover their actual widths under the q64 table.
   The outgoing witness, typed prefix and ordinary suffix are repriced.
-- [ ] The grinding plan prices the column challenges with the proof of work
-  below. The full security ledger includes all algebraic, retry, setup and
+- [ ] The grinding plan keeps the root's column-challenge work entry and its
+  `2^136` denominator. The full security ledger includes all algebraic, retry, setup and
   binding losses.
 - [ ] The evidence script passes under `python3 -I`.
   Protocol mutations and malformed-input tests reject with typed errors.
@@ -674,46 +674,51 @@ The current weight-46 column-challenge family has support size
 ```text
 S46 = sum_(j=0..46) binom(162,j)
     = 107,268,495,235,892,251,993,000,716,928,106,195,079,952
-floor(S46 / 2^128) = 315
+2^136 <= S46 < 2^137
 I = s*C
 extraction-address term per response candidate = I/S46
 ```
 
-For one response candidate, the term is at most `2^-128` exactly when
-`I <= 315`. One owner at `C = 256` meets it. Two owners at `C = 256` do not.
-
-The binary root prices this site with the fold proof of work that
-[transcript grinding](transcript-grinding.md) already applies to sparse fold
-challenges. After the prover absorbs a response nonce candidate, it runs one
-`FoldChallengeWork` proof of work before the column challenges are squeezed.
-Its bit count is
+The current root already prices this site.
+`crates/akita-types/src/binary_source/grinding.rs` places one
+`FoldChallengeWork` entry after the root response nonce.
+The entry counts all I column coordinates and uses the family's guaranteed
+set size `2^136` as its denominator, as in
+[transcript grinding](transcript-grinding.md):
 
 ```text
-g = least g with I * 2^128 <= S46 * 2^g
+g = least g with I * 2^128 <= 2^136 * 2^g
 ```
-
-compared in exact integers.
 
 | I | Example | g |
 | ---: | --- | ---: |
-| at most 315 | one owner at `C = 256` | 0 |
+| at most 256 | one owner at `C = 256` | 0 |
 | 512 | two owners at `C = 256` | 1 |
 | 1,024 | four owners at `C = 256` | 2 |
 | 1,048,576 | 4,096 owners at `C = 256` | 12 |
 
-Under the classical random-oracle bound of that spec,
-`sum_i q_i * 2^-g_i * L_i / |E_i|`, this event then costs at most `2^-128`
-per query. The count q includes every response candidate the prover tries.
-A zero-bit site emits no nonce. A nonzero site adds one canonical LEB128
-nonce of at most `ceil((g+7)/7)` bytes, which is 3 bytes at g = 12.
-The honest prover spends about `2^g` check squeezes per response candidate.
-The current root has no work entry at this site. The grinding plan gains one
-entry, and its digest changes.
+The migration keeps this entry, its position and its `2^136` denominator.
+The exact size S46 would allow `g = 0` up to `I = 315`.
+Using it would need a new entry representation, validation, encoding and plan
+identity, so the migration does not adopt it.
+The field change does not alter I or the column-challenge family.
+Only the plan identity changes, through the new challenge order of the other
+sites.
+The 4096-owner descriptor cap stays a resource limit, not a cap on I for this
+event.
 
-This pricing replaces any cap on I for this event. The 4096-owner descriptor
-cap stays a resource limit. E64 batching does not affect this term. The full
-security ledger still adds every other algebraic, retry, setup, binding and
-hash term.
+The per-query rate of this entry rests on the indexed extraction stage in
+[the checkpoint argument](binary-source-checkpoint.md).
+That stage replaces one column coordinate and keeps every other coordinate.
+The root draws its coordinates by squeezing one 32-byte seed and expanding
+indexed SHAKE streams (`crates/akita-challenges/src/fold_draw.rs`,
+`crates/akita-challenges/src/binary/sampler.rs`).
+The argument therefore needs each indexed stream to be modeled as an
+independently programmable oracle, with its queries counted.
+This premise is shared with the current P128 root and is listed under open
+questions. The migration neither strengthens nor weakens it.
+E64 batching does not affect this term. The full security ledger still adds
+every other algebraic, retry, setup, binding and hash term.
 
 ### Alternatives Considered
 
@@ -816,7 +821,7 @@ The stages below describe future changes; this spec commit changes no Rust.
    `crates/akita-pcs/tests/binary_source_end_to_end/byte_contract.rs`,
    `compatibility.rs` and `statement_binding.rs`.
    Generate the selected p64 catalog and induced setup instances.
-   Price the column-challenge proof of work and complete the security ledger
+   Keep the column-challenge work entry and complete the security ledger
    before production admission. Record complete size and timing results.
    Update the owning Book pages and spec lifecycle in the implementing PRs.
 
@@ -826,6 +831,12 @@ The stages below describe future changes; this spec commit changes no Rust.
   mixed shapes? Complete proof bytes, time and memory remain unmeasured.
 - What complete security allocation will production admit? The q24, B/D,
   suffix and setup instances need certification under that allocation.
+- Which extraction argument covers the seed-plus-indexed-SHAKE column sampler?
+  The indexed stage of the checkpoint argument replaces one coordinate at a
+  time. It needs each indexed stream modeled as an independently programmable
+  oracle with its queries counted, or a sampler whose coordinates are encoded
+  independently in the transcript. This question applies equally to the
+  current root.
 - Will the prime API remain base-field-only or admit E64 points and values?
   E64 support requires two coordinate planes and an explicit cap decision.
 - Will B and D keep a shared rank or expose separate ranks?

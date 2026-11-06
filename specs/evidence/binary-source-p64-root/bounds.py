@@ -276,16 +276,15 @@ assert support == 107_268_495_235_892_251_993_000_716_928_106_195_079_952
 assert F(256,support) <= F(1,2**128) < F(512,support)
 assert F(4096*256,support) > F(1,2**128)
 bit_interval(F(4096*256,support),116)
-# Column-challenge proof of work, priced like a sparse fold challenge:
-# g = least g with I * 2^128 <= S46 * 2^g.
+# Column-challenge proof of work, as the current work entry prices it:
+# g = least g with I * 2^128 <= 2^136 * 2^g.
 def column_work_bits(i):
     g = 0
-    while i * 2**128 > support * 2**g:
+    while i * 2**128 > 2**(136 + g):
         g += 1
     return g
-assert support // 2**128 == 315
-assert column_work_bits(315) == 0 and column_work_bits(316) == 1
-assert [column_work_bits(i) for i in (1, 256, 512, 1024, 4096*256)] == [0, 0, 1, 2, 12]
+assert 2**136 <= support < 2**137 and support // 2**128 == 315
+assert [column_work_bits(i) for i in (1, 256, 257, 512, 1024, 4096*256)] == [0, 0, 1, 1, 2, 12]
 assert all(F(i, support * 2**column_work_bits(i)) <= F(1, 2**128)
            for i in range(1, 4096*256 + 1, 997))
 assert F(7+2*23,2**162) < F(1,2**156)
