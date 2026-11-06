@@ -96,17 +96,16 @@ pub(super) fn evaluate<C: MeasurementConfig>(
         let mut values = words
             .iter()
             .map(|&word| {
-                bit_weights
-                    .iter()
-                    .take(128)
-                    .enumerate()
-                    .fold(C::Field::zero(), |sum, (bit, weight)| {
+                bit_weights.iter().take(128).enumerate().fold(
+                    C::Field::zero(),
+                    |sum, (bit, weight)| {
                         if (word >> bit) & 1 == 0 {
                             sum
                         } else {
                             sum + *weight
                         }
-                    })
+                    },
+                )
             })
             .collect::<Vec<_>>();
         for &r in point.get(8..).ok_or(AkitaError::InvalidProof)? {

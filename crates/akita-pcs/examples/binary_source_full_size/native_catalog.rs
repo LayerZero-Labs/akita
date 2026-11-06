@@ -117,7 +117,8 @@ impl FixtureCatalog {
         log: usize,
         shape: &str,
     ) -> Result<TrustedScheduleCatalog<C>> {
-        self.identity.check(&CatalogIdentity::new::<C>(log, shape))?;
+        self.identity
+            .check(&CatalogIdentity::new::<C>(log, shape))?;
         self.check_rows::<C>(log, shape)?;
         let chunking = ChunkedWitnessCfg::default_non_chunked();
         let policy = policy_of::<C>(chunking);
@@ -276,8 +277,7 @@ fn plan<C: MeasurementConfig>(
     let prefix_cells = price.typed_prefix.natural_len;
     let transition = NativeRootTransition::new(price.outgoing_physical_cells, 3, prefix_cells)?;
     let seed = ResolvedScheduleRow::try_new(profiles.clone(), seed.schedule, &policy)?;
-    let schedule =
-        find_native_root_schedule(&seed, transition, &policy, C::ring_challenge_config)?;
+    let schedule = find_native_root_schedule(&seed, transition, &policy, C::ring_challenge_config)?;
     let dimension = schedule
         .recursive_folds
         .first()

@@ -57,9 +57,9 @@ impl MeasurementConfig for P64 {
         seed: [u8; 32],
         words: Vec<u128>,
     ) -> Option<Self::Attacker> {
-        crate::p64::FAULT.with(|selected| selected.get()).map(|fault| {
-            crate::p64::fault_backend::FaultBackend::new(backend, seed, words, fault)
-        })
+        crate::p64::FAULT
+            .with(|selected| selected.get())
+            .map(|fault| crate::p64::fault_backend::FaultBackend::new(backend, seed, words, fault))
     }
 }
 
