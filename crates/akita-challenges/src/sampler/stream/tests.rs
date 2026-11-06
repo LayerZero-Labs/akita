@@ -101,8 +101,9 @@ fn encode(stream: &SparseChallengeStream, challenge: &SparseChallenge) -> (u128,
 }
 
 /// The `(signs, rank)` pairs of the message's candidates whose rank words are
-/// accepted, in message order, computed from the definition: `rank =
-/// floor(x R / 2^m)`, accepted when `x R mod 2^m >= 2^m mod R`.
+/// accepted, in message order, read candidate by candidate. The rank map is
+/// the production `lemire_rank`; `lemire_rank_matches_its_definition` checks
+/// it independently at full width.
 fn accepted_draws(stream: &SparseChallengeStream, message: &[u8]) -> Vec<(u128, u128)> {
     let shell = &stream.shell;
     let weight = shell.config.weight();
@@ -235,6 +236,75 @@ fn widening_multiply_is_exact() {
             let two_128 = (u128::MAX % p + 1) % p;
             let lhs = ((high % p) * two_128 % p + low % p) % p;
             assert_eq!(lhs, (x % p) * (y % p) % p);
+        }
+    }
+}
+
+#[test]
+fn lemire_rank_matches_its_definition() {
+    // `x R = hi 2^m + lo`: `lo` is `x R mod 2^m`, computed here by wrapping
+    // multiplication, and `hi` is checked by its congruence modulo two primes
+    // near 2^64, independently of `widening_mul` and the shifts.
+    let primes = [18_446_744_073_709_551_557u128, 18_446_744_073_709_551_533];
+    let mut rng = SplitMix(11);
+    let mut spaces: Vec<(u128, u32)> = production_families()
+        .into_iter()
+        .map(|(d, config, _, _)| {
+            let shell = layout(d, &config, None, 1).unwrap().shell;
+            (shell.rank_space, shell.rank_bits)
+        })
+        .collect();
+    for m in [63, 64, 65, 127, 128] {
+        let top = if m == u128::BITS {
+            u128::MAX
+        } else {
+            (1u128 << m) - 1
+        };
+        spaces.push((top >> 9 | 1, m));
+        spaces.push((top / 3 + 7, m));
+    }
+    for (rank_space, m) in spaces {
+        let mask = if m == u128::BITS {
+            u128::MAX
+        } else {
+            (1u128 << m) - 1
+        };
+        let threshold = if m == u128::BITS {
+            (u128::MAX % rank_space + 1) % rank_space
+        } else {
+            (1u128 << m) % rank_space
+        };
+        let mut words = vec![0, 1, mask, mask - 1, mask >> 1];
+        words.extend(
+            (0..2_000).map(|_| (u128::from(rng.next()) << 64 | u128::from(rng.next())) & mask),
+        );
+        for x in words {
+            let low = x.wrapping_mul(rank_space) & mask;
+            let got = lemire_rank(x, rank_space, m, threshold);
+            assert_eq!(
+                got.is_some(),
+                low >= threshold,
+                "R={rank_space} m={m} x={x}"
+            );
+            // Rejected words have no rank; recompute the quotient for them too.
+            let high = match got {
+                Some(high) => high,
+                None => lemire_rank(x, rank_space, m, 0).unwrap(),
+            };
+            assert!(high < rank_space);
+            for p in primes {
+                let two_m = if m == u128::BITS {
+                    (u128::MAX % p + 1) % p
+                } else {
+                    (1u128 << m) % p
+                };
+                let lhs = ((high % p) * two_m % p + low % p) % p;
+                assert_eq!(
+                    lhs,
+                    (x % p) * (rank_space % p) % p,
+                    "R={rank_space} m={m} x={x}"
+                );
+            }
         }
     }
 }

@@ -239,7 +239,7 @@ because their sizing rates assume it.
 | D64 (31,11), threshold 18 | 147 | `1 - 2^-18.92` | 0.6623 | `0.6499 <= 0.65 * (1 - 2^-16)` | `>= 2^128.062` |
 | D128 (31,0), threshold 13 | 146 | `1 - 2^-16.81` | 0.7908 | `0.7799 <= 0.78 * (1 - 2^-16)` | `>= 2^128.563` |
 
-The certificates prove predicate rates of at least 0.2349 (D64) and 0.4803
+The certificates prove predicate rates of at least 0.2349 (D64) and 0.4802
 (D128) on the shell, that is `2^128.062 / |S|` and `2^128.563 / |S|`. The
 measured predicate rates come from 20,000 draws and are used only to size the
 pool. The sizing rates 0.65 and 0.78 sit about 3.7 and 3.8 standard errors
@@ -274,22 +274,25 @@ Both are exact integer conditions in `u128`. The union bound wins for small
 `W`, the Chernoff bound for large `W`. An unfiltered family with `t = 0` (a
 power-of-two `R`; no production family) rejects nothing and has `B = W`.
 
-| Family | `W` | `B` | message bytes | exact tail `log2 P[run out]` at the sizing `p` |
+| Family | `W` | `B` | message bytes | `log2 P[run out]` at the sizing `p`, at most |
 |---|---|---|---|---|
 | D64 (31,10) | 9 | 20 | 368 | -204.7 |
-| D64 (31,10) | 79 | 93 | 1688 | -221.0 |
-| D64 (31,10) | 256 | 273 | 4952 | -240.2 |
-| D128 (31,0) | 3 | 13 | 240 | -178.7 |
+| D64 (31,10) | 79 | 93 | 1688 | -220.9 |
+| D64 (31,10) | 256 | 273 | 4952 | -240.1 |
+| D128 (31,0) | 3 | 13 | 240 | -178.6 |
 | D128 (31,0) | 2048 | 2088 | 38112 | -402.3 |
-| D64 operator norm | 4 | 124 | 2280 | -166.9 |
-| D64 operator norm | 6 | 139 | 2560 | -177.4 |
-| D64 operator norm | 8 | 151 | 2776 | -184.2 |
-| D64 operator norm | 64 | 524 | 9632 | -463.8 |
-| D128 operator norm | 8 | 104 | 1904 | -180.1 |
-| D128 operator norm | 64 | 397 | 7248 | -505.7 |
+| D64 operator norm | 4 | 124 | 2280 | -166.8 |
+| D64 operator norm | 6 | 139 | 2560 | -177.3 |
+| D64 operator norm | 8 | 151 | 2776 | -184.1 |
+| D64 operator norm | 64 | 524 | 9632 | -463.5 |
+| D128 operator norm | 8 | 104 | 1904 | -180.0 |
+| D128 operator norm | 64 | 397 | 7248 | -505.5 |
 
-For the unfiltered rows the sizing `p` is the exact rejection rate, so their
-tails are exact bounds, not estimates.
+Each value is the exact binomial tail `P[Bin(B, p) < W]`, computed with exact
+rationals and rounded up. For the unfiltered rows `p = 1 - t / 2^m` is the
+exact acceptance rate, so their tails are exact, not estimates; the Chernoff
+test uses the rational lower bound `1 - 2^-s` on it. For the operator-norm
+rows `p` is the sizing rate `6499/10000` or `7799/10000`.
 
 The pool size changes only completeness, and the soundness argument charges
 nothing for it. Whether a message runs out depends only on which candidates
@@ -300,23 +303,25 @@ of challenge vectors, `P[accept and bad] <= P_ideal[bad]`, with no bias term.
 
 For the operator-norm families the sizing rate is measured, not proven, so
 their `2^-161` is a completeness estimate. At the certified predicate rates
-the same pools give a bound that depends on the count `W`:
+the same pools give a bound that depends on the count `W`. The rate is the
+certificate's exact `p0` times the rank-word acceptance `1 - t / 2^m`; a range
+row is the worst count in the range, and every value is rounded up:
 
 | Family | `W` | `log2 P[run out]` at the certified rate, at most |
 |---|---|---|
-| D64 | `<= 64` | -31.8 |
+| D64 | `<= 64` | -28.4 (worst at `W = 22`, `B = 239`) |
 | D64 | 128 | -9.6 |
 | D64 | `>= 200` | no useful bound (`B * 0.2349` is about `W`) |
-| D128 | `<= 64` | -64.4 |
-| D128 | 191 | -91.9 |
-| D128 | 256 | -70.4 |
-| D128 | 512 | -23.7 |
+| D128 | `<= 64` | -64.2 (worst at `W = 11`, `B = 116`) |
+| D128 | 191 | -91.8 |
+| D128 | 256 | -70.3 |
+| D128 | 512 | -23.6 |
 
 A count past these ranges is complete only under the measured rate. Running
 out costs the honest prover one more fold-response candidate, never a failed
 proof. The pools are smaller than before this revision (D64, `W = 8`: 151
 candidates instead of 357), so the certified-rate bounds are a little weaker
-at small `W` (D64 `W <= 32`: -31.8 instead of -43.8); they were never part of
+at small `W` (D64 `W <= 32`: -28.4 instead of -43.8); they were never part of
 soundness.
 
 ### Fold proof-of-work pricing
@@ -402,10 +407,12 @@ Every family is a pool. Each candidate is accepted independently with the
 same probability, and an accepted candidate is uniform on the accepted family
 `C` (the shell, or its predicate-accepted part) and independent of which
 candidates were accepted. Replacing the `j`-th accepted candidate by an
-encoding of a fresh uniform element of `C` (uniform signs, and a uniform
-accepted rank word for its rank: each rank has the same number
-`floor(2^m / R)` of them) keeps the acceptance pattern, every other candidate
-and the unused tail, so it is exact. A message that runs out is rejected and
+encoding of a fresh uniform element `c` of `C` keeps the acceptance pattern, every other candidate
+and the unused tail, so it is exact. The encoding copies the signs of `c` and
+picks its rank word uniformly among the accepted preimages of the position
+rank of `c`: each rank has exactly `floor(2^m / R)` of them. The signs are not
+resampled independently, because the operator-norm predicate depends on
+them. A message that runs out is rejected and
 contributes no accepting child.
 
 This is simpler than the indexed case, which had to program a SHAKE tape
@@ -584,9 +591,10 @@ Ranked recommendation:
 2. **Rank-check advice** for a recursion guest. Same transcript bits as
    option 1: the host supplies the decoded positions as untrusted advice, and
    the guest checks them instead of searching. The guest MUST check all of:
-   for every candidate before the last accepted one, recompute
+   for every candidate up to and including the last accepted one, recompute
    `x * R = hi * 2^m + lo` and compare `lo` with `t`, so the guest itself
-   decides which rank words are rejected; for each accepted candidate, the ±1
+   decides which rank words are rejected and derives each `hi` from the
+   transcript word; for each accepted candidate, the ±1
    positions are strictly increasing and their colexicographic rank
    `r_a = sum_k binom(p_k, k)` is below `binom(d, a)`; the ±2 positions are
    given as strictly increasing indices into the complement of the ±1 set,
@@ -594,7 +602,9 @@ Ranked recommendation:
    complement; and `r_a + binom(d, a) * r_b` equals `hi`. Checking one subset
    alone would let a prover choose the ±2 positions. An operator-norm guest
    also evaluates the predicate on every candidate it accepts and every
-   candidate it skips. It is a guest implementation of option 1, not a
+   rank-word-accepted candidate it skips, after checking that candidate's
+   advised positions against its `hi` in the same way and reading its signs
+   from the transcript; unchecked advice must never justify a skip. It is a guest implementation of option 1, not a
    protocol choice. Putting the positions in the proof instead would add about
    `W * w * log2 d` bits (55 KB at fold 0) and is rejected.
 3. **Unranking into a `2^K` prefix.** The fewest bits, and no rejection for

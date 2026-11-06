@@ -63,11 +63,12 @@ const MAX_CACHED_BINOMIAL_TABLES: usize = 8;
 #[cfg(feature = "parallel")]
 const PARALLEL_DECODE_WORK_THRESHOLD: usize = 1 << 14;
 
-/// Lower bounds used to size an operator-norm pool.
+/// Lower bounds used to size a candidate pool.
 ///
-/// `accept` is a rational `u / v` lower bound on the probability that one
+/// `accept` is a rational `u / v` lower bound on the probability `p` that one
 /// candidate is accepted, and `fail_bits` a rational lower bound on
-/// `-log2(1 - u / v)`. For an unfiltered family both are exact bounds on the
+/// `-log2(1 - p)`. The two bound `p` independently: `fail_bits` may exceed
+/// `-log2(1 - u / v)`. For an unfiltered family both are proven bounds on the
 /// rank-word acceptance. For an operator-norm family they are the rank-word
 /// acceptance times a sizing predicate rate about 3.7 (D64) or 3.8 (D128)
 /// standard errors below the rate measured on 20,000 draws: an estimate, not a
@@ -97,7 +98,7 @@ fn operator_norm_rates(rejection: OperatorNormRejection) -> Result<(PoolRates, u
         )),
         // Sizing predicate rate 0.78 (measured 0.7908), times `1 - 2^-16`.
         // The certificate retains 2^128.563 accepted challenges, a predicate
-        // rate of at least 0.4803 on the shell.
+        // rate of at least 0.4802 on the shell.
         OperatorNormRejection::D128_SELECTIVE_L2 => Ok((
             PoolRates {
                 accept: (7799, 10_000),
