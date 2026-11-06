@@ -302,11 +302,14 @@ It requires no additional typed setup table.
 Use the existing A/T adjoint with the explicit vector rho.
 Its entries no longer come from combinations of q-valued J rows.
 
-For base-field prime claims, let
+For P64 prime claims, let
 `H_other = 2*[word] + r_B + r_D + O + 2*planes`.
 Here `[word]` is one when the word frontend is selected and zero otherwise.
 The values r_B and r_D are the B and D authentication ranks.
 O counts the selected ordinary linear rows and negative-bit addresses.
+Here `planes = 2*claims`, with at most one prime point per group and at most
+one claimed value per committed polynomial. Each plane has an independent
+ring-identity batch and each output coordinate has an independent reading batch.
 The relation batch has `a + H_other` independent coordinates instead of
 `7 + H_other`.
 This changes the number of challenge coordinates, not the number of Stage 2
@@ -431,19 +434,33 @@ Public statement bytes are separate from projection proof bytes.
 
 At `C = 256`, one base-coordinate plane has 912,384 natural digits and
 1,441,792 physical cells.
-Five have 4,561,920 natural digits and 7,208,960 physical cells.
+Two planes per claim have 1,824,768 natural digits and 2,883,584 physical
+cells. Five claims have ten planes, 9,123,840 natural digits and 14,417,920
+physical cells.
 Prime-only D has `ceil(planes*22*162*C/64)` columns.
 Word U adds `s*162*C` compact digits before division into degree-64 columns.
 
-A base-field prime claim keeps one plane per separable claim.
-An admitted E64 claim needs two base-coordinate EP planes, each with 22 digits.
-Its reading uses extension arithmetic.
-The current `PrimePlaneClaim` API carries base residues.
-Supporting E64 points and values therefore needs an API and layout change.
-Count both coordinate planes against the resource cap, or enlarge and reprice
-the cap explicitly.
-The five-plane cost and rank tables in this spec refer to base-field claims.
-Random testing challenges are E64 in either case.
+P64 prime points and values are E64 elements. `PrimeClaimValue` represents
+one P128 residue or two P64 coordinates `c0 + c1*u`. Both P64 coordinates
+are canonical residues below p, encoded as eight-byte little-endian integers.
+P64 uses `AkitaPrimePlanes/p64\x04`; the old P64 version 3 is rejected.
+P128 retains `AkitaPrimePlanes\x02`, its 43-digit planes and all existing bytes.
+A profile's decoder rejects the other profile's tag and coordinate shape.
+
+Each P64 claim owns two EP planes, ordered by polynomial and then coordinate.
+The single shared point has E64 coordinates. For row tensor weights `e_r`,
+write `EP_b = sum_r e_r*T_rb` in E64. Commit the two base coordinates of
+EP_b separately, each with 22 centered base-eight digits. Authenticate each
+coordinate's ring identity against the complete response. The reading is
+`sum_b col_b * <omega, EP_b> = value` in E64, using `u^2 = 2`.
+Batch its two coordinate equations independently over E64. Row, column and
+coefficient point coordinates can all have nonzero u coordinates.
+
+At most one point per group and one value per committed polynomial are allowed.
+For s committed polynomials, at most s claims and 2s coordinate planes are
+admitted. D's compact width, label and independent rank use this actual plane
+count through the manifest. A claim with even a base-valued P64 point still
+owns two planes. E64 challenges are used for both coordinate equations.
 
 #### Agreement and units
 
@@ -485,20 +502,22 @@ Use the widths
 
 ```text
 B_columns = s*C*3*8*648/64
-D_columns = ceil((5*22*162*C + s*162*C)/64)
+claims = min(s, 5)
+planes = 2*claims
+D_columns = ceil((planes*22*162*C + s*162*C)/64)
 ```
 
-for five base planes plus all-owner word U.
+for up to five E64 claims plus all-owner word U.
 
-| Geometry; owners | B columns | Minimum B rank | D columns | Minimum D rank |
-| --- | ---: | ---: | ---: | ---: |
-| Fixture; 1 | 486 | 2 | 562 | 2 |
-| Fixture; 4096 | 1,990,656 | 3 | 21,293 | 2 |
-| Envelope; 1 | 62,208 | 2 | 71,928 | 2 |
-| Envelope; 10 | 622,080 | 3 | 77,760 | 3 |
-| Envelope; 4096 | 254,803,968 | 5 | 2,725,488 | 3 |
+| Geometry; owners | Claims | Planes | B columns | Minimum B rank | D columns | Minimum D rank |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Fixture; 1 | 1 | 2 | 486 | 2 | 228 | 1 |
+| Fixture; 4096 | 5 | 10 | 1,990,656 | 3 | 21,850 | 2 |
+| Envelope; 1 | 1 | 2 | 62,208 | 2 | 29,160 | 2 |
+| Envelope; 10 | 5 | 10 | 622,080 | 3 | 149,040 | 3 |
+| Envelope; 4096 | 5 | 10 | 254,803,968 | 5 | 2,796,768 | 3 |
 
-Rank two covers both single-owner geometries, including five base planes.
+Rank two covers both single-owner geometries with their two coordinate planes.
 It does not cover every larger-owner B or D width.
 Each role must meet its minimum rank.
 A shared-rank implementation must select the maximum of the two minima.
@@ -811,7 +830,7 @@ The stages below describe future changes; this spec commit changes no Rust.
    `crates/akita-pcs/tests/binary_source_end_to_end/prime_plane.rs` and
    `crates/akita-cpu-backend/src/binary_root_mixed_tests.rs`.
    Use 22 digits per base coordinate and the new unit proof.
-   Gate any E64 claim API on explicit two-plane resource accounting.
+   Use E64 points and values with explicit two-plane resource accounting.
    Select the actual p64 ordinary compression/norm contract.
    Decode signed ordinary sources against the selected field modulus.
 6. **Admit and measure the complete schedule.** Touch
@@ -837,8 +856,6 @@ The stages below describe future changes; this spec commit changes no Rust.
   oracle with its queries counted, or a sampler whose coordinates are encoded
   independently in the transcript. This question applies equally to the
   current root.
-- Will the prime API remain base-field-only or admit E64 points and values?
-  E64 support requires two coordinate planes and an explicit cap decision.
 - Will B and D keep a shared rank or expose separate ranks?
   Either choice must meet the per-role minima above.
 - Which p64 ordinary profile supplies the mixed root's compression and norm

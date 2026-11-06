@@ -376,12 +376,15 @@ pub(crate) fn prime_plane_weights<E: Field>(
     terms
         .try_reserve_exact(term_count)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let (rows, column_weights, omega) = manifest
+    let coordinates = manifest
         .claim()
         .ok_or(AkitaError::InvalidProof)?
         .weights::<E>(descriptor)?;
     let mut target = E::zero();
     for (plane_index, claim) in manifest.planes().iter().enumerate() {
+        let (rows, _, _) = coordinates
+            .get(claim.coordinate)
+            .ok_or(AkitaError::InvalidProof)?;
         let batch_index = checked::product([plane_index, 2]).ok_or(AkitaError::InvalidProof)?;
         let relation_batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
         let reading_batch = *batches
@@ -407,7 +410,7 @@ pub(crate) fn prime_plane_weights<E: Field>(
                 power *= alpha;
             }
         }
-        for (column, column_weight) in column_weights.iter().copied().enumerate() {
+        for column in 0..columns {
             let challenge_index = checked::mul_add(claim.polynomial, columns, column)
                 .ok_or(AkitaError::InvalidProof)?;
             let multiplier = scalar_challenges
@@ -420,10 +423,25 @@ pub(crate) fn prime_plane_weights<E: Field>(
             let element =
                 checked::mul_add(plane_index, columns, column).ok_or(AkitaError::InvalidProof)?;
             for (coefficient, relation) in kernel.into_iter().enumerate() {
-                let weight = reading_batch
-                    * column_weight
-                    * *omega.get(coefficient).ok_or(AkitaError::InvalidProof)?
-                    - relation_batch * relation;
+                let degree = manifest.field_profile().extension_degree();
+                let mut reading = E::zero();
+                for (c, (_, column_weights, _)) in coordinates.iter().enumerate() {
+                    for (o, (_, _, omega)) in coordinates.iter().enumerate() {
+                        let power = claim.coordinate + c + o;
+                        let output = power % degree;
+                        let batch_index = plane_index
+                            .checked_sub(claim.coordinate)
+                            .and_then(|first| checked::sum([first, output]))
+                            .and_then(|index| checked::mul_add(2, index, 1))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
+                        reading += batch
+                            * E::from_u64(1 << (power / degree))
+                            * column_weights[column]
+                            * omega[coefficient];
+                    }
+                }
+                let weight = reading - relation_batch * relation;
                 terms.extend(repacking.coefficient_weights(
                     plane_segment,
                     element,

@@ -197,7 +197,7 @@ fn p64_quotients_are_last_and_preserve_existing_natural_addresses() {
     for (m, columns, depth, old_live) in [(1, 2, 8, 57_600), (8192, 256, 12, 39_915_264)] {
         for owners in [1, 2, 4096] {
             let descriptor = descriptor_geometry(m, columns, owners);
-            for (word, planes) in [(true, 0), (false, 1), (true, 1)] {
+            for (word, planes) in [(true, 0), (false, 2), (true, 2)] {
                 let plan = BinaryRootWitnessPlan::for_profile(
                     &descriptor,
                     3,
@@ -381,6 +381,12 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
         };
         assert!(BinaryCommittedGroupManifest::from_bytes(&wrong_version).is_err());
         for (word, planes, mixed) in [(true, 0, false), (false, 1, false), (true, 1, true)] {
+            let planes = planes * field_profile.extension_degree();
+            let zero = if field_profile == BinaryFieldProfile::P64 {
+                crate::binary_source::PrimeClaimValue::from([0, 0])
+            } else {
+                0.into()
+            };
             let claim = word.then(|| {
                 BinaryTerminalClaim::new(
                     &descriptor,
@@ -394,10 +400,10 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
             let prime = PrimePlaneManifest::with_field_profile(
                 &descriptor,
                 (planes > 0).then(|| PrimeGroupClaim {
-                    point: vec![0; 11],
+                    point: vec![zero; 11],
                     evaluations: vec![PrimePlaneClaim {
                         polynomial: 0,
-                        value: 0,
+                        value: zero,
                     }],
                 }),
                 field_profile,
@@ -420,8 +426,11 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                 7
             };
             let ordinary = mixed.then(|| {
-                OrdinaryNativeRootPlan::new(ordinary_carrier, if word { 5 } else { 2 } + planes)
-                    .unwrap()
+                OrdinaryNativeRootPlan::new(
+                    ordinary_carrier,
+                    if word { 5 } else { 2 } + usize::from(planes > 0),
+                )
+                .unwrap()
             });
             let other = 2 * usize::from(word)
                 + manifest.b_rows()
@@ -452,7 +461,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                 assert_eq!(
                     segment,
                     if word { 5 } else { 2 }
-                        + planes
+                        + usize::from(planes > 0)
                         + ordinary
                             .as_ref()
                             .map_or(0, |ordinary| ordinary.segments().len())

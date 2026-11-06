@@ -63,7 +63,7 @@ fn claim(words: &[u128], polynomial: usize) -> PrimePlaneClaim {
     });
     PrimePlaneClaim {
         polynomial,
-        value: value.to_u128_checked().unwrap(),
+        value: value.to_u128_checked().unwrap().into(),
     }
 }
 
@@ -190,7 +190,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     assert_eq!(packed_bytes, logical_bytes);
     let word_claim = word.then(|| honest_claim(&descriptor, &words[0]));
     let primes = (planes > 0).then(|| PrimeGroupClaim {
-        point: prime_point(),
+        point: prime_point().into_iter().map(Into::into).collect(),
         evaluations: (0..planes)
             .map(|owner| claim(&words[owner], owner))
             .collect(),
@@ -208,14 +208,14 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
                 0 => bad.evaluations.clear(),
                 1 => bad.evaluations.push(bad.evaluations[0].clone()),
                 2 => bad.evaluations[0].polynomial = owners,
-                3 => bad.evaluations[0].value = akita_params::binary_setup::BINARY_SETUP_P,
-                4 => bad.point[0] = akita_params::binary_setup::BINARY_SETUP_P,
+                3 => bad.evaluations[0].value = akita_params::binary_setup::BINARY_SETUP_P.into(),
+                4 => bad.point[0] = akita_params::binary_setup::BINARY_SETUP_P.into(),
                 5 => {
                     bad.point.pop();
                 }
                 _ => {
                     let mut extra = bad.evaluations[0].clone();
-                    extra.value ^= 1;
+                    extra.value = (extra.value.coordinates()[0] ^ 1).into();
                     bad.evaluations.push(extra);
                 }
             }
@@ -468,12 +468,13 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     let prime = primes.as_ref().unwrap();
     for index in 0..prime.evaluations.len() {
         let mut altered = prime.clone();
-        altered.evaluations[index].value ^= 1;
+        altered.evaluations[index].value =
+            (altered.evaluations[index].value.coordinates()[0] ^ 1).into();
         rejects("prime value", &proof, &commitment, Some(altered));
     }
     for coordinate in 0..prime.point.len() {
         let mut altered = prime.clone();
-        altered.point[coordinate] ^= 1;
+        altered.point[coordinate] = (altered.point[coordinate].coordinates()[0] ^ 1).into();
         rejects("prime coordinate", &proof, &commitment, Some(altered));
     }
     // The prime-only D payload is the first prover message. Alter one field
@@ -557,9 +558,9 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
 fn prime_plane_rejects_a_second_value_for_the_same_polynomial() {
     let descriptor = descriptor(2);
     let one = claim(&WORDS, 0);
-    for value in [one.value, one.value ^ 1] {
+    for value in [one.value, (one.value.coordinates()[0] ^ 1).into()] {
         let primes = PrimeGroupClaim {
-            point: prime_point(),
+            point: prime_point().into_iter().map(Into::into).collect(),
             evaluations: vec![
                 one.clone(),
                 PrimePlaneClaim {
@@ -574,7 +575,7 @@ fn prime_plane_rejects_a_second_value_for_the_same_polynomial() {
         ));
     }
     let primes = PrimeGroupClaim {
-        point: prime_point(),
+        point: prime_point().into_iter().map(Into::into).collect(),
         evaluations: vec![one, claim(&WORDS, 1)],
     };
     assert_eq!(
@@ -616,7 +617,7 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
         .final_group;
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
     let claim = PrimeGroupClaim {
-        point: prime_point(),
+        point: prime_point().into_iter().map(Into::into).collect(),
         evaluations: vec![claim(&WORDS, 0), claim(&WORDS, 1)],
     };
     let first = |claim: PrimeGroupClaim| {
@@ -669,12 +670,13 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
     assert_ne!(one_owner, first(altered), "polynomial did not bind");
     for index in 0..claim.evaluations.len() {
         let mut altered = claim.clone();
-        altered.evaluations[index].value ^= 1;
+        altered.evaluations[index].value =
+            (altered.evaluations[index].value.coordinates()[0] ^ 1).into();
         assert_ne!(baseline, first(altered), "value {index} did not bind");
     }
     for coordinate in 0..claim.point.len() {
         let mut altered = claim.clone();
-        altered.point[coordinate] ^= 1;
+        altered.point[coordinate] = (altered.point[coordinate].coordinates()[0] ^ 1).into();
         assert_ne!(
             baseline,
             first(altered),
@@ -820,7 +822,7 @@ fn multiple_owner_catalog(
 }
 
 #[test]
-fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
+fn prime_plane_p64_extension_claims_and_extension_typed_prefix_endpoint() {
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_params::binary_setup::BinaryFieldProfile;
     use akita_types::binary_source::{
@@ -836,7 +838,7 @@ fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
             64,
             BinaryFieldProfile::P64,
             word,
-            1,
+            2,
         )
         .unwrap();
         let typed = BinaryTypedPrefix::from_plan(&manifest, &plan).unwrap();
@@ -851,7 +853,7 @@ fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
         let a = BinaryAProduct::new(&plan, &rho, &stage2, typed.domain_len).unwrap();
         let batches = [
             vec![extension(3000); manifest.b_rows()],
-            vec![extension(4000); manifest.d_label(word, 1).unwrap().rank as usize],
+            vec![extension(4000); manifest.d_label(word, 2).unwrap().rank as usize],
         ];
         let refs = [&batches[0][..], &batches[1][..]];
         let weights = typed
@@ -881,16 +883,16 @@ fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
         assert_eq!(actual, expected);
         drop(guard);
     }
-    let base_claim = PrimeGroupClaim {
-        point: vec![2; 11],
+    let extension_claim = PrimeGroupClaim {
+        point: vec![[2, 3].into(); 11],
         evaluations: vec![PrimePlaneClaim {
             polynomial: 0,
-            value: 3,
+            value: [3, 5].into(),
         }],
     };
     let prime = PrimePlaneManifest::with_field_profile(
         manifest.descriptor(),
-        Some(base_claim),
+        Some(extension_claim),
         BinaryFieldProfile::P64,
     )
     .unwrap();
@@ -907,4 +909,147 @@ fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
         Err(AkitaError::UnsupportedSchedule(_))
     ));
     assert!(channel.narg_string().is_empty());
+}
+
+#[test]
+fn prime_plane_p64_extension_reading_rejects_each_coordinate_and_plane() {
+    use akita_algebra::eq_poly::EqPolynomial;
+    use akita_challenges::{Challenges, SparseChallenge};
+    use akita_cpu_backend::binary_root::{prime_plane_digits, BinaryRootRelation};
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{
+        binary_word_manifest_fixture, prime_plane_relation_weights, BinaryRootWitnessPlan,
+    };
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    type E = Ext2<Base>;
+    let field = BinaryFieldProfile::P64;
+    let manifest = binary_word_manifest_fixture(field, 1);
+    let descriptor = manifest.descriptor();
+    let point = (0..11)
+        .map(|i| E::from_base_fn(|c| Base::from_u64((19 + 7 * i + 13 * c) as u64)))
+        .collect::<Vec<_>>();
+    let low = EqPolynomial::evals(&point[..8]).unwrap();
+    let high = EqPolynomial::evals(&point[8..]).unwrap();
+    let value = WORDS
+        .iter()
+        .enumerate()
+        .fold(E::zero(), |sum, (row, word)| {
+            (0..128).fold(sum, |sum, bit| {
+                sum + if word >> bit & 1 == 1 {
+                    high[row] * low[bit]
+                } else {
+                    E::zero()
+                }
+            })
+        });
+    assert_ne!(value.base_coefficient(1), Base::zero());
+    let coordinates = |v: E| {
+        [
+            v.base_coefficient(0).to_u128_checked().unwrap(),
+            v.base_coefficient(1).to_u128_checked().unwrap(),
+        ]
+    };
+    let claim = PrimeGroupClaim {
+        point: point
+            .iter()
+            .copied()
+            .map(|v| coordinates(v).into())
+            .collect(),
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: coordinates(value).into(),
+        }],
+    };
+    let prime =
+        PrimePlaneManifest::with_field_profile(descriptor, Some(claim.clone()), field).unwrap();
+    let sources = (0..2)
+        .map(|column| {
+            std::array::from_fn(|i| {
+                let bit = i / 4;
+                if bit < 128 {
+                    ((WORDS[column + 2 * (i % 4)] >> bit) & 1) as i128
+                        * if bit % 2 == 0 { 1 } else { -1 }
+                } else {
+                    0
+                }
+            })
+        })
+        .collect::<Vec<[i128; 648]>>();
+    let response = [std::array::from_fn(|i| sources[0][i] + sources[1][i])];
+    let challenges = Challenges::from_sparse(
+        (0..2)
+            .map(|_| SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        2,
+        1,
+    )
+    .unwrap();
+    let extension = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + 31 * i + 43 * c) as u64));
+    for word in [false, true] {
+        let plan = BinaryRootWitnessPlan::for_profile(descriptor, 3, 64, field, word, 2).unwrap();
+        let repacking = plan.repacking();
+        let segment = plan.prime_segment().unwrap();
+        let mut natural = repacking
+            .segments()
+            .iter()
+            .map(|s| vec![0; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()])
+            .collect::<Vec<_>>();
+        natural[0] = BinaryRootRelation::response_digits(&response).unwrap();
+        natural[segment] = prime_plane_digits::<Base>(descriptor, &prime, &sources).unwrap();
+        let plane_len = 2 * 22 * 162;
+        assert_eq!(natural[segment].len(), 2 * plane_len);
+        assert!(natural[segment][plane_len..].iter().any(|&d| d != 0));
+        let table = repacking
+            .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+            .unwrap()
+            .into_iter()
+            .map(|v| E::from_i128(i128::from(v)))
+            .collect::<Vec<_>>();
+        let weights = |manifest: &PrimePlaneManifest| {
+            prime_plane_relation_weights(
+                descriptor,
+                manifest,
+                repacking,
+                0,
+                segment,
+                &challenges,
+                extension(0),
+                &[extension(1), extension(2), extension(3), extension(4)],
+            )
+            .unwrap()
+        };
+        weights(&prime).check_table(&table).unwrap();
+        for coordinate in 0..2 {
+            let mut changed = table.clone();
+            let address = repacking
+                .coefficient_address(segment, 2 * coordinate, 0, 0)
+                .unwrap();
+            changed[address] += E::one();
+            assert!(matches!(
+                weights(&prime).check_table(&changed),
+                Err(AkitaError::InvalidProof)
+            ));
+            for point in [false, true] {
+                let mut changed = claim.clone();
+                let v = if point {
+                    &mut changed.point[3]
+                } else {
+                    &mut changed.evaluations[0].value
+                };
+                let mut c: [u128; 2] = v.coordinates().try_into().unwrap();
+                c[coordinate] = (c[coordinate] + 1) % field.modulus();
+                *v = c.into();
+                let changed =
+                    PrimePlaneManifest::with_field_profile(descriptor, Some(changed), field)
+                        .unwrap();
+                assert!(matches!(
+                    weights(&changed).check_table(&table),
+                    Err(AkitaError::InvalidProof)
+                ));
+            }
+        }
+    }
 }
