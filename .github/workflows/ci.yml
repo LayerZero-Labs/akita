@@ -112,6 +112,10 @@ jobs:
         run: cargo clippy -p akita-types -p akita-cpu-backend -p akita-params -p akita-planner --all-targets --no-default-features --features labinius-trinomial,transcript-keccak -- -D warnings
       - name: Test binary source end-to-end opening
         run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-keccak
+      - name: Test research binary p64 complete schedules
+        run: |
+          cargo test --release -p akita-pcs --example binary_source_full_size --no-default-features --features parallel,binary-source-measurements,transcript-keccak -- --test-threads=1
+          cargo test --release -p akita-pcs --example binary_source_full_size --no-default-features --features parallel,binary-source-measurements,transcript-keccak,dev-protocol -- --test-threads=1
 
 
   labinius-binary:

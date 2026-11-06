@@ -32,15 +32,23 @@ fn fixture_directory() -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-fn compare_baseline(proof: &[u8], shape: &str) {
-    let pin = fixture_directory().join(format!("p64-{shape}.pin"));
+fn compare_baseline(proof: &[u8], log: usize, shape: &str) {
+    let pin = fixture_directory().join("large-pins.txt");
+    let key = format!("{log}-{shape}");
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
-    let actual = format!("{} {}", proof.len(), crate::metrics::hex(&digest));
-    let expected = std::fs::read_to_string(&pin).unwrap_or_else(|error| {
+    let actual = format!("{key} {} {}", proof.len(), crate::metrics::hex(&digest));
+    let pins = std::fs::read_to_string(&pin).unwrap_or_else(|error| {
         panic!(
-            "Linux reference pin pending at {}: {error}; observed {actual}",
+            "missing Linux reference pins at {}: {error}; observed {actual}",
             pin.display()
         )
     });
+    let mut entries = pins
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some(key.as_str()));
+    let expected = entries
+        .next()
+        .unwrap_or_else(|| panic!("missing reference pin for {key} in {}", pin.display()));
+    assert!(entries.next().is_none(), "duplicate reference pin for {key}");
     assert_eq!(actual, expected.trim(), "p64 reference bytes changed");
 }

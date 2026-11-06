@@ -179,8 +179,13 @@ for inheritance and final-discharge requirements.
 The research `binary-source-measurements` example accepts `--field p64` to
 select the p64/E64 native root; omitting it preserves P128. Shapes are
 `binary-claim`, `prime-claim`, `binary-and-prime-claims`, and
-`binary-and-prime-claims-plus-ordinary`. `--log-carriers 3` selects the eight
-carrier, C=2 fixture; 22 and 23 select C=256. Use separate `--phase plan`,
+`binary-and-prime-claims-plus-ordinary`. P64 fixtures use `--log-carriers 22`
+and 23, both with C=256; complete replay tests use log 22, the smallest feasible
+measured size. Log 3 is infeasible because the full-field typed setup prefix exceeds
+the native witness while
+`crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs:83`
+requires `next_witness_len < request.current_witness_len`.
+Use separate `--phase plan`,
 `--phase prove`, and `--phase verify` invocations with a `--fixture` directory.
 Planning writes a research native catalog; proving writes commitments, induced
 verifier setup and proof. Verification reconstructs and validates that catalog.
@@ -193,5 +198,10 @@ planning when its catalog passes identity and row validation. Use a fresh direct
 and unset the cache for fresh planning. Cache names now include the field family;
 legacy P128 cache filenames are not reused. A valid alternate cached row can change
 setup and proof bytes, so byte comparisons must use identical selected rows.
-Research replay catalogs and pins live under `crates/akita-pcs/tests/fixtures/`,
-outside the supported schedule artifacts.
+Research replay catalogs and SHA3-256 proof pins at logs 22/23 live under
+`crates/akita-pcs/tests/fixtures/binary-source-p64{,-dev}/`, outside the supported
+schedule artifacts. CI replays log 22 in both protocol modes. To regenerate, run
+the example's three phases for all four shapes, logs 22/23 and both modes in two
+fresh roots; require equal catalog, commitment, setup, claims and proof bytes
+before installing catalogs and `large-pins.txt`. The fixture README provides the
+exact generation commands and installed SHA-256 manifest.

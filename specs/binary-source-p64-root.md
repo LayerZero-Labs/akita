@@ -20,9 +20,10 @@ batching. Keep the rank-three degree-648 commitment modulo q and the
 GF(2^128) word claim. This spec approves the protocol design.
 Production security is not established. The research implementation selects P64
 through explicitly admitted native catalog rows, the sole execution boundary.
-Linux catalogs, reference pins, complete measurements and validation remain pending;
-this record stays active until that evidence and the admission obligations below
-are resolved.
+Linux catalogs and proof pins at logs 22/23 are installed, with independently
+reproduced honest proofs and measured timings; the restored adversarial replay
+suite still needs Linux validation. This record stays active until that validation
+and the admission obligations below are resolved.
 
 ## Intent
 
@@ -833,8 +834,8 @@ Land any shared extension seams on main first under the branch contract.
 Each PR keeps unselected ordinary behavior byte-identical.
 Stages 1–5 provide the paired-field arithmetic and typed setup machinery.
 Stage 6 adds research catalog admission and the complete measurement driver.
-Its Linux-generated catalogs, singleton pins and measured results are pending;
-no production security allocation is admitted.
+Its Linux-generated catalogs and proof pins at logs 22/23 are installed, with
+honest replay evidence below; no production security allocation is admitted.
 
 1. **Define the paired field profile and identities.** Touch
    `crates/akita-params/src/binary_setup.rs` and `binary_setup/tests.rs`;
@@ -899,10 +900,46 @@ no production security allocation is admitted.
    before production admission. Record complete size and timing results.
    Update the owning Book pages and spec lifecycle in the implementing PRs.
 
+### Linux evidence
+
+At `afe36fd1`, Linux generation, proving and verification passed for all four
+shapes at logs 22 and 23 in current and dev protocol modes. Two independent roots
+matched on catalog, commitments, verifier setup, claims and proof bytes (80/80
+comparisons). Forty additional current-mode proofs also matched their references.
+Catalogs are installed under `crates/akita-pcs/tests/fixtures/binary-source-p64/`
+and `binary-source-p64-dev/`, with length and SHA3-256 proof pins in `large-pins.txt`;
+the enclosing `P64-SHA256SUMS` records the supplied files' SHA-256 digests.
+
+Log 3 is infeasible because the full-field typed setup prefix exceeds the native
+witness while `crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs:83`
+requires `next_witness_len < request.current_witness_len`.
+The complete replay tests therefore use log 22, the smallest feasible measured
+size, preserving statement, commitment, proof and setup tampering checks, K and
+prime digit faults, and ordinary-row refusal assertions. Their restored CI step
+runs both modes; passing honest measurements do not establish those adversarial
+test results, which remain pending Linux validation.
+
+Measurements used a 64-thread Threadripper PRO 7975WX on Ubuntu 24.04 with Rust
+1.95.0. Current-mode log-22 median proving was 2.18 s (word), 3.77 s (prime),
+4.11 s (word and prime), and 4.25 s (mixed), including cold setup. Proof sizes
+were respectively 79,331, 77,453, 80,402 and 83,497 bytes. Warm verification was
+about 11–23 ms, with mixed repeats up to 27 ms across modes; first mixed
+verification was about 30 ms. Log-23 proof sizes were 79,769, 76,702, 79,756 and
+83,594 bytes. Dev proofs matched current proofs; catalogs differed by mode.
+These are implementation measurements, not production security certification.
+
+To regenerate, follow the [fixture README](../crates/akita-pcs/tests/fixtures/README.md#regenerate-on-linux):
+run the existing example's plan/prove/verify phases at logs 22/23 for every shape
+and both modes in two fresh roots with the cache unset, compare all five artifacts,
+and install only catalogs and independently verified proof pins. Keep large
+setups, proofs and logs outside the repository. The README also gives per-test
+runtime estimates and the exact restored CI replay commands.
+
 ### Open questions
 
-- Which p64 catalog and successor schedules cover the intended word, prime and
-  mixed shapes? Complete proof bytes, time and memory remain unmeasured.
+- Which additional p64 catalog and successor schedules cover other geometries?
+  All four research shapes at logs 22/23 have measured honest replay evidence;
+  the complete adversarial replay suite still requires Linux validation.
 - What complete security allocation will production admit? The q24, B/D,
   suffix and setup instances need certification under that allocation.
 - Which extraction argument covers the seed-plus-indexed-SHAKE column sampler?

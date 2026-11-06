@@ -9,6 +9,9 @@ use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::Ring;
 use std::path::Path;
 
+// Smallest feasible measured geometry; the full-field prefix prevents log 3.
+const LOG: usize = 22;
+
 // Each shape owns an isolated directory; the generator revalidates cached rows.
 fn fixture(shape: &'static str) {
     std::thread::Builder::new()
@@ -17,12 +20,12 @@ fn fixture(shape: &'static str) {
             let directory =
                 std::env::temp_dir().join(format!("akita-p64-{}-{shape}", std::process::id()));
             std::fs::create_dir_all(&directory).unwrap();
-            let catalog = super::fixture_directory().join(format!("3-{shape}.json"));
+            let catalog = super::fixture_directory().join(format!("{LOG}-{shape}.json"));
             std::fs::copy(&catalog, directory.join("native-catalog.json")).unwrap_or_else(
-                |error| panic!("Linux catalog pending at {}: {error}", catalog.display()),
+                |error| panic!("missing research catalog at {}: {error}", catalog.display()),
             );
-            run::prove::<P64>(3, shape, &directory).unwrap();
-            run::verify::<P64>(3, shape, &directory, &metrics::Timings::default()).unwrap();
+            run::prove::<P64>(LOG, shape, &directory).unwrap();
+            run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default()).unwrap();
             let proof = std::fs::read(directory.join("proof.bin")).unwrap();
             mutate_statement(shape, &directory);
             mutate_commitment(shape, &directory);
@@ -36,9 +39,9 @@ fn fixture(shape: &'static str) {
             .flatten()
             {
                 FAULT.with(|selected| selected.set(Some(fault)));
-                run::prove::<P64>(3, shape, &directory).unwrap();
+                run::prove::<P64>(LOG, shape, &directory).unwrap();
                 FAULT.with(|selected| selected.set(None));
-                let error = run::verify::<P64>(3, shape, &directory, &metrics::Timings::default())
+                let error = run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default())
                     .unwrap_err();
                 assert!(
                     matches!(
@@ -48,7 +51,7 @@ fn fixture(shape: &'static str) {
                     "committed digit fault must fail verification: {error}"
                 );
             }
-            super::compare_baseline(&proof, shape);
+            super::compare_baseline(&proof, LOG, shape);
             std::fs::remove_dir_all(directory).unwrap();
         })
         .unwrap()
@@ -57,7 +60,8 @@ fn fixture(shape: &'static str) {
 }
 
 fn rejects(shape: &str, directory: &Path) {
-    let error = run::verify::<P64>(3, shape, directory, &metrics::Timings::default()).unwrap_err();
+    let error =
+        run::verify::<P64>(LOG, shape, directory, &metrics::Timings::default()).unwrap_err();
     assert!(
         matches!(
             error.downcast_ref::<AkitaError>(),
@@ -151,7 +155,8 @@ fn mutate_setup(shape: &str, directory: &Path) {
     let byte = &mut identity[1][0];
     *byte = serde_json::Value::from(byte.as_u64().unwrap() ^ 1);
     std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
-    let error = run::verify::<P64>(3, shape, directory, &metrics::Timings::default()).unwrap_err();
+    let error =
+        run::verify::<P64>(LOG, shape, directory, &metrics::Timings::default()).unwrap_err();
     assert_eq!(
         error.downcast_ref::<AkitaError>(),
         Some(&AkitaError::InvalidInput(
