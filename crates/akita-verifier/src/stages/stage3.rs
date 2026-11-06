@@ -43,7 +43,8 @@ where
     E: ExtField<F> + ChallengeCodec,
 {
     let input = statement.input_claim(coefficients)?;
-    // Public in both modes, as the prover sends them.
+    // Public in both modes, as the prover sends them: the rounds fold
+    // and check in the clear even over a masked channel.
     let (challenges, output_claim) = grinding.public_sumcheck(
         akita_params::SumcheckProtocol::Stage3,
         level,
@@ -58,9 +59,7 @@ where
     )?;
     let value = akita_types::stage3_prefix_eval::<F, E, _>(grinding, level, E::zero())?;
     let weight = statement.evaluate_weight(coefficients, &challenges)?;
-    if output_claim != value * weight {
-        return Err(AkitaError::InvalidProof);
-    }
+    grinding.check_public(output_claim == value * weight)?;
     Ok(SetupSumcheckReplay {
         claim,
         setup_prefix_eval: value,

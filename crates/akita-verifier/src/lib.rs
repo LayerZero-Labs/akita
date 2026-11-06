@@ -27,6 +27,8 @@ mod benchmark_support;
 mod claims;
 mod coefficient_packing_relation;
 mod fold;
+#[cfg(feature = "zk")]
+mod masked;
 mod prepared_cache;
 mod relation;
 mod setup_contribution;
@@ -41,10 +43,12 @@ pub use benchmark_support::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
     RelationEvaluatorBenchmarkCase,
 };
+#[cfg(feature = "zk")]
+pub use masked::{MaskedPrefix, MaskedPrefixRows, ResidualClaim};
 pub use prepared_cache::{build_riscv64_terminal_ntt_cache, TrustedTerminalCache};
 pub use relation::{RelationMatrixEvaluator, Stage2RelationWeights};
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
-pub use stages::stage1::Stage1Verifier;
+pub use stages::stage1::{Stage1Verifier, Stage1VerifyOutput};
 pub use verifier::AkitaVerifier;
 
 mod setup_batch;

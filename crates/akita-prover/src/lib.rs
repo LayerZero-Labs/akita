@@ -29,21 +29,25 @@ mod setup;
 
 pub use backend::{
     AcceptedFoldHandle, CommitmentHandleMetadata, CommitmentMaterialMetadata,
-    CommitmentRelationMaterial, NextWitnessBindingMessage, OpaqueEorKernel, OpaqueOpeningKernel,
-    OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel, OpaqueRelationWitnessKernel,
-    OpaqueResourceReleaseKernel, OpaqueStage1Kernel, OpaqueStage2Kernel, OpaqueStage3Kernel,
-    OpaqueTerminalFoldKernel, OpaqueWitnessCommitKernel, OpaqueWitnessOpeningKernel, OpeningSource,
-    OperationCtx, PreparedGroupOpening, PreparedRelationHandle, ProofAdmission, ProofContext,
-    ProofScope, ProofScopeConsumer, ProofScopeId, ProverBackend, ProverHandleFamily,
-    RecursiveWitnessBuildStart, RecursiveWitnessFoldInput, RecursiveWitnessHandle,
-    RecursiveWitnessManifest, RelationWitnessMetadata, SourceMetadata,
-    TerminalCommitmentMaterialKernel, TerminalTFieldsMessage, WitnessCommitmentOutput,
+    CommitmentRelationMaterial, DigitRangeSteps, NextWitnessBindingMessage, OpaqueEorKernel,
+    OpaqueOpeningKernel, OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel,
+    OpaqueRelationWitnessKernel, OpaqueResourceReleaseKernel, OpaqueStage1Kernel,
+    OpaqueStage2Kernel, OpaqueStage3Kernel, OpaqueTerminalFoldKernel, OpaqueWitnessCommitKernel,
+    OpaqueWitnessOpeningKernel, OpeningSource, OperationCtx, PreparedGroupOpening,
+    PreparedRelationHandle, ProofAdmission, ProofContext, ProofScope, ProofScopeConsumer,
+    ProofScopeId, ProverBackend, ProverHandleFamily, RecursiveWitnessBuildStart,
+    RecursiveWitnessFoldInput, RecursiveWitnessHandle, RecursiveWitnessManifest,
+    RelationWitnessMetadata, SourceMetadata, TerminalCommitmentMaterialKernel,
+    TerminalTFieldsMessage, WitnessCommitmentOutput,
 };
 pub use opening::{ProverOpeningData, SelectedProverOpeningData};
 pub use protocol::{
-    batched_prove, batched_prove_embedded, ProveLevelOutput, RingRelationInstance,
-    RingRelationProver, RingSwitchOutput, SuffixProverState,
+    batched_prove, batched_prove_embedded, catch_prover_panic, prove_digit_range, DigitRangeOutput,
+    ProveLevelOutput, RingRelationInstance, RingRelationProver, RingSwitchOutput,
+    SuffixProverState,
 };
+#[cfg(feature = "zk")]
+pub use protocol::{prove_masked_prefix, ResidualOpening};
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 
 #[cfg(feature = "labinius-trinomial")]

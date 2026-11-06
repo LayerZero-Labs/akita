@@ -1,4 +1,4 @@
-use super::FoldSuccessorParams;
+use super::{FoldSuccessorParams, SuccessorPayload};
 use crate::backend::{ProverBackend, RecursiveWitnessHandle};
 use crate::protocol::ring_switch::NextWitnessState;
 use akita_error::AkitaError;
@@ -26,6 +26,7 @@ pub(in crate::protocol::prove) fn commit_next_witness<F, E, B, C>(
     expected_output_witness_len: usize,
     next_witness_binding: akita_params::NextWitnessBindingPolicy,
     witness_handle: B::WitnessHandle,
+    payload: &mut impl SuccessorPayload<F>,
 ) -> Result<CommittedNextWitness<F, B::WitnessHandle, B::CommitmentMaterialHandle>, AkitaError>
 where
     C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
@@ -72,10 +73,12 @@ where
             crate::backend::NextWitnessBindingMessage::OuterPayload(public_commitment),
             akita_params::NextWitnessBindingPolicy::OuterPayload,
         ) => {
+            // Public in both modes: at the cut level this is cm(u_a), u_a
+            // being hidden by its own randomness r_a.
             akita_transcript::send_field_group(
                 grinding.state_mut().clear_state(),
                 akita_types::FoldSite::NextWitnessPayload { level }.id()?,
-                public_commitment.coeffs(),
+                &payload.payload(level, public_commitment.coeffs())?,
             )?;
             NextWitnessState::OuterPayload(public_commitment)
         }
@@ -90,6 +93,11 @@ where
             };
             // The scheduled prefix stops before the last block, which travels
             // as a digest.
+            if grinding.state_mut().masks() {
+                return Err(AkitaError::UnsupportedSchedule(
+                    "a masked level hands no inner state to a terminal fold".into(),
+                ));
+            }
             let (sent, last_block) = terminal.split_last_t_block(message.fields())?;
             akita_transcript::send_field_group(
                 grinding.state_mut().clear_state(),

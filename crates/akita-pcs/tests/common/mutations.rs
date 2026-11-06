@@ -123,6 +123,7 @@ mod tests {
             ),
             start,
             len: 1,
+            pads: None,
         }
     }
 

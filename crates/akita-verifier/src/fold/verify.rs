@@ -73,6 +73,9 @@ where
     ///
     /// Returns an error when the statement does not match the setup or the
     /// selected schedule, or when the proof is invalid.
+    ///
+    /// A zero-knowledge configuration is refused before any transcript
+    /// operation ([`akita_config::require_clear_opening`]).
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify_embedded")]
     pub fn batched_verify_embedded(
@@ -117,6 +120,7 @@ where
                     .polynomial
                     .validate::<Cfg::Field, Cfg::ExtField>(self.setup.expanded())?;
             }
+            akita_config::require_clear_opening::<Cfg>()?;
             let setup = &self.setup;
             let selection = statement.selection();
             let claims = statement.into_claims();

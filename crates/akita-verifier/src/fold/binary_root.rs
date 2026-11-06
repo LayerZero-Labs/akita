@@ -272,7 +272,7 @@ where
         relation.claim() + gamma * stage1.range_image_evaluation,
         akita_sumcheck::SumcheckShape::new(num_vars, 3)?,
     )?;
-    let witness_eval = akita_types::stage2_w_eval::<F, E, _>(grinding, 0, E::zero())?;
+    let (witness_eval, _) = akita_types::stage2_w_eval::<F, E, _>(grinding, 0, E::zero())?;
     drop(span);
     let negative_bit_weight = akita_types::native_root_relation::NativeRootWeights::new(
         domain_len,

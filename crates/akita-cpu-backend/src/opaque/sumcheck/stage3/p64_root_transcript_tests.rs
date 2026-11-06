@@ -298,7 +298,8 @@ pub(crate) fn root_round_trip(
             ),
             0,
         )?;
-        let image = akita_types::stage1_range_image::<F, E, _>(&mut grinding, 0, 0, E::zero())?;
+        let (image, _) =
+            akita_types::stage1_range_image::<F, E, _>(&mut grinding, 0, 0, E::zero())?;
         if range.output_claim
             != image
                 * (image - E::from_u64(2))
@@ -319,7 +320,7 @@ pub(crate) fn root_round_trip(
             weights.claim() + gamma * image,
             SumcheckShape::new(variables, 3)?,
         )?;
-        let w = akita_types::stage2_w_eval::<F, E, _>(&mut grinding, 0, E::zero())?;
+        let (w, _) = akita_types::stage2_w_eval::<F, E, _>(&mut grinding, 0, E::zero())?;
         // The successor also authenticates this outgoing-witness opening.
         // At this isolated root boundary use its fixed table as the oracle.
         let expected_w = committed_witness

@@ -256,6 +256,8 @@ where
     let norm_merge =
         grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::L2NormMerge { level })?;
     let input_claim = range.input_claim + norm_merge * norm_input_claim;
+    // The physical L2 route is never scheduled at a masked level, so only the
+    // clear verifier replays it (`specs/whiteout-akita.md` §2.5).
     let (challenges, output_claim) = grinding.single_sumcheck(
         akita_params::SumcheckProtocol::PhysicalL2,
         level,
@@ -275,7 +277,8 @@ where
         akita_transcript::extension_slots::<E, _>(grinding.state_mut(), virtual_count)?;
     akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
     let range_image_evaluation =
-        akita_types::stage1_range_image::<F, E, _>(grinding, level, range.range_stage, E::zero())?;
+        akita_types::stage1_range_image::<F, E, _>(grinding, level, range.range_stage, E::zero())?
+            .0;
     validate_integer_claim::<F, E>(
         plan,
         response_l2_sq,

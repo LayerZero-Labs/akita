@@ -62,6 +62,8 @@ where
         akita_params::GrindingSite::EvaluationBatch { level },
         grinding,
     )?;
+    #[cfg(feature = "test-support")]
+    grinding.record_batch_coefficients(level, &row_coefficients);
     let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(
         || Ok(row_coefficients.clone()),
         |factors| opening_shape.scale_row_coefficients_by_group(&row_coefficients, factors),

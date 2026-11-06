@@ -14,6 +14,25 @@ use akita_types::{
     OpeningFamily, PhysicalResponsePlan, RelationRangeImagePlan,
 };
 
+/// What a fold sends for its successor's outer commitment u.
+pub(in crate::protocol::prove) trait SuccessorPayload<F> {
+    /// The coefficients fold `level` sends for `u`.
+    ///
+    /// # Errors
+    ///
+    /// The payload's own errors (a compression's).
+    fn payload(&mut self, level: u32, u: &[F]) -> Result<Vec<F>, AkitaError>;
+}
+
+/// u itself: every clear fold, and every masked level before the cut.
+pub(in crate::protocol::prove) struct RawPayload;
+
+impl<F: Clone> SuccessorPayload<F> for RawPayload {
+    fn payload(&mut self, _: u32, u: &[F]) -> Result<Vec<F>, AkitaError> {
+        Ok(u.to_vec())
+    }
+}
+
 pub(in crate::protocol::prove) struct PhysicalL2ProverReplay<E: Field> {
     plan: PhysicalResponsePlan,
     point: Vec<E>,
@@ -26,6 +45,7 @@ struct Stage1ProveOutput<E: Field> {
     point: Vec<E>,
     range_image_evaluation: E,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
+    range_leaf: Option<RangeLeafClaim<E>>,
 }
 
 pub(in crate::protocol::prove) struct Stage2ProveOutput<E: Field> {
@@ -252,8 +272,8 @@ where
         scalar_openings.extend_from_slice(prepared.scalar_openings());
     }
     if reduction.is_none() {
-        // A setup prefix is group 0, with one public evaluation; every other
-        // opening is derived from earlier messages.
+        // A setup prefix is group 0, with one evaluation, which stays public;
+        // every other opening is a derived claim.
         let (prefix, derived) = match (level_params.setup_prefix(), scalar_openings.as_slice()) {
             (Some(_), [prefix, derived @ ..]) => (Some(prefix), derived),
             (Some(_), []) => {
@@ -524,6 +544,7 @@ pub(in crate::protocol::prove) fn prove_fold<F, E, B, C>(
         &B::WitnessHandle,
         &B::CommitmentMaterialHandle,
     ) -> Result<(), AkitaError>,
+    payload: &mut impl SuccessorPayload<F>,
 ) -> Result<ProveLevelOutput<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>, AkitaError>
 where
     C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
@@ -586,6 +607,7 @@ where
         expected_output_witness_len,
         next_witness_binding,
         witness_handle,
+        payload,
     )?;
     handoff(
         &instance,
@@ -651,6 +673,7 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
+        range_leaf,
     } = prove_stage1::<F, E, _, C>(
         &consumer_ctx,
         grinding,
@@ -743,6 +766,7 @@ where
     crate::backend::OpaqueWitnessCommitKernel::advance_witness_level(consumer, &mut next_witness)?;
 
     Ok(ProveLevelOutput {
+        range_leaf,
         next_state: SuffixProverState {
             witness_handle: next_witness,
             commitment_material: commitment_material_handle,
@@ -758,4 +782,5 @@ where
 }
 
 pub(in crate::protocol::prove) mod sumcheck;
+pub use sumcheck::{prove_digit_range, DigitRangeOutput};
 use sumcheck::{prove_stage1, prove_stage2, prove_stage3};

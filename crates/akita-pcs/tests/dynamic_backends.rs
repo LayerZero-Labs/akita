@@ -86,7 +86,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     let private = PrivateCpu::new(CpuBackend::new(setup.expanded.clone())?);
     let cpu = CpuBackend::<F, E>::new(setup.expanded.clone())?;
 
-    let (committed_group, private_handle) = private.commit_onehot(scheme.schedules(), polys)?;
+    let (committed_group, private_handle) = private.commit(scheme.schedules(), polys)?;
     let opening = || {
         SelectedProverOpeningData::from_committed_claims::<Cfg>(
             OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -294,6 +294,55 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
                 );
             }
         }
+        // A kernel panic surfaces as a typed error at the prove entry point,
+        // releases every admitted scope, and leaves the backends reusable.
+        private.fault.set(Fault::PanicStage1Round);
+        let error = prove(false).unwrap_err();
+        assert_eq!(
+            error,
+            AkitaError::Internal("prover panicked: injected Stage-1 kernel panic".into())
+        );
+        for backend in backends {
+            assert_eq!(
+                backend.admitted.get(),
+                backend.finished.get() + backend.aborted.get()
+            );
+        }
+        private.fault.set(Fault::None);
+        assert_eq!(prove(false)?, reference);
+        for backend in backends {
+            assert_eq!(
+                backend.admitted.get(),
+                backend.finished.get() + backend.aborted.get()
+            );
+        }
+        // Stage-2 rounds at level 0 that sum correctly but miss the oracle
+        // `w·(B(w+1) + R)`: the prover's self-checks pass, so proving succeeds.
+        private.fault.set(Fault::Stage2OracleMiss);
+        let faulted = prove(false)?;
+        private.fault.set(Fault::None);
+        let statement = GroupBatchStatement::new(
+            selection,
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                point.clone(),
+                evaluations.clone(),
+                &committed_group,
+            )?])?,
+        )?;
+        // Only `InvalidProof` is asserted; it still isolates the Stage-2 check,
+        // because every other check holds on this proof (honest witness
+        // evaluation, consistent rounds) and the verifier accepts it once
+        // `validate_stage2_replay` skips the oracle check.
+        assert_eq!(
+            verifier.batched_verify(
+                &faulted,
+                DOMAIN,
+                statement,
+                BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
+            ),
+            Err(AkitaError::InvalidProof)
+        );
     }
     Ok(())
 }
