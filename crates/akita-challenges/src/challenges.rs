@@ -4,7 +4,7 @@ use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{ExtField, Field, Ring};
+use jolt_field::{ExtField, Field, Ring, Unreduced, Zero};
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
@@ -31,6 +31,7 @@ pub struct Challenges {
     sampled_family: Option<(usize, SparseChallengeConfig)>,
     embedding_stride: usize,
     materialized: std::sync::Arc<std::sync::OnceLock<Vec<SparseChallenge>>>,
+    quartet_codes: std::sync::Arc<std::sync::OnceLock<Vec<[u64; 4]>>>,
 }
 
 impl PartialEq for Challenges {
@@ -38,7 +39,9 @@ impl PartialEq for Challenges {
         self.num_live_blocks_per_claim == other.num_live_blocks_per_claim
             && self.num_claims == other.num_claims
             && ((self.embedding_stride == other.embedding_stride
-                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges))
+                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges)
+                && (!self.challenges.is_empty()
+                    || std::sync::Arc::ptr_eq(&self.quartet_codes, &other.quartet_codes)))
                 || self.as_slice() == other.as_slice())
     }
 }
@@ -54,6 +57,33 @@ impl Challenges {
         let mut result = Self::from_sparse(challenges, blocks, claims)?;
         result.sampled_family = Some((ring_d, config));
         Ok(result)
+    }
+
+    pub(crate) fn from_checked_quartets(
+        packed: Vec<[u64; 4]>,
+        blocks: usize,
+        claims: usize,
+    ) -> Result<Self, AkitaError> {
+        if blocks.checked_mul(claims) != Some(packed.len()) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let cache = std::sync::OnceLock::new();
+        cache.get_or_init(|| packed);
+        Ok(Self {
+            challenges: Vec::new().into(),
+            num_live_blocks_per_claim: blocks,
+            num_claims: claims,
+            sampled_family: Some((
+                64,
+                SparseChallengeConfig {
+                    count_pm1: 31,
+                    count_pm2: 10,
+                },
+            )),
+            embedding_stride: 1,
+            materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+            quartet_codes: std::sync::Arc::new(cache),
+        })
     }
     /// Whether immutable challenge storage was generated in this checked family.
     /// Values supplied through `from_sparse` always require full validation.
@@ -90,6 +120,7 @@ impl Challenges {
             sampled_family: None,
             embedding_stride: 1,
             materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+            quartet_codes: std::sync::Arc::new(std::sync::OnceLock::new()),
         })
     }
 
@@ -97,6 +128,43 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn as_slice(&self) -> &[SparseChallenge] {
+        if self.challenges.is_empty() && self.quartet_codes.get().is_some() {
+            return self.materialized.get_or_init(|| {
+                self.quartet_codes
+                    .get()
+                    .into_iter()
+                    .flatten()
+                    .map(|words| {
+                        let mut p1 = crate::SparseChallengePositions::new();
+                        let mut p2 = crate::SparseChallengePositions::new();
+                        let mut c1 = crate::SparseChallengeCoefficients::new();
+                        let mut c2 = crate::SparseChallengeCoefficients::new();
+                        for q in 0..16 {
+                            let mut code = (words[q / 4] >> (10 * (q % 4))) & 1023;
+                            for i in 0..4 {
+                                let c = (code % 5) as i8 - 2;
+                                code /= 5;
+                                let p = ((4 * q + i) * self.embedding_stride) as u32;
+                                if c.unsigned_abs() == 1 {
+                                    p1.push(p);
+                                    c1.push(c);
+                                }
+                                if c.unsigned_abs() == 2 {
+                                    p2.push(p);
+                                    c2.push(c);
+                                }
+                            }
+                        }
+                        p1.extend(p2);
+                        c1.extend(c2);
+                        SparseChallenge {
+                            positions: p1,
+                            coeffs: c1,
+                        }
+                    })
+                    .collect()
+            });
+        }
         if self.embedding_stride == 1 {
             return &self.challenges;
         }
@@ -126,14 +194,16 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        self.challenges.len()
+        self.quartet_codes
+            .get()
+            .map_or(self.challenges.len(), Vec::len)
     }
 
     /// Whether this challenge set is empty.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.challenges.is_empty()
+        self.len() == 0
     }
 
     /// Number of claims represented by this challenge set.
@@ -179,8 +249,18 @@ impl Challenges {
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
         F: Field + Ring,
-        E: Field + ExtField<F>,
+        E: Field + ExtField<F> + Unreduced,
     {
+        if self.len() >= 1024
+            && self.sampled_family.as_ref().is_some_and(|(d, config)| {
+                *d == alpha_pows.len()
+                    && *d / self.embedding_stride == 64
+                    && config.count_pm1 == 31
+                    && config.count_pm2 == 10
+            })
+        {
+            return self.evaluate_quartets::<F, E>(alpha_pows);
+        }
         let sampled = self
             .sampled_family
             .as_ref()
@@ -199,21 +279,47 @@ impl Challenges {
             if sampled.is_some() {
                 // Sampler provenance guarantees the shape, range and +/-1/2 family.
                 // Bounds-checked indexing is retained at this immutable boundary.
-                Ok(E::signed_sum(
-                    challenge.positions.iter().zip(&challenge.coeffs).map(
-                        |(&position, &coefficient)| {
-                            let powers = if coefficient == 2 || coefficient == -2 {
-                                &doubles[..]
-                            } else {
-                                alpha_pows
-                            };
-                            (
-                                &powers[(position as usize) * self.embedding_stride],
-                                coefficient < 0,
-                            )
-                        },
-                    ),
-                ))
+                if std::mem::size_of::<E::SmallProduct>() > std::mem::size_of::<E>()
+                    && challenge.positions.len() <= 64
+                {
+                    // Bound each deferred sum to 64 unit-scalar terms,
+                    // within every supported small-product backend's headroom.
+                    let mut positive = E::SmallProduct::zero();
+                    let mut negative = E::SmallProduct::zero();
+                    for (&position, &coefficient) in
+                        challenge.positions.iter().zip(&challenge.coeffs)
+                    {
+                        let powers = if coefficient == 2 || coefficient == -2 {
+                            &doubles[..]
+                        } else {
+                            alpha_pows
+                        };
+                        let term = powers[(position as usize) * self.embedding_stride]
+                            .mul_u64_unreduced(1);
+                        if coefficient < 0 {
+                            negative += term;
+                        } else {
+                            positive += term;
+                        }
+                    }
+                    Ok(E::reduce_small_product(positive) - E::reduce_small_product(negative))
+                } else {
+                    Ok(E::signed_sum(
+                        challenge.positions.iter().zip(&challenge.coeffs).map(
+                            |(&position, &coefficient)| {
+                                let powers = if coefficient == 2 || coefficient == -2 {
+                                    &doubles[..]
+                                } else {
+                                    alpha_pows
+                                };
+                                (
+                                    &powers[(position as usize) * self.embedding_stride],
+                                    coefficient < 0,
+                                )
+                            },
+                        ),
+                    ))
+                }
             } else {
                 challenge.eval_at_pows::<F, E>(alpha_pows)
             }
@@ -266,6 +372,173 @@ impl Challenges {
         }
 
         source.iter().map(evaluate).collect()
+    }
+
+    fn evaluate_quartets<F: Field + Ring, E: Field + ExtField<F> + Unreduced>(
+        &self,
+        powers: &[E],
+    ) -> Result<Vec<E>, AkitaError> {
+        if self.quartet_codes.get().is_none() {
+            let mut packed = Vec::with_capacity(self.challenges.len());
+            for challenge in self.challenges.iter() {
+                let zero_word = 312u64 | (312 << 10) | (312 << 20) | (312 << 30);
+                let mut words = [zero_word; 4];
+                if challenge.positions.len() != challenge.coeffs.len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                const DELTAS: [u64; 64] = [
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                    1,
+                    5,
+                    25,
+                    125,
+                    1024,
+                    5120,
+                    25600,
+                    128000,
+                    1048576,
+                    5242880,
+                    26214400,
+                    131072000,
+                    1073741824,
+                    5368709120,
+                    26843545600,
+                    134217728000,
+                ];
+                if challenge.positions.len() != 41 {
+                    return Err(AkitaError::InvalidProof);
+                }
+                for (i, (&position, &coefficient)) in challenge
+                    .positions
+                    .iter()
+                    .zip(&challenge.coeffs)
+                    .enumerate()
+                {
+                    let position = position as usize;
+                    if position >= 64 {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    // Private sampler provenance fixes the first 31 magnitudes to 1, the last 10 to 2.
+                    let delta = DELTAS[position] << u32::from(i >= 31);
+                    let word = &mut words[position / 16];
+                    if coefficient < 0 {
+                        *word -= delta;
+                    } else {
+                        *word += delta;
+                    }
+                }
+                packed.push(words);
+            }
+            let _ = self.quartet_codes.set(packed);
+        }
+        let codes = self.quartet_codes.get().ok_or(AkitaError::InvalidProof)?;
+        let mut tables = Vec::with_capacity(16 * 625);
+        {
+            for q in 0..16 {
+                let mut p = [E::zero(); 4];
+                for (i, value) in p.iter_mut().enumerate() {
+                    *value = *powers
+                        .get((q * 4 + i) * self.embedding_stride)
+                        .ok_or(AkitaError::InvalidProof)?;
+                }
+                let sum = p.iter().copied().fold(E::zero(), |a, b| a + b);
+                let mut v3 = -(sum + sum);
+                for _ in 0..5 {
+                    let mut v2 = v3;
+                    for _ in 0..5 {
+                        let mut v1 = v2;
+                        for _ in 0..5 {
+                            let mut v0 = v1;
+                            for _ in 0..5 {
+                                tables.push(v0);
+                                v0 += p[0];
+                            }
+                            v1 += p[1];
+                        }
+                        v2 += p[2];
+                    }
+                    v3 += p[3];
+                }
+            }
+        }
+        let mut output = Vec::with_capacity(codes.len());
+        for words in codes {
+            // The existing small-product accumulator defers the reduction of
+            // these sixteen field terms. Multiplication by literal one folds
+            // into the accumulator representation on the portable backend.
+            let mut sum = <E as Unreduced>::SmallProduct::zero();
+            macro_rules! add_quartet {
+                ($q:literal) => {{
+                    let code = ((words[$q / 4] >> (10 * ($q % 4))) & 1023) as usize;
+                    sum += tables[$q * 625 + code].mul_u64_unreduced(1);
+                }};
+            }
+            add_quartet!(0);
+            add_quartet!(1);
+            add_quartet!(2);
+            add_quartet!(3);
+            add_quartet!(4);
+            add_quartet!(5);
+            add_quartet!(6);
+            add_quartet!(7);
+            add_quartet!(8);
+            add_quartet!(9);
+            add_quartet!(10);
+            add_quartet!(11);
+            add_quartet!(12);
+            add_quartet!(13);
+            add_quartet!(14);
+            add_quartet!(15);
+            output.push(E::reduce_small_product(sum));
+        }
+        Ok(output)
     }
 
     /// Select complete claims in the requested order.
@@ -359,6 +632,7 @@ impl Challenges {
                     .map(|(_, config)| (ambient_ring_dimension, *config)),
                 embedding_stride: stride,
                 materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+                quartet_codes: std::sync::Arc::clone(&self.quartet_codes),
             });
         }
         let source = self.as_slice();
@@ -627,3 +901,9 @@ mod embedding_view_tests {
         assert_eq!(once, eager);
     }
 }
+
+#[cfg(test)]
+mod deferred_evaluation_tests;
+
+#[cfg(test)]
+mod quartet_evaluation_tests;

@@ -23,7 +23,7 @@ fn prepare_coefficient_packing_verifier_group<F, E>(
 ) -> Result<CoefficientPackingVerifierGroupSemantics<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: ExtField<F> + jolt_field::Unreduced,
 {
     let compact_factors = compact::prepare_compact_factors(validated)?;
     Ok(CoefficientPackingVerifierGroupSemantics {
@@ -41,7 +41,7 @@ pub(crate) fn prepare_coefficient_packing_verifier_batch_semantics<F, E>(
 ) -> Result<CoefficientPackingVerifierBatchSemantics<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F>,
+    E: ExtField<F> + FpExtEncoding<F> + jolt_field::Unreduced,
 {
     let groups = validate_coefficient_packing_batch_groups(&inputs, |group| {
         prepare_coefficient_packing_verifier_group(&group)
