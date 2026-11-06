@@ -21,7 +21,7 @@ std::thread_local! {
 mod tests;
 
 #[cfg(test)]
-fn fixture_directory() -> std::path::PathBuf {
+pub(super) fn fixture_directory() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(if akita_params::DEV_PROTOCOL {

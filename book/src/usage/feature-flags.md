@@ -181,10 +181,14 @@ select the p64/E64 native root; omitting it preserves P128. Shapes are
 `binary-claim`, `prime-claim`, `binary-and-prime-claims`, and
 `binary-and-prime-claims-plus-ordinary`. P64 fixtures use `--log-carriers 22`
 and 23, both with C=256; complete replay tests use log 22, the smallest feasible
-measured size. Log 3 is infeasible because the full-field typed setup prefix exceeds
-the native witness while
-`crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs:83`
-requires `next_witness_len < request.current_witness_len`.
+measured size. The selected planner/preset refused log 3 under the strict
+`next_witness_len < request.current_witness_len` rule in
+`crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs`.
+That comparison includes the full-field typed prefix's contribution to the
+complete successor witness. Word-only log 3 has 77,824 natural prefix field
+cells, a 131,072-cell padded prefix domain and 82,176 outgoing physical digit
+cells; raw prefix length is not the comparison. This is a property of the
+selected planner/preset, not a theorem excluding all small P64 protocols.
 Use separate `--phase plan`,
 `--phase prove`, and `--phase verify` invocations with a `--fixture` directory.
 Planning writes a research native catalog; proving writes commitments, induced
@@ -200,7 +204,10 @@ legacy P128 cache filenames are not reused. A valid alternate cached row can cha
 setup and proof bytes, so byte comparisons must use identical selected rows.
 Research replay catalogs and SHA3-256 proof pins at logs 22/23 live under
 `crates/akita-pcs/tests/fixtures/binary-source-p64{,-dev}/`, outside the supported
-schedule artifacts. CI replays log 22 in both protocol modes. To regenerate, run
+schedule artifacts. Required CI replays log 22 in both protocol modes, admits
+all 16 catalogs without proving and checks both pin rosters and the installed
+SHA-256 manifest. Honest log-23 replay against existing pins is a separate Linux
+gate whenever protocol bytes change. To regenerate, run
 the example's three phases for all four shapes, logs 22/23 and both modes in two
 fresh roots; require equal catalog, commitment, setup, claims and proof bytes
 before installing catalogs and `large-pins.txt`. The fixture README provides the

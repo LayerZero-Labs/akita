@@ -21,9 +21,10 @@ GF(2^128) word claim. This spec approves the protocol design.
 Production security is not established. The research implementation selects P64
 through explicitly admitted native catalog rows, the sole execution boundary.
 Linux catalogs and proof pins at logs 22/23 are installed, with independently
-reproduced honest proofs and measured timings; the restored adversarial replay
-suite still needs Linux validation. This record stays active until that validation
-and the admission obligations below are resolved.
+reproduced honest proofs and provisional host measurements. The restored replay
+suite passed all five tests per mode at `72ef7dbc`; `421b93a0` applies only the
+reported formatting fixes. Final-relation bypass evidence, final-head hosted CI
+and the production admission obligations below remain open.
 
 ## Intent
 
@@ -910,36 +911,61 @@ Catalogs are installed under `crates/akita-pcs/tests/fixtures/binary-source-p64/
 and `binary-source-p64-dev/`, with length and SHA3-256 proof pins in `large-pins.txt`;
 the enclosing `P64-SHA256SUMS` records the supplied files' SHA-256 digests.
 
-Log 3 is infeasible because the full-field typed setup prefix exceeds the native
-witness while `crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs:83`
-requires `next_witness_len < request.current_witness_len`.
-The complete replay tests therefore use log 22, the smallest feasible measured
-size, preserving statement, commitment, proof and setup tampering checks, K and
-prime digit faults, and ordinary-row refusal assertions. Their restored CI step
-runs both modes; passing honest measurements do not establish those adversarial
-test results, which remain pending Linux validation.
+The selected planner/preset refused log 3 under the strict shrinking rule in
+`crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs`:
+`next_witness_len < request.current_witness_len`. It compares the complete
+successor witness, including the full-field typed prefix's contribution, with
+the current physical witness. For the word-only log-3 case, the prefix has
+77,824 natural field cells and a 131,072-cell padded domain; the outgoing root
+has 82,176 physical digit cells. The natural prefix alone is smaller than that
+outgoing witness. Its padded domain and full-field contribution to the complete
+successor are the relevant costs. This refusal is a property of the selected
+planner and preset, not a theorem excluding every small P64 protocol.
 
-Measurements used a 64-thread Threadripper PRO 7975WX on Ubuntu 24.04 with Rust
-1.95.0. Current-mode log-22 median proving was 2.18 s (word), 3.77 s (prime),
+The complete replay tests use log 22, the smallest feasible measured size.
+At `72ef7dbc`, both exact release CI example commands passed all five tests,
+with zero failures, ignored or filtered tests in each mode: four complete
+shape replays with statement, commitment, proof and setup mutations and committed
+K/prime digit faults, plus the catalog identity test. Both measurement-mode
+all-target checks and release example Clippy runs also passed. `421b93a0`
+contains only the two formatting fixes reported by that run; no fresh formatter
+pass at that revision is claimed. Required CI additionally admits all 16
+catalogs across its two modes and checks both complete pin rosters and all 18
+installed SHA-256 hashes. Honest log-23 replay against existing proof pins
+remains a Linux gate whenever protocol bytes change.
+
+Those passing negative tests require `InvalidProof` but do not isolate its
+rejection site. A disposable-checkout bypass of only the final relation comparison
+is still required for every committed K/prime fault. Green final-head hosted CI,
+including runtime and peak-memory observations, also remains required before
+merge; the large-host results do not establish hosted-runner resource use.
+
+Provisional measurements used a 64-thread Threadripper PRO 7975WX on Ubuntu
+24.04 with Rust 1.95.0. Current-mode log-22 median proving was 2.18 s (word), 3.77 s (prime),
 4.11 s (word and prime), and 4.25 s (mixed), including cold setup. Proof sizes
 were respectively 79,331, 77,453, 80,402 and 83,497 bytes. Warm verification was
 about 11–23 ms, with mixed repeats up to 27 ms across modes; first mixed
 verification was about 30 ms. Log-23 proof sizes were 79,769, 76,702, 79,756 and
 83,594 bytes. Dev proofs matched current proofs; catalogs differed by mode.
-These are implementation measurements, not production security certification.
+The restored five-test release suite took 104.28 s in current mode and 112.55 s
+in dev mode on that Linux host (one suite run per mode); command wall times
+including compilation were 221 s and 216 s. Honest measurements and the
+independent repeats are separate samples from these suite totals. Timings are
+provisional and are not hosted-runner measurements or production certification.
 
 To regenerate, follow the [fixture README](../crates/akita-pcs/tests/fixtures/README.md#regenerate-on-linux):
 run the existing example's plan/prove/verify phases at logs 22/23 for every shape
 and both modes in two fresh roots with the cache unset, compare all five artifacts,
 and install only catalogs and independently verified proof pins. Keep large
-setups, proofs and logs outside the repository. The README also gives per-test
-runtime estimates and the exact restored CI replay commands.
+setups, proofs and logs outside the repository. The README also gives measured
+suite totals and the exact required CI replay commands.
 
 ### Open questions
 
 - Which additional p64 catalog and successor schedules cover other geometries?
   All four research shapes at logs 22/23 have measured honest replay evidence;
-  the complete adversarial replay suite still requires Linux validation.
+  log-22 adversarial replay passed at the revision above. Final-relation bypass
+  attribution and green final-head hosted CI remain open.
 - What complete security allocation will production admit? The q24, B/D,
   suffix and setup instances need certification under that allocation.
 - Which extraction argument covers the seed-plus-indexed-SHAKE column sampler?

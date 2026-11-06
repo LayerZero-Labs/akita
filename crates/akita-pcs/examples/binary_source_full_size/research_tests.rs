@@ -9,7 +9,7 @@ use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::Ring;
 use std::path::Path;
 
-// Smallest feasible measured geometry; the full-field prefix prevents log 3.
+// Smallest feasible measured geometry for the selected planner and preset.
 const LOG: usize = 22;
 
 // Each shape owns an isolated directory; the generator revalidates cached rows.

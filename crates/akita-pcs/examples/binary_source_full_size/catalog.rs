@@ -31,13 +31,6 @@ pub(super) fn plan<C: MeasurementConfig>(
     dimension: usize,
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
     if let Some(profile) = ordinary {
-        let outer_degree = profile.outer.matrix.ring_dimension();
-        let outer_basis = profile.outer.digits.log_basis;
-        if outer_degree != 64 || outer_basis != 3 {
-            return Err(AkitaError::InvalidSetup(format!(
-                "mixed root ordinary profile requires outer ring dimension 64 and log basis 3; got {outer_degree} and {outer_basis}"
-            )));
-        }
         let inner_modulus = profile.inner.matrix.sis_modulus_profile();
         let outer_modulus = profile.outer.matrix.sis_modulus_profile();
         if !inner_modulus.matches_modulus(C::PROFILE.modulus())

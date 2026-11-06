@@ -316,8 +316,30 @@ pub(super) fn load<C: MeasurementConfig>(
 
 #[cfg(test)]
 mod tests {
-    use super::CatalogIdentity;
+    use super::{CatalogIdentity, FixtureCatalog};
     use crate::run::config::{P128, P64};
+
+    // The two required CI invocations admit eight catalogs each, covering all
+    // 16 files without planning, setup generation or proving.
+    #[test]
+    fn p64_committed_catalogs_admit_both_sizes() {
+        let directory = crate::p64::fixture_directory();
+        for log in [22, 23] {
+            for shape in [
+                "binary-claim",
+                "prime-claim",
+                "binary-and-prime-claims",
+                "binary-and-prime-claims-plus-ordinary",
+            ] {
+                let path = directory.join(format!("{log}-{shape}.json"));
+                let bytes = std::fs::read(&path).unwrap();
+                let fixture: FixtureCatalog = serde_json::from_slice(&bytes).unwrap();
+                fixture
+                    .admit::<P64>(log, shape)
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            }
+        }
+    }
 
     #[test]
     fn identity_rejects_another_request() {

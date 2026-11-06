@@ -15,14 +15,29 @@ Each directory contains `{22,23}-<shape>.json` for these shapes:
 
 `large-pins.txt` contains eight lines, each `<log>-<shape> <proof length> <SHA3-256>`.
 The digest is the default descriptor digest; do not enable `keccak256-digests`.
-Both protocol modes have identical proof pins but distinct catalogs. The complete
-replay tests use log 22, the smallest feasible measured size, and compare both
-proof length and digest against the exact pin entry. Missing catalogs, missing
-pins, duplicate entries or changed bytes fail the test.
+Both protocol modes have identical proof pins but distinct catalogs. Required CI
+replays log 22, the smallest feasible measured size, and compares proof length
+and digest against the exact pin entry. The example's cheap
+`p64_committed_catalogs_admit_both_sizes` test loads and admits all eight catalogs
+for the compiled mode; the two CI invocations cover all 16 catalogs without
+proving at log 23. The required Python suite runs
+`scripts/tests/test_p64_fixtures.py`, checking the full eight-key roster in each
+pin file and every installed file against the complete 18-entry SHA-256 manifest.
+Missing files, missing or duplicate entries, malformed pins and changed installed
+bytes fail these checks. Hash integrity does not establish that a log-23 proof
+pin matches current protocol code: honest log-23 replay for all four shapes in
+both modes is a separate Linux gate whenever protocol bytes change. Replay must
+compare existing pins and must never refresh them silently.
 
-Log 3 is infeasible because the full-field typed setup prefix exceeds the native
-witness while `crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs:83`
-requires `next_witness_len < request.current_witness_len`.
+The selected planner/preset refused log 3 because the full-field typed prefix's
+contribution to the complete successor witness does not satisfy the strict
+`next_witness_len < request.current_witness_len` rule in
+`crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs`.
+For word-only log 3, distinguish 77,824 natural prefix field cells, a 131,072-cell
+padded prefix domain and 82,176 outgoing physical digit cells. The comparison
+uses the complete successor and current physical witness, not raw prefix length.
+This is a property of the selected planner/preset, not a general impossibility
+result for small P64 protocols.
 
 The catalogs and pins were generated on Linux at `afe36fd1` and reproduced in two
 independent roots: all 80 catalog, commitment, verifier setup, claims and proof
@@ -41,22 +56,21 @@ cargo test --release -p akita-pcs --example binary_source_full_size --no-default
 cargo test --release -p akita-pcs --example binary_source_full_size --no-default-features --features parallel,binary-source-measurements,transcript-keccak,dev-protocol -- --test-threads=1
 ```
 
-On a 64-thread Threadripper PRO, measured honest log-22 proving takes about
-2–4.3 s and warm verification about 11–23 ms (mixed repeats reached 27 ms).
-The following complete-test estimates include the additional forged proofs and
-repeated cold verification; they are budgets, not measured replay-test results:
+Provisional measurements used a 64-thread Threadripper PRO 7975WX on Ubuntu
+24.04 with Rust 1.95.0. Honest log-22 proving took about 2–4.3 s and warm
+verification about 11–23 ms (mixed repeats reached 27 ms). At `72ef7dbc`, the
+complete release suite passed five tests per mode, with none ignored or filtered.
+One suite run per mode took 104.28 s (current) and 112.55 s (dev); command wall
+times including compilation were 221 s and 216 s. `421b93a0` applies the two
+formatting fixes reported by that run. The newly added cheap admission test
+brings the expected example total to six tests per mode; its Linux result is
+pending. These host-specific observations replace the earlier runtime budgets.
 
-| Test | Proofs (honest + forged) | Expected release runtime on that host |
-| --- | --- | --- |
-| `p64_word_complete_schedule_and_tampering` | 1 + 1 | 10–30 s |
-| `p64_prime_complete_schedule_and_tampering` | 1 + 2 | 20–60 s |
-| `p64_word_and_prime_complete_schedule_and_tampering` | 1 + 2 | 20–60 s |
-| `p64_mixed_complete_schedule_and_tampering` | 1 + 2 | 30–90 s |
-
-Catalog identity checks should take well under a second. Cached catalogs avoid
-planning; each fixture-dependent test should remain below a few minutes in CI.
-Measure the restored suite on Linux, including the adversarial backend's dense
-weight materialization, before treating those runtime estimates as evidence.
+The final-relation bypass control for each K/prime fault is still open, as are
+green final-head hosted CI and hosted runtime/peak-memory measurements. The
+adversarial backend materializes dense weights, so the large-host suite totals
+do not establish hosted-runner resource use. Production security, composition
+and extraction obligations remain open.
 
 ## Regenerate on Linux
 
