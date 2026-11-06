@@ -389,10 +389,30 @@ impl Challenges {
         let mut output = Vec::with_capacity(codes.len());
         for words in codes {
             let mut sum = E::zero();
-            for q in 0..16 {
-                let code = ((words[q / 4] >> (10 * (q % 4))) & 1023) as usize;
-                sum += *tables.get(q * 625 + code).ok_or(AkitaError::InvalidProof)?;
+            macro_rules! add_quartet {
+                ($q:literal) => {{
+                    let code = ((words[$q / 4] >> (10 * ($q % 4))) & 1023) as usize;
+                    sum += *tables
+                        .get($q * 625 + code)
+                        .ok_or(AkitaError::InvalidProof)?;
+                }};
             }
+            add_quartet!(0);
+            add_quartet!(1);
+            add_quartet!(2);
+            add_quartet!(3);
+            add_quartet!(4);
+            add_quartet!(5);
+            add_quartet!(6);
+            add_quartet!(7);
+            add_quartet!(8);
+            add_quartet!(9);
+            add_quartet!(10);
+            add_quartet!(11);
+            add_quartet!(12);
+            add_quartet!(13);
+            add_quartet!(14);
+            add_quartet!(15);
             output.push(sum);
         }
         Ok(output)
