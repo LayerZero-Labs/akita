@@ -39,7 +39,9 @@ impl PartialEq for Challenges {
         self.num_live_blocks_per_claim == other.num_live_blocks_per_claim
             && self.num_claims == other.num_claims
             && ((self.embedding_stride == other.embedding_stride
-                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges))
+                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges)
+                && (!self.challenges.is_empty()
+                    || std::sync::Arc::ptr_eq(&self.quartet_codes, &other.quartet_codes)))
                 || self.as_slice() == other.as_slice())
     }
 }
@@ -55,6 +57,33 @@ impl Challenges {
         let mut result = Self::from_sparse(challenges, blocks, claims)?;
         result.sampled_family = Some((ring_d, config));
         Ok(result)
+    }
+
+    pub(crate) fn from_checked_quartets(
+        packed: Vec<[u64; 4]>,
+        blocks: usize,
+        claims: usize,
+    ) -> Result<Self, AkitaError> {
+        if blocks.checked_mul(claims) != Some(packed.len()) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let cache = std::sync::OnceLock::new();
+        cache.get_or_init(|| packed);
+        Ok(Self {
+            challenges: Vec::new().into(),
+            num_live_blocks_per_claim: blocks,
+            num_claims: claims,
+            sampled_family: Some((
+                64,
+                SparseChallengeConfig {
+                    count_pm1: 31,
+                    count_pm2: 10,
+                },
+            )),
+            embedding_stride: 1,
+            materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+            quartet_codes: std::sync::Arc::new(cache),
+        })
     }
     /// Whether immutable challenge storage was generated in this checked family.
     /// Values supplied through `from_sparse` always require full validation.
@@ -99,6 +128,43 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn as_slice(&self) -> &[SparseChallenge] {
+        if self.challenges.is_empty() && self.quartet_codes.get().is_some() {
+            return self.materialized.get_or_init(|| {
+                self.quartet_codes
+                    .get()
+                    .into_iter()
+                    .flatten()
+                    .map(|words| {
+                        let mut p1 = crate::SparseChallengePositions::new();
+                        let mut p2 = crate::SparseChallengePositions::new();
+                        let mut c1 = crate::SparseChallengeCoefficients::new();
+                        let mut c2 = crate::SparseChallengeCoefficients::new();
+                        for q in 0..16 {
+                            let mut code = (words[q / 4] >> (10 * (q % 4))) & 1023;
+                            for i in 0..4 {
+                                let c = (code % 5) as i8 - 2;
+                                code /= 5;
+                                let p = ((4 * q + i) * self.embedding_stride) as u32;
+                                if c.unsigned_abs() == 1 {
+                                    p1.push(p);
+                                    c1.push(c);
+                                }
+                                if c.unsigned_abs() == 2 {
+                                    p2.push(p);
+                                    c2.push(c);
+                                }
+                            }
+                        }
+                        p1.extend(p2);
+                        c1.extend(c2);
+                        SparseChallenge {
+                            positions: p1,
+                            coeffs: c1,
+                        }
+                    })
+                    .collect()
+            });
+        }
         if self.embedding_stride == 1 {
             return &self.challenges;
         }
@@ -128,14 +194,16 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        self.challenges.len()
+        self.quartet_codes
+            .get()
+            .map_or(self.challenges.len(), Vec::len)
     }
 
     /// Whether this challenge set is empty.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.challenges.is_empty()
+        self.len() == 0
     }
 
     /// Number of claims represented by this challenge set.
@@ -564,7 +632,7 @@ impl Challenges {
                     .map(|(_, config)| (ambient_ring_dimension, *config)),
                 embedding_stride: stride,
                 materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
-                quartet_codes: std::sync::Arc::new(std::sync::OnceLock::new()),
+                quartet_codes: std::sync::Arc::clone(&self.quartet_codes),
             });
         }
         let source = self.as_slice();
