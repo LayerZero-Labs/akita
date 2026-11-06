@@ -1,5 +1,8 @@
 //! Canonical CPU ownership and commitment for explicitly selected binary sources.
 
+#[path = "binary_research.rs"]
+mod research;
+
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, PrivateSource, SourceHandle};
 use super::owned_kind::SourceGroupKind;
 use super::*;
@@ -279,6 +282,11 @@ where
     F: Field + CanonicalEncoding + 'static,
     E: Field + 'static,
 {
+    if let Some(request) = request.downcast_ref::<
+        akita_types::binary_source::ResearchBatchWitnessRequest<CommitmentHandle<F, E>>,
+    >() {
+        return research::prepare(backend, session, context, request);
+    }
     let binding = backend.binding(session, context)?;
     if let Some(request) =
         request.downcast_ref::<akita_types::binary_source::BinaryFieldSwitchSourceRequest>()
@@ -293,6 +301,22 @@ where
     let request = request
         .downcast_ref::<akita_types::binary_source::BinaryRootWitnessRequest<CommitmentHandle<F, E>>>()
         .ok_or_else(|| AkitaError::InvalidInput("native root request family mismatch".into()))?;
+    prepare_binary(backend, session, binding, context, handle, request, false)
+}
+
+fn prepare_binary<F, E>(
+    backend: &CpuBackend<F, E>,
+    session: &CpuProofSessionHandle,
+    binding: OperationBinding,
+    context: &ProofContext,
+    handle: &CommitmentHandle<F, E>,
+    request: &akita_types::binary_source::BinaryRootWitnessRequest<CommitmentHandle<F, E>>,
+    research: bool,
+) -> Result<(Vec<F>, Box<dyn std::any::Any + Send + Sync>), AkitaError>
+where
+    F: Field + CanonicalEncoding + 'static,
+    E: Field + 'static,
+{
     let manifest = &request.manifest;
     let claim = &request.claim;
     let plan = &request.plan;
@@ -320,13 +344,15 @@ where
             != Some(manifest.setup_group())
         || manifest != &source.manifest
         || handle.committed.parameters != source.carrier_profile
-        || schedule.root.params.group_params(&root_layout, 0)?.profile != source.carrier_profile
+        || schedule.root.params.group_params(
+            &root_layout, context.group_index().ok_or(AkitaError::InvalidProof)?,
+        )?.profile != source.carrier_profile
         || handle.committed.retained.is_some()
         || plan.descriptor() != manifest.descriptor()
         || plan.rank() != manifest.a_rank()
         || plan.field_profile() != manifest.field_profile()
         || plan.repacking().destination_ring_dimension() != destination_ring
-        || plan.repacking().domain_len() != domain_len
+        || (!research && plan.repacking().domain_len() != domain_len)
     {
         return Err(AkitaError::InvalidInput(
             "native root request differs from its admitted commitment".into(),
@@ -363,14 +389,16 @@ where
             .admit_commitment(&ordinary_context, ordinary_handle.committed.commitment_id)?;
         segments
     } else {
-        if root_layout.num_groups() != 1 {
+        if root_layout.num_groups() != if research { 8 } else { 1 } {
             return Err(AkitaError::InvalidInput(
                 "native root request omits an admitted ordinary group".into(),
             ));
         }
         Vec::new()
     };
-    expected_plan = expected_plan.with_domain_len(domain_len)?;
+    if !research {
+        expected_plan = expected_plan.with_domain_len(domain_len)?;
+    }
     if expected_plan.repacking() != plan.repacking() {
         return Err(AkitaError::InvalidInput(
             "native root request has a different coefficient map".into(),
@@ -435,7 +463,7 @@ pub(super) fn build_root_group<F, E>(
     session: &CpuProofSessionHandle,
     context: &ProofContext,
     preparation: &dyn std::any::Any,
-    challenges: &akita_challenges::Challenges,
+    challenges: &dyn std::any::Any,
     logical_len: usize,
     destination_ring_dimension: usize,
 ) -> Result<Option<CpuWitnessHandle>, AkitaError>
@@ -443,6 +471,16 @@ where
     F: Field + CanonicalEncoding,
     E: Field,
 {
+    if let Some(response) =
+        challenges.downcast_ref::<akita_types::binary_source::ResearchBatchResponse>()
+    {
+        return research::build(
+            backend, session, context, preparation, response,
+            logical_len, destination_ring_dimension,
+        );
+    }
+    let challenges = challenges.downcast_ref::<akita_challenges::Challenges>()
+        .ok_or(AkitaError::InvalidProof)?;
     let binding = backend.binding(session, context)?;
     let preparation = preparation
         .downcast_ref::<BinaryRootPreparation>()
@@ -461,6 +499,19 @@ where
             "native root build differs from its admitted successor".into(),
         ));
     }
+    let Some(digits) = build_digits(preparation, challenges, logical_len)? else {
+        return Ok(None);
+    };
+    super::binary_root_sessions::import_root_witness(
+        backend, session, context, digits, destination_ring_dimension,
+    ).map(Some)
+}
+
+fn build_digits(
+    preparation: &BinaryRootPreparation,
+    challenges: &akita_challenges::Challenges,
+    logical_len: usize,
+) -> Result<Option<Vec<i8>>, AkitaError> {
     let source = &preparation.source;
     let span = tracing::info_span!("binary_root_probe_response").entered();
     let Some(response) = fold_packed(
@@ -554,15 +605,7 @@ where
     }
     digits.truncate(logical_len);
     drop(span);
-    let _span = tracing::info_span!("binary_root_import_witness").entered();
-    super::binary_root_sessions::import_root_witness(
-        backend,
-        session,
-        context,
-        digits,
-        destination_ring_dimension,
-    )
-    .map(Some)
+    Ok(Some(digits))
 }
 
 /// Extract the authenticated owner's carriers in canonical low-column-bit order.

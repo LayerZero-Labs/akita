@@ -150,7 +150,7 @@ impl OpaqueRecursiveWitnessBuildKernel<F, E> for FaultBackend {
         _session: &Self::ProofSessionHandle,
         _context: &akita_prover::backend::ProofContext,
         _preparation: &dyn std::any::Any,
-        _challenges: &akita_challenges::Challenges,
+        _challenges: &dyn std::any::Any,
         _logical_len: usize,
         _destination_ring_dimension: usize,
     ) -> Result<Option<Self::WitnessHandle>, AkitaError> {

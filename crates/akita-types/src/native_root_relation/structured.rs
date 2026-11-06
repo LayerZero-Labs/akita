@@ -217,6 +217,7 @@ pub(crate) fn weigh_units<W: Send>(
 /// The structured public weight families of a binary root.
 #[derive(Clone, Debug)]
 pub(crate) enum RootWeightFamily<E: Field> {
+    Embedded(super::embedding::EmbeddedWeights<E>),
     DirectA(DirectAWeights<E>),
     Image(ImageWeights<E>),
     Prime(PrimePlaneWeights<E>),
@@ -230,6 +231,7 @@ pub(crate) enum RootWeightFamily<E: Field> {
 impl<E: Field> RootWeightFamily<E> {
     pub(crate) fn table_len(&self) -> usize {
         match self {
+            Self::Embedded(weights) => weights.table_len(),
             Self::DirectA(direct) => direct.table_len(),
             Self::Image(image) => image.table_len(),
             Self::Prime(prime) => prime.table_len(),
@@ -243,6 +245,7 @@ impl<E: Field> RootWeightFamily<E> {
 
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         match self {
+            Self::Embedded(weights) => weights.evaluate(eq.point()),
             Self::DirectA(direct) => direct.evaluate(eq),
             Self::Image(image) => {
                 let _span = tracing::info_span!("root_weights_evaluate_image").entered();
@@ -284,6 +287,7 @@ impl<E: Field> RootWeightFamily<E> {
             lanes.recompose(element, offset, value, &mut visit)
         };
         match self {
+            Self::Embedded(weights) => weights.visit(&mut visit),
             Self::DirectA(direct) => {
                 let _span = tracing::info_span!("root_weights_visit_direct_a").entered();
                 direct.profiles(&mut recompose)
@@ -323,6 +327,9 @@ impl<E: Field> RootWeightFamily<E> {
     /// profile per element; the others add per-address weights by lane.
     pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
         match self {
+            Self::Embedded(weights) => {
+                weights.visit(&mut |address, value| profiles.add(address, value))
+            }
             Self::DirectA(direct) => {
                 let _span = tracing::info_span!("root_weights_emit_direct_a").entered();
                 direct.emit(profiles)

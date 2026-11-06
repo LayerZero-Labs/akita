@@ -47,6 +47,10 @@ where
                 next_fold_params,
             )
         }
+        #[cfg(feature = "labinius-trinomial")]
+        Some(akita_types::opening_claims::GroupClaimKind::ResearchOrdinary { .. }) => {
+            Err(AkitaError::InvalidInput("research ordinary requires its batch root".into()))
+        }
         Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
             super::ordinary_root::verify_root(
                 setup,

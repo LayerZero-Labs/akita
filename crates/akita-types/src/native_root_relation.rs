@@ -18,6 +18,7 @@ use jolt_field::{cfg_chunks, cfg_iter, Field};
 use crate::binary_source::{BinarySourceDescriptor, BINARY_SOURCE_Q};
 use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
+mod embedding;
 mod profiles;
 mod structured;
 pub use binary_commitment::binary_commitment_group;

@@ -7,6 +7,12 @@
 pub enum GroupClaimKind {
     /// The ordinary negacyclic-ring opening relation.
     Ordinary,
+    /// Explicit research signed-source owners in commitment slot order.
+    #[cfg(feature = "labinius-trinomial")]
+    ResearchOrdinary {
+        owners: Vec<[u8; 32]>,
+        width: akita_params::ordinary_source::OrdinarySourceWidth,
+    },
     /// A binary word claim supplied by the caller.
     #[cfg(feature = "labinius-trinomial")]
     Binary {

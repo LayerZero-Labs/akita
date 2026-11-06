@@ -8,6 +8,26 @@ use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
 
 impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, CommittedGroup<F>> {
+    /// Select the signed ordinary part of the research four-plus-four statement.
+    /// Points retain the challenge-field type so extension terminals need no cast.
+    pub fn new_research_ordinary(
+        commitment: CommittedGroup<F>,
+        terminal: crate::binary_source::ResearchTerminal<E>,
+        owners: Vec<[u8; 32]>,
+        width: akita_params::ordinary_source::OrdinarySourceWidth,
+    ) -> Result<Self, AkitaError> {
+        if !matches!(commitment.kind(), CommittedGroupKind::Ordinary)
+            || owners.len() != commitment.profile().group.num_polynomials()
+            || terminal.evaluations.len() != owners.len()
+            || terminal.point.len() != commitment.profile().group.num_vars()
+        {
+            return Err(AkitaError::InvalidInput("research ordinary owner geometry".into()));
+        }
+        let mut group = Self::new(terminal.point, terminal.evaluations, commitment)?;
+        group.kind = GroupClaimKind::ResearchOrdinary { owners, width };
+        Ok(group)
+    }
+
     /// Select one logical word claim over GF(2^128).
     ///
     /// The ordinary point and evaluation vectors are zero carrier geometry for

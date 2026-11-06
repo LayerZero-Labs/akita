@@ -16,6 +16,9 @@ pub(super) fn validate_group_payload<F: Field>(
     match (committed.kind(), kind) {
         (CommittedGroupKind::Ordinary, GroupClaimKind::Ordinary) => {}
         #[cfg(feature = "labinius-trinomial")]
+        (CommittedGroupKind::Ordinary, GroupClaimKind::ResearchOrdinary { owners, .. })
+            if owners.len() == committed.profile().group.num_polynomials() => {}
+        #[cfg(feature = "labinius-trinomial")]
         (
             CommittedGroupKind::Binary(manifest),
             GroupClaimKind::Binary {

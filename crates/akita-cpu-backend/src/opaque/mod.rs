@@ -202,7 +202,7 @@ where
         session: &Self::ProofSessionHandle,
         context: &crate::opaque::ProofContext,
         preparation: &dyn std::any::Any,
-        challenges: &akita_challenges::Challenges,
+        challenges: &dyn std::any::Any,
         logical_len: usize,
         destination_ring_dimension: usize,
     ) -> Result<Option<Self::WitnessHandle>, AkitaError> {
