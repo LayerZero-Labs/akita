@@ -148,12 +148,12 @@ compression-weights-crosscheck = ["akita-types/compression-weights-crosscheck"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "lattice",
 ] }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -167,10 +167,10 @@ akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = f
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", optional = true }
-jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", features = [
   "whiteout",
 ], optional = true }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, optional = true }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, optional = true }
 zeroize = { version = "1.8", default-features = false, features = [
   "alloc",
 ], optional = true }
@@ -178,7 +178,7 @@ zeroize = { version = "1.8", default-features = false, features = [
 [dev-dependencies]
 zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
-jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", features = [
   "test-support",
   "whiteout-test-support",
 ] }
@@ -187,11 +187,11 @@ jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false, features = [
   "logging-transcript",
 ] }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "transcript-blake2b",
   "transcript-keccak",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
 spongefish = { version = "=0.8.0", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
 # seed. Schedule rows remain checked-in external artifacts loaded at runtime.

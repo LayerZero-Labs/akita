@@ -33,11 +33,11 @@ parallel = [
 
 [dependencies]
 akita-algebra = { path = "../crates/akita-algebra" }
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "lattice",
 ] }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "transcript-blake2b",
 ] }
 akita-config = { path = "../crates/akita-config", default-features = false, features = [
@@ -76,11 +76,11 @@ akita-types = { path = "../crates/akita-types", default-features = false, featur
 akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = [
   "transcript-keccak",
 ] }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
 libfuzzer-sys = "0.4.12"
 num-bigint = "0.4"
 rayon = "1.10"
@@ -92,15 +92,6 @@ tracing = "0.1"
 debug = 1
 debug-assertions = true
 overflow-checks = true
-
-# Local Whiteout integration only, mirroring the root manifest's pin: the fuzz
-# workspace is standalone, so the root patch does not reach it.
-[patch."https://github.com/a16z/jolt"]
-jolt-algebra = { path = "../../jolt/.claude/worktrees/whiteout-dev/crates/jolt-algebra" }
-jolt-poly = { path = "../../jolt/.claude/worktrees/whiteout-dev/crates/jolt-poly" }
-jolt-transcript = { path = "../../jolt/.claude/worktrees/whiteout-dev/crates/jolt-transcript" }
-jolt-sumcheck = { path = "../../jolt/.claude/worktrees/whiteout-dev/crates/jolt-sumcheck" }
-jolt-crypto = { path = "../../jolt/.claude/worktrees/whiteout-dev/crates/jolt-crypto" }
 
 [[bin]]
 name = "serialization_vec"

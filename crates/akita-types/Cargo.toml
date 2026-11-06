@@ -14,17 +14,17 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "lattice",
 ] }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "transcript-blake2b",
 ] }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
@@ -32,7 +32,7 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 rand_core = "0.6"
 shake = "0.1.0"
 tracing = "0.1"
-jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", optional = true }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", optional = true }
 
 [features]
 default = ["transcript-keccak"]
@@ -81,9 +81,9 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
   "test-support",
 ] }
 criterion = { version = "0.8", features = ["html_reports"] }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
 # Test-only: the masked claim domains the shared stage checks lower into.
-jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", features = [
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", features = [
   "test-support",
 ] }
 rand = "0.8"

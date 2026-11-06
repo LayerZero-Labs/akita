@@ -27,7 +27,7 @@ trusted-benchmark-artifact = []
 akita-error = { version = "0.1.0", path = "../../../crates/akita-error" }
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -37,7 +37,7 @@ akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default
 akita-params = { version = "0.1.0", path = "../../../crates/akita-params", default-features = false }
 
 [dev-dependencies]
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "lattice",
 ] }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false, features = [

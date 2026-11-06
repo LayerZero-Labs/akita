@@ -16,11 +16,11 @@ readme = "../../README.md"
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 bytemuck = { version = "1.16", features = ["derive"] }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "bytemuck",
   "solinas",
 ] }
-jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "f15e9b17ccb933d3a0ad49be049cca999256e1e3" }
+jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview" }
 thiserror = "2.0"
 
 [dev-dependencies]
