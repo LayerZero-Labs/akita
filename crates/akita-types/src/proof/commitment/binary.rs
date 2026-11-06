@@ -159,12 +159,19 @@ mod binary_source_tests {
         ] {
             let manifest = manifest(BinaryFieldProfile::P64, columns, owners);
             assert_eq!(manifest.b_rows(), b);
-            let d_label = manifest.d_label(true, 5).unwrap();
-            assert_eq!(d_label.rank, d);
+            // The spec table prices a word plus five prime planes; a group has
+            // at most one plane per committed polynomial.
+            let planes = owners.min(5);
+            let d_label = manifest.d_label(true, planes).unwrap();
+            if planes == 5 {
+                assert_eq!(d_label.rank, d);
+            } else {
+                assert!(d_label.rank <= d);
+            }
             assert_eq!(d_label.role, SetupStreamRole::WitnessCommitment);
             assert_eq!(d_label.modulus, SetupStreamModulus::Prime64Offset59);
             assert!(manifest.d_label(false, 0).is_err());
-            assert!(manifest.d_label(true, 6).is_err());
+            assert!(manifest.d_label(true, owners + 1).is_err());
         }
     }
 
@@ -268,7 +275,7 @@ mod binary_source_tests {
         type E = jolt_field::Ext2<F>;
         let manifest = manifest(BinaryFieldProfile::P64, 2, 1);
         let prime =
-            crate::binary_source::PrimePlaneManifest::new(manifest.descriptor(), &[]).unwrap();
+            crate::binary_source::PrimePlaneManifest::new(manifest.descriptor(), None).unwrap();
         let payload = vec![F::zero(); manifest.payload_coefficients().unwrap()];
         let mut prover = new_prover_channel(b"p64-admission");
         let mut verifier = new_verifier_channel(b"p64-admission", &[]);
