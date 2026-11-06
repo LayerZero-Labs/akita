@@ -15,6 +15,7 @@ use akita_params::{CommittedGroupParams, DigitRangePlan};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
 use akita_types::DigitRangeEqualityPoint;
+use akita_types::RangeLeaf;
 use akita_types::{
     batch_l2_virtual_evaluations, FpExtEncoding, PhysicalResponsePlan, RelationRangeImagePlan,
 };
@@ -184,17 +185,11 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
             input,
         )?;
         let range_image_evaluation = grinding.range_image(level, stage)?;
-        let [range_image, output_claim] = <[E; 2]>::try_from(G::clear_values(&[
+        grinding.check_range_leaf(
+            RangeLeaf::new(self.plan, &leaf.polynomial_coefficients)?,
             range_image_evaluation.clone(),
             output_claim,
-        ])?)
-        .map_err(|_| AkitaError::InvalidProof)?;
-        let expected_output = self
-            .plan
-            .evaluate_leaf_polynomial(&leaf.polynomial_coefficients, range_image);
-        if output_claim != expected_output {
-            return Err(AkitaError::InvalidProof);
-        }
+        )?;
         Ok(Stage1VerifyOutput {
             point,
             range_image_evaluation,

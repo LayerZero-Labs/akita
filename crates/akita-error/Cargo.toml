@@ -10,10 +10,10 @@ readme = "../../README.md"
 
 [dependencies]
 thiserror = "2.0"
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8a92941b01488ebe2373b51546395a93fbb94a6e", default-features = false, features = [
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9275c21918cb3927ff9f2d8fdc22f0e802fbdfe4", default-features = false, features = [
   "lattice",
 ] }
-jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8a92941b01488ebe2373b51546395a93fbb94a6e", default-features = false }
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9275c21918cb3927ff9f2d8fdc22f0e802fbdfe4", default-features = false }
 
 [lints]
 workspace = true
