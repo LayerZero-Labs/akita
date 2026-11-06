@@ -98,6 +98,8 @@ fn clear_only<T>() -> Result<T, AkitaError> {
 impl<G: GrindingReplay, F> GrindingReplay for MaskedReplay<'_, G, F> {
     type State = G::State;
 
+    const COUNTS_ONLY: bool = G::COUNTS_ONLY;
+
     fn state_mut(&mut self) -> &mut G::State {
         self.grinding.state_mut()
     }

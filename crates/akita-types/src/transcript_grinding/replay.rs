@@ -246,6 +246,12 @@ pub trait GrindingReplay {
     /// The role-specific proof channel state.
     type State: ProofChannel;
 
+    /// Whether this replay only counts (`CountingGrinding`): it runs over
+    /// zero bytes for the pad layout, which reads the shape of its checks
+    /// and never their values, so it may skip computing a value that only
+    /// enters a check.
+    const COUNTS_ONLY: bool = false;
+
     /// Borrow the state for ordinary protocol messages and challenges.
     ///
     /// Callers must propagate errors from operations on this borrow before

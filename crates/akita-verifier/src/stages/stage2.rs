@@ -459,7 +459,16 @@ where
         physical_l2_families: stage1.physical_l2_families,
     })?;
 
-    let weights = stage2_verifier.oracle_weights(&replay.challenges)?;
+    // The oracle weights (the level's setup scan) only enter this check's
+    // value, which a counting replay never reads.
+    let weights = if G::COUNTS_ONLY {
+        Stage2OracleWeights {
+            binary: E::zero(),
+            linear: E::zero(),
+        }
+    } else {
+        stage2_verifier.oracle_weights(&replay.challenges)?
+    };
     grinding.check_stage2_oracle(weights, witness_eval.clone(), replay.output_claim)?;
     Ok(Stage2Output {
         point: replay.challenges,
