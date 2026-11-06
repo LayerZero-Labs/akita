@@ -60,16 +60,24 @@ impl BinaryFieldProfile {
         )
     }
 
-    /// Validate the field pair and reject unfinished roots before any protocol work.
-    pub fn admit_root(self, modulus: u128, degree: usize) -> Result<(), AkitaError> {
+    /// Validate the field pair and admission mode before protocol work.
+    /// `research_native` must come from trusted catalog resolution at the PCS
+    /// boundary. Internal stages may rely on that preceding admission check.
+    /// P64 production admission remains refused, even with a valid field pair.
+    pub fn admit_root(
+        self,
+        modulus: u128,
+        degree: usize,
+        research_native: bool,
+    ) -> Result<(), AkitaError> {
         if modulus != self.modulus() || degree != self.extension_degree() {
             return Err(AkitaError::InvalidSetup(
                 "binary root field profile mismatch".into(),
             ));
         }
-        if self == Self::P64 {
+        if self == Self::P64 && !research_native {
             return Err(AkitaError::UnsupportedSchedule(
-                "p64/E64 binary root is not yet supported".into(),
+                "p64 root requires an explicitly admitted research native catalog; production admission is refused".into(),
             ));
         }
         Ok(())

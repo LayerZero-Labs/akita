@@ -224,6 +224,14 @@ pub struct CpuWitnessHandle {
 pub(crate) type OpaqueRecursiveWitness = CpuWitnessHandle;
 
 impl CpuWitnessHandle {
+    /// Copy the logical digits for an adversarial integration backend.
+    /// This read-only test surface cannot change the live handle. Tests import
+    /// an altered table through the ordinary backend boundary and prove it.
+    #[cfg(feature = "test-support")]
+    pub fn coefficients_for_test(&self) -> Vec<i8> {
+        self.logical.digits().collect()
+    }
+
     pub(crate) fn snapshot(&self) -> Self {
         Self {
             phase: self.phase,

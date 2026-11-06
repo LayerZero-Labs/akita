@@ -586,3 +586,22 @@ nonce encoding are documented in
 
 The detailed grinding contract is recorded in
 [the transcript grinding specification](https://github.com/LayerZero-Labs/akita/blob/main/specs/transcript-grinding.md).
+
+## Selected p64 binary root
+
+The research binary root uses the same caller transcript and grinding cursor as
+its ordinary successor. Its selected manifest binds the p64/E64 field pair,
+base payloads embedded in E64, and the typed setup identity. After committing
+the accepted response and quotient digits, it draws independent E64 weights
+for the common relation vector. It sends no integer projection messages.
+
+The plan uses the exact order `(64,2,2^64-59)` for field-site pricing. The root
+response nonce is still followed by column-challenge work with denominator
+2^136 and loss I=owners*columns. Thus I=256 costs zero work bits, I=257 costs
+one, and I=1,048,576 costs twelve. Every suffix site remains in the same cursor.
+The column sampler's indexed-oracle extraction premise is unresolved for
+production; field migration does not strengthen it.
+
+`crates/akita-types/src/binary_source/grinding.rs` owns this plan, and
+`crates/akita-types/src/binary_source/root_transcript.rs` owns the statement and
+coefficient draws. The P128 path retains its original field order and messages.

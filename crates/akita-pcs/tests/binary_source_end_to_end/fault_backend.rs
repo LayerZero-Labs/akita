@@ -1,6 +1,6 @@
 //! Adversarial test backend; production exposes no witness mutation operation.
 
-use super::F;
+use super::{E, F};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
@@ -17,13 +17,12 @@ use jolt_poly::UnivariatePoly;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-type E = F;
-type NativeBackend = CpuBackend<F, F>;
-type C = <NativeBackend as ProverHandleFamily<F, F>>::CommitmentHandle;
-type W = <NativeBackend as ProverHandleFamily<F, F>>::WitnessHandle;
-type M = <NativeBackend as ProverHandleFamily<F, F>>::CommitmentMaterialHandle;
+type NativeBackend = CpuBackend<F, E>;
+type C = <NativeBackend as ProverHandleFamily<F, E>>::CommitmentHandle;
+type W = <NativeBackend as ProverHandleFamily<F, E>>::WitnessHandle;
+type M = <NativeBackend as ProverHandleFamily<F, E>>::CommitmentMaterialHandle;
 type Session = <NativeBackend as ProofScopeConsumer>::ProofSessionHandle;
-type Stage2 = <NativeBackend as ProverHandleFamily<F, F>>::Stage2SessionHandle;
+type Stage2 = <NativeBackend as ProverHandleFamily<F, E>>::Stage2SessionHandle;
 
 #[path = "delegation.rs"]
 mod delegation;
@@ -31,7 +30,7 @@ mod delegation;
 mod fault_witness;
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum Fault {
+pub(crate) enum Fault {
     ForeignCommitment,
     ForeignPartials,
     Image,
@@ -41,6 +40,7 @@ pub(super) enum Fault {
     ValueCarry,
     Padding,
     PrimePlane,
+    Quotient,
 }
 
 impl Fault {
@@ -64,6 +64,7 @@ impl Fault {
         let segment = match self {
             Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
             Self::PrimePlane => plan.prime_segment().unwrap(),
+            Self::Quotient => plan.quotient_segment().unwrap(),
             Self::Response => 0,
             Self::Image => 1,
             Self::Partials => 2,
@@ -83,9 +84,6 @@ impl Fault {
 
 struct FaultPreparation {
     native: Box<dyn Any + Send + Sync>,
-    manifest: BinaryCommittedGroupManifest,
-    claim: Option<BinaryTerminalClaim>,
-    prime: PrimePlaneManifest,
     plan: BinaryRootWitnessPlan,
 }
 
@@ -104,7 +102,7 @@ impl FaultBackend {
         setup: &akita_cpu_backend::AkitaProverSetup<F>,
         schedules: &TrustedScheduleCatalog<super::BinaryTestSuffix>,
         prefixes: &akita_prover::SetupPrefixProverRegistry<F, C>,
-        data: akita_prover::SelectedProverOpeningData<'_, F, C, F>,
+        data: akita_prover::SelectedProverOpeningData<'_, E, C, F>,
         prover: &mut akita_transcript::ProverChannel,
     ) -> Result<(), AkitaError> {
         let resolved = schedules.resolve_selection(data.selection())?;
@@ -169,17 +167,10 @@ impl FaultBackend {
             );
             payload = foreign;
         }
-        assert!(
-            request.ordinary.is_none(),
-            "fault injection uses the binary-only fixture"
-        );
         Ok((
             payload,
             Box::new(FaultPreparation {
                 native,
-                manifest: request.manifest.clone(),
-                claim: request.claim.clone(),
-                prime: request.prime.clone(),
                 plan: request.plan.clone(),
             }),
         ))
@@ -195,29 +186,18 @@ impl FaultBackend {
         destination_ring_dimension: usize,
     ) -> Result<Option<W>, AkitaError> {
         let preparation = preparation.downcast_ref::<FaultPreparation>().unwrap();
-        if self
-            .inner
-            .build_root_group(
-                session,
-                context,
-                preparation.native.as_ref(),
-                challenges,
-                logical_len,
-                destination_ring_dimension,
-            )?
-            .is_none()
-        {
-            return Ok(None);
-        }
-        let mut digits = fault_witness::reconstruct(
-            &preparation.manifest,
-            preparation.claim.as_ref(),
-            &preparation.prime,
-            &preparation.plan,
-            &self.seed,
-            &self.words,
+        let Some(honest) = self.inner.build_root_group(
+            session,
+            context,
+            preparation.native.as_ref(),
             challenges,
-        )?;
+            logical_len,
+            destination_ring_dimension,
+        )?
+        else {
+            return Ok(None);
+        };
+        let mut digits = honest.coefficients_for_test();
         digits.truncate(logical_len);
         if !matches!(
             self.fault,
@@ -239,25 +219,26 @@ impl FaultBackend {
     fn begin_fault_root_relation(
         &self,
         witness: &W,
-        weights: NativeRootWeights<F>,
-        negative_binary_weights: Vec<(usize, F)>,
-        claim: F,
-        stage1_point: &[F],
-        range_image_evaluation: F,
-        batching: F,
+        weights: NativeRootWeights<E>,
+        negative_binary_weights: Vec<(usize, E)>,
+        claim: E,
+        stage1_point: &[E],
+        range_image_evaluation: E,
+        batching: E,
     ) -> Result<Stage2, AkitaError> {
         // A malicious prover is allowed to use an incorrect public oracle. Make
         // its own sumcheck consistent so it emits a complete proof; the real
         // verifier must detect the wrong relation at its final oracle check.
-        assert!(negative_binary_weights.is_empty());
+        // K and prime-digit faults leave the ordinary negative-bit predicates
+        // intact, so their contribution remains zero in a mixed witness.
         let mut table = weights.materialize()?;
         let state = self.digits.lock().unwrap();
         let digits = state.as_ref().unwrap();
         let actual = table
             .iter()
             .zip(digits)
-            .fold(F::zero(), |sum, (&weight, &digit)| {
-                sum + weight * F::from_i64(i64::from(digit))
+            .fold(E::zero(), |sum, (&weight, &digit)| {
+                sum + weight * E::from_i64(i64::from(digit))
             });
         match self.fault {
             Fault::ForeignCommitment | Fault::ForeignPartials => {}
@@ -271,7 +252,7 @@ impl FaultBackend {
             ),
         }
         let anchor = digits.iter().position(|&digit| digit != 0).unwrap();
-        let value = F::from_i64(i64::from(digits[anchor]));
+        let value = E::from_i64(i64::from(digits[anchor]));
         table[anchor] += (claim - actual) * value.inverse().unwrap();
         let terms = table
             .into_iter()

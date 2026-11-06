@@ -217,12 +217,13 @@ pub(super) fn proof(
     proof: &[u8],
     log_carriers: usize,
     word: bool,
+    profile: akita_params::binary_setup::BinaryFieldProfile,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use akita_error::checked;
 
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
     println!(
-        "proof bytes={} digest_algorithm=blake2b256 digest={}",
+        "proof bytes={} digest_algorithm=descriptor_digest digest={}",
         proof.len(),
         hex(&digest)
     );
@@ -263,7 +264,11 @@ pub(super) fn proof(
             if word { 21 } else { 0 },
             usize::from(word),
         ),
-        ("integer_projections", projection_start, 84, 7),
+        (
+            "integer_projections", projection_start,
+            if profile == akita_params::binary_setup::BinaryFieldProfile::P128 { 84 } else { 0 },
+            7,
+        ),
     ] {
         if bytes != 0 {
             let end = checked::sum([start, bytes]).ok_or("range overflow")?;

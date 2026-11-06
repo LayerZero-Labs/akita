@@ -48,7 +48,7 @@ where
             |plan| {
                 claims
                     .opening_claims()
-                    .root_grinding_plan(plan, resolved.schedule())
+                    .root_grinding_plan(plan, resolved.schedule(), resolved.is_native_root())
             },
         )?;
     Ok((resolved, digests, claims, grinding_plan, descriptor_bytes))

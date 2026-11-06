@@ -1,9 +1,12 @@
 use akita_challenges::FoldChallengeDistribution;
 use akita_config::{proof_optimized::fp128::DenseBounded, CommitmentConfig};
 use akita_error::AkitaError;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{sis::CommittedSourceClass, DecompositionParams, SisModulusProfileId};
 
-pub(super) type F = jolt_field::Prime128Offset275;
+pub(super) type F = super::super::F;
+pub(super) type E = super::super::E;
+pub(super) const PROFILE: BinaryFieldProfile = super::super::PROFILE;
 
 /// Ordinary suffix for an explicitly selected experimental binary fixture.
 #[derive(Clone)]
@@ -11,7 +14,7 @@ pub(super) struct FullSize;
 
 impl CommitmentConfig for FullSize {
     type Field = F;
-    type ExtField = F;
+    type ExtField = E;
     const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
         DenseBounded::RING_DIMENSION_SCHEDULE;
 
@@ -19,14 +22,20 @@ impl CommitmentConfig for FullSize {
         DecompositionParams {
             log_basis: DenseBounded::decomposition().log_basis,
             log_commit_bound: 5,
-            log_open_bound: Some(128),
+            log_open_bound: Some(match PROFILE {
+                BinaryFieldProfile::P128 => 128,
+                BinaryFieldProfile::P64 => 64,
+            }),
         }
     }
     fn ring_challenge_config(dimension: usize) -> Result<FoldChallengeDistribution, AkitaError> {
         DenseBounded::ring_challenge_config(dimension)
     }
     fn sis_modulus_profile() -> SisModulusProfileId {
-        SisModulusProfileId::Q128Offset275
+        match PROFILE {
+            BinaryFieldProfile::P128 => SisModulusProfileId::Q128Offset275,
+            BinaryFieldProfile::P64 => SisModulusProfileId::Q64Offset59,
+        }
     }
     fn opening_basis_range() -> (u32, u32) {
         DenseBounded::opening_basis_range()
@@ -41,6 +50,9 @@ impl CommitmentConfig for FullSize {
         true
     }
     fn schedule_family_name() -> &'static str {
-        "binary_source_full_size_fixture"
+        match PROFILE {
+            BinaryFieldProfile::P128 => "binary_source_full_size_fixture",
+            BinaryFieldProfile::P64 => "binary_source_p64_research",
+        }
     }
 }

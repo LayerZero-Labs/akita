@@ -175,3 +175,14 @@ Every policy checks Stage 3 completely; only direct setup evaluations are deferr
 Attach auxiliary archived-proof advice with `SetupClaimAccumulator::with_advice`.
 See [external setup accumulation](../how/recursion.md#external-setup-accumulation)
 for inheritance and final-discharge requirements.
+
+The research `binary-source-measurements` example accepts `--field p64` to
+select the p64/E64 native root; omitting it preserves P128. Shapes are
+`binary-claim`, `prime-claim`, `binary-and-prime-claims`, and
+`binary-and-prime-claims-plus-ordinary`. `--log-carriers 3` selects the eight
+carrier, C=2 fixture; 22 and 23 select C=256. Use separate `--phase plan`,
+`--phase prove`, and `--phase verify` invocations with a `--fixture` directory.
+Planning writes a research native catalog; proving writes commitments, induced
+verifier setup and proof. Verification reconstructs and validates that catalog.
+Catalogs must come from trusted local preprocessing. None is a production
+admission certificate.

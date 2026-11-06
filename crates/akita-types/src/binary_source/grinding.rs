@@ -15,6 +15,7 @@ use akita_params::{
 /// the root Stage 3, and all subsequent folds.
 pub fn binary_root_grinding_plan(
     ordinary: &GrindingPlan,
+    field_profile: BinaryFieldProfile,
     fold_coordinates: &[usize],
     domain_len: usize,
     maximum_native_degree: usize,
@@ -28,9 +29,9 @@ pub fn binary_root_grinding_plan(
             "invalid native root grinding geometry".into(),
         ));
     }
-    // P128 stays selected until the quotient compiler, E64 adjoints and full
-    // security ledger land. The paired profile owns the exact challenge order.
-    let order = BinaryFieldProfile::P128.challenge_order()?;
+    // The selected pair owns the exact order. Column work still uses the
+    // unchanged 136-bit family, independently of this field order.
+    let order = field_profile.challenge_order()?;
     let rounds = domain_len.trailing_zeros() as usize;
     let challenges = fold_coordinates
         .iter()
@@ -133,4 +134,47 @@ pub fn binary_root_grinding_plan(
             )
     }));
     GrindingPlan::new(runs, order)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn p64_keeps_column_work_and_suffix_with_exact_field_pricing() {
+        for profile in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
+            let order = profile.challenge_order().unwrap();
+            let suffix = GrindingRun::proof_of_work(
+                GrindingSite::SumcheckRound {
+                    protocol: SumcheckProtocol::Stage3,
+                    level: 0,
+                    stage: 0,
+                    round: 0,
+                },
+                2,
+                order,
+            )
+            .unwrap();
+            let ordinary = GrindingPlan::new(vec![suffix], order).unwrap();
+            for (coordinates, bits) in [(256, 0), (257, 1), (512, 1), (1024, 2), (1_048_576, 12)] {
+                let plan =
+                    binary_root_grinding_plan(&ordinary, profile, &[coordinates], 1 << 17, 648)
+                        .unwrap();
+                assert_eq!(plan.runs()[0], GrindingRun::fold_response(0));
+                let work = plan.runs()[1];
+                assert_eq!(work.site(), GrindingSite::FoldChallengeWork { level: 0 });
+                assert_eq!(work.challenge_set_bits(), 136);
+                assert_eq!(work.loss_factor(), coordinates as u64);
+                assert_eq!(work.grind_bits(), bits);
+                assert_eq!(plan.runs().last(), Some(&suffix));
+                let batch = plan
+                    .runs()
+                    .iter()
+                    .find(|run| run.site() == GrindingSite::Tau1Point { level: 0 })
+                    .unwrap();
+                assert_eq!(batch.loss_factor(), 1);
+                assert_eq!(batch.grind_bits(), order.grind_bits(1).unwrap());
+            }
+        }
+    }
 }

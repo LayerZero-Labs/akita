@@ -555,3 +555,22 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
   `crates/akita-cpu-backend/src/commitment/api.rs`
   (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.
+
+## Research p64 binary admission
+
+P64 native catalog admission authorizes research execution, not a production
+security claim. For a fixed authenticated digit witness, each integer defect
+R-qK has magnitude strictly below p. A nonzero defect therefore survives in
+E64, and one independent common coefficient batch loses it with probability at
+most 1/p². This is already slightly greater than 2^-128. Ring switching, range
+proofs, the fused relation sumcheck, the typed setup product, the word frontend
+and the ordinary suffix all add their own losses.
+
+The complete conditional ledger is maintained in
+[the active p64 specification](../../../specs/binary-source-p64-root.md#complete-research-schedule-ledger).
+Production requires a common-witness checkpoint, full-tree debits and extraction
+cost, a declared adversarial query budget, the indexed column oracle argument,
+setup and hash accounting, and certificates for q24 A, q64 B/D, outgoing, typed
+prefix and suffix commitments at their actual widths. These are unresolved
+obligations, not zero terms. The local grinding target does not certify the
+aggregate. Linux measurements and negative tests cannot replace this analysis.
