@@ -291,3 +291,19 @@ commitment, direct witness, or transcript input must be rejected with
 
 Maintainer mirror: [`docs/verifier-contract.md`](../../../docs/verifier-contract.md).
 Historical audit evidence: [`docs/verifier-panic-audit.md`](../../../docs/verifier-panic-audit.md).
+
+## Research p64 root boundary
+
+P64 binary openings require a row explicitly admitted through the trusted native
+catalog constructor. An ordinary artifact row or a missing selected row does
+not authorize P64; production admission remains refused. The prover and verifier
+both enforce this before binding the instance or consuming root messages.
+The internal field admission additionally checks the exact base modulus and
+quadratic challenge degree.
+
+Manifest ranks and payload lengths, strict integer lifts, prime-coordinate
+canonicality, range checks, the common relation, the typed setup identity and
+the entire ordinary suffix remain enforced. The verifier evaluates A through
+its adjoint and authenticated setup product; it does not materialize A online.
+The complete-schedule example replay tests retain `BinaryAReadGuard::forbid`
+and caller-transcript continuation checks. Linux results are pending.

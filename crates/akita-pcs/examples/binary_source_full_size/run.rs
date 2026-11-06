@@ -4,14 +4,14 @@ mod catalog;
 mod claims;
 #[path = "config.rs"]
 mod config;
-#[path = "metrics.rs"]
-mod metrics;
 #[path = "native_catalog.rs"]
 mod native_catalog;
 
+use crate::metrics;
 use akita_config::TrustedScheduleCatalog;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::checked;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, SetupPrefixSlotId};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
@@ -24,7 +24,7 @@ use akita_types::{
     AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 use akita_verifier::SetupPolicy;
-use config::{FullSize, F};
+use config::{FullSize, E, F, PROFILE};
 use jolt_field::Ring;
 use jolt_transcript::BytesMsg;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,18 @@ use tracing_subscriber::prelude::*;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const PROTOCOL: &[u8] = b"binary-source-full-size-v1";
 
+#[cfg(test)]
+type BinaryTestSuffix = FullSize;
+// The shared backend also contains frontend helpers used by the P128 suite.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../tests/binary_source_end_to_end/fault_backend.rs"]
+pub(super) mod fault_backend;
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static FAULT: std::cell::Cell<Option<fault_backend::Fault>> = const { std::cell::Cell::new(None) };
+}
+
 #[derive(Serialize, Deserialize)]
 struct Fixture {
     claims: claims::Claims,
@@ -43,7 +55,7 @@ struct Fixture {
     contexts: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-pub(super) fn main() -> Result<()> {
+pub(crate) fn main() -> Result<()> {
     let mut log = 22usize;
     let mut shape = "binary-and-prime-claims".to_owned();
     let mut phase = "prove".to_owned();
@@ -52,6 +64,10 @@ pub(super) fn main() -> Result<()> {
     while let Some(arg) = args.next() {
         let value = args.next().ok_or("missing argument value")?;
         match arg.as_str() {
+            "--field"
+                if (value == "p64" && PROFILE == BinaryFieldProfile::P64)
+                    || (value == "p128" && PROFILE == BinaryFieldProfile::P128) => {}
+
             "--log-carriers" => log = value.parse()?,
             "--shape" => shape = value,
             "--phase" => phase = value,
@@ -59,9 +75,10 @@ pub(super) fn main() -> Result<()> {
             _ => return Err(format!("unknown argument {arg}").into()),
         }
     }
-    if ![10, 22, 23].contains(&log)
+    if ![3, 10, 22, 23].contains(&log)
         || ![
             "binary-claim",
+            "prime-claim",
             "binary-and-prime-claims",
             "binary-and-prime-claims-plus-ordinary",
         ]
@@ -70,6 +87,8 @@ pub(super) fn main() -> Result<()> {
         return Err("invalid measurement geometry".into());
     }
     let directory = directory.ok_or("missing --fixture directory")?;
+    std::fs::create_dir_all(&directory)?;
+    println!("field_profile={PROFILE:?} admission=research production_admitted=false");
     let timings = metrics::Timings::default();
     tracing_subscriber::registry().with(timings.clone()).init();
     let columns = claims::descriptor(log)?.index_map().columns();
@@ -77,7 +96,8 @@ pub(super) fn main() -> Result<()> {
     let outcome = match phase.as_str() {
         "prove" => prove(log, &shape, &directory),
         "verify" => verify(log, &shape, &directory, &timings),
-        "plan" => catalog::plan_only(log, &shape),
+        "plan" if PROFILE == BinaryFieldProfile::P128 => catalog::plan_only(log, &shape),
+        "plan" => native_catalog::build(log, &shape, &directory).map(|_| ()),
         _ => Err("phase must be prove, verify or plan".into()),
     };
     timings.print(&phase);
@@ -88,16 +108,16 @@ pub(super) fn main() -> Result<()> {
     outcome
 }
 
-fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
+pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let (catalog, key) = {
         let _span = tracing::info_span!("catalog_planning").entered();
-        if log == 10 {
+        if log == 10 && PROFILE == BinaryFieldProfile::P128 {
             catalog::build(log, shape)?
         } else {
             native_catalog::build(log, shape, directory)?
         }
     };
-    if log == 10 {
+    if log == 10 && PROFILE == BinaryFieldProfile::P128 {
         std::fs::write(
             directory.join("catalog.aks"),
             catalog.catalog().to_artifact_bytes()?,
@@ -137,7 +157,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         let _span = tracing::info_span!("cold_prover_setup").entered();
         let max_vars = carrier.group.num_vars().max(log);
         let max_polynomials = 1 + usize::from(shape == "binary-and-prime-claims-plus-ordinary");
-        if log == 10 {
+        if log == 10 && PROFILE == BinaryFieldProfile::P128 {
             scheme.setup_prover(max_vars, max_polynomials)?
         } else {
             // This trusted fixture prepares the typed root prefix explicitly.
@@ -160,9 +180,13 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     };
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
     let descriptor = claims::descriptor(log)?;
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier)?;
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(), 0, &carrier, PROFILE,
+    )?;
     let count = checked::pow2(log).ok_or("carrier count overflow")?;
     let words = claims::words(count);
+    #[cfg(test)]
+    let fault_words = words.clone();
     let claims = {
         let _span = tracing::info_span!("fixture_claim_evaluation").entered();
         claims::evaluate(log, shape, &words)?
@@ -226,7 +250,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let prefixes = {
         let _span = tracing::info_span!("cold_prefix_preparation").entered();
         let prefixes = backend.prepare_binary_a_prefixes(&manifest, &typed, &first, &later)?;
-        if log != 10 {
+        if log != 10 || PROFILE == BinaryFieldProfile::P64 {
             let ordinary_ids = later
                 .iter()
                 .cloned()
@@ -283,7 +307,22 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     akita_transcript::clear_thread_events();
     {
         let _span = tracing::info_span!("prove_complete_opening").entered();
+        #[cfg(test)]
+        let attacker = FAULT.with(|selected| selected.get()).map(|fault| {
+            fault_backend::FaultBackend::new(
+                backend.clone(),
+                setup.expanded.descriptor().setup_seed.seed,
+                fault_words,
+                fault,
+            )
+        });
         let mut registry = akita_prover::BackendRegistry::<FullSize>::new()?;
+        #[cfg(test)]
+        let root = match &attacker {
+            Some(attacker) => registry.register(attacker, &prefixes)?,
+            None => registry.register(backend.as_ref(), &prefixes)?,
+        };
+        #[cfg(not(test))]
         let root = registry.register(backend.as_ref(), &prefixes)?;
         let mut route = akita_prover::FixedFoldRoute::new(vec![root; schedule.num_fold_levels()]);
         akita_prover::batched_prove_embedded::<FullSize, _>(
@@ -297,7 +336,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         )?;
     }
     akita_transcript::finish_proof_ranges(&prover);
-    metrics::proof(prover.narg_string(), log, true)?;
+    metrics::proof(prover.narg_string(), log, claims.word_point.is_some(), PROFILE)?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
     prover.public_message(&BytesMsg(b"application-suffix"));
     let fixture = Fixture {
@@ -314,7 +353,7 @@ fn groups(
     claims: &claims::Claims,
     descriptor: &akita_types::binary_source::BinarySourceDescriptor,
     commitments: &[CommittedGroup<F>],
-) -> Result<Vec<PolynomialGroupClaims<'static, F, CommittedGroup<F>>>> {
+) -> Result<Vec<PolynomialGroupClaims<'static, E, CommittedGroup<F>>>> {
     let binary = commitments.first().ok_or("missing binary commitment")?;
     let mut groups = vec![PolynomialGroupClaims::new_binary_planes(
         binary.clone(),
@@ -323,7 +362,7 @@ fn groups(
     )?];
     if let Some(ordinary) = commitments.get(1) {
         let point = (0..log.max(18))
-            .map(|axis| F::from_u64(7 + axis as u64 * 11))
+            .map(|axis| E::from_u64(7 + axis as u64 * 11))
             .collect::<Vec<_>>();
         let value = *point.first().ok_or("empty ordinary point")?;
         groups.push(PolynomialGroupClaims::new(
@@ -335,9 +374,14 @@ fn groups(
     Ok(groups)
 }
 
-fn verify(log: usize, shape: &str, directory: &Path, timings: &metrics::Timings) -> Result<()> {
+pub(super) fn verify(
+    log: usize,
+    shape: &str,
+    directory: &Path,
+    timings: &metrics::Timings,
+) -> Result<()> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
-    let catalog = if log == 10 {
+    let catalog = if log == 10 && PROFILE == BinaryFieldProfile::P128 {
         TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
             &std::fs::read(directory.join("catalog.aks"))?,
             ChunkedWitnessCfg::default_non_chunked(),

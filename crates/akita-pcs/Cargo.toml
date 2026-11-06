@@ -142,6 +142,9 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false, features = [
+  "test-support",
+] }
 # Extension seam: expose existing test diagnostics to grouped integration tests.
 # <https://github.com/LayerZero-Labs/akita/issues/285>.
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [

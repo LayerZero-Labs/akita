@@ -167,6 +167,8 @@ fn p64_fault_table_changes_k_independently_of_response_and_image() {
         BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
             .unwrap();
     let segment = plan.quotient_segment().unwrap();
+    assert_eq!(super::Fault::Quotient.address(&plan),
+        plan.repacking().coefficient_address(segment, 0, 0, 0).unwrap());
     let mut natural = plan
         .repacking()
         .segments()

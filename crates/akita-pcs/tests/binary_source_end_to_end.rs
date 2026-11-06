@@ -52,6 +52,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 type F = Prime128Offset275;
+type E = F;
 
 /// Existing ordinary suffix catalog, explicitly selected only by this test.
 /// The small binary source's rank-three A and rank-two B have no security claim.

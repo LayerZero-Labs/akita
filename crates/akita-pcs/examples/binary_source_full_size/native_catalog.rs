@@ -112,6 +112,7 @@ impl FixtureCatalog {
 
     fn admit(self, log: usize, shape: &str) -> Result<TrustedScheduleCatalog<FullSize>> {
         self.identity.check(&CatalogIdentity::new(log, shape))?;
+        self.check_rows(log, shape)?;
         let chunking = ChunkedWitnessCfg::default_non_chunked();
         let policy = policy_of::<FullSize>(chunking);
         let transition = NativeRootTransition::new(self.physical_cells, 3, self.prefix_cells)?;
@@ -142,7 +143,8 @@ pub(super) fn build(
 ) -> Result<(TrustedScheduleCatalog<FullSize>, ScheduleLookupKey)> {
     let cache = std::env::var_os("BINARY_SOURCE_CATALOG_CACHE").map(|cache| {
         Path::new(&cache).join(format!(
-            "native-catalog-{}-{log}-{shape}.json",
+            "native-catalog-{}-{}-{log}-{shape}.json",
+            FullSize::schedule_family_name(),
             if akita_params::DEV_PROTOCOL {
                 "dev"
             } else {
@@ -150,10 +152,15 @@ pub(super) fn build(
             }
         ))
     });
-    if let Some((path, bytes)) = cache
-        .as_ref()
-        .and_then(|path| Some((path, std::fs::read(path).ok()?)))
-    {
+    let local = directory.join("native-catalog.json");
+    let cached = if local.is_file() {
+        Some((local.clone(), std::fs::read(&local)?))
+    } else {
+        cache.as_ref().and_then(|path| {
+            std::fs::read(path).ok().map(|bytes| (path.clone(), bytes))
+        })
+    };
+    if let Some((path, bytes)) = cached {
         let rejected = |error: Box<dyn std::error::Error>| {
             format!(
                 "catalog cache entry {} rejected: {error}; delete it to re-plan",
@@ -163,18 +170,13 @@ pub(super) fn build(
         std::fs::write(directory.join("native-catalog.json"), &bytes)?;
         let fixture: FixtureCatalog =
             serde_json::from_slice(&bytes).map_err(|e| rejected(e.into()))?;
-        fixture
-            .identity
-            .check(&CatalogIdentity::new(log, shape))
-            .map_err(rejected)?;
-        fixture.check_rows(log, shape).map_err(rejected)?;
         let key = match fixture.ordinary.first() {
             Some((profiles, _)) => ScheduleLookupKey {
                 final_group: profiles.final_group.group,
                 precommitteds: vec![profiles.final_group],
                 root_accumulated_setup_prefix_len: 0,
             },
-            None => ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log)),
+            None => ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18))),
         };
         println!(
             "native_transition physical_cells={} prefix_cells={} catalog_cache=hit",
@@ -208,7 +210,7 @@ fn plan(
     directory: &Path,
 ) -> Result<(TrustedScheduleCatalog<FullSize>, ScheduleLookupKey)> {
     let (policy, direct_policy) = policies();
-    let singleton = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log));
+    let singleton = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
     let contract = FullSize::committed_source_contract()?;
     let mut ordinary = Vec::new();
     let producer = if shape == "binary-and-prime-claims-plus-ordinary" {

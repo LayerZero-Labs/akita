@@ -1,4 +1,4 @@
-use super::{claims, config::FullSize};
+use super::{claims, config::{FullSize, PROFILE}};
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::{checked, AkitaError};
 use akita_params::{
@@ -19,11 +19,11 @@ pub(super) fn plan(
     dimension: usize,
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
     let descriptor = claims::descriptor(log)?;
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, carrier)?;
-    let word = true;
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, carrier, PROFILE)?;
+    let word = shape != "prime-claim";
     let planes = usize::from(shape != "binary-claim");
     let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
-    let prime = PrimePlaneManifest::new(
+    let prime = PrimePlaneManifest::with_field_profile(
         &descriptor,
         (planes > 0).then(|| PrimeGroupClaim {
             point: vec![2; arity],
@@ -32,17 +32,24 @@ pub(super) fn plan(
                 value: 0,
             }],
         }),
+        PROFILE,
     )?;
     let price = akita_planner::prime_planes::price_binary_root_planes(
         &manifest, word, &prime, dimension, ordinary,
     )?;
-    let mut canonical = BinaryRootWitnessPlan::new(&descriptor, manifest.a_rank(), dimension)?
-        .with_prime_planes(word, planes)?;
+    let mut canonical = BinaryRootWitnessPlan::for_profile(
+        &descriptor, manifest.a_rank(), dimension, PROFILE, word, planes,
+    )?;
     if let Some(ordinary) = ordinary {
         let ordinary =
-            OrdinaryNativeRootPlan::new(ordinary, canonical.repacking().segments().len())?;
+            OrdinaryNativeRootPlan::new(ordinary, canonical.quotient_segment().unwrap_or(canonical.repacking().segments().len()))?;
         canonical = canonical.with_ordinary(&ordinary)?;
     }
+    println!(
+        "root_profile field={PROFILE:?} b_rank={} quotient={:?}",
+        manifest.b_rows(),
+        canonical.projection_bounds().quotient(),
+    );
     let mut live = 0usize;
     let mut physical = 0usize;
     for (index, segment) in canonical.repacking().segments().iter().enumerate() {

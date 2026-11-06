@@ -57,7 +57,7 @@ where
     };
     manifest
         .field_profile()
-        .admit_root(akita_params::field_modulus::<F>()?, E::DEGREE)?;
+        .admit_root(akita_params::field_modulus::<F>()?, E::DEGREE, true)?;
     let ordinary = claims.groups().get(1);
     let ordinary_profile = match ordinary {
         Some(group)

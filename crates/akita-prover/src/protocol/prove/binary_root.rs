@@ -67,6 +67,7 @@ where
     manifest.field_profile().admit_root(
         akita_params::field_modulus::<Cfg::Field>()?,
         Cfg::ExtField::DEGREE,
+        true,
     )?;
     let next = schedule
         .recursive_folds

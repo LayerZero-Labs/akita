@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Akita contributors |
 | Created | 2026-11-05 |
-| Status | approved |
+| Status | active |
 | PR | |
 | Supersedes | P128 root profile and exact-divisibility projection design in [binary-source-opening.md](binary-source-opening.md), upon implementation |
 | Superseded-by | |
@@ -18,7 +18,11 @@ The current seven integer projections do not fit the smaller characteristic.
 Replace them with committed coefficient quotients and independent extension-field
 batching. Keep the rank-three degree-648 commitment modulo q and the
 GF(2^128) word claim. This spec approves the protocol design.
-Production security admission remains a separate requirement.
+Production security admission remains refused. The research implementation now
+selects P64 through explicitly admitted native catalog rows. Linux catalog
+artifacts, reference pins, complete measurements and validation remain pending;
+this record stays active until that evidence and the admission obligations below
+are resolved.
 
 ## Intent
 
@@ -667,6 +671,57 @@ Such repetition is not part of this approved projection schedule.
 A full-proof repetition would have to cover all deficient tests and retain
 the fixed-commitment premises.
 
+#### Complete research schedule ledger
+
+Research execution is not a production security allocation. A trusted native
+catalog supplies the exact outgoing physical span, the typed prefix footprint,
+the ordinary producer (when selected), and the complete suffix. Ordinary catalog
+artifacts cannot admit P64 roots. Missing selections return typed errors; field,
+rank, strict lift, prefix identity, range and suffix checks remain mandatory.
+
+For one selected row let r be the outgoing domain's log size, k the typed setup
+prefix domain's log size, n the word carrier log size, I=s*C, and e=p^2.
+The following ledger includes every class of loss; unresolved premises are not
+assigned zero. The public grinding plan records the actual per-site degrees.
+
+| Event | Charge and admission obligation |
+| --- | --- |
+| Coefficient and other fixed root rows | One `1/e` batch, conditional on the common bounded-witness checkpoint; no factor `1944*s` and no extra `q^-7` |
+| Integer quotient and carry lifts | Zero additional algebraic error only after range checks and the strict characteristic-p bounds |
+| Root ring switch | `648/e`; the prime polynomial's `161/e` is included, and mixed native degrees must not exceed 648 |
+| Range equality point | `r/e`, at the root Tau0 site |
+| Stage 1 | Sum `(degree+1)/e` over the actual `DigitRangePlan::new(8)` round shapes, plus `(child_claims-1)/e` at each nonempty interstage powers batch |
+| Stage 2 | Separate range-image binding `1/e`, then `3r/e` for the fused sumcheck |
+| Stage 3 | `2k/e` for the one typed A/B/D product; setup and witness evaluations continue into the ordinary successor |
+| Word frontend | `(7+2n)/2^162` when selected; zero when absent |
+| Column extraction | `I/2^136` before its work filter, retaining the indexed-oracle premise and query units below |
+| Ordinary suffix and terminal | Every retained plan site and every scheduled binding instance, including the optional ordinary input; no discount from sharing the root |
+| Field codecs | Charge pooled challenge messages under the transcript codec's `2^-160` budget per message; the separate exact P64 coefficient sampler has abort at most `2*batch_count*(59/2^64)^256`, not a soundness improvement |
+| Response and work retries | Every candidate enters the adversarial query budget. The 4096 response trials are not 12 security bits. Conditional response-tail bounds and bounded work exhaustion are completeness obligations |
+| Setup | Include the total sampling/model distance for typed A/B/D, outgoing, prefix and suffix setup streams, and trusted setup/context authenticity |
+| Binding | Sum actual q24 A, q64 B/D, ordinary/compression, outgoing, typed-prefix and suffix matrix-collision advantages at the extractor's full cost |
+| Hashes | Include each distinct identity/commitment/setup hash role and the transcript/XOF model; for a 256-bit ideal digest role use `(binom(Q_h,2)+Q_h*V)/2^256` where applicable |
+
+The q24 comparison radius is 1,506,960. B/D use their actual degree-64 widths
+and coefficient-difference bound seven, not the old q128 ranks. Generated suffix
+rows audit their own ordinary instances; this does not certify A or the complete
+native checkpoint. Induced prefix instances must be included in the same
+certificate set, not inferred from the visible B/D lookup alone.
+
+For every priced site a use the exact conditional debit d_a, set size S_a,
+work g_a and adversarial/final-verifier query counts q_a and v_a. A candidate
+aggregate bound is the sum of `(q_a+v_a)*d_a/(S_a*2^g_a)`, unpriced frontend
+terms, codec/setup distances, hash terms and all induced binding advantages.
+Do not also add an envelope `Q*max(rate)` for those same queries. A plan's
+one-replay structural query count is not an adversarial query bound, especially
+for the indexed SHAKE columns and the blockwise coefficient sampler.
+
+Production remains refused until the fixed-witness checkpoint, independently
+programmable indexed column streams, full-tree debits, extraction branching and
+cost, query budget and every induced SIS certificate are established together.
+A local 128-bit per-query grinding target is not a whole-proof 128-bit claim.
+Linux timing, byte pins and mutation tests provide implementation evidence only.
+
 #### Column-challenge proof of work
 
 The current weight-46 column-challenge family has support size
@@ -760,7 +815,10 @@ Archive it only after its durable content is folded into the Book.
 Target dev for the selected p64 binary extension.
 Land any shared extension seams on main first under the branch contract.
 Each PR keeps unselected ordinary behavior byte-identical.
-The stages below describe future changes; this spec commit changes no Rust.
+Stages 1–5 provide the paired-field arithmetic and typed setup machinery.
+Stage 6 adds research catalog admission and the complete measurement driver.
+Its Linux-generated catalogs, singleton pins and measured results are pending;
+no production security allocation is admitted.
 
 1. **Define the paired field profile and identities.** Touch
    `crates/akita-params/src/binary_setup.rs` and `binary_setup/tests.rs`;
@@ -841,8 +899,9 @@ The stages below describe future changes; this spec commit changes no Rust.
   E64 support requires two coordinate planes and an explicit cap decision.
 - Will B and D keep a shared rank or expose separate ranks?
   Either choice must meet the per-role minima above.
-- Which p64 ordinary profile supplies the mixed root's compression and norm
-  contract?
+- The research mixed root selects Q64Offset59 through the generated ordinary
+  producer row, with two compression maps checked by `OrdinaryNativeRootPlan`.
+  Production certification of that complete instance remains open.
 - Does the generalized checkpoint comparison establish the required fixed
   witness for the extension compiler and shared setup/suffix claim?
   Validate that premise alongside negative carries, quotient mutations and

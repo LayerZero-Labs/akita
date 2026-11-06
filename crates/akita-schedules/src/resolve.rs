@@ -78,6 +78,13 @@ impl ResolvedScheduleRow {
         Ok(())
     }
 
+    /// Whether trusted preprocessing explicitly admitted a research native root.
+    /// Ordinary artifact decoding cannot create this capability. It certifies
+    /// geometry and suffix checks, not production security of the native root.
+    pub const fn is_native_root(&self) -> bool {
+        !self.canonical_root_transition
+    }
+
     /// Batch-level public schedule selection.
     pub const fn selection(&self) -> OpeningScheduleSelection {
         self.selection

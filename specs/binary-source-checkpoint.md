@@ -6,6 +6,13 @@
 | Created | 2026-10-27 |
 | Scope | Mathematical checkpoint for the proposed binary root; not production admission |
 
+The selected P64 research root follows the coefficient-quotient order and
+[complete conditional ledger](binary-source-p64-root.md#complete-research-schedule-ledger)
+of the active p64 specification. Its E64 batch, 22-digit prime coordinates and
+absence of J/y messages supersede the P128-specific rules below only when P64
+is selected. The indexed extraction and common-witness premises remain open
+for production; native catalog execution is not production admission.
+
 ## Blockers and corrections
 
 There is no unresolved algebraic blocker in the checkpoint proved below. Two

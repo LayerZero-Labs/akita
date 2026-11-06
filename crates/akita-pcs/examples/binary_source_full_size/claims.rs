@@ -1,5 +1,5 @@
 //! Deterministic benchmark inputs and independent claimed evaluations.
-use super::config::F;
+use super::config::{F, PROFILE};
 use akita_algebra::binary::BinaryField128;
 use akita_error::{checked, AkitaError};
 use akita_types::binary_source::{
@@ -20,9 +20,9 @@ pub(super) fn descriptor(log_carriers: usize) -> Result<BinarySourceDescriptor, 
     let count = checked::pow2(log_carriers).ok_or(AkitaError::InvalidProof)?;
     // Smoke exercises the same kernels with a narrow matrix; benchmark rows
     // retain the specified C=256 and rank three.
-    let columns = if log_carriers == 10 { 2 } else { 256 };
+    let columns = if log_carriers <= 10 { 2 } else { 256 };
     let index = BinaryIndexMap::new(128, count, count, columns)?;
-    let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0)?;
+    let profiles = BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, PROFILE)?;
     BinarySourceDescriptor::new(index, vec![[29; 32]], profiles)
 }
 
@@ -43,7 +43,7 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         word_value: [0; 16],
         prime: None,
     };
-    {
+    if shape != "prime-claim" {
         let point = (0..log)
             .map(|axis| (31 + axis as u128 * 17).to_le_bytes())
             .collect::<Vec<_>>();
