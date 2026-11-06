@@ -140,7 +140,10 @@ where
         inputs.push(Zeroizing::new(input.to_vec()));
         Ok(())
     })?;
-    let input_refs = inputs.iter().map(|input| input.as_slice()).collect::<Vec<_>>();
+    let input_refs = inputs
+        .iter()
+        .map(|input| input.as_slice())
+        .collect::<Vec<_>>();
     // A hiding commitment's inputs are secret (the witness digits and the
     // randomness), so they take the constant-time kernel. A clear commitment
     // keeps the zero-plane skip.

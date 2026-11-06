@@ -25,7 +25,6 @@ mod rows;
 #[cfg(test)]
 mod tests;
 
-
 use akita_algebra::EqPolynomial;
 use akita_config::{derive_digit_range_grinding_plan, CommitmentConfig, SetupRequirements};
 use akita_cpu_backend::custom_source::SignedBlockPoly;
