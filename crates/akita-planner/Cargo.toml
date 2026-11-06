@@ -19,6 +19,7 @@ akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", defa
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", optional = true, default-features = false }
 libm = "0.2"
+rayon = { version = "1.10", optional = true }
 
 [features]
 default = ["transcript-keccak"]
@@ -50,6 +51,9 @@ labinius-trinomial = [
   "akita-schedules/labinius-trinomial",
 ]
 dev-protocol = ["akita-params/dev-protocol"]
+# Completes each search state's successors on rayon's pool; the selected
+# schedule is the same with or without it.
+parallel = ["dep:rayon"]
 # Plans zero-knowledge schedules (`find_zk_schedule`) and emits their
 # catalogs.
 zk = ["akita-params/zk", "akita-schedules/zk"]
@@ -71,6 +75,11 @@ required-features = ["catalog-gen"]
 [[example]]
 name = "mixed_dimension_search"
 path = "examples/mixed_dimension_search.rs"
+required-features = ["catalog-gen"]
+
+[[example]]
+name = "response_plan"
+path = "examples/response_plan.rs"
 required-features = ["catalog-gen"]
 
 [[example]]

@@ -1,12 +1,88 @@
+use std::cell::RefCell;
+
 use super::*;
 
 /// Inputs shared by every split considered for one recursive level.
+///
+/// A search is prepared for one [`RecursiveCandidateRequest`], and every
+/// split walk over it uses that request.
 pub(super) struct RecursiveLevelSearch {
     pub(super) num_chunks: usize,
     pub(super) num_ring_elems: usize,
     pub(super) reduced_vars: usize,
     pub(super) current_witness_len: usize,
     pub(super) setup_prefixes: Vec<Option<akita_params::GroupOpenPhaseParams>>,
+    /// What the modeled walk visited at each split, for the universal walk.
+    split_visits: RefCell<Vec<RecordedSplit>>,
+}
+
+type SplitVisit = (LayoutCandidateScore, CommittedGroupParams, usize);
+
+/// One split's candidates in visit order, and the core they were built from.
+struct RecordedSplit {
+    /// The opening of the request whose walk recorded the split. A search
+    /// serves one request, and the selective-ℓ2 path builds its own request
+    /// over the same search without walking it; keying the opening keeps a
+    /// walk from another request from replaying these visits.
+    opening: PlannerOpeningCandidate,
+    split: usize,
+    relation_domain: RelationSearchDomain,
+    core: RecursiveCandidateCore,
+    visits: Vec<SplitVisit>,
+}
+
+impl RecursiveLevelSearch {
+    /// The visits recorded for `split`, if they were built from `core`.
+    ///
+    /// Everything a walk derives after a split's core is a function of the
+    /// core, the split, the relation domain, the request and this search.
+    /// The modeled and universal walks of one request differ only in the
+    /// source moment, which enters only the core (its modeled ℓ∞ cap), so a
+    /// universal walk whose core equals the modeled one at a split visits
+    /// exactly what the modeled walk visited there.
+    pub(super) fn recorded_split_visits(
+        &self,
+        opening: PlannerOpeningCandidate,
+        split: usize,
+        relation_domain: RelationSearchDomain,
+        core: &RecursiveCandidateCore,
+    ) -> Option<Vec<SplitVisit>> {
+        self.split_visits
+            .borrow()
+            .iter()
+            .find(|recorded| {
+                recorded.opening == opening
+                    && recorded.split == split
+                    && recorded.relation_domain == relation_domain
+                    && recorded.core == *core
+            })
+            .map(|recorded| recorded.visits.clone())
+    }
+
+    pub(super) fn record_split_visits(
+        &self,
+        opening: PlannerOpeningCandidate,
+        split: usize,
+        relation_domain: RelationSearchDomain,
+        core: RecursiveCandidateCore,
+        visits: Vec<SplitVisit>,
+    ) {
+        let mut recorded = self.split_visits.borrow_mut();
+        if !recorded.iter().any(|existing| {
+            existing.opening == opening
+                && existing.split == split
+                && existing.relation_domain == relation_domain
+                && existing.core == core
+        }) {
+            recorded.push(RecordedSplit {
+                opening,
+                split,
+                relation_domain,
+                core,
+                visits,
+            });
+        }
+    }
 }
 
 pub(super) fn prepare_recursive_level_search(
@@ -80,6 +156,7 @@ pub(super) fn prepare_recursive_level_search(
         reduced_vars,
         current_witness_len,
         setup_prefixes,
+        split_visits: RefCell::new(Vec::new()),
     }))
 }
 

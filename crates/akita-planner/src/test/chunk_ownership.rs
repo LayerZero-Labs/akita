@@ -507,7 +507,7 @@ fn memo_ownership_is_shared_but_compared_by_value() {
         ..state
     }
     .memo_key(&policy);
-    let mut memo = ScheduleMemo::new();
+    let memo = ScheduleMemo::new();
     memo.insert(key, empty_suffix_result(), None);
     assert!(memo.get(&equal_key).is_some());
     assert!(memo.get(&different_key).is_none());
@@ -681,7 +681,7 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
         };
         let domain = candidates::CandidateDomain::prepare(&ctx, state).unwrap();
         let generate = || {
-            let mut memo = ScheduleMemo::new();
+            let memo = ScheduleMemo::new();
             let mut raw = Vec::new();
             for basis in
                 policy.opening_basis_range.0.max(state.current_lb)..=policy.opening_basis_range.1
@@ -692,7 +692,7 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
                             &ctx,
                             state,
                             basis,
-                            &mut memo.setup_prefixes,
+                            &memo.setup_prefixes,
                         )
                         .unwrap()
                         .folds,
