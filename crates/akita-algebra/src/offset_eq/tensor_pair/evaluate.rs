@@ -45,7 +45,7 @@ pub(super) fn eval_unfactored_tensor_families<
         .try_for_each(EqPairTensorAxis::validate_weights)?;
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
     let mut multi_axis_batches =
-        BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<&EqPairTensorFamily<F>>>::new();
+        BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<Vec<&EqPairTensorFamily<F>>>>::new();
     let mut scalar_seeds = Vec::new();
     let mut acc = F::zero();
     for family in families {
@@ -86,19 +86,17 @@ pub(super) fn eval_unfactored_tensor_families<
                     Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            if has_factored_weights {
-                acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                    left_challenges,
-                    right_challenges,
-                    &[family],
-                    &recurrence_geometry,
-                    work,
-                )?;
+            let groups = multi_axis_batches.entry(recurrence_geometry).or_default();
+            if let Some(batch) = groups.iter_mut().find(|batch| {
+                batch.first().is_some_and(|first| {
+                    recurrence_axes
+                        .iter()
+                        .all(|&i| first.axes.get(i) == family.axes.get(i))
+                })
+            }) {
+                batch.push(family);
             } else {
-                multi_axis_batches
-                    .entry(recurrence_geometry)
-                    .or_default()
-                    .push(family);
+                groups.push(vec![family]);
             }
             continue;
         }
@@ -125,14 +123,16 @@ pub(super) fn eval_unfactored_tensor_families<
             work,
         )?;
     }
-    for (recurrence_geometry, families) in multi_axis_batches {
-        acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-            left_challenges,
-            right_challenges,
-            &families,
-            &recurrence_geometry,
-            work,
-        )?;
+    for (recurrence_geometry, groups) in multi_axis_batches {
+        for families in groups {
+            acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                left_challenges,
+                right_challenges,
+                &families,
+                &recurrence_geometry,
+                work,
+            )?;
+        }
     }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
         sum + seed.weight
