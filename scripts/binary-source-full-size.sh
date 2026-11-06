@@ -14,13 +14,13 @@ while (($#)); do
     --dev-protocol) dev_protocol=1; shift ;;
     --plan-only) plan_only=1; shift ;;
     --help|-h)
-      echo 'Usage: scripts/binary-source-full-size.sh --log-carriers 10|22|23 --shape binary-claim|binary-and-prime-claims|binary-and-prime-claims-plus-ordinary|five-prime-claims [--dev-protocol] [--plan-only]'
+      echo 'Usage: scripts/binary-source-full-size.sh --log-carriers 10|22|23 --shape binary-claim|binary-and-prime-claims|binary-and-prime-claims-plus-ordinary [--dev-protocol] [--plan-only]'
       exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 case "$log_carriers" in 10|22|23) ;; *) echo 'log-carriers must be 10, 22 or 23' >&2; exit 2 ;; esac
-case "$shape" in binary-claim|binary-and-prime-claims|binary-and-prime-claims-plus-ordinary|five-prime-claims) ;; *) echo "unknown shape: $shape" >&2; exit 2 ;; esac
+case "$shape" in binary-claim|binary-and-prime-claims|binary-and-prime-claims-plus-ordinary) ;; *) echo "unknown shape: $shape" >&2; exit 2 ;; esac
 : "${CARGO_TARGET_DIR:?use the supplied CARGO_TARGET_DIR}"
 features=parallel,binary-source-measurements,transcript-blake2b,logging-transcript
 if ((dev_protocol)); then features+=,dev-protocol; fi
