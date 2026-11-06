@@ -6,7 +6,7 @@ use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, CommitmentSliceCount, CommittedGroupParams};
 use akita_prover::backend::{ResidualExportKernel, ResidualWitness};
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 impl<F, E> ResidualExportKernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
@@ -55,14 +55,14 @@ where
                     AkitaError::Internal("residual inner rows are not whole rings".into())
                 })?;
                 let blocks = rings.chunks_exact(n_a).collect::<Vec<_>>();
-                let digits = decompose_commit_blocks_into::<F, D, D>(
+                let mut digits = decompose_commit_blocks_into::<F, D, D>(
                     &blocks,
                     profile.outer.digits.num_digits,
                     profile.outer.digits.log_basis,
                 )?;
-                Ok::<_, AkitaError>(Zeroizing::new(
-                    digits.typed_planes::<D>()?.as_flattened().to_vec(),
-                ))
+                let t_hat = Zeroizing::new(digits.typed_planes::<D>()?.as_flattened().to_vec());
+                digits.typed_planes_mut::<D>()?.as_flattened_mut().zeroize();
+                Ok::<_, AkitaError>(t_hat)
             }
         )?;
         Ok(ResidualWitness {

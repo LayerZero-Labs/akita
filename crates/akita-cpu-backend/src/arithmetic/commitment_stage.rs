@@ -137,11 +137,18 @@ where
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let mut inputs = Vec::with_capacity(geometry.slice_count().get());
     for_each_outer_slice_input::<D_B>(polynomial_planes, randomness, geometry, |input| {
-        inputs.push(input.to_vec());
+        inputs.push(Zeroizing::new(input.to_vec()));
         Ok(())
     })?;
-    let input_refs = inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    let row_batches = backend.digit_rows::<D_B>(prepared, n_b, &input_refs, log_basis)?;
+    let input_refs = inputs.iter().map(|input| input.as_slice()).collect::<Vec<_>>();
+    // A hiding commitment's inputs are secret (the witness digits and the
+    // randomness), so they take the constant-time kernel. A clear commitment
+    // keeps the zero-plane skip.
+    let row_batches = if randomness.is_empty() {
+        backend.digit_rows::<D_B>(prepared, n_b, &input_refs, log_basis)?
+    } else {
+        backend.digit_rows_secret::<D_B>(prepared, n_b, &input_refs, log_basis)?
+    };
     if row_batches.len() != input_refs.len() || row_batches.iter().any(|rows| rows.len() != n_b) {
         return Err(AkitaError::Internal(format!(
             "backend returned B commitment row shape {:?}, expected {} batches of {n_b} rows",

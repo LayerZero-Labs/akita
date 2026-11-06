@@ -96,6 +96,12 @@ impl From<Arc<[i8]>> for PackedSignedDigits {
 
 impl PackedSignedDigits {
     pub(crate) fn from_i8_digits_auto(digits: Vec<i8>) -> Self {
+        Self::from_i8_digit_slice(&digits)
+    }
+
+    /// [`from_i8_digits_auto`](Self::from_i8_digits_auto) over a borrowed
+    /// slice, so a secret caller keeps the only unpacked copy and wipes it.
+    pub(crate) fn from_i8_digit_slice(digits: &[i8]) -> Self {
         let bounds = signed_digit_bounds(digits.iter().copied());
         let bit_width = minimum_signed_bit_width(bounds);
         let len = digits.len();
@@ -105,7 +111,7 @@ impl PackedSignedDigits {
         let mut storage =
             PackedSignedDigitWriter::allocate_zeroed_storage(encoded_len + VECTOR_LOAD_PADDING);
         encode_digits(
-            &digits,
+            digits,
             bit_width,
             &mut Arc::make_mut(&mut storage)[..encoded_len],
         );

@@ -105,13 +105,13 @@ pub struct DigitRangeProver<E: Field> {
 impl<E: Field + Ring> DigitRangeProver<E> {
     /// Build a standalone prover from a compact digit witness.
     pub fn new(
-        digit_witness: std::sync::Arc<[i8]>,
+        digit_witness: &[i8],
         plan: DigitRangePlan,
         domain: FlatBooleanDomain,
         equality_point: DigitRangeEqualityPoint<E>,
     ) -> Result<Self, AkitaError> {
         Self::from_packed_digits(
-            PackedSignedDigits::from_i8_digits_auto(digit_witness.as_ref().to_vec()),
+            PackedSignedDigits::from_i8_digit_slice(digit_witness),
             plan,
             domain,
             equality_point,

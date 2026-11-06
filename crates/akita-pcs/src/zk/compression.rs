@@ -110,11 +110,19 @@ pub(crate) fn compress(
     profile: SisModulusProfileId,
     image: &[F],
 ) -> Result<CompressedImage<F>, AkitaError> {
+    let chunks = chunks(profile, image.len())?;
+    // The witness is secret: reserve it exactly, so no reallocation leaves
+    // an unwiped copy behind.
+    let witness_len = chunks
+        .iter()
+        .flat_map(|chunk| chunk.plan.maps())
+        .map(|map| map.padded_digit_count())
+        .sum();
     let mut compressed = CompressedImage {
         payload: Vec::new(),
-        witness: Vec::new(),
+        witness: Vec::with_capacity(witness_len),
     };
-    for chunk in chunks(profile, image.len())? {
+    for chunk in chunks {
         let source = image
             .get(chunk.coefficients.clone())
             .ok_or_else(|| AkitaError::Internal("chunk outside the image".into()))?;

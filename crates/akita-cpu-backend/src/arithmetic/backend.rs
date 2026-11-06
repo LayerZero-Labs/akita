@@ -178,6 +178,17 @@ where
         digit_vectors: &[&[[i8; D]]],
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+
+    /// [`digit_rows`](Self::digit_rows) in time and with memory addresses
+    /// independent of the digits, for inputs that carry secret digits (a
+    /// hiding commitment's witness and randomness). Same output.
+    fn digit_rows_secret<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        row_len: usize,
+        digit_vectors: &[&[[i8; D]]],
+        log_basis: u32,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.

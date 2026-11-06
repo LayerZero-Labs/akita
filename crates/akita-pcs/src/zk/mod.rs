@@ -25,7 +25,6 @@ mod rows;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
 
 use akita_algebra::EqPolynomial;
 use akita_config::{derive_digit_range_grinding_plan, CommitmentConfig, SetupRequirements};
@@ -358,7 +357,7 @@ where
             DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau, shape.num_vars, 0)
                 .map_err(zk_error)?;
         let mut session = DigitRangeProver::new(
-            Arc::from(digits.range),
+            digits.range,
             plan,
             FlatBooleanDomain::new(shape.len, shape.num_vars).map_err(zk_error)?,
             equality_point.clone(),
@@ -433,161 +432,168 @@ where
         statement: &ResponseStatement<'_, F, D>,
         state: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
-        let shape = ResponseShape::new(statement.layout()?.len()).map_err(zk_error)?;
-        let row = self
-            .scheme
-            .schedules()
-            .resolve_key(&ScheduleLookupKey::single(
-                PolynomialGroupLayout::singleton(shape.num_vars),
-            ))
-            .map_err(zk_error)?;
-        let opening_layout = OpeningClaimsLayout::new(shape.num_vars, 1).map_err(zk_error)?;
-        let geometry =
-            RelationWitnessGeometry::for_level(&row.schedule().root.params, &opening_layout, 1)
-                .map_err(zk_error)?;
-        let compression = geometry
-            .rhs_layout()
-            .compression_plan_for_group(0)
-            .map_err(zk_error)?;
-        let ring_dim = compression
-            .maps()
-            .last()
-            .ok_or_else(|| {
-                zk_error(AkitaError::InvalidSetup(
-                    "response commitment has no compression map".into(),
+        // A rejected proof ends the transcript, as in the fold verifiers.
+        let result = (|| -> Result<(), ZkError> {
+            let shape = ResponseShape::new(statement.layout()?.len()).map_err(zk_error)?;
+            let row = self
+                .scheme
+                .schedules()
+                .resolve_key(&ScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(shape.num_vars),
                 ))
-            })?
-            .ring_dimension();
-        let coefficients: Vec<F> = receive_field_group(
-            state,
-            site(step::COMMITMENT),
-            compression.terminal_coefficients(),
-        )
-        .map_err(zk_error)?;
-        let committed = CommittedGroup::new(
-            row.profiles().final_group,
-            Commitment::new(
-                RingVec::from_coeffs_with_ring_dim(coefficients, ring_dim).map_err(zk_error)?,
-            ),
-        )
-        .map_err(|_| zk_error(AkitaError::InvalidProof))?;
-
-        // 2. The product reduction at α.
-        let product_span = tracing::info_span!("response_product_sumcheck").entered();
-        let alpha: F = ext_challenge(state, site(step::ALPHA)).map_err(zk_error)?;
-        let product_vars = ceil_log2(statement.row_shape().products.max(1));
-        let [target] = receive_array(state, step::PRODUCT_TARGET)?;
-        let product = verify_sumcheck_rounds::<F, F, _>(
-            &mut VerifierRounds {
-                state,
-                step: step::PRODUCT_SUMCHECK,
-            },
-            0,
-            target,
-            SumcheckShape::new(product_vars, 2).map_err(zk_error)?,
-        )
-        .map_err(zk_error)?;
-        let [x, y] = receive_array(state, step::PRODUCT_CLAIMS)?;
-        let claims = ProductClaims { target, x, y };
-        if claims.x * claims.y != product.output_claim {
-            return Err(WhiteoutError::ResponseRejected("product sumcheck").into());
-        }
-        drop(product_span);
-
-        // 3. The row batch at η, and the padding term at τ_pad.
-        let rows_span = tracing::info_span!("response_row_batch").entered();
-        let chains = self.chains(statement)?;
-        let eta: Vec<F> = ext_challenges(
-            state,
-            site(step::ETA),
-            row_variables(statement, &chains).map_err(zk_error)?,
-        )
-        .map_err(zk_error)?;
-        let weights = RowWeights::new(statement, &eta, &product.challenges, &chains)?;
-        let padding = padding_term(state, shape)?;
-        let b = batch_target(statement, alpha, &weights, claims, &chains)?;
-        drop(rows_span);
-
-        // 4. The digit range of e.
-        let range_span = tracing::info_span!("response_digit_range").entered();
-        let tau: Vec<F> =
-            ext_challenges(state, site(step::RANGE_POINT), shape.num_vars).map_err(zk_error)?;
-        let plan = range_plan::<Cfg, D>(statement).map_err(zk_error)?;
-        let grinding_plan =
-            derive_digit_range_grinding_plan::<Cfg>(plan, shape.num_vars, RANGE_LEVEL)
                 .map_err(zk_error)?;
-        let mut grinding = VerifierGrinding::new(state, &grinding_plan);
-        let range = Stage1Verifier::new(
-            DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau, shape.num_vars, 0)
-                .map_err(zk_error)?,
-            plan,
-        )
-        .verify_clear::<F>(&mut grinding, None, RANGE_LEVEL)
-        .map_err(zk_error)?;
-        // The response's later messages follow on this state; the Whiteout
-        // verifier checks the end of the argument string after its tail.
-        let _: PendingEof = grinding.finish().map_err(zk_error)?;
-        drop(range_span);
-
-        // 5. The fused range-and-relation sumcheck, with the binary
-        // constraint on the compression digits.
-        let fused_span = tracing::info_span!("response_fused_sumcheck").entered();
-        let gamma: F = ext_challenge(state, site(step::GAMMA)).map_err(zk_error)?;
-        let zeta: F = ext_challenge(state, site(step::ZETA)).map_err(zk_error)?;
-        let fused = verify_sumcheck_rounds::<F, F, _>(
-            &mut VerifierRounds {
+            let opening_layout = OpeningClaimsLayout::new(shape.num_vars, 1).map_err(zk_error)?;
+            let geometry =
+                RelationWitnessGeometry::for_level(&row.schedule().root.params, &opening_layout, 1)
+                    .map_err(zk_error)?;
+            let compression = geometry
+                .rhs_layout()
+                .compression_plan_for_group(0)
+                .map_err(zk_error)?;
+            let ring_dim = compression
+                .maps()
+                .last()
+                .ok_or_else(|| {
+                    zk_error(AkitaError::InvalidSetup(
+                        "response commitment has no compression map".into(),
+                    ))
+                })?
+                .ring_dimension();
+            let coefficients: Vec<F> = receive_field_group(
                 state,
-                step: step::FUSED_SUMCHECK,
-            },
-            0,
-            b + gamma * range.range_image_evaluation,
-            SumcheckShape::new(shape.num_vars, 3).map_err(zk_error)?,
-        )
-        .map_err(zk_error)?;
-        let [v] = receive_array(state, step::OPENING_VALUE)?;
-        drop(fused_span);
-        let weight_span = tracing::info_span!("response_weight_at").entered();
-        let a = batch_weight_at(
-            statement,
-            shape,
-            alpha,
-            &weights,
-            &padding,
-            &chains,
-            &fused.challenges,
-        )?;
-        let b = range_weight_at(
-            gamma,
-            zeta,
-            &chains.support(shape.padded_len()).map_err(zk_error)?,
-            &range.point,
-            &fused.challenges,
-        )
-        .map_err(zk_error)?;
-        if a * v + b * v * (v + F::one()) != fused.output_claim {
-            return Err(WhiteoutError::ResponseRejected("fused sumcheck").into());
-        }
-        drop(weight_span);
-
-        // 6. Open E(r) = v.
-        let group =
-            PolynomialGroupClaims::new(fused.challenges, vec![v], &committed).map_err(zk_error)?;
-        let opening = GroupBatchStatement::new(
-            row.selection(),
-            OpeningClaims::from_groups(vec![group]).map_err(zk_error)?,
-        )
-        .map_err(zk_error)?;
-        // The caller owns the transcript and its end-of-proof check.
-        let _pending = self
-            .verifier
-            .batched_verify_embedded(
-                state,
-                opening,
-                BasisMode::Lagrange,
-                SetupPolicy::Check(None),
+                site(step::COMMITMENT),
+                compression.terminal_coefficients(),
             )
             .map_err(zk_error)?;
-        Ok(())
+            let committed = CommittedGroup::new(
+                row.profiles().final_group,
+                Commitment::new(
+                    RingVec::from_coeffs_with_ring_dim(coefficients, ring_dim).map_err(zk_error)?,
+                ),
+            )
+            .map_err(|_| zk_error(AkitaError::InvalidProof))?;
+
+            // 2. The product reduction at α.
+            let product_span = tracing::info_span!("response_product_sumcheck").entered();
+            let alpha: F = ext_challenge(state, site(step::ALPHA)).map_err(zk_error)?;
+            let product_vars = ceil_log2(statement.row_shape().products.max(1));
+            let [target] = receive_array(state, step::PRODUCT_TARGET)?;
+            let product = verify_sumcheck_rounds::<F, F, _>(
+                &mut VerifierRounds {
+                    state,
+                    step: step::PRODUCT_SUMCHECK,
+                },
+                0,
+                target,
+                SumcheckShape::new(product_vars, 2).map_err(zk_error)?,
+            )
+            .map_err(zk_error)?;
+            let [x, y] = receive_array(state, step::PRODUCT_CLAIMS)?;
+            let claims = ProductClaims { target, x, y };
+            if claims.x * claims.y != product.output_claim {
+                return Err(WhiteoutError::ResponseRejected("product sumcheck").into());
+            }
+            drop(product_span);
+
+            // 3. The row batch at η, and the padding term at τ_pad.
+            let rows_span = tracing::info_span!("response_row_batch").entered();
+            let chains = self.chains(statement)?;
+            let eta: Vec<F> = ext_challenges(
+                state,
+                site(step::ETA),
+                row_variables(statement, &chains).map_err(zk_error)?,
+            )
+            .map_err(zk_error)?;
+            let weights = RowWeights::new(statement, &eta, &product.challenges, &chains)?;
+            let padding = padding_term(state, shape)?;
+            let b = batch_target(statement, alpha, &weights, claims, &chains)?;
+            drop(rows_span);
+
+            // 4. The digit range of e.
+            let range_span = tracing::info_span!("response_digit_range").entered();
+            let tau: Vec<F> =
+                ext_challenges(state, site(step::RANGE_POINT), shape.num_vars).map_err(zk_error)?;
+            let plan = range_plan::<Cfg, D>(statement).map_err(zk_error)?;
+            let grinding_plan =
+                derive_digit_range_grinding_plan::<Cfg>(plan, shape.num_vars, RANGE_LEVEL)
+                    .map_err(zk_error)?;
+            let mut grinding = VerifierGrinding::new(state, &grinding_plan);
+            let range = Stage1Verifier::new(
+                DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau, shape.num_vars, 0)
+                    .map_err(zk_error)?,
+                plan,
+            )
+            .verify_clear::<F>(&mut grinding, None, RANGE_LEVEL)
+            .map_err(zk_error)?;
+            // The response's later messages follow on this state; the Whiteout
+            // verifier checks the end of the argument string after its tail.
+            let _: PendingEof = grinding.finish().map_err(zk_error)?;
+            drop(range_span);
+
+            // 5. The fused range-and-relation sumcheck, with the binary
+            // constraint on the compression digits.
+            let fused_span = tracing::info_span!("response_fused_sumcheck").entered();
+            let gamma: F = ext_challenge(state, site(step::GAMMA)).map_err(zk_error)?;
+            let zeta: F = ext_challenge(state, site(step::ZETA)).map_err(zk_error)?;
+            let fused = verify_sumcheck_rounds::<F, F, _>(
+                &mut VerifierRounds {
+                    state,
+                    step: step::FUSED_SUMCHECK,
+                },
+                0,
+                b + gamma * range.range_image_evaluation,
+                SumcheckShape::new(shape.num_vars, 3).map_err(zk_error)?,
+            )
+            .map_err(zk_error)?;
+            let [v] = receive_array(state, step::OPENING_VALUE)?;
+            drop(fused_span);
+            let weight_span = tracing::info_span!("response_weight_at").entered();
+            let a = batch_weight_at(
+                statement,
+                shape,
+                alpha,
+                &weights,
+                &padding,
+                &chains,
+                &fused.challenges,
+            )?;
+            let b = range_weight_at(
+                gamma,
+                zeta,
+                &chains.support(shape.padded_len()).map_err(zk_error)?,
+                &range.point,
+                &fused.challenges,
+            )
+            .map_err(zk_error)?;
+            if a * v + b * v * (v + F::one()) != fused.output_claim {
+                return Err(WhiteoutError::ResponseRejected("fused sumcheck").into());
+            }
+            drop(weight_span);
+
+            // 6. Open E(r) = v.
+            let group = PolynomialGroupClaims::new(fused.challenges, vec![v], &committed)
+                .map_err(zk_error)?;
+            let opening = GroupBatchStatement::new(
+                row.selection(),
+                OpeningClaims::from_groups(vec![group]).map_err(zk_error)?,
+            )
+            .map_err(zk_error)?;
+            // The caller owns the transcript and its end-of-proof check.
+            let _pending = self
+                .verifier
+                .batched_verify_embedded(
+                    state,
+                    opening,
+                    BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
+                )
+                .map_err(zk_error)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = akita_transcript::reject(state);
+        }
+        result
     }
 }
 
