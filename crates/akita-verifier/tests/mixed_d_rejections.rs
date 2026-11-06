@@ -79,6 +79,7 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
             input_witness_len: 64,
             ..terminal_witness
         },
+        zk: None,
     };
     validate_schedule_ring_dims(&schedule)
         .expect("flat setup capacity has no generation ring dimension");

@@ -93,6 +93,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
         crate::planner::ScheduleSearchOptions {
             relation_traversal_order: RelationTraversalOrder::Canonical,
             relation_mode_filter: RelationModeFilter::All,
+            zk: None,
             root_main_constraint: None,
             adaptation_guide: None,
             root_setup_mode: None,
@@ -109,6 +110,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
         crate::planner::ScheduleSearchOptions {
             relation_traversal_order: RelationTraversalOrder::Reversed,
             relation_mode_filter: RelationModeFilter::All,
+            zk: None,
             root_main_constraint: None,
             adaptation_guide: None,
             root_setup_mode: None,

@@ -26,12 +26,79 @@ pub(crate) struct AbCommitmentCandidateRequest<'a> {
     /// Optional typed-model cap for the Linf response. The universal policy
     /// remains the dominance guard.
     pub(crate) modeled_linf_cap: Option<u128>,
+    pub(crate) masking: LevelMasking,
+}
+
+/// How a planned fold level sits relative to a zero-knowledge cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum LevelMasking {
+    Clear,
+    /// The level's witness-carrying B slices and its D image carry hiding
+    /// randomness, every group's fold response is one-shot and sized for the
+    /// carried target, and it uses the ℓ∞ route, the quotient relation, and
+    /// base 8. A setup prefix it consumes is public and carries no
+    /// randomness.
+    Masked(FoldFailureTarget),
+    /// The clear level after the cut: it opens the residual commitment
+    /// (d_A = d_B, one outer slice, base 16, hidden by r_a) and consumes no
+    /// setup prefix, so the cut runs no Stage 3.
+    AfterCut,
+}
+
+impl LevelMasking {
+    /// The masking of fold `level` under `zk`, folding `witness_groups`
+    /// groups that carry witness data.
+    pub(crate) fn at(
+        zk: Option<akita_params::zk::ZkOpeningSchedule>,
+        level: usize,
+        witness_groups: usize,
+    ) -> Result<Self, AkitaError> {
+        Ok(match zk {
+            Some(zk) if zk.masks(level) => Self::Masked(zk.fold_failure_target(witness_groups)?),
+            Some(zk) if level == zk.cut_level() as usize + 1 => Self::AfterCut,
+            _ => Self::Clear,
+        })
+    }
+
+    pub(crate) const fn hiding(self) -> bool {
+        matches!(self, Self::Masked(_))
+    }
+
+    pub(crate) const fn allows_setup_prefix(self) -> bool {
+        !matches!(self, Self::AfterCut)
+    }
+
+    pub(crate) const fn opens_residual(self) -> bool {
+        matches!(self, Self::AfterCut)
+    }
+
+    /// Whether the level may end the schedule: a masked level's witness and
+    /// the residual commitment's opening must be folded, never sent.
+    pub(crate) const fn allows_terminal(self) -> bool {
+        matches!(self, Self::Clear)
+    }
+
+    /// Whether the commitment this level consumes carries B hiding
+    /// randomness: every masked level's, and at the level after the cut the
+    /// residual commitment's r_a, at the residual alphabet.
+    pub(crate) const fn hides_outer(self) -> bool {
+        matches!(self, Self::Masked(_) | Self::AfterCut)
+    }
+
+    pub(crate) const fn failure_target(self) -> FoldFailureTarget {
+        match self {
+            Self::Clear | Self::AfterCut => FoldFailureTarget::PerAttempt,
+            Self::Masked(target) => target,
+        }
+    }
 }
 
 pub(crate) struct AbCommitmentCandidate {
     pub(crate) num_digits_fold: usize,
     pub(crate) inner_commit_matrix: InnerCommitMatrixParams,
     pub(crate) outer_commit_matrix: OuterCommitMatrixParams,
+    /// Hiding-randomness columns appended to every B slice.
+    pub(crate) outer_randomness_columns: usize,
 }
 
 pub(super) struct InnerCommitmentCandidateRequest<'a> {
@@ -48,7 +115,9 @@ pub(super) struct InnerCommitmentCandidateRequest<'a> {
     pub(super) witness_norms: FoldWitnessNorms,
     pub(super) log_basis_open: u32,
     pub(super) width_s: usize,
+    /// Optional per-attempt typed-model cap for the Linf response.
     pub(super) modeled_linf_cap: Option<u128>,
+    pub(super) masking: LevelMasking,
 }
 
 pub(super) struct InnerCommitmentCandidate {
@@ -66,13 +135,154 @@ pub(super) struct OuterCommitmentCandidateRequest<'a> {
     log_basis_open: u32,
     num_digits_outer: usize,
     inner_output_rank: usize,
+    hiding: bool,
+    /// The residual commitment after a zero-knowledge cut: B is priced at
+    /// its Σ-binding rank too.
+    sigma_binding: bool,
+}
+
+/// Hiding-randomness columns for an image of `rows` rings of `ring_dim`
+/// coefficients, drawn from the balanced `2^log_basis` alphabet.
+#[cfg(feature = "zk")]
+fn hiding_columns(
+    rows: usize,
+    ring_dim: usize,
+    modulus: akita_params::SisModulusProfileId,
+    log_basis: u32,
+) -> Result<usize, AkitaError> {
+    akita_params::zk::hiding_randomness_columns(
+        akita_params::zk::ImageShape {
+            rows,
+            ring_dim,
+            modulus,
+        },
+        akita_params::zk::DigitAlphabet { log_basis },
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn hiding_columns(
+    _rows: usize,
+    _ring_dim: usize,
+    _modulus: akita_params::SisModulusProfileId,
+    _log_basis: u32,
+) -> Result<usize, AkitaError> {
+    Err(AkitaError::UnsupportedSchedule(
+        "hiding schedules need the planner's zk feature".into(),
+    ))
+}
+
+/// The Σ-binding rank of a `ring_dim`-dimensional matrix of `width` ring
+/// columns: the rank at which the Whiteout Σ-protocol's opening of the
+/// residual commitment binds (`specs/whiteout-akita.md` §5.1), or `None`
+/// when no rank does.
+#[cfg(feature = "zk")]
+fn sigma_binding_rank(
+    modulus: akita_params::SisModulusProfileId,
+    ring_dim: usize,
+    width: usize,
+) -> Result<Option<usize>, AkitaError> {
+    Ok(akita_params::sis::sigma_binding::sigma_binding_min_rank(
+        modulus, ring_dim, width,
+    ))
+}
+
+#[cfg(not(feature = "zk"))]
+fn sigma_binding_rank(
+    _modulus: akita_params::SisModulusProfileId,
+    _ring_dim: usize,
+    _width: usize,
+) -> Result<Option<usize>, AkitaError> {
+    Err(AkitaError::UnsupportedSchedule(
+        "the residual commitment's Σ binding needs the planner's zk feature".into(),
+    ))
+}
+
+/// `key`'s matrix of `width` columns at the larger of its SIS floor and its
+/// Σ-binding rank, or `None` if no rank binds.
+fn sigma_bound_linf_matrix<M>(
+    key: akita_params::SisTableKey,
+    width: usize,
+    floor_rank: usize,
+    build: impl Fn(akita_params::SisTableKey, usize, usize) -> Result<M, AkitaError>,
+) -> Result<Option<M>, AkitaError> {
+    let Some(binding) =
+        sigma_binding_rank(key.modulus_profile, key.ring_dimension as usize, width)?
+    else {
+        return Ok(None);
+    };
+    Ok(build(key, floor_rank.max(binding), width).ok())
+}
+
+/// The residual commitment's A matrix (the level after the cut) at its
+/// Σ-binding rank. Only the ℓ∞ route prices it: a residual on the ℓ2 route
+/// is not a candidate.
+pub(crate) fn sigma_bound_inner_matrix(
+    matrix: InnerCommitMatrixParams,
+) -> Result<Option<InnerCommitMatrixParams>, AkitaError> {
+    let akita_params::InnerCommitSecurityRoute::Linf(key) = matrix.security_route() else {
+        return Ok(None);
+    };
+    sigma_bound_linf_matrix(
+        key,
+        matrix.input_width(),
+        matrix.output_rank(),
+        |key, rank, width| {
+            InnerCommitMatrixParams::try_new(
+                key.policy,
+                key.table_digest,
+                key.modulus_profile,
+                rank,
+                width,
+                key.coeff_linf_bound,
+                key.ring_dimension as usize,
+            )
+        },
+    )
+}
+
+/// Price one commitment matrix together with its hiding randomness.
+///
+/// The randomness width depends on the image rank, and the rank on the
+/// widened input width, so the two are iterated to their joint fixed point
+/// from zero randomness. Both maps are nondecreasing, so the sequence only
+/// grows; a few rounds suffice for every supported table. Returns `None` when
+/// pricing fails or no fixed point is reached.
+pub(crate) fn price_with_hiding_randomness<M>(
+    hiding: bool,
+    message_width: usize,
+    ring_dim: usize,
+    modulus: akita_params::SisModulusProfileId,
+    log_basis: u32,
+    price: impl Fn(usize) -> Option<M>,
+    output_rank: impl Fn(&M) -> usize,
+) -> Result<Option<(M, usize)>, AkitaError> {
+    const MAX_ROUNDS: usize = 8;
+    let mut randomness = 0usize;
+    for _ in 0..MAX_ROUNDS {
+        let Some(width) = message_width.checked_add(randomness) else {
+            return Ok(None);
+        };
+        let Some(matrix) = price(width) else {
+            return Ok(None);
+        };
+        if !hiding {
+            return Ok(Some((matrix, 0)));
+        }
+        let needed = hiding_columns(output_rank(&matrix), ring_dim, modulus, log_basis)?;
+        if needed == randomness {
+            return Ok(Some((matrix, randomness)));
+        }
+        randomness = needed;
+    }
+    Ok(None)
 }
 
 /// Derive the one physical B matrix and complete logical B source after the
 /// route-specific A rank is known.
 pub(super) fn derive_outer_commitment_candidate(
     request: OuterCommitmentCandidateRequest<'_>,
-) -> Result<Option<OuterCommitMatrixParams>, AkitaError> {
+) -> Result<Option<(OuterCommitMatrixParams, usize)>, AkitaError> {
     let OuterCommitmentCandidateRequest {
         policy,
         dimensions,
@@ -83,6 +293,8 @@ pub(super) fn derive_outer_commitment_candidate(
         log_basis_open,
         num_digits_outer,
         inner_output_rank,
+        hiding,
+        sigma_binding,
     } = request;
     let Ok(slice_geometry) = akita_params::CommitmentSliceGeometry::try_new(
         outer_slice_count,
@@ -104,15 +316,40 @@ pub(super) fn derive_outer_commitment_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_params::SisMatrixRole::Outer,
-            dimensions.d_b(),
-            norm_t,
-        ),
+    let key = sis_key_at_dimension(
+        policy,
+        akita_params::SisMatrixRole::Outer,
+        dimensions.d_b(),
+        norm_t,
+    );
+    let Some((outer_commit_matrix, randomness_columns)) = price_with_hiding_randomness(
+        hiding,
         slice_geometry.physical_input_width(),
-    ) else {
+        dimensions.d_b(),
+        policy.sis_modulus_profile,
+        log_basis_open,
+        |width| {
+            let floor = OuterCommitMatrixParams::try_new_with_min_rank(key, width).ok()?;
+            if !sigma_binding {
+                return Some(floor);
+            }
+            sigma_bound_linf_matrix(key, width, floor.output_rank(), |key, rank, width| {
+                OuterCommitMatrixParams::try_new(
+                    key.policy,
+                    key.table_digest,
+                    key.modulus_profile,
+                    rank,
+                    width,
+                    key.coeff_linf_bound,
+                    key.ring_dimension as usize,
+                )
+            })
+            .ok()
+            .flatten()
+        },
+        OuterCommitMatrixParams::output_rank,
+    )?
+    else {
         return Ok(None);
     };
     if payload_mode.is_compressed()
@@ -125,7 +362,7 @@ pub(super) fn derive_outer_commitment_candidate(
     {
         return Ok(None);
     }
-    Ok(Some(outer_commit_matrix))
+    Ok(Some((outer_commit_matrix, randomness_columns)))
 }
 
 /// Derive the slice-independent response digit count and A matrix.
@@ -147,27 +384,33 @@ pub(super) fn derive_inner_commitment_candidate(
         log_basis_open,
         width_s,
         modeled_linf_cap,
+        masking,
     } = request;
+    let failure_target = masking.failure_target();
     let d_a = dimensions.d_a();
-    let num_fold_coeffs = width_s
-        .checked_mul(d_a)
-        .and_then(|count| count.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
-    let Ok(universal_digits) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
-        ring_dimension: d_a,
+    let query = HonestFoldSizingQuery::new(
+        d_a,
         challenge_dimension,
         num_claims,
-        num_live_ring_elements_per_claim,
-        num_live_blocks,
-        num_positions_per_block,
+        akita_params::BlockGeometry::new(
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+        ),
         num_chunks,
-        num_fold_coeffs,
+        width_s,
         witness_norms,
-        log_basis_response: log_basis_open,
-        challenge_config: ring_challenge_cfg,
-        failure_target: FoldFailureTarget::PerAttempt,
-    }) else {
+        log_basis_open,
+        ring_challenge_cfg,
+        failure_target,
+    )?;
+    let Ok(universal_digits) = fold_policy.num_digits_fold(query) else {
         return Ok(None);
+    };
+    // The modeled cap is a per-attempt bound, never a one-shot one.
+    let modeled_linf_cap = match failure_target {
+        FoldFailureTarget::PerAttempt => modeled_linf_cap,
+        FoldFailureTarget::OneShot { .. } => None,
     };
     let num_digits_fold = modeled_linf_cap
         .map(|cap| {
@@ -226,6 +469,7 @@ pub(crate) fn derive_ab_commitment_candidate(
         width_s,
         num_digits_outer,
         modeled_linf_cap,
+        masking,
     } = request;
     let Some(inner_candidate) =
         derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
@@ -243,13 +487,14 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             width_s,
             modeled_linf_cap,
+            masking,
         })?
     else {
         return Ok(None);
     };
     let num_digits_fold = inner_candidate.num_digits_fold;
     let inner_commit_matrix = inner_candidate.inner_commit_matrix;
-    let Some(outer_commit_matrix) =
+    let Some((outer_commit_matrix, outer_randomness_columns)) =
         derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
             policy,
             dimensions,
@@ -260,6 +505,8 @@ pub(crate) fn derive_ab_commitment_candidate(
             log_basis_open,
             num_digits_outer,
             inner_output_rank: inner_commit_matrix.output_rank(),
+            hiding: masking.hiding(),
+            sigma_binding: false,
         })?
     else {
         return Ok(None);
@@ -268,6 +515,7 @@ pub(crate) fn derive_ab_commitment_candidate(
         num_digits_fold,
         inner_commit_matrix,
         outer_commit_matrix,
+        outer_randomness_columns,
     }))
 }
 

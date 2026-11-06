@@ -49,6 +49,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
             input_witness_len: ring_dimension,
             ..terminal_witness
         },
+        zk: None,
     }
 }
 
@@ -204,7 +205,7 @@ fn reduced_residue_oracle_tracks_every_admitted_commitment_dimension() {
             })
             .collect::<Vec<_>>();
         assert_eq!(
-            akita_algebra::residue_kernel(&coefficients, alpha).unwrap(),
+            jolt_algebra::residue_kernel(&coefficients, alpha).unwrap(),
             expected,
             "residue kernel disagrees at admitted dimension {dimension}"
         );

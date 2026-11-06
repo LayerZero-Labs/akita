@@ -27,6 +27,9 @@ transcript-keccak = [
 ]
 test-support = []
 dev-protocol = ["akita-params/dev-protocol"]
+# Zero-knowledge configurations (`ZkCommitmentConfig`) and their catalogs,
+# and the response proof's preset (`fp128::ResponseDigits`).
+zk = ["akita-params/zk", "akita-schedules/zk"]
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
