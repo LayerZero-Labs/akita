@@ -22,8 +22,7 @@ Production security is not established. The research implementation selects P64
 through explicitly admitted native catalog rows, the sole execution boundary.
 Linux catalogs and proof pins at logs 22/23 are installed, with independently
 reproduced honest proofs and provisional host measurements. The restored replay
-suite passed all five tests per mode at `72ef7dbc`; `421b93a0` applies only the
-reported formatting fixes. Final-relation bypass evidence, final-head hosted CI
+suite passed all six tests per mode on Linux. Final-relation bypass evidence, final-head hosted CI
 and the production admission obligations below remain open.
 
 ## Intent
@@ -903,7 +902,7 @@ honest replay evidence below; no production security allocation is admitted.
 
 ### Linux evidence
 
-At `afe36fd1`, Linux generation, proving and verification passed for all four
+On Linux, generation, proving and verification passed for all four
 shapes at logs 22 and 23 in current and dev protocol modes. Two independent roots
 matched on catalog, commitments, verifier setup, claims and proof bytes (80/80
 comparisons). Forty additional current-mode proofs also matched their references.
@@ -926,13 +925,12 @@ planner and preset, not a theorem excluding every small P64 protocol.
 
 The complete replay tests use log 22, the smallest size measured; logs 4–21
 have not been tried.
-At `72ef7dbc`, both exact release CI example commands passed all five tests,
+Both exact release CI example commands passed all six tests,
 with zero failures, ignored or filtered tests in each mode: four complete
 shape replays with statement, commitment, proof and setup mutations and committed
-K/prime digit faults, plus the catalog identity test. Both measurement-mode
-all-target checks and release example Clippy runs also passed. `421b93a0`
-contains only the two formatting fixes reported by that run; no fresh formatter
-pass at that revision is claimed. Required CI additionally admits all 16
+K/prime digit faults, plus the catalog identity and committed-catalog admission
+tests. Both measurement-mode all-target checks and release example Clippy runs
+also passed. Required CI additionally admits all 16
 catalogs across its two modes and checks the shared pin roster and all 16
 installed catalog hashes. The dedicated large-runner replay job uses `ci-test`
 with debug assertions and overflow checks, with a 60-minute timeout. Expected

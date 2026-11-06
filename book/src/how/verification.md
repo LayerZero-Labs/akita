@@ -309,9 +309,8 @@ canonicality, range checks, the common relation, the typed setup identity and
 the entire ordinary suffix remain enforced. The verifier evaluates A through
 its adjoint and authenticated setup product; it does not materialize A online.
 The complete-schedule example replay tests retain `BinaryAReadGuard::forbid`
-and caller-transcript continuation checks. At `72ef7dbc`, all five release example
-tests passed in each protocol mode; `421b93a0` applies the reported formatting
-fixes. Attribution of each committed K/prime rejection to the final relation
+and caller-transcript continuation checks. On Linux, all six release example
+tests passed in each protocol mode. Attribution of each committed K/prime rejection to the final relation
 comparison still needs a disposable-checkout bypass control. Final-head hosted
 CI and production-security obligations remain open.
 

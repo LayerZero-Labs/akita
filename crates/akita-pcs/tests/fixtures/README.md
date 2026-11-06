@@ -41,7 +41,7 @@ uses the complete successor and current physical witness, not raw prefix length.
 This is a property of the selected planner/preset, not a general impossibility
 result for small P64 protocols.
 
-The catalogs and pins were generated on Linux at `afe36fd1` and reproduced in two
+The catalogs and pins were generated on Linux and reproduced in two
 independent roots: all 80 catalog, commitment, verifier setup, claims and proof
 comparisons matched. `P64-SHA256SUMS` preserves the supplied SHA-256 entries for
 the 16 catalogs; proof lengths and digests are preserved in the shared TSV. Keep
@@ -64,13 +64,11 @@ cargo test --profile ci-test -p akita-pcs --example binary_source_full_size --no
 
 Provisional measurements used a 64-thread Threadripper PRO 7975WX on Ubuntu
 24.04 with Rust 1.95.0. Honest log-22 proving took about 2–4.3 s and warm
-verification about 11–23 ms (mixed repeats reached 27 ms). At `72ef7dbc`, the
-complete release suite passed five tests per mode, with none ignored or filtered.
-One suite run per mode took 104.28 s (current) and 112.55 s (dev); command wall
-times including compilation were 221 s and 216 s. `421b93a0` applies the two
-formatting fixes reported by that run. The newly added cheap admission test
-brings the expected example total to six tests per mode; its Linux result and
-the new `ci-test` profile timings are pending. These host-specific observations replace the earlier runtime budgets.
+verification about 11–23 ms (mixed repeats reached 27 ms). The complete release
+suite, including the cheap admission test, passed six tests per mode with none
+ignored or filtered. Under the `ci-test` profile one suite run took about 114 s
+per mode on that host, and about 215 s per mode including compilation. Hosted
+runner timings are still to be measured. These host-specific observations replace the earlier runtime budgets.
 
 The final-relation bypass control for each K/prime fault is still open, as are
 green final-head hosted CI and hosted runtime/peak-memory measurements. The
