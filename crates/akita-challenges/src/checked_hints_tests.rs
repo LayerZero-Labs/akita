@@ -1,6 +1,4 @@
-use crate::{
-    Challenges, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, SparseChallengeConfig,
-};
+use crate::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, SparseChallengeConfig};
 use akita_error::AkitaError;
 use jolt_field::{Prime128OffsetA7F7 as F, Ring};
 struct Message(Vec<u8>);
