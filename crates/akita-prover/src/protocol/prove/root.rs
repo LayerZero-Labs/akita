@@ -96,8 +96,15 @@ where
         Some(akita_types::opening_claims::GroupClaimKind::Binary { .. }) => {
             if claims.num_groups() == 8 {
                 return super::research_batch::prove_root::<Cfg, B>(
-                    expanded, backend, claims, layout, handles, schedule,
-                    proof_session, grinding, basis,
+                    expanded,
+                    backend,
+                    claims,
+                    layout,
+                    handles,
+                    schedule,
+                    proof_session,
+                    grinding,
+                    basis,
                 );
             }
             super::binary_root::prove_root(
@@ -116,9 +123,9 @@ where
             )
         }
         #[cfg(feature = "labinius-trinomial")]
-        Some(akita_types::opening_claims::GroupClaimKind::ResearchOrdinary { .. }) => {
-            Err(AkitaError::InvalidInput("research ordinary requires its batch root".into()))
-        }
+        Some(akita_types::opening_claims::GroupClaimKind::ResearchOrdinary { .. }) => Err(
+            AkitaError::InvalidInput("research ordinary requires its batch root".into()),
+        ),
         Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
             super::ordinary_root::prove_root(
                 expanded,

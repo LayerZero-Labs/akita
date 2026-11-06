@@ -414,18 +414,33 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
             )
             .unwrap();
             if word {
-                assert!(matches!(public.bind_terminal(None), Err(AkitaError::InvalidInput(_))));
+                assert!(matches!(
+                    public.bind_terminal(None),
+                    Err(AkitaError::InvalidInput(_))
+                ));
                 let challenges = Challenges::from_sparse(
-                    vec![SparseChallenge {
-                        positions: Default::default(),
-                        coeffs: Default::default(),
-                    }; 2],
+                    vec![
+                        SparseChallenge {
+                            positions: Default::default(),
+                            coeffs: Default::default(),
+                        };
+                        2
+                    ],
                     2,
                     1,
-                ).unwrap();
+                )
+                .unwrap();
                 assert!(matches!(
                     public.relation::<E>(
-                        &challenges, E::one(), &[], &[], &[], &[], &[], None, None,
+                        &challenges,
+                        E::one(),
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        None,
+                        None,
                     ),
                     Err(AkitaError::InvalidProof)
                 ));

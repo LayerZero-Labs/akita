@@ -91,7 +91,8 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                 }) {
                     return Err(akita_error::AkitaError::InvalidInput(
                         "one binary word claim per polynomial; \
-                         reduce multiple points before opening".into(),
+                         reduce multiple points before opening"
+                            .into(),
                     ));
                 }
             }

@@ -28,8 +28,11 @@ where
         .check_field_pair(akita_params::field_modulus::<F>()?, E::DEGREE)?;
     akita_transcript::public_bytes(
         state,
-        ProtocolSiteId { family: SITE_FAMILY_ROOT_STATEMENT, stage: 20,
-            ..ProtocolSiteId::default() },
+        ProtocolSiteId {
+            family: SITE_FAMILY_ROOT_STATEMENT,
+            stage: 20,
+            ..ProtocolSiteId::default()
+        },
         b"akita/research/route1/4+4/direct/joint/base-s11a/v2",
     )?;
     for (index, (group, profile)) in claims.groups().iter().zip(profiles).enumerate() {
@@ -39,13 +42,17 @@ where
         terminals.validate::<F>()?;
         let mut identity = profile.canonical_descriptor_bytes();
         identity.extend_from_slice(
-            &u64::try_from(index).map_err(|_| AkitaError::InvalidProof)?.to_le_bytes(),
+            &u64::try_from(index)
+                .map_err(|_| AkitaError::InvalidProof)?
+                .to_le_bytes(),
         );
         let bytes = payload(group.commitment());
         let dimension = match group.kind() {
-            GroupClaimKind::Binary { manifest, claim, prime }
-                if index < 4 && (index == 0 || claim.is_none()) =>
-            {
+            GroupClaimKind::Binary {
+                manifest,
+                claim,
+                prime,
+            } if index < 4 && (index == 0 || claim.is_none()) => {
                 if bytes.len() != manifest.payload_coefficients()? {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -70,15 +77,23 @@ where
                 for owner in owners {
                     identity.extend_from_slice(owner);
                 }
-                compression.maps().last().ok_or(AkitaError::InvalidProof)?.ring_dimension()
+                compression
+                    .maps()
+                    .last()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .ring_dimension()
             }
-            GroupClaimKind::Ordinary | GroupClaimKind::Binary { .. }
+            GroupClaimKind::Ordinary
+            | GroupClaimKind::Binary { .. }
             | GroupClaimKind::ResearchOrdinary { .. } => return Err(AkitaError::InvalidProof),
         };
         akita_transcript::public_bytes(
             state,
-            ProtocolSiteId { family: SITE_FAMILY_ROOT_STATEMENT, stage: 21,
-                ..ProtocolSiteId::default() },
+            ProtocolSiteId {
+                family: SITE_FAMILY_ROOT_STATEMENT,
+                stage: 21,
+                ..ProtocolSiteId::default()
+            },
             &identity,
         )?;
         let lifted = bytes.iter().copied().map(E::lift_base).collect::<Vec<_>>();
@@ -87,7 +102,8 @@ where
             crate::FoldSite::RootCommitment {
                 group: index,
                 ring_dimension: dimension,
-            }.id()?,
+            }
+            .id()?,
             &lifted,
         )?;
         akita_transcript::public_extensions::<F, E, _>(

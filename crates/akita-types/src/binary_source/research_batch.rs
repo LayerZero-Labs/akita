@@ -48,13 +48,17 @@ impl<E: Field> ResearchTerminals<E> {
         match self.mode {
             ResearchTerminalMode::BaseS11a => {
                 let [terminal] = self.readings.as_slice() else {
-                    return Err(AkitaError::InvalidInput(
-                        "research base point count".into(),
-                    ));
+                    return Err(AkitaError::InvalidInput("research base point count".into()));
                 };
-                if terminal.point.iter().chain(&terminal.evaluations).any(|value| {
-                    (1..E::DEGREE).any(|coordinate| !value.base_coefficient(coordinate).is_zero())
-                }) {
+                if terminal
+                    .point
+                    .iter()
+                    .chain(&terminal.evaluations)
+                    .any(|value| {
+                        (1..E::DEGREE)
+                            .any(|coordinate| !value.base_coefficient(coordinate).is_zero())
+                    })
+                {
                     return Err(AkitaError::InvalidInput(
                         "research base terminal has E64 data".into(),
                     ));
@@ -108,7 +112,11 @@ impl ResearchBatchPlan {
         let mut ordinary_sources = Vec::with_capacity(4);
         for (index, (kind, profile)) in kinds.iter().zip(profiles).enumerate() {
             match kind {
-                GroupClaimKind::Binary { manifest, claim, prime } if index < 4 => {
+                GroupClaimKind::Binary {
+                    manifest,
+                    claim,
+                    prime,
+                } if index < 4 => {
                     manifest.validate_carrier(profile)?;
                     if manifest.field_profile() != BinaryFieldProfile::P64
                         || manifest.setup_group()
@@ -117,19 +125,21 @@ impl ResearchBatchPlan {
                         || (index != 0 && claim.is_some())
                         || prime.planes().len() != 1
                     {
-                        return Err(AkitaError::InvalidInput(
-                            "research binary roster".into(),
-                        ));
+                        return Err(AkitaError::InvalidInput("research binary roster".into()));
                     }
                     if let Some(claim) = claim {
                         claim.validate(manifest.descriptor())?;
                     }
                     let d_len = checked::product([
                         usize::try_from(
-                            manifest.d_label(claim.is_some(), prime.planes().len())?.rank,
-                        ).map_err(|_| AkitaError::InvalidProof)?,
+                            manifest
+                                .d_label(claim.is_some(), prime.planes().len())?
+                                .rank,
+                        )
+                        .map_err(|_| AkitaError::InvalidProof)?,
                         manifest.b_ring_dimension(),
-                    ]).ok_or(AkitaError::InvalidProof)?;
+                    ])
+                    .ok_or(AkitaError::InvalidProof)?;
                     let range = checked::range(d_end, d_len).ok_or(AkitaError::InvalidProof)?;
                     d_end = range.end;
                     d_ranges.push(range);
@@ -155,23 +165,25 @@ impl ResearchBatchPlan {
                         prime,
                         setup,
                         local.repacking().domain_len(),
-                        destination_ring, None,
+                        destination_ring,
+                        None,
                     )?);
                 }
                 GroupClaimKind::ResearchOrdinary { owners: ids, width } if index >= 4 => {
                     let ordinary_index = index - 4;
-                    let count = *[3, 3, 5, 1].get(ordinary_index)
+                    let count = *[3, 3, 5, 1]
+                        .get(ordinary_index)
                         .ok_or(AkitaError::InvalidProof)?;
-                    let bits = *[2, 9, 18, 33].get(ordinary_index)
+                    let bits = *[2, 9, 18, 33]
+                        .get(ordinary_index)
                         .ok_or(AkitaError::InvalidProof)?;
-                    if ids.len() != count || profile.group.num_polynomials() != count
+                    if ids.len() != count
+                        || profile.group.num_polynomials() != count
                         || width.bits() != bits
                         || profile.inner.matrix.sis_modulus_profile()
                             != akita_params::SisModulusProfileId::Q64Offset59
                     {
-                        return Err(AkitaError::InvalidInput(
-                            "research ordinary roster".into(),
-                        ));
+                        return Err(AkitaError::InvalidInput("research ordinary roster".into()));
                     }
                     for owner in ids {
                         if !owners.insert(*owner) {
@@ -191,27 +203,41 @@ impl ResearchBatchPlan {
         }
         let ordinary = OrdinaryNativeRootBatch::new(&ordinary_sources, 0)?;
         let ordinary_repacking = RootCoefficientRepacking::new(
-            ordinary.plans().iter().flat_map(|plan| plan.segments().iter().copied()).collect(),
+            ordinary
+                .plans()
+                .iter()
+                .flat_map(|plan| plan.segments().iter().copied())
+                .collect(),
             destination_ring,
         )?;
         let mut offsets = Vec::with_capacity(5);
         let mut physical_cells = 0;
-        for len in binary.iter().map(|local| local.plan().repacking().domain_len())
+        for len in binary
+            .iter()
+            .map(|local| local.plan().repacking().domain_len())
             .chain([ordinary_repacking.domain_len()])
         {
             let offset = checked::align_up(physical_cells, len).ok_or(AkitaError::InvalidProof)?;
             offsets.push(offset);
             physical_cells = checked::sum([offset, len]).ok_or(AkitaError::InvalidProof)?;
         }
-        let domain_len = checked::ceil_log2(physical_cells).and_then(checked::pow2)
+        let domain_len = checked::ceil_log2(physical_cells)
+            .and_then(checked::pow2)
             .ok_or(AkitaError::InvalidProof)?;
         let negative_count = ordinary.plans().iter().try_fold(0, |total, plan| {
-            checked::sum([total, plan.negative_binary_addresses(&ordinary_repacking)?.len()])
-                .ok_or(AkitaError::InvalidProof)
+            checked::sum([
+                total,
+                plan.negative_binary_addresses(&ordinary_repacking)?.len(),
+            ])
+            .ok_or(AkitaError::InvalidProof)
         })?;
-        let batch_count = checked::sum(binary.iter().map(BinaryRootPublic::batch_count)
-            .chain([ordinary.linear_batch_count(), negative_count]))
-            .ok_or(AkitaError::InvalidProof)?;
+        let batch_count = checked::sum(
+            binary
+                .iter()
+                .map(BinaryRootPublic::batch_count)
+                .chain([ordinary.linear_batch_count(), negative_count]),
+        )
+        .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
             binary,
             ordinary,
@@ -219,7 +245,9 @@ impl ResearchBatchPlan {
             offsets,
             d_ranges,
             fold_coordinates,
-            physical_cells, domain_len, batch_count,
+            physical_cells,
+            domain_len,
+            batch_count,
         })
     }
 
@@ -228,7 +256,10 @@ impl ResearchBatchPlan {
         &mut self,
         terminal: Option<&super::BinaryTerminalClaim>,
     ) -> Result<(), AkitaError> {
-        self.binary.first_mut().ok_or(AkitaError::InvalidProof)?.bind_terminal(terminal)
+        self.binary
+            .first_mut()
+            .ok_or(AkitaError::InvalidProof)?
+            .bind_terminal(terminal)
     }
 
     pub fn d_ranges(&self) -> &[std::ops::Range<usize>] {
@@ -275,8 +306,8 @@ impl ResearchBatchPlan {
         let mut components = Vec::with_capacity(5);
         let mut cursor = 0;
         for ((local, input), &offset) in self.binary.iter().zip(binary).zip(&self.offsets) {
-            let range = checked::range(cursor, local.batch_count())
-                .ok_or(AkitaError::InvalidProof)?;
+            let range =
+                checked::range(cursor, local.batch_count()).ok_or(AkitaError::InvalidProof)?;
             cursor = range.end;
             let (weights, negative) = local.relation(
                 input.challenges,
@@ -298,17 +329,22 @@ impl ResearchBatchPlan {
             .ok_or(AkitaError::InvalidProof)?;
         cursor = range.end;
         let ordinary_offset = *self.offsets.get(4).ok_or(AkitaError::InvalidProof)?;
-        components.push((ordinary_offset, self.ordinary.linear_weights(
-            &self.ordinary_repacking,
-            setup,
-            ordinary,
-            alpha,
-            batches.get(range).ok_or(AkitaError::InvalidProof)?,
-        )?));
+        components.push((
+            ordinary_offset,
+            self.ordinary.linear_weights(
+                &self.ordinary_repacking,
+                setup,
+                ordinary,
+                alpha,
+                batches.get(range).ok_or(AkitaError::InvalidProof)?,
+            )?,
+        ));
         let mut negative = Vec::new();
         for plan in self.ordinary.plans() {
             for address in plan.negative_binary_addresses(&self.ordinary_repacking)? {
-                negative.try_reserve(1).map_err(|_| AkitaError::InvalidProof)?;
+                negative
+                    .try_reserve(1)
+                    .map_err(|_| AkitaError::InvalidProof)?;
                 negative.push((
                     checked::sum([ordinary_offset, address]).ok_or(AkitaError::InvalidProof)?,
                     *batches.get(cursor).ok_or(AkitaError::InvalidProof)?,
@@ -319,7 +355,10 @@ impl ResearchBatchPlan {
         if cursor != batches.len() {
             return Err(AkitaError::InvalidProof);
         }
-        Ok((NativeRootWeights::concatenate(self.domain_len, components)?, negative))
+        Ok((
+            NativeRootWeights::concatenate(self.domain_len, components)?,
+            negative,
+        ))
     }
 }
 
@@ -355,9 +394,8 @@ mod tests {
         terminals.readings.push(terminal);
         assert!(terminals.validate::<F>().is_err());
         terminals.readings.pop();
-        terminals.readings[0].point[0] = E::from_base_fn(|index| {
-            F::from_u64(if index == 0 { 7 } else { 1 })
-        });
+        terminals.readings[0].point[0] =
+            E::from_base_fn(|index| F::from_u64(if index == 0 { 7 } else { 1 }));
         assert!(terminals.validate::<F>().is_err());
         terminals.readings.clear();
         assert!(terminals.validate::<F>().is_err());

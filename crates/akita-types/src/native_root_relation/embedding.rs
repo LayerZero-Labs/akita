@@ -27,11 +27,15 @@ impl<E: Field> NativeRootWeights<E> {
         for (offset, local) in components {
             let range = checked::range(offset, local.table_len).ok_or(AkitaError::InvalidProof)?;
             if offset < end || !offset.is_multiple_of(local.table_len) || range.end > table_len {
-                return Err(AkitaError::InvalidInput("overlapping root weight blocks".into()));
+                return Err(AkitaError::InvalidInput(
+                    "overlapping root weight blocks".into(),
+                ));
             }
             end = range.end;
             claim += local.claim;
-            families.try_reserve(1).map_err(|_| AkitaError::InvalidProof)?;
+            families
+                .try_reserve(1)
+                .map_err(|_| AkitaError::InvalidProof)?;
             families.push(RootWeightFamily::Embedded(EmbeddedWeights {
                 local: Box::new(local),
                 offset,
@@ -55,7 +59,11 @@ impl<E: Field> EmbeddedWeights<E> {
         let mut address = self.offset / self.local.table_len;
         let mut factor = E::one();
         for &coordinate in high {
-            factor *= if address & 1 == 0 { E::one() - coordinate } else { coordinate };
+            factor *= if address & 1 == 0 {
+                E::one() - coordinate
+            } else {
+                coordinate
+            };
             address >>= 1;
         }
         if address != 0 {
@@ -90,17 +98,25 @@ mod tests {
 
     #[test]
     fn nested_root_embeddings_preserve_weights_and_visitor_errors() {
-        let leaf = NativeRootWeights::new(4, vec![(1, F::from_u64(3))], F::from_u64(5))
-            .unwrap();
+        let leaf = NativeRootWeights::new(4, vec![(1, F::from_u64(3))], F::from_u64(5)).unwrap();
         let inner = NativeRootWeights::concatenate(16, [(4, leaf)]).unwrap();
         let outer = NativeRootWeights::concatenate(64, [(32, inner)]).unwrap();
-        let expected = NativeRootWeights::new(64, vec![(37, F::from_u64(3))], F::from_u64(5))
-            .unwrap();
+        let expected =
+            NativeRootWeights::new(64, vec![(37, F::from_u64(3))], F::from_u64(5)).unwrap();
         assert_eq!(outer.claim(), expected.claim());
-        assert_eq!(outer.materialize().unwrap(), expected.materialize().unwrap());
-        assert_eq!(outer.profiles(2).unwrap().take_dense(), expected.materialize().unwrap());
+        assert_eq!(
+            outer.materialize().unwrap(),
+            expected.materialize().unwrap()
+        );
+        assert_eq!(
+            outer.profiles(2).unwrap().take_dense(),
+            expected.materialize().unwrap()
+        );
         let point = [2, 3, 5, 7, 11, 13].map(F::from_u64);
-        assert_eq!(outer.evaluate(&point).unwrap(), expected.evaluate(&point).unwrap());
+        assert_eq!(
+            outer.evaluate(&point).unwrap(),
+            expected.evaluate(&point).unwrap()
+        );
         assert!(matches!(
             outer.families[0].visit(|_, _| Err(AkitaError::InvalidProof)),
             Err(AkitaError::InvalidProof)
@@ -117,7 +133,10 @@ mod tests {
         assert_eq!(table[22], F::from_u64(7));
         let point = [2, 3, 5, 7, 11].map(F::from_u64);
         let eq = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
-        let dense = table.iter().zip(eq).fold(F::zero(), |sum, (&w, e)| sum + w * e);
+        let dense = table
+            .iter()
+            .zip(eq)
+            .fold(F::zero(), |sum, (&w, e)| sum + w * e);
         assert_eq!(joined.evaluate(&point).unwrap(), dense);
         let local = NativeRootWeights::new(8, vec![(0, F::from_u64(1))], F::zero()).unwrap();
         assert!(NativeRootWeights::concatenate(32, [(3, local.clone())]).is_err());

@@ -344,9 +344,15 @@ where
             != Some(manifest.setup_group())
         || manifest != &source.manifest
         || handle.committed.parameters != source.carrier_profile
-        || schedule.root.params.group_params(
-            &root_layout, context.group_index().ok_or(AkitaError::InvalidProof)?,
-        )?.profile != source.carrier_profile
+        || schedule
+            .root
+            .params
+            .group_params(
+                &root_layout,
+                context.group_index().ok_or(AkitaError::InvalidProof)?,
+            )?
+            .profile
+            != source.carrier_profile
         || handle.committed.retained.is_some()
         || plan.descriptor() != manifest.descriptor()
         || plan.rank() != manifest.a_rank()
@@ -475,11 +481,17 @@ where
         challenges.downcast_ref::<akita_types::binary_source::ResearchBatchResponse>()
     {
         return research::build(
-            backend, session, context, preparation, response,
-            logical_len, destination_ring_dimension,
+            backend,
+            session,
+            context,
+            preparation,
+            response,
+            logical_len,
+            destination_ring_dimension,
         );
     }
-    let challenges = challenges.downcast_ref::<akita_challenges::Challenges>()
+    let challenges = challenges
+        .downcast_ref::<akita_challenges::Challenges>()
         .ok_or(AkitaError::InvalidProof)?;
     let binding = backend.binding(session, context)?;
     let preparation = preparation
@@ -503,8 +515,13 @@ where
         return Ok(None);
     };
     super::binary_root_sessions::import_root_witness(
-        backend, session, context, digits, destination_ring_dimension,
-    ).map(Some)
+        backend,
+        session,
+        context,
+        digits,
+        destination_ring_dimension,
+    )
+    .map(Some)
 }
 
 fn build_digits(

@@ -32,9 +32,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                 let mut coordinates = Vec::with_capacity(4);
                 for (index, group) in self.groups().iter().take(4).enumerate() {
                     let super::GroupClaimKind::Binary {
-                        manifest,
-                        claim,
-                        ..
+                        manifest, claim, ..
                     } = group.kind()
                     else {
                         return Err(AkitaError::InvalidProof);
@@ -50,11 +48,20 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                 }
                 // Direct setup consumes no root Stage 3. Keep every suffix run.
                 let suffix = GrindingPlan::new(
-                    ordinary.runs().iter().copied().filter(|run| run.site().level() != 0).collect(),
+                    ordinary
+                        .runs()
+                        .iter()
+                        .copied()
+                        .filter(|run| run.site().level() != 0)
+                        .collect(),
                     manifest.field_profile().challenge_order()?,
                 )?;
                 return crate::binary_source::binary_root_grinding_plan(
-                    &suffix, manifest.field_profile(), &coordinates, domain_len, 648,
+                    &suffix,
+                    manifest.field_profile(),
+                    &coordinates,
+                    domain_len,
+                    648,
                 );
             }
             return crate::binary_source::binary_root_grinding_plan(

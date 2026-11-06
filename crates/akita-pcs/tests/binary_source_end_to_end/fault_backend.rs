@@ -198,7 +198,8 @@ impl FaultBackend {
         logical_len: usize,
         destination_ring_dimension: usize,
     ) -> Result<Option<W>, AkitaError> {
-        let challenges = challenges.downcast_ref::<akita_challenges::Challenges>()
+        let challenges = challenges
+            .downcast_ref::<akita_challenges::Challenges>()
             .ok_or(AkitaError::InvalidProof)?;
         let preparation = preparation.downcast_ref::<FaultPreparation>().unwrap();
         let Some(honest) = self.inner.build_root_group(

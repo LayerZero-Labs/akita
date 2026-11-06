@@ -11,13 +11,13 @@
 mod admission;
 #[cfg(feature = "labinius-trinomial")]
 mod binary_root;
-#[cfg(feature = "labinius-trinomial")]
-mod research_batch;
 mod challenges;
 mod ordinary_root;
 #[cfg(feature = "labinius-trinomial")]
 mod prime_readings;
 mod relation_instance;
+#[cfg(feature = "labinius-trinomial")]
+mod research_batch;
 mod root;
 mod suffix;
 mod terminal;

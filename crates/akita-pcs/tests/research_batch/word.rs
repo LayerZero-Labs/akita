@@ -25,7 +25,9 @@ pub(super) fn claim(descriptor: &BinarySourceDescriptor, words: &[u128]) -> Bina
     BinaryWordClaim::new(
         descriptor,
         descriptor.polynomials()[0],
-        point.map(|coordinate| u128::from(coordinate).to_le_bytes()).to_vec(),
+        point
+            .map(|coordinate| u128::from(coordinate).to_le_bytes())
+            .to_vec(),
         (u128::from(low) | (u128::from(high) << 64)).to_le_bytes(),
     )
     .unwrap()
@@ -36,7 +38,12 @@ pub(super) fn reject_mutations(
     rejects: impl Fn(&OpeningClaims<'_, E, CommittedGroup<F>>) -> bool,
 ) {
     let first = &claims.groups()[0];
-    let GroupClaimKind::Binary { manifest, claim: Some(word), .. } = first.kind() else {
+    let GroupClaimKind::Binary {
+        manifest,
+        claim: Some(word),
+        ..
+    } = first.kind()
+    else {
         panic!("hash group must carry H");
     };
     for change_point in [false, true] {
@@ -47,17 +54,19 @@ pub(super) fn reject_mutations(
         } else {
             value[0] ^= 1;
         }
-        let changed = BinaryWordClaim::new(
-            manifest.descriptor(), *word.polynomial(), point, value,
-        ).unwrap();
+        let changed =
+            BinaryWordClaim::new(manifest.descriptor(), *word.polynomial(), point, value).unwrap();
         let mut groups = claims.groups().to_vec();
         groups[0] = PolynomialGroupClaims::new_research_binary_with_word(
             first.commitment().clone(),
             first.research_terminals().unwrap().clone(),
             Some(changed),
-        ).unwrap();
-        assert!(rejects(&OpeningClaims::from_groups(groups).unwrap()),
-            "H mutation: change_point={change_point}");
+        )
+        .unwrap();
+        assert!(
+            rejects(&OpeningClaims::from_groups(groups).unwrap()),
+            "H mutation: change_point={change_point}"
+        );
     }
     let second = &claims.groups()[1];
     let GroupClaimKind::Binary { manifest, .. } = second.kind() else {
@@ -75,15 +84,26 @@ pub(super) fn reject_mutations(
     // Both groups retain valid typed terminals; only H's roster position changes.
     let mut groups = claims.groups().to_vec();
     groups.swap(0, 1);
-    assert!(matches!(OpeningClaims::from_groups(groups), Err(AkitaError::InvalidInput(_))));
+    assert!(matches!(
+        OpeningClaims::from_groups(groups),
+        Err(AkitaError::InvalidInput(_))
+    ));
     let without_word = PolynomialGroupClaims::new_research_binary(
-        first.commitment().clone(), first.research_terminals().unwrap().clone(),
-    ).unwrap();
+        first.commitment().clone(),
+        first.research_terminals().unwrap().clone(),
+    )
+    .unwrap();
     let explicit_none = PolynomialGroupClaims::new_research_binary_with_word(
-        first.commitment().clone(), first.research_terminals().unwrap().clone(), None,
-    ).unwrap();
+        first.commitment().clone(),
+        first.research_terminals().unwrap().clone(),
+        None,
+    )
+    .unwrap();
     assert_eq!(without_word.kind(), explicit_none.kind());
     let mut omitted = claims.groups().to_vec();
     omitted[0] = without_word;
-    assert!(rejects(&OpeningClaims::from_groups(omitted).unwrap()), "omitted H");
+    assert!(
+        rejects(&OpeningClaims::from_groups(omitted).unwrap()),
+        "omitted H"
+    );
 }

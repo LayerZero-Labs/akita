@@ -1,6 +1,6 @@
 //! Assemble the direct research relation from the same public compiler on both sides.
 
-use super::{BinaryAOperand, OrdinaryNativeRootClaim, ResearchBatchPlan, ResearchBinaryRelation,};
+use super::{BinaryAOperand, OrdinaryNativeRootClaim, ResearchBatchPlan, ResearchBinaryRelation};
 use crate::native_root_relation::NativeRootWeights;
 use crate::{AkitaSetupDescriptor, OpeningClaims};
 use akita_challenges::Challenges;
@@ -27,16 +27,30 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    if claims.num_groups() != 8 || profiles.len() != 8
-        || challenges.len() != 4 || matrices.len() != 4
+    if claims.num_groups() != 8
+        || profiles.len() != 8
+        || challenges.len() != 4
+        || matrices.len() != 4
         || plan.d_ranges().last().map(|range| range.end) != Some(d_payload.len())
     {
         return Err(AkitaError::InvalidProof);
     }
-    let commitments = claims.groups().iter().map(|group| {
-        payload(group.commitment()).iter().copied().map(E::lift_base).collect::<Vec<_>>()
-    }).collect::<Vec<_>>();
-    let d = d_payload.iter().copied().map(E::lift_base).collect::<Vec<_>>();
+    let commitments = claims
+        .groups()
+        .iter()
+        .map(|group| {
+            payload(group.commitment())
+                .iter()
+                .copied()
+                .map(E::lift_base)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let d = d_payload
+        .iter()
+        .copied()
+        .map(E::lift_base)
+        .collect::<Vec<_>>();
     let mut binary = Vec::with_capacity(4);
     for (index, range) in plan.d_ranges().iter().enumerate() {
         binary.push(ResearchBinaryRelation {

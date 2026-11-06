@@ -5,8 +5,8 @@ use akita_challenges::{PreviewFoldDraw, ProverFoldDraw};
 use akita_params::{DigitRangePlan, FlatBooleanDomain, GrindingSite, NextWitnessBindingPolicy};
 use akita_types::binary_source::{
     binary_root_challenges, binary_root_p64_batch_challenges, research_batch_relation,
-    research_batch_statement, BinaryProjectionRequest, BinaryProjectionWitness,
-    ResearchBatchPlan, ResearchBatchResponse, ResearchBatchWitnessRequest,
+    research_batch_statement, BinaryProjectionRequest, BinaryProjectionWitness, ResearchBatchPlan,
+    ResearchBatchResponse, ResearchBatchWitnessRequest,
 };
 use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
@@ -30,23 +30,44 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Unreduced + Fold + Ring
-        + MulBaseUnreduced<Cfg::Field> + AkitaSerialize + 'static,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<Cfg::Field>
+        + AkitaSerialize
+        + 'static,
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
     if basis != BasisMode::Lagrange || handles.len() != 8 {
-        return Err(AkitaError::InvalidInput("research batch proof geometry".into()));
+        return Err(AkitaError::InvalidInput(
+            "research batch proof geometry".into(),
+        ));
     }
-    let next = schedule.recursive_folds.first().ok_or(AkitaError::InvalidProof)?;
+    let next = schedule
+        .recursive_folds
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
     if next.predecessor_setup_contribution_mode() != SetupContributionMode::Direct {
         return Err(AkitaError::InvalidInput(
             "research root requires direct setup".into(),
         ));
     }
-    let profiles = (0..8).map(|index| {
-        schedule.root.params.group_params(layout, index).map(|group| group.profile)
-    }).collect::<Result<Vec<_>, _>>()?;
-    let kinds = claims.groups().iter().map(|group| group.kind().clone()).collect::<Vec<_>>();
+    let profiles = (0..8)
+        .map(|index| {
+            schedule
+                .root
+                .params
+                .group_params(layout, index)
+                .map(|group| group.profile)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let kinds = claims
+        .groups()
+        .iter()
+        .map(|group| group.kind().clone())
+        .collect::<Vec<_>>();
     let mut plan = ResearchBatchPlan::new(&kinds, &profiles, expanded, next.params.d_a())?;
     if plan.physical_cells() != schedule.root.output_witness_len {
         return Err(AkitaError::InvalidProof);
@@ -59,7 +80,9 @@ where
     )?;
     let context = backend.proof_context(proof_session, 0)?;
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
-    let akita_types::opening_claims::GroupClaimKind::Binary { manifest, claim, .. } = group.kind()
+    let akita_types::opening_claims::GroupClaimKind::Binary {
+        manifest, claim, ..
+    } = group.kind()
     else {
         return Err(AkitaError::InvalidProof);
     };
@@ -73,7 +96,9 @@ where
                 polynomial: *claim.polynomial(),
             },
         )?;
-        let carriers = source.downcast_ref::<Vec<u128>>().ok_or(AkitaError::InvalidProof)?;
+        let carriers = source
+            .downcast_ref::<Vec<u128>>()
+            .ok_or(AkitaError::InvalidProof)?;
         Some(crate::binary_field_switch::prove_field_switch(
             manifest.descriptor(),
             claim,
@@ -88,7 +113,11 @@ where
         proof_session,
         &context,
         handles.first().ok_or(AkitaError::InvalidProof)?,
-        &ResearchBatchWitnessRequest { kinds, plan: plan.clone(), handles: handles.to_vec() },
+        &ResearchBatchWitnessRequest {
+            kinds,
+            plan: plan.clone(),
+            handles: handles.to_vec(),
+        },
     )?;
     if plan.d_ranges().last().map(|range| range.end) != Some(d_payload.len()) {
         return Err(AkitaError::InvalidProof);
@@ -96,7 +125,11 @@ where
     // All four D commitments precede the only response nonce.
     akita_transcript::send_field_group(
         grinding.state_mut(),
-        akita_types::FoldSite::OpeningPayload { level: 0, ring_dimension: 64 }.id()?,
+        akita_types::FoldSite::OpeningPayload {
+            level: 0,
+            ring_dimension: 64,
+        }
+        .id()?,
         &d_payload,
     )?;
     let site = GrindingSite::FoldResponse { level: 0 };
@@ -119,7 +152,8 @@ where
             &context,
             preparation.as_ref(),
             &response,
-            plan.physical_cells(), next.params.d_a(),
+            plan.physical_cells(),
+            next.params.d_a(),
         )? {
             accepted = Some((work, response.challenges, witness));
             break;
@@ -158,29 +192,31 @@ where
     let mut matrices = Vec::with_capacity(4);
     for (index, challenge) in challenges.iter().enumerate() {
         let (_, residual) = backend.prepare_root_group(
-            proof_session, &context.for_group(index),
+            proof_session,
+            &context.for_group(index),
             handles.get(index).ok_or(AkitaError::InvalidProof)?,
-            &BinaryProjectionRequest { challenges: challenge.clone() },
+            &BinaryProjectionRequest {
+                challenges: challenge.clone(),
+            },
         )?;
-        let residual = residual.downcast::<BinaryProjectionWitness>()
+        let residual = residual
+            .downcast::<BinaryProjectionWitness>()
             .map_err(|_| AkitaError::InvalidProof)?;
         matrices.push(residual.matrix);
     }
-    let alpha = grinding.grinded_ext_challenge::<Cfg::ExtField>(
-        GrindingSite::RingSwitchAlpha { level: 0 },
-    )?;
+    let alpha = grinding
+        .grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::RingSwitchAlpha { level: 0 })?;
     let num_vars = usize::try_from(plan.domain_len().trailing_zeros())
         .map_err(|_| AkitaError::InvalidProof)?;
     let domain = FlatBooleanDomain::new(plan.physical_cells(), num_vars)?;
     if domain.domain_len() != plan.domain_len() {
         return Err(AkitaError::InvalidProof);
     }
-    let tau0 = grinding.grinded_ext_challenges::<Cfg::ExtField>(
-        GrindingSite::Tau0Point { level: 0 },
-        num_vars,
-    )?;
+    let tau0 = grinding
+        .grinded_ext_challenges::<Cfg::ExtField>(GrindingSite::Tau0Point { level: 0 }, num_vars)?;
     let batches = binary_root_p64_batch_challenges::<Cfg::Field, Cfg::ExtField, _>(
-        grinding, plan.batch_count(),
+        grinding,
+        plan.batch_count(),
     )?;
     let (relation, negative) = research_batch_relation::<Cfg::Field, Cfg::ExtField, _>(
         &plan,
@@ -198,32 +234,31 @@ where
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
     let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B>(
-        backend,
-        session,
-        range,
-        domain,
-        tau0,
-        None,
-        grinding,
-        0,
+        backend, session, range, domain, tau0, None, grinding, 0,
     )?;
-    let gamma = grinding.grinded_ext_challenge::<Cfg::ExtField>(
-        GrindingSite::Stage2Batch { level: 0 },
-    )?;
+    let gamma =
+        grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
     let session = backend.begin_root_relation(
         &witness,
         relation,
         negative,
         relation_claim,
         &stage1.point,
-        stage1.range_image_evaluation, gamma,
+        stage1.range_image_evaluation,
+        gamma,
     )?;
     let stage2 = fold::sumcheck::prove_stage2_session::<Cfg::Field, Cfg::ExtField, B>(
-        backend, session, grinding, 0, num_vars,
+        backend,
+        session,
+        grinding,
+        0,
+        num_vars,
         relation_claim + gamma * stage1.range_image_evaluation,
     )?;
     akita_types::stage2_w_eval::<Cfg::Field, Cfg::ExtField, _>(
-        grinding, 0, stage2.witness_evaluation,
+        grinding,
+        0,
+        stage2.witness_evaluation,
     )?;
     backend.advance_witness_level(&mut witness)?;
     Ok(ProveLevelOutput {

@@ -25,10 +25,14 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
             || terminal.evaluations.len() != owners.len()
             || terminal.point.len() != commitment.profile().group.num_vars()
         {
-            return Err(AkitaError::InvalidInput("research ordinary owner geometry".into()));
+            return Err(AkitaError::InvalidInput(
+                "research ordinary owner geometry".into(),
+            ));
         }
         let mut group = Self::new(
-            terminal.point.clone(), terminal.evaluations.clone(), commitment,
+            terminal.point.clone(),
+            terminal.evaluations.clone(),
+            commitment,
         )?;
         group.kind = GroupClaimKind::ResearchOrdinary { owners, width };
         group.research_terminals = Some(terminals);
@@ -65,15 +69,30 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
             || manifest.descriptor().polynomials().len() != 1
             || terminal.evaluations.len() != 1
         {
-            return Err(AkitaError::InvalidInput("research binary terminal owner count".into()));
+            return Err(AkitaError::InvalidInput(
+                "research binary terminal owner count".into(),
+            ));
         }
-        let residue = |value: &E| value.base_coefficient(0).to_u128_checked()
-            .ok_or(AkitaError::InvalidProof);
+        let residue = |value: &E| {
+            value
+                .base_coefficient(0)
+                .to_u128_checked()
+                .ok_or(AkitaError::InvalidProof)
+        };
         let prime = crate::binary_source::PrimeGroupClaim {
-            point: terminal.point.iter().map(residue).collect::<Result<Vec<_>, _>>()?,
+            point: terminal
+                .point
+                .iter()
+                .map(residue)
+                .collect::<Result<Vec<_>, _>>()?,
             evaluations: vec![crate::binary_source::PrimePlaneClaim {
                 polynomial: 0,
-                value: residue(terminal.evaluations.first().ok_or(AkitaError::InvalidProof)?)?,
+                value: residue(
+                    terminal
+                        .evaluations
+                        .first()
+                        .ok_or(AkitaError::InvalidProof)?,
+                )?,
             }],
         };
         if claim.is_some() && manifest.setup_group() != 0 {
