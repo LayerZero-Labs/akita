@@ -52,6 +52,7 @@ class P64FixtureTests(unittest.TestCase):
             fields = line.split()
             self.assertEqual(len(fields), 2, line)
             digest, name = fields
+            name = name.removeprefix("./")
             self.assertIn(name, expected)
             self.assertNotIn(name, seen, f"duplicate manifest entry: {name}")
             seen.add(name)
