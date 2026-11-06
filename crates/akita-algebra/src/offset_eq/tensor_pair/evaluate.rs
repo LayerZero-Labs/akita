@@ -1,5 +1,6 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
+mod state_sort;
 mod unit_intervals;
 mod unit_intervals_cache;
 
@@ -480,7 +481,7 @@ type PairState<F> = ((usize, usize), F);
 fn merge_pair_states<F: Field>(
     mut states: Vec<PairState<F>>,
 ) -> Result<Vec<PairState<F>>, AkitaError> {
-    states.sort_unstable_by_key(|(key, _)| *key);
+    state_sort::sort(&mut states)?;
     states.dedup_by(|next, previous| {
         if next.0 == previous.0 {
             previous.1 += next.1;
