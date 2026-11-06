@@ -310,6 +310,15 @@ mod p64 {
             &natural[2],
         )
         .unwrap();
+        crate::opaque::sumcheck::stage3::p64_root_transcript_tests::word_root_round_trip(
+            &manifest,
+            &public,
+            &matrix,
+            &challenges,
+            &witness,
+            &b,
+            &d,
+        );
         let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
         let batches = (0..public.batch_count()).map(extension).collect::<Vec<_>>();
         let rho = batches[..plan.coefficient_batch_count().unwrap()]
@@ -326,10 +335,7 @@ mod p64 {
                 &lift(&b),
                 &lift(&d),
                 None,
-                Some(BinaryAOperand {
-                    matrix: &matrix,
-                    canonical: |_| None,
-                }),
+                Some(BinaryAOperand::new::<F>(&matrix)),
             )
             .unwrap();
         assert!(negative.is_empty());
@@ -451,6 +457,60 @@ mod p64 {
             terminal.witness_evaluation(),
             dense_terminal.witness_evaluation()
         );
+        // The same dense coefficient coordinates feed Stage 3 over the
+        // selected base setup; no integer representative of E64 is used.
+        let typed =
+            akita_types::binary_source::BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+        let stage2_point = (0..variables)
+            .map(|round| extension(500 + round))
+            .collect::<Vec<_>>();
+        let (stage3_rho, _) = public.coefficient_inputs(&batches, &[], &[]).unwrap();
+        assert_eq!(stage3_rho.as_ref(), rho);
+        let a = akita_types::binary_source::BinaryAProduct::new(
+            plan,
+            &stage3_rho,
+            &stage2_point,
+            typed.domain_len,
+        )
+        .unwrap();
+        let authentication = public.authentication_batches(&batches).unwrap();
+        let typed_weights = typed
+            .prover_weights(
+                &a,
+                &stage2_point,
+                extension(3),
+                authentication,
+                typed.domain_len,
+            )
+            .unwrap();
+        let setup = typed
+            .setup_coefficients::<F>(&seed, &manifest, typed.domain_len)
+            .unwrap();
+        let stage3_claim = setup
+            .iter()
+            .zip(typed_weights)
+            .fold(E::zero(), |sum, (&value, weight)| {
+                sum + E::lift_base(value) * weight
+            });
+        let (online, _) = public
+            .relation(
+                &challenges,
+                extension(3),
+                &batches,
+                &[],
+                &[],
+                &lift(&b),
+                &lift(&d),
+                None,
+                None,
+            )
+            .unwrap();
+        let online_weight = online.evaluate(&stage2_point).unwrap();
+        assert_eq!(
+            online_weight + stage3_claim,
+            weights.evaluate(&stage2_point).unwrap()
+        );
+        assert_ne!(stage3_claim.base_coefficient(1), F::zero());
         // Keep Z, T, U and all carries fixed. Only K changes, within the range.
         for (row, digit, coefficient) in [(0, 0, 0), (2, bounds.digits - 1, 647)] {
             let address = plan

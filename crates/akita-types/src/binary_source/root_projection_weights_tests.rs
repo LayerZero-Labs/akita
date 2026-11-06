@@ -177,12 +177,7 @@ fn p64_generic_adjoint_and_quotient_weights_match_dense_reference_at_extension_r
             .map(|_| std::array::from_fn(|_| extension(&mut rng)))
             .collect::<Vec<_>>();
         for with_a in [false, true] {
-            let operand = with_a.then_some(BinaryAOperand {
-                matrix: &matrix,
-                // A quadratic element has no integer representative. The
-                // generic field path must never call this callback.
-                canonical: |_| None,
-            });
+            let operand = with_a.then_some(BinaryAOperand::new::<Prime64Offset59>(&matrix));
             let fast = binary_direct_a_weights(&plan, operand, &challenges, &rho).unwrap();
             let reference = crate::binary_source::root_public::reference::direct_a_weights(
                 &plan,
@@ -329,10 +324,7 @@ fn p64_coefficient_relation_vanishes_exactly_for_planted_quotients() {
         .collect::<Vec<_>>();
     let weights = binary_direct_a_weights(
         &plan,
-        Some(BinaryAOperand {
-            matrix: &matrix,
-            canonical: |_| None,
-        }),
+        Some(BinaryAOperand::new::<Prime64Offset59>(&matrix)),
         &challenges,
         &rho,
     )

@@ -248,6 +248,7 @@ where
         None,
     )?;
     let authentication = public.authentication_batches(&batches)?.map(<[E]>::to_vec);
+    let (rho, _) = public.coefficient_inputs(&batches, &rho, &projected_values)?;
     drop(batches);
     drop(span);
 

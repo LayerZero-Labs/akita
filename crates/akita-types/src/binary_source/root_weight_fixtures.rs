@@ -1,6 +1,7 @@
 //! Small compiled binary root relations for prover differential tests.
 
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::sis::{
     sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
@@ -9,7 +10,7 @@ use akita_params::{
     BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits,
     GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
 };
-use jolt_field::{CanonicalEncoding, Prime128Offset275, Ring};
+use jolt_field::{Prime128Offset275, Ring};
 
 use super::{
     BinaryAOperand, BinaryAProduct, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic,
@@ -90,12 +91,16 @@ impl Stream {
 }
 
 /// One small ordinary group with real audited table cells.
-fn ordinary_profile() -> GroupCommitPhaseParams {
+fn ordinary_profile(field: BinaryFieldProfile) -> GroupCommitPhaseParams {
+    let (modulus, digits) = match field {
+        BinaryFieldProfile::P128 => (SisModulusProfileId::Q128Offset275, 43),
+        BinaryFieldProfile::P64 => (SisModulusProfileId::Q64Offset59, 22),
+    };
     let key = |role, degree| {
         sis_table_key_for_linf_bound(
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128Offset275,
+            modulus,
             role,
             degree,
             8,
@@ -109,7 +114,7 @@ fn ordinary_profile() -> GroupCommitPhaseParams {
         4,
         1,
         inner.output_rank(),
-        43,
+        digits,
         128,
         64,
     )
@@ -125,10 +130,14 @@ fn ordinary_profile() -> GroupCommitPhaseParams {
         blocks: BlockGeometry::new(8, 2, 4),
         outer_slice_count: CommitmentSliceCount::ONE,
         inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
-        outer: RoleParams::new(GadgetDigits::new(3, 43), outer),
+        outer: RoleParams::new(GadgetDigits::new(3, digits), outer),
     };
     profile
-        .validate_frozen_precommit(128)
+        .validate_frozen_precommit(if field == BinaryFieldProfile::P128 {
+            128
+        } else {
+            64
+        })
         .expect("frozen fixture profile");
     profile
 }
@@ -156,8 +165,12 @@ fn public(
         .collect::<Vec<_>>();
     let descriptor = BinarySourceDescriptor::new(index, polynomials.clone(), profiles)
         .expect("fixture descriptor");
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &ordinary_profile())
-        .expect("fixture manifest");
+    let manifest = BinaryCommittedGroupManifest::new(
+        descriptor.clone(),
+        0,
+        &ordinary_profile(BinaryFieldProfile::P128),
+    )
+    .expect("fixture manifest");
     let rows = descriptor.index_map().padded_carriers() / descriptor.index_map().columns();
     let claim = shape.word_claim.then(|| {
         BinaryTerminalClaim::new(
@@ -190,7 +203,9 @@ fn public(
         num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         setup_seed: SETUP_SEED.into(),
     };
-    let ordinary = shape.mixed.then(ordinary_profile);
+    let ordinary = shape
+        .mixed
+        .then(|| ordinary_profile(BinaryFieldProfile::P128));
     let build = |logical_len| {
         BinaryRootPublic::new(
             &manifest,
@@ -256,7 +271,7 @@ fn compile(shape: Shape, seed: u64) -> RootWeightFixture {
     let projected: [i128; 7] = std::array::from_fn(|_| i128::from(stream.next() as i64));
     let commitment = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
     let d_payload = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
-    let ordinary = ordinary_profile();
+    let ordinary = ordinary_profile(BinaryFieldProfile::P128);
     let ordinary_point = (0..ordinary.group.num_vars())
         .map(|_| stream.field())
         .collect::<Vec<_>>();
@@ -279,10 +294,7 @@ fn compile(shape: Shape, seed: u64) -> RootWeightFixture {
                 .collect()
         })
         .collect::<Vec<Vec<[i128; 648]>>>();
-    let operand = BinaryAOperand {
-        matrix: &matrix,
-        canonical: |x: &RootFixtureField| x.to_u128_checked(),
-    };
+    let operand = BinaryAOperand::new::<RootFixtureField>(&matrix);
     let (weights, negative_binary_weights) = public
         .relation(
             &challenges,
@@ -395,4 +407,29 @@ pub fn root_weight_fixtures() -> Vec<RootWeightFixture> {
         compile(shape, seed)
     })
     .collect()
+}
+
+/// Small word-root manifest with the selected base profile. Larger owner counts
+/// are useful for layout arithmetic only, without allocating their witnesses.
+pub fn binary_word_manifest_fixture(
+    field: BinaryFieldProfile,
+    owners: usize,
+) -> BinaryCommittedGroupManifest {
+    let index = BinaryIndexMap::new(128, 8, 8, 2).expect("fixture index");
+    let profiles = BinaryCommittedGroupManifest::profiles_for_field(&index, owners, 0, field)
+        .expect("fixture profiles");
+    let descriptor = BinarySourceDescriptor::new(
+        index,
+        (0..owners)
+            .map(|owner| {
+                let mut id = [1; 32];
+                id[..8].copy_from_slice(&(owner as u64).to_le_bytes());
+                id
+            })
+            .collect(),
+        profiles,
+    )
+    .expect("fixture descriptor");
+    BinaryCommittedGroupManifest::with_field_profile(descriptor, 0, &ordinary_profile(field), field)
+        .expect("fixture manifest")
 }

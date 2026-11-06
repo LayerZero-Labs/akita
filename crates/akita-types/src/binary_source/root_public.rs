@@ -215,7 +215,7 @@ impl BinaryRootPublic {
     /// Interpret the profile's independent coordinates once. P64 has no J or y
     /// inputs: rho comes directly from the first a common batch coordinates.
     #[allow(clippy::type_complexity)]
-    fn coefficient_inputs<'a, E: Field>(
+    pub fn coefficient_inputs<'a, E: Field>(
         &self,
         batches: &[E],
         rho: &'a [[E; 648]],

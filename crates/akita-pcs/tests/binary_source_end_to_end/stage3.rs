@@ -284,3 +284,79 @@ pub(super) fn measure_root_a<T>(verify: impl FnOnce() -> T) -> (T, std::time::Du
         .expect("verification emitted exactly one root A span");
     (output, elapsed)
 }
+
+#[test]
+fn stage3_p64_extension_endpoint_matches_the_committed_base_prefix_oracle() {
+    use akita_algebra::eq_poly::EqPolynomial;
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{
+        binary_word_manifest_fixture, BinaryAProduct, BinaryAReadGuard, BinaryRootWitnessPlan,
+    };
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    type E = Ext2<Base>;
+    let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
+    let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+    let plan = BinaryRootWitnessPlan::for_profile(
+        manifest.descriptor(),
+        3,
+        64,
+        BinaryFieldProfile::P64,
+        true,
+        0,
+    )
+    .unwrap();
+    let extension = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + i * 31 + c * 43) as u64));
+    let stage2 = (0..plan.repacking().domain_len().trailing_zeros())
+        .map(|i| extension(i as usize))
+        .collect::<Vec<_>>();
+    let rho = (0..3)
+        .map(|row| std::array::from_fn(|k| extension(row * 648 + k)))
+        .collect::<Vec<_>>();
+    let a = BinaryAProduct::new(&plan, &rho, &stage2, typed.domain_len).unwrap();
+    let batches = [
+        vec![extension(3000); manifest.b_rows()],
+        vec![extension(4000); manifest.d_label(true, 0).unwrap().rank as usize],
+    ];
+    let weights = typed
+        .prover_weights(
+            &a,
+            &stage2,
+            extension(5000),
+            [&batches[0], &batches[1]],
+            typed.domain_len,
+        )
+        .unwrap();
+    let setup = typed
+        .setup_coefficients::<Base>(&[41; 32], &manifest, typed.domain_len)
+        .unwrap();
+    let point = (0..typed.domain_len.trailing_zeros())
+        .map(|i| extension(6000 + i as usize))
+        .collect::<Vec<_>>();
+    let equality = EqPolynomial::evals(&point).unwrap();
+    let eval = setup
+        .iter()
+        .zip(&equality)
+        .fold(E::zero(), |sum, (&v, &eq)| sum + E::lift_base(v) * eq);
+    assert_ne!(eval.base_coefficient(1), Base::zero());
+    let dense = weights
+        .iter()
+        .zip(equality)
+        .fold(E::zero(), |sum, (&v, eq)| sum + v * eq);
+    let _guard = BinaryAReadGuard::forbid();
+    let online = a.evaluate(&point).unwrap()
+        + typed
+            .digit_weight(&point, &stage2, extension(5000), [&batches[0], &batches[1]])
+            .unwrap();
+    assert_eq!(online, dense);
+    for coordinate in 0..2 {
+        let altered = eval
+            + E::from_base_fn(|c| {
+                if c == coordinate {
+                    Base::one()
+                } else {
+                    Base::zero()
+                }
+            });
+        assert_ne!(online * altered, online * eval);
+    }
+}
