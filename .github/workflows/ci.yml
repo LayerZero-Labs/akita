@@ -69,6 +69,10 @@ jobs:
         run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
       - name: Clippy (dev protocol)
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak,dev-protocol -- -D warnings
+      - name: Clippy (binary source measurement tests)
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,binary-source-measurements,transcript-keccak -- -D warnings
+      - name: Clippy (binary source measurement tests, dev protocol)
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,binary-source-measurements,transcript-keccak,dev-protocol -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -113,6 +117,26 @@ jobs:
       - name: Test binary source end-to-end opening
         run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-keccak
 
+  test-binary-p64:
+    name: Research binary P64 complete schedules
+    runs-on: GitHubRunner-Large-Public
+    # Initial budget for both builds and suites; hosted runtime is unmeasured.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-test-binary-p64
+          add-job-id-key: false
+          cache-on-failure: true
+      - name: Test research binary p64 complete schedules
+        run: |
+          cargo test --profile ci-test -p akita-pcs --example binary_source_full_size --no-default-features --features parallel,binary-source-measurements,transcript-keccak -- --test-threads=1
+          cargo test --profile ci-test -p akita-pcs --example binary_source_full_size --no-default-features --features parallel,binary-source-measurements,transcript-keccak,dev-protocol -- --test-threads=1
 
   labinius-binary:
     name: LaBinius binary arithmetic

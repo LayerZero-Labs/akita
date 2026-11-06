@@ -269,7 +269,7 @@ mod binary_source_tests {
     }
 
     #[test]
-    fn p64_binary_root_statement_rejects_on_both_channels() {
+    fn p64_binary_root_statement_binds_on_both_channels() {
         use akita_transcript::{new_prover_channel, new_verifier_channel};
         type F = Prime64Offset59;
         type E = jolt_field::Ext2<F>;
@@ -295,12 +295,35 @@ mod binary_source_tests {
             &payload,
             None,
         );
-        for result in [prove, verify] {
-            assert!(
-                matches!(result, Err(AkitaError::UnsupportedSchedule(message))
-                if message.contains("not yet supported"))
-            );
-        }
+        prove.unwrap();
+        verify.unwrap();
+        let sent: [u8; 32] = prover.verifier_message();
+        let received: [u8; 32] = verifier.verifier_message();
+        assert_eq!(sent, received);
+
+        // Statement binding is field validation, not catalog admission.
+        // The PCS boundary supplies the selected row's native marker.
+        manifest.field_profile().admit_root(true).unwrap();
+        assert_eq!(
+            manifest.field_profile().admit_root(false),
+            Err(AkitaError::UnsupportedSchedule(
+                "p64 root requires an explicitly selected native catalog row".into()
+            ))
+        );
+        let mut wrong_field = new_prover_channel(b"p64-admission");
+        assert_eq!(
+            crate::binary_source::binary_root_statement::<F, F, _>(
+                &mut wrong_field,
+                &manifest,
+                None,
+                &prime,
+                &payload,
+                None,
+            ),
+            Err(AkitaError::InvalidSetup(
+                "binary root field profile mismatch".into()
+            ))
+        );
     }
 
     #[test]

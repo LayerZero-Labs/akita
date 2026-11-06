@@ -1,4 +1,5 @@
-//! Word-only proofs pin the merged projection and typed Stage 3 protocol.
+//! P128 word-only pins retain the projection and typed Stage 3 protocol.
+//! P64 proof pins live in the full-size script's shared TSV and example replay tests.
 
 use super::*;
 
@@ -81,5 +82,55 @@ pub(super) fn assert_base_bytes(proof: &[u8], mixed: bool, word_width: usize) {
     assert_eq!(
         akita_params::descriptor_bytes::digest_descriptor_bytes(proof),
         digest
+    );
+}
+
+#[test]
+fn p64_cannot_use_an_ordinary_catalog_row() {
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{
+        binary_ordinary_profile_fixture, binary_word_manifest_fixture,
+    };
+    use jolt_field::{Ext2, Prime64Offset59 as Base};
+    let profile = BinaryFieldProfile::P64;
+    let manifest = binary_word_manifest_fixture(profile, 1);
+    let claim = BinaryWordClaim::new(
+        manifest.descriptor(),
+        manifest.descriptor().polynomials()[0],
+        vec![1u128.to_le_bytes(); 3],
+        0u128.to_le_bytes(),
+    )
+    .unwrap();
+    let commitment = CommittedGroup::new_binary(
+        binary_ordinary_profile_fixture(profile),
+        akita_types::Commitment::new(akita_types::RingVec::from_coeffs(vec![
+            Base::from_u64(0);
+            manifest
+                .payload_coefficients()
+                .unwrap()
+        ])),
+        manifest,
+    )
+    .unwrap();
+    let claims =
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::<Ext2<Base>, _>::new_binary(
+            commitment, claim,
+        )
+        .unwrap()])
+        .unwrap();
+    let catalog = test_catalog();
+    let row = catalog
+        .resolve_key(&ScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(18),
+        ))
+        .unwrap();
+    assert!(!row.is_native_root());
+    let ordinary =
+        akita_params::GrindingPlan::new(vec![], profile.challenge_order().unwrap()).unwrap();
+    assert_eq!(
+        claims.root_grinding_plan(ordinary, row.schedule(), row.is_native_root()),
+        Err(AkitaError::UnsupportedSchedule(
+            "p64 root requires an explicitly selected native catalog row".into()
+        ))
     );
 }

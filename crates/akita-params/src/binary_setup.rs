@@ -60,16 +60,25 @@ impl BinaryFieldProfile {
         )
     }
 
-    /// Validate the field pair and reject unfinished roots before any protocol work.
-    pub fn admit_root(self, modulus: u128, degree: usize) -> Result<(), AkitaError> {
+    /// Check the concrete base and challenge fields, without authorizing a root.
+    pub fn check_field_pair(self, modulus: u128, degree: usize) -> Result<(), AkitaError> {
         if modulus != self.modulus() || degree != self.extension_degree() {
             return Err(AkitaError::InvalidSetup(
                 "binary root field profile mismatch".into(),
             ));
         }
-        if self == Self::P64 {
+        Ok(())
+    }
+
+    /// Require native-row admission for P64 at the public PCS boundary.
+    /// `native` must come from a row resolved through the trusted catalog.
+    /// This is the execution boundary; there is no separate production gate.
+    /// Production use additionally requires the open security-ledger obligations
+    /// in `specs/binary-source-p64-root.md`, including extraction and all SIS instances.
+    pub fn admit_root(self, native: bool) -> Result<(), AkitaError> {
+        if self == Self::P64 && !native {
             return Err(AkitaError::UnsupportedSchedule(
-                "p64/E64 binary root is not yet supported".into(),
+                "p64 root requires an explicitly selected native catalog row".into(),
             ));
         }
         Ok(())

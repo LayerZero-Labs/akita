@@ -34,7 +34,7 @@ where
     manifest.validate()?;
     manifest
         .field_profile()
-        .admit_root(akita_params::field_modulus::<F>()?, E::DEGREE)?;
+        .check_field_pair(akita_params::field_modulus::<F>()?, E::DEGREE)?;
     if binary_commitment.len() != manifest.payload_coefficients()? {
         return Err(AkitaError::InvalidInput(
             "binary root payload shape mismatch".into(),
@@ -67,8 +67,8 @@ where
             &bytes,
         )?;
     }
-    // The admitted binary root has extension degree one, so lifting base
-    // payloads preserves their canonical field-atom encoding on both sides.
+    // Both drivers embed base payloads in the selected challenge field.
+    // P128 retains its degree-one encoding; P64 binds a zero second coordinate.
     let lift = |payload: &[F]| -> Result<Vec<E>, AkitaError> {
         let mut lifted = Vec::new();
         lifted

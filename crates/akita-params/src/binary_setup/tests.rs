@@ -560,7 +560,7 @@ fn p64_block_draws_and_paired_draws_preserve_stream_positions() {
 }
 
 #[test]
-fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
+fn paired_profiles_bind_exact_challenge_orders() {
     let p64 = BinaryFieldProfile::P64;
     assert_eq!(p64.modulus(), 18_446_744_073_709_551_557);
     assert_eq!(p64.extension_degree(), 2);
@@ -572,9 +572,12 @@ fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
         p64.challenge_order().unwrap(),
         BinaryFieldProfile::P128.challenge_order().unwrap()
     );
-    assert!(
-        matches!(p64.admit_root(p64.modulus(), 2), Err(AkitaError::UnsupportedSchedule(message)) if message.contains("not yet supported"))
-    );
+    p64.check_field_pair(p64.modulus(), 2).unwrap();
+    p64.admit_root(true).unwrap();
+    assert!(matches!(
+        p64.admit_root(false),
+        Err(AkitaError::UnsupportedSchedule(_))
+    ));
     for (profile, modulus, degree) in [
         (p64, p64.modulus(), 1),
         (p64, BINARY_SETUP_P, 2),
@@ -582,22 +585,25 @@ fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
         (BinaryFieldProfile::P128, BINARY_SETUP_P, 2),
     ] {
         assert!(matches!(
-            profile.admit_root(modulus, degree),
+            profile.check_field_pair(modulus, degree),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
     BinaryFieldProfile::P128
-        .admit_root(BINARY_SETUP_P, 1)
+        .check_field_pair(BINARY_SETUP_P, 1)
         .unwrap();
+    BinaryFieldProfile::P128.admit_root(false).unwrap();
 }
 
 #[test]
 fn p64_digit_ranks_match_every_spec_row_and_width_boundary() {
     let p64 = BinaryFieldProfile::P64;
     for (b, br, d, dr) in [
-        (486, 2, 562, 2),
+        (486, 2, 117, 1),
+        (2_430, 2, 583, 2),
         (1_990_656, 3, 21_293, 2),
-        (62_208, 2, 71_928, 2),
+        (62_208, 2, 14_904, 2),
+        (311_040, 3, 74_520, 2),
         (622_080, 3, 77_760, 3),
         (254_803_968, 5, 2_725_488, 3),
     ] {

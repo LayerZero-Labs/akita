@@ -161,15 +161,19 @@ impl BinaryRootWitnessPlan {
         Ok(self)
     }
 
+    /// Insertion point for ordinary segments, preceding any coefficient quotients.
+    pub fn ordinary_first_segment(&self) -> usize {
+        self.quotient_segment()
+            .unwrap_or(self.repacking.segments().len())
+    }
+
     /// Append one admitted ordinary source's complete commitment preimage
     /// before selecting the common outgoing coefficient domain.
     pub fn with_ordinary(
         mut self,
         ordinary: &super::OrdinaryNativeRootPlan,
     ) -> Result<Self, AkitaError> {
-        let first = self
-            .quotient_segment()
-            .unwrap_or(self.repacking.segments().len());
+        let first = self.ordinary_first_segment();
         if ordinary
             .profile()
             .inner

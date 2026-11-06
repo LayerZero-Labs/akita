@@ -291,3 +291,31 @@ commitment, direct witness, or transcript input must be rejected with
 
 Maintainer mirror: [`docs/verifier-contract.md`](../../../docs/verifier-contract.md).
 Historical audit evidence: [`docs/verifier-panic-audit.md`](../../../docs/verifier-panic-audit.md).
+
+## Research p64 root boundary
+
+P64 binary openings require a row explicitly admitted through the trusted native
+catalog constructor. An ordinary artifact row or a missing selected row does
+not authorize P64. Native-row selection is the execution admission boundary;
+there is no separate runtime production gate. Production use additionally requires
+closing the open extraction, query-budget, setup/hash-model and induced SIS
+obligations described in the security chapter. The prover and verifier enforce
+catalog admission before binding the instance or consuming root messages.
+Internal field validation separately checks the exact base modulus and quadratic
+challenge degree.
+
+Manifest ranks and payload lengths, strict integer lifts, prime-coordinate
+canonicality, range checks, the common relation, the typed setup identity and
+the entire ordinary suffix remain enforced. The verifier evaluates A through
+its adjoint and authenticated setup product; it does not materialize A online.
+The complete-schedule example replay tests retain `BinaryAReadGuard::forbid`
+and caller-transcript continuation checks. On Linux, all six release example
+tests passed in each protocol mode. Attribution of each committed K/prime rejection to the final relation
+comparison still needs a disposable-checkout bypass control. Final-head hosted
+CI and production-security obligations remain open.
+
+The shared `OrdinaryNativeRootPlan::new` admission path requires ordinary outer
+ring dimension 64, base-eight image digits and matching inner/outer fields.
+Planner pricing and verifier root construction therefore reject an otherwise
+valid outer-128 ordinary profile with `InvalidSetup` before executing the root.
+The separately selected `new_signed` arithmetic contract is unchanged.

@@ -1,29 +1,59 @@
-use super::{claims, config::FullSize};
-use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
+use super::{claims, config::MeasurementConfig};
+use akita_config::{policy_of, TrustedScheduleCatalog};
 use akita_error::{checked, AkitaError};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, PolynomialGroupLayout, ScheduleLookupKey,
     SetupContributionMode,
 };
-use akita_schedules::{RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog};
+use akita_schedules::{
+    PlannerPolicy, RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog,
+};
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimeGroupClaim,
     PrimePlaneClaim, PrimePlaneManifest,
 };
 
-pub(super) fn plan(
+/// Restrict ordinary producers to the mixed root's current preimage geometry.
+pub(super) fn ordinary_policy(mut policy: PlannerPolicy) -> PlannerPolicy {
+    // Measurement presets supply a validated, sorted dimension domain.
+    policy.ring_dimension_schedule =
+        akita_planner::ordinary_source::mixed_root_producer_domain(policy.ring_dimension_schedule);
+    // Guard against future preset changes: root search uses only this minimum.
+    // Retain the producer suffix's range.
+    policy.opening_basis_range.0 = 3;
+    policy
+}
+
+pub(super) fn plan<C: MeasurementConfig>(
     log: usize,
     shape: &str,
     carrier: &akita_params::GroupCommitPhaseParams,
     ordinary: Option<akita_params::GroupCommitPhaseParams>,
     dimension: usize,
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
-    let descriptor = claims::descriptor(log)?;
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, carrier)?;
-    let word = true;
+    if let Some(profile) = ordinary {
+        let inner_modulus = profile.inner.matrix.sis_modulus_profile();
+        let outer_modulus = profile.outer.matrix.sis_modulus_profile();
+        if !inner_modulus.matches_modulus(C::PROFILE.modulus())
+            || !outer_modulus.matches_modulus(C::PROFILE.modulus())
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "mixed root ordinary profile requires {:?} SIS moduli; got inner {inner_modulus:?} and outer {outer_modulus:?}",
+                C::PROFILE
+            )));
+        }
+    }
+    let descriptor = claims::descriptor::<C>(log)?;
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        carrier,
+        C::PROFILE,
+    )?;
+    let word = shape != "prime-claim";
     let planes = usize::from(shape != "binary-claim");
     let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
-    let prime = PrimePlaneManifest::new(
+    let prime = PrimePlaneManifest::with_field_profile(
         &descriptor,
         (planes > 0).then(|| PrimeGroupClaim {
             point: vec![2; arity],
@@ -32,17 +62,29 @@ pub(super) fn plan(
                 value: 0,
             }],
         }),
+        C::PROFILE,
     )?;
     let price = akita_planner::prime_planes::price_binary_root_planes(
         &manifest, word, &prime, dimension, ordinary,
     )?;
-    let mut canonical = BinaryRootWitnessPlan::new(&descriptor, manifest.a_rank(), dimension)?
-        .with_prime_planes(word, planes)?;
+    let mut canonical = BinaryRootWitnessPlan::for_profile(
+        &descriptor,
+        manifest.a_rank(),
+        dimension,
+        C::PROFILE,
+        word,
+        planes,
+    )?;
     if let Some(ordinary) = ordinary {
-        let ordinary =
-            OrdinaryNativeRootPlan::new(ordinary, canonical.repacking().segments().len())?;
+        let ordinary = OrdinaryNativeRootPlan::new(ordinary, canonical.ordinary_first_segment())?;
         canonical = canonical.with_ordinary(&ordinary)?;
     }
+    println!(
+        "root_profile field={:?} b_rank={} quotient={:?}",
+        C::PROFILE,
+        manifest.b_rows(),
+        canonical.projection_bounds().quotient(),
+    );
     let mut live = 0usize;
     let mut physical = 0usize;
     for (index, segment) in canonical.repacking().segments().iter().enumerate() {
@@ -66,7 +108,7 @@ pub(super) fn plan(
     if price.outgoing_domain_len != canonical.repacking().domain_len()
         || price.outgoing_physical_cells != physical
     {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AkitaError::Internal(
             "planner and canonical witness disagree".into(),
         ));
     }
@@ -74,12 +116,12 @@ pub(super) fn plan(
     Ok(price)
 }
 
-pub(super) fn build(
+pub(super) fn build<C: MeasurementConfig>(
     log: usize,
     shape: &str,
-) -> Result<(TrustedScheduleCatalog<FullSize>, ScheduleLookupKey), Box<dyn std::error::Error>> {
+) -> Result<(TrustedScheduleCatalog<C>, ScheduleLookupKey), Box<dyn std::error::Error>> {
     let chunking = ChunkedWitnessCfg::default_non_chunked();
-    let policy = policy_of::<FullSize>(chunking);
+    let policy = policy_of::<C>(chunking);
     let mut direct_policy = policy;
     direct_policy.recursive_setup_planning = false;
     direct_policy.selection_policy = SelectionPolicyId::for_policy(false);
@@ -90,10 +132,10 @@ pub(super) fn build(
     let ordinary_row = if shape == "binary-and-prime-claims-plus-ordinary" {
         Some(akita_planner::find_schedule(
             &ordinary_key,
-            FullSize::committed_source_contract()?,
+            C::committed_source_contract()?,
             &[],
-            &direct_policy,
-            FullSize::ring_challenge_config,
+            &ordinary_policy(direct_policy),
+            C::ring_challenge_config,
         )?)
     } else {
         None
@@ -107,10 +149,10 @@ pub(super) fn build(
         let producer = if ordinary_profile.is_some() {
             Some(akita_planner::find_schedule(
                 &singleton,
-                FullSize::committed_source_contract()?,
+                C::committed_source_contract()?,
                 &[],
                 &direct_policy,
-                FullSize::ring_challenge_config,
+                C::ring_challenge_config,
             )?)
         } else {
             None
@@ -127,13 +169,13 @@ pub(super) fn build(
         } else {
             singleton
         };
-        let contract = FullSize::committed_source_contract()?;
+        let contract = C::committed_source_contract()?;
         let planned = match akita_planner::find_schedule_with_root_setup_mode(
             &key,
             contract,
             &vec![contract; key.precommitteds.len()],
             &policy,
-            FullSize::ring_challenge_config,
+            C::ring_challenge_config,
             SetupContributionMode::Recursive,
             ordinary_row.as_ref().map(|r| &r.schedule.root.params),
         ) {
@@ -154,7 +196,7 @@ pub(super) fn build(
         };
         let dimension = first.params.role_dims().d_a();
         let carrier = carrier.unwrap_or(schedule.root.params.own_group().profile);
-        let price = plan(log, shape, &carrier, ordinary_profile, dimension)?;
+        let price = plan::<C>(log, shape, &carrier, ordinary_profile, dimension)?;
         let scheduled_domain = akita_params::witness_commitment_domain_len(
             schedule.root.output_witness_len,
             dimension,
@@ -203,18 +245,21 @@ pub(super) fn build(
             planned.schedule,
         ));
         let catalog = ValidatedScheduleCatalog::try_new(
-            FullSize::schedule_family_name(),
+            C::schedule_family_name(),
             rows,
             &policy,
-            FullSize::ring_challenge_config,
+            C::ring_challenge_config,
         )?;
         return Ok((TrustedScheduleCatalog::new(catalog, chunking)?, key));
     }
     Err("no runtime schedule covers the canonical binary witness and typed A prefix".into())
 }
 
-pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut policy = policy_of::<FullSize>(ChunkedWitnessCfg::default_non_chunked());
+pub(super) fn plan_only<C: MeasurementConfig>(
+    log: usize,
+    shape: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut policy = policy_of::<C>(ChunkedWitnessCfg::default_non_chunked());
     policy.recursive_setup_planning = false;
     policy.selection_policy = SelectionPolicyId::for_policy(false);
     policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
@@ -231,7 +276,7 @@ pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::erro
         &std::fs::read(path)?,
         "labinius_fp128_digits_b4",
         &policy,
-        FullSize::ring_challenge_config,
+        C::ring_challenge_config,
     )?;
     let carrier = direct
         .resolve_key(&ScheduleLookupKey::single(
@@ -243,16 +288,16 @@ pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::erro
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
         let planned = akita_planner::find_schedule(
             &key,
-            FullSize::committed_source_contract()?,
+            C::committed_source_contract()?,
             &[],
-            &policy,
-            FullSize::ring_challenge_config,
+            &ordinary_policy(policy),
+            C::ring_challenge_config,
         )?;
         Some(planned.schedule.root.params.own_group().profile)
     } else {
         None
     };
-    let price = plan(log, shape, &carrier, ordinary, 64)?;
+    let price = plan::<C>(log, shape, &carrier, ordinary, 64)?;
     println!(
         "typed_a_prefix natural_cells={} required_domain={}",
         price.typed_prefix.natural_len, price.typed_prefix.domain_len

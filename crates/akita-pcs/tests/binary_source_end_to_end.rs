@@ -52,6 +52,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 type F = Prime128Offset275;
+type E = F;
 
 /// Existing ordinary suffix catalog, explicitly selected only by this test.
 /// The small binary source's rank-three A and rank-two B have no security claim.
@@ -504,7 +505,10 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
                 .and_then(|eof| eof)
                 .unwrap_or_else(|error| panic!("{fault:?} was rejected: {error}"));
         } else {
-            assert!(outcome.is_err(), "{fault:?} was accepted");
+            assert!(
+                matches!(outcome, Err(AkitaError::InvalidProof)),
+                "{fault:?} must fail proof verification with InvalidProof: {outcome:?}"
+            );
         }
     };
     if let Some(fault) = authentication_fault {

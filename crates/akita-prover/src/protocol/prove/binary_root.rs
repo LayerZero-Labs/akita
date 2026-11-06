@@ -64,7 +64,7 @@ where
     else {
         return Err(AkitaError::InvalidProof);
     };
-    manifest.field_profile().admit_root(
+    manifest.field_profile().check_field_pair(
         akita_params::field_modulus::<Cfg::Field>()?,
         Cfg::ExtField::DEGREE,
     )?;

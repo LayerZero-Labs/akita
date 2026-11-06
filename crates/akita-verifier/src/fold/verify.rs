@@ -192,7 +192,7 @@ where
                     schedule,
                     basis,
                     batch_level,
-                    |plan| claims.root_grinding_plan(plan, schedule),
+                    |plan| claims.root_grinding_plan(plan, schedule, resolved.is_native_root()),
                 )?;
             akita_transcript::bind_instance(state, &descriptor_bytes)?;
             let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);

@@ -276,3 +276,27 @@ Implementation: `crates/akita-prover/src/protocol/prove/registry.rs`,
 `crates/akita-cpu-backend/src/opaque/transfer.rs`. Design record:
 `specs/dynamic-backend-bridges.md`. Regression coverage:
 `crates/akita-pcs/tests/dynamic_backends.rs`.
+
+## Research binary root over p64
+
+An explicitly selected binary commitment can open one word claim, one base-prime
+point, or both, optionally alongside one ordinary Q64Offset59 group. Its base
+field is p=2^64-59 and its testing field is the quadratic extension with u²=2.
+The public PCS resolves an explicitly admitted native catalog row before running
+this root. Native-root catalog selection is the execution admission boundary;
+ordinary artifact loading does not admit it. There is no separate production
+gate. Production use additionally requires closing the extraction, query-budget,
+setup/hash-model and induced SIS obligations described in the security chapter.
+Enabling the extension alone does not select it.
+
+The root commits balanced base-eight digits of each integer quotient K=R/q
+with the accepted response. The common range proof bounds those digits; one
+independent extension weight per residual coefficient authenticates R-qK=0.
+One typed A/B/D setup product and one ordinary suffix finish the opening in the
+caller's transcript. Prime coordinates use 22 digits. Multiple binary groups
+and extension-valued prime claims are outside this driver.
+
+The enforcement path is `crates/akita-types/src/opening_claims/root_schedule.rs`,
+`crates/akita-types/src/binary_source/root_public.rs`, and the public prover and
+verifier root dispatch. `crates/akita-schedules/src/native_root.rs` audits exact
+native transition geometry and retains the ordinary suffix checks.

@@ -10,6 +10,13 @@
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
+The selected P64 research root follows the coefficient-quotient order and
+[complete conditional ledger](binary-source-p64-root.md#complete-research-schedule-ledger)
+of the active p64 specification. Its E64 batch, 22-digit prime coordinates and
+absence of J/y messages supersede the P128-specific rules below only when P64
+is selected. The indexed extraction and common-witness premises remain open
+for production; native catalog execution is not production admission.
+
 ## Scope and selection
 
 The 64-bit migration is specified in

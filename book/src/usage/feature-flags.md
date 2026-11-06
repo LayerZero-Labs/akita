@@ -175,3 +175,41 @@ Every policy checks Stage 3 completely; only direct setup evaluations are deferr
 Attach auxiliary archived-proof advice with `SetupClaimAccumulator::with_advice`.
 See [external setup accumulation](../how/recursion.md#external-setup-accumulation)
 for inheritance and final-discharge requirements.
+
+The research `binary-source-measurements` example accepts `--field p64` to
+select the p64/E64 native root; omitting it preserves P128. Shapes are
+`binary-claim`, `prime-claim`, `binary-and-prime-claims`, and
+`binary-and-prime-claims-plus-ordinary`. P64 fixtures use `--log-carriers 22`
+and 23, both with C=256; complete replay tests use log 22, the smallest size
+measured (logs 4–21 have not been tried). The selected planner/preset refused log 3 under the strict
+`next_witness_len < request.current_witness_len` rule in
+`crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs`.
+That comparison includes the full-field typed prefix's contribution to the
+complete successor witness. Word-only log 3 has 77,824 natural prefix field
+cells, a 131,072-cell padded prefix domain and 82,176 outgoing physical digit
+cells; raw prefix length is not the comparison. This is a property of the
+selected planner/preset, not a theorem excluding all small P64 protocols.
+Use separate `--phase plan`,
+`--phase prove`, and `--phase verify` invocations with a `--fixture` directory.
+Planning writes a research native catalog; proving writes commitments, induced
+verifier setup and proof. Verification reconstructs and validates that catalog.
+Catalogs must come from trusted local preprocessing. None is a production
+admission certificate.
+
+The measurement driver reuses `<fixture>/native-catalog.json` before consulting
+`BINARY_SOURCE_CATALOG_CACHE`, for both fields. A reused directory therefore skips
+planning when its catalog passes identity and row validation. Use a fresh directory
+and unset the cache for fresh planning. Cache names now include the field family;
+legacy P128 cache filenames are not reused. A valid alternate cached row can change
+setup and proof bytes, so byte comparisons must use identical selected rows.
+Research replay catalogs at logs 22/23 live under
+`crates/akita-pcs/tests/fixtures/binary-source-p64{,-dev}/`, outside the supported
+schedule artifacts. Their shared SHA3-256 proof pins live alongside P128 in
+`scripts/binary-source-full-size-digests.tsv`. Required CI replays log 22 in both
+protocol modes, admits all 16 catalogs without proving and checks the shared pin
+roster and installed catalog hashes. Honest log-23 replay against existing pins
+is a separate Linux gate whenever protocol bytes change. The existing
+`scripts/binary-source-full-size.sh --field p64 --all` runs fresh generation and
+pin checks; its `--reference-dir` option compares two independent executions.
+See the [fixture README](../../../crates/akita-pcs/tests/fixtures/README.md) for the
+single regeneration procedure and evidence requirements.

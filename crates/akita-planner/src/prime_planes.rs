@@ -1,6 +1,7 @@
 //! Admission inputs for explicitly selected binary prime evaluation planes.
 
 use akita_error::{checked, AkitaError};
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::sis::ajtai_key::{
     min_secure_rank, sis_table_key_for_linf_bound, SisMatrixRole, SisModulusProfileId,
     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
@@ -50,14 +51,21 @@ pub fn price_binary_root_planes(
 ) -> Result<BinaryPrimePlanePrice, AkitaError> {
     manifest.validate()?;
     prime.validate(manifest.descriptor())?;
-    let mut plan = BinaryRootWitnessPlan::new(
+    if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
+        return Err(AkitaError::InvalidInput(
+            "prime plane profile mismatch".into(),
+        ));
+    }
+    let mut plan = BinaryRootWitnessPlan::for_profile(
         manifest.descriptor(),
         manifest.a_rank(),
         destination_ring_dimension,
-    )?
-    .with_prime_planes(word, prime.planes().len())?;
+        manifest.field_profile(),
+        word,
+        prime.planes().len(),
+    )?;
     if let Some(profile) = ordinary {
-        let ordinary = OrdinaryNativeRootPlan::new(profile, plan.repacking().segments().len())?;
+        let ordinary = OrdinaryNativeRootPlan::new(profile, plan.ordinary_first_segment())?;
         plan = plan.with_ordinary(&ordinary)?;
     }
     let repacking = plan.repacking();
@@ -85,7 +93,10 @@ pub fn price_binary_root_planes(
     let d_table_min_rank = sis_table_key_for_linf_bound(
         DEFAULT_SIS_SECURITY_POLICY,
         SisTableDigest::CURRENT,
-        SisModulusProfileId::Q128Offset275,
+        match manifest.field_profile() {
+            BinaryFieldProfile::P128 => SisModulusProfileId::Q128Offset275,
+            BinaryFieldProfile::P64 => SisModulusProfileId::Q64Offset59,
+        },
         SisMatrixRole::Open,
         u32::try_from(manifest.b_ring_dimension()).map_err(|_| AkitaError::InvalidProof)?,
         7,
@@ -104,7 +115,7 @@ pub fn price_binary_root_planes(
         planes: prime.planes().len(),
         d_live_digits,
         d_columns,
-        d_rank: manifest.b_rows(),
+        d_rank: manifest.d_label(word, prime.planes().len())?.rank as usize,
         d_table_min_rank,
         outgoing_physical_cells,
         outgoing_domain_len: repacking.domain_len(),
@@ -136,9 +147,13 @@ mod tests {
         carrier_bits: usize,
         columns: usize,
         owners: usize,
+        field: BinaryFieldProfile,
     ) -> BinaryCommittedGroupManifest {
         let params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128Offset275,
+            match field {
+                BinaryFieldProfile::P128 => SisModulusProfileId::Q128Offset275,
+                BinaryFieldProfile::P64 => SisModulusProfileId::Q64Offset59,
+            },
             64,
             3,
             3,
@@ -155,14 +170,14 @@ mod tests {
         let count = 1usize << carrier_bits;
         let index = BinaryIndexMap::new(128, count, count, columns).unwrap();
         let profiles =
-            BinaryCommittedGroupManifest::commitment_profiles(&index, owners, 7).unwrap();
+            BinaryCommittedGroupManifest::profiles_for_field(&index, owners, 7, field).unwrap();
         let descriptor = BinarySourceDescriptor::new(
             index,
             (0..owners).map(|x| [x as u8; 32]).collect(),
             profiles,
         )
         .unwrap();
-        BinaryCommittedGroupManifest::new(descriptor, 7, &profile).unwrap()
+        BinaryCommittedGroupManifest::with_field_profile(descriptor, 7, &profile, field).unwrap()
     }
 
     fn prime(manifest: &BinaryCommittedGroupManifest, planes: usize) -> PrimePlaneManifest {
@@ -172,7 +187,7 @@ mod tests {
             .padded_carriers()
             .trailing_zeros() as usize
             + 8;
-        PrimePlaneManifest::new(
+        PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
             (planes > 0).then(|| PrimeGroupClaim {
                 point: vec![2; arity],
@@ -183,6 +198,7 @@ mod tests {
                     })
                     .collect(),
             }),
+            manifest.field_profile(),
         )
         .unwrap()
     }
@@ -192,7 +208,7 @@ mod tests {
         for (planes, expected_cells, expected_d) in
             [(1, 79616, 223), (2, 159232, 446), (5, 398080, 1114)]
         {
-            let manifest = manifest(3, 2, planes);
+            let manifest = manifest(3, 2, planes, BinaryFieldProfile::P128);
             let price =
                 price_binary_root_planes(&manifest, true, &prime(&manifest, planes), 64, None)
                     .unwrap();
@@ -209,7 +225,7 @@ mod tests {
         for bits in [22, 23] {
             for word in [false, true] {
                 for planes in [1, 2, 5] {
-                    let manifest = manifest(bits, 256, planes);
+                    let manifest = manifest(bits, 256, planes, BinaryFieldProfile::P128);
                     let price = price_binary_root_planes(
                         &manifest,
                         word,
@@ -246,11 +262,34 @@ mod tests {
 
     #[test]
     fn prime_planes_are_bounded_by_the_polynomial_manifest() {
-        let manifest = manifest(3, 2, 5);
+        let manifest = manifest(3, 2, 5, BinaryFieldProfile::P128);
         let price =
             price_binary_root_planes(&manifest, false, &prime(&manifest, 5), 64, None).unwrap();
         assert_eq!(price.planes, 5);
         assert_eq!(price.segment_physical_cells.last(), Some(&110080));
         assert_eq!(price.d_columns, 1089);
+    }
+
+    #[test]
+    fn p64_prices_role_specific_ranks_and_quotient_cells() {
+        for (log, columns, rank) in [(3, 2, 1), (22, 256, 2)] {
+            let manifest = manifest(log, columns, 1, BinaryFieldProfile::P64);
+            for (word, planes) in [(true, 0), (false, 1), (true, 1)] {
+                let price =
+                    price_binary_root_planes(&manifest, word, &prime(&manifest, planes), 64, None)
+                        .unwrap();
+                assert_eq!(price.d_rank, rank);
+                assert_eq!(price.d_table_min_rank, Some(rank));
+                assert_eq!(
+                    price.d_columns,
+                    (columns * 162 * (usize::from(word) + 22 * planes)).div_ceil(64)
+                );
+                if log == 3 && planes == 0 {
+                    assert_eq!(price.outgoing_physical_cells, 82_176);
+                    assert_eq!(price.outgoing_domain_len, 131_072);
+                    assert_eq!(manifest.b_rows(), 2);
+                }
+            }
+        }
     }
 }
