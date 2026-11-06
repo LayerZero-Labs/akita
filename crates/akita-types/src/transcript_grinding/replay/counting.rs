@@ -62,6 +62,8 @@ impl<'a, C: ProofChannel> CountingGrinding<'a, C> {
 impl<C: ProofChannel> GrindingReplay for CountingGrinding<'_, C> {
     type State = C;
 
+    const COUNTS_ONLY: bool = true;
+
     fn state_mut(&mut self) -> &mut C {
         self.state
     }
