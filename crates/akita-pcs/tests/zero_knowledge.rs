@@ -991,16 +991,15 @@ fn one_shot_fold_response_replays_without_a_nonce() {
     });
 }
 
-/// Groups at masked levels. The production search never offloads into
-/// the cut level (`specs/whiteout-akita.md` §5.3), so these planning tests
-/// take the row that offloads level 0's setup to a level-1 setup prefix
+/// Groups at masked levels. These planning tests take the row that
+/// offloads level 0's setup to a level-1 setup prefix
 /// (`find_zk_schedule_offloading_the_root_for_test`), as the proving tests do
-/// at 31 variables. The root here also folds one precommitted dense group,
+/// at 31 variables (`specs/whiteout-akita.md` §5.3). The root here also folds one precommitted dense group,
 /// the shape of Jolt's untrusted advice.
 type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
 const MULTI_NV: usize = 37;
 
-/// The planner's row, offloading at the cut, for one `MULTI_NV`-variable
+/// The planner's row, offloading the root, for one `MULTI_NV`-variable
 /// one-hot polynomial beside one precommitted dense polynomial committed
 /// under [`zk_row`]'s hiding root profile.
 fn multi_group_zk_row() -> (CommittedGroupBatchProfile, FoldSchedule) {
@@ -1093,8 +1092,7 @@ fn masked_levels_admit_a_hiding_precommitted_group_and_a_public_setup_prefix() {
 
 /// Jolt's one-hot root: the production zero-knowledge search keeps the
 /// edge into the cut level direct at every size, the 36:1 headline and
-/// 37 variables included, where the setup alone would favour offloading
-/// the root's setup at the cut (`specs/whiteout-akita.md` §5.3).
+/// 37 variables included (`specs/whiteout-akita.md` §5.3).
 #[test]
 fn the_priced_search_never_offloads_into_the_cut_level() {
     on_large_stack(|| {
@@ -1120,9 +1118,9 @@ fn the_priced_search_never_offloads_into_the_cut_level() {
     });
 }
 
-/// The root's two witness groups each get a quarter of the 2^-136 budget
-/// (two masked levels, two groups); level 1's setup prefix is public, so its
-/// own group keeps half.
+/// The root's two witness groups each get a sixth of the 2^-136 budget
+/// (three masked levels, two groups); level 1's setup prefix is public, so
+/// its own group keeps its level's third.
 #[test]
 fn witness_groups_split_the_one_shot_budget_per_level() {
     on_large_stack(|| {
@@ -1135,7 +1133,7 @@ fn witness_groups_split_the_one_shot_budget_per_level() {
             security_bits: akita_params::zk::ZK_FOLD_SECURITY_BITS,
             masked_folds,
         };
-        assert_eq!(target(&schedule.root.params), one_shot(4));
-        assert_eq!(target(&schedule.recursive_folds[0].params), one_shot(2));
+        assert_eq!(target(&schedule.root.params), one_shot(6));
+        assert_eq!(target(&schedule.recursive_folds[0].params), one_shot(3));
     });
 }

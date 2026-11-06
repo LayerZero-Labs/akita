@@ -493,15 +493,15 @@ pub(crate) fn own_pads(claims: Vec<F>) -> Vec<AffineRow<F>> {
 }
 
 /// The recursive one-hot root of the multi-group instance. The production
-/// zero-knowledge search keeps the cut level direct
-/// (`specs/whiteout-akita.md` §5.3); the instance plans the admitted row
-/// that offloads at the cut (a masked Stage 3).
+/// zero-knowledge search offloads the root's setup only from 36 variables;
+/// the instance plans the admitted row that offloads it at 31 (masked Stage 3,
+/// `specs/whiteout-akita.md` §5.3).
 pub(crate) type RecCfg = ZkCommitmentConfig<akita_config::RecursiveCommitmentConfig<fp128::OneHot>>;
 pub(crate) const MULTI_NV: usize = 31;
 
-/// The admitted zero-knowledge row for `key` whose cut level consumes the
+/// The admitted zero-knowledge row for `key` whose level 1 consumes the
 /// root's setup as a setup prefix.
-pub(crate) fn cut_offloading_row(
+pub(crate) fn root_offloading_row(
     key: &ScheduleLookupKey,
 ) -> (CommittedGroupBatchProfile, akita_params::FoldSchedule) {
     let planned = akita_planner::find_zk_schedule_offloading_the_root_for_test(
@@ -528,7 +528,7 @@ impl Instance<RecCfg> {
     /// A one-hot `MULTI_NV`-variable root beside one precommitted dense
     /// polynomial committed under [`dense_zk_row`]'s hiding profile, as Jolt
     /// commits untrusted advice. The planner's row offloads level 0's setup
-    /// to a setup prefix at the cut level.
+    /// to a setup prefix at level 1.
     pub(crate) fn multi_group() -> Self {
         Self::multi_group_seeded(7)
     }
@@ -544,17 +544,14 @@ impl Instance<RecCfg> {
         };
         let scheme = AkitaCommitmentScheme::<RecCfg>::new(
             TrustedScheduleCatalog::try_from_rows(
-                [cut_offloading_row(&key)],
+                [root_offloading_row(&key)],
                 ChunkedWitnessCfg::default_non_chunked(),
             )
             .unwrap(),
         );
         let schedule = scheme.schedules().resolve_key(&key).unwrap().schedule();
         assert_eq!(schedule.root.params.precommitted_groups().len(), 1);
-        assert!(schedule.recursive_folds[ZK_CUT_LEVEL as usize - 1]
-            .params
-            .setup_prefix()
-            .is_some());
+        assert!(schedule.recursive_folds[0].params.setup_prefix().is_some());
         let setup = scheme.setup_prover(MULTI_NV, 2).unwrap();
         let backend = CpuBackend::new(setup.expanded.clone())
             .unwrap()

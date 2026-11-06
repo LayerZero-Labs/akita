@@ -221,11 +221,12 @@ const FP128_ONEHOT_RECURSIVE_ZK_KEYS: &[PolynomialGroupLayout] = onehot_keys![(3
 
 /// Response schedules of Whiteout's response proof (`specs/whiteout-akita.md`
 /// §6.1), one per `e` length `2^ν`: `ν = 23` for the single-group
-/// end-to-end statement and `ν = 27` for the multi-group one and the
-/// headline.
+/// end-to-end statement, `ν = 25` for the multi-group one and `ν = 26` for
+/// the headline.
 const FP128_RESPONSE_DIGITS_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(23),
-    PolynomialGroupLayout::singleton(27),
+    PolynomialGroupLayout::singleton(25),
+    PolynomialGroupLayout::singleton(26),
 ];
 
 const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
