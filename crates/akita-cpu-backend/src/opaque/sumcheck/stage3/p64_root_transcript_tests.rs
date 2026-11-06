@@ -373,7 +373,8 @@ pub(crate) fn word_root_round_trip(
     let (proof, stage1_offset, claim_offset) = prove(witness).unwrap();
     verify(&proof, witness).unwrap();
     // A changed K digit still satisfies Stage 1's range check, but cannot
-    // satisfy the compiled integer relation checked by the Stage 2 constructor.
+    // satisfy the compiled integer relation. Debug builds check it at
+    // construction; release builds check the folded terminal oracle.
     let mut changed = witness.to_vec();
     let k = public.plan().quotient_segment().unwrap();
     let address = public
@@ -386,9 +387,14 @@ pub(crate) fn word_root_round_trip(
     } else {
         changed[address] + 1
     };
-    let changed_proof = prove(&changed);
-    assert!(matches!(changed_proof, Err(AkitaError::Internal(message))
+    let error = prove(&changed).expect_err("changed K must not produce a root proof");
+    if cfg!(debug_assertions) {
+        assert!(matches!(error, AkitaError::Internal(message)
             if message == "materialized relation weights do not match the combined relation claim"));
+    } else {
+        assert!(matches!(error, AkitaError::InvalidInput(message)
+            if message == "relation session final claim disagrees with its folded oracle"));
+    }
     assert!(matches!(
         verify(&proof, &changed),
         Err(AkitaError::InvalidProof)
