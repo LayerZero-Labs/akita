@@ -650,7 +650,9 @@ impl BinomialTable {
             .ok_or_else(|| AkitaError::Internal("sparse binomial table is too small".into()))
     }
 
-    /// Authenticate a strictly increasing subset by its exact colex rank.
+    /// Strictly increasing in-range positions have the unique colex rank
+    /// sum_i C(position_i, i+1). Checking that sum authenticates the hint
+    /// without searching Pascal columns to invert the rank.
     fn check_positions(
         &self,
         rank: u128,
@@ -659,27 +661,48 @@ impl BinomialTable {
         first: usize,
         out: &mut [u32],
     ) -> Result<(), AkitaError> {
-        if n > self.max_n || out.len() > self.max_k || out.len() > n {
+        let count = out.len();
+        if n > self.max_n || count > self.max_k || count > n {
             return Err(AkitaError::InvalidProof);
         }
+        let rows = self.max_n + 1;
+        // Construction checked rows*(max_k+1). A strict increasing k-subset
+        // has colex rank < C(n,k); reject saturation before summing unchecked.
+        let limit = *self
+            .entries
+            .get(count * rows + n)
+            .ok_or(AkitaError::InvalidProof)?;
+        if limit == u128::MAX || rank >= limit {
+            return Err(AkitaError::InvalidProof);
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        let mut word_index = first / 4;
+        let mut packed =
+            *words.get(word_index).ok_or(AkitaError::InvalidProof)? >> (16 * (first % 4));
+        word_index += 1;
+        let mut available = 4 - first % 4;
+        let mut maximum = n - count;
         let mut previous = None;
         let mut sum = 0u128;
-        let rows = self.max_n + 1;
-        for (i, slot) in out.iter_mut().enumerate() {
-            let at = first.checked_add(i).ok_or(AkitaError::InvalidProof)?;
-            let word = *words.get(at / 4).ok_or(AkitaError::InvalidProof)?;
-            let position = ((word >> (16 * (at % 4))) & 65535) as usize;
-            if position >= n || previous.is_some_and(|p| position <= p) {
+        for (column, slot) in self.entries.chunks_exact(rows).skip(1).zip(out) {
+            if available == 0 {
+                packed = *words.get(word_index).ok_or(AkitaError::InvalidProof)?;
+                word_index += 1;
+                available = 4;
+            }
+            let position = (packed & 65535) as usize;
+            packed >>= 16;
+            available -= 1;
+            if position > maximum || previous.is_some_and(|p| position <= p) {
                 return Err(AkitaError::InvalidProof);
             }
-            let offset = (i + 1)
-                .checked_mul(rows)
-                .and_then(|o| o.checked_add(position))
-                .ok_or(AkitaError::InvalidProof)?;
-            let value = *self.entries.get(offset).ok_or(AkitaError::InvalidProof)?;
-            sum = sum.checked_add(value).ok_or(AkitaError::InvalidProof)?;
+            let value = *column.get(position).ok_or(AkitaError::InvalidProof)?;
+            sum += value;
             *slot = position as u32;
             previous = Some(position);
+            maximum += 1;
         }
         if sum != rank {
             return Err(AkitaError::InvalidProof);
