@@ -194,7 +194,6 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
         1,
         vec![
             RelationGroupRows {
-                randomness_columns: 0,
                 group_index: 0,
                 role_dims: final_dims,
                 opening_geometry: RelationRowGeometry::native(final_dims.d_a()).unwrap(),
@@ -202,9 +201,9 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
             RelationGroupRows {
-                randomness_columns: 0,
                 group_index: 1,
                 role_dims: precommitted_dims,
                 opening_geometry: RelationRowGeometry::native(precommitted_dims.d_a()).unwrap(),
@@ -212,6 +211,7 @@ fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
                 n_a: 2,
                 physical_b_rows: 2,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
         ],
     );
@@ -268,7 +268,6 @@ fn rows_allow_group_a_larger_than_final_group_a() {
         1,
         vec![
             RelationGroupRows {
-                randomness_columns: 0,
                 group_index: 0,
                 role_dims: CommitmentRingDims {
                     inner: 64,
@@ -280,9 +279,9 @@ fn rows_allow_group_a_larger_than_final_group_a() {
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
             RelationGroupRows {
-                randomness_columns: 0,
                 group_index: 1,
                 role_dims: CommitmentRingDims {
                     inner: 128,
@@ -294,6 +293,7 @@ fn rows_allow_group_a_larger_than_final_group_a() {
                 n_a: 1,
                 physical_b_rows: 1,
                 outer_slice_count: CommitmentSliceCount::ONE,
+                randomness_columns: 0,
             },
         ],
     );

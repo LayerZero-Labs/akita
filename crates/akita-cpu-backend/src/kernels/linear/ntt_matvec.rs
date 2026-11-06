@@ -119,15 +119,7 @@ pub fn mat_vec_mul_ntt_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
     blocks: &[&[[i8; D]]],
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    validate_i8_log_basis(log_basis)?;
-    for block in blocks {
-        validate_digit_rows_for_log_basis(
-            block,
-            num_cols.min(block.len()),
-            log_basis,
-            "for predecomposed digit mat-vec",
-        )?;
-    }
+    validate_digit_blocks(num_cols, blocks, log_basis)?;
     dispatch_slot!(
         F,
         slot,
@@ -137,4 +129,43 @@ pub fn mat_vec_mul_ntt_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
         blocks,
         log_basis
     )
+}
+
+/// [`mat_vec_mul_ntt_digits_i8`] in time and with memory addresses
+/// independent of the digits ([`I8CommitPolicy::ConstantTime`]), with the
+/// same output.
+pub(crate) fn mat_vec_mul_ntt_digits_i8_ct<F: Field + CanonicalEncoding, const D: usize>(
+    slot: &PreparedNttCache<D>,
+    num_rows: usize,
+    num_cols: usize,
+    blocks: &[&[[i8; D]]],
+    log_basis: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    validate_digit_blocks(num_cols, blocks, log_basis)?;
+    dispatch_slot!(
+        F,
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_digits_i8_ct_with_params,
+        blocks,
+        log_basis
+    )
+}
+
+fn validate_digit_blocks<const D: usize>(
+    num_cols: usize,
+    blocks: &[&[[i8; D]]],
+    log_basis: u32,
+) -> Result<(), AkitaError> {
+    validate_i8_log_basis(log_basis)?;
+    for block in blocks {
+        validate_digit_rows_for_log_basis(
+            block,
+            num_cols.min(block.len()),
+            log_basis,
+            "for predecomposed digit mat-vec",
+        )?;
+    }
+    Ok(())
 }

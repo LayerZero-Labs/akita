@@ -2,7 +2,7 @@
 
 use super::compression_witness::{CompressionSourceId, CompressionWitnessMaterialization};
 use super::finalize::PreparedRingSwitchGroup;
-use crate::commitment::{for_each_outer_slice_input, randomness_planes};
+use crate::commitment::for_each_outer_slice_input;
 use crate::opaque::RelationQuotientRow;
 use crate::opaque::RingSwitchRelationView;
 use crate::opaque::{
@@ -10,13 +10,13 @@ use crate::opaque::{
     RuntimeRingSwitchProveBackend,
 };
 use crate::validation::validate_i8_setup_log_basis;
-use akita_algebra::CyclotomicRing;
-use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, RelationRowGeometry};
 use akita_types::{OpeningFamily, RingRelationGroupOpening, RingVec};
 use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
+use jolt_crypto::challenge::{Challenges, SparseChallenge};
 
 #[cfg(test)]
 std::thread_local! {
@@ -728,7 +728,7 @@ where
                 let mut b_cyclic = Vec::with_capacity(n_b);
                 for_each_outer_slice_input::<D_B>(
                     t_hat_planes.chunks(planes_per_claim),
-                    &randomness_planes::<D_B>(&group.outer_randomness)?,
+                    &crate::arithmetic::randomness_planes::<D_B>(&group.outer_randomness)?,
                     &slice_geometry,
                     |slice_input| {
                         let b_rows = RingSwitchRelationKernel::relation_rows(
