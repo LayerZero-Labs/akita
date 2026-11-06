@@ -1245,14 +1245,23 @@ The driver selects the default-off `binary-source-measurements` feature, which
 enables `labinius-trinomial` and the offline plane planner. It accepts:
 
 ```sh
-scripts/binary-source-full-size.sh --log-carriers 10 --shape word-prime-ordinary
-scripts/binary-source-full-size.sh --log-carriers 22 --shape word-prime
-scripts/binary-source-full-size.sh --log-carriers 23 --shape word-prime --dev-protocol
-scripts/binary-source-full-size.sh --log-carriers 22 --shape prime5 --plan-only
+scripts/binary-source-full-size.sh --log-carriers 10 --shape binary-and-prime-claims-plus-ordinary
+scripts/binary-source-full-size.sh --log-carriers 22 --shape binary-and-prime-claims
+scripts/binary-source-full-size.sh --log-carriers 23 --shape binary-and-prime-claims --dev-protocol
+scripts/binary-source-full-size.sh --log-carriers 22 --shape five-prime-claims --plan-only
 ```
 
-The other shapes are `word` and `word-prime-ordinary`; `prime5` has five prime
-planes and no word claim. `--plan-only` performs layout reconciliation without
+Every shape commits one binary polynomial of N carriers and differs only in
+the claims it opens:
+
+| Shape | Claims opened |
+| --- | --- |
+| `binary-claim` | One binary word claim over GF(2^128) |
+| `binary-and-prime-claims` | One binary word claim and one prime evaluation plane |
+| `binary-and-prime-claims-plus-ordinary` | The same two claims, plus an ordinary group of max(N, 2^18) coefficients with one evaluation claim |
+| `five-prime-claims` | Five prime evaluation planes at different points, and no word claim |
+
+`--plan-only` performs layout reconciliation without
 committing or proving and must not be reported as an opening measurement.
 The driver prints the commit and `uptime` load averages. Proving and verification
 run in separate processes, so their process peak RSS values are independent;
@@ -1296,15 +1305,15 @@ partition below in bytes and atoms. The lengths and their changes:
 
 | N | Shape | Pre-v8 dev before → with offload | Change | v8 before → with offload | Change |
 | --- | --- | --- | ---: | --- | ---: |
-| 2^10 | word-prime-ordinary | 82,308 → 82,285 | −23 | 82,298 → 82,308 | +10 |
-| 2^22 | word | 82,739 → 82,786 | +47 | 82,773 → 82,764 | −9 |
-| 2^22 | word-prime | 82,788 → 84,423 | +1,635 | 82,743 → 84,392 | +1,649 |
-| 2^22 | word-prime-ordinary | 82,747 → 84,394 | +1,647 | 82,762 → 84,406 | +1,644 |
-| 2^22 | prime5 | 79,860 → 89,212 | +9,352 | 79,899 → 89,195 | +9,296 |
-| 2^23 | word | 84,544 → 84,580 | +36 | 84,583 → 84,590 | +7 |
-| 2^23 | word-prime | 84,554 → 84,576 | +22 | 84,594 → 84,590 | −4 |
-| 2^23 | word-prime-ordinary | 84,598 → 84,535 | −63 | 84,569 → 84,553 | −16 |
-| 2^23 | prime5 | 81,534 → 89,248 | +7,714 | 81,562 → 89,212 | +7,650 |
+| 2^10 | binary-and-prime-claims-plus-ordinary | 82,308 → 82,285 | −23 | 82,298 → 82,308 | +10 |
+| 2^22 | binary-claim | 82,739 → 82,786 | +47 | 82,773 → 82,764 | −9 |
+| 2^22 | binary-and-prime-claims | 82,788 → 84,423 | +1,635 | 82,743 → 84,392 | +1,649 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 82,747 → 84,394 | +1,647 | 82,762 → 84,406 | +1,644 |
+| 2^22 | five-prime-claims | 79,860 → 89,212 | +9,352 | 79,899 → 89,195 | +9,296 |
+| 2^23 | binary-claim | 84,544 → 84,580 | +36 | 84,583 → 84,590 | +7 |
+| 2^23 | binary-and-prime-claims | 84,554 → 84,576 | +22 | 84,594 → 84,590 | −4 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 84,598 → 84,535 | −63 | 84,569 → 84,553 | −16 |
+| 2^23 | five-prime-claims | 81,534 → 89,248 | +7,714 | 81,562 → 89,212 | +7,650 |
 
 Where the prefix domain grows, both changes are the added Stage 3 rounds and
 the larger successor schedule. Elsewhere both are a few tens of bytes of
@@ -1323,22 +1332,22 @@ the pins after the padding-row deletion and before the offload:
 
 | N | Shape | Pre-v8 current bytes | Pre-v8 dev bytes | v8 bytes before the offload |
 | --- | --- | ---: | ---: | ---: |
-| 2^10 | word-prime-ordinary | 87,337 | 82,308 | 82,298 |
-| 2^22 | word | 87,804 | 82,739 | 82,773 |
-| 2^22 | word-prime | 87,805 | 82,788 | 82,743 |
-| 2^22 | word-prime-ordinary | 87,786 | 82,747 | 82,762 |
-| 2^22 | prime5 | 84,879 | 79,860 | 79,899 |
-| 2^23 | word | 89,641 | 84,544 | 84,583 |
-| 2^23 | word-prime | 89,603 | 84,554 | 84,594 |
-| 2^23 | word-prime-ordinary | 89,638 | 84,598 | 84,569 |
-| 2^23 | prime5 | 86,595 | 81,534 | 81,562 |
+| 2^10 | binary-and-prime-claims-plus-ordinary | 87,337 | 82,308 | 82,298 |
+| 2^22 | binary-claim | 87,804 | 82,739 | 82,773 |
+| 2^22 | binary-and-prime-claims | 87,805 | 82,788 | 82,743 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 87,786 | 82,747 | 82,762 |
+| 2^22 | five-prime-claims | 84,879 | 79,860 | 79,899 |
+| 2^23 | binary-claim | 89,641 | 84,544 | 84,583 |
+| 2^23 | binary-and-prime-claims | 89,603 | 84,554 | 84,594 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 89,638 | 84,598 | 84,569 |
+| 2^23 | five-prime-claims | 86,595 | 81,534 | 81,562 |
 
 At every full-size row, the field switch, projections, Stage 1–3 and physical
 L2 categories have the same bytes and atoms as the pre-v8 dev-protocol
 partition. Only the remaining payload, framing and work category changes.
 
 The v8 pins also differ from those of the structured-weight branch below this
-one (for example 82,743 rather than 82,752 bytes at N=2^22 `word-prime`). The
+one (for example 82,743 rather than 82,752 bytes at N=2^22 `binary-and-prime-claims`). The
 padding-row deletion changes the root's batching challenges, so every later
 challenge, nonce and the terminal payload change. The message grammar does
 not: at the smoke size both branches emit the same 955 message ranges in the
@@ -1357,7 +1366,7 @@ These rows measure `237eb5a13`: the B/D setup offload, the prover-speed pass
 and protocol v8 together. One executable (SHA-256
 `71f17c7eb0c73c19298578523ee2d7f9afd88e1bc897f67b16cb780c077d468a`)
 served two campaigns, both with the catalog cache. Each shape proved once and
-`word-prime` three times, and every proof verified three times in isolated
+`binary-and-prime-claims` three times, and every proof verified three times in isolated
 processes. All 25 proofs reproduce their pins. All 49 verifications report
 `verification passed=true`, match the caller's transcript continuation and
 keep online A reads forbidden.
@@ -1372,14 +1381,14 @@ loads of 5.69 to 7.49.
 
 | N | Shape | Proof bytes | Atoms | Verification (ms) | Verifier peak RSS bytes | One-minute load | Pre-v8 (ms) |
 | --- | --- | ---: | ---: | ---: | ---: | --- | ---: |
-| 2^22 | word | 82,764 | 25,591 | 14.9 | 76,709,888 | 9.91 | 14.9 |
-| 2^22 | word-prime | 84,392 | 25,701 | 16.5 | 156,352,512 | 10.25 | 16.1 |
-| 2^22 | word-prime-ordinary | 84,406 | 25,717 | 178.0 | 644,055,040 | 9.76 | 124.8 |
-| 2^22 | prime5 | 89,195 | 26,128 | 15.4 | 129,482,752 | 9.86 | 15.2 |
-| 2^23 | word | 84,590 | 25,755 | 16.7 | 156,811,264 | 12.28 | 16.2 |
-| 2^23 | word-prime | 84,590 | 25,756 | 18.3 | 159,465,472 | 11.17 | 17.5 |
-| 2^23 | word-prime-ordinary | 84,553 | 25,718 | 351.5 | 1,048,330,240 | 13.77 | 215.2 |
-| 2^23 | prime5 | 89,212 | 26,147 | 20.9 | 136,249,344 | 15.13–15.14 | 16.5 |
+| 2^22 | binary-claim | 82,764 | 25,591 | 14.9 | 76,709,888 | 9.91 | 14.9 |
+| 2^22 | binary-and-prime-claims | 84,392 | 25,701 | 16.5 | 156,352,512 | 10.25 | 16.1 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 84,406 | 25,717 | 178.0 | 644,055,040 | 9.76 | 124.8 |
+| 2^22 | five-prime-claims | 89,195 | 26,128 | 15.4 | 129,482,752 | 9.86 | 15.2 |
+| 2^23 | binary-claim | 84,590 | 25,755 | 16.7 | 156,811,264 | 12.28 | 16.2 |
+| 2^23 | binary-and-prime-claims | 84,590 | 25,756 | 18.3 | 159,465,472 | 11.17 | 17.5 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 84,553 | 25,718 | 351.5 | 1,048,330,240 | 13.77 | 215.2 |
+| 2^23 | five-prime-claims | 89,212 | 26,147 | 20.9 | 136,249,344 | 15.13–15.14 | 16.5 |
 
 The binary-only shapes verify in 14.9–20.9 ms, as before v8. The mixed shape
 is slower: its ordinary-root flat terms (`binary_root_weights_ordinary`)
@@ -1387,7 +1396,7 @@ took 141.7 ms at N=2^22 and 299.4 ms at N=2^23, against 85.9 and 160.7 ms
 before v8. The v8 merge without the offload was not timed, so this rise is
 not attributed.
 
-Complete `word-prime` proving, with the prover-speed pass's v8 medians
+Complete `binary-and-prime-claims` proving, with the prover-speed pass's v8 medians
 before the offload:
 
 | N | Proving (ms) | Three runs (ms) | Prover peak RSS bytes | One-minute loads | Before the offload (ms) |
@@ -1420,10 +1429,10 @@ before each run was between 9.10 and 9.48. The logs are
 
 | Shape | Base (ms) | Base RSS bytes | Final (ms) | Final RSS bytes | Final `binary_root_verify` (ms) | Loads |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| word | 15.2 | 76,087,296 | 9.9 | 74,219,520 | 3.9 | 9.48 |
-| word-prime | 17.2 | 157,401,088 | 11.4 | 157,040,640 | 4.7 | 9.10–9.28 |
-| word-prime-ordinary | 190.9 | 644,890,624 | 17.1 | 170,377,216 | 10.2 | 9.17 |
-| prime5 | 15.3 | 127,778,816 | 11.3 | 126,992,384 | 4.3 | 9.44 |
+| binary-claim | 15.2 | 76,087,296 | 9.9 | 74,219,520 | 3.9 | 9.48 |
+| binary-and-prime-claims | 17.2 | 157,401,088 | 11.4 | 157,040,640 | 4.7 | 9.10–9.28 |
+| binary-and-prime-claims-plus-ordinary | 190.9 | 644,890,624 | 17.1 | 170,377,216 | 10.2 | 9.17 |
+| five-prime-claims | 15.3 | 127,778,816 | 11.3 | 126,992,384 | 4.3 | 9.44 |
 
 The mixed shape's ordinary-root weights (`binary_root_weights_ordinary`)
 take 2.0 ms in the final median run, against 149.4 ms in the base. The
@@ -1458,27 +1467,27 @@ Parallel verification:
 
 | N | Shape | Base ns | Base RSS bytes | Final ns | Final RSS bytes | Base loads | Final loads |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 2^22 | word | 15,142,208 | 75,726,848 | 10,073,500 | 73,875,456 | 12.75, 12.75, 12.75 | 12.75, 12.75, 12.75 |
-| 2^22 | word-prime | 16,765,875 | 156,794,880 | 11,340,417 | 156,041,216 | 12.75, 12.53, 12.53 | 12.75, 12.53, 12.53 |
-| 2^22 | word-prime-ordinary | 135,130,833 | 642,465,792 | 18,496,416 | 169,033,728 | 12.53, 12.53, 12.65 | 12.53, 12.53, 12.65 |
-| 2^22 | prime5 | 15,454,333 | 126,779,392 | 11,070,084 | 126,599,168 | 12.65, 12.65, 12.65 | 12.65, 12.65, 12.65 |
-| 2^23 | word | 16,360,000 | 155,762,688 | 10,521,500 | 155,336,704 | 12.65, 12.65, 12.12 | 12.65, 12.12, 12.12 |
-| 2^23 | word-prime | 17,831,459 | 156,680,192 | 12,408,375 | 156,696,576 | 12.12, 12.12, 12.12 | 12.12, 12.12, 12.12 |
-| 2^23 | word-prime-ordinary | 226,495,292 | 1,047,445,504 | 19,017,292 | 178,913,280 | 12.12, 11.71, 11.71 | 11.71, 11.71, 11.71 |
-| 2^23 | prime5 | 17,002,667 | 133,906,432 | 12,002,583 | 134,529,024 | 11.71, 11.33, 11.33 | 11.71, 11.33, 11.33 |
+| 2^22 | binary-claim | 15,142,208 | 75,726,848 | 10,073,500 | 73,875,456 | 12.75, 12.75, 12.75 | 12.75, 12.75, 12.75 |
+| 2^22 | binary-and-prime-claims | 16,765,875 | 156,794,880 | 11,340,417 | 156,041,216 | 12.75, 12.53, 12.53 | 12.75, 12.53, 12.53 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 135,130,833 | 642,465,792 | 18,496,416 | 169,033,728 | 12.53, 12.53, 12.65 | 12.53, 12.53, 12.65 |
+| 2^22 | five-prime-claims | 15,454,333 | 126,779,392 | 11,070,084 | 126,599,168 | 12.65, 12.65, 12.65 | 12.65, 12.65, 12.65 |
+| 2^23 | binary-claim | 16,360,000 | 155,762,688 | 10,521,500 | 155,336,704 | 12.65, 12.65, 12.12 | 12.65, 12.12, 12.12 |
+| 2^23 | binary-and-prime-claims | 17,831,459 | 156,680,192 | 12,408,375 | 156,696,576 | 12.12, 12.12, 12.12 | 12.12, 12.12, 12.12 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 226,495,292 | 1,047,445,504 | 19,017,292 | 178,913,280 | 12.12, 11.71, 11.71 | 11.71, 11.71, 11.71 |
+| 2^23 | five-prime-claims | 17,002,667 | 133,906,432 | 12,002,583 | 134,529,024 | 11.71, 11.33, 11.33 | 11.71, 11.33, 11.33 |
 
 Single-threaded verification:
 
 | N | Shape | Base ns | Base RSS bytes | Final ns | Final RSS bytes | Base loads | Final loads |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 2^22 | word | 24,055,375 | 72,368,128 | 18,791,041 | 71,663,616 | 12.75, 12.75, 12.75 | 12.75, 12.75, 12.75 |
-| 2^22 | word-prime | 31,414,834 | 153,567,232 | 25,839,667 | 152,993,792 | 12.75, 12.53, 12.53 | 12.53, 12.53, 12.53 |
-| 2^22 | word-prime-ordinary | 212,846,833 | 642,318,336 | 35,422,959 | 166,313,984 | 12.53, 12.53, 12.65 | 12.53, 12.53, 12.65 |
-| 2^22 | prime5 | 29,563,167 | 124,616,704 | 25,417,667 | 125,337,600 | 12.65, 12.65, 12.65 | 12.65, 12.65, 12.65 |
-| 2^23 | word | 30,198,208 | 153,518,080 | 24,942,750 | 153,337,856 | 12.65, 12.12, 12.12 | 12.65, 12.12, 12.12 |
-| 2^23 | word-prime | 32,319,875 | 154,828,800 | 26,771,375 | 154,206,208 | 12.12, 12.12, 12.12 | 12.12, 12.12, 12.12 |
-| 2^23 | word-prime-ordinary | 356,886,167 | 1,044,185,088 | 38,534,125 | 175,882,240 | 11.71, 11.71, 11.71 | 11.71, 11.71, 11.71 |
-| 2^23 | prime5 | 32,119,250 | 131,989,504 | 27,139,667 | 132,005,888 | 11.71, 11.33, 11.33 | 11.71, 11.33, 11.33 |
+| 2^22 | binary-claim | 24,055,375 | 72,368,128 | 18,791,041 | 71,663,616 | 12.75, 12.75, 12.75 | 12.75, 12.75, 12.75 |
+| 2^22 | binary-and-prime-claims | 31,414,834 | 153,567,232 | 25,839,667 | 152,993,792 | 12.75, 12.53, 12.53 | 12.53, 12.53, 12.53 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 212,846,833 | 642,318,336 | 35,422,959 | 166,313,984 | 12.53, 12.53, 12.65 | 12.53, 12.53, 12.65 |
+| 2^22 | five-prime-claims | 29,563,167 | 124,616,704 | 25,417,667 | 125,337,600 | 12.65, 12.65, 12.65 | 12.65, 12.65, 12.65 |
+| 2^23 | binary-claim | 30,198,208 | 153,518,080 | 24,942,750 | 153,337,856 | 12.65, 12.12, 12.12 | 12.65, 12.12, 12.12 |
+| 2^23 | binary-and-prime-claims | 32,319,875 | 154,828,800 | 26,771,375 | 154,206,208 | 12.12, 12.12, 12.12 | 12.12, 12.12, 12.12 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 356,886,167 | 1,044,185,088 | 38,534,125 | 175,882,240 | 11.71, 11.71, 11.71 | 11.71, 11.71, 11.71 |
+| 2^23 | five-prime-claims | 32,119,250 | 131,989,504 | 27,139,667 | 132,005,888 | 11.71, 11.33, 11.33 | 11.71, 11.33, 11.33 |
 
 The mixed shape gains most: 7.3× parallel and 6.0× single-threaded at
 N=2^22, 11.9× and 9.3× at N=2^23. Its verifier peak RSS falls from 642 MB to
@@ -1491,7 +1500,7 @@ base → final, in milliseconds. The ordinary suffix's Stage 2 verification
 (`stage2_verifier`, which contains `relation_setup_scan`) is untouched and
 is now the largest single cost.
 
-| Span | 2^22 word | 2^22 word-prime | 2^22 word-prime-ordinary | 2^22 prime5 | 2^23 word | 2^23 word-prime | 2^23 word-prime-ordinary | 2^23 prime5 |
+| Span | 2^22 binary-claim | 2^22 binary-and-prime-claims | 2^22 binary-and-prime-claims-plus-ordinary | 2^22 five-prime-claims | 2^23 binary-claim | 2^23 binary-and-prime-claims | 2^23 binary-and-prime-claims-plus-ordinary | 2^23 five-prime-claims |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `verify_complete_opening` | 24.1 → 18.8 | 31.4 → 25.8 | 212.8 → 35.4 | 29.6 → 25.4 | 30.2 → 24.9 | 32.3 → 26.8 | 356.9 → 38.5 | 32.1 → 27.1 |
 | `binary_root_verify` | 9.2 → 3.8 | 10.4 → 4.6 | 191.9 → 14.3 | 8.5 → 4.3 | 9.8 → 4.4 | 11.3 → 5.7 | 335.7 → 17.4 | 10.1 → 5.2 |
@@ -1519,9 +1528,9 @@ base-to-final difference.
 | --- | --- | --- | --- | --- | --- |
 | `85902a75e` | Ordinary root rows as translated patterns with residue kernels, evaluated in closed form | 2^22 / 2^23 mixed | 135.1 → 26.5 / 226.5 → 29.3 | 212.8 → 43.4 / 356.9 → 47.9 | 8.8–16.7 |
 | `b66cfdb7f` | Ordinary root residue kernels derived in parallel; superseded by `4fcb1e43f` | 2^22 / 2^23 mixed | 26.5 → 25.9 / 29.3 → 27.5 | 43.4 → 43.4 / 47.9 → 47.2 | 8.8–16.7 |
-| `86cc8a002` | Terminal partial columns as one structured family | 2^22 word / 2^23 word | 15.9 → 13.5 / 23.1 → 18.4 | 23.8 → 21.5 / 31.1 → 28.8 | 10.5–13.4 |
-| `9fbde6581` | Trinomial adjoint of an equality table in closed form | 2^22 word-prime / 2^23 word-prime | 14.3 → 11.7 / 17.3 → 14.3 | 28.7 → 25.7 / 30.1 → 27.0 | 21.4–23.1 |
-| `2c31ad17d` | Prime plane work shared across one polynomial's planes | 2^22 prime5 / 2^23 prime5 | 12.6 → 10.7 / 14.0 → 11.4 | 26.3 → 25.0 / 28.3 → 26.4 | 6.7–6.9 |
+| `86cc8a002` | Terminal partial columns as one structured family | 2^22 binary-claim / 2^23 binary-claim | 15.9 → 13.5 / 23.1 → 18.4 | 23.8 → 21.5 / 31.1 → 28.8 | 10.5–13.4 |
+| `9fbde6581` | Trinomial adjoint of an equality table in closed form | 2^22 binary-and-prime-claims / 2^23 binary-and-prime-claims | 14.3 → 11.7 / 17.3 → 14.3 | 28.7 → 25.7 / 30.1 → 27.0 | 21.4–23.1 |
+| `2c31ad17d` | Prime plane work shared across one polynomial's planes | 2^22 five-prime-claims / 2^23 five-prime-claims | 12.6 → 10.7 / 14.0 → 11.4 | 26.3 → 25.0 / 28.3 → 26.4 | 6.7–6.9 |
 | `4fcb1e43f` | Ordinary root residue kernels read through low windows | 2^22 / 2^23 mixed | 20.2 → 17.7 / 20.2 → 18.3 | 37.5 → 34.6 / 42.3 → 38.0 | 7.4–7.5 |
 
 The figures before these speedups, with the B/D offload comparison, are in
@@ -1540,19 +1549,19 @@ measured.
 
 | N | Shape | Proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 82,773 | 25,597 | 5,123,981,312 | 75,563,008 |
-| 2^22 | word-prime | 82,743 | 25,567 | 5,139,398,656 | 76,136,448 |
-| 2^22 | word-prime-ordinary | 82,762 | 25,589 | 5,200,101,376 | 562,003,968 |
-| 2^22 | prime5 | 79,899 | 25,440 | 7,694,123,008 | 79,511,552 |
-| 2^23 | word | 84,583 | 25,749 | 9,741,746,176 | 156,172,288 |
-| 2^23 | word-prime | 84,594 | 25,760 | 9,986,932,736 | 157,810,688 |
-| 2^23 | word-prime-ordinary | 84,569 | 25,733 | 9,939,501,056 | 1,039,564,800 |
-| 2^23 | prime5 | 81,562 | 25,588 | 9,576,710,144 | 160,710,656 |
+| 2^22 | binary-claim | 82,773 | 25,597 | 5,123,981,312 | 75,563,008 |
+| 2^22 | binary-and-prime-claims | 82,743 | 25,567 | 5,139,398,656 | 76,136,448 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 82,762 | 25,589 | 5,200,101,376 | 562,003,968 |
+| 2^22 | five-prime-claims | 79,899 | 25,440 | 7,694,123,008 | 79,511,552 |
+| 2^23 | binary-claim | 84,583 | 25,749 | 9,741,746,176 | 156,172,288 |
+| 2^23 | binary-and-prime-claims | 84,594 | 25,760 | 9,986,932,736 | 157,810,688 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 84,569 | 25,733 | 9,939,501,056 | 1,039,564,800 |
+| 2^23 | five-prime-claims | 81,562 | 25,588 | 9,576,710,144 | 160,710,656 |
 
 The partition's first six categories equal the pre-v8 tables below. The
 remaining payload, framing and work category is, in bytes/atoms:
 
-| N | word | word-prime | word-prime-ordinary | prime5 |
+| N | binary-claim | binary-and-prime-claims | binary-and-prime-claims-plus-ordinary | five-prime-claims |
 | --- | ---: | ---: | ---: | ---: |
 | 2^22 | 56,319/23,580 | 56,289/23,550 | 56,308/23,572 | 56,324/23,587 |
 | 2^23 | 56,263/23,556 | 56,274/23,567 | 56,249/23,540 | 56,277/23,570 |
@@ -1588,25 +1597,25 @@ appendix. The `uptime` load triples of these runs are:
 
 | N | Shape | Before proving | After proving | After the third verification |
 | --- | --- | --- | --- | --- |
-| 2^22 | word | 5.76/6.74/6.58 | 6.19/6.71/6.58 | 6.19/6.71/6.58 |
-| 2^22 | word-prime | 6.19/6.71/6.58 | 7.49/6.94/6.67 | 7.49/6.94/6.67 |
-| 2^22 | word-prime-ordinary | 6.13/6.65/6.58 | 7.30/6.88/6.66 | 7.30/6.88/6.66 |
-| 2^22 | prime5 | 7.49/6.94/6.67 | 6.23/6.68/6.59 | 6.13/6.65/6.58 |
-| 2^23 | word | 7.30/6.88/6.66 | 5.86/6.56/6.56 | 5.86/6.56/6.56 |
-| 2^23 | word-prime | 5.86/6.56/6.56 | 5.69/6.37/6.48 | 5.69/6.37/6.48 |
-| 2^23 | word-prime-ordinary | 6.39/6.31/6.44 | 5.82/6.16/6.38 | 5.82/6.16/6.38 |
-| 2^23 | prime5 | 5.69/6.37/6.48 | 6.39/6.31/6.44 | 6.39/6.31/6.44 |
+| 2^22 | binary-claim | 5.76/6.74/6.58 | 6.19/6.71/6.58 | 6.19/6.71/6.58 |
+| 2^22 | binary-and-prime-claims | 6.19/6.71/6.58 | 7.49/6.94/6.67 | 7.49/6.94/6.67 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 6.13/6.65/6.58 | 7.30/6.88/6.66 | 7.30/6.88/6.66 |
+| 2^22 | five-prime-claims | 7.49/6.94/6.67 | 6.23/6.68/6.59 | 6.13/6.65/6.58 |
+| 2^23 | binary-claim | 7.30/6.88/6.66 | 5.86/6.56/6.56 | 5.86/6.56/6.56 |
+| 2^23 | binary-and-prime-claims | 5.86/6.56/6.56 | 5.69/6.37/6.48 | 5.69/6.37/6.48 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 6.39/6.31/6.44 | 5.82/6.16/6.38 | 5.82/6.16/6.38 |
+| 2^23 | five-prime-claims | 5.69/6.37/6.48 | 6.39/6.31/6.44 | 6.39/6.31/6.44 |
 
 | N | Shape | Proof bytes | Atoms | Prover peak RSS bytes |
 | --- | --- | ---: | ---: | ---: |
-| 2^22 | word | 87,801 | 25,828 | 5,180,358,656 |
-| 2^22 | word-prime | 89,464 | 25,976 | 6,055,002,112 |
-| 2^22 | word-prime-ordinary | 89,463 | 25,976 | 6,232,817,664 |
-| 2^22 | prime5 | 94,242 | 26,374 | 10,003,873,792 |
-| 2^23 | word | 89,626 | 25,992 | 10,183,802,880 |
-| 2^23 | word-prime | 89,658 | 26,024 | 10,190,553,088 |
-| 2^23 | word-prime-ordinary | 89,661 | 26,026 | 10,211,393,536 |
-| 2^23 | prime5 | 94,261 | 26,392 | 10,593,697,792 |
+| 2^22 | binary-claim | 87,801 | 25,828 | 5,180,358,656 |
+| 2^22 | binary-and-prime-claims | 89,464 | 25,976 | 6,055,002,112 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 89,463 | 25,976 | 6,232,817,664 |
+| 2^22 | five-prime-claims | 94,242 | 26,374 | 10,003,873,792 |
+| 2^23 | binary-claim | 89,626 | 25,992 | 10,183,802,880 |
+| 2^23 | binary-and-prime-claims | 89,658 | 26,024 | 10,190,553,088 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 89,661 | 26,026 | 10,211,393,536 |
+| 2^23 | five-prime-claims | 94,261 | 26,392 | 10,593,697,792 |
 
 The complete proof partition below is bytes/atoms per category across all fold
 levels. The other category includes the remaining payload, framing and work
@@ -1614,21 +1623,21 @@ families. The categories sum exactly to each proof's size and atom count.
 
 | N | Shape | Field switch | Projections | Stage 1 | Stage 2 | Stage 3 | Physical L2 | Other |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 2,993/173 | 84/7 | 11,043/858 | 7,217/587 | 824/74 | 4,293/318 | 61,347/23,811 |
-| 2^22 | word-prime | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 61,300/23,794 |
-| 2^22 | word-prime-ordinary | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 61,299/23,794 |
-| 2^22 | prime5 | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 63,832/23,956 |
-| 2^23 | word | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 61,306/23,799 |
-| 2^23 | word-prime | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 61,338/23,831 |
-| 2^23 | word-prime-ordinary | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 61,341/23,833 |
-| 2^23 | prime5 | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 63,851/23,974 |
+| 2^22 | binary-claim | 2,993/173 | 84/7 | 11,043/858 | 7,217/587 | 824/74 | 4,293/318 | 61,347/23,811 |
+| 2^22 | binary-and-prime-claims | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 61,300/23,794 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 61,299/23,794 |
+| 2^22 | five-prime-claims | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 63,832/23,956 |
+| 2^23 | binary-claim | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 61,306/23,799 |
+| 2^23 | binary-and-prime-claims | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 61,338/23,831 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 61,341/23,833 |
+| 2^23 | five-prime-claims | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 63,851/23,974 |
 
-Where the typed prefix grows to 2^25 at N=2^22 (`word-prime` and
-`word-prime-ordinary`), the successor schedule changes the way it does at
+Where the typed prefix grows to 2^25 at N=2^22 (`binary-and-prime-claims` and
+`binary-and-prime-claims-plus-ordinary`), the successor schedule changes the way it does at
 N=2^23, whose prefix was already 2^25: Stage 1 grows from 11,043 to 14,357
 bytes, Physical L2 shrinks from 4,293 to 2,754 bytes, and Stage 3 grows from
-824 to 857 bytes (one round). At 2^26 (`prime5` at both sizes) Stage 1 reaches
-20,891 bytes. N=2^22 `word` and the N=2^23 shapes other than `prime5` keep
+824 to 857 bytes (one round). At 2^26 (`five-prime-claims` at both sizes) Stage 1 reaches
+20,891 bytes. N=2^22 `binary-claim` and the N=2^23 shapes other than `five-prime-claims` keep
 their partitions except for value-dependent coding in the other category.
 
 Each final current-protocol run selected six ordinary recursive folds and
@@ -1643,21 +1652,21 @@ dimensions remain in the logs.
 
 | N | Shape | Successive recursive output cells |
 | --- | --- | --- |
-| 2^22 | word | 21,206,528 → 2,633,536 → 953,408 → 280,448 → 128,896 → 93,696 |
-| 2^22 | word-prime | 17,269,248 → 1,757,184 → 552,960 → 245,504 → 121,856 → 93,696 |
-| 2^22 | word-prime-ordinary | 17,445,376 → 1,771,520 → 565,248 → 245,504 → 121,856 → 93,696 |
-| 2^22 | prime5 | 19,017,216 → 1,752,448 → 579,712 → 207,104 → 124,672 → 93,696 |
-| 2^23 | word | 17,777,152 → 1,785,856 → 565,248 → 245,504 → 121,856 → 93,696 |
-| 2^23 | word-prime | 17,869,312 → 1,800,192 → 565,248 → 245,504 → 121,856 → 93,696 |
-| 2^23 | word-prime-ordinary | 18,182,656 → 1,814,528 → 565,248 → 245,504 → 121,856 → 93,696 |
-| 2^23 | prime5 | 19,377,664 → 1,765,120 → 579,712 → 207,104 → 124,672 → 93,696 |
+| 2^22 | binary-claim | 21,206,528 → 2,633,536 → 953,408 → 280,448 → 128,896 → 93,696 |
+| 2^22 | binary-and-prime-claims | 17,269,248 → 1,757,184 → 552,960 → 245,504 → 121,856 → 93,696 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 17,445,376 → 1,771,520 → 565,248 → 245,504 → 121,856 → 93,696 |
+| 2^22 | five-prime-claims | 19,017,216 → 1,752,448 → 579,712 → 207,104 → 124,672 → 93,696 |
+| 2^23 | binary-claim | 17,777,152 → 1,785,856 → 565,248 → 245,504 → 121,856 → 93,696 |
+| 2^23 | binary-and-prime-claims | 17,869,312 → 1,800,192 → 565,248 → 245,504 → 121,856 → 93,696 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 18,182,656 → 1,814,528 → 565,248 → 245,504 → 121,856 → 93,696 |
+| 2^23 | five-prime-claims | 19,377,664 → 1,765,120 → 579,712 → 207,104 → 124,672 → 93,696 |
 
 The phase tables report inclusive wall times in nanoseconds, under the load
 triples above.
 
 N=2^22:
 
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 26,377,241,416 | 28,476,150,041 | 10,488,192,167 | 29,101,533,000 |
 | Cold prover setup | 41,027,459 | 81,349,250 | 81,609,875 | 168,867,875 |
@@ -1673,7 +1682,7 @@ N=2^22:
 
 N=2^23:
 
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 31,336,903,750 | 31,482,820,625 | 11,295,199,625 | 31,778,615,875 |
 | Cold prover setup | 83,035,417 | 82,813,792 | 79,797,625 | 166,126,208 |
@@ -1698,7 +1707,7 @@ reproduced their digest pins.
 
 The tables below predate the v8 merge. After merging the v8 port of the
 padding-row deletion (`53b25df19`, measured at `85d0d17b3`) and before the
-offload, `word-prime` was proved three more times per size with the catalog
+offload, `binary-and-prime-claims` was proved three more times per size with the catalog
 cache. Every run
 reproduced its v8 pin. The one-minute loads were higher than in the pre-v8
 sweep, so the small increase is within the host's noise:
@@ -1708,7 +1717,7 @@ sweep, so the small increase is within the host's noise:
 | 2^22 | 1,783.7 | 1,737.8 | 4,193,042,432 | 9.48–11.76 |
 | 2^23 | 3,012.9 | 2,927.9 | 8,056,356,864 | 8.90–10.26 |
 
-Those logs are `$CARGO_TARGET_DIR/v8-logs/317-q-<log>-word-prime-<run>.txt`.
+Those logs are `$CARGO_TARGET_DIR/v8-logs/317-q-<log>-binary-and-prime-claims-<run>.txt`.
 
 The driver records each prover span's call count, inclusive wall time and
 process CPU time (`getrusage` user plus system). It also records live and
@@ -1734,18 +1743,18 @@ the runs of each executable stayed within these ranges:
 
 | N | Shape | Baseline runs | Final runs |
 | --- | --- | --- | --- |
-| 2^22 | word | 3.24–6.08 | 5.15–6.08 |
-| 2^22 | word-prime | 5.94–8.67 | 6.40–8.67 |
-| 2^22 | word-prime-ordinary | 5.20–7.52 | 5.20–5.96 |
-| 2^22 | prime5 | 4.97–10.74 | 4.97–10.74 |
-| 2^23 | word | 4.95–6.98 | 4.95–6.98 |
-| 2^23 | word-prime | 4.51–6.47 | 4.51–5.88 |
-| 2^23 | word-prime-ordinary | 4.24–6.64 | 4.24–6.64 |
-| 2^23 | prime5 | 4.97–7.17 | 4.97–7.17 |
+| 2^22 | binary-claim | 3.24–6.08 | 5.15–6.08 |
+| 2^22 | binary-and-prime-claims | 5.94–8.67 | 6.40–8.67 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 5.20–7.52 | 5.20–5.96 |
+| 2^22 | five-prime-claims | 4.97–10.74 | 4.97–10.74 |
+| 2^23 | binary-claim | 4.95–6.98 | 4.95–6.98 |
+| 2^23 | binary-and-prime-claims | 4.51–6.47 | 4.51–5.88 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 4.24–6.64 | 4.24–6.64 |
+| 2^23 | five-prime-claims | 4.97–7.17 | 4.97–7.17 |
 
 Final executable, N=2^22:
 
-| Span | word | word-prime | word-prime-ordinary | prime5 |
+| Span | binary-claim | binary-and-prime-claims | binary-and-prime-claims-plus-ordinary | five-prime-claims |
 | --- | ---: | ---: | ---: | ---: |
 | Binary commitment | 368.2 | 379.9 | 316.2 | 331.2 |
 | › pack words | 26.1 | 26.6 | 23.9 | 25.0 |
@@ -1774,7 +1783,7 @@ Final executable, N=2^22:
 
 Final executable, N=2^23:
 
-| Span | word | word-prime | word-prime-ordinary | prime5 |
+| Span | binary-claim | binary-and-prime-claims | binary-and-prime-claims-plus-ordinary | five-prime-claims |
 | --- | ---: | ---: | ---: | ---: |
 | Binary commitment | 577.0 | 536.7 | 536.0 | 531.7 |
 | › pack words | 55.1 | 50.5 | 49.8 | 49.7 |
@@ -1802,13 +1811,13 @@ Final executable, N=2^23:
 | Prover peak RSS bytes | 8,075,493,376 | 8,051,064,832 | 8,649,621,504 | 8,057,487,360 |
 
 The baseline tables are in the appendix. The commits and their measured
-effects on N=2^22 `word-prime` are listed below. Each commit's executable
+effects on N=2^22 `binary-and-prime-claims` are listed below. Each commit's executable
 proved three times in isolated processes with the catalog cache, and each
 figure is the median of those runs. A commit's before figure is the median of
 the previous executable, so `3cf7db7bf` starts from the span baseline
-`f5e9ad551`, whose runs are the baseline tables' word-prime 2^22 runs.
+`f5e9ad551`, whose runs are the baseline tables' binary-and-prime-claims 2^22 runs.
 
-The logs are `$CARGO_TARGET_DIR/r3/m-c<k>-22-word-prime-<run>.txt`. Executable
+The logs are `$CARGO_TARGET_DIR/r3/m-c<k>-22-binary-and-prime-claims-<run>.txt`. Executable
 `c1` is `f5e9ad551`, and `c2` through `c7` are the six commits in table order.
 Each log records the `uptime` load triple before and after its run. The last
 column gives the range of one-minute loads in those records for the commit's
@@ -1835,7 +1844,7 @@ Loads differed from commit to commit, between 5.23 and 11.88. The per-commit
 columns are therefore not an exact decomposition of the end-to-end gain; the
 interleaved tables are the comparison.
 
-The remaining N=2^22 `word-prime` cost splits into three kinds.
+The remaining N=2^22 `binary-and-prime-claims` cost splits into three kinds.
 
 - **Representation cost.** Stage 2 (about 324 ms) runs the ordinary
   range-image sumcheck over a dense 2^25-cell table. Weight materialization
@@ -1874,16 +1883,16 @@ verified. One-minute loads were 4.91–15.77.
 
 | N | Shape | Weight materialization + Stage 2 (ms) | Complete proving (ms) | Prover peak RSS bytes |
 | --- | --- | --- | --- | --- |
-| 2^22 | `word` | 421.6 → 178.5 | 1,583.4 → 1,494.0 | 4,445,175,808 → 2,996,060,160 |
-| 2^22 | `word-prime` | 588.5 → 250.9 | 2,391.3 → 2,105.5 | 5,238,603,776 → 5,181,784,064 |
-| 2^22 | `word-prime-ordinary` | 583.3 → 271.3 | 2,560.5 → 2,226.9 | 5,584,814,080 → 5,495,062,528 |
-| 2^22 | `prime5` | 1,167.8 → 395.0 | 3,471.4 → 2,818.0 | 9,370,451,968 → 8,814,641,152 |
-| 2^23 | `word-prime` | 1,027.1 → 345.7 | 3,513.2 → 2,900.1 | 8,610,463,744 → 5,448,220,672 |
+| 2^22 | `binary-claim` | 421.6 → 178.5 | 1,583.4 → 1,494.0 | 4,445,175,808 → 2,996,060,160 |
+| 2^22 | `binary-and-prime-claims` | 588.5 → 250.9 | 2,391.3 → 2,105.5 | 5,238,603,776 → 5,181,784,064 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 583.3 → 271.3 | 2,560.5 → 2,226.9 | 5,584,814,080 → 5,495,062,528 |
+| 2^22 | `five-prime-claims` | 1,167.8 → 395.0 | 3,471.4 → 2,818.0 | 9,370,451,968 → 8,814,641,152 |
+| 2^23 | `binary-and-prime-claims` | 1,027.1 → 345.7 | 3,513.2 → 2,900.1 | 8,610,463,744 → 5,448,220,672 |
 
 Stage 2's own live-heap peak falls by 26–48%. For the 2^22 shapes with prime
 planes, Stage 3 now sets the process peak: its dense weight over the typed
 A/B/D prefix is unchanged by this work, so peak RSS barely moves there. At
-2^22 `word` and 2^23 `word-prime`, Stage 3 stays below the old Stage 2 peak
+2^22 `binary-claim` and 2^23 `binary-and-prime-claims`, Stage 3 stays below the old Stage 2 peak
 and peak RSS falls by a third.
 
 The earlier measurement, on base `f92e959ee` before the B/D setup offload,
@@ -1892,11 +1901,11 @@ used the structured executable `2e59907c9` and 33 runs at one-minute loads of
 
 | N | Shape | Weight materialization + Stage 2 (ms) | Complete proving (ms) | Prover peak RSS bytes |
 | --- | --- | --- | --- | --- |
-| 2^22 | `word` | 451.7 → 175.0 | 1,524.1 → 1,273.1 | 4,194,680,832 → 2,581,151,744 |
-| 2^22 | `word-prime` | 555.6 → 227.3 | 1,746.6 → 1,416.0 | 4,195,729,408 → 2,646,753,280 |
-| 2^22 | `word-prime-ordinary` | 572.5 → 270.9 | 2,041.4 → 1,753.5 | 4,753,358,848 → 3,263,168,512 |
-| 2^22 | `prime5` | 1,194.2 → 415.7 | 2,686.3 → 1,866.9 | 6,945,423,360 → 2,792,046,592 |
-| 2^23 | `word-prime` | 993.5 → 334.3 | 3,148.9 → 2,497.3 | 8,059,813,888 → 4,623,138,816 |
+| 2^22 | `binary-claim` | 451.7 → 175.0 | 1,524.1 → 1,273.1 | 4,194,680,832 → 2,581,151,744 |
+| 2^22 | `binary-and-prime-claims` | 555.6 → 227.3 | 1,746.6 → 1,416.0 | 4,195,729,408 → 2,646,753,280 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 572.5 → 270.9 | 2,041.4 → 1,753.5 | 4,753,358,848 → 3,263,168,512 |
+| 2^22 | `five-prime-claims` | 1,194.2 → 415.7 | 2,686.3 → 1,866.9 | 6,945,423,360 → 2,792,046,592 |
+| 2^23 | `binary-and-prime-claims` | 993.5 → 334.3 | 3,148.9 → 2,497.3 | 8,059,813,888 → 4,623,138,816 |
 
 The representation cost described above is now mostly the authentication
 family's weight build, which has no shared structure.
@@ -1917,24 +1926,24 @@ One-minute loads were 5.39–14.58.
 
 | Shape | `2^k'` | Complete proving (ms) | Stage 2 (ms) | Stage 3 (ms) | Prover peak RSS bytes |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `word` | 2^24 | 1,301.3 | 150.4 | 278.8 | 2,990,473,216 |
-| `word-prime` | 2^25 | 1,704.4 | 192.7 | 445.8 | 5,188,812,800 |
-| `word-prime-ordinary` | 2^25 | 1,900.6 | 226.0 | 429.7 | 5,500,960,768 |
-| `prime5` | 2^26 | 2,600.7 | 348.8 | 757.3 | 8,804,007,936 |
+| `binary-claim` | 2^24 | 1,301.3 | 150.4 | 278.8 | 2,990,473,216 |
+| `binary-and-prime-claims` | 2^25 | 1,704.4 | 192.7 | 445.8 | 5,188,812,800 |
+| `binary-and-prime-claims-plus-ordinary` | 2^25 | 1,900.6 | 226.0 | 429.7 | 5,500,960,768 |
+| `five-prime-claims` | 2^26 | 2,600.7 | 348.8 | 757.3 | 8,804,007,936 |
 
 The Stage 3 span tree, in milliseconds, with the live heap in GB:
 
 | Shape | Layout | Source | Weights | Begin (coefficient pass) | Rounds | Heap at entry → peak |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| `word` | 1.6 | 130.6 | 18.1 | 66.2 (8.4) | 62.7 | 0.96 → 1.77 |
-| `word-prime` | 1.6 | 166.5 | 27.3 | 131.6 (13.2) | 117.8 | 1.69 → 3.30 |
-| `word-prime-ordinary` | 1.6 | 156.9 | 27.5 | 128.4 (12.9) | 114.9 | 1.76 → 3.37 |
-| `prime5` | 1.6 | 234.0 | 53.6 | 256.1 (23.8) | 212.1 | 2.78 → 6.00 |
+| `binary-claim` | 1.6 | 130.6 | 18.1 | 66.2 (8.4) | 62.7 | 0.96 → 1.77 |
+| `binary-and-prime-claims` | 1.6 | 166.5 | 27.3 | 131.6 (13.2) | 117.8 | 1.69 → 3.30 |
+| `binary-and-prime-claims-plus-ordinary` | 1.6 | 156.9 | 27.5 | 128.4 (12.9) | 114.9 | 1.76 → 3.37 |
+| `five-prime-claims` | 1.6 | 234.0 | 53.6 | 256.1 (23.8) | 212.1 | 2.78 → 6.00 |
 
 - *Layout* builds `BinaryTypedPrefix` and `BinaryAProduct`.
 - *Source* derives the typed setup table with
   `BinaryTypedPrefix::setup_coefficients` and copies it into an `Arc<[F]>`.
-  At `word-prime`, a temporary span puts the serial A derivation inside it at
+  At `binary-and-prime-claims`, a temporary span puts the serial A derivation inside it at
   124 ms per call and the B/D copies into the A padding at 17 ms. The copy
   briefly holds the table twice: the source span's own peak is the entry heap
   plus `32 * 2^k'` bytes.
@@ -1949,8 +1958,8 @@ The Stage 3 span tree, in milliseconds, with the live heap in GB:
 
 The typed table that *Source* derives was already derived and committed by
 the cold prefix preparation of the same process (`cold_prefix_preparation`,
-415 ms at `word-prime`). The prover derives it three times per process, so
-the serial A derivation costs about 370 ms of the `word-prime` process.
+415 ms at `binary-and-prime-claims`). The prover derives it three times per process, so
+the serial A derivation costs about 370 ms of the `binary-and-prime-claims` process.
 
 **Where the weight comes from.** The prefix holds the A tensor and the B/D
 digit pieces. Every other cell is zero in the setup table and in the weight.
@@ -2026,15 +2035,15 @@ N=2^23. Times are in milliseconds.
 
 | N | Shape | Complete proving | Stage 3 | Stage 3 heap peak (GB) | Prover peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | `word` | 1,375.8 → 1,052.7 | 294.3 → 39.9 | 1.77 → 1.18 | 2,985,230,336 → 2,221,113,344 |
-| 2^22 | `word-prime` | 1,806.3 → 1,279.3 | 490.4 → 47.7 | 3.30 → 1.95 | 5,177,180,160 → 3,106,586,624 |
-| 2^22 | `word-prime-ordinary` | 2,095.4 → 1,536.8 | 496.8 → 51.2 | 3.37 → 2.03 | 5,491,441,664 → 3,690,053,632 |
-| 2^22 | `prime5` | 2,818.5 → 2,108.9 | 863.4 → 73.6 | 6.00 → 3.24 | 8,806,416,384 → 5,414,109,184 |
-| 2^23 | `word-prime` | 2,627.6 → 1,950.5 | 580.6 → 61.1 | 3.50 → 2.26 | 5,435,490,304 → 3,981,492,224 |
+| 2^22 | `binary-claim` | 1,375.8 → 1,052.7 | 294.3 → 39.9 | 1.77 → 1.18 | 2,985,230,336 → 2,221,113,344 |
+| 2^22 | `binary-and-prime-claims` | 1,806.3 → 1,279.3 | 490.4 → 47.7 | 3.30 → 1.95 | 5,177,180,160 → 3,106,586,624 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 2,095.4 → 1,536.8 | 496.8 → 51.2 | 3.37 → 2.03 | 5,491,441,664 → 3,690,053,632 |
+| 2^22 | `five-prime-claims` | 2,818.5 → 2,108.9 | 863.4 → 73.6 | 6.00 → 3.24 | 8,806,416,384 → 5,414,109,184 |
+| 2^23 | `binary-and-prime-claims` | 2,627.6 → 1,950.5 | 580.6 → 61.1 | 3.50 → 2.26 | 5,435,490,304 → 3,981,492,224 |
 
 Outside complete proving, the A derivation also shortens the cold prefix
-preparation and the cold verifier setup. At N=2^22 `word-prime` they go from
-430.9 to 339.2 ms and from 453.0 to 328.5 ms. At `word` they nearly halve,
+preparation and the cold verifier setup. At N=2^22 `binary-and-prime-claims` they go from
+430.9 to 339.2 ms and from 453.0 to 328.5 ms. At `binary-claim` they nearly halve,
 from 204.7 to 112.0 ms and from 188.5 to 97.2 ms.
 
 **What remains.**
@@ -2044,8 +2053,8 @@ from 204.7 to 112.0 ms and from 188.5 to 97.2 ms.
   and later run on the dense index state of `2^(k'-6)` entries.
 - Stage 3 no longer sets the live-heap peak of complete proving. The peak is
   now Stage 2's `RelationRangeImageProver::fold_round`: 1.52, 2.28 and
-  3.81 GB at N=2^22 for `word`, `word-prime` and `prime5`. At `word-prime`
-  and `prime5` the cold verifier setup peaks slightly higher, at 2.34 and
+  3.81 GB at N=2^22 for `binary-claim`, `binary-and-prime-claims` and `five-prime-claims`. At `binary-and-prime-claims`
+  and `five-prime-claims` the cold verifier setup peaks slightly higher, at 2.34 and
   3.93 GB.
 - The cold prefix preparation and verifier setup still take 250–350 ms at
   N=2^22 for the prime shapes. They already use about twelve cores. They
@@ -2062,11 +2071,11 @@ profile executable adds sub-spans to `f92e959ee`: the A matrix derived in
 proving (`binary_root_a_matrix`), the Stage 3 A coefficients, the three phases
 of the residual rows, the direct A adjoint, and the field switch's source
 extraction, partial evaluations and rounds. The profile is three isolated
-proving runs at N=2^22 `word-prime` with `BINARY_SOURCE_CATALOG_CACHE`. Every
+proving runs at N=2^22 `binary-and-prime-claims` with `BINARY_SOURCE_CATALOG_CACHE`. Every
 run reproduced its pin. The host was shared and the one-minute load was
 27.2–37.5, so these spans run 20–40% above the post-merge figures above. The
 third run was disturbed (complete proving 8.5 s) and is excluded by the
-median. Logs are `$CARGO_TARGET_DIR/p2/logs/s<run>-22-word-prime.txt`.
+median. Logs are `$CARGO_TARGET_DIR/p2/logs/s<run>-22-binary-and-prime-claims.txt`.
 
 | Span (ms, median of 3) | Wall | Process CPU |
 | --- | ---: | ---: |
@@ -2117,7 +2126,7 @@ What these spans spend their time on:
 - **D payload.** Each setup column multiplies a 64-coefficient setup entry by
   64 balanced digits with full field products.
 
-Candidate changes, with the expected gain at N=2^22 `word-prime` scaled to the
+Candidate changes, with the expected gain at N=2^22 `binary-and-prime-claims` scaled to the
 post-merge figures:
 
 | Candidate | Spans removed or reduced | Expected gain (ms) |
@@ -2149,35 +2158,35 @@ before and after together, not down a column.
 
 | Change | Shape | Span: before → after (ms) | Complete proving (ms) | Load |
 | --- | --- | --- | ---: | --- |
-| Residual remainders over limb primes by CRT | `word-prime` | residual rows 217.1 → 28.0; projections 281.7 → 104.2 | 2,164.6 → 1,720.9 | 35.4–44.0 |
-| Reuse the commitment's A | `word-prime` | A derivation 78.8 → 0; Stage 3 A coefficients 111.0 → 10.5 | 1,842.8 → 1,632.6 | 8.0–13.0 |
-| Reuse the accepted response in the projections | `word-prime` | projections 85.7 → 25.8 | 1,422.5 → 1,349.2 | 9.2–11.2 |
-| Length-1,458 middle products in the integer adjoint | `word-prime` | direct A 209.0 → 157.9 (CPU 1,938 → 1,469) | within noise | 13.4–15.3 |
-| Small-digit accumulation in digit commitments | `word-prime` | D payload 70.4 → 29.9; commitment B payload 160.7 → 63.7 | 1,498.6 → 1,436.0 | 11.8–16.0 |
-| Parallel ordinary root weights, allocation-free recomposition | `word-prime-ordinary` | ordinary weights 217.8 → 74.4; relation compile 366.9 → 211.7 | 1,871.4 → 1,686.3 | 9.8–11.0 |
-| Parallel field-switch source gather | `word-prime` | field-switch source 17.0 → 6.0 | 1,314.8 → 1,304.0 | 7.4–10.5 |
-| Parallel q setup matrix derivation | `word-prime` | commitment A 82.9 → 19.1; cold typed-prefix preparation 140.0 → 75.1 | not in proving | 7.4–10.5 |
+| Residual remainders over limb primes by CRT | `binary-and-prime-claims` | residual rows 217.1 → 28.0; projections 281.7 → 104.2 | 2,164.6 → 1,720.9 | 35.4–44.0 |
+| Reuse the commitment's A | `binary-and-prime-claims` | A derivation 78.8 → 0; Stage 3 A coefficients 111.0 → 10.5 | 1,842.8 → 1,632.6 | 8.0–13.0 |
+| Reuse the accepted response in the projections | `binary-and-prime-claims` | projections 85.7 → 25.8 | 1,422.5 → 1,349.2 | 9.2–11.2 |
+| Length-1,458 middle products in the integer adjoint | `binary-and-prime-claims` | direct A 209.0 → 157.9 (CPU 1,938 → 1,469) | within noise | 13.4–15.3 |
+| Small-digit accumulation in digit commitments | `binary-and-prime-claims` | D payload 70.4 → 29.9; commitment B payload 160.7 → 63.7 | 1,498.6 → 1,436.0 | 11.8–16.0 |
+| Parallel ordinary root weights, allocation-free recomposition | `binary-and-prime-claims-plus-ordinary` | ordinary weights 217.8 → 74.4; relation compile 366.9 → 211.7 | 1,871.4 → 1,686.3 | 9.8–11.0 |
+| Parallel field-switch source gather | `binary-and-prime-claims` | field-switch source 17.0 → 6.0 | 1,314.8 → 1,304.0 | 7.4–10.5 |
+| Parallel q setup matrix derivation | `binary-and-prime-claims` | commitment A 82.9 → 19.1; cold typed-prefix preparation 140.0 → 75.1 | not in proving | 7.4–10.5 |
 
 Final comparison of `f92e959ee` against the last commit, interleaved, median
 of 3 isolated proving runs per side with `BINARY_SOURCE_CATALOG_CACHE`. All
 thirty runs reproduced their pins. Logs are
 `$CARGO_TARGET_DIR/p2/logs/ab-base-c7-{B,A}<run>-<log>-<shape>.txt` and, for
-the repeated N=2^23 comparison, `r23-{B,A}<run>-23-word-prime.txt`.
+the repeated N=2^23 comparison, `r23-{B,A}<run>-23-binary-and-prime-claims.txt`.
 
 | Shape | Complete proving (ms) | Binary root level (ms) | Prover peak RSS (GB) | Load |
 | --- | ---: | ---: | ---: | --- |
-| `word`, N=2^22 | 1,564.0 → 1,140.1 | 1,293.0 → 858.2 | 4.19 → 3.95 | 9.7–11.9 |
-| `word-prime`, N=2^22 | 1,828.4 → 1,308.2 | 1,545.7 → 1,016.5 | 4.20 → 3.96 | 11.9–17.7 |
-| `word-prime-ordinary`, N=2^22 | 2,009.6 → 1,421.0 | 1,726.2 → 1,129.7 | 4.76 → 4.31 | 15.1–16.7 |
-| `prime5`, N=2^22 | 2,706.8 → 2,158.2 | 2,420.1 → 1,867.0 | 6.97 → 6.64 | 11.0–15.6 |
-| `word-prime`, N=2^23 | 3,685.5 → 2,495.5 | 3,127.9 → 2,000.7 | 8.08 → 7.54 | 14.3–26.9 |
+| `binary-claim`, N=2^22 | 1,564.0 → 1,140.1 | 1,293.0 → 858.2 | 4.19 → 3.95 | 9.7–11.9 |
+| `binary-and-prime-claims`, N=2^22 | 1,828.4 → 1,308.2 | 1,545.7 → 1,016.5 | 4.20 → 3.96 | 11.9–17.7 |
+| `binary-and-prime-claims-plus-ordinary`, N=2^22 | 2,009.6 → 1,421.0 | 1,726.2 → 1,129.7 | 4.76 → 4.31 | 15.1–16.7 |
+| `five-prime-claims`, N=2^22 | 2,706.8 → 2,158.2 | 2,420.1 → 1,867.0 | 6.97 → 6.64 | 11.0–15.6 |
+| `binary-and-prime-claims`, N=2^23 | 3,685.5 → 2,495.5 | 3,127.9 → 2,000.7 | 8.08 → 7.54 | 14.3–26.9 |
 
 The first N=2^23 comparison gave 3,228.0 → 2,716.7 ms at load 11.6–16.9. Two
 of its three final-side runs were disturbed: their untouched spans, Stage 2,
 the range-image fold and the suffix relation preparation, ran up to twice their
 base time. The repeated comparison in the table has no such outlier.
 
-Root spans at N=2^22 `word-prime`, from the same final runs:
+Root spans at N=2^22 `binary-and-prime-claims`, from the same final runs:
 
 | Span (ms) | `f92e959ee` | Final |
 | --- | ---: | ---: |
@@ -2204,7 +2213,7 @@ pays for the derivation. It would also make the prepared setup hold A,
 3 * 4,096 * 648 coefficients (about 127 MB as `i128`), for the lifetime of
 the setup instead of the source handle. This pass does not make that move.
 
-What remains at N=2^22 `word-prime`, about 1.3 s against the 0.4–0.8 s target:
+What remains at N=2^22 `binary-and-prime-claims`, about 1.3 s against the 0.4–0.8 s target:
 
 - **Out of scope.** Weight materialization (245 ms) and Stage 2 (337 ms)
   together are about 45% of complete proving. The target is out of reach
@@ -2223,7 +2232,7 @@ What remains at N=2^22 `word-prime`, about 1.3 s against the 0.4–0.8 s target:
 - **D commitment, 62 ms.** The D payload (25 ms) costs about 5.9 µs of CPU
   per setup entry. Its SHAKE256 setup streams probably dominate it; that is
   inferred from the per-entry cost, not profiled. The prime digits take 20 ms and the row partials
-  take 17 ms serially. At `prime5` the D commitment is 243 ms, of which the D
+  take 17 ms serially. At `five-prime-claims` the D commitment is 243 ms, of which the D
   payload is 140 ms and the prime digits 101 ms. The prime-plane weight visit
   takes 362 ms serially there but is part of weight materialization.
 - **Smaller serial spans.** Evaluation witness (20 ms), repacking (12 ms),
@@ -2242,7 +2251,7 @@ supersedes two of this pass's changes:
   relation compile.
 - The closed-form weight families replace the ordinary root's term
   enumeration, so this pass's parallel ordinary weighing is gone. The base's
-  families are faster: the relation compile at `word-prime-ordinary` is
+  families are faster: the relation compile at `binary-and-prime-claims-plus-ordinary` is
   below.
 
 Both sides parallelized the q setup matrix and the typed A scatter. The merge
@@ -2262,16 +2271,16 @@ was shared and loaded, so only figures from the same rounds are compared.
 
 | N | Shape | Complete proving (ms) | Root level (ms) | Verification (ms) | Prover peak RSS (bytes) | Loads |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| 2^22 | `word` | 1,194.0 → 1,055.3 | 918.7 → 713.6 | 10.1 → 10.2 | 2,221,703,168 → 2,039,644,160 | 9.29–11.99 |
-| 2^22 | `word-prime` | 2,269.4 → 1,769.5 | 1,612.5 → 1,080.9 | 14.3 → 17.9 | 3,095,003,136 → 3,036,069,888 | 14.50–22.84 |
-| 2^22 | `word-prime-ordinary` | 1,769.0 → 1,350.3 | 1,251.5 → 897.7 | 17.9 → 17.0 | 3,297,558,528 → 3,141,369,856 | 15.46–19.54 |
-| 2^22 | `prime5` | 2,270.8 → 1,746.0 | 1,559.5 → 1,028.5 | 11.2 → 11.2 | 5,414,666,240 → 5,118,984,192 | 10.29–16.40 |
-| 2^23 | `word-prime` | 2,439.7 → 1,617.9 | 1,997.7 → 1,211.3 | 13.8 → 12.8 | 3,984,883,712 → 3,805,167,616 | 13.99–20.40 |
+| 2^22 | `binary-claim` | 1,194.0 → 1,055.3 | 918.7 → 713.6 | 10.1 → 10.2 | 2,221,703,168 → 2,039,644,160 | 9.29–11.99 |
+| 2^22 | `binary-and-prime-claims` | 2,269.4 → 1,769.5 | 1,612.5 → 1,080.9 | 14.3 → 17.9 | 3,095,003,136 → 3,036,069,888 | 14.50–22.84 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 1,769.0 → 1,350.3 | 1,251.5 → 897.7 | 17.9 → 17.0 | 3,297,558,528 → 3,141,369,856 | 15.46–19.54 |
+| 2^22 | `five-prime-claims` | 2,270.8 → 1,746.0 | 1,559.5 → 1,028.5 | 11.2 → 11.2 | 5,414,666,240 → 5,118,984,192 | 10.29–16.40 |
+| 2^23 | `binary-and-prime-claims` | 2,439.7 → 1,617.9 | 1,997.7 → 1,211.3 | 13.8 → 12.8 | 3,984,883,712 → 3,805,167,616 | 13.99–20.40 |
 
-The gain comes from the spans this pass targeted. At 2^22 `word-prime` the
+The gain comes from the spans this pass targeted. At 2^22 `binary-and-prime-claims` the
 relation compile falls from 255.5 to 161.3 ms and the D commitment from 151.0
-to 86.4 ms. At `prime5` the D commitment falls from 415.0 to 216.3 ms. At
-`word-prime-ordinary` the relation compile falls from 167.5 to 140.3 ms.
+to 86.4 ms. At `five-prime-claims` the D commitment falls from 415.0 to 216.3 ms. At
+`binary-and-prime-claims-plus-ordinary` the relation compile falls from 167.5 to 140.3 ms.
 Stage 2 and Stage 3 run the base's code in both executables. Stage 3 CPU
 time agrees within 2.5%. Stage 2 uses 2.5–6.3% more CPU time in this head at
 every shape. The cause is not measured. Verification time is within noise.
@@ -2284,12 +2293,12 @@ prover pass (`e7b6c127a`) and structured Stage 2 (`4d536c84e`) on
 records: the names of each span's enclosing spans, so the span tree below is
 measured rather than inferred. Spans opened on worker threads have no parent.
 
-The merged base was proved three times at N=2^22 `word-prime` in isolated
+The merged base was proved three times at N=2^22 `binary-and-prime-claims` in isolated
 processes with `BINARY_SOURCE_CATALOG_CACHE`. Every run reproduced its pin. An
 earlier set of three runs at a one-minute load of 17.9–19.1 took 1,732, 2,943
 and 2,587 ms with unchanged CPU time (7.8–8.0 s); it is disturbed and not used.
 The runs below had one-minute loads of 10.9–12.2. Logs are
-`$CARGO_TARGET_DIR/p3/logs/c0-22-word-prime-{4,5,6}.txt`.
+`$CARGO_TARGET_DIR/p3/logs/c0-22-binary-and-prime-claims-{4,5,6}.txt`.
 
 | Span (ms, median of 3) | Wall | Process CPU |
 | --- | ---: | ---: |
@@ -2341,7 +2350,7 @@ take 69 ms. The authentication profile build weighs its columns in parallel,
 but streams every weight into the profile rows serially, one address at a
 time; it runs at 7 cores of 16.
 
-Candidate changes, with the expected gain at N=2^22 `word-prime`:
+Candidate changes, with the expected gain at N=2^22 `binary-and-prime-claims`:
 
 | Candidate | Spans reduced | Expected gain (ms) |
 | --- | --- | ---: |
@@ -2373,7 +2382,7 @@ commit.
 Every change below preserves setup, commitment and proof bytes; each one
 reproduced every pin it was measured on. None touches ordinary-protocol code.
 Each commit message records its median of three interleaved runs against its
-parent at 2^22 `word-prime`, with the one-minute loads.
+parent at 2^22 `binary-and-prime-claims`, with the one-minute loads.
 
 | Commit | Change | Span: before → after (ms) |
 | --- | --- | --- |
@@ -2407,7 +2416,7 @@ on one thread, sampling the setup coefficients from their SHAKE streams takes
 20.6 ms of the 73.3 ms commitment, so the integer negacyclic digit products are
 about 72% and SHAKE about 28%. Rewriting the products as 16-bit limbs in i32
 lanes brought the commitment to 64.7 ms, a 12% gain. That is worth about 12 ms
-at `prime5` and 2.5 ms at `word-prime`, so the rewrite was not kept.
+at `five-prime-claims` and 2.5 ms at `binary-and-prime-claims`, so the rewrite was not kept.
 
 #### Third-pass results
 
@@ -2417,16 +2426,16 @@ runs reproduced their pins. 2^23 ran last.
 
 | N | Shape | Complete proving (ms) | Root level (ms) | Process CPU (ms) | Peak RSS (bytes) | Loads |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| 2^22 | `word` | 745.1 → 595.1 | 501.7 → 343.7 | 7,540 → 6,219 | 2,290,221,056 → 2,608,889,856 | 5.17–6.52 |
-| 2^22 | `word-prime` | 822.3 → 636.1 | 584.0 → 398.8 | 8,566 → 7,143 | 2,370,994,176 → 2,704,932,864 | 6.52–8.27 |
-| 2^22 | `word-prime-ordinary` | 993.3 → 756.4 | 748.2 → 512.2 | 9,471 → 8,084 | 2,875,932,672 → 2,932,752,384 | 7.31–8.08 |
-| 2^22 | `prime5` | 1,094.6 → 822.4 | 846.3 → 577.7 | 11,498 → 9,979 | 2,538,864,640 → 2,839,494,656 | 4.06–7.54 |
-| 2^23 | `word-prime` | 1,392.5 → 1,221.6 | 1,013.6 → 784.4 | 13,946 → 11,436 | 4,158,078,976 → 5,080,317,952 | 4.55–9.19 |
+| 2^22 | `binary-claim` | 745.1 → 595.1 | 501.7 → 343.7 | 7,540 → 6,219 | 2,290,221,056 → 2,608,889,856 | 5.17–6.52 |
+| 2^22 | `binary-and-prime-claims` | 822.3 → 636.1 | 584.0 → 398.8 | 8,566 → 7,143 | 2,370,994,176 → 2,704,932,864 | 6.52–8.27 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 993.3 → 756.4 | 748.2 → 512.2 | 9,471 → 8,084 | 2,875,932,672 → 2,932,752,384 | 7.31–8.08 |
+| 2^22 | `five-prime-claims` | 1,094.6 → 822.4 | 846.3 → 577.7 | 11,498 → 9,979 | 2,538,864,640 → 2,839,494,656 | 4.06–7.54 |
+| 2^23 | `binary-and-prime-claims` | 1,392.5 → 1,221.6 | 1,013.6 → 784.4 | 13,946 → 11,436 | 4,158,078,976 → 5,080,317,952 | 4.55–9.19 |
 
 The base column is faster than the opening profile above because the machine
 was less loaded; only interleaved pairs are compared.
 
-Root spans at 2^22 `word-prime`, from the same runs:
+Root spans at 2^22 `binary-and-prime-claims`, from the same runs:
 
 | Span (ms, median of 3) | Base | Head |
 | --- | ---: | ---: |
@@ -2455,12 +2464,12 @@ The ordinary suffix is unchanged: its Stage 2 sumchecks take 85.5 ms, its
 `RingRelationProver::prepare` 58.3 ms, of which fold grinding is 45.9 ms, and
 its Stage 1 sumchecks 48.0 ms.
 
-Peak RSS rises 13–14% at `word`, `word-prime` and `prime5`, 2% at
-`word-prime-ordinary` and 22% at 2^23. Live heap does not: the prove-phase
+Peak RSS rises 13–14% at `binary-claim`, `binary-and-prime-claims` and `five-prime-claims`, 2% at
+`binary-and-prime-claims-plus-ordinary` and 22% at 2^23. Live heap does not: the prove-phase
 live-heap peak is identical in base and head, 1,516, 1,565, 1,996 and 2,009 MB
 for the four 2^22 shapes and 2,961 MB at 2^23. The difference is freed memory
 that the system allocator keeps resident in its large-block cache. With
-`MallocLargeCache=0`, peak RSS at `word-prime` falls from 1,687,420,928 to
+`MallocLargeCache=0`, peak RSS at `binary-and-prime-claims` falls from 1,687,420,928 to
 1,663,991,808 bytes at 2^22 and from 3,142,221,824 to 3,101,229,056 bytes at
 2^23. In the base, the authentication emission allocated and freed a batch
 of column weights every 4,096 columns. That churn happened to evict the
@@ -2469,7 +2478,7 @@ The lane fill allocates nothing large, so freed buffers of earlier stages stay
 cached and later stages map fresh pages. The prover keeps no more live data
 than before; the RSS budget is exceeded only by allocator residency.
 
-What remains at 2^22 `word-prime` is about 400 ms in the root and 237 ms in
+What remains at 2^22 `binary-and-prime-claims` is about 400 ms in the root and 237 ms in
 the suffix. No root span above 10 ms is still serial. The largest are:
 
 - the response fold at 58 ms, an integer fold of every carrier that already
@@ -2479,7 +2488,7 @@ the suffix. No root span above 10 ms is still serial. The largest are:
 - the Stage 2 sumcheck rounds after the profiles, at about 72 ms;
 - the D commitment at 39 ms: payload 21 ms and prime digits 16 ms.
 
-At `prime5` the D commitment is 179 ms, of which the payload is 100 ms and the
+At `five-prime-claims` the D commitment is 179 ms, of which the payload is 100 ms and the
 prime digits 78 ms; they already run at 15 and 10 cores. The suffix's six ordinary
 folds run at 12–14 cores. A further gain there needs a different algorithm,
 not more threads, and the fold-grinding acceptance rule and nonce order fix
@@ -2492,7 +2501,7 @@ A protocol change could buy the following; none is made here:
   digit chunk as integers. Arithmetic is about 72% of the D payload. A commitment modulus with a
   64-point negacyclic transform, or a limb-prime path like the direct A
   adjoint's, would cut most of that share: at most about 70 ms of the
-  `prime5` payload and 15 ms at `word-prime`.
+  `five-prime-claims` payload and 15 ms at `binary-and-prime-claims`.
 - Setup entries come from one SHAKE stream each. A setup derived from fewer,
   longer streams would cut the SHAKE share of the D payload, about 28%, and
   part of the authentication emission.
@@ -2510,21 +2519,21 @@ commitment and proof bytes are unchanged.
 
 The base's structured Stage 2 and closed-form families changed the code
 around four of this pass's changes. Each still runs on the prover path and
-keeps its gain. The figures below are medians at 2^22 `word-prime`, from the
+keeps its gain. The figures below are medians at 2^22 `binary-and-prime-claims`, from the
 runs below, as base → second pass → this head:
 
 - *Authentication profile fill.* The authentication family still emits
   through `ProfileBuilder::add_lanes`: 140.2 → 153.4 → 60.7 ms, and 175.3 →
-  195.8 → 85.7 ms at `prime5`.
+  195.8 → 85.7 ms at `five-prime-claims`.
 - *Recomposed profile fill.* Direct A, the image and the prime planes still
   add one element's profile per task through `ProfileBuilder::add_shared`.
   The prime-plane emission takes 19.6 → 19.8 → 4.6 ms, and 91.3 → 90.4 →
-  10.8 ms at `prime5`. The direct A emission takes 14.2 → 14.1 → 5.6 ms and
+  10.8 ms at `five-prime-claims`. The direct A emission takes 14.2 → 14.1 → 5.6 ms and
   the image emission 20.4 → 16.7 → 13.1 ms.
 - *D row partials.* `binary_root_row_partials` takes 17.4 → 17.8 → 5.1 ms.
 - *Direct A adjoint.* The relation compile still calls `apply_integer_rows`:
   255.5 → 161.3 → 56.1 ms, and 167.5 → 140.3 → 41.8 ms at
-  `word-prime-ordinary`.
+  `binary-and-prime-claims-plus-ordinary`.
 
 Base `0ff6a96f7` and head `8f575025c` were proved in the interleaved rounds
 described in the second pass's subsection, with the same 60 runs and the
@@ -2532,22 +2541,22 @@ same loads. All runs reproduced their pins and verified.
 
 | N | Shape | Complete proving (ms) | Root level (ms) | Verification (ms) | Prover peak RSS (bytes) | Loads |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| 2^22 | `word` | 1,194.0 → 853.1 | 918.7 → 505.0 | 10.1 → 10.5 | 2,221,703,168 → 2,485,534,720 | 9.29–11.99 |
-| 2^22 | `word-prime` | 2,269.4 → 1,435.8 | 1,612.5 → 789.8 | 14.3 → 15.5 | 3,095,003,136 → 3,673,833,472 | 14.50–22.84 |
-| 2^22 | `word-prime-ordinary` | 1,769.0 → 1,076.3 | 1,251.5 → 621.1 | 17.9 → 19.2 | 3,297,558,528 → 4,013,850,624 | 15.46–19.54 |
-| 2^22 | `prime5` | 2,270.8 → 1,430.1 | 1,559.5 → 747.1 | 11.2 → 12.2 | 5,414,666,240 → 5,815,009,280 | 10.29–16.40 |
-| 2^23 | `word-prime` | 2,439.7 → 1,184.5 | 1,997.7 → 773.3 | 13.8 → 12.2 | 3,984,883,712 → 4,629,168,128 | 13.99–20.40 |
+| 2^22 | `binary-claim` | 1,194.0 → 853.1 | 918.7 → 505.0 | 10.1 → 10.5 | 2,221,703,168 → 2,485,534,720 | 9.29–11.99 |
+| 2^22 | `binary-and-prime-claims` | 2,269.4 → 1,435.8 | 1,612.5 → 789.8 | 14.3 → 15.5 | 3,095,003,136 → 3,673,833,472 | 14.50–22.84 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 1,769.0 → 1,076.3 | 1,251.5 → 621.1 | 17.9 → 19.2 | 3,297,558,528 → 4,013,850,624 | 15.46–19.54 |
+| 2^22 | `five-prime-claims` | 2,270.8 → 1,430.1 | 1,559.5 → 747.1 | 11.2 → 12.2 | 5,414,666,240 → 5,815,009,280 | 10.29–16.40 |
+| 2^23 | `binary-and-prime-claims` | 2,439.7 → 1,184.5 | 1,997.7 → 773.3 | 13.8 → 12.2 | 3,984,883,712 → 4,629,168,128 | 13.99–20.40 |
 
 Peak RSS rises by 7–22%, as in the third-pass results above. The second
-pass alone lowers it. At 2^22 `word` the Stage 3 rounds also run
+pass alone lowers it. At 2^22 `binary-claim` the Stage 3 rounds also run
 slower in this head, 36.9 → 56.0 ms, with the same CPU time (about 370 ms)
 and the same live-heap peak. Both effects are most likely the system
 allocator's large-block cache. With `MallocLargeCache=0`, three more
-interleaved pairs at 2^22 `word` (loads 10.11–10.93) gave Stage 3 rounds of
+interleaved pairs at 2^22 `binary-claim` (loads 10.11–10.93) gave Stage 3 rounds of
 60.7 → 44.2 ms and peak RSS of 1,735,442,432 → 1,560,182,784 bytes. That
 cause is inferred from these runs; it has not been profiled.
 
-What remains in the root at `word-prime-ordinary` includes two closed-form
+What remains in the root at `binary-and-prime-claims-plus-ordinary` includes two closed-form
 families from the base. Both are emitted serially, one address at a time: the
 translated lanes at 27.9 ms and the source evaluation at 28.7 ms. A lane fill
 like the authentication family's would apply to both. This pass does not make
@@ -2561,8 +2570,8 @@ for every shape.
 
 The third-pass results above (595, 636, 756 and 822 ms) were measured on a
 base without the B/D setup offload (#318), which changed the proof bytes. At
-2^22 `word-prime` that base proves 82,743 bytes and `737c6a6f5` proves 84,392
-bytes. The offload moves work into the ordinary suffix: at `word-prime` the
+2^22 `binary-and-prime-claims` that base proves 82,743 bytes and `737c6a6f5` proves 84,392
+bytes. The offload moves work into the ordinary suffix: at `binary-and-prime-claims` the
 first suffix fold's `DensePoly::decompose_fold` takes 68.5 ms here and 13 ms
 in the third-pass runs, and the suffix's Stage 1 sumchecks take 117.7 ms here
 and 48.0 ms there. The figures below are the baseline for this pass.
@@ -2573,7 +2582,7 @@ shapes. All runs reproduced their pins. One-minute loads were 5.18–7.08.
 Logs are `$CARGO_TARGET_DIR/p4/logs/base-22-<shape>-p<run>.txt`. Each cell is
 the median wall time in ms, with process CPU time in parentheses.
 
-| Span | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| Span | `binary-claim` | `binary-and-prime-claims` | `binary-and-prime-claims-plus-ordinary` | `five-prime-claims` |
 | --- | ---: | ---: | ---: | ---: |
 | Complete proving | 615.8 (6,791) | 804.3 (9,061) | 895.3 (9,543) | 1,268.5 (15,544) |
 | › binary root level | 369.2 (3,858) | 433.0 (4,729) | 525.2 (5,086) | 664.6 (7,712) |
@@ -2605,19 +2614,19 @@ the median wall time in ms, with process CPU time in parentheses.
 | ›› coefficient-packing partials | 13.3 (166) | 17.4 (242) | 18.6 (258) | 29.5 (406) |
 | Prover peak RSS (bytes) | 2,484,502,528 | 3,687,809,024 | 4,013,096,960 | 5,810,634,752 |
 
-The first suffix fold dominates the suffix. In medians of three, at `prime5`
+The first suffix fold dominates the suffix. In medians of three, at `five-prime-claims`
 its Stage 1 sumcheck takes 209.5 ms of the six folds' 283.6 ms, its Stage 2
 sumcheck 98.4 ms of 137.0 ms, and its `RingRelationProver::prepare` 102.4 ms
-of 117.9 ms. At `word-prime` the same three take 67.7, 53.0 and 96.7 ms.
+of 117.9 ms. At `binary-and-prime-claims` the same three take 67.7, 53.0 and 96.7 ms.
 
 What the largest suffix spans spend their time on:
 
-- **First-fold decomposition.** At `word-prime` the first suffix fold folds
+- **First-fold decomposition.** At `binary-and-prime-claims` the first suffix fold folds
   65,536 ring elements of degree 512, in 256 blocks of 256 positions, into 19
   balanced base-128 digits under challenges of weight 41 with coefficients
   of magnitude one or two. Each digit plane adds 41 shifted copies of itself
   into an `i16` accumulator held in memory, so every term loads and stores
-  the whole accumulator. At `word` and `prime5` the digits are base 1,024 and
+  the whole accumulator. At `binary-claim` and `five-prime-claims` the digits are base 1,024 and
   run through the same loop on `i16` planes.
 - **Stage 1 compact digit source.** The class pairs of the Stage 1 leaf are
   derived by one serial pass over every packed digit.
@@ -2626,12 +2635,12 @@ Candidate changes, with the expected gain at N=2^22:
 
 | Candidate | Spans reduced | Shapes | Expected gain (ms) |
 | --- | --- | --- | ---: |
-| Parallel interval fill for the translated-lane and source-evaluation families | weight profiles | `word-prime-ordinary` | 40–50 |
-| Register-blocked digit-plane accumulation in the first suffix fold (ordinary) | `DensePoly::decompose_fold` | `word-prime`, `word-prime-ordinary`, `prime5` | 25–40 |
-| Parallel class pairs in the Stage 1 compact digit source (ordinary) | Stage 1 compact digit source | `word-prime`, `word-prime-ordinary`, `prime5` | 12–18 |
-| First suffix fold's Stage 1 sumcheck (ordinary) | Stage 1 sumchecks | `prime5`, then the others | 0–60 |
-| Authentication emission | weight profiles | all, most at `prime5` | 10–30 |
-| D payload and prime digits | D commitment | `prime5`, then `word-prime` | 0–40 |
+| Parallel interval fill for the translated-lane and source-evaluation families | weight profiles | `binary-and-prime-claims-plus-ordinary` | 40–50 |
+| Register-blocked digit-plane accumulation in the first suffix fold (ordinary) | `DensePoly::decompose_fold` | `binary-and-prime-claims`, `binary-and-prime-claims-plus-ordinary`, `five-prime-claims` | 25–40 |
+| Parallel class pairs in the Stage 1 compact digit source (ordinary) | Stage 1 compact digit source | `binary-and-prime-claims`, `binary-and-prime-claims-plus-ordinary`, `five-prime-claims` | 12–18 |
+| First suffix fold's Stage 1 sumcheck (ordinary) | Stage 1 sumchecks | `five-prime-claims`, then the others | 0–60 |
+| Authentication emission | weight profiles | all, most at `five-prime-claims` | 10–30 |
+| D payload and prime digits | D commitment | `five-prime-claims`, then `binary-and-prime-claims` | 0–40 |
 | Response fold, per-carrier work | response fold | all | 0–15 |
 
 The ordinary candidates change ordinary-protocol prover code only. Each lands
@@ -2649,10 +2658,10 @@ ordinary-protocol prover files only.
 
 | Commit | Change | Ordinary | Span: before → after (ms) |
 | --- | --- | --- | --- |
-| `7c12fdf5e` | Translated-lane and source-evaluation weights filled by interval in parallel | no | `word-prime-ordinary` weight profiles 111.0 → 69.8, translated lanes 27.1 → 11.2, source evaluation 27.9 → 2.7 |
-| `2d55bf4e8` | Stage 1 digit class pairs derived in parallel | yes | `word-prime` compact digit source 16.4 → 1.8, suffix Stage 1 sumchecks 132.9 → 117.8 |
-| `d73085026` | Register-blocked narrow kernel for unaligned challenges in the first suffix fold | yes | `DensePoly::decompose_fold` 72.6 → 40.1 at `word-prime`, 86.0 → 68.2 at `prime5` |
-| `2c6acc838` | Residual operands validated and narrowed in parallel | no | `word-prime` residual rows 35.0 → 24.7 |
+| `7c12fdf5e` | Translated-lane and source-evaluation weights filled by interval in parallel | no | `binary-and-prime-claims-plus-ordinary` weight profiles 111.0 → 69.8, translated lanes 27.1 → 11.2, source evaluation 27.9 → 2.7 |
+| `2d55bf4e8` | Stage 1 digit class pairs derived in parallel | yes | `binary-and-prime-claims` compact digit source 16.4 → 1.8, suffix Stage 1 sumchecks 132.9 → 117.8 |
+| `d73085026` | Register-blocked narrow kernel for unaligned challenges in the first suffix fold | yes | `DensePoly::decompose_fold` 72.6 → 40.1 at `binary-and-prime-claims`, 86.0 → 68.2 at `five-prime-claims` |
+| `2c6acc838` | Residual operands validated and narrowed in parallel | no | `binary-and-prime-claims` residual rows 35.0 → 24.7 |
 | `fe54a6f5a` | Type alias for the translated lanes, for the `labinius-trinomial` clippy configuration | no | none |
 
 Commits `75f119aab` and `5a2b2abf9` add and revert a work-in-progress copy of
@@ -2693,26 +2702,26 @@ reproduced their pins. 2^23 ran last. Each cell is the median of three.
 
 | N | Shape | Complete proving (ms) | Root level (ms) | Ordinary suffix (ms) | Process CPU (ms) | Peak RSS (bytes) | Loads |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 2^22 | `word` | 619.3 → 617.9 | 367.9 → 365.5 | 254.8 → 246.9 | 6,521 → 6,515 | 2,476,326,912 → 2,492,940,288 | 4.48–7.47 |
-| 2^22 | `word-prime` | 801.1 → 748.9 | 430.1 → 426.4 | 369.0 → 321.7 | 8,790 → 8,470 | 3,684,843,520 → 3,646,275,584 | 6.79–8.25 |
-| 2^22 | `word-prime-ordinary` | 875.6 → 805.9 | 515.7 → 477.4 | 363.9 → 328.1 | 9,238 → 9,034 | 4,027,924,480 → 3,308,568,576 | 7.77–8.55 |
-| 2^22 | `prime5` | 1,241.3 → 1,254.1 | 633.0 → 666.7 | 608.3 → 587.4 | 15,046 → 15,212 | 5,812,322,304 → 5,803,769,856 | 5.36–7.77 |
-| 2^23 | `word-prime` | 1,127.5 → 1,084.0 | 736.8 → 726.9 | 390.7 → 350.3 | 11,782 → 11,346 | 4,633,804,800 → 3,536,830,464 | 7.26–9.56 |
+| 2^22 | `binary-claim` | 619.3 → 617.9 | 367.9 → 365.5 | 254.8 → 246.9 | 6,521 → 6,515 | 2,476,326,912 → 2,492,940,288 | 4.48–7.47 |
+| 2^22 | `binary-and-prime-claims` | 801.1 → 748.9 | 430.1 → 426.4 | 369.0 → 321.7 | 8,790 → 8,470 | 3,684,843,520 → 3,646,275,584 | 6.79–8.25 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 875.6 → 805.9 | 515.7 → 477.4 | 363.9 → 328.1 | 9,238 → 9,034 | 4,027,924,480 → 3,308,568,576 | 7.77–8.55 |
+| 2^22 | `five-prime-claims` | 1,241.3 → 1,254.1 | 633.0 → 666.7 | 608.3 → 587.4 | 15,046 → 15,212 | 5,812,322,304 → 5,803,769,856 | 5.36–7.77 |
+| 2^23 | `binary-and-prime-claims` | 1,127.5 → 1,084.0 | 736.8 → 726.9 | 390.7 → 350.3 | 11,782 → 11,346 | 4,633,804,800 → 3,536,830,464 | 7.26–9.56 |
 
-`word` and `word-prime` now prove inside the 0.4–0.8 s target;
-`word-prime-ordinary` is 6 ms above it and `prime5` is not near it. At
-`prime5` the individual runs were 1,241.3, 1,229.4 and 1,387.5 ms for the base
+`binary-claim` and `binary-and-prime-claims` now prove inside the 0.4–0.8 s target;
+`binary-and-prime-claims-plus-ordinary` is 6 ms above it and `five-prime-claims` is not near it. At
+`five-prime-claims` the individual runs were 1,241.3, 1,229.4 and 1,387.5 ms for the base
 and 1,254.1, 1,223.2 and 1,437.6 ms for the head. Its root level rose
 33.7 ms although the only change there, the residual rows, fell 6.3 ms;
 spans no change touches rose with it, such as authentication emission
-(76.2 → 80.2 ms) and Stage 3 (69.6 → 78.8 ms). The `prime5` difference is
+(76.2 → 80.2 ms) and Stage 3 (69.6 → 78.8 ms). The `five-prime-claims` difference is
 load noise. Its suffix gained 21 ms. Verification is unchanged: 9.4, 11.0,
 16.2 and 10.6 ms at 2^22 and 11.8 ms at 2^23 for the base, within 0.3 ms for
 the head.
 
 Spans at 2^22 from the same runs, base → head:
 
-| Span (ms, median of 3) | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| Span (ms, median of 3) | `binary-claim` | `binary-and-prime-claims` | `binary-and-prime-claims-plus-ordinary` | `five-prime-claims` |
 | --- | ---: | ---: | ---: | ---: |
 | root weight profiles | 47.9 → 42.6 | 57.1 → 55.7 | 111.3 → 77.2 | 94.0 → 99.2 |
 | › translated lanes | — | — | 27.2 → 11.6 | — |
@@ -2727,16 +2736,16 @@ Spans at 2^22 from the same runs, base → head:
 | › first fold's `DensePoly::decompose_fold` | 13.7 → 12.4 | 60.1 → 36.6 | 61.3 → 37.2 | 54.7 → 50.6 |
 | Stage 1 compact digit source | 0.4 → 0.4 | 16.0 → 1.9 | 15.5 → 2.1 | 17.1 → 2.2 |
 
-The first fold gains less at `prime5` and `word` than at `word-prime` because
+The first fold gains less at `five-prime-claims` and `binary-claim` than at `binary-and-prime-claims` because
 their planes are base-1,024 `i16` digits under challenges of weight 19, so the
 per-term loop they replace is shorter.
 
 Live heap does not change. The prove-phase live-heap peak is identical in base
 and head: 1,516, 2,337, 2,713 and 3,933 MB for the four 2^22 shapes and 2,943
-MB at 2^23. Peak RSS falls 18% at `word-prime-ordinary` and 24% at 2^23, and
+MB at 2^23. Peak RSS falls 18% at `binary-and-prime-claims-plus-ordinary` and 24% at 2^23, and
 moves about 1% or less elsewhere. As in the third pass, the difference is freed
 memory that the system allocator keeps resident, not live data. At
-`word-prime` the live-heap peak of the prove process falls inside the cold
+`binary-and-prime-claims` the live-heap peak of the prove process falls inside the cold
 verifier setup preparation, outside complete proving; complete proving peaks
 at 2,284 MB in the root Stage 2 fold rounds. No buffer release inside complete
 proving lowers the measured peak, so this pass has no RSS commit, and
@@ -2755,15 +2764,15 @@ These are the largest spans at 2^22 that this pass did not reduce:
   once per fold took 8.3 ms, because one counter per class is one dependency
   chain. Advancing the six class counters in lockstep took 2.44–2.68 ms.
 - **Setup-derived weights.** Authentication emission (23–80 ms), the D
-  payload (up to 107 ms at `prime5`) and the suffix's relation-lane setup
+  payload (up to 107 ms at `five-prime-claims`) and the suffix's relation-lane setup
   columns (23–42 ms) expand B and D setup entries from SHAKE streams on every
-  proof. In a sample profile of the `word-prime` emission, 56% of the samples
+  proof. In a sample profile of the `binary-and-prime-claims` emission, 56% of the samples
   are in the SHAKE permutation and 20% in the residue kernel. Caching the
   expanded entries would trade that time for memory of the setup's size.
-- **`prime5` D commitment, 180–185 ms.** Its D payload and prime digits were
+- **`five-prime-claims` D commitment, 180–185 ms.** Its D payload and prime digits were
   not changed in this pass. The third pass measured the payload at about 72%
   integer products and 28% SHAKE.
-- **`prime5` suffix Stage 1 sumchecks, 277–299 ms,** of which the first fold
+- **`five-prime-claims` suffix Stage 1 sumchecks, 277–299 ms,** of which the first fold
   takes about 210 ms. Its class-indexed product and leaf rounds already run
   factored kernels; this pass found no byte-preserving change there.
 - **Smaller spans.** These are root Stage 3 rounds (36–65 ms), the suffix
@@ -2777,14 +2786,14 @@ measured:
 
 - **A cheaper setup generator** for the B and D setup columns would remove
   most of the SHAKE share above. From the sample shares, that is about 40 ms
-  of authentication emission and about 30 ms of D payload at `prime5`, and
-  about 25 ms in all at `word-prime`.
-- **Word's first-fold digit basis and challenge weight for the word-prime
-  shapes.** At `word` the first fold uses base-1,024 digits and challenges of
+  of authentication emission and about 30 ms of D payload at `five-prime-claims`, and
+  about 25 ms in all at `binary-and-prime-claims`.
+- **`binary-claim`'s first-fold digit basis and challenge weight for the binary-and-prime-claims
+  shapes.** At `binary-claim` the first fold uses base-1,024 digits and challenges of
   weight 19. Its decomposition takes 12.4 ms and its suffix Stage 1
-  sumchecks 53 ms, against 36.6 ms and 104.5 ms at `word-prime`, which uses 19
-  base-128 digits and weight 41. With word's parameters, the `word-prime`
-  suffix would move toward word's 247 ms. This changes the proof bytes and
+  sumchecks 53 ms, against 36.6 ms and 104.5 ms at `binary-and-prime-claims`, which uses 19
+  base-128 digits and weight 41. With `binary-claim`'s parameters, the `binary-and-prime-claims`
+  suffix would move toward `binary-claim`'s 247 ms. This changes the proof bytes and
   needs the planner's security accounting.
 - **A lower root challenge weight.** The response fold scales linearly with
   the root family's weight of 46. That weight is set by the root's security
@@ -2816,14 +2825,14 @@ Every figure below is from 50 repeats against a fixture proved once by the
 base executable. Every fixture reproduced its pin, and every repeated run
 reported `verification passed=true`. The one-minute load before each run is
 listed per configuration. The repeats' spread is small: at N=2^22
-`word-prime` the minimum and maximum lie within 4% of the median in parallel
+`binary-and-prime-claims` the minimum and maximum lie within 4% of the median in parallel
 and within 2% single-threaded.
 
 #### Base profile
 
 Per-verification span times at `737c6a6f5`, in milliseconds. The columns are
-the four shapes at N=2^22 (`word`, `word-prime`, `word-prime-ordinary`,
-`prime5`), `word-prime` at N=2^23, and the smoke run, `word-prime-ordinary` at
+the four shapes at N=2^22 (`binary-claim`, `binary-and-prime-claims`, `binary-and-prime-claims-plus-ordinary`,
+`five-prime-claims`), `binary-and-prime-claims` at N=2^23, and the smoke run, `binary-and-prime-claims-plus-ordinary` at
 N=2^10. Indentation is the measured span tree; spans with no parent were
 opened on Rayon workers and are placed under the span that spawned them.
 
@@ -2882,7 +2891,7 @@ Three facts shape the pass:
   8.6–10.5 ms for the binary-only shapes and 9.5 of 15.5 ms for the mixed
   shape.
 - **About 1 ms of each verification is outside every span.** A `sample`
-  profile of single-threaded N=2^22 `word-prime` attributes it to the suffix
+  profile of single-threaded N=2^22 `binary-and-prime-claims` attributes it to the suffix
   folds' Stage 1 replay (`verify_stage1`, about 0.35 ms over six folds), their
   Stage 1 challenge derivation (about 0.3 ms), Stage 2 sumcheck replay, and
   the root's field switch and projection-row draw.
@@ -2905,10 +2914,10 @@ verified the same fixtures alternately, 50 repeats each, at loads of
 
 | N=2^22 shape | Parallel: scan, verification (ms) | Single-threaded: scan, verification (ms) |
 | --- | --- | --- |
-| `word` | 2.37 → 2.29, 8.90 → 8.74 | 10.01 → 9.29, 17.09 → 15.90 |
-| `word-prime` | 2.66 → 2.58, 9.57 → 9.45 | 16.81 → 15.89, 24.40 → 23.00 |
-| `word-prime-ordinary` | 3.09 → 2.98, 15.23 → 15.07 | 17.26 → 16.34, 32.12 → 31.41 |
-| `prime5` | 3.01 → 2.87, 9.98 → 9.87 | 15.77 → 15.28, 23.17 → 22.59 |
+| `binary-claim` | 2.37 → 2.29, 8.90 → 8.74 | 10.01 → 9.29, 17.09 → 15.90 |
+| `binary-and-prime-claims` | 2.66 → 2.58, 9.57 → 9.45 | 16.81 → 15.89, 24.40 → 23.00 |
+| `binary-and-prime-claims-plus-ordinary` | 3.09 → 2.98, 15.23 → 15.07 | 17.26 → 16.34, 32.12 → 31.41 |
+| `five-prime-claims` | 3.01 → 2.87, 9.98 → 9.87 | 15.77 → 15.28, 23.17 → 22.59 |
 
 #327 makes the scan 3–7% faster here. That is 0.5–0.9 ms single-threaded,
 where the scan is 54–70% of verification, and 0.1 ms in parallel, where it is
@@ -2923,7 +2932,7 @@ Expected gains at N=2^22, from the profile above:
 | --- | --- | --- | ---: | ---: |
 | Image challenge supports read from the challenge positions | A image compile | all | 0.7 | 0.7 |
 | Independent root weight families evaluated in parallel | relation evaluation | all | 0.6–1.5 | 0 |
-| Independent root weight families compiled in parallel | relation compile | `word-prime`, `prime5`, mixed | 0.2–1.0 | 0 |
+| Independent root weight families compiled in parallel | relation compile | `binary-and-prime-claims`, `five-prime-claims`, mixed | 0.2–1.0 | 0 |
 | Ordinary root role rings without per-ring conversion and copies | ordinary root compile | mixed | 0.2–0.5 | 0.3–0.6 |
 | Image and Stage 3 adjoints of the A rows in parallel | image evaluation, Stage 3 | all | 0.1–0.3 | 0 |
 | Suffix Stage 1 replay and challenge derivation | ordinary-protocol code | all | 0.1–0.3 | 0.1–0.3 |
@@ -2945,22 +2954,22 @@ each. Every run passed.
 
 | Commit | Change | Shape at 2^22 | Parallel (ms) | Single-threaded (ms) | Loads |
 | --- | --- | --- | --- | --- | --- |
-| `3acaa2125` | Image challenge supports read from the scalar challenges | `word` | 8.87 → 8.33 | 17.09 → 16.59 | 6.20–6.47 |
-| | | `word-prime` | 10.20 → 9.71 | 24.37 → 23.74 | |
-| | | `word-prime-ordinary` | 15.61 → 15.28 | 31.88 → 31.55 | |
-| | | `prime5` | 10.32 → 9.76 | 24.08 → 23.31 | |
-| `2d2c00d1e` | Root weight families evaluated in parallel | `word` | 7.93 → 7.28 | 15.75 → 15.89 | 6.30–7.73 |
-| | | `word-prime` | 9.11 → 7.98 | 22.85 → 24.40 | |
-| | | `word-prime-ordinary` | 14.34 → 12.74 | 32.51 → 31.47 | |
-| | | `prime5` | 9.26 → 8.83 | 23.09 → 22.93 | |
-| `9fc38aa64` | Root relation evaluated beside its Stage 3 replay | `word` | 8.05 → 7.57 | 16.80 → 16.86 | 10.32–10.97 |
-| | | `word-prime` | 9.32 → 8.80 | 24.11 → 24.15 | |
-| | | `word-prime-ordinary` | 13.56 → 13.07 | 31.63 → 31.58 | |
-| | | `prime5` | 9.57 → 9.14 | 23.23 → 23.28 | |
-| `b6f87d4db` | Root weight components compiled in parallel | `word-prime` | 8.56 → 8.31 | 24.07 → 24.02 | 11.75–13.66 |
-| | | `word-prime-ordinary` | 12.81 → 12.01 | 31.52 → 31.61 | |
-| | | `prime5` | 9.51 → 9.05 | 23.18 → 23.10 | |
-| `70096cfdb` | Ordinary root setup rings converted into one buffer | `word-prime-ordinary` | 11.33 → 11.13 | 32.24 → 31.22 | 10.07–13.50 |
+| `3acaa2125` | Image challenge supports read from the scalar challenges | `binary-claim` | 8.87 → 8.33 | 17.09 → 16.59 | 6.20–6.47 |
+| | | `binary-and-prime-claims` | 10.20 → 9.71 | 24.37 → 23.74 | |
+| | | `binary-and-prime-claims-plus-ordinary` | 15.61 → 15.28 | 31.88 → 31.55 | |
+| | | `five-prime-claims` | 10.32 → 9.76 | 24.08 → 23.31 | |
+| `2d2c00d1e` | Root weight families evaluated in parallel | `binary-claim` | 7.93 → 7.28 | 15.75 → 15.89 | 6.30–7.73 |
+| | | `binary-and-prime-claims` | 9.11 → 7.98 | 22.85 → 24.40 | |
+| | | `binary-and-prime-claims-plus-ordinary` | 14.34 → 12.74 | 32.51 → 31.47 | |
+| | | `five-prime-claims` | 9.26 → 8.83 | 23.09 → 22.93 | |
+| `9fc38aa64` | Root relation evaluated beside its Stage 3 replay | `binary-claim` | 8.05 → 7.57 | 16.80 → 16.86 | 10.32–10.97 |
+| | | `binary-and-prime-claims` | 9.32 → 8.80 | 24.11 → 24.15 | |
+| | | `binary-and-prime-claims-plus-ordinary` | 13.56 → 13.07 | 31.63 → 31.58 | |
+| | | `five-prime-claims` | 9.57 → 9.14 | 23.23 → 23.28 | |
+| `b6f87d4db` | Root weight components compiled in parallel | `binary-and-prime-claims` | 8.56 → 8.31 | 24.07 → 24.02 | 11.75–13.66 |
+| | | `binary-and-prime-claims-plus-ordinary` | 12.81 → 12.01 | 31.52 → 31.61 | |
+| | | `five-prime-claims` | 9.51 → 9.05 | 23.18 → 23.10 | |
+| `70096cfdb` | Ordinary root setup rings converted into one buffer | `binary-and-prime-claims-plus-ordinary` | 11.33 → 11.13 | 32.24 → 31.22 | 10.07–13.50 |
 
 The machine was shared, and its load rose from about 6 to about 13 during the
 pass, so the absolute figures of later rows are higher than those of earlier
@@ -2972,8 +2981,8 @@ reduced the ordinary root compile from 3.33 to 2.74 ms single-threaded and from
 
 One further change was measured and dropped: splitting the parity-row and
 prime-plane evaluations into Rayon tasks within each family. It made both
-families slower in wall time (N=2^22 `word-prime`, parity rows 0.57 → 0.68 ms,
-`prime5` prime planes 0.84 → 1.26 ms) and parallel verification slower by up
+families slower in wall time (N=2^22 `binary-and-prime-claims`, parity rows 0.57 → 0.68 ms,
+`five-prime-claims` prime planes 0.84 → 1.26 ms) and parallel verification slower by up
 to 0.9 ms. The families already run beside one another and beside Stage 3,
 and the added tasks are too small to repay their scheduling.
 
@@ -2987,24 +2996,24 @@ than that profile's. The head is faster in 29 of the 30 parallel pairs and in
 
 | Configuration | Parallel: base → head (ms) | Single-threaded: base → head (ms) |
 | --- | --- | --- |
-| N=2^22 `word` | 11.05 → 9.47 (−14%) | 18.79 → 18.29 (−3%) |
-| N=2^22 `word-prime` | 12.78 → 10.48 (−18%) | 25.88 → 25.11 (−3%) |
-| N=2^22 `word-prime-ordinary` | 17.13 → 13.58 (−21%) | 32.37 → 31.16 (−4%) |
-| N=2^22 `prime5` | 10.50 → 9.45 (−10%) | 23.89 → 23.44 (−2%) |
-| N=2^23 `word-prime` | 12.24 → 10.37 (−15%) | 26.91 → 26.71 (−1%) |
-| N=2^10 `word-prime-ordinary` | 10.61 → 9.32 (−12%) | 13.93 → 13.02 (−7%) |
+| N=2^22 `binary-claim` | 11.05 → 9.47 (−14%) | 18.79 → 18.29 (−3%) |
+| N=2^22 `binary-and-prime-claims` | 12.78 → 10.48 (−18%) | 25.88 → 25.11 (−3%) |
+| N=2^22 `binary-and-prime-claims-plus-ordinary` | 17.13 → 13.58 (−21%) | 32.37 → 31.16 (−4%) |
+| N=2^22 `five-prime-claims` | 10.50 → 9.45 (−10%) | 23.89 → 23.44 (−2%) |
+| N=2^23 `binary-and-prime-claims` | 12.24 → 10.37 (−15%) | 26.91 → 26.71 (−1%) |
+| N=2^10 `binary-and-prime-claims-plus-ordinary` | 10.61 → 9.32 (−12%) | 13.93 → 13.02 (−7%) |
 
 The gain is in the binary root, whose span in one pass (loads 12.3–13.2) fell
 as follows:
 
 | Configuration | Parallel root: base → head (ms) | Single-threaded root: base → head (ms) |
 | --- | --- | --- |
-| N=2^22 `word` | 3.50 → 2.09 | 3.38 → 2.82 |
-| N=2^22 `word-prime` | 4.33 → 2.25 | 4.24 → 3.69 |
-| N=2^22 `word-prime-ordinary` | 10.03 → 6.15 | 12.12 → 10.81 |
-| N=2^22 `prime5` | 4.05 → 2.63 | 3.94 → 3.59 |
-| N=2^23 `word-prime` | 5.52 → 3.05 | 5.32 → 5.12 |
-| N=2^10 `word-prime-ordinary` | 6.75 → 5.61 | 7.67 → 7.20 |
+| N=2^22 `binary-claim` | 3.50 → 2.09 | 3.38 → 2.82 |
+| N=2^22 `binary-and-prime-claims` | 4.33 → 2.25 | 4.24 → 3.69 |
+| N=2^22 `binary-and-prime-claims-plus-ordinary` | 10.03 → 6.15 | 12.12 → 10.81 |
+| N=2^22 `five-prime-claims` | 4.05 → 2.63 | 3.94 → 3.59 |
+| N=2^23 `binary-and-prime-claims` | 5.52 → 3.05 | 5.32 → 5.12 |
+| N=2^10 `binary-and-prime-claims-plus-ordinary` | 6.75 → 5.61 | 7.67 → 7.20 |
 
 The suffix Stage 2 spans are unchanged within noise. No commit touches
 ordinary-protocol code. The image-support, family-evaluation,
@@ -3012,7 +3021,7 @@ component-compile and role-ring commits change shared `akita-types` code that
 the prover also evaluates; the Stage 3 overlap is verifier-only.
 
 **Against the target.** In parallel, the three binary-only shapes at N=2^22
-and `word-prime` at N=2^23 verify in 9.5–10.5 ms at loads 11–16. The three
+and `binary-and-prime-claims` at N=2^23 verify in 9.5–10.5 ms at loads 11–16. The three
 binary-only shapes at N=2^22 took 7.3–8.8 ms at the loads of 6–8 under which
 the family-evaluation commit was measured. The mixed shape stays above the range at 13.6 ms (11.1 ms at load
 10–13). Single-threaded verification, 18–31 ms at N=2^22, is not near it,
@@ -3022,7 +3031,7 @@ because the suffix's setup scan alone takes 10–17 ms.
 
 Head spans at N=2^22, from the pass above:
 
-| Span (ms) | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| Span (ms) | `binary-claim` | `binary-and-prime-claims` | `binary-and-prime-claims-plus-ordinary` | `five-prime-claims` |
 | --- | ---: | ---: | ---: | ---: |
 | Parallel verification | 8.60 | 9.56 | 13.54 | 9.90 |
 | › suffix Stage 2 (6 folds) | 4.85 | 5.57 | 5.60 | 5.60 |
@@ -3053,7 +3062,7 @@ The byte-preserving costs that remain are:
   and challenge derivation, which are ordinary-protocol code.
 - **The binary root's relation evaluation** is now bounded by its largest
   family. In the shapes with a word claim that is the parity rows (0.6 ms).
-  `prime5` has no word claim, so it compiles no terminal or parity rows; its
+  `five-prime-claims` has no word claim, so it compiles no terminal or parity rows; its
   largest family is the prime planes (0.8 ms at the base). Splitting families
   further did not pay (above).
 
@@ -3080,22 +3089,22 @@ not a measurement.
 
 A fifth byte-preserving pass starts from `31aa471a2`, the fourth pass. It
 targets the two shapes still above 0.8 s of complete proving at N=2^22:
-`prime5` first, then `word-prime-ordinary`.
+`five-prime-claims` first, then `binary-and-prime-claims-plus-ordinary`.
 
 The base was proved three times per shape at N=2^22 in isolated processes
 with `BINARY_SOURCE_CATALOG_CACHE`, after one warm-up run per shape,
 alternating the two shapes. All runs reproduced their pins. The machine was
 shared: other sessions' test runs held 4–11 cores, and one-minute loads were
 8.46–10.18. Complete proving is therefore slower than in the fourth pass's
-results (1,640 against 1,254 ms at `prime5`, 944 against 806 ms at
-`word-prime-ordinary`). The interleaved base runs behind the first change
+results (1,640 against 1,254 ms at `five-prime-claims`, 944 against 806 ms at
+`binary-and-prime-claims-plus-ordinary`). The interleaved base runs behind the first change
 below, at loads of 5.9–15.2, took 1,290 and 834 ms. Only interleaved pairs
 are compared. Logs are `$CARGO_TARGET_DIR/p5/logs/base-22-<shape>-p<run>.txt`.
 Each cell is the median wall time in ms, with process CPU time in
 parentheses. Spans that the root and the suffix share, such as the Stage 2
 fold rounds, are listed once, under the root.
 
-| Span | `prime5` | `word-prime-ordinary` |
+| Span | `five-prime-claims` | `binary-and-prime-claims-plus-ordinary` |
 | --- | ---: | ---: |
 | Complete proving | 1,640.1 (14,990) | 944.3 (8,936) |
 | › binary root level | 809.5 (7,704) | 576.0 (5,256) |
@@ -3161,12 +3170,12 @@ fold rounds, are listed once, under the root.
 | › coefficient-packing partials | 36.9 (415) | 26.4 (274) |
 | Prover peak RSS (bytes) | 5,805,326,336 | 3,313,369,088 |
 
-The first suffix fold dominates the suffix. In medians of three, at `prime5`
+The first suffix fold dominates the suffix. In medians of three, at `five-prime-claims`
 its Stage 1 sumcheck takes 277.9 ms, its Stage 2 sumcheck 122.2 ms and its
-`RingRelationProver::prepare` 120.0 ms. At `word-prime-ordinary` they take
+`RingRelationProver::prepare` 120.0 ms. At `binary-and-prime-claims-plus-ordinary` they take
 67.5, 58.9 and 85.2 ms.
 
-One `prime5` proof was sampled at 1 ms with the system `sample` tool. Where
+One `five-prime-claims` proof was sampled at 1 ms with the system `sample` tool. Where
 the time of the largest spans goes:
 
 - **D payload: arithmetic.** Of the samples in the digit commitment, which
@@ -3195,14 +3204,14 @@ Candidate changes, with the expected gain at N=2^22:
 
 | Candidate | Spans reduced | Shapes | Expected gain (ms) |
 | --- | --- | --- | ---: |
-| D payload as signed 16-bit limb products in NEON multiply-accumulates | D payload | `prime5`, then the word-prime shapes | 60–80 at `prime5`, 10–15 elsewhere |
-| SHAKE streams squeezed two at a time through the paired permutation | authentication emission, D payload | `prime5`, then the others | 25–40 at `prime5`, 8–15 elsewhere |
-| Prime digits written in parallel; planes share one source pass | prime digits | `prime5` | 25–40 |
-| Product folds fused into the next round's pass (ordinary) | suffix Stage 1 sumchecks | `prime5` | 0–40 |
-| `word-prime-ordinary` translated lanes, parity rows and compact quotient prefix | weight profiles | `word-prime-ordinary` | 5–15 |
+| D payload as signed 16-bit limb products in NEON multiply-accumulates | D payload | `five-prime-claims`, then the binary-and-prime-claims shapes | 60–80 at `five-prime-claims`, 10–15 elsewhere |
+| SHAKE streams squeezed two at a time through the paired permutation | authentication emission, D payload | `five-prime-claims`, then the others | 25–40 at `five-prime-claims`, 8–15 elsewhere |
+| Prime digits written in parallel; planes share one source pass | prime digits | `five-prime-claims` | 25–40 |
+| Product folds fused into the next round's pass (ordinary) | suffix Stage 1 sumchecks | `five-prime-claims` | 0–40 |
+| `binary-and-prime-claims-plus-ordinary` translated lanes, parity rows and compact quotient prefix | weight profiles | `binary-and-prime-claims-plus-ordinary` | 5–15 |
 
 A cache of expanded setup entries would hold 139,320 columns × 2 rows × 64
-coefficients of 16 bytes at `prime5`, 285 MB, which is 5% of the base peak
+coefficients of 16 bytes at `five-prime-claims`, 285 MB, which is 5% of the base peak
 RSS on its own; it is not pursued. The response fold is not retried: the
 profile shows nothing the fourth pass did not.
 
@@ -3215,9 +3224,9 @@ message records its median of three interleaved runs against its parent at
 
 | Commit | Change | Ordinary | Span: before → after (ms) |
 | --- | --- | --- | --- |
-| `4c3b80c05` | D payload as signed 16-bit limb products | no | `prime5` D payload 119.5 → 46.6, D commitment 207.9 → 132.6; `word-prime-ordinary` D payload 23.8 → 9.7 |
-| `63fadf01d` | Two setup rows squeezed through the paired permutation | no | `prime5` authentication 74.9 → 66.0, D payload 41.9 → 34.4; `word-prime-ordinary` authentication 33.7 → 28.6 |
-| `c1e710606` | Prime-plane digits written in parallel by column | no | `prime5` prime digits 80.6 → 52.5; `word-prime-ordinary` 16.3 → 11.2 |
+| `4c3b80c05` | D payload as signed 16-bit limb products | no | `five-prime-claims` D payload 119.5 → 46.6, D commitment 207.9 → 132.6; `binary-and-prime-claims-plus-ordinary` D payload 23.8 → 9.7 |
+| `63fadf01d` | Two setup rows squeezed through the paired permutation | no | `five-prime-claims` authentication 74.9 → 66.0, D payload 41.9 → 34.4; `binary-and-prime-claims-plus-ordinary` authentication 33.7 → 28.6 |
+| `c1e710606` | Prime-plane digits written in parallel by column | no | `five-prime-claims` prime digits 80.6 → 52.5; `binary-and-prime-claims-plus-ordinary` 16.3 → 11.2 |
 
 The digit commitment multiplies digits in [-4, 3] by negacyclic setup
 entries of degree 64 modulo P. With `s_j = a_j - 2^15` for the eight 16-bit
@@ -3252,7 +3261,7 @@ Three candidates were measured or examined and not kept:
 - **An in-place `fold_evals_in_place`.** The allocating parallel fold was
   4.11 ms against 4.45 ms for an in-place wave fold over a full 2^22 fold
   chain, so the allocation is not the cost.
-- **The quartet coefficient table for the second product round at `prime5`.**
+- **The quartet coefficient table for the second product round at `five-prime-claims`.**
   Its first fold has 32 digit classes, so the table would hold 2^20 entries of
   five coefficients, as many as the quartets it replaces.
 - **Product folds fused into the next round.** The fold and the round are
@@ -3265,7 +3274,7 @@ Three candidates were measured or examined and not kept:
 Base `31aa471a2` and head `c1e710606` were proved alternately, three times
 each per configuration, in isolated processes with a cached catalog. All 48
 runs reproduced their pins and verified with matching caller transcript
-continuation. The first round at `word-prime-ordinary`, `prime5` and 2^23
+continuation. The first round at `binary-and-prime-claims-plus-ordinary`, `five-prime-claims` and 2^23
 ran while other sessions pushed one-minute loads to 12; it reproduced its
 pins but was rerun in the same order, 2^23 last, and the table uses the
 rerun. Each cell is the median of three. The suffix columns are the six
@@ -3274,16 +3283,16 @@ ordinary Stage 1 and Stage 2 sumchecks and the six
 
 | N | Shape | Complete proving (ms) | Root level (ms) | Suffix Stage 1 (ms) | Suffix Stage 2 (ms) | Suffix `prepare` (ms) | Process CPU (ms) | Peak RSS (bytes) | Loads |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 2^22 | `word` | 590.5 → 579.3 | 353.3 → 343.1 | 49.2 → 49.0 | 87.8 → 88.1 | 50.4 → 49.3 | 6,541 → 6,525 | 2,492,235,776 → 2,493,431,808 | 1.66–3.23 |
-| 2^22 | `word-prime` | 725.4 → 710.6 | 406.1 → 388.9 | 101.0 → 103.6 | 95.2 → 96.7 | 74.2 → 72.4 | 8,464 → 8,187 | 3,647,111,168 → 3,645,620,224 | 3.20–4.07 |
-| 2^22 | `word-prime-ordinary` | 772.7 → 756.9 | 470.3 → 450.3 | 95.1 → 95.9 | 91.4 → 91.5 | 70.1 → 70.3 | 9,044 → 8,812 | 3,312,517,120 → 3,312,091,136 | 5.41–6.34 |
-| 2^22 | `prime5` | 1,321.3 → 1,137.5 | 715.0 → 555.1 | 279.4 → 276.3 | 147.7 → 142.9 | 106.0 → 96.5 | 15,222 → 13,994 | 5,807,603,712 → 5,806,735,360 | 5.71–9.77 |
-| 2^23 | `word-prime` | 993.8 → 944.2 | 659.3 → 627.5 | 99.8 → 98.9 | 95.1 → 93.2 | 72.1 → 73.0 | 11,419 → 11,112 | 4,620,402,688 → 4,559,323,136 | 6.77–9.77 |
+| 2^22 | `binary-claim` | 590.5 → 579.3 | 353.3 → 343.1 | 49.2 → 49.0 | 87.8 → 88.1 | 50.4 → 49.3 | 6,541 → 6,525 | 2,492,235,776 → 2,493,431,808 | 1.66–3.23 |
+| 2^22 | `binary-and-prime-claims` | 725.4 → 710.6 | 406.1 → 388.9 | 101.0 → 103.6 | 95.2 → 96.7 | 74.2 → 72.4 | 8,464 → 8,187 | 3,647,111,168 → 3,645,620,224 | 3.20–4.07 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 772.7 → 756.9 | 470.3 → 450.3 | 95.1 → 95.9 | 91.4 → 91.5 | 70.1 → 70.3 | 9,044 → 8,812 | 3,312,517,120 → 3,312,091,136 | 5.41–6.34 |
+| 2^22 | `five-prime-claims` | 1,321.3 → 1,137.5 | 715.0 → 555.1 | 279.4 → 276.3 | 147.7 → 142.9 | 106.0 → 96.5 | 15,222 → 13,994 | 5,807,603,712 → 5,806,735,360 | 5.71–9.77 |
+| 2^23 | `binary-and-prime-claims` | 993.8 → 944.2 | 659.3 → 627.5 | 99.8 → 98.9 | 95.1 → 93.2 | 72.1 → 73.0 | 11,419 → 11,112 | 4,620,402,688 → 4,559,323,136 | 6.77–9.77 |
 
-`word`, `word-prime` and `word-prime-ordinary` now prove inside the
-0.4–0.8 s target; `prime5` does not. The `prime5` runs were 1,504.8, 1,321.3
+`binary-claim`, `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary` now prove inside the
+0.4–0.8 s target; `five-prime-claims` does not. The `five-prime-claims` runs were 1,504.8, 1,321.3
 and 1,168.9 ms for the base and 1,339.4, 1,137.5 and 1,093.7 ms for the head;
-its root level, where every change sits, fell 160 ms. The third `word-prime`
+its root level, where every change sits, fell 160 ms. The third `binary-and-prime-claims`
 run of each binary (895.5 and 878.8 ms) met a load spike. Verification is
 unchanged: 9.4, 10.8, 15.9 and 10.5 ms at 2^22 and 11.4 ms at 2^23 for the
 base, within 0.5 ms for the head.
@@ -3293,7 +3302,7 @@ setup material across phases.
 
 Spans at 2^22 from the same runs, base → head:
 
-| Span (ms, median of 3) | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| Span (ms, median of 3) | `binary-claim` | `binary-and-prime-claims` | `binary-and-prime-claims-plus-ordinary` | `five-prime-claims` |
 | --- | ---: | ---: | ---: | ---: |
 | root D commitment | 4.2 → 2.6 | 39.1 → 21.1 | 46.2 → 29.2 | 212.7 → 93.1 |
 | › D payload | 2.3 → 0.8 | 20.3 → 7.8 | 20.3 → 7.6 | 123.6 → 36.9 |
@@ -3303,71 +3312,71 @@ Spans at 2^22 from the same runs, base → head:
 | root response fold | 56.1 → 57.0 | 53.2 → 52.8 | 56.4 → 58.2 | 69.3 → 68.4 |
 | root Stage 3 | 45.0 → 45.5 | 47.3 → 47.7 | 44.1 → 46.2 | 78.7 → 75.6 |
 
-At 2^23 `word-prime` the D commitment fell 53.7 → 32.6 ms and authentication
+At 2^23 `binary-and-prime-claims` the D commitment fell 53.7 → 32.6 ms and authentication
 33.9 → 28.7 ms.
 
 #### Fifth-pass remainder
 
-At `prime5` the head still spends about 390 ms in the first suffix fold: in
+At `five-prime-claims` the head still spends about 390 ms in the first suffix fold: in
 the median run, 202 ms of Stage 1, 104 ms of Stage 2 and 88 ms of
 `prepare`. The largest remaining spans:
 
-- **`prime5` suffix Stage 1, 276 ms.** Its second product round rescans the
+- **`five-prime-claims` suffix Stage 1, 276 ms.** Its second product round rescans the
   quartets with the arity-four product kernel, because the first fold's
   32 digit classes are too many for the quartet coefficient table. The
   materialized rounds and the folds between them are arithmetic at 9–10
   cores.
-- **Relation fold rounds, root and suffix, 96 ms at `prime5`,** and their
+- **Relation fold rounds, root and suffix, 96 ms at `five-prime-claims`,** and their
   dense round terms, 68 ms. Their allocating fold is already faster than an
   in-place one.
 - **Authentication emission, 20–71 ms.** In a sample of the head at
-  `prime5`, 37% of its samples are the paired SHAKE permutation, 23% the
+  `five-prime-claims`, 37% of its samples are the paired SHAKE permutation, 23% the
   residue kernel, 18% the field combination of the two rows and 9% the
   per-stream absorb, which still permutes alone. Pairing the absorb would
   save about 3 ms.
-- **`prime5` prime digits, 56 ms.** Most of it is now the parallel subset
+- **`five-prime-claims` prime digits, 56 ms.** Most of it is now the parallel subset
   sums of `weighted_source_bits`: about 16 field additions per source word
   per plane. Accumulating them as unreduced integers would need a
   field-specific path through that generic labinius-prover boundary;
   inferred gain 15–25 ms, not measured.
 - **The response fold, 52–68 ms, and root Stage 3, 46–76 ms,** are
   unchanged.
-- **`DensePoly::decompose_fold`, 47 ms at `prime5`.** Nearly all of it is the
+- **`DensePoly::decompose_fold`, 47 ms at `five-prime-claims`.** Nearly all of it is the
   vectorized balanced decomposition kernel.
 
 A cache of the D setup columns would let authentication reuse the entries
 the D payload already expanded. It would hold the D share of the 285 MB
-estimated above at `prime5`; it is not pursued. No change needed a
+estimated above at `five-prime-claims`; it is not pursued. No change needed a
 verifier-side edit.
 
 What a protocol change would buy, inferred from these profiles and not
 measured:
 
 - **A cheaper setup generator.** SHAKE is about 37% of authentication
-  emission at `prime5`, so replacing it would save about 25 ms there, plus
+  emission at `five-prime-claims`, so replacing it would save about 25 ms there, plus
   the SHAKE share of the 37 ms D payload, which this pass did not separate
   from its limb products.
-- **A smaller first-fold digit basis at `prime5`.** With eight digit classes
+- **A smaller first-fold digit basis at `five-prime-claims`.** With eight digit classes
   instead of 32, the second product round would use the quartet coefficient
-  table, which takes 6 ms at `word-prime-ordinary`. This changes the proof
+  table, which takes 6 ms at `binary-and-prime-claims-plus-ordinary`. This changes the proof
   bytes and the planner's security accounting.
 - **A larger prime-plane digit basis.** The 43 base-8 digits per prime-plane
   coefficient set the prime digit count and the D payload's width.
-- The fourth pass's notes on word's first-fold parameters for the word-prime
+- The fourth pass's notes on `binary-claim`'s first-fold parameters for the binary-and-prime-claims
   shapes and on the root challenge weight still apply.
 
 ### Sixth prover pass
 
 A sixth byte-preserving pass starts from `016f466b7`, the fifth pass. Its
-target is `prime5`, the one shape still above 0.8 s of complete proving at
+target is `five-prime-claims`, the one shape still above 0.8 s of complete proving at
 N=2^22, and within it the first ordinary suffix fold.
 
-The base was proved three times at N=2^22 `prime5` in isolated processes with
+The base was proved three times at N=2^22 `five-prime-claims` in isolated processes with
 `BINARY_SOURCE_CATALOG_CACHE`, after one warm-up run. All runs reproduced
 their pin. One-minute loads were 5.21–6.15. Each cell is the median wall time
 in ms, with process CPU time in parentheses.
 
-| Span | `prime5` |
+| Span | `five-prime-claims` |
 | --- | ---: |
 | Complete proving | 1,130.6 (14,272) |
 | › binary root level | 553.5 (6,626) |
@@ -3478,7 +3487,7 @@ time as follows:
 - **Memory traffic.** At the machine's multiplication rate the rounds need
   at most 53 GB/s; none of them is bandwidth-bound.
 
-Candidate changes, with the expected gain at N=2^22 `prime5`:
+Candidate changes, with the expected gain at N=2^22 `five-prime-claims`:
 
 | Candidate | Spans reduced | Expected gain (ms) |
 | --- | --- | ---: |
@@ -3509,11 +3518,11 @@ parent at 2^22, with the one-minute loads.
 
 | Commit | Change | Ordinary | Span: before → after (ms) |
 | --- | --- | --- | --- |
-| `bf520dd38` | `digit_range` bench of the `prime5` first-fold session | yes (bench) | — |
-| `46b07b6fb` | Exact-prefix tables folded out of place in one parallel pass | yes | `prime5` Stage 1 264.5 → 220.7, product folds 50.8 → 26.6, leaf folds 21.1 → 9.0; `word-prime` Stage 1 95.2 → 76.4 |
-| `ff34ad710` | The second parent's batch weight folded into its node lane | yes | `prime5` Stage 1 223.9 → 215.2, product initial rounds 53.3 → 49.8, materialized rounds 59.6 → 55.7 |
-| `59938c8a3` | The product's second round summed over quartet classes | yes | `prime5` Stage 1 222.1 → 214.6, product initial rounds 51.9 → 41.7 |
-| `75daa646c4e2baa9344fc31325fef267f9493a52` | That round kept on the rescan below two quartets per class | yes | `word` Stage 1 49.2 → 45.4, product initial rounds 5.1 → 2.3 |
+| `bf520dd38` | `digit_range` bench of the `five-prime-claims` first-fold session | yes (bench) | — |
+| `46b07b6fb` | Exact-prefix tables folded out of place in one parallel pass | yes | `five-prime-claims` Stage 1 264.5 → 220.7, product folds 50.8 → 26.6, leaf folds 21.1 → 9.0; `binary-and-prime-claims` Stage 1 95.2 → 76.4 |
+| `ff34ad710` | The second parent's batch weight folded into its node lane | yes | `five-prime-claims` Stage 1 223.9 → 215.2, product initial rounds 53.3 → 49.8, materialized rounds 59.6 → 55.7 |
+| `59938c8a3` | The product's second round summed over quartet classes | yes | `five-prime-claims` Stage 1 222.1 → 214.6, product initial rounds 51.9 → 41.7 |
+| `75daa646c4e2baa9344fc31325fef267f9493a52` | That round kept on the rescan below two quartets per class | yes | `binary-claim` Stage 1 49.2 → 45.4, product initial rounds 5.1 → 2.3 |
 
 **Out-of-place folds.** An exact-prefix table folded in place in a serial
 prefix and then in dependent parallel waves. It now writes the folded prefix
@@ -3529,17 +3538,17 @@ is the same field element.
 
 **Quartet-class second round.** After the first challenge, a quartet's
 second-round coefficients depend only on its pair of folded class pairs. At
-`prime5` the 4,754,304 quartets fall into 981,064 of the 2^20 quartet
+`five-prime-claims` the 4,754,304 quartets fall into 981,064 of the 2^20 quartet
 classes. The round now sums each class's equality weight, then multiplies
 each nonzero class weight by that class's coefficients once. Above 4,096
 classes, the classes split into ranges that hold equal numbers of quartets:
-`prime5`'s digits are skewed, and a split into equal class ranges gave one
+`five-prime-claims`'s digits are skewed, and a split into equal class ranges gave one
 of 16 ranges 1.64 M quartets. Each range fills its own slice of one weight
-table. This is the exact field sum of the rescan, reordered. At `word`,
+table. This is the exact field sum of the rescan, reordered. At `binary-claim`,
 70,112 quartets fall into 2^16 classes, and there the rescan is faster. The
 class round therefore runs only when quartets outnumber classes twice over.
-Of the second rounds probed at 2^22, in `word`, `word-prime` and `prime5`,
-only `prime5`'s first fold qualifies.
+Of the second rounds probed at 2^22, in `binary-claim`, `binary-and-prime-claims` and `five-prime-claims`,
+only `five-prime-claims`'s first fold qualifies.
 
 Measured and not kept:
 
@@ -3549,8 +3558,8 @@ Measured and not kept:
   to its first rounds (3.9 → 18.3). Stage 1 went from 214.6 to 218.2 ms.
 - **Deferred-reduction slot sums in `weighted_source_bits`.** The slots
   summed as unreduced 128-bit products and reduced once per column. A scratch
-  kernel at the `prime5` plane shape (16,384 rows, 256 columns) ran 8.6 →
-  6.9 ms per plane at a load of 1.7. In the prover, `prime5` prime digits
+  kernel at the `five-prime-claims` plane shape (16,384 rows, 256 columns) ran 8.6 →
+  6.9 ms per plane at a load of 1.7. In the prover, `five-prime-claims` prime digits
   measured 71.0 → 72.4 ms at loads 6–10, so the change did not pay. Tiling
   columns to keep a group's 256 subset sums in L1 was no faster in the
   scratch kernel: 8.6 ms untiled, 8.6–11.5 ms for tiles of 4–16 columns.
@@ -3570,22 +3579,22 @@ and Stage 2 sumchecks and the six `RingRelationProver::prepare` calls.
 
 | N | Shape | Complete proving (ms) | Root level (ms) | Suffix Stage 1 (ms) | Suffix Stage 2 (ms) | Suffix `prepare` (ms) | Process CPU (ms) | Peak RSS (bytes) | Loads |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 2^22 | `word` | 566.0 → 567.0 | 331.9 → 335.1 | 48.6 → 45.4 | 87.7 → 88.5 | 48.7 → 48.6 | 6,550 → 6,518 | 2,495,119,360 → 2,491,645,952 | 3.56–7.06 |
-| 2^22 | `word-prime` | 689.0 → 668.1 | 379.1 → 378.8 | 99.0 → 78.0 | 93.5 → 92.9 | 70.3 → 70.1 | 8,352 → 8,087 | 3,654,303,744 → 3,652,124,672 | 3.56–7.06 |
-| 2^22 | `word-prime-ordinary` | 740.4 → 728.9 | 433.7 → 430.9 | 95.6 → 79.8 | 90.8 → 91.8 | 71.3 → 71.8 | 8,785 → 8,570 | 3,313,106,944 → 3,306,831,872 | 4.57–7.78 |
-| 2^22 | `prime5` | 1,064.5 → 1,016.2 | 519.0 → 513.8 | 256.1 → 204.2 | 134.8 → 141.4 | 91.1 → 91.0 | 13,980 → 13,089 | 5,801,394,176 → 5,827,313,664 | 4.40–7.40 |
-| 2^23 | `word-prime` | 936.9 → 917.1 | 621.9 → 622.5 | 98.7 → 76.7 | 94.5 → 93.5 | 71.9 → 72.2 | 11,083 → 10,871 | 4,621,647,872 → 4,625,219,584 | 3.61–3.96 |
+| 2^22 | `binary-claim` | 566.0 → 567.0 | 331.9 → 335.1 | 48.6 → 45.4 | 87.7 → 88.5 | 48.7 → 48.6 | 6,550 → 6,518 | 2,495,119,360 → 2,491,645,952 | 3.56–7.06 |
+| 2^22 | `binary-and-prime-claims` | 689.0 → 668.1 | 379.1 → 378.8 | 99.0 → 78.0 | 93.5 → 92.9 | 70.3 → 70.1 | 8,352 → 8,087 | 3,654,303,744 → 3,652,124,672 | 3.56–7.06 |
+| 2^22 | `binary-and-prime-claims-plus-ordinary` | 740.4 → 728.9 | 433.7 → 430.9 | 95.6 → 79.8 | 90.8 → 91.8 | 71.3 → 71.8 | 8,785 → 8,570 | 3,313,106,944 → 3,306,831,872 | 4.57–7.78 |
+| 2^22 | `five-prime-claims` | 1,064.5 → 1,016.2 | 519.0 → 513.8 | 256.1 → 204.2 | 134.8 → 141.4 | 91.1 → 91.0 | 13,980 → 13,089 | 5,801,394,176 → 5,827,313,664 | 4.40–7.40 |
+| 2^23 | `binary-and-prime-claims` | 936.9 → 917.1 | 621.9 → 622.5 | 98.7 → 76.7 | 94.5 → 93.5 | 71.9 → 72.2 | 11,083 → 10,871 | 4,621,647,872 → 4,625,219,584 | 3.61–3.96 |
 
 Every gain sits in suffix Stage 1. The other columns move within their run
-spread: one head `prime5` Stage 2 run took 148.9 ms, the other two 141.4 and
-134.1. `prime5` still proves above the 0.8 s target. The head runs were
+spread: one head `five-prime-claims` Stage 2 run took 148.9 ms, the other two 141.4 and
+134.1. `five-prime-claims` still proves above the 0.8 s target. The head runs were
 1,016.2, 1,024.2 and 1,004.0 ms. Peak RSS rises by at most 0.45%, at
-`prime5`, where the out-of-place folds and the class weights hold one more
+`five-prime-claims`, where the out-of-place folds and the class weights hold one more
 table at a time. Verification was not remeasured; no verifier code changed.
 
 Stage 1 spans at 2^22 from the same runs, base → head:
 
-| Span (ms, median of 3) | `word` | `word-prime` | `word-prime-ordinary` | `prime5` |
+| Span (ms, median of 3) | `binary-claim` | `binary-and-prime-claims` | `binary-and-prime-claims-plus-ordinary` | `five-prime-claims` |
 | --- | ---: | ---: | ---: | ---: |
 | first suffix fold, Stage 1 | 12.1 → 12.2 | 51.1 → 39.5 | 48.7 → 40.3 | 182.3 → 145.7 |
 | product folds | 4.5 → 2.4 | 20.3 → 9.3 | 19.4 → 8.9 | 50.4 → 27.6 |
@@ -3593,15 +3602,15 @@ Stage 1 spans at 2^22 from the same runs, base → head:
 | product rounds, materialized | 5.1 → 6.0 | 15.2 → 15.5 | 15.2 → 15.5 | 58.6 → 55.1 |
 | leaf rounds, materialized | 3.7 → 3.4 | 19.0 → 19.5 | 18.9 → 20.2 | 32.8 → 32.4 |
 
-At 2^23 `word-prime` the first fold's Stage 1 fell 50.8 → 39.4 ms and the
+At 2^23 `binary-and-prime-claims` the first fold's Stage 1 fell 50.8 → 39.4 ms and the
 product folds 19.3 → 8.7 ms.
 
-The first fold's Stage 1 at `prime5` now runs at 1.74 times the 84 ms
+The first fold's Stage 1 at `five-prime-claims` now runs at 1.74 times the 84 ms
 multiplication bound above, against 2.18 times for the base in the same runs.
 
 #### Sixth-pass remainder
 
-At `prime5` the head spends 514 ms in the binary root level and 146 ms in
+At `five-prime-claims` the head spends 514 ms in the binary root level and 146 ms in
 Stage 1 of the first suffix fold. The largest remaining spans:
 
 - **Root Stage 2, 111 ms beyond its 81 ms of weight profiles.** It is a
@@ -3620,7 +3629,7 @@ Stage 1 of the first suffix fold. The largest remaining spans:
 
 What a protocol change would buy, without making one:
 
-- **A base-16 first fold at `prime5`.** In the `digit_range` bench, a
+- **A base-16 first fold at `five-prime-claims`.** In the `digit_range` bench, a
   session of 19,017,216 base-16 digits takes 42.8 ms against 125.7 ms for
   base 64, measured. A base-16 decomposition of the same values needs 1.5
   times the digits, so the session would take about 64 ms, inferred; about
@@ -3649,40 +3658,40 @@ triples are:
 
 | N | Shape | Before proving | After proving | After the third verification |
 | --- | --- | --- | --- | --- |
-| 2^22 | word | 5.82/6.16/6.38 | 5.37/6.00/6.31 | 5.37/6.00/6.31 |
-| 2^22 | word-prime | 5.37/6.00/6.31 | 6.27/6.11/6.33 | 6.27/6.11/6.33 |
-| 2^22 | word-prime-ordinary | 7.06/6.38/6.41 | 6.72/6.37/6.41 | 6.74/6.38/6.41 |
-| 2^22 | prime5 | 6.27/6.11/6.33 | 7.06/6.38/6.41 | 7.06/6.38/6.41 |
-| 2^23 | word | 6.74/6.38/6.41 | 13.67/8.47/7.19 | 13.67/8.47/7.19 |
-| 2^23 | word-prime | 13.67/8.47/7.19 | 10.41/8.46/7.27 | 10.41/8.46/7.27 |
-| 2^23 | word-prime-ordinary | 15.33/9.75/7.82 | 10.66/9.28/7.74 | 10.66/9.28/7.74 |
-| 2^23 | prime5 | 10.41/8.46/7.27 | 15.33/9.75/7.82 | 15.33/9.75/7.82 |
+| 2^22 | binary-claim | 5.82/6.16/6.38 | 5.37/6.00/6.31 | 5.37/6.00/6.31 |
+| 2^22 | binary-and-prime-claims | 5.37/6.00/6.31 | 6.27/6.11/6.33 | 6.27/6.11/6.33 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 7.06/6.38/6.41 | 6.72/6.37/6.41 | 6.74/6.38/6.41 |
+| 2^22 | five-prime-claims | 6.27/6.11/6.33 | 7.06/6.38/6.41 | 7.06/6.38/6.41 |
+| 2^23 | binary-claim | 6.74/6.38/6.41 | 13.67/8.47/7.19 | 13.67/8.47/7.19 |
+| 2^23 | binary-and-prime-claims | 13.67/8.47/7.19 | 10.41/8.46/7.27 | 10.41/8.46/7.27 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 15.33/9.75/7.82 | 10.66/9.28/7.74 | 10.66/9.28/7.74 |
+| 2^23 | five-prime-claims | 10.41/8.46/7.27 | 15.33/9.75/7.82 | 15.33/9.75/7.82 |
 
 | N | Shape | Proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 82,786 | 25,610 | 5,189,074,944 | 75,251,712 |
-| 2^22 | word-prime | 84,423 | 25,735 | 6,067,929,088 | 155,107,328 |
-| 2^22 | word-prime-ordinary | 84,394 | 25,706 | 6,231,687,168 | 643,334,144 |
-| 2^22 | prime5 | 89,212 | 26,143 | 10,006,872,064 | 128,319,488 |
-| 2^23 | word | 84,580 | 25,746 | 10,179,739,648 | 155,353,088 |
-| 2^23 | word-prime | 84,576 | 25,742 | 10,190,028,800 | 157,106,176 |
-| 2^23 | word-prime-ordinary | 84,535 | 25,700 | 10,358,407,168 | 1,047,003,136 |
-| 2^23 | prime5 | 89,248 | 26,179 | 10,594,435,072 | 133,496,832 |
+| 2^22 | binary-claim | 82,786 | 25,610 | 5,189,074,944 | 75,251,712 |
+| 2^22 | binary-and-prime-claims | 84,423 | 25,735 | 6,067,929,088 | 155,107,328 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 84,394 | 25,706 | 6,231,687,168 | 643,334,144 |
+| 2^22 | five-prime-claims | 89,212 | 26,143 | 10,006,872,064 | 128,319,488 |
+| 2^23 | binary-claim | 84,580 | 25,746 | 10,179,739,648 | 155,353,088 |
+| 2^23 | binary-and-prime-claims | 84,576 | 25,742 | 10,190,028,800 | 157,106,176 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 84,535 | 25,700 | 10,358,407,168 | 1,047,003,136 |
+| 2^23 | five-prime-claims | 89,248 | 26,179 | 10,594,435,072 | 133,496,832 |
 
 | N | Shape | Field switch | Projections | Stage 1 | Stage 2 | Stage 3 | Physical L2 | Other |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 2,993/173 | 84/7 | 11,043/858 | 7,217/587 | 824/74 | 4,293/318 | 56,332/23,593 |
-| 2^22 | word-prime | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 56,259/23,553 |
-| 2^22 | word-prime-ordinary | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 56,230/23,524 |
-| 2^22 | prime5 | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 58,802/23,725 |
-| 2^23 | word | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,260/23,553 |
-| 2^23 | word-prime | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,256/23,549 |
-| 2^23 | word-prime-ordinary | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,215/23,507 |
-| 2^23 | prime5 | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 58,838/23,761 |
+| 2^22 | binary-claim | 2,993/173 | 84/7 | 11,043/858 | 7,217/587 | 824/74 | 4,293/318 | 56,332/23,593 |
+| 2^22 | binary-and-prime-claims | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 56,259/23,553 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 2,993/173 | 84/7 | 14,357/1,142 | 7,119/579 | 857/77 | 2,754/204 | 56,230/23,524 |
+| 2^22 | five-prime-claims | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 58,802/23,725 |
+| 2^23 | binary-claim | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,260/23,553 |
+| 2^23 | binary-and-prime-claims | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,256/23,549 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 3,035/175 | 84/7 | 14,422/1,147 | 7,168/583 | 857/77 | 2,754/204 | 56,215/23,507 |
+| 2^23 | five-prime-claims | 0/0 | 84/7 | 20,891/1,646 | 7,168/583 | 890/80 | 1,377/102 | 58,838/23,761 |
 
 N=2^22:
 
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 26,444,312,458 | 28,269,842,667 | 10,192,390,708 | 29,025,299,917 |
 | Cold prover setup | 42,911,125 | 85,848,291 | 73,045,084 | 164,313,584 |
@@ -3699,7 +3708,7 @@ N=2^22:
 
 N=2^23:
 
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 31,553,362,042 | 32,214,784,167 | 11,380,303,292 | 31,845,983,042 |
 | Cold prover setup | 75,469,459 | 86,793,708 | 101,245,292 | 150,365,041 |
@@ -3721,18 +3730,18 @@ following canonical repacking counts with `price_binary_root_planes`. Natural di
 virtual coefficient tails; physical cells
 include those tails but exclude final power-of-two padding. These counts
 agree with the design's section 12.1; its five-plane row additionally includes
-a word claim, unlike the `prime5` harness shape.
+a word claim, unlike the `five-prime-claims` harness shape.
 
 | N | Shape | Natural digits | Physical cells | Minimum domain | Padding cells |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 14,642,046 | 23,138,048 | 33,554,432 | 18,912,386 |
-| 2^22 | word-prime | 16,425,342 | 25,956,096 | 33,554,432 | 17,129,090 |
-| 2^22 | word-prime-ordinary | 21,393,790 | 30,924,544 | 33,554,432 | 12,160,642 |
-| 2^22 | prime5 | 23,514,624 | 37,158,912 | 67,108,864 | 43,594,240 |
-| 2^23 | word | 25,258,878 | 39,915,264 | 67,108,864 | 41,849,986 |
-| 2^23 | word-prime | 27,042,174 | 42,733,312 | 67,108,864 | 40,066,690 |
-| 2^23 | word-prime-ordinary | 36,172,158 | 51,863,296 | 67,108,864 | 30,936,706 |
-| 2^23 | prime5 | 34,131,456 | 53,936,128 | 67,108,864 | 32,977,408 |
+| 2^22 | binary-claim | 14,642,046 | 23,138,048 | 33,554,432 | 18,912,386 |
+| 2^22 | binary-and-prime-claims | 16,425,342 | 25,956,096 | 33,554,432 | 17,129,090 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 21,393,790 | 30,924,544 | 33,554,432 | 12,160,642 |
+| 2^22 | five-prime-claims | 23,514,624 | 37,158,912 | 67,108,864 | 43,594,240 |
+| 2^23 | binary-claim | 25,258,878 | 39,915,264 | 67,108,864 | 41,849,986 |
+| 2^23 | binary-and-prime-claims | 27,042,174 | 42,733,312 | 67,108,864 | 40,066,690 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 36,172,158 | 51,863,296 | 67,108,864 | 30,936,706 |
+| 2^23 | five-prime-claims | 34,131,456 | 53,936,128 | 67,108,864 | 32,977,408 |
 
 The ordinary group contributes N source cells and 704,512 image digit cells.
 Its two compression segments contribute 65,536/4,096 cells at N=2^22 and
@@ -3748,7 +3757,7 @@ binary verifier consumes the same authenticated successor input length. This
 replaces an ordinary-carrier capacity search, which found no carrier at
 N=2^22 (see the appendix). Smoke runs keep their original ordinary carrier
 schedules, so their pinned proof bytes are unchanged. Both measured
-`word-prime` schedules have six recursive folds and eight total fold levels.
+`binary-and-prime-claims` schedules have six recursive folds and eight total fold levels.
 Their first successor uses degree 512 and the later ordinary folds use degree
 64. Full selected profiles are printed in each measurement log.
 
@@ -3777,7 +3786,7 @@ transition all read it.
 
 ### Reconciliation with the design's cost budgets
 
-Section 12.3's serialized `word-prime` estimates were 89,033 and 89,525 bytes.
+Section 12.3's serialized `binary-and-prime-claims` estimates were 89,033 and 89,525 bytes.
 The measured current-protocol proofs before the v8 merge are 89,464 and
 89,658 bytes, differences of **+431** and **+133** bytes. The estimates used
 the smaller proposed A-prefix domains and planner-estimated ordinary suffix
@@ -3785,27 +3794,27 @@ bytes; the measured proofs use the corrected rank/coefficient padding, the
 typed prefix that also holds the B/D setup, and the exact native-root
 transition. Their similar total sizes do not validate the original suffix
 estimate or its individual message assumptions. Section 12.1's five-plane row
-also includes a word claim, whereas the harness's `prime5` shape does not.
+also includes a word claim, whereas the harness's `five-prime-claims` shape does not.
 
-The pre-v8 dev-protocol `word-prime` proofs were 84,423 and 84,576 bytes:
+The pre-v8 dev-protocol `binary-and-prime-claims` proofs were 84,423 and 84,576 bytes:
 differences of **-4,610** and **-4,949** bytes from those design estimates, and
 5,041 and 5,082 bytes below the corresponding pre-v8 current-protocol proofs.
 That dev protocol omitted the last live e and t blocks through terminal
 recomputation. This is a grammar distinction, not an optimization that
 preserves proof bytes. The v8 protocol includes it, so the v8 proofs are
 comparable with the pre-v8 dev-protocol proofs, not the pre-v8 current ones.
-After the v8 merge, the `word-prime` proofs are 84,392 and 84,590 bytes.
+After the v8 merge, the `binary-and-prime-claims` proofs are 84,392 and 84,590 bytes.
 
 The timings in this subsection predate the v8 merge.
 Section 12.4's prover targets of 0.4–0.8 seconds at N=2^22 and 0.8–1.6 seconds
 at N=2^23 are not achieved. In the offload campaign, without the prover-speed
-pass, final `word-prime` complete proving took 12,357,436,292 ns and
+pass, final `binary-and-prime-claims` complete proving took 12,357,436,292 ns and
 22,819,519,709 ns under the load triples above. The prover-speed pass,
 measured without the offload, brought it to 1,737,754,208 ns and
 2,927,935,667 ns, the prover span profile medians: 2.2 and 1.8 times the
 upper ends of the targets.
 Section 12.5's verifier targets are 5–10 ms at N=2^22 and 6–13 ms at
-N=2^23. After the verifier speedups, parallel `word-prime` verification takes
+N=2^23. After the verifier speedups, parallel `binary-and-prime-claims` verification takes
 12,408,375 ns at N=2^23, within its target, and 11,340,417 ns at N=2^22,
 1.3 ms above it, under one-minute loads of 12.12–12.75. Single-threaded it
 takes 25,839,667 ns and 26,771,375 ns, so neither target is met there. The binary
@@ -3813,7 +3822,7 @@ root takes 4.3 and 5.5 ms parallel (`binary_root_verify`). The ordinary
 suffix's Stage 2 verification takes 5.3 and 5.1 ms parallel and 19.3 and
 19.2 ms single-threaded, most of it the direct setup scan.
 
-Dev-protocol `word-prime` proving took 12,329,756,500 ns and 23,120,246,417 ns
+Dev-protocol `binary-and-prime-claims` proving took 12,329,756,500 ns and 23,120,246,417 ns
 in the offload campaign, and 1,674,145,125 ns and 2,910,122,000 ns in the
 prover-speed medians; verification took 16,311,917 ns and 19,281,709 ns
 before the verifier speedups, under its recorded loads.
@@ -3822,7 +3831,7 @@ before the verifier speedups, under its recorded loads.
 
 The timings in this subsection predate the v8 merge.
 The verifier draws one batching coefficient per root row and none per padding
-cell. At N=2^22 `word-prime` the median τ₁ draw takes 2,250 ns, against
+cell. At N=2^22 `binary-and-prime-claims` the median τ₁ draw takes 2,250 ns, against
 861,793,834 ns for the 17,129,090 per-cell padding challenges it drew before
 the deletion (appendix). The mixed shape adds one row per digit of the two
 ordinary compression segments (`w(w+1)=0`): 69,632 coefficients at N=2^22 and
@@ -3879,10 +3888,10 @@ reaches a production-size geometry.
   B/D claims stay in Stage 2.
 
 Before the offload, the verifier derived 2 × (62,208 + 28,512) = 181,440
-SHAKE256 ring entries at N=2^22 `word-prime` and evaluated one residue kernel
+SHAKE256 ring entries at N=2^22 `binary-and-prime-claims` and evaluated one residue kernel
 per setup column. After the byte-preserving speedups that span
 (`root_weights_evaluate_authentication`) still took 28.0 ms of 43.2 ms; at
-N=2^22 `prime5` it took 58.3 of 72.3 ms. The offload removes it (comparison
+N=2^22 `five-prime-claims` it took 58.3 of 72.3 ms. The offload removes it (comparison
 table in the appendix). The mixed shape's ordinary root still derives its
 setup matrix during verification. In the single-threaded median runs that
 derivation (`derive_public_matrix_prefix`) takes 2.4 ms at N=2^22 and 4.8 ms
@@ -3934,30 +3943,30 @@ extended row.
 
 ### Memory
 
-Before the v8 merge, the N=2^23 `word-prime` prover peak in the offload
+Before the v8 merge, the N=2^23 `binary-and-prime-claims` prover peak in the offload
 campaign was 10,190,553,088 bytes in the current protocol and 10,190,028,800
-bytes in the dev protocol. The largest measured peak, N=2^23 dev `prime5`, was
+bytes in the dev protocol. The largest measured peak, N=2^23 dev `five-prime-claims`, was
 10,594,435,072 bytes. Against the tables before the B/D setup offload
 (appendix), the prover peak rose in every shape. Where the prefix domain does
-not grow, it rose by 0.14 GB (N=2^22 `word`) to 0.69 GB (N=2^23
-`word-prime-ordinary`, from 9,517,465,600 to 10,211,393,536 bytes). The
+not grow, it rose by 0.14 GB (N=2^22 `binary-claim`) to 0.69 GB (N=2^23
+`binary-and-prime-claims-plus-ordinary`, from 9,517,465,600 to 10,211,393,536 bytes). The
 offload adds a dense `16 * 2^k'`-byte Stage 3 weight in every shape. Removing
 Stage 3's redundant full-length index table left the process peak nearly
 unchanged. Whole-process peak RSS does not say which phase sets the peak, so
 that attribution is unmeasured. The setup offload note, §8, separates prefix
 growth, dense weights and backend state. Before the v8 merge, the largest
 verifier peak after the verifier speedups was 178,913,280 bytes (N=2^23
-`word-prime-ordinary`, parallel), down from 1,047,445,504 bytes before them.
+`binary-and-prime-claims-plus-ordinary`, parallel), down from 1,047,445,504 bytes before them.
 
 The prover-speed pass was measured without the offload. Its N=2^23
-`word-prime` medians were 8,051,064,832 bytes in the current protocol and
+`binary-and-prime-claims` medians were 8,051,064,832 bytes in the current protocol and
 8,057,176,064 bytes in the dev protocol, against 8,462,876,672 bytes for the
 baseline executable under the same conditions. After the v8 merge and before
 the offload, the median was 8,056,356,864 bytes; the v8 merge's single run
 without the prover-speed pass, which planned its catalog in the proving
 process, peaked at 9,986,932,736 bytes. With the offload after the v8 merge, the
 median was 8,595,046,400 bytes. The largest peak after the v8 merge was
-10,705,600,512 bytes, at N=2^23 `prime5` in the first campaign, which
+10,705,600,512 bytes, at N=2^23 `five-prime-claims` in the first campaign, which
 planned its catalog in the proving process. All are below one sixth of the
 68,719,476,736-byte host. Peak RSS includes cold preparation in each isolated
 process. These values establish memory fit for this fixture; they do
@@ -4026,7 +4035,7 @@ verification (`derive_public_matrix_prefix`: 2.4 and 4.8 ms single-threaded,
 0.6 and 0.9 ms parallel). It evaluates the A, B and compression-map rows as
 residue-kernel lanes. `binary_root_weights_ordinary` takes 3.9 and 7.1 ms
 single-threaded and 2.1 and 3.1 ms parallel. The ordinary share of the
-relation evaluation, the mixed span minus the `word-prime` span, is about 1.5
+relation evaluation, the mixed span minus the `binary-and-prime-claims` span, is about 1.5
 and 2.1 ms single-threaded and 1.1 and 1.4 ms parallel.
 
 **Change.** Move the setup-dependent ordinary rows into a Stage 3 setup
@@ -4126,16 +4135,16 @@ C=2 results validate the harness; they are not full-size benchmark results.
 
 | Shape | Proof bytes | Atoms, including framing and work | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | ---: | ---: | ---: | ---: |
-| word-prime-ordinary | 87,341 | 25,756 | 1,546,911,744 | 404,439,040 |
-| prime5 | 84,842 | 25,598 | 2,051,637,248 | 437,993,472 |
+| binary-and-prime-claims-plus-ordinary | 87,341 | 25,756 | 1,546,911,744 | 404,439,040 |
+| five-prime-claims | 84,842 | 25,598 | 2,051,637,248 | 437,993,472 |
 
 Both selected six recursive folds and eight total fold levels, with a
 scheduled witness domain of 8,388,608 cells. Their scheduled live lengths
 were 5,452,288 and 4,276,544 respectively. The Blake2b-256 proof digests were:
 
 ```text
-word-prime-ordinary 878fe23f6701a2936ca09fa887c91449f4feedeb528e0652d3ab9374b61d83df
-prime5              1c0c7581aef2a052798fc0505003047713a9e87c068ea4ec554ac0ecc504b79c
+binary-and-prime-claims-plus-ordinary 878fe23f6701a2936ca09fa887c91449f4feedeb528e0652d3ab9374b61d83df
+five-prime-claims              1c0c7581aef2a052798fc0505003047713a9e87c068ea4ec554ac0ecc504b79c
 ```
 
 The mixed smoke with HEAD `13b668f6eb40787f01b5ad250bcca76766063866` and
@@ -4165,7 +4174,7 @@ they were **72.09/52.27/31.41 → 16.04/35.55/29.48**. These noisy timings
 are not optimization comparisons. Peak RSS includes each process's cold
 preparation and planner work.
 
-| Phase | word-prime-ordinary ns | prime5 ns |
+| Phase | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: |
 | Catalog planning | 52,348,544,375 | 237,928,101,292 |
 | Cold prover setup | 63,737,583 | 25,723,792 |
@@ -4178,7 +4187,7 @@ preparation and planner work.
 | Complete verification | 699,767,625 | 546,214,958 |
 
 Native-root admission has superseded the following search. Before it, the
-N=2^22 `word-prime` command exited with an error during the bounded ordinary
+N=2^22 `binary-and-prime-claims` command exited with an error during the bounded ordinary
 carrier search, before source import. At carrier log 30 the selected ordinary
 row had 24,725,376 live witness cells and a 4,194,304-cell prefix, below the
 binary requirements of 25,956,096 physical cells and a 16,777,216-cell prefix.
@@ -4196,11 +4205,11 @@ The first N=2^22 driver logged HEAD `da4f701d2` with native-admission changes
 uncommitted; N=2^23 logged clean HEAD `4fc40d2db`. The saved current-protocol
 baseline executable has SHA-256
 `7398ec122a80fbf811ea4d3e861b9f4af9595bb5b94823650c39ad70fee84d83`.
-Later word and five-plane measurements explicitly record that source commit
+Later `binary-claim` and five-plane measurements explicitly record that source commit
 and executable digest. These are baselines before the subsequent parity,
 Stage-2 lifetime and adjoint optimizations.
 
-The original `word-prime` logs are
+The original `binary-and-prime-claims` logs are
 `$CARGO_TARGET_DIR/n22-native-baseline.txt` and
 `$CARGO_TARGET_DIR/n23-native-baseline.txt`. The saved-executable shape runs are
 `$CARGO_TARGET_DIR/baseline-current-<log>-<shape>.txt`.
@@ -4210,21 +4219,21 @@ byte, and kept online A reads forbidden.
 
 | N | Shape | Proof bytes | Proof atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 87,811 | 25,835 | 6,685,179,904 | 1,473,527,808 |
-| 2^22 | word-prime | 87,786 | 25,813 | 7,068,237,824 | 2,120,646,656 |
-| 2^22 | prime5 | 84,936 | 25,678 | 13,015,891,968 | 6,235,439,104 |
-| 2^23 | word | 89,586 | 25,952 | 13,085,933,568 | 2,469,560,320 |
-| 2^23 | word-prime | 89,661 | 26,024 | 13,687,668,736 | 3,689,857,024 |
-| 2^23 | prime5 | 86,548 | 25,774 | 16,770,433,024 | 8,435,122,176 |
+| 2^22 | binary-claim | 87,811 | 25,835 | 6,685,179,904 | 1,473,527,808 |
+| 2^22 | binary-and-prime-claims | 87,786 | 25,813 | 7,068,237,824 | 2,120,646,656 |
+| 2^22 | five-prime-claims | 84,936 | 25,678 | 13,015,891,968 | 6,235,439,104 |
+| 2^23 | binary-claim | 89,586 | 25,952 | 13,085,933,568 | 2,469,560,320 |
+| 2^23 | binary-and-prime-claims | 89,661 | 26,024 | 13,687,668,736 | 3,689,857,024 |
+| 2^23 | five-prime-claims | 86,548 | 25,774 | 16,770,433,024 | 8,435,122,176 |
 
-The N=2^23 `word-prime` baseline prover peak is below one fifth of the host's
+The N=2^23 `binary-and-prime-claims` baseline prover peak is below one fifth of the host's
 68,719,476,736-byte memory. RSS includes the complete prover process and cold
 preparation. The initial N=2^22 mixed baseline failed on the one-block-per-B-slice
 restriction discussed below; it produced no proof or verifier measurement.
 Its planning and error-path spans are not successful opening timings.
 
 Their proof bytes, atoms and stage partitions equal the final rows. Their
-digests are the `word-prime`, `word` and `prime5` pins described above.
+digests are the `binary-and-prime-claims`, `binary-claim` and `five-prime-claims` pins described above.
 
 The measured inclusive phase times below are nanoseconds. None was taken below
 one-minute load 4. Each row records the complete `uptime` load triple before
@@ -4232,14 +4241,14 @@ and after its run, so these shared-host timings are not unloaded benchmarks.
 
 | N | Shape | Complete proving ns | Complete verification ns | Load before | Load after |
 | --- | --- | ---: | ---: | --- | --- |
-| 2^22 | word | 14,690,556,625 | 2,156,176,333 | 8.69/10.52/10.14 | 11.84/11.44/10.53 |
-| 2^22 | word-prime | 16,569,918,917 | 2,493,462,334 | 12.12/9.48/8.98 | 11.40/9.69/9.09 |
-| 2^22 | prime5 | 21,659,233,542 | 5,741,997,125 | 28.27/14.65/11.77 | 17.14/14.18/11.83 |
-| 2^23 | word | 28,153,493,500 | 3,515,415,083 | 17.14/14.18/11.83 | 11.88/13.36/11.74 |
-| 2^23 | word-prime | 30,060,170,166 | 4,098,428,834 | 16.20/12.52/10.34 | 13.03/12.29/10.45 |
-| 2^23 | prime5 | 33,363,737,625 | 5,881,257,792 | 11.88/13.36/11.74 | 10.82/12.61/11.64 |
+| 2^22 | binary-claim | 14,690,556,625 | 2,156,176,333 | 8.69/10.52/10.14 | 11.84/11.44/10.53 |
+| 2^22 | binary-and-prime-claims | 16,569,918,917 | 2,493,462,334 | 12.12/9.48/8.98 | 11.40/9.69/9.09 |
+| 2^22 | five-prime-claims | 21,659,233,542 | 5,741,997,125 | 28.27/14.65/11.77 | 17.14/14.18/11.83 |
+| 2^23 | binary-claim | 28,153,493,500 | 3,515,415,083 | 17.14/14.18/11.83 | 11.88/13.36/11.74 |
+| 2^23 | binary-and-prime-claims | 30,060,170,166 | 4,098,428,834 | 16.20/12.52/10.34 | 13.03/12.29/10.45 |
+| 2^23 | five-prime-claims | 33,363,737,625 | 5,881,257,792 | 11.88/13.36/11.74 | 10.82/12.61/11.64 |
 
-The detailed `word-prime` preparation phases use the same loads as their rows
+The detailed `binary-and-prime-claims` preparation phases use the same loads as their rows
 above: N=2^22 **12.12/9.48/8.98 → 11.40/9.69/9.09**, N=2^23
 **16.20/12.52/10.34 → 13.03/12.29/10.45**.
 
@@ -4257,8 +4266,8 @@ above: N=2^22 **12.12/9.48/8.98 → 11.40/9.69/9.09**, N=2^23
 After the canonical B-slice repair, both mixed benchmark sizes completed with
 `verification passed=true`, matching the caller's transcript continuation and
 keeping online A reads forbidden. The logs are
-`$CARGO_TARGET_DIR/before-adjoint-current-22-word-prime-ordinary.txt` and
-`$CARGO_TARGET_DIR/before-adjoint-current-23-word-prime-ordinary.txt`.
+`$CARGO_TARGET_DIR/before-adjoint-current-22-binary-and-prime-claims-plus-ordinary.txt` and
+`$CARGO_TARGET_DIR/before-adjoint-current-23-binary-and-prime-claims-plus-ordinary.txt`.
 They record source `2b8854e14_plus_canonical_b_slice_fix` and executable SHA-256
 `1012001f9a34a1471927da3adbaabf813a5deecf32d9433146fb8ecb487e5263`.
 This version includes the parity and buffer-lifetime changes and precedes the
@@ -4290,11 +4299,11 @@ These inclusive tracing times use nanoseconds. The `uptime` loads were
 | Complete proving | 14,815,040,000 | 27,541,188,625 |
 | Complete verification | 2,396,975,334 | 4,034,210,958 |
 
-Their stage partitions equal the final `word-prime-ordinary` rows.
+Their stage partitions equal the final `binary-and-prime-claims-plus-ordinary` rows.
 
 ### Optimizations after the baseline
 
-A ten-second sample of the N=2^22 `word-prime` prover is retained at
+A ten-second sample of the N=2^22 `binary-and-prime-claims` prover is retained at
 `$CARGO_TARGET_DIR/n22-root-baseline.sample.txt`. The sampled window contained
 2,993 relation-construction samples and 803 samples in the dense parity
 row-product path.
@@ -4337,7 +4346,7 @@ is likewise released after its last use.
 | 2^22 | 274,065,680 | 127,401,984 | 1,912,111,104 | 2,313,578,768 |
 | 2^23 | 641,067,280 | 254,803,968 | 3,545,530,368 | 4,441,401,616 |
 
-The intermediate current-protocol `word-prime` runs in
+The intermediate current-protocol `binary-and-prime-claims` runs in
 `$CARGO_TARGET_DIR/n22-parity-lifetime.txt` and
 `$CARGO_TARGET_DIR/n23-parity-lifetime.txt` both report
 `proof_digest_pin matched=True` and `verification passed=true`. Their exact
@@ -4400,7 +4409,7 @@ online A reads. Commit `1b80cd6a9` pins all eight historical dev-protocol
 proof digests before optimized dev-protocol measurements. This is a
 retrospective replay of pre-optimization source: the dev baseline was rebuilt
 and pinned after the optimization commits, unlike the initial current-protocol
-`word-prime` pins captured before those optimizations. The saved baseline
+`binary-and-prime-claims` pins captured before those optimizations. The saved baseline
 and optimized executables are run with the driver's same `--phase prove` and
 `--phase verify` arguments and a common temporary `--fixture` directory.
 This avoids repeated Cargo-lock waits between measurements. Their source and
@@ -4409,14 +4418,14 @@ executable digests and `uptime` loads are logged separately. The driver's
 
 | N | Shape | Baseline proof bytes | Atoms | Prover peak RSS bytes | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 82,784 | 25,609 | 6,717,030,400 | 1,474,199,552 |
-| 2^22 | word-prime | 82,731 | 25,557 | 7,070,449,664 | 2,121,285,632 |
-| 2^22 | word-prime-ordinary | 82,743 | 25,569 | 7,744,585,728 | 2,402,058,240 |
-| 2^22 | prime5 | 79,851 | 25,393 | 12,682,412,032 | 6,235,619,328 |
-| 2^23 | word | 84,578 | 25,746 | 13,090,422,784 | 2,471,755,776 |
-| 2^23 | word-prime | 84,574 | 25,739 | 13,677,051,904 | 3,692,511,232 |
-| 2^23 | word-prime-ordinary | 84,621 | 25,787 | 13,799,866,368 | 4,208,295,936 |
-| 2^23 | prime5 | 81,554 | 25,581 | 16,754,196,480 | 8,435,105,792 |
+| 2^22 | binary-claim | 82,784 | 25,609 | 6,717,030,400 | 1,474,199,552 |
+| 2^22 | binary-and-prime-claims | 82,731 | 25,557 | 7,070,449,664 | 2,121,285,632 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 82,743 | 25,569 | 7,744,585,728 | 2,402,058,240 |
+| 2^22 | five-prime-claims | 79,851 | 25,393 | 12,682,412,032 | 6,235,619,328 |
+| 2^23 | binary-claim | 84,578 | 25,746 | 13,090,422,784 | 2,471,755,776 |
+| 2^23 | binary-and-prime-claims | 84,574 | 25,739 | 13,677,051,904 | 3,692,511,232 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 84,621 | 25,787 | 13,799,866,368 | 4,208,295,936 |
+| 2^23 | five-prime-claims | 81,554 | 25,581 | 16,754,196,480 | 8,435,105,792 |
 
 The baseline's canonical outgoing geometry and six-level recursive output
 chains match the corresponding current-protocol rows above. Dev-protocol
@@ -4429,18 +4438,18 @@ no row was measured below one-minute load 4.
 
 | N | Shape | Load before | Load after |
 | --- | --- | --- | --- |
-| 2^22 | word | 16.64/11.36/10.71 | 26.12/14.75/12.00 |
-| 2^22 | word-prime | 26.12/14.75/12.00 | 29.11/18.34/13.58 |
-| 2^22 | word-prime-ordinary | 29.11/18.34/13.58 | 32.18/20.71/14.68 |
-| 2^22 | prime5 | 32.18/20.71/14.68 | 23.10/20.69/15.23 |
-| 2^23 | word | 23.10/20.69/15.23 | 25.71/22.03/16.30 |
-| 2^23 | word-prime | 25.71/22.03/16.30 | 19.51/20.99/16.54 |
-| 2^23 | word-prime-ordinary | 19.51/20.99/16.54 | 28.63/23.29/17.77 |
-| 2^23 | prime5 | 28.63/23.29/17.77 | 19.76/21.65/17.84 |
+| 2^22 | binary-claim | 16.64/11.36/10.71 | 26.12/14.75/12.00 |
+| 2^22 | binary-and-prime-claims | 26.12/14.75/12.00 | 29.11/18.34/13.58 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 29.11/18.34/13.58 | 32.18/20.71/14.68 |
+| 2^22 | five-prime-claims | 32.18/20.71/14.68 | 23.10/20.69/15.23 |
+| 2^23 | binary-claim | 23.10/20.69/15.23 | 25.71/22.03/16.30 |
+| 2^23 | binary-and-prime-claims | 25.71/22.03/16.30 | 19.51/20.99/16.54 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 19.51/20.99/16.54 | 28.63/23.29/17.77 |
+| 2^23 | five-prime-claims | 28.63/23.29/17.77 | 19.76/21.65/17.84 |
 
 Historical dev-protocol N=2^22, inclusive nanoseconds, with the load triples above:
 
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 30,920,451,042 | 32,485,773,875 | 9,311,988,791 | 31,613,850,625 |
 | Cold prover setup | 57,612,167 | 66,512,792 | 67,569,500 | 94,900,958 |
@@ -4456,7 +4465,7 @@ Historical dev-protocol N=2^22, inclusive nanoseconds, with the load triples abo
 
 Historical dev-protocol N=2^23, inclusive nanoseconds, with the load triples above:
 
-| Phase | word ns | word-prime ns | word-prime-ordinary ns | prime5 ns |
+| Phase | binary-claim ns | binary-and-prime-claims ns | binary-and-prime-claims-plus-ordinary ns | five-prime-claims ns |
 | --- | ---: | ---: | ---: | ---: |
 | Catalog planning | 36,788,665,000 | 36,754,778,959 | 13,405,380,042 | 36,218,120,041 |
 | Cold prover setup | 139,934,000 | 128,158,708 | 182,121,166 | 126,810,875 |
@@ -4484,14 +4493,14 @@ Peak RSS is an independent process measurement, not the sum of buffer sizes.
 
 | N | Shape | Baseline prove ns | Final prove ns | Baseline verify ns | Final verify ns | Baseline prover RSS bytes | Final prover RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 19,643,377,583 | 13,180,117,792 | 2,417,749,334 | 2,077,195,042 | 6,717,030,400 | 5,611,520,000 |
-| 2^22 | word-prime | 19,518,184,125 | 14,305,025,750 | 2,698,914,042 | 2,490,934,167 | 7,070,449,664 | 7,067,271,168 |
-| 2^22 | word-prime-ordinary | 17,057,029,209 | 14,260,011,083 | 2,869,937,041 | 2,416,851,959 | 7,744,585,728 | 7,479,492,608 |
-| 2^22 | prime5 | 23,907,995,375 | 19,831,039,583 | 5,818,740,292 | 5,496,839,916 | 12,682,412,032 | 12,482,592,768 |
-| 2^23 | word | 33,873,689,833 | 25,438,106,167 | 4,120,492,125 | 3,525,101,458 | 13,090,422,784 | 10,916,085,760 |
-| 2^23 | word-prime | 35,893,664,792 | 26,886,707,000 | 4,785,251,541 | 4,093,525,875 | 13,677,051,904 | 13,666,058,240 |
-| 2^23 | word-prime-ordinary | 34,586,278,334 | 26,642,876,458 | 4,827,243,125 | 4,112,921,833 | 13,799,866,368 | 12,827,443,200 |
-| 2^23 | prime5 | 38,174,043,667 | 30,962,749,791 | 6,817,642,875 | 5,993,753,084 | 16,754,196,480 | 14,592,933,888 |
+| 2^22 | binary-claim | 19,643,377,583 | 13,180,117,792 | 2,417,749,334 | 2,077,195,042 | 6,717,030,400 | 5,611,520,000 |
+| 2^22 | binary-and-prime-claims | 19,518,184,125 | 14,305,025,750 | 2,698,914,042 | 2,490,934,167 | 7,070,449,664 | 7,067,271,168 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 17,057,029,209 | 14,260,011,083 | 2,869,937,041 | 2,416,851,959 | 7,744,585,728 | 7,479,492,608 |
+| 2^22 | five-prime-claims | 23,907,995,375 | 19,831,039,583 | 5,818,740,292 | 5,496,839,916 | 12,682,412,032 | 12,482,592,768 |
+| 2^23 | binary-claim | 33,873,689,833 | 25,438,106,167 | 4,120,492,125 | 3,525,101,458 | 13,090,422,784 | 10,916,085,760 |
+| 2^23 | binary-and-prime-claims | 35,893,664,792 | 26,886,707,000 | 4,785,251,541 | 4,093,525,875 | 13,677,051,904 | 13,666,058,240 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 34,586,278,334 | 26,642,876,458 | 4,827,243,125 | 4,112,921,833 | 13,799,866,368 | 12,827,443,200 |
+| 2^23 | five-prime-claims | 38,174,043,667 | 30,962,749,791 | 6,817,642,875 | 5,993,753,084 | 16,754,196,480 | 14,592,933,888 |
 
 The fixture I/O spans provide the following before/after evidence for buffered
 transport, under those same baseline and final load triples. Fixture
@@ -4501,14 +4510,14 @@ I/O microbenchmark or a protocol speedup.
 
 | N | Shape | Unbuffered serialization ns | Buffered serialization ns | Historical setup deserialization ns | Final setup deserialization ns |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 6,343,925,167 | 43,618,084 | 89,677,083 | 71,212,208 |
-| 2^22 | word-prime | 6,107,946,875 | 39,096,625 | 87,560,250 | 73,428,584 |
-| 2^22 | word-prime-ordinary | 6,260,954,041 | 36,684,959 | 89,923,458 | 74,661,083 |
-| 2^22 | prime5 | 6,150,190,041 | 46,458,083 | 92,268,083 | 78,432,291 |
-| 2^23 | word | 15,382,593,792 | 152,262,000 | 241,358,542 | 181,717,083 |
-| 2^23 | word-prime | 14,740,160,750 | 128,314,709 | 234,842,833 | 192,590,583 |
-| 2^23 | word-prime-ordinary | 15,237,461,834 | 105,148,417 | 227,985,250 | 187,963,167 |
-| 2^23 | prime5 | 14,805,404,416 | 208,287,000 | 233,246,875 | 194,434,917 |
+| 2^22 | binary-claim | 6,343,925,167 | 43,618,084 | 89,677,083 | 71,212,208 |
+| 2^22 | binary-and-prime-claims | 6,107,946,875 | 39,096,625 | 87,560,250 | 73,428,584 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 6,260,954,041 | 36,684,959 | 89,923,458 | 74,661,083 |
+| 2^22 | five-prime-claims | 6,150,190,041 | 46,458,083 | 92,268,083 | 78,432,291 |
+| 2^23 | binary-claim | 15,382,593,792 | 152,262,000 | 241,358,542 | 181,717,083 |
+| 2^23 | binary-and-prime-claims | 14,740,160,750 | 128,314,709 | 234,842,833 | 192,590,583 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 15,237,461,834 | 105,148,417 | 227,985,250 | 187,963,167 |
+| 2^23 | five-prime-claims | 14,805,404,416 | 208,287,000 | 233,246,875 | 194,434,917 |
 
 ### Structured root weight history
 
@@ -4518,25 +4527,25 @@ the load triples of their phase tables.
 
 | Protocol | N | Shape | Complete verification ns | Verifier peak RSS bytes |
 | --- | --- | --- | ---: | ---: |
-| Current | 2^22 | word | 2,614,753,208 | 1,472,561,152 |
-| Current | 2^22 | word-prime | 2,700,073,541 | 2,117,910,528 |
-| Current | 2^22 | word-prime-ordinary | 2,596,214,334 | 2,403,041,280 |
-| Current | 2^22 | prime5 | 6,010,423,708 | 6,235,340,800 |
-| Current | 2^23 | word | 3,518,153,167 | 2,470,723,584 |
-| Current | 2^23 | word-prime | 4,037,486,416 | 3,691,986,944 |
-| Current | 2^23 | word-prime-ordinary | 4,093,851,125 | 4,208,427,008 |
-| Current | 2^23 | prime5 | 6,389,273,750 | 8,434,941,952 |
-| Dev | 2^22 | word | 2,077,195,042 | 1,473,511,424 |
-| Dev | 2^22 | word-prime | 2,490,934,167 | 2,119,794,688 |
-| Dev | 2^22 | word-prime-ordinary | 2,416,851,959 | 2,403,155,968 |
-| Dev | 2^22 | prime5 | 5,496,839,916 | 6,234,652,672 |
-| Dev | 2^23 | word | 3,525,101,458 | 2,470,641,664 |
-| Dev | 2^23 | word-prime | 4,093,525,875 | 3,690,250,240 |
-| Dev | 2^23 | word-prime-ordinary | 4,112,921,833 | 4,208,427,008 |
-| Dev | 2^23 | prime5 | 5,993,753,084 | 8,434,696,192 |
+| Current | 2^22 | binary-claim | 2,614,753,208 | 1,472,561,152 |
+| Current | 2^22 | binary-and-prime-claims | 2,700,073,541 | 2,117,910,528 |
+| Current | 2^22 | binary-and-prime-claims-plus-ordinary | 2,596,214,334 | 2,403,041,280 |
+| Current | 2^22 | five-prime-claims | 6,010,423,708 | 6,235,340,800 |
+| Current | 2^23 | binary-claim | 3,518,153,167 | 2,470,723,584 |
+| Current | 2^23 | binary-and-prime-claims | 4,037,486,416 | 3,691,986,944 |
+| Current | 2^23 | binary-and-prime-claims-plus-ordinary | 4,093,851,125 | 4,208,427,008 |
+| Current | 2^23 | five-prime-claims | 6,389,273,750 | 8,434,941,952 |
+| Dev | 2^22 | binary-claim | 2,077,195,042 | 1,473,511,424 |
+| Dev | 2^22 | binary-and-prime-claims | 2,490,934,167 | 2,119,794,688 |
+| Dev | 2^22 | binary-and-prime-claims-plus-ordinary | 2,416,851,959 | 2,403,155,968 |
+| Dev | 2^22 | five-prime-claims | 5,496,839,916 | 6,234,652,672 |
+| Dev | 2^23 | binary-claim | 3,525,101,458 | 2,470,641,664 |
+| Dev | 2^23 | binary-and-prime-claims | 4,093,525,875 | 3,690,250,240 |
+| Dev | 2^23 | binary-and-prime-claims-plus-ordinary | 4,112,921,833 | 4,208,427,008 |
+| Dev | 2^23 | five-prime-claims | 5,993,753,084 | 8,434,696,192 |
 
 The families replaced flat term lists built from the outgoing domain. At
-N=2^22 `word-prime` on the current protocol, with one-minute load between 4 and 5,
+N=2^22 `binary-and-prime-claims` on the current protocol, with one-minute load between 4 and 5,
 the 2.27 s verification included 1,171 ms of root relation construction. That
 construction comprised the image term (445 ms), padding (85 ms), parity rows
 (66 ms), prime planes (127 ms), B authentication (283 ms), D authentication
@@ -4546,7 +4555,7 @@ parity evaluations take 1.9, 0.5 and 0.6 ms. Padding evaluation takes about
 58 ms, and B/D evaluation about 370 ms, of which about 238 ms derives setup
 entries.
 
-Each commit below was measured on one saved N=2^22 `word-prime`
+Each commit below was measured on one saved N=2^22 `binary-and-prime-claims`
 current-protocol fixture. Each entry is the median of three isolated
 verifications, with the one-minute load range of those runs; the earlier
 value is the previous entry's.
@@ -4573,22 +4582,22 @@ come from `8d395668a`, under the load triples recorded with them.
 
 | Protocol | N | Shape | Proof bytes | Complete proving ns | Prover peak RSS bytes | Complete verification ns | Verifier peak RSS bytes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Current | 2^22 | word | 87,811 | 15,183,593,500 | 5,647,679,488 | 1,328,603,792 | 682,721,280 |
-| Current | 2^22 | word-prime | 87,786 | 16,972,422,083 | 7,080,706,048 | 1,341,655,250 | 625,704,960 |
-| Current | 2^22 | word-prime-ordinary | 87,790 | 15,325,837,834 | 7,487,815,680 | 1,350,053,125 | 949,370,880 |
-| Current | 2^22 | prime5 | 84,936 | 23,093,974,750 | 11,841,126,400 | 2,936,744,000 | 1,475,411,968 |
-| Current | 2^23 | word | 89,586 | 25,241,062,250 | 10,936,434,688 | 2,337,992,542 | 1,497,088,000 |
-| Current | 2^23 | word-prime | 89,661 | 26,545,813,375 | 12,891,324,416 | 2,328,043,666 | 1,440,219,136 |
-| Current | 2^23 | word-prime-ordinary | 89,664 | 26,455,607,667 | 12,852,248,576 | 2,340,802,584 | 2,032,025,600 |
-| Current | 2^23 | prime5 | 86,548 | 31,498,905,792 | 14,589,149,184 | 2,404,516,125 | 1,211,678,720 |
-| Dev | 2^22 | word | 82,784 | 13,180,117,792 | 5,611,520,000 | 1,195,380,917 | 681,279,488 |
-| Dev | 2^22 | word-prime | 82,731 | 14,305,025,750 | 7,067,271,168 | 1,215,787,167 | 623,312,896 |
-| Dev | 2^22 | word-prime-ordinary | 82,743 | 14,260,011,083 | 7,479,492,608 | 1,224,120,833 | 948,371,456 |
-| Dev | 2^22 | prime5 | 79,851 | 19,831,039,583 | 12,482,592,768 | 2,939,910,916 | 1,475,575,808 |
-| Dev | 2^23 | word | 84,578 | 25,438,106,167 | 10,916,085,760 | 2,339,421,625 | 1,494,253,568 |
-| Dev | 2^23 | word-prime | 84,574 | 26,886,707,000 | 13,666,058,240 | 2,364,934,333 | 1,439,842,304 |
-| Dev | 2^23 | word-prime-ordinary | 84,621 | 26,642,876,458 | 12,827,443,200 | 2,334,033,583 | 2,027,765,760 |
-| Dev | 2^23 | prime5 | 81,554 | 30,962,749,791 | 14,592,933,888 | 2,626,463,584 | 1,211,662,336 |
+| Current | 2^22 | binary-claim | 87,811 | 15,183,593,500 | 5,647,679,488 | 1,328,603,792 | 682,721,280 |
+| Current | 2^22 | binary-and-prime-claims | 87,786 | 16,972,422,083 | 7,080,706,048 | 1,341,655,250 | 625,704,960 |
+| Current | 2^22 | binary-and-prime-claims-plus-ordinary | 87,790 | 15,325,837,834 | 7,487,815,680 | 1,350,053,125 | 949,370,880 |
+| Current | 2^22 | five-prime-claims | 84,936 | 23,093,974,750 | 11,841,126,400 | 2,936,744,000 | 1,475,411,968 |
+| Current | 2^23 | binary-claim | 89,586 | 25,241,062,250 | 10,936,434,688 | 2,337,992,542 | 1,497,088,000 |
+| Current | 2^23 | binary-and-prime-claims | 89,661 | 26,545,813,375 | 12,891,324,416 | 2,328,043,666 | 1,440,219,136 |
+| Current | 2^23 | binary-and-prime-claims-plus-ordinary | 89,664 | 26,455,607,667 | 12,852,248,576 | 2,340,802,584 | 2,032,025,600 |
+| Current | 2^23 | five-prime-claims | 86,548 | 31,498,905,792 | 14,589,149,184 | 2,404,516,125 | 1,211,678,720 |
+| Dev | 2^22 | binary-claim | 82,784 | 13,180,117,792 | 5,611,520,000 | 1,195,380,917 | 681,279,488 |
+| Dev | 2^22 | binary-and-prime-claims | 82,731 | 14,305,025,750 | 7,067,271,168 | 1,215,787,167 | 623,312,896 |
+| Dev | 2^22 | binary-and-prime-claims-plus-ordinary | 82,743 | 14,260,011,083 | 7,479,492,608 | 1,224,120,833 | 948,371,456 |
+| Dev | 2^22 | five-prime-claims | 79,851 | 19,831,039,583 | 12,482,592,768 | 2,939,910,916 | 1,475,575,808 |
+| Dev | 2^23 | binary-claim | 84,578 | 25,438,106,167 | 10,916,085,760 | 2,339,421,625 | 1,494,253,568 |
+| Dev | 2^23 | binary-and-prime-claims | 84,574 | 26,886,707,000 | 13,666,058,240 | 2,364,934,333 | 1,439,842,304 |
+| Dev | 2^23 | binary-and-prime-claims-plus-ordinary | 84,621 | 26,642,876,458 | 12,827,443,200 | 2,334,033,583 | 2,027,765,760 |
+| Dev | 2^23 | five-prime-claims | 81,554 | 30,962,749,791 | 14,592,933,888 | 2,626,463,584 | 1,211,662,336 |
 
 Before the deletion, the digest table held these pins. Each superseded pin was captured at a different point in the history above. A pin establishes byte
 equality only between the source it was captured from and later sources:
@@ -4596,13 +4605,13 @@ equality only between the source it was captured from and later sources:
 - Packed source storage (`da4f701d2`) predates every full-size baseline. The
   earlier expanded importer rejected both benchmark sizes before commitment,
   so no pin establishes byte equality with the pre-packed representation.
-- The current-protocol `word-prime` pins (`325b72ca6` at N=2^22, `f6c1b1b45`
+- The current-protocol `binary-and-prime-claims` pins (`325b72ca6` at N=2^22, `f6c1b1b45`
   at N=2^23) come from the native-admission source `4fc40d2db`. They predate
   the parity (`082dd6278`), buffer-lifetime (`b17e9a2e2`), fixture-buffering
-  (`2b8854e14`) and adjoint-scratch (`ae173d73c`) changes. The `word` and
-  `prime5` pins (`56aed7ed4`) come from the saved `4fc40d2db` baseline
+  (`2b8854e14`) and adjoint-scratch (`ae173d73c`) changes. The `binary-claim` and
+  `five-prime-claims` pins (`56aed7ed4`) come from the saved `4fc40d2db` baseline
   executable.
-- The current-protocol `word-prime-ordinary` pins (`e74bfada5`) follow the
+- The current-protocol `binary-and-prime-claims-plus-ordinary` pins (`e74bfada5`) follow the
   B-slice repair. They were captured with that repair applied before it was
   committed as `b64fdbb4c`, on source that already included the parity,
   buffer-lifetime and buffering changes but not the adjoint-scratch change.
@@ -4630,33 +4639,33 @@ pin was 82,308 bytes and the current-protocol smoke pin 87,337 bytes.
 
 | Protocol | N | Shape | Proof bytes | Complete proving ns | Prover peak RSS bytes | Complete verification ns | Verifier peak RSS bytes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Current | 2^22 | word | 87,804 | 11,492,767,791 | 5,041,061,888 | 254,508,416 | 75,104,256 |
-| Current | 2^22 | word-prime | 87,805 | 12,724,620,834 | 5,068,324,864 | 366,722,875 | 75,759,616 |
-| Current | 2^22 | word-prime-ordinary | 87,786 | 12,590,064,167 | 5,178,376,192 | 615,104,291 | 560,644,096 |
-| Current | 2^22 | prime5 | 84,879 | 16,216,057,708 | 7,606,075,392 | 783,566,834 | 80,904,192 |
-| Current | 2^23 | word | 89,641 | 22,705,387,458 | 9,918,758,912 | 266,389,958 | 158,236,672 |
-| Current | 2^23 | word-prime | 89,603 | 25,467,671,042 | 9,698,836,480 | 387,217,417 | 158,466,048 |
-| Current | 2^23 | word-prime-ordinary | 89,638 | 26,341,418,583 | 9,517,465,600 | 964,557,042 | 1,041,711,104 |
-| Current | 2^23 | prime5 | 86,595 | 27,111,337,334 | 9,195,012,096 | 791,450,834 | 158,810,112 |
-| Dev | 2^22 | word | 82,739 | 12,256,222,875 | 5,061,033,984 | 261,353,584 | 74,596,352 |
-| Dev | 2^22 | word-prime | 82,788 | 14,150,406,375 | 5,083,938,816 | 363,747,209 | 75,382,784 |
-| Dev | 2^22 | word-prime-ordinary | 82,747 | 12,806,476,042 | 5,180,211,200 | 625,042,541 | 562,757,632 |
-| Dev | 2^22 | prime5 | 79,860 | 15,958,563,125 | 7,618,150,400 | 781,013,083 | 79,659,008 |
-| Dev | 2^23 | word | 84,544 | 22,128,615,583 | 9,911,517,184 | 252,647,125 | 155,254,784 |
-| Dev | 2^23 | word-prime | 84,554 | 23,296,890,708 | 9,917,906,944 | 364,523,333 | 157,040,640 |
-| Dev | 2^23 | word-prime-ordinary | 84,598 | 23,485,063,167 | 9,922,002,944 | 815,302,375 | 1,039,532,032 |
-| Dev | 2^23 | prime5 | 81,534 | 26,446,996,167 | 9,554,968,576 | 779,827,333 | 156,106,752 |
+| Current | 2^22 | binary-claim | 87,804 | 11,492,767,791 | 5,041,061,888 | 254,508,416 | 75,104,256 |
+| Current | 2^22 | binary-and-prime-claims | 87,805 | 12,724,620,834 | 5,068,324,864 | 366,722,875 | 75,759,616 |
+| Current | 2^22 | binary-and-prime-claims-plus-ordinary | 87,786 | 12,590,064,167 | 5,178,376,192 | 615,104,291 | 560,644,096 |
+| Current | 2^22 | five-prime-claims | 84,879 | 16,216,057,708 | 7,606,075,392 | 783,566,834 | 80,904,192 |
+| Current | 2^23 | binary-claim | 89,641 | 22,705,387,458 | 9,918,758,912 | 266,389,958 | 158,236,672 |
+| Current | 2^23 | binary-and-prime-claims | 89,603 | 25,467,671,042 | 9,698,836,480 | 387,217,417 | 158,466,048 |
+| Current | 2^23 | binary-and-prime-claims-plus-ordinary | 89,638 | 26,341,418,583 | 9,517,465,600 | 964,557,042 | 1,041,711,104 |
+| Current | 2^23 | five-prime-claims | 86,595 | 27,111,337,334 | 9,195,012,096 | 791,450,834 | 158,810,112 |
+| Dev | 2^22 | binary-claim | 82,739 | 12,256,222,875 | 5,061,033,984 | 261,353,584 | 74,596,352 |
+| Dev | 2^22 | binary-and-prime-claims | 82,788 | 14,150,406,375 | 5,083,938,816 | 363,747,209 | 75,382,784 |
+| Dev | 2^22 | binary-and-prime-claims-plus-ordinary | 82,747 | 12,806,476,042 | 5,180,211,200 | 625,042,541 | 562,757,632 |
+| Dev | 2^22 | five-prime-claims | 79,860 | 15,958,563,125 | 7,618,150,400 | 781,013,083 | 79,659,008 |
+| Dev | 2^23 | binary-claim | 84,544 | 22,128,615,583 | 9,911,517,184 | 252,647,125 | 155,254,784 |
+| Dev | 2^23 | binary-and-prime-claims | 84,554 | 23,296,890,708 | 9,917,906,944 | 364,523,333 | 157,040,640 |
+| Dev | 2^23 | binary-and-prime-claims-plus-ordinary | 84,598 | 23,485,063,167 | 9,922,002,944 | 815,302,375 | 1,039,532,032 |
+| Dev | 2^23 | five-prime-claims | 81,534 | 26,446,996,167 | 9,554,968,576 | 779,827,333 | 156,106,752 |
 
 The prefix domain was 2^24 at N=2^22 and 2^25 at N=2^23 for every shape. The
-recursive output chains of N=2^22 `word-prime`, `word-prime-ordinary` and
-`prime5`, and of N=2^23 `prime5`, were:
+recursive output chains of N=2^22 `binary-and-prime-claims`, `binary-and-prime-claims-plus-ordinary` and
+`five-prime-claims`, and of N=2^23 `five-prime-claims`, were:
 
 | N | Shape | Successive recursive output cells |
 | --- | --- | --- |
-| 2^22 | word-prime | 21,294,592 → 2,652,800 → 953,408 → 280,448 → 128,896 → 93,696 |
-| 2^22 | word-prime-ordinary | 21,514,752 → 2,672,064 → 953,408 → 280,448 → 128,896 → 93,696 |
-| 2^22 | prime5 | 21,778,944 → 2,691,328 → 953,408 → 280,448 → 128,896 → 93,696 |
-| 2^23 | prime5 | 18,256,384 → 1,814,528 → 565,248 → 245,504 → 121,856 → 93,696 |
+| 2^22 | binary-and-prime-claims | 21,294,592 → 2,652,800 → 953,408 → 280,448 → 128,896 → 93,696 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 21,514,752 → 2,672,064 → 953,408 → 280,448 → 128,896 → 93,696 |
+| 2^22 | five-prime-claims | 21,778,944 → 2,691,328 → 953,408 → 280,448 → 128,896 → 93,696 |
+| 2^23 | five-prime-claims | 18,256,384 → 1,814,528 → 565,248 → 245,504 → 121,856 → 93,696 |
 
 The other chains are unchanged by the offload. The end-to-end fixture sizes
 before the offload were, in the current and dev protocols: prime only
@@ -4697,42 +4706,42 @@ and `$CARGO_TARGET_DIR/bd-offload/<log>-<shape>.verify<i>.txt`.
 
 | N | Shape | Base ms | Base RSS bytes | Speedups ms | Speedups RSS bytes | Offload ms | Offload RSS bytes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 249.3 | 74,022,912 | 33.7 | 75,939,840 | 14.9 | 75,284,480 |
-| 2^22 | word-prime | 353.0 | 75,268,096 | 43.2 | 77,643,776 | 16.1 | 157,270,016 |
-| 2^22 | word-prime-ordinary | 601.2 | 562,708,480 | 150.5 | 566,575,104 | 124.8 | 644,710,400 |
-| 2^22 | prime5 | 764.5 | 78,872,576 | 72.3 | 84,705,280 | 15.2 | 126,566,400 |
-| 2^23 | word | 253.1 | 154,927,104 | 34.2 | 157,614,080 | 16.2 | 156,794,880 |
-| 2^23 | word-prime | 364.1 | 158,023,680 | 51.4 | 159,121,408 | 17.5 | 157,450,240 |
-| 2^23 | word-prime-ordinary | 803.9 | 1,038,237,696 | 241.5 | 1,048,707,072 | 215.2 | 1,047,756,800 |
-| 2^23 | prime5 | 785.3 | 157,761,536 | 84.1 | 163,905,536 | 16.5 | 133,218,304 |
+| 2^22 | binary-claim | 249.3 | 74,022,912 | 33.7 | 75,939,840 | 14.9 | 75,284,480 |
+| 2^22 | binary-and-prime-claims | 353.0 | 75,268,096 | 43.2 | 77,643,776 | 16.1 | 157,270,016 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 601.2 | 562,708,480 | 150.5 | 566,575,104 | 124.8 | 644,710,400 |
+| 2^22 | five-prime-claims | 764.5 | 78,872,576 | 72.3 | 84,705,280 | 15.2 | 126,566,400 |
+| 2^23 | binary-claim | 253.1 | 154,927,104 | 34.2 | 157,614,080 | 16.2 | 156,794,880 |
+| 2^23 | binary-and-prime-claims | 364.1 | 158,023,680 | 51.4 | 159,121,408 | 17.5 | 157,450,240 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 803.9 | 1,038,237,696 | 241.5 | 1,048,707,072 | 215.2 | 1,047,756,800 |
+| 2^23 | five-prime-claims | 785.3 | 157,761,536 | 84.1 | 163,905,536 | 16.5 | 133,218,304 |
 
 The one-minute load before each of the three verification runs:
 
 | N | Shape | Base loads | Speedups loads | Offload loads |
 | --- | --- | --- | --- | --- |
-| 2^22 | word | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 6.19, 6.19, 6.19 |
-| 2^22 | word-prime | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 7.49, 7.49, 7.49 |
-| 2^22 | word-prime-ordinary | 4.59, 4.59, 4.59 | 4.59, 4.59, 4.59 | 7.30, 7.30, 7.30 |
-| 2^22 | prime5 | 4.59, 4.73, 4.73 | 4.59, 4.59, 4.59 | 6.23, 6.13, 6.13 |
-| 2^23 | word | 5.85, 5.85, 5.85 | 5.85, 5.85, 5.85 | 5.86, 5.86, 5.86 |
-| 2^23 | word-prime | 3.58, 3.77, 3.77 | 3.77, 3.77, 3.77 | 5.69, 5.69, 5.69 |
-| 2^23 | word-prime-ordinary | 3.87, 3.87, 3.87 | 3.80, 3.80, 3.80 | 5.82, 5.82, 5.82 |
-| 2^23 | prime5 | 3.82, 3.72, 3.72 | 3.82, 3.82, 3.82 | 6.39, 6.39, 6.39 |
+| 2^22 | binary-claim | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 6.19, 6.19, 6.19 |
+| 2^22 | binary-and-prime-claims | 4.73, 4.73, 4.73 | 4.73, 4.73, 4.73 | 7.49, 7.49, 7.49 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 4.59, 4.59, 4.59 | 4.59, 4.59, 4.59 | 7.30, 7.30, 7.30 |
+| 2^22 | five-prime-claims | 4.59, 4.73, 4.73 | 4.59, 4.59, 4.59 | 6.23, 6.13, 6.13 |
+| 2^23 | binary-claim | 5.85, 5.85, 5.85 | 5.85, 5.85, 5.85 | 5.86, 5.86, 5.86 |
+| 2^23 | binary-and-prime-claims | 3.58, 3.77, 3.77 | 3.77, 3.77, 3.77 | 5.69, 5.69, 5.69 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 3.87, 3.87, 3.87 | 3.80, 3.80, 3.80 | 5.82, 5.82, 5.82 |
+| 2^23 | five-prime-claims | 3.82, 3.72, 3.72 | 3.82, 3.82, 3.82 | 6.39, 6.39, 6.39 |
 
 With the speedups alone, B/D authentication (`root_weights_evaluate_authentication`)
-was still 28.0 of 43.2 ms at N=2^22 `word-prime` and 58.3 of 72.3 ms at
-N=2^22 `prime5`. After the offload that span is gone, and the binary-only
+was still 28.0 of 43.2 ms at N=2^22 `binary-and-prime-claims` and 58.3 of 72.3 ms at
+N=2^22 `five-prime-claims`. After the offload that span is gone, and the binary-only
 shapes verify in 14.9–17.5 ms at both sizes. The mixed shape's remaining
 time is the ordinary root's flat-term construction
 (`binary_root_weights_ordinary`: 85.9 ms at N=2^22 and 160.7 ms at N=2^23),
 which the offload does not touch.
 
 Verifier peak RSS follows the selected prefix, not the B/D work. Where the
-prefix domain grows (N=2^22 `word-prime` and `word-prime-ordinary` from 2^24
-to 2^25, `prime5` to 2^26), the successor folds and their prepared setup grow
-with it. Against the speedups build, RSS rises by 42 MB (`prime5`) to 80 MB
-(`word-prime`) at N=2^22. Where it does not grow (N=2^22 `word`, and N=2^23
-except `prime5`), RSS is within 2 MB of the speedups build. N=2^23 `prime5` drops by
+prefix domain grows (N=2^22 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary` from 2^24
+to 2^25, `five-prime-claims` to 2^26), the successor folds and their prepared setup grow
+with it. Against the speedups build, RSS rises by 42 MB (`five-prime-claims`) to 80 MB
+(`binary-and-prime-claims`) at N=2^22. Where it does not grow (N=2^22 `binary-claim`, and N=2^23
+except `five-prime-claims`), RSS is within 2 MB of the speedups build. N=2^23 `five-prime-claims` drops by
 31 MB under its different successor schedule.
 
 ### Verification before the verifier speedups
@@ -4744,14 +4753,14 @@ verifier speedups remeasures the same source.
 
 | N | Shape | Complete verification ns | Verifier peak RSS bytes |
 | --- | --- | ---: | ---: |
-| 2^22 | word | 14,900,416 | 75,284,480 |
-| 2^22 | word-prime | 16,091,291 | 157,270,016 |
-| 2^22 | word-prime-ordinary | 124,834,791 | 644,710,400 |
-| 2^22 | prime5 | 15,235,792 | 126,566,400 |
-| 2^23 | word | 16,205,875 | 156,794,880 |
-| 2^23 | word-prime | 17,545,167 | 157,450,240 |
-| 2^23 | word-prime-ordinary | 215,159,375 | 1,047,756,800 |
-| 2^23 | prime5 | 16,455,833 | 133,218,304 |
+| 2^22 | binary-claim | 14,900,416 | 75,284,480 |
+| 2^22 | binary-and-prime-claims | 16,091,291 | 157,270,016 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 124,834,791 | 644,710,400 |
+| 2^22 | five-prime-claims | 15,235,792 | 126,566,400 |
+| 2^23 | binary-claim | 16,205,875 | 156,794,880 |
+| 2^23 | binary-and-prime-claims | 17,545,167 | 157,450,240 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 215,159,375 | 1,047,756,800 |
+| 2^23 | five-prime-claims | 16,455,833 | 133,218,304 |
 
 ### Before the prover-speed pass
 
@@ -4763,22 +4772,22 @@ triples recorded with it.
 
 | Protocol | N | Shape | Binary commitment ns | Complete proving ns | Prover peak RSS bytes |
 | --- | --- | --- | ---: | ---: | ---: |
-| Current | 2^22 | word | 1,931,572,875 | 11,492,767,791 | 5,041,061,888 |
-| Current | 2^22 | word-prime | 1,863,130,792 | 12,724,620,834 | 5,068,324,864 |
-| Current | 2^22 | word-prime-ordinary | 1,955,571,458 | 12,590,064,167 | 5,178,376,192 |
-| Current | 2^22 | prime5 | 1,897,854,000 | 16,216,057,708 | 7,606,075,392 |
-| Current | 2^23 | word | 2,057,973,375 | 22,705,387,458 | 9,918,758,912 |
-| Current | 2^23 | word-prime | 2,007,653,125 | 25,467,671,042 | 9,698,836,480 |
-| Current | 2^23 | word-prime-ordinary | 1,989,260,875 | 26,341,418,583 | 9,517,465,600 |
-| Current | 2^23 | prime5 | 2,007,191,500 | 27,111,337,334 | 9,195,012,096 |
-| Dev | 2^22 | word | 1,780,184,042 | 12,256,222,875 | 5,061,033,984 |
-| Dev | 2^22 | word-prime | 1,771,492,417 | 14,150,406,375 | 5,083,938,816 |
-| Dev | 2^22 | word-prime-ordinary | 1,771,982,542 | 12,806,476,042 | 5,180,211,200 |
-| Dev | 2^22 | prime5 | 1,778,575,292 | 15,958,563,125 | 7,618,150,400 |
-| Dev | 2^23 | word | 2,025,972,583 | 22,128,615,583 | 9,911,517,184 |
-| Dev | 2^23 | word-prime | 2,017,258,875 | 23,296,890,708 | 9,917,906,944 |
-| Dev | 2^23 | word-prime-ordinary | 2,033,678,958 | 23,485,063,167 | 9,922,002,944 |
-| Dev | 2^23 | prime5 | 2,011,634,083 | 26,446,996,167 | 9,554,968,576 |
+| Current | 2^22 | binary-claim | 1,931,572,875 | 11,492,767,791 | 5,041,061,888 |
+| Current | 2^22 | binary-and-prime-claims | 1,863,130,792 | 12,724,620,834 | 5,068,324,864 |
+| Current | 2^22 | binary-and-prime-claims-plus-ordinary | 1,955,571,458 | 12,590,064,167 | 5,178,376,192 |
+| Current | 2^22 | five-prime-claims | 1,897,854,000 | 16,216,057,708 | 7,606,075,392 |
+| Current | 2^23 | binary-claim | 2,057,973,375 | 22,705,387,458 | 9,918,758,912 |
+| Current | 2^23 | binary-and-prime-claims | 2,007,653,125 | 25,467,671,042 | 9,698,836,480 |
+| Current | 2^23 | binary-and-prime-claims-plus-ordinary | 1,989,260,875 | 26,341,418,583 | 9,517,465,600 |
+| Current | 2^23 | five-prime-claims | 2,007,191,500 | 27,111,337,334 | 9,195,012,096 |
+| Dev | 2^22 | binary-claim | 1,780,184,042 | 12,256,222,875 | 5,061,033,984 |
+| Dev | 2^22 | binary-and-prime-claims | 1,771,492,417 | 14,150,406,375 | 5,083,938,816 |
+| Dev | 2^22 | binary-and-prime-claims-plus-ordinary | 1,771,982,542 | 12,806,476,042 | 5,180,211,200 |
+| Dev | 2^22 | five-prime-claims | 1,778,575,292 | 15,958,563,125 | 7,618,150,400 |
+| Dev | 2^23 | binary-claim | 2,025,972,583 | 22,128,615,583 | 9,911,517,184 |
+| Dev | 2^23 | binary-and-prime-claims | 2,017,258,875 | 23,296,890,708 | 9,917,906,944 |
+| Dev | 2^23 | binary-and-prime-claims-plus-ordinary | 2,033,678,958 | 23,485,063,167 | 9,922,002,944 |
+| Dev | 2^23 | five-prime-claims | 2,011,634,083 | 26,446,996,167 | 9,554,968,576 |
 
 The baseline built residual rows at two call sites: inside the response build
 and again in the projection replay. The collector sums spans by name, so the
@@ -4795,7 +4804,7 @@ were:
 
 Baseline executable, N=2^22:
 
-| Span | word | word-prime | word-prime-ordinary | prime5 |
+| Span | binary-claim | binary-and-prime-claims | binary-and-prime-claims-plus-ordinary | five-prime-claims |
 | --- | ---: | ---: | ---: | ---: |
 | Binary commitment | 1,698.8 | 1,700.7 | 1,627.9 | 1,698.3 |
 | › pack words | 26.8 | 26.7 | 24.1 | 27.2 |
@@ -4824,7 +4833,7 @@ Baseline executable, N=2^22:
 
 Baseline executable, N=2^23:
 
-| Span | word | word-prime | word-prime-ordinary | prime5 |
+| Span | binary-claim | binary-and-prime-claims | binary-and-prime-claims-plus-ordinary | five-prime-claims |
 | --- | ---: | ---: | ---: | ---: |
 | Binary commitment | 1,910.3 | 1,847.3 | 1,854.7 | 1,899.9 |
 | › pack words | 54.1 | 49.7 | 49.7 | 50.8 |

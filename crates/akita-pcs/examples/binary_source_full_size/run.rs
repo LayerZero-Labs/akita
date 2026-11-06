@@ -45,7 +45,7 @@ struct Fixture {
 
 pub(super) fn main() -> Result<()> {
     let mut log = 22usize;
-    let mut shape = "word-prime".to_owned();
+    let mut shape = "binary-and-prime-claims".to_owned();
     let mut phase = "prove".to_owned();
     let mut directory = None;
     let mut args = std::env::args().skip(1);
@@ -60,7 +60,13 @@ pub(super) fn main() -> Result<()> {
         }
     }
     if ![10, 22, 23].contains(&log)
-        || !["word", "word-prime", "word-prime-ordinary", "prime5"].contains(&shape.as_str())
+        || ![
+            "binary-claim",
+            "binary-and-prime-claims",
+            "binary-and-prime-claims-plus-ordinary",
+            "five-prime-claims",
+        ]
+        .contains(&shape.as_str())
     {
         return Err("invalid measurement geometry".into());
     }
@@ -131,7 +137,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let mut setup = {
         let _span = tracing::info_span!("cold_prover_setup").entered();
         let max_vars = carrier.group.num_vars().max(log);
-        let max_polynomials = 1 + usize::from(shape == "word-prime-ordinary");
+        let max_polynomials = 1 + usize::from(shape == "binary-and-prime-claims-plus-ordinary");
         if log == 10 {
             scheme.setup_prover(max_vars, max_polynomials)?
         } else {
@@ -173,7 +179,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     };
     let mut commitments = vec![committed.committed_group];
     let mut handles = vec![committed.private_handle];
-    if shape == "word-prime-ordinary" {
+    if shape == "binary-and-prime-claims-plus-ordinary" {
         let _span = tracing::info_span!("ordinary_commit").entered();
         let ordinary_log = log.max(18);
         let ordinary_count = checked::pow2(ordinary_log).ok_or("ordinary count overflow")?;
@@ -289,7 +295,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         )?;
     }
     akita_transcript::finish_proof_ranges(&prover);
-    metrics::proof(prover.narg_string(), log, shape != "prime5")?;
+    metrics::proof(prover.narg_string(), log, shape != "five-prime-claims")?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
     prover.public_message(&BytesMsg(b"application-suffix"));
     let fixture = Fixture {

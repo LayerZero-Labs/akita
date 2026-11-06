@@ -20,10 +20,10 @@ pub(super) fn plan(
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
     let descriptor = claims::descriptor(log)?;
     let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, carrier)?;
-    let word = shape != "prime5";
-    let planes = if shape == "word" {
+    let word = shape != "five-prime-claims";
+    let planes = if shape == "binary-claim" {
         0
-    } else if shape == "prime5" {
+    } else if shape == "five-prime-claims" {
         5
     } else {
         1
@@ -94,7 +94,7 @@ pub(super) fn build(
     // Smoke retains the existing 18-variable ordinary fixture while reducing
     // the binary source; a 10-variable mixed search has no admitted schedule.
     let ordinary_key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
-    let ordinary_row = if shape == "word-prime-ordinary" {
+    let ordinary_row = if shape == "binary-and-prime-claims-plus-ordinary" {
         Some(akita_planner::find_schedule(
             &ordinary_key,
             FullSize::committed_source_contract()?,
@@ -246,7 +246,7 @@ pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::erro
         ))?
         .profiles()
         .final_group;
-    let ordinary = if shape == "word-prime-ordinary" {
+    let ordinary = if shape == "binary-and-prime-claims-plus-ordinary" {
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
         let planned = akita_planner::find_schedule(
             &key,

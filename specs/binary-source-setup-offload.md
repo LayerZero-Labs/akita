@@ -22,10 +22,10 @@ commitments: B for the image digits and D for the opening digits. Before this
 change, the verifier evaluated both authentication rows at the Stage 2 point
 `r` by reading every B/D setup column. One column is 2 rows of 64
 coefficients, each squeezed from SHAKE256, so the read is linear in the setup:
-62,208 image columns plus 28,512 opening columns at 2^22 `word-prime`, and
-62,208 plus 139,320 at 2^22 `prime5`. After the byte-preserving speedups
+62,208 image columns plus 28,512 opening columns at 2^22 `binary-and-prime-claims`, and
+62,208 plus 139,320 at 2^22 `five-prime-claims`. After the byte-preserving speedups
 earlier on this branch, the read still cost 28.0 ms of a 43.2 ms verification
-at 2^22 `word-prime`, and 58.3 ms of 72.3 ms at 2^22 `prime5`.
+at 2^22 `binary-and-prime-claims`, and 58.3 ms of 72.3 ms at 2^22 `five-prime-claims`.
 
 The typed A product already avoids this cost. Its setup lives in a typed setup
 prefix that setup preparation commits. Stage 3 reduces its contribution to one
@@ -41,9 +41,9 @@ Online verification reads no setup entry.
 
 The change adds no sumcheck, no batching challenge and no proof field. It
 enlarges the typed prefix only where the A padding cannot hold the pieces:
-from 2^24 to 2^25 cells at 2^22 `word-prime` and `word-prime-ordinary`, and
-to 2^26 for `prime5` at both sizes. At 2^22 `word` and at 2^23 `word`,
-`word-prime` and `word-prime-ordinary`, the prefix domain is unchanged. Each
+from 2^24 to 2^25 cells at 2^22 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`, and
+to 2^26 for `five-prime-claims` at both sizes. At 2^22 `binary-claim` and at 2^23 `binary-claim`,
+`binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`, the prefix domain is unchanged. Each
 added Stage 3 round adds `2/P = 2^-127` of interactive error, 32 bytes of
 round message and the round's scheduled grinding nonce. The prover now builds
 a dense Stage 3 weight over the whole prefix. Before the change, the A weight
@@ -202,17 +202,17 @@ length is 2^24 at 2^22 and 2^25 at 2^23, as before the change.
 
 | N | Shape | Digit cells | In A padding | In tail | Natural cells | `2^k` before | `2^k'` after |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 8,045,568 | 8,045,568 | 0 | 16,777,216 | 2^24 | 2^24 |
-| 2^22 | word-prime | 11,612,160 | 8,126,464 | 3,485,696 | 20,262,912 | 2^24 | 2^25 |
-| 2^22 | word-prime-ordinary | 11,612,160 | 8,126,464 | 3,485,696 | 20,262,912 | 2^24 | 2^25 |
-| 2^22 | prime5 | 25,795,584 | 8,126,464 | 17,669,120 | 34,446,336 | 2^24 | 2^26 |
-| 2^23 | word | 8,045,568 | 8,045,568 | 0 | 33,554,432 | 2^25 | 2^25 |
-| 2^23 | word-prime | 11,612,160 | 11,612,160 | 0 | 33,554,432 | 2^25 | 2^25 |
-| 2^23 | word-prime-ordinary | 11,612,160 | 11,612,160 | 0 | 33,554,432 | 2^25 | 2^25 |
-| 2^23 | prime5 | 25,795,584 | 16,252,928 | 9,542,656 | 43,097,088 | 2^25 | 2^26 |
+| 2^22 | binary-claim | 8,045,568 | 8,045,568 | 0 | 16,777,216 | 2^24 | 2^24 |
+| 2^22 | binary-and-prime-claims | 11,612,160 | 8,126,464 | 3,485,696 | 20,262,912 | 2^24 | 2^25 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 11,612,160 | 8,126,464 | 3,485,696 | 20,262,912 | 2^24 | 2^25 |
+| 2^22 | five-prime-claims | 25,795,584 | 8,126,464 | 17,669,120 | 34,446,336 | 2^24 | 2^26 |
+| 2^23 | binary-claim | 8,045,568 | 8,045,568 | 0 | 33,554,432 | 2^25 | 2^25 |
+| 2^23 | binary-and-prime-claims | 11,612,160 | 11,612,160 | 0 | 33,554,432 | 2^25 | 2^25 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 11,612,160 | 11,612,160 | 0 | 33,554,432 | 2^25 | 2^25 |
+| 2^23 | five-prime-claims | 25,795,584 | 16,252,928 | 9,542,656 | 43,097,088 | 2^25 | 2^26 |
 
-At 2^22 `word-prime` the digit cells exceed the A padding by 3,485,696 cells,
-so no placement keeps the 2^24 domain. At 2^22 `prime5` they exceed it by
+At 2^22 `binary-and-prime-claims` the digit cells exceed the A padding by 3,485,696 cells,
+so no placement keeps the 2^24 domain. At 2^22 `five-prime-claims` they exceed it by
 17,669,120 cells, and the A tensor plus all digit cells (42,572,800) exceed
 2^25, so no placement keeps 2^25.
 
@@ -297,11 +297,11 @@ difference is that `W` has more nonzero cells.
 
 | Shapes | `k` → `k'` | Before | After |
 | --- | --- | --- | --- |
-| 2^22 word | 24 → 24 | `48/P = 2^-122.415` | unchanged |
-| 2^22 word-prime, word-prime-ordinary | 24 → 25 | `48/P = 2^-122.415` | `50/P = 2^-122.356` |
-| 2^22 prime5 | 24 → 26 | `48/P = 2^-122.415` | `52/P = 2^-122.300` |
-| 2^23 word, word-prime, word-prime-ordinary | 25 → 25 | `50/P = 2^-122.356` | unchanged |
-| 2^23 prime5 | 25 → 26 | `50/P = 2^-122.356` | `52/P = 2^-122.300` |
+| 2^22 binary-claim | 24 → 24 | `48/P = 2^-122.415` | unchanged |
+| 2^22 binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 24 → 25 | `48/P = 2^-122.415` | `50/P = 2^-122.356` |
+| 2^22 five-prime-claims | 24 → 26 | `48/P = 2^-122.415` | `52/P = 2^-122.300` |
+| 2^23 binary-claim, binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 25 → 25 | `50/P = 2^-122.356` | unchanged |
+| 2^23 five-prime-claims | 25 → 26 | `50/P = 2^-122.356` | `52/P = 2^-122.300` |
 
 There is no batching term, because B and D enter through the `beta` already
 priced at `Tau1Point`. There is no new identity-testing term, because
@@ -366,9 +366,9 @@ the weight. Measured times are in the opening spec.
 **Bytes.** Each added Stage 3 round adds 32 bytes of coefficients and its
 grinding nonce, which is one byte at the measured schedules. The claim and the
 prefix evaluation are unchanged at 32 bytes. Predicted level-0 change: none at
-2^22 `word` and at 2^23 `word`, `word-prime` and `word-prime-ordinary`; +33
-bytes at 2^22 `word-prime` and `word-prime-ordinary`; +66 at 2^22 `prime5`;
-+33 at 2^23 `prime5`. Where `k' > k`, the successor folds also open a larger
+2^22 `binary-claim` and at 2^23 `binary-claim`, `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`; +33
+bytes at 2^22 `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`; +66 at 2^22 `five-prime-claims`;
++33 at 2^23 `five-prime-claims`. Where `k' > k`, the successor folds also open a larger
 prefix, which changes their schedule. Everywhere, the prefix values change,
 and the successors' Golomb–Rice-coded tail responses
 ([`tail_segments.rs`](../crates/akita-types/src/proof/tail_segments.rs))
@@ -396,14 +396,14 @@ protocol. The level-0 Stage 3 bytes match the prediction: 824 bytes at
 
 | N | Shape | `k'` | Verification before → after (ms) | Proof bytes before → after | Prover peak RSS before → after (GB) |
 | --- | --- | ---: | --- | --- | --- |
-| 2^22 | word | 24 | 33.7 → 14.9 | 87,804 → 87,801 | 5.04 → 5.18 |
-| 2^22 | word-prime | 25 | 43.2 → 16.1 | 87,805 → 89,464 | 5.07 → 6.06 |
-| 2^22 | word-prime-ordinary | 25 | 150.5 → 124.8 | 87,786 → 89,463 | 5.18 → 6.23 |
-| 2^22 | prime5 | 26 | 72.3 → 15.2 | 84,879 → 94,242 | 7.61 → 10.00 |
-| 2^23 | word | 25 | 34.2 → 16.2 | 89,641 → 89,626 | 9.92 → 10.18 |
-| 2^23 | word-prime | 25 | 51.4 → 17.5 | 89,603 → 89,658 | 9.70 → 10.19 |
-| 2^23 | word-prime-ordinary | 25 | 241.5 → 215.2 | 89,638 → 89,661 | 9.52 → 10.21 |
-| 2^23 | prime5 | 26 | 84.1 → 16.5 | 86,595 → 94,261 | 9.20 → 10.59 |
+| 2^22 | binary-claim | 24 | 33.7 → 14.9 | 87,804 → 87,801 | 5.04 → 5.18 |
+| 2^22 | binary-and-prime-claims | 25 | 43.2 → 16.1 | 87,805 → 89,464 | 5.07 → 6.06 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 25 | 150.5 → 124.8 | 87,786 → 89,463 | 5.18 → 6.23 |
+| 2^22 | five-prime-claims | 26 | 72.3 → 15.2 | 84,879 → 94,242 | 7.61 → 10.00 |
+| 2^23 | binary-claim | 25 | 34.2 → 16.2 | 89,641 → 89,626 | 9.92 → 10.18 |
+| 2^23 | binary-and-prime-claims | 25 | 51.4 → 17.5 | 89,603 → 89,658 | 9.70 → 10.19 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 25 | 241.5 → 215.2 | 89,638 → 89,661 | 9.52 → 10.21 |
+| 2^23 | five-prime-claims | 26 | 84.1 → 16.5 | 86,595 → 94,261 | 9.20 → 10.59 |
 
 "Before" verification is the build with the byte-preserving speedups and
 without the offload; "before" bytes and prover RSS are the opening spec's
@@ -420,7 +420,7 @@ one-element coefficient factor. The rectangular product then binds the same
 variables in the same order as with the table as its coefficient factor, and
 the proof bytes are identical. The choice matters for memory: the kernel's
 first pass keeps one unreduced accumulator per coefficient-factor entry in
-each parallel task, which at 2^22 `word` raised the prover's peak RSS from
+each parallel task, which at 2^22 `binary-claim` raised the prover's peak RSS from
 5.18 GB to 7.33 GB.
 
 **Where the prover memory goes.** Three sources add memory, and they do not
@@ -448,14 +448,14 @@ host before and after it:
 
 | N | Shape | `k'` | Prover peak RSS before → after (bytes) |
 | --- | --- | ---: | --- |
-| 2^22 | word | 24 | 5,206,458,368 → 5,189,353,472 |
-| 2^22 | prime5 | 26 | 10,007,166,976 → 10,012,590,080 |
+| 2^22 | binary-claim | 24 | 5,206,458,368 → 5,189,353,472 |
+| 2^22 | five-prime-claims | 26 | 10,007,166,976 → 10,012,590,080 |
 
-Removing a 256 MiB (`word`) or 1 GiB (`prime5`) Stage 3 table changed the
+Removing a 256 MiB (`binary-claim`) or 1 GiB (`five-prime-claims`) Stage 3 table changed the
 process peak by less than 20 MB. Whole-process peak RSS cannot attribute the
 peak to a phase, in part because the allocator may retain freed memory, so
 which phase sets the peak is unmeasured. Where `k' > k` the growth is
-consistent with prefix growth. At 2^22 `word` (+0.14 GB) and the 2^23 shapes
+consistent with prefix growth. At 2^22 `binary-claim` (+0.14 GB) and the 2^23 shapes
 with `k' = k` (+0.26 to +0.69 GB), the prefix domain is unchanged, and the
 source of the growth has not been located.
 
@@ -465,8 +465,8 @@ source of the growth has not been located.
 
 This removes the SHAKE derivation but not the linear pass. The verifier would
 still compute `<M_{row,c}, K(e_c)>` for every column. It would also hold
-`columns * 2 * 64 * 16` bytes: 185,794,560 bytes at 2^22 `word-prime`
-(90,720 columns) and 412,729,344 bytes at 2^22 `prime5` (201,528 columns).
+`columns * 2 * 64 * 16` bytes: 185,794,560 bytes at 2^22 `binary-and-prime-claims`
+(90,720 columns) and 412,729,344 bytes at 2^22 `five-prime-claims` (201,528 columns).
 Rejected.
 
 ### 9.2 Structured B/D setup
@@ -478,7 +478,7 @@ matrix, and it needs a new hardness argument. Rejected for this branch.
 
 ### 9.3 Offload the mixed shape's ordinary-root rows
 
-At 2^22 `word-prime-ordinary`, the ordinary-root setup derivation reads
+At 2^22 `binary-and-prime-claims-plus-ordinary`, the ordinary-root setup derivation reads
 131,072 elements and costs 0.69 ms. The remaining ordinary span is the
 construction of 9,936,896 flat terms from public geometry, not setup reads.
 Offloading those rows through Stage 3 would remove setup reads that cost
@@ -490,12 +490,12 @@ structured evaluator for the ordinary rows instead. Deferred.
 The first implementation placed every copy after the A tensor in blocks of
 `2^e` columns. It is simpler: no regions, one aligned base per block. It
 always enlarges the prefix, because the A tensor alone already fills a power
-of two: 2^24 → 2^25 at 2^22 `word`, `word-prime` and `word-prime-ordinary`,
-2^24 → 2^26 at 2^22 `prime5`, and 2^25 → 2^26 at every 2^23 shape. Measured at
+of two: 2^24 → 2^25 at 2^22 `binary-claim`, `binary-and-prime-claims` and `binary-and-prime-claims-plus-ordinary`,
+2^24 → 2^26 at 2^22 `five-prime-claims`, and 2^25 → 2^26 at every 2^23 shape. Measured at
 full size, it removed the B/D derivation as intended (verification 15.5 ms to
 17.7 ms for the three binary-only shapes at both sizes). But the larger prefix
-doubled the prover's peak RSS at 2^22 `word-prime` (5.06 GB to 10.35 GB),
-added 1,673 bytes there (87,805 to 89,478) and 9,344 bytes at 2^22 `prime5`,
+doubled the prover's peak RSS at 2^22 `binary-and-prime-claims` (5.06 GB to 10.35 GB),
+added 1,673 bytes there (87,805 to 89,478) and 9,344 bytes at 2^22 `five-prime-claims`,
 and raised verifier RSS by 42 to 80 MB at 2^22, because the successor folds
 open the larger prefix. Packing into the A padding keeps the verifier gain.
 It restores the 2^24 and 2^25 domains wherever the digit cells fit.

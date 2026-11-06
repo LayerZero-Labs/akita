@@ -23,7 +23,7 @@ use jolt_poly::OmittedConstantPoly;
 /// The second round sums over quartet classes once quartets outnumber them
 /// this many times. It evaluates every occurring class once and passes over
 /// the quartets three times, so near parity the per-quartet rescan is
-/// cheaper: `word` at N=2^22 has 70,112 quartets for 2^16 classes.
+/// cheaper: `binary-claim` at N=2^22 has 70,112 quartets for 2^16 classes.
 const QUARTETS_PER_QUARTET_CLASS: usize = 2;
 
 struct CompactProductState<E: Field, const LANES: usize> {

@@ -21,7 +21,7 @@
 
 The binary root checks that every outgoing-witness cell without a natural
 coefficient is zero. The check uses one independent batching weight per such
-cell, so verification is linear in the witness. At N=2^22 `word-prime` the
+cell, so verification is linear in the witness. At N=2^22 `binary-and-prime-claims` the
 verifier draws 17,129,105 order-7 batching scalars, of which 17,129,090 are
 padding weights.
 
@@ -76,14 +76,14 @@ opening spec's layout table:
 
 | N | Shape | n | Natural `|Nat|` | Physical `Lambda` | Stride tails | Domain tail | `|Pad|` |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2^22 | word | 25 | 14,642,046 | 23,138,048 | 8,496,002 | 10,416,384 | 18,912,386 |
-| 2^22 | word-prime | 25 | 16,425,342 | 25,956,096 | 9,530,754 | 7,598,336 | 17,129,090 |
-| 2^22 | word-prime-ordinary | 25 | 21,393,790 | 30,924,544 | 9,530,754 | 2,629,888 | 12,160,642 |
-| 2^22 | prime5 | 26 | 23,514,624 | 37,158,912 | 13,644,288 | 29,949,952 | 43,594,240 |
-| 2^23 | word | 26 | 25,258,878 | 39,915,264 | 14,656,386 | 27,193,600 | 41,849,986 |
-| 2^23 | word-prime | 26 | 27,042,174 | 42,733,312 | 15,691,138 | 24,375,552 | 40,066,690 |
-| 2^23 | word-prime-ordinary | 26 | 36,172,158 | 51,863,296 | 15,691,138 | 15,245,568 | 30,936,706 |
-| 2^23 | prime5 | 26 | 34,131,456 | 53,936,128 | 19,804,672 | 13,172,736 | 32,977,408 |
+| 2^22 | binary-claim | 25 | 14,642,046 | 23,138,048 | 8,496,002 | 10,416,384 | 18,912,386 |
+| 2^22 | binary-and-prime-claims | 25 | 16,425,342 | 25,956,096 | 9,530,754 | 7,598,336 | 17,129,090 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 25 | 21,393,790 | 30,924,544 | 9,530,754 | 2,629,888 | 12,160,642 |
+| 2^22 | five-prime-claims | 26 | 23,514,624 | 37,158,912 | 13,644,288 | 29,949,952 | 43,594,240 |
+| 2^23 | binary-claim | 26 | 25,258,878 | 39,915,264 | 14,656,386 | 27,193,600 | 41,849,986 |
+| 2^23 | binary-and-prime-claims | 26 | 27,042,174 | 42,733,312 | 15,691,138 | 24,375,552 | 40,066,690 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 26 | 36,172,158 | 51,863,296 | 15,691,138 | 15,245,568 | 30,936,706 |
+| 2^23 | five-prime-claims | 26 | 34,131,456 | 53,936,128 | 19,804,672 | 13,172,736 | 32,977,408 |
 
 Two different notions are both called "padding", and this note concerns only
 the second. The *source's committed padding* (scalar coordinates 128..161,
@@ -319,8 +319,8 @@ The per-root sum is `648 + 9n + 2 + 2k` over P.
 
 | N | Shapes | n | k | Current root sum | Padding term (padding-point rule) | With padding point | Deletion rule |
 | --- | --- | ---: | ---: | --- | --- | --- | --- |
-| 2^22 | word, word-prime, word-prime-ordinary | 25 | 24 | 923/P = 2^-118.1498 | 25/P = 2^-123.3561 | 948/P = 2^-118.1113 | 923/P (unchanged) |
-| 2^22 | prime5 | 26 | 24 | 932/P = 2^-118.1358 | 26/P = 2^-123.2996 | 958/P = 2^-118.0961 | 932/P |
+| 2^22 | binary-claim, binary-and-prime-claims, binary-and-prime-claims-plus-ordinary | 25 | 24 | 923/P = 2^-118.1498 | 25/P = 2^-123.3561 | 948/P = 2^-118.1113 | 923/P (unchanged) |
+| 2^22 | five-prime-claims | 26 | 24 | 932/P = 2^-118.1358 | 26/P = 2^-123.2996 | 958/P = 2^-118.0961 | 932/P |
 | 2^23 | all four | 26 | 25 | 934/P = 2^-118.1327 | 26/P = 2^-123.2996 | 960/P = 2^-118.0931 | 934/P |
 
 The frontend term `(7 + 2 log2 N)/2^162`, the divisibility term `q^-7`, the
@@ -382,14 +382,14 @@ is one larger. The bit columns are the smallest `b` with
 
 | N | Shape | Current K | Deletion K | Fallback K | Current `K/(2P)` | Tree-model bits: current / deletion / fallback |
 | --- | --- | ---: | ---: | ---: | --- | --- |
-| 2^22 | word | 18,912,399 | 13 | 14 | 2^-104.8272 | 25 / 4 / 4 |
-| 2^22 | word-prime | 17,129,105 | 15 | 16 | 2^-104.9701 | 25 / 4 / 5 |
-| 2^22 | word-prime-ordinary | 12,230,332 | 69,690 | 69,691 | 2^-105.4560 | 24 / 17 / 17 |
-| 2^22 | prime5 | 43,594,261 | 21 | 22 | 2^-103.6224 | 26 / 5 / 5 |
-| 2^23 | word | 41,849,999 | 13 | 14 | 2^-103.6813 | 26 / 4 / 4 |
-| 2^23 | word-prime | 40,066,705 | 15 | 16 | 2^-103.7441 | 26 / 4 / 5 |
-| 2^23 | word-prime-ordinary | 30,973,624 | 36,918 | 36,919 | 2^-104.1155 | 25 / 16 / 16 |
-| 2^23 | prime5 | 32,977,429 | 21 | 22 | 2^-104.0250 | 25 / 5 / 5 |
+| 2^22 | binary-claim | 18,912,399 | 13 | 14 | 2^-104.8272 | 25 / 4 / 4 |
+| 2^22 | binary-and-prime-claims | 17,129,105 | 15 | 16 | 2^-104.9701 | 25 / 4 / 5 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 12,230,332 | 69,690 | 69,691 | 2^-105.4560 | 24 / 17 / 17 |
+| 2^22 | five-prime-claims | 43,594,261 | 21 | 22 | 2^-103.6224 | 26 / 5 / 5 |
+| 2^23 | binary-claim | 41,849,999 | 13 | 14 | 2^-103.6813 | 26 / 4 / 4 |
+| 2^23 | binary-and-prime-claims | 40,066,705 | 15 | 16 | 2^-103.7441 | 26 / 4 / 5 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 30,973,624 | 36,918 | 36,919 | 2^-104.1155 | 25 / 16 / 16 |
+| 2^23 | five-prime-claims | 32,977,429 | 21 | 22 | 2^-104.0250 | 25 / 5 / 5 |
 
 `K = 7 + 2 [word] + 2 planes + 2·2 (B/D rows) + |Pad| + O`. Here `O` is the
 mixed shapes' `{-1,0}` bit addresses plus their ordinary linear rows
@@ -440,7 +440,7 @@ to the native segments. In mixed shapes the first native segment has stride 512
 and follows stride-256 segments. Its bases, 25,956,096 at 2^22 and 42,733,312 at
 2^23, are both 256 modulo 512. Native segments contribute no padding, so the
 factorization below never uses them, and the fallback is unaffected. At 2^22
-`word-prime`:
+`binary-and-prime-claims`:
 
 | Segment | `B_k` | `S_k` | `B_k / S_k` | Lanes `L_k` | `D_k` |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -507,22 +507,22 @@ Exact counts from that evaluator, including shared work:
 
 | N | Shape | n | Padded segments | Multiplications | Additions/subtractions |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 2^22 | word | 25 | 5 | 641 | 176 |
-| 2^22 | word-prime | 25 | 6 | 765 | 198 |
-| 2^22 | word-prime-ordinary | 25 | 6 | 777 | 204 |
-| 2^22 | prime5 | 26 | 3 | 425 | 144 |
-| 2^23 | word | 26 | 5 | 665 | 180 |
-| 2^23 | word-prime | 26 | 6 | 793 | 202 |
-| 2^23 | word-prime-ordinary | 26 | 6 | 801 | 206 |
-| 2^23 | prime5 | 26 | 3 | 429 | 146 |
+| 2^22 | binary-claim | 25 | 5 | 641 | 176 |
+| 2^22 | binary-and-prime-claims | 25 | 6 | 765 | 198 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 25 | 6 | 777 | 204 |
+| 2^22 | five-prime-claims | 26 | 3 | 425 | 144 |
+| 2^23 | binary-claim | 26 | 5 | 665 | 180 |
+| 2^23 | binary-and-prime-claims | 26 | 6 | 793 | 202 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 26 | 6 | 801 | 206 |
+| 2^23 | five-prime-claims | 26 | 3 | 429 | 146 |
 
-At 2^22 `word-prime`, the per-segment multiplications are Z 92, T 98, U 106,
+At 2^22 `binary-and-prime-claims`, the per-segment multiplications are Z 92, T 98, U 106,
 K 112, K_val 120 and EP 124. The domain tail costs 88, and the shared work
 costs 25. The final multiplication by `beta_pad` adds one. The worst case is
-therefore **802 multiplications** (2^23 `word-prime-ordinary`).
+therefore **802 multiplications** (2^23 `binary-and-prime-claims-plus-ordinary`).
 
 The current rule instead squeezes `|Pad|` challenges (17,129,090 and
-40,066,690 for `word-prime`) and evaluates the same number of
+40,066,690 for `binary-and-prime-claims`) and evaluates the same number of
 `weight * eq(r, a)` terms. It also performs an O(2^n) `is_padding_address`
 scan in `BinaryRootPublic::new` (root_public.rs lines 111-122). That scan can
 be replaced by one comparison of the last natural address with `logical_len`.
@@ -537,7 +537,7 @@ weight terms, leaving the Stage 2 weight table zero on `Pad`.
 The padding-point rule replaces the squeezes with `|Pad|` products
 `eq_hi(h) * eq_lo(t)`. Per segment, it builds an `S_k`-entry low table scaled
 by `beta_pad` and an `L_k`-entry high table. That is about `|Pad| + Σ_k (S_k + L_k)`
-multiplications (about 17.1M at 2^22 `word-prime`), against 17.1M transcript
+multiplications (about 17.1M at 2^22 `binary-and-prime-claims`), against 17.1M transcript
 squeezes today. The degree-three Stage 2 sumcheck over `2^n` cells is
 unchanged by either rule.
 
@@ -597,14 +597,14 @@ remaining padding would be:
 
 | N | Shape | Domain | Remaining padding |
 | --- | --- | ---: | ---: |
-| 2^22 | word | 2^24 | 2,135,170 |
-| 2^22 | word-prime | 2^24 | 351,874 |
-| 2^22 | word-prime-ordinary | 2^25 | 12,160,642 |
-| 2^22 | prime5 | 2^25 | 10,039,808 |
-| 2^23 | word | 2^25 | 8,295,554 |
-| 2^23 | word-prime | 2^25 | 6,512,258 |
-| 2^23 | word-prime-ordinary | 2^26 | 30,936,706 |
-| 2^23 | prime5 | 2^26 | 32,977,408 |
+| 2^22 | binary-claim | 2^24 | 2,135,170 |
+| 2^22 | binary-and-prime-claims | 2^24 | 351,874 |
+| 2^22 | binary-and-prime-claims-plus-ordinary | 2^25 | 12,160,642 |
+| 2^22 | five-prime-claims | 2^25 | 10,039,808 |
+| 2^23 | binary-claim | 2^25 | 8,295,554 |
+| 2^23 | binary-and-prime-claims | 2^25 | 6,512,258 |
+| 2^23 | binary-and-prime-claims-plus-ordinary | 2^26 | 30,936,706 |
+| 2^23 | five-prime-claims | 2^26 | 32,977,408 |
 
 Dense packing halves the domain, removing one Stage 2 round, in five of the
 eight shapes. However, it leaves a domain tail that is still millions of cells
@@ -727,5 +727,5 @@ cited lines:
 
 No number in [binary-source-opening.md](binary-source-opening.md) was found to
 be wrong. The brief's figure of 17,129,090 counts padding weights only; the
-complete order-7 `Tau1Point` vector at 2^22 `word-prime` has 17,129,105
+complete order-7 `Tau1Point` vector at 2^22 `binary-and-prime-claims` has 17,129,105
 entries.
