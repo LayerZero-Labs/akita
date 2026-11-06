@@ -4,8 +4,8 @@ use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
 use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 use akita_types::binary_source::{
-    BinaryCommitmentProfiles, BinaryIndexMap, BinaryTerminalClaim, PrimePlaneClaim,
-    PrimePlaneManifest,
+    BinaryCommitmentProfiles, BinaryIndexMap, BinaryTerminalClaim, PrimeGroupClaim,
+    PrimePlaneClaim, PrimePlaneManifest,
 };
 use jolt_field::Prime128Offset275;
 
@@ -187,12 +187,13 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
         );
         let primes = PrimePlaneManifest::new(
             &descriptor,
-            &[PrimePlaneClaim {
-                polynomial: 1,
+            Some(PrimeGroupClaim {
                 point: (0..12).map(|i| (i + 3) as u128).collect(),
-                tensor_component: 2,
-                value: 0,
-            }],
+                evaluations: vec![PrimePlaneClaim {
+                    polynomial: 1,
+                    value: 0,
+                }],
+            }),
         )
         .unwrap();
         assert_eq!(

@@ -33,10 +33,7 @@ pub(super) fn validate_group_payload<F: Field>(
             if let Some(claim) = claim {
                 claim.validate(manifest.descriptor())?;
             }
-            akita_types::binary_source::PrimePlaneManifest::new(
-                manifest.descriptor(),
-                prime.planes(),
-            )?;
+            prime.validate(manifest.descriptor())?;
             if committed.rows().coeff_len()
                 != akita_types::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
             {

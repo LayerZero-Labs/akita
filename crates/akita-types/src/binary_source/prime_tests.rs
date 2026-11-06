@@ -1,6 +1,6 @@
 use super::*;
 use crate::binary_source::prime_weights::prime_plane_relation_weights;
-use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
+use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, BinaryRootWitnessPlan};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::{RelationPolynomial, RelationRowGeometry};
@@ -20,93 +20,114 @@ fn descriptor() -> BinarySourceDescriptor {
     .unwrap()
 }
 
-fn claim() -> PrimePlaneClaim {
-    PrimePlaneClaim {
-        polynomial: 0,
+fn claim() -> PrimeGroupClaim {
+    PrimeGroupClaim {
         point: vec![0; 11],
-        tensor_component: 0,
-        value: 0,
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: 0,
+        }],
     }
 }
 
 #[test]
-fn prime_plane_manifest_rejects_caps_conflicts_and_noncanonical_fields() {
+fn prime_manifest_rejects_repeated_owners_empty_values_and_noncanonical_fields() {
     let source = descriptor();
-    let base = claim();
-    let one = PrimePlaneManifest::new(&source, std::slice::from_ref(&base)).unwrap();
-    let duplicates = PrimePlaneManifest::new(&source, &[base.clone(), base.clone()]).unwrap();
-    assert_eq!(duplicates.planes(), one.planes());
-    assert_eq!(duplicates.canonical_bytes(), one.canonical_bytes());
-    let mut other = base.clone();
-    other.value = 1;
-    assert!(matches!(
-        PrimePlaneManifest::new(&source, &[base.clone(), other]),
-        Err(AkitaError::InvalidInput(_))
-    ));
-    for change in 0..4 {
-        let mut bad = base.clone();
+    for change in 0..7 {
+        let mut bad = claim();
         match change {
-            0 => bad.value = BINARY_SETUP_P,
+            0 => bad.evaluations[0].value = BINARY_SETUP_P,
             1 => bad.point[0] = BINARY_SETUP_P,
-            2 => bad.tensor_component = 4,
-            _ => bad.polynomial = 2,
+            2 => bad.evaluations[0].polynomial = 2,
+            3 => bad.evaluations.clear(),
+            4 => bad.evaluations.push(bad.evaluations[0].clone()),
+            5 => {
+                bad.point.pop();
+            }
+            _ => bad.evaluations.push(PrimePlaneClaim {
+                polynomial: 0,
+                value: 1,
+            }),
         }
-        assert!(matches!(
-            PrimePlaneManifest::new(&source, &[bad]),
-            Err(AkitaError::InvalidInput(_))
-        ));
-    }
-    let six_points = (0..6)
-        .map(|x| {
-            let mut c = base.clone();
-            c.point[0] = x;
-            c
-        })
-        .collect::<Vec<_>>();
-    assert!(matches!(
-        PrimePlaneManifest::new(&source, &six_points),
-        Err(AkitaError::InvalidInput(_))
-    ));
-    let six_components = (0..6)
-        .map(|x| {
-            let mut c = base.clone();
-            c.polynomial = x / 4;
-            c.tensor_component = (x % 4) as u8;
-            c
-        })
-        .collect::<Vec<_>>();
-    assert!(matches!(
-        PrimePlaneManifest::new(&source, &six_components),
-        Err(AkitaError::InvalidInput(_))
-    ));
-    let mut second_owner = base.clone();
-    second_owner.polynomial = 1;
-    assert_eq!(
-        PrimePlaneManifest::new(&source, &[base, second_owner])
-            .unwrap()
-            .planes()
-            .len(),
-        2
-    );
-}
-
-#[test]
-fn prime_plane_component_and_point_tensor_order_are_explicit() {
-    let source = descriptor();
-    for component in 0..4 {
-        let mut c = claim();
-        c.point = vec![2; 11];
-        c.tensor_component = component;
-        let (rows, columns, omega) = c.weights::<F>(&source).unwrap();
-        assert_eq!(columns, vec![-F::one(), F::from_u64(2)]);
-        assert_eq!(omega.len(), 256);
-        assert_eq!(omega[0], F::one());
-        assert_eq!(omega[1], -F::from_u64(2));
-        assert_eq!(
-            rows,
-            vec![F::one(), -F::from_u64(2), -F::from_u64(2), F::from_u64(4)]
+        assert!(
+            matches!(
+                PrimePlaneManifest::new(&source, Some(bad)),
+                Err(AkitaError::InvalidInput(_))
+            ),
+            "mutation {change}"
         );
     }
+    assert!(PrimePlaneManifest::new(&source, None)
+        .unwrap()
+        .planes()
+        .is_empty());
+}
+
+#[test]
+fn prime_manifest_orders_one_plane_per_polynomial_without_a_separate_cap() {
+    let source = BinarySourceDescriptor::new(
+        descriptor().index_map().clone(),
+        (0..6).map(|i| [i; 32]).collect(),
+        descriptor().profiles().clone(),
+    )
+    .unwrap();
+    let claim = PrimeGroupClaim {
+        point: vec![2; 11],
+        evaluations: (0..6)
+            .rev()
+            .map(|polynomial| PrimePlaneClaim {
+                polynomial,
+                value: polynomial as u128,
+            })
+            .collect(),
+    };
+    let checked = PrimePlaneManifest::new(&source, Some(claim.clone())).unwrap();
+    assert_eq!(checked.planes().len(), 6);
+    assert_eq!(
+        checked
+            .planes()
+            .iter()
+            .map(|p| p.polynomial)
+            .collect::<Vec<_>>(),
+        (0..6).collect::<Vec<_>>()
+    );
+    let mut sorted = claim;
+    sorted.evaluations.reverse();
+    assert_eq!(
+        checked,
+        PrimePlaneManifest::new(&source, Some(sorted)).unwrap()
+    );
+    let bytes = checked.canonical_bytes();
+    let mut expected = b"AkitaPrimePlanes\x02".to_vec();
+    expected.extend_from_slice(&11u64.to_le_bytes());
+    for _ in 0..11 {
+        expected.extend_from_slice(&2u128.to_le_bytes());
+    }
+    expected.extend_from_slice(&6u64.to_le_bytes());
+    for i in 0..6u64 {
+        expected.extend_from_slice(&i.to_le_bytes());
+        expected.extend_from_slice(&u128::from(i).to_le_bytes());
+    }
+    assert_eq!(bytes, expected);
+    let plan = BinaryRootWitnessPlan::new(&source, 3, 64).unwrap();
+    assert!(plan.clone().with_prime_planes(false, 6).is_ok());
+    assert!(plan.with_prime_planes(false, 7).is_err());
+}
+
+#[test]
+fn prime_point_tensor_order_is_explicit() {
+    let source = descriptor();
+    let mut c = claim();
+    c.point = vec![2; 11];
+    let (rows, columns, omega) = c.weights::<F>(&source).unwrap();
+    assert_eq!(columns, vec![-F::one(), F::from_u64(2)]);
+    assert_eq!(omega.len(), 256);
+    assert_eq!(omega[0], F::one());
+    assert_eq!(omega[1], -F::from_u64(2));
+    assert_eq!(
+        rows,
+        vec![F::one(), -F::from_u64(2), -F::from_u64(2), F::from_u64(4)]
+    );
 }
 
 #[test]
@@ -116,8 +137,8 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
     // EP_0 = 9 Z, c_0 = Z^161, so V_0 = -9 - 9 Z^81 in Phi_243.
     // Coefficient equality at point (2,...,2) reads EP_0 as -18.
     c.point[..8].fill(2);
-    c.value = BINARY_SETUP_P - 18;
-    let manifest = PrimePlaneManifest::new(&source, &[c]).unwrap();
+    c.evaluations[0].value = BINARY_SETUP_P - 18;
+    let manifest = PrimePlaneManifest::new(&source, Some(c)).unwrap();
     let repacking = RootCoefficientRepacking::new(
         vec![
             RootRepackingSegment {
@@ -197,9 +218,9 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
         bad[address] += F::one();
         assert!(weights.check_table(&bad).is_err());
     }
-    let mut false_claim = manifest.planes()[0].clone();
-    false_claim.value += 1;
-    let false_manifest = PrimePlaneManifest::new(&source, &[false_claim]).unwrap();
+    let mut false_claim = manifest.claim().unwrap().clone();
+    false_claim.evaluations[0].value += 1;
+    let false_manifest = PrimePlaneManifest::new(&source, Some(false_claim)).unwrap();
     assert!(prime_plane_relation_weights(
         &source,
         &false_manifest,

@@ -206,7 +206,7 @@ pub(crate) fn terminal_weights<E: Field>(
             terms.push((address, batches[0] * sign * weight));
         }
     }
-    for (column, weight) in column_weights.into_iter().enumerate() {
+    for (column, weight) in column_weights.iter().copied().enumerate() {
         let challenge_index =
             checked::mul_add(owner, columns, column).ok_or(AkitaError::InvalidProof)?;
         let challenge = scalar_challenges
@@ -318,15 +318,18 @@ pub(crate) fn prime_plane_weights<E: Field>(
     terms
         .try_reserve_exact(term_count)
         .map_err(|_| AkitaError::InvalidProof)?;
+    let (rows, column_weights, omega) = manifest
+        .claim()
+        .ok_or(AkitaError::InvalidProof)?
+        .weights::<E>(descriptor)?;
     let mut target = E::zero();
     for (plane_index, claim) in manifest.planes().iter().enumerate() {
-        let (rows, column_weights, omega) = claim.weights::<E>(descriptor)?;
         let batch_index = checked::product([plane_index, 2]).ok_or(AkitaError::InvalidProof)?;
         let relation_batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
         let reading_batch = *batches
             .get(checked::sum([batch_index, 1]).ok_or(AkitaError::InvalidProof)?)
             .ok_or(AkitaError::InvalidProof)?;
-        for (row, row_weight) in rows.into_iter().enumerate() {
+        for (row, row_weight) in rows.iter().copied().enumerate() {
             if row_weight == E::zero() {
                 continue;
             }
@@ -346,7 +349,7 @@ pub(crate) fn prime_plane_weights<E: Field>(
                 power *= alpha;
             }
         }
-        for (column, column_weight) in column_weights.into_iter().enumerate() {
+        for (column, column_weight) in column_weights.iter().copied().enumerate() {
             let challenge_index = checked::mul_add(claim.polynomial, columns, column)
                 .ok_or(AkitaError::InvalidProof)?;
             let multiplier = scalar_challenges

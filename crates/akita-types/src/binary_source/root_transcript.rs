@@ -40,7 +40,7 @@ where
     if let Some(claim) = claim {
         claim.validate(manifest.descriptor())?;
     }
-    super::PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
+    prime.validate(manifest.descriptor())?;
     let mut messages = vec![(3, manifest.canonical_bytes())];
     if let Some(claim) = claim {
         messages.push((4, claim.canonical_bytes()));

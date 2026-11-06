@@ -7,7 +7,7 @@ use akita_params::{descriptor_bytes::digest_descriptor_bytes, BasisMode};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::VerifierChannel;
 use akita_types::binary_source::{
-    BinaryOpening, BinaryWordClaim, PrimePlaneClaim, SourceAgreementBinding,
+    BinaryOpening, BinaryWordClaim, PrimeGroupClaim, SourceAgreementBinding,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{FpExtEncoding, GroupBatchStatement, PendingEof};
@@ -41,7 +41,7 @@ where
     ) -> Result<
         (
             PendingEof,
-            BinaryOpening<Option<BinaryWordClaim>, Vec<PrimePlaneClaim>>,
+            BinaryOpening<Option<BinaryWordClaim>, Option<PrimeGroupClaim>>,
         ),
         AkitaError,
     > {
@@ -79,7 +79,7 @@ where
             };
             Ok(BinaryOpening::from_authenticated_readings(
                 claim.clone(),
-                prime.planes().to_vec(),
+                prime.claim().cloned(),
                 binding,
             ))
         });

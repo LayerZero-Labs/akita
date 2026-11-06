@@ -58,9 +58,9 @@ certifying a parameter set. Existing feature and crate names are retained.
   and descriptor comparison. Parsing MUST reject unknown identities,
   unsupported widths, inconsistent counts, noncanonical values and trailing
   bytes using typed errors, without panics or unchecked allocations.
-- Group manifests MUST bind polynomial ownership and the plane budget before
-  any fold challenge. Duplicate prime points MUST share an admitted plane for
-  the same source owner and tensor component.
+- Group manifests MUST bind one prime point and at most one value per
+  committed polynomial before any fold challenge. Each claimed polynomial
+  MUST own exactly one prime evaluation plane.
 - An agreement proof MUST bind this session, group, polynomial manifest,
   descriptor/index map, dimensions and terminal prime claims. A boolean flag
   MUST NOT discharge the agreement contract.
@@ -85,8 +85,8 @@ specifications until a later migration.
   full-block padding and every committed/virtual boundary in both directions.
 - [ ] Verify the explicit permutation against the existing column-contiguous
   source packing kernel and publish the claim-variable split.
-- [ ] Accept five admitted prime planes, reject six, and reuse identical points
-  without granting extra planes to another polynomial or tensor component.
+- [ ] Accept one shared prime point with one value per claimed polynomial; reject
+  repeated owners, out-of-range owners, empty values and noncanonical fields.
 - [ ] Accept the canonical image window `[-7,126,704, 7,126,704]` and enforced
   digit interval `[-9,586,980, 7,190,235]`; reject off-by-one substitutions.
 - [ ] Round-trip canonical descriptor encodings; reject each unsupported field,
@@ -112,7 +112,7 @@ Schedule artifacts MUST NOT change merely because descriptor types exist.
 ### Performance
 
 Dense packing uses all 128 payload coordinates of a carrier, including for bit
-and byte sources. The point cap limits source-plane growth before allocation.
+and byte sources. The descriptor's polynomial count bounds source-plane growth before allocation.
 The source contract API makes no performance or proof-size measurement claims.
 The design keeps an explicit linear verifier weight term in the number of
 carriers per column; it does not claim a logarithmic online verifier. All q24
@@ -172,7 +172,7 @@ The source descriptor MUST bind:
 5. Canonical image representative window and full enforced digit interval.
 6. A and outer-B commitment profile identities.
 7. Challenge-family identity and response interval.
-8. Prime-point/plane cap and the agreement contract identity.
+8. Single-point prime claim rule and the agreement contract identity.
 
 ell MUST be a power of two in `[1,128]`; other widths produce a typed error.
 The logical length is nonzero and counts words. N and C are powers of two,
@@ -189,7 +189,7 @@ There is one canonical byte encoding of the descriptor, in this order:
 | Five little-endian u64 integers | ell, logical word length, padded carriers N, columns C, polynomial count |
 | Little-endian u32 | q, exactly 14,253,409 |
 | Six little-endian i32 integers | Jq lower/upper, I8 lower/upper, response lower/upper endpoints |
-| One byte | Prime cap, exactly 5 |
+| One byte | Reserved v1 encoding byte, exactly `0x05`; it imposes no plane limit |
 | Two 32-byte identities | A commitment profile, then outer-B commitment profile |
 | Ordered 32-byte identities | Exactly polynomial-count distinct polynomial identities |
 
@@ -321,49 +321,31 @@ permutation is needed. The low-coordinate convention is consistent with
 [packed F162 arithmetic](labinius-packed-f162.md), whose folds eliminate the
 least-significant table-index bit first.
 
-### 5. Claims and prime-plane cap
+### 5. One prime point per group
 
-A binary group admits at most five distinct prime points. Each point is
-compared canonically; duplicate claims at an identical point share a plane
-when their source polynomial and tensor component coincide. Their claimed
-values remain bound individually and conflicting duplicate values are invalid.
+As in an ordinary grouped opening, a binary group has one prime-field point,
+at most one claimed value per committed polynomial, and one prime evaluation
+plane per claimed polynomial. The manifest MUST bind the point once followed
+by `(polynomial, value)` pairs in polynomial order before the first challenge.
+A group MUST select a word claim or a prime claim.
 
-For a separable functional, the prime view uses
-`EP_b(Z) = sum_r e_r src_(r,b)(Z)`, fixed behind D before the column challenge.
-The full response, rather than its lowest digit, enters the prime relation.
-Each base-field plane uses 43 balanced digits per scalar coefficient. At C=256
-this is `43*162*256 = 1,783,296` live cells, or `43*256*256 = 2,818,048`
-coefficient-padded cells. Five planes cost 14,090,240 such physical cells.
-An extension E/F adds its coordinate planes; tensor rank adds one plane per
-component. A general four-component functional can require four components.
+The point has `n + 8` canonical base-field coordinates in coefficient, column,
+then row order. Prime admission MUST reject empty value lists, repeated
+polynomial indices even with equal values, out-of-range indices, wrong point
+dimensions, and noncanonical coordinates or values. The descriptor's
+polynomial count MUST bound every plane allocation.
 
-The group manifest MUST state polynomial owners and all plane multiplicities.
-The group manifest adopts a conservative aggregate budget: both distinct prime
-points and unique `(polynomial, point, tensor_component)` planes MUST be at most
-five. Tensor components are numbered 0 through 3; polynomial indices must belong
-to the descriptor's ordered manifest. Duplicate requests for that exact triple
-reuse the existing plane. Distinct owners or components consume distinct planes
-even at identical points. No polynomial receives a separate five-plane quota.
-Validation returns the shared plane index for each request in manifest order.
+All planes share `e_r`, `h_b` and `omega_s`, computed once from that point.
+For each claimed polynomial, `EP_b(Z) = sum_r e_r src_(r,b)(Z)` is fixed behind
+D before the column challenge. The full response, rather than its lowest
+digit, enters the prime relation. Each plane uses 43 balanced digits per
+scalar coefficient: at C=256, `43*162*256 = 1,783,296` live cells and
+`43*256*256 = 2,818,048` coefficient-padded cells.
 
-Prime-plane validation bounds input at 4096 requests and rejects excess before
-allocation. Points are canonical base-field coordinate vectors; wrong point
-counts or coordinates outside `[0,P)` are typed validation errors. Different
-polynomials and tensor components MUST NOT receive implicit free planes through
-point deduplication. Both cap violations are typed errors. These conservative
-bounds are API admission limits, not a certificate. Production admission MUST
-certify D and every widened ordinary instance for the declared maximum. A caller
-needing more points supplies its own reduction or selects a separately certified
-profile.
-
-When one polynomial has several binary claims, reduce them in H before field
-switching using independent H batching scalars and a degree-two sumcheck.
-For n carrier-address variables this costs `32n+16` bytes, including the
-terminal source value. Authenticate that value even when the public multiplier
-is zero; do not divide by the multiplier. Then send one array of 128 H
-partials, 2048 bytes, fixed before seven B row-selector challenges. One B
-frontend sumcheck leaves the source terminal linked by K_val. Claims owned by
-different polynomials retain distinct terminals and ownership.
+This change only narrows the statement. Each remaining equation is already
+specified, now using a single shared point. Production admission MUST still
+certify D and every widened ordinary instance for the declared polynomial
+count. This API rule supplies no production certificate.
 
 ### 6. Conditional agreement output
 
@@ -400,7 +382,7 @@ reading without invoking conditional agreement.
 ### 7. Setup, commitment and normative message order
 
 Setup admission fixes q, rank/width certificates, digit depths, challenge
-family, point/plane cap, relation bounds and the complete ordinary suffix.
+family, single-point statement, relation bounds and the complete ordinary suffix.
 A uses uniform rejection sampling modulo q and centered coefficients. P setup
 streams use exact P sampling with distinct typed domains. Typed setup prefixes
 are authenticated in advance; preparation may scan A once, online verification
@@ -410,10 +392,10 @@ commitment plus its manifest; T remains a private hint.
 
 | Order | Message or action | Fixation requirement |
 | --- | --- | --- |
-| 0 | Bind caller session, all commitments, shapes, maps, claims and schedules | One session and explicit source ownership |
+| 0 | Bind caller session, all commitments, shapes, maps, claims and schedules; bind the single prime point once, then polynomial/value pairs in polynomial order | One session and explicit source ownership |
 | 1 | Application-owned reductions and optional H multiple-point reduction | Each sumcheck message precedes its challenge; terminals remain pending |
 | 2 | One field-switch partial array and B frontend rounds/terminal | Partials precede row selector; terminal awaits this fold |
-| 3 | Ordinary D commitment to U, every EP plane and other groups' segments | Before any column fold challenge |
+| 3 | Ordinary D commitment to U, EP planes in polynomial order and other groups' segments | Before any column fold challenge |
 | 4 | Ordinary response nonce and indexed per-group column challenges | Binary family only for selected binary groups |
 | 5 | Outgoing ordinary witness commitment to Z/T digits, U/EP views, K, K_val and ordinary segments | All tables fixed before relation challenges; no equality tree |
 | 6 | Successor-source checkpoint, fresh seven-row projection seed J, then seven signed outputs y | Candidate source fixed before J; all y precede output batching |

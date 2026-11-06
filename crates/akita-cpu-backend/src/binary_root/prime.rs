@@ -14,7 +14,7 @@ const COLUMN_DIGITS: usize = PRIME_PLANE_DIGITS * 162;
 /// Build the committed prime planes before drawing column fold challenges.
 ///
 /// Sources are polynomial/column/ring-row ordered. Returned natural digits
-/// are unique-plane/column/digit/coefficient ordered. Each coefficient is first
+/// are polynomial/column/digit/coefficient ordered. Each coefficient is first
 /// reduced modulo the proof prime and centered; 43 balanced digits cover that
 /// entire centered interval. Canonical nonnegative residues do not all fit the
 /// positive endpoint of that digit interval.
@@ -28,6 +28,7 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
             "prime plane field differs from the proof prime".into(),
         ));
     }
+    manifest.validate(descriptor)?;
     let columns = descriptor.index_map().columns();
     let scalar_rows = checked::exact_div(descriptor.index_map().padded_carriers(), columns)
         .ok_or(AkitaError::InvalidProof)?;
@@ -47,8 +48,11 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
         .try_reserve_exact(width)
         .map_err(|_| AkitaError::InvalidProof)?;
     digits.resize(width, 0);
+    let Some(prime) = manifest.claim() else {
+        return Ok(digits);
+    };
+    let (rows, _, _) = prime.weights::<F>(descriptor)?;
     for (plane, claim) in manifest.planes().iter().enumerate() {
-        let (rows, _, _) = claim.weights::<F>(descriptor)?;
         for column in 0..columns {
             let mut partial = [F::zero(); 162];
             for (row, row_weight) in rows.iter().enumerate() {
@@ -93,6 +97,7 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
             "prime plane field differs from the proof prime".into(),
         ));
     }
+    manifest.validate(descriptor)?;
     let index = descriptor.index_map();
     let columns = index.columns();
     let expected = checked::product([descriptor.polynomials().len(), index.padded_carriers()])
@@ -111,12 +116,15 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
         .map_err(|_| AkitaError::InvalidProof)?;
     digits.resize(width, 0);
     let plane_width = checked::product([columns, COLUMN_DIGITS]).ok_or(AkitaError::InvalidProof)?;
+    let Some(prime) = manifest.claim() else {
+        return Ok(digits);
+    };
+    let (rows, _, _) = prime.weights::<F>(descriptor)?;
     for (claim, plane_digits) in manifest
         .planes()
         .iter()
         .zip(digits.chunks_exact_mut(plane_width))
     {
-        let (rows, _, _) = claim.weights::<F>(descriptor)?;
         let start = checked::product([claim.polynomial, index.padded_carriers()])
             .ok_or(AkitaError::InvalidProof)?;
         let range =
@@ -187,7 +195,9 @@ fn write_prime_column<F: Field + CanonicalEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, PrimePlaneClaim};
+    use akita_types::binary_source::{
+        BinaryCommitmentProfiles, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
+    };
     use jolt_field::{One, Prime128Offset275, Ring, Zero};
 
     type F = Prime128Offset275;
@@ -203,13 +213,14 @@ mod tests {
             },
         )
         .unwrap();
-        let claim = PrimePlaneClaim {
-            polynomial: 0,
+        let claim = PrimeGroupClaim {
             point: vec![0; 10],
-            tensor_component: 0,
-            value: 0,
+            evaluations: vec![PrimePlaneClaim {
+                polynomial: 0,
+                value: 0,
+            }],
         };
-        let manifest = PrimePlaneManifest::new(&source, &[claim]).unwrap();
+        let manifest = PrimePlaneManifest::new(&source, Some(claim)).unwrap();
         let half = i128::try_from(BINARY_SETUP_P / 2).unwrap();
         for integer in [0, 1, -1, half, -half, i128::MAX, i128::MIN + 1] {
             let mut element = [0i128; 648];

@@ -69,7 +69,7 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
             &mut prover,
             manifest,
             Some(claim),
-            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), &[])
+            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), None)
                 .unwrap(),
             binary,
             Some((64, ordinary, point, values)),
@@ -79,7 +79,7 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
             &mut verifier,
             manifest,
             Some(claim),
-            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), &[])
+            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), None)
                 .unwrap(),
             binary,
             Some((64, ordinary, point, values)),
