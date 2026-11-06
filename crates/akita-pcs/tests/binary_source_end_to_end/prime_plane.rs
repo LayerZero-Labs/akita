@@ -893,17 +893,24 @@ fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
         BinaryFieldProfile::P64,
     )
     .unwrap();
+    // Full native-row selection is exercised by the catalog-backed replay suite.
+    // At this layer, admission consumes the selected row's native marker.
+    manifest.field_profile().admit_root(true).unwrap();
     let mut channel = new_prover_channel(b"p64-prime-public-admission");
-    assert!(matches!(
-        binary_root_statement::<Base, E, _>(
-            &mut channel,
-            &manifest,
-            None,
-            &prime,
-            &vec![Base::zero(); manifest.payload_coefficients().unwrap()],
-            None
-        ),
-        Err(AkitaError::UnsupportedSchedule(_))
-    ));
+    let payload = vec![Base::zero(); manifest.payload_coefficients().unwrap()];
+    binary_root_statement::<Base, E, _>(&mut channel, &manifest, None, &prime, &payload, None)
+        .unwrap();
+    let mut replay = new_verifier_channel(b"p64-prime-public-admission", &[]);
+    binary_root_statement::<Base, E, _>(&mut replay, &manifest, None, &prime, &payload, None)
+        .unwrap();
+    let sent: [u8; 32] = channel.verifier_message();
+    let received: [u8; 32] = replay.verifier_message();
+    assert_eq!(sent, received);
     assert!(channel.narg_string().is_empty());
+    assert_eq!(
+        manifest.field_profile().admit_root(false),
+        Err(AkitaError::UnsupportedSchedule(
+            "p64 root requires an explicitly selected native catalog row".into()
+        ))
+    );
 }

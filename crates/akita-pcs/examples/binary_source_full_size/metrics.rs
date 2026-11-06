@@ -224,13 +224,14 @@ pub(super) fn proof(
     use akita_types::binary_source::{BINARY_PROJECTION_BYTES, BINARY_PROJECTION_COUNT};
 
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
-    // Keep the legacy label and digest calculation consumed by the P128 pin script.
-    println!(
-        "proof bytes={} digest_algorithm=blake2b256 digest={}",
-        proof.len(),
-        hex(&digest)
-    );
-    if profile == BinaryFieldProfile::P64 {
+    if profile == BinaryFieldProfile::P128 {
+        // Keep the legacy label and digest calculation consumed by the P128 pin script.
+        println!(
+            "proof bytes={} digest_algorithm=blake2b256 digest={}",
+            proof.len(),
+            hex(&digest)
+        );
+    } else {
         println!(
             "p64_proof bytes={} digest_algorithm=descriptor_digest digest={}",
             proof.len(),

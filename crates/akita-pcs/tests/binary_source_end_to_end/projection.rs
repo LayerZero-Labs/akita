@@ -250,7 +250,9 @@ fn p64_dense_batches_replay_both_coordinates_after_the_outgoing_commitment() {
 fn p64_fault_table_changes_k_independently_of_response_and_image() {
     use akita_cpu_backend::binary_root::BinaryRootRelation;
     use akita_params::binary_setup::BinaryFieldProfile;
-    use akita_types::binary_source::{BinaryIndexMap, BinaryRootWitnessPlan, BinarySourceDescriptor};
+    use akita_types::binary_source::{
+        BinaryIndexMap, BinaryRootWitnessPlan, BinarySourceDescriptor,
+    };
     use jolt_field::{Ext2, ExtField, Prime64Offset59};
     type E = Ext2<Prime64Offset59>;
     let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
@@ -269,7 +271,9 @@ fn p64_fault_table_changes_k_independently_of_response_and_image() {
     let segment = plan.quotient_segment().unwrap();
     assert_eq!(
         super::Fault::Quotient.address(&plan),
-        plan.repacking().coefficient_address(segment, 0, 0, 0).unwrap()
+        plan.repacking()
+            .coefficient_address(segment, 0, 0, 0)
+            .unwrap()
     );
     let mut natural = plan
         .repacking()

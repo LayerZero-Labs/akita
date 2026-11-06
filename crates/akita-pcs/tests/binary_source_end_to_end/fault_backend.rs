@@ -91,7 +91,7 @@ struct FaultPreparation {
     plan: BinaryRootWitnessPlan,
 }
 
-pub(super) struct FaultBackend {
+pub(crate) struct FaultBackend {
     inner: Arc<NativeBackend>,
     seed: [u8; 32],
     words: Vec<u128>,
@@ -125,7 +125,7 @@ impl FaultBackend {
         )
     }
 
-    pub(super) fn new(
+    pub(crate) fn new(
         inner: Arc<NativeBackend>,
         seed: [u8; 32],
         words: Vec<u128>,
@@ -256,14 +256,14 @@ impl FaultBackend {
         let mut table = weights.materialize()?;
         let state = self.digits.lock().unwrap();
         let digits = state.as_ref().unwrap();
-        let negative_contribution = negative_binary_weights.iter().fold(
-            E::zero(),
-            |sum, &(address, weight)| {
-                let digit = E::from_i64(i64::from(digits[address]));
-                assert!(matches!(digits[address], -1 | 0));
-                sum + weight * digit * (digit + E::from_u64(1))
-            },
-        );
+        let negative_contribution =
+            negative_binary_weights
+                .iter()
+                .fold(E::zero(), |sum, &(address, weight)| {
+                    let digit = E::from_i64(i64::from(digits[address]));
+                    assert!(matches!(digits[address], -1 | 0));
+                    sum + weight * digit * (digit + E::from_u64(1))
+                });
         assert_eq!(
             negative_contribution,
             E::zero(),

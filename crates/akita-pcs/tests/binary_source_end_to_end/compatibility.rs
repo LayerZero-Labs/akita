@@ -103,25 +103,34 @@ fn p64_cannot_use_an_ordinary_catalog_row() {
     .unwrap();
     let commitment = CommittedGroup::new_binary(
         binary_ordinary_profile_fixture(profile),
-        akita_types::Commitment::new(akita_types::RingVec::from_coeffs(
-            vec![Base::from_u64(0); manifest.payload_coefficients().unwrap()],
-        )),
+        akita_types::Commitment::new(akita_types::RingVec::from_coeffs(vec![
+            Base::from_u64(0);
+            manifest
+                .payload_coefficients()
+                .unwrap()
+        ])),
         manifest,
     )
     .unwrap();
-    let claims = OpeningClaims::from_groups(vec![
-        PolynomialGroupClaims::<Ext2<Base>, _>::new_binary(commitment, claim).unwrap(),
-    ])
-    .unwrap();
+    let claims =
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::<Ext2<Base>, _>::new_binary(
+            commitment, claim,
+        )
+        .unwrap()])
+        .unwrap();
     let catalog = test_catalog();
     let row = catalog
-        .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::singleton(18)))
+        .resolve_key(&ScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(18),
+        ))
         .unwrap();
     assert!(!row.is_native_root());
     let ordinary =
         akita_params::GrindingPlan::new(vec![], profile.challenge_order().unwrap()).unwrap();
-    assert!(matches!(
+    assert_eq!(
         claims.root_grinding_plan(ordinary, row.schedule(), row.is_native_root()),
-        Err(AkitaError::UnsupportedSchedule(_))
-    ));
+        Err(AkitaError::UnsupportedSchedule(
+            "p64 root requires an explicitly selected native catalog row".into()
+        ))
+    );
 }
