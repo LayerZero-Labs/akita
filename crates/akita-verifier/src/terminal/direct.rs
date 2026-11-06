@@ -165,6 +165,7 @@ fn base_reduced_z<F, const D: usize>(
 where
     F: Field + Ring,
 {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/base_reduced_z");
     let terms = num_positions
         .checked_mul(gadget.len())
         .ok_or(AkitaError::InvalidProof)?;
@@ -214,6 +215,7 @@ fn a_row_sides<F, const D: usize>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/a_row_sides");
     if t.len()
         != challenges
             .len()
@@ -265,6 +267,8 @@ pub(crate) fn verify_terminal_ring_relations<F>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
 {
+    let _profile_scope =
+        akita_error::experiment_scope("outer_profile/verify_terminal_ring_relations");
     let witness = terminal_response;
     if witness.layout.ring_dimension != params.d_a() || witness.layout.groups.len() != 1 {
         return Err(AkitaError::InvalidProof);
@@ -452,6 +456,7 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: ExtField<F> + FpExtEncoding<F>,
 {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/verify_terminal_trace");
     if row_coefficients.len() != 1 || claim_scales.is_some_and(|scales| scales.len() != 1) {
         return Err(AkitaError::InvalidProof);
     }

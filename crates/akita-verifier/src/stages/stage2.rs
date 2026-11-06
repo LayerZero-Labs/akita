@@ -62,6 +62,7 @@ impl<'a, E: Field> PackingStage2<'a, E> {
     }
 
     fn weight_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let _profile_scope = akita_error::experiment_scope("outer_profile/weight_at_point");
         let evaluate_group = |semantics: &CoefficientPackingVerifierGroupSemantics<E>| {
             let (relation, structured) = cfg_join!(
                 || {
@@ -250,6 +251,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
     pub(crate) fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
+        let _profile_scope = akita_error::experiment_scope("outer_profile/expected_output_claim");
         let w_eval = {
             let _span = tracing::info_span!("stage2_witness_eval").entered();
             self.witness_eval
@@ -371,6 +373,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
 {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/replay_stage2");
     let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
         + relation_claim
         + opening_semantics.opening_claim()
@@ -460,6 +463,7 @@ where
     F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/evaluate_compression_oracle");
     match compression {
         Stage2CompressionOracle::QuotientLift {
             weights,

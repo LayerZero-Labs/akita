@@ -66,6 +66,8 @@ impl<E: Field> RelationMatrixEvaluator<E> {
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
     {
+        let _profile_scope =
+            akita_error::experiment_scope("outer_profile/eval_flat_at_point_with_deferred_setup");
         let PreparedRelationGroups::QuotientLift(groups) = &self.groups else {
             return Err(AkitaError::InvalidSetup(
                 "reduced relation evaluation has no deferred setup contribution".into(),
@@ -100,6 +102,8 @@ impl<E: Field> RelationMatrixEvaluator<E> {
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
     {
+        let _profile_scope =
+            akita_error::experiment_scope("outer_profile/eval_flat_at_point_with_external_setup");
         use akita_types::setup_claims::SetupQuery;
         match &self.groups {
             PreparedRelationGroups::QuotientLift(groups) => {

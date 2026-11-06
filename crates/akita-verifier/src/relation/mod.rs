@@ -114,6 +114,8 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
+    let _profile_scope =
+        akita_error::experiment_scope("outer_profile/prepare_relation_matrix_evaluator");
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();

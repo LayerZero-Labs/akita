@@ -151,6 +151,8 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
     /// Evaluate packed E and Q relation weights without expanding their
     /// claim/block/digit/plane support.
     pub(crate) fn evaluate_relation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let _profile_scope =
+            akita_error::experiment_scope("outer_profile/evaluate_relation_at_point");
         self.validate_point(point)?;
         let evaluate_affine = || -> Result<E, AkitaError> {
             let mut coefficient_evaluations = [None; usize::BITS as usize];
@@ -251,6 +253,8 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
     /// Evaluate the direct-opening and packing-Z structured terms from their
     /// retained tensor factors.
     pub(crate) fn evaluate_stage2_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let _profile_scope =
+            akita_error::experiment_scope("outer_profile/evaluate_stage2_at_point");
         self.validate_point(point)?;
         let evaluate = |left: &[E], families: &[EqPairTensorFamily<E>]| match self.basis {
             BasisMode::Lagrange => {
@@ -397,6 +401,7 @@ fn extend_point<E: Field>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaE
 pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + ExtField<F>>(
     group: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
 ) -> Result<CoefficientPackingCompactFactors<E>, AkitaError> {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/prepare_compact_factors");
     let s = group.geometry().challenge_subring_dimension();
     let k = group.geometry().extension_degree();
     let kh = group.geometry().subring_embedding_stride();

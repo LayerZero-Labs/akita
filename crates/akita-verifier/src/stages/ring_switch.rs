@@ -93,6 +93,7 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
 {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/ring_switch_verifier");
     let mut challenges = RingSwitchChallenges(grinding);
     ring_switch_verifier_with_challenges::<F, E, _>(replay, w_len, &mut challenges, level)
 }

@@ -207,6 +207,7 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize + ChallengeCodec,
 {
+    let _profile_scope = akita_error::experiment_scope("outer_profile/verify_stage1");
     let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
     if rs.tau0.len() != num_rounds {
         return Err(AkitaError::InvalidSize {
