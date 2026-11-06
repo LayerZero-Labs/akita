@@ -2,21 +2,16 @@ use super::*;
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_params::sis::sis_table_key_for_linf_bound;
 use akita_params::{
-    scheduled_setup_prefix, CompressionChainPlan, FlatMatrix, GroupCommitPhaseParams,
-    GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
-    DEFAULT_SIS_SECURITY_POLICY,
+    scheduled_setup_prefix, CompressionChainPlan, FlatMatrix, FoldChallengeDistribution,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, SetupPrefixSlotId, SisMatrixRole,
+    SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
 use akita_types::{
     sample_akita_setup_seed, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot,
-use akita_types::FoldChallengeDistribution;
-    scheduled_setup_prefix, CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams,
-    GroupOpeningPlan, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    SetupPrefixSlotId, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
 };
-use jolt_crypto::challenge::SparseChallengeConfig;
-use jolt_crypto::lattice::derive_public_matrix_prefix;
 use jolt_algebra::Zero;
+use jolt_crypto::lattice::derive_public_matrix_prefix;
 
 type TestCfg = fp128::OneHot;
 type TestF = fp128::Field;
@@ -206,6 +201,7 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
             group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
             blocks: akita_params::BlockGeometry::new(1, 1, 1),
             outer_slice_count: akita_params::CommitmentSliceCount::ONE,
+            randomness_columns: 0,
             inner: akita_params::RoleParams::new(
                 akita_params::GadgetDigits::new(1, inner_digits),
                 inner_commit_matrix,
