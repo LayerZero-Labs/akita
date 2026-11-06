@@ -1,5 +1,9 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
+mod state_sort;
+mod unit_intervals;
+mod unit_intervals_cache;
+
 use super::{
     charge_work, checked_axis_offset, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
 };
@@ -473,7 +477,7 @@ type PairState<F> = ((usize, usize), F);
 fn merge_pair_states<F: Field>(
     mut states: Vec<PairState<F>>,
 ) -> Result<Vec<PairState<F>>, AkitaError> {
-    states.sort_unstable_by_key(|(key, _)| *key);
+    state_sort::sort(&mut states)?;
     states.dedup_by(|next, previous| {
         if next.0 == previous.0 {
             previous.1 += next.1;
@@ -773,6 +777,52 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
         return Ok(F::zero());
     }
 
+    if left_stride == 1
+        && len >= 128
+        && ((right_stride == 1 && seeds.len() >= 8) || seeds.len() >= 128)
+    {
+        match right_stride {
+            1 => {
+                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 2>(
+                    left_challenges,
+                    right_challenges,
+                    len,
+                    seeds,
+                    work,
+                )
+            }
+            3 => {
+                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 4>(
+                    left_challenges,
+                    right_challenges,
+                    len,
+                    seeds,
+                    work,
+                )
+            }
+            5 => {
+                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 6>(
+                    left_challenges,
+                    right_challenges,
+                    len,
+                    seeds,
+                    work,
+                )
+            }
+            n if n.is_power_of_two() && n.trailing_zeros() as usize <= right_challenges.len() => {
+                return unit_intervals::eval_power_two_right::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                    left_challenges,
+                    right_challenges,
+                    n,
+                    len,
+                    seeds,
+                    work,
+                );
+            }
+            _ => {}
+        }
+    }
+
     let left_domain = 1usize << left_challenges.len();
     let right_domain = 1usize << right_challenges.len();
     let block_bucket_count = usize::BITS as usize - len.leading_zeros() as usize;
@@ -960,3 +1010,6 @@ fn basis_eval_at_index<F: Field, const MONOMIAL: bool>(challenges: &[F], index: 
         eq_eval_at_index(challenges, index)
     }
 }
+
+#[cfg(test)]
+mod unit_intervals_tests;
