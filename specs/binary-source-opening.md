@@ -12,6 +12,9 @@
 
 ## Scope and selection
 
+The 64-bit migration is specified in
+[binary-source-p64-root.md](binary-source-p64-root.md).
+
 A binary source is a commitment-group kind in the canonical grouped PCS. The
 caller commits, supplies an optional binary word claim over GF(2^128) and/or
 prime evaluation claims, and uses the
