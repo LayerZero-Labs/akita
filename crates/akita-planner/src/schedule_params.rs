@@ -81,7 +81,7 @@ pub(crate) use relation_transition::{
 };
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 #[cfg(feature = "zk")]
-pub(crate) use suffix_dp::CutOffload;
+pub(crate) use suffix_dp::RootOffload;
 pub(crate) use suffix_dp::{
     derive_selected_suffix_schedule, QuerySearch, ScheduleMemo, SetupFieldBudget, SuffixCtx,
     SuffixState, SuffixTopology, ZkSearch, MAX_PRECOMMIT_OPENING_PRODUCTS,

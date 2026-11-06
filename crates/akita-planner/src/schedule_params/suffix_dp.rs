@@ -41,7 +41,7 @@ use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Pro
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;
 #[cfg(feature = "zk")]
-pub(crate) use state::CutOffload;
+pub(crate) use state::RootOffload;
 use state::*;
 pub(crate) use state::{
     ScheduleMemo, SetupFieldBudget, SuffixCtx, SuffixState, SuffixTopology, ZkSearch,

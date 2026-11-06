@@ -670,9 +670,10 @@ fn append_selective_l2_candidates(
         ..
     } = *request;
     // A masked level is ℓ∞ only: an ℓ2 route reveals the response energy and
-    // its cap is sized for a retrying prover.
+    // its cap is sized for a retrying prover. The residual level is ℓ∞ only
+    // too: the Σ-binding ranks price the ℓ∞ route alone.
     if !policy.selective_l2_response_model_enabled()
-        || matches!(request.masking, super::LevelMasking::Masked(_))
+        || !matches!(request.masking, super::LevelMasking::Clear)
     {
         return Ok(());
     }

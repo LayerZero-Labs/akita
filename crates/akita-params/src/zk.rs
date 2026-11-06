@@ -36,8 +36,8 @@ use core::ops::Range;
 use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use jolt_crypto::lattice::required_randomness_columns;
 
-/// The only supported cut: levels 0 and 1 are masked (`k = 2`).
-pub const ZK_CUT_LEVEL: u32 = 1;
+/// The only supported cut: levels 0, 1 and 2 are masked (`k = 3`).
+pub const ZK_CUT_LEVEL: u32 = 2;
 
 /// Every one-shot response of a witness group fails with probability at most
 /// `2^-ZK_FOLD_SECURITY_BITS / masked_folds`, so all of them together fail
@@ -870,8 +870,8 @@ mod tests {
             security_bits: ZK_FOLD_SECURITY_BITS,
             masked_folds,
         };
-        assert_eq!(target(1), Ok(one_shot(2)));
-        assert_eq!(target(3), Ok(one_shot(6)));
+        assert_eq!(target(1), Ok(one_shot(3)));
+        assert_eq!(target(3), Ok(one_shot(9)));
         assert!(target(0).is_err());
     }
 

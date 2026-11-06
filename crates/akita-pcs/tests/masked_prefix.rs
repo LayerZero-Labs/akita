@@ -235,8 +235,8 @@ fn assert_counting_replay_counts_the_honest_pads<C: CommitmentConfig<Field = F, 
 }
 
 /// W2b on the masked path: a root that folds a hiding precommitted group
-/// beside its own, and a cut level that consumes a setup prefix (so level 0
-/// runs Stage 3). Every root group's claim is a masked statement claim; the
+/// beside its own, and a masked level 1 that consumes a setup prefix (so
+/// level 0 runs Stage 3). Every root group's claim is a masked statement claim; the
 /// honest rows hold, every shifted message breaks one, the counting replay
 /// counts the pads the prover consumes, and the masked claims of both groups
 /// decode to the openings.

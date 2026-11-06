@@ -20,6 +20,18 @@ pub(crate) fn derive_recursive_candidate_views(
             "combined terminal/fold search requires EvaluationTrace".into(),
         ));
     }
+    // A masked or residual level ends no schedule, and its folds take the
+    // zero-knowledge restrictions `derive_fold_candidates` applies.
+    if !request.masking.allows_terminal() {
+        return Ok(RecursiveCandidateViews {
+            terminal: Vec::new(),
+            folds: derive_fold_candidates(
+                request,
+                RecursiveFoldWork::direct(relation_domain),
+                fold_policy,
+            )?,
+        });
+    }
     if matches!(
         request.policy.selection_policy,
         crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
