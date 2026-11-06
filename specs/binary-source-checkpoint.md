@@ -400,16 +400,13 @@ S_E-linearity gives `s_b L_P(Dec_P(f*_b))=s_b EP_b`. The P-unit condition
 then permits cancellation, proving `EP_b=L_P(Dec_P(f*_b))`. Only now does
 the second row apply omega to prove the prime terminal value.
 
-A general E-linear coefficient functional with weights W[r,t] must first be
-decomposed as `W[r,t]=sum_alpha e_(alpha,r) omega_(alpha,t)`. Each alpha defines
-an S_E-linear plane `L_(P,alpha)(v)=sum_r e_(alpha,r) v_r`; the final value is
-`sum_alpha <omega_alpha,L_(P,alpha)(v)>`. Such a decomposition always exists,
-for example by taking one plane per row with row-selector weights, but its
-plane count must fit the descriptor's cap. All weights are public and fixed
-before c, and every EP plane is bound by D. The descriptor caps all planes,
-including different polynomials and distinct points, and D admission uses that
-actual maximum. No bounded integer lift of a general EP field value is required
-for this cancellation.
+The implemented prime statement selects one separable point for the group.
+Every claimed polynomial has its own plane `L_P(v)=sum_r e_r v_r`, with shared
+public row, column and coefficient weights fixed before c. The descriptor's
+polynomial count bounds the number of planes, and D admission uses that
+actual count. No bounded integer lift of an EP field value is required for
+this cancellation. The single-point change only narrows the statement: every
+remaining equation is the one above with shared point weights.
 
 **Why scalar-algebra linearity is necessary.** Let L_bad(v) be the constant
 coefficient of the first unpacked component, embedded as a constant in S_E.
@@ -748,7 +745,7 @@ Production admission requires:
 - Matching the emitted transcript to the pre-J checkpoint and every fixation in
   Theorem 8, with exactly one caller application checkpoint and fresh J per trial.
 - Instantiating the source descriptor's index map, complete signed-bit/zero
-  coverage contract, source ownership and prime-plane cap; no unconditional
+  coverage contract, source ownership and one-plane-per-claimed-polynomial rule; no unconditional
   agreement output.
 - Comparing the trinomial kernels, unit admissions, challenge sampler and typed
   setup streams with these identities, including zero virtual slots and negative

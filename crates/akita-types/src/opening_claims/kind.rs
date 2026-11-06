@@ -14,7 +14,7 @@ pub enum GroupClaimKind {
         manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
         /// The caller's logical word MLE evaluation over GF(2^128).
         claim: Option<crate::binary_source::BinaryWordClaim>,
-        /// Checked prime requests, shared by exact plane identity.
+        /// Checked single-point prime claim, in polynomial order.
         prime: crate::binary_source::PrimePlaneManifest,
     },
 }
@@ -40,10 +40,7 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                 prime,
             } = &group.kind
             {
-                crate::binary_source::PrimePlaneManifest::new(
-                    manifest.descriptor(),
-                    prime.planes(),
-                )?;
+                prime.validate(manifest.descriptor())?;
                 let Some(claim) = claim else {
                     if prime.planes().is_empty() {
                         return Err(akita_error::AkitaError::InvalidInput(

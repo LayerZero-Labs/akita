@@ -13,8 +13,8 @@ use jolt_field::{CanonicalEncoding, Prime128Offset275, Ring};
 
 use super::{
     BinaryAOperand, BinaryAProduct, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic,
-    BinarySourceDescriptor, BinaryTerminalClaim, BinaryTypedPrefix, PrimePlaneClaim,
-    PrimePlaneManifest, TypedPrefixWeights,
+    BinarySourceDescriptor, BinaryTerminalClaim, BinaryTypedPrefix, PrimeGroupClaim,
+    PrimePlaneClaim, PrimePlaneManifest, TypedPrefixWeights,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -174,15 +174,16 @@ fn public(
         .expect("fixture word claim")
     });
     let arity = descriptor.index_map().padded_carriers().trailing_zeros() as usize + 8;
-    let claims = (0..shape.prime_planes)
-        .map(|plane| PrimePlaneClaim {
-            polynomial: plane % shape.owners,
-            point: (0..arity).map(|_| stream.u127()).collect(),
-            tensor_component: (plane % 4) as u8,
-            value: stream.u127(),
-        })
-        .collect::<Vec<_>>();
-    let prime = PrimePlaneManifest::new(&descriptor, &claims).expect("fixture prime planes");
+    let claims = (shape.prime_planes > 0).then(|| PrimeGroupClaim {
+        point: (0..arity).map(|_| stream.u127()).collect(),
+        evaluations: (0..shape.prime_planes)
+            .map(|polynomial| PrimePlaneClaim {
+                polynomial,
+                value: stream.u127(),
+            })
+            .collect(),
+    });
+    let prime = PrimePlaneManifest::new(&descriptor, claims).expect("fixture prime planes");
     let setup = AkitaSetupDescriptor {
         max_num_vars: 0,
         max_num_batched_polys: 0,
@@ -338,7 +339,7 @@ fn stage3(
     }
 }
 
-/// Compiled roots covering one and two owners, prime planes, extra zero rings
+/// Compiled roots covering up to five owners, prime planes, extra zero rings
 /// and the mixed ordinary group.
 pub fn root_weight_fixtures() -> Vec<RootWeightFixture> {
     let base = Shape {
@@ -389,6 +390,9 @@ pub fn root_weight_fixtures() -> Vec<RootWeightFixture> {
     ]
     .into_iter()
     .zip(1u64..)
-    .map(|(shape, seed)| compile(shape, seed))
+    .map(|(mut shape, seed)| {
+        shape.owners = shape.owners.max(shape.prime_planes);
+        compile(shape, seed)
+    })
     .collect()
 }

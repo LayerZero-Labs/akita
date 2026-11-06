@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::binary_source::{
-    BinaryAOperand, BinaryCommittedGroupManifest, BinaryIndexMap, PrimePlaneClaim,
+    BinaryAOperand, BinaryCommittedGroupManifest, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
 };
 use crate::AkitaSetupDescriptor;
 use akita_challenges::SparseChallenge;
@@ -114,17 +114,16 @@ fn public(shape: Shape, rng: &mut StdRng) -> BinaryRootPublic {
         .unwrap()
     });
     let arity = descriptor.index_map().padded_carriers().trailing_zeros() as usize + 8;
-    let claims = (0..shape.prime_planes)
-        .map(|plane| PrimePlaneClaim {
-            polynomial: plane % shape.owners,
-            point: (0..arity)
-                .map(|_| rng.gen::<u128>() >> 1)
-                .collect::<Vec<_>>(),
-            tensor_component: (plane % 4) as u8,
-            value: rng.gen::<u128>() >> 1,
-        })
-        .collect::<Vec<_>>();
-    let prime = PrimePlaneManifest::new(&descriptor, &claims).unwrap();
+    let claims = (shape.prime_planes > 0).then(|| PrimeGroupClaim {
+        point: (0..arity).map(|_| rng.gen::<u128>() >> 1).collect(),
+        evaluations: (0..shape.prime_planes)
+            .map(|polynomial| PrimePlaneClaim {
+                polynomial,
+                value: rng.gen::<u128>() >> 1,
+            })
+            .collect(),
+    });
+    let prime = PrimePlaneManifest::new(&descriptor, claims).expect("fixture prime planes");
     let setup = AkitaSetupDescriptor {
         max_num_vars: 0,
         max_num_batched_polys: 0,
@@ -310,18 +309,9 @@ fn check(shape: Shape, seed: u64) {
 /// regression. They include every claim, plane and owner combination of the
 /// prime-plane end-to-end tests.
 ///
-/// Sixteen use the end-to-end geometry: 8 padded carriers and 2 columns, hence
-/// 4 scalar rows and one response quad. Without the mixed group: the word claim
-/// at width 128 with zero, one, two or five planes and at width 8 with zero
-/// planes; two owners with the word claim and zero or five planes; and
-/// prime-only claims with two planes over two owners and with three planes and
-/// five extra zero rings. With the mixed group: the word claim with zero, two
-/// or five planes, and at width 8 with one plane and three extra rings; and one,
-/// two or five prime-only planes. The last three use 32 carriers and 2 columns,
-/// or 64 carriers and 4 columns, hence 16 scalar rows and four response quads:
-/// one owner with the word claim alone; two owners with two planes and the claim
-/// on the second owner; and the mixed group at width 8 with the word claim, five
-/// planes and two extra rings. No shape reaches a production-size geometry.
+/// The shapes cover word-only, prime-only and mixed ordinary openings, one
+/// point with values on several owners, wider source rows and extra zero rings.
+/// Every plane has a distinct owner; no shape reaches production size.
 fn shapes() -> Vec<Shape> {
     let base = Shape {
         word_width: 128,
@@ -427,7 +417,8 @@ fn shapes() -> Vec<Shape> {
 /// Compare both sides on every shape in [`shapes`].
 #[test]
 fn structured_root_weights_match_the_flat_reference() {
-    for (seed, shape) in shapes().into_iter().enumerate() {
+    for (seed, mut shape) in shapes().into_iter().enumerate() {
+        shape.owners = shape.owners.max(shape.prime_planes);
         check(shape, seed as u64);
     }
 }
@@ -436,7 +427,8 @@ fn structured_root_weights_match_the_flat_reference() {
 /// negative-bit rows, is zero on every padding address.
 #[test]
 fn compiled_root_weights_vanish_on_every_padding_address() {
-    for (seed, shape) in shapes().into_iter().enumerate() {
+    for (seed, mut shape) in shapes().into_iter().enumerate() {
+        shape.owners = shape.owners.max(shape.prime_planes);
         let (public, compiled, _) = compile(shape, seed as u64);
         let repacking = public.plan().repacking();
         let padding = (0..repacking.domain_len())
@@ -478,7 +470,8 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
     };
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
-    for (seed, shape) in shapes().into_iter().enumerate() {
+    for (seed, mut shape) in shapes().into_iter().enumerate() {
+        shape.owners = shape.owners.max(shape.prime_planes);
         let mut rng = StdRng::seed_from_u64(1000 + seed as u64);
         let public = public(shape, &mut rng);
         let plan = public.plan();
