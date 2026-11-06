@@ -47,7 +47,7 @@ with an ordinary clear Akita opening, the response proof.
   values arrive. The cut hands off a typed `ResidualOpening` and
   `ResidualClaim`.
 - **Residual commitment (§5).** u_a is Module-SIS binding at the Σ
-  collision radius R_Σ ≈ 2^47.82, is committed over `R_128`, and is sent
+  collision radius R_Σ ≈ 2^39.82, is committed over `R_128`, and is sent
   compressed as `cm(u_a)`.
 - **Response proof (§6).** `akita_pcs::zk::AkitaResponseProver` implements
   jolt-zk's `ResponseProver`: a product sumcheck, a radix-16 digit range, a
@@ -1151,12 +1151,13 @@ passes 2^56, beyond Akita's Euclidean table (squared collisions up to 2^84).
 - B(D) = 8(16^D − 1)/15, the magnitude of the D-digit balanced radix-16
   certified box (its negative end; the positive end is smaller), the
   largest response coefficient on any segment of s;
-- D = 10, the Σ regime. Every Gaussian segment of one Σ instance has the
-  same digit count, and public segments have fewer, so B_M = B(D) for both
-  residual matrices.
+- D = 8, the Σ regime at α = 2^9 (it was D = 10 at α = 2^17). Every
+  Gaussian segment of one Σ instance has the same digit count, and public
+  segments have fewer, so B_M = B(D) for both residual matrices.
 
-At D = 10: B = 586,406,201,480 ≈ 2^39.09 and
-R_Σ = 248,636,229,427,520 ≈ 2^47.82. jolt-zk owns the formula and D
+At D = 8: B = 2,290,649,224 ≈ 2^31.09 and
+R_Σ = 971,235,270,976 ≈ 2^39.82 (at D = 10 they were 2^39.09 and 2^47.82).
+The Σ-binding table is generated at this radius. jolt-zk owns the formula and D
 (`jolt_zk::whiteout::BINDING_RESPONSE_DIGITS`,
 `jolt_zk::whiteout::binding_collision_radius()`), and `SigmaParams`
 rejects a table whose response digits exceed `BINDING_RESPONSE_DIGITS`, so
@@ -1249,7 +1250,7 @@ planner's search domain, not of the protocol:
    `R_64 ↪ R_128`, X ↦ Y², makes every `R_128`-linear map `R_64`-linear,
    preserves coefficient norms, and turns multiplication by a challenge c
    into multiplication by c(Y²), which has the same ℓ1 norm. So
-   ‖(c − c′)v‖∞ ≤ 2κ₁‖v‖∞ holds verbatim, Γ_Δ = 106 and R_Σ ≈ 2^47.82 are
+   ‖(c − c′)v‖∞ ≤ 2κ₁‖v‖∞ holds verbatim, Γ_Δ = 106 and R_Σ ≈ 2^39.82 are
    unchanged, and the binding reduction applies to the `R_128` matrices as
    stated. `ResidualShape::new` accepts any d_A = d_B that is a multiple
    of 64.
