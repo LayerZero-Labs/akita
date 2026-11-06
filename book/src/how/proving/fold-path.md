@@ -49,13 +49,21 @@ method selected by the fold that consumes it. The commitment itself does not
 record that method.
 
 Root planning assigns one challenge subring to each class of precommitted
-groups with equal commit profiles and source contracts. It searches all opening
-assignments when their Cartesian product has at most 256 entries. For larger
-products, it keeps all assignments that use one shared subring first. It fills
-the remaining slots, up to 256, with mixed-subring assignments ranked by total
-D segment width per opening digit, including repeated groups. This width is a
-setup and proof-size estimate. Normal security and response checks still apply.
-The bounded search can miss a feasible or better schedule.
+groups with equal commit profiles and source contracts. Products of at most
+256 assignments keep their original search order. Larger products are streamed
+in full after the root dimensions, final-group opening, and decomposition bases
+are fixed. Each assignment is admitted and sized with the combined D matrix,
+compression, and witness layout. Its score is the smallest outgoing root
+witness across the allowed splits and slices. The planner retains the 256
+assignments with the smallest scores. Equal scores use the original class
+opening order. Shared subrings receive no reserved slots.
+
+Class openings and final-group layouts are cached. Ranking uses parameters;
+it does not allocate a witness or generate a proof. Memory is bounded by the
+retained candidates, but ranking time grows with the full Cartesian product.
+The normal schedule objective selects among retained candidates. A smaller
+next witness does not guarantee a smaller proof or setup, so this bound can
+exclude the best complete schedule.
 
 For coefficient packing, ring-switch finalization prepares one compact batch
 of checked group semantics. The batch retains shared sparse challenges, alpha

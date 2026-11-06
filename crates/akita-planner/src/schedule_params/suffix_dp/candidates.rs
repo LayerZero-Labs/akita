@@ -7,8 +7,8 @@ use akita_params::{
 
 use crate::{
     planner::{
-        precommitted_group_equivalence_classes, root_level_candidates_for_prepared_producers,
-        PreparedRootProducers,
+        precommitted_group_equivalence_classes, smallest_witness_root_candidates,
+        PreparedRootFinalGroup, PreparedRootProducers,
     },
     PlannerPolicy,
 };
@@ -54,8 +54,8 @@ const fn trace_opening_purpose(
 struct OpeningWork {
     dimensions: CommitmentRingDims,
     opening: crate::schedule_params::PlannerOpeningCandidate,
-    /// One opening per interchangeable precommitted class, in class order.
-    precommitted_class_openings: Vec<crate::schedule_params::PlannerOpeningCandidate>,
+    /// One opening per class; `None` defers a large product to witness ranking.
+    precommitted_class_openings: Option<Vec<crate::schedule_params::PlannerOpeningCandidate>>,
     purpose: OpeningPurpose,
 }
 
@@ -213,7 +213,7 @@ fn opening_work_domain(
                         trace_work.push(OpeningWork {
                             dimensions,
                             opening: trace_opening,
-                            precommitted_class_openings,
+                            precommitted_class_openings: Some(precommitted_class_openings),
                             purpose,
                         });
                     }
@@ -221,24 +221,31 @@ fn opening_work_domain(
             }
         }
 
-        if let Some(precommit_products) = root_precommit_products.as_ref() {
-            for opening in packing_domain {
-                for precommitted_class_openings in precommit_products {
-                    packing_work.push(OpeningWork {
-                        dimensions,
-                        opening,
-                        precommitted_class_openings: precommitted_class_openings.clone(),
-                        purpose: OpeningPurpose::FoldOnly,
-                    });
+        for opening in packing_domain {
+            match root_precommit_products.as_ref() {
+                Some(Some(products)) => {
+                    for assignment in products {
+                        packing_work.push(OpeningWork {
+                            dimensions,
+                            opening,
+                            precommitted_class_openings: Some(assignment.clone()),
+                            purpose: OpeningPurpose::FoldOnly,
+                        });
+                    }
                 }
+                Some(None) => packing_work.push(OpeningWork {
+                    dimensions,
+                    opening,
+                    precommitted_class_openings: None,
+                    purpose: OpeningPurpose::FoldOnly,
+                }),
+                None => packing_work.push(OpeningWork {
+                    dimensions,
+                    opening,
+                    precommitted_class_openings: Some(Vec::new()),
+                    purpose: OpeningPurpose::FoldOnly,
+                }),
             }
-        } else {
-            packing_work.extend(packing_domain.into_iter().map(|opening| OpeningWork {
-                dimensions,
-                opening,
-                precommitted_class_openings: Vec::new(),
-                purpose: OpeningPurpose::FoldOnly,
-            }));
         }
     }
 
@@ -660,30 +667,46 @@ impl<'a> CandidateDomain<'a> {
             AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
         for work in &self.opening_work {
-            let Some(preparation) = PreparedRootProducers::prepare(
-                root_key,
-                ctx.precommitted_source_contracts,
-                ctx.policy,
-                work.dimensions,
-                work.opening,
-                &work.precommitted_class_openings,
-                open_lb,
-            )?
-            else {
-                continue;
+            let preparation = if let Some(openings) = &work.precommitted_class_openings {
+                let Some(preparation) = PreparedRootProducers::prepare(
+                    root_key,
+                    ctx.precommitted_source_contracts,
+                    ctx.policy,
+                    work.dimensions,
+                    work.opening,
+                    openings,
+                    open_lb,
+                )?
+                else {
+                    continue;
+                };
+                Some(preparation)
+            } else {
+                None
             };
             for inner_lb in self.inner_basis_range.clone() {
-                let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+                let main = PreparedRootFinalGroup::prepare(
                     root_key,
                     final_source_contract,
                     ctx.policy,
                     work.dimensions,
                     work.opening,
-                    &preparation,
                     inner_lb,
                     open_lb,
                     self.root_main_constraint.map(candidate_layout_guide),
                 )?;
+                let mut dimension_candidates = if let Some(preparation) = &preparation {
+                    main.candidates(ctx.policy, preparation, true)?
+                } else {
+                    smallest_witness_root_candidates(
+                        root_key,
+                        ctx.precommitted_source_contracts,
+                        ctx.policy,
+                        work.dimensions,
+                        open_lb,
+                        &main,
+                    )?
+                };
                 if let Some(constraint) = self.root_main_constraint {
                     dimension_candidates.retain(|(params, _)| {
                         root_candidate_matches_constraint(params, constraint)
