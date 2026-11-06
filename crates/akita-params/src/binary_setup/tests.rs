@@ -20,6 +20,7 @@ fn fingerprint(seed: [u8; 32], label: SetupStreamLabel) -> Vec<u128> {
         .map(|_| match label.modulus {
             SetupStreamModulus::Q(_) => stream.sample_q_centered().unwrap() as u128,
             SetupStreamModulus::Prime128Offset275 => stream.sample_p().unwrap(),
+            SetupStreamModulus::Prime64Offset59 => u128::from(stream.sample_p64().unwrap()),
         })
         .collect()
 }
@@ -48,6 +49,7 @@ fn every_label_component_and_seed_separates_both_domains() {
     for modulus in [
         SetupStreamModulus::Q(14_253_409),
         SetupStreamModulus::Prime128Offset275,
+        SetupStreamModulus::Prime64Offset59,
     ] {
         let base = label(modulus);
         let expected = fingerprint([42; 32], base);
@@ -89,7 +91,9 @@ fn every_label_component_and_seed_separates_both_domains() {
         variants.push(SetupStreamLabel {
             modulus: match modulus {
                 SetupStreamModulus::Q(_) => SetupStreamModulus::Q(33_568_993),
-                SetupStreamModulus::Prime128Offset275 => SetupStreamModulus::Q(14_253_409),
+                SetupStreamModulus::Prime128Offset275 | SetupStreamModulus::Prime64Offset59 => {
+                    SetupStreamModulus::Q(14_253_409)
+                }
             },
             ..base
         });
@@ -463,4 +467,170 @@ fn rejection_heavy_q_draws_follow_the_reference_stream() {
         assert_eq!(stream.sample_q_centered().unwrap(), expected);
     }
     assert!(rejections > 1_000, "{rejections} rejections");
+}
+
+#[test]
+fn p64_draws_follow_the_versioned_eight_byte_stream() {
+    use shake::digest::{ExtendableOutput, Update, XofReader};
+    let seed = [42; 32];
+    let p64 = label(SetupStreamModulus::Prime64Offset59);
+    let mut reference = shake::Shake256::default();
+    for part in [
+        b"akita/binary-source/setup/shake256/v2".as_slice(),
+        &seed,
+        &[p64.role as u8],
+        &p64.group.to_le_bytes(),
+        &p64.level.to_le_bytes(),
+        &p64.rank.to_le_bytes(),
+        &p64.row.to_le_bytes(),
+        &p64.column.to_le_bytes(),
+        &[p64.ring as u8],
+        &p64.degree.to_le_bytes(),
+        &[3],
+        &u128::from(BINARY_SETUP_P64).to_le_bytes(),
+    ] {
+        reference.update(part);
+    }
+    let mut reference = reference.finalize_xof();
+    let mut stream = TypedSetupStream::new(&seed, p64).unwrap();
+    for _ in 0..1_000 {
+        let expected = loop {
+            let mut bytes = [0; 8];
+            reference.read(&mut bytes);
+            let value = u64::from_le_bytes(bytes);
+            if value < BINARY_SETUP_P64 {
+                break value;
+            }
+        };
+        assert_eq!(stream.sample_p64().unwrap(), expected);
+    }
+    assert!(stream.sample_q_centered().is_err());
+    assert_ne!(
+        fingerprint(seed, p64),
+        fingerprint(seed, label(SetupStreamModulus::Prime128Offset275))
+    );
+    let mut legacy =
+        TypedSetupStream::new(&seed, label(SetupStreamModulus::Prime128Offset275)).unwrap();
+    assert!(legacy.sample_p64().is_err());
+
+    // Force the rare rejection path: p - 1 accepts, p and u64::MAX reject.
+    let mut stream = TypedSetupStream::new(&seed, p64).unwrap();
+    for (slot, candidate) in stream.squeeze.block.chunks_exact_mut(8).zip([
+        BINARY_SETUP_P64 - 1,
+        BINARY_SETUP_P64,
+        u64::MAX,
+        17,
+    ]) {
+        slot.copy_from_slice(&candidate.to_le_bytes());
+    }
+    assert_eq!(stream.sample_p64().unwrap(), BINARY_SETUP_P64 - 1);
+    assert_eq!(stream.sample_p64().unwrap(), 17);
+    assert_eq!(stream.squeeze.read, 32);
+}
+
+#[test]
+fn p64_block_draws_and_paired_draws_preserve_stream_positions() {
+    let seed = [57; 32];
+    let base = label(SetupStreamModulus::Prime64Offset59);
+    let other = SetupStreamLabel { row: 1, ..base };
+    let mut first = TypedSetupStream::new(&seed, base).unwrap();
+    let mut second = TypedSetupStream::new(&seed, other).unwrap();
+    let mut first_output = [0; 200];
+    let mut second_output = [0; 65];
+    TypedSetupStream::fill_p_pair(
+        &mut first,
+        &mut first_output,
+        &mut second,
+        &mut second_output,
+    )
+    .unwrap();
+    for (label, output, mut stream) in [
+        (base, first_output.as_slice(), first),
+        (other, second_output.as_slice(), second),
+    ] {
+        let mut reference = TypedSetupStream::new(&seed, label).unwrap();
+        for &value in output {
+            assert_eq!(value, u128::from(reference.sample_p64().unwrap()));
+        }
+        assert_eq!(
+            stream.sample_p().unwrap(),
+            u128::from(reference.sample_p64().unwrap())
+        );
+    }
+}
+
+#[test]
+fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
+    let p64 = BinaryFieldProfile::P64;
+    assert_eq!(p64.modulus(), 18_446_744_073_709_551_557);
+    assert_eq!(p64.extension_degree(), 2);
+    assert_eq!(
+        p64.challenge_order().unwrap(),
+        crate::ChallengeFieldOrder::from_field(64, 2, p64.modulus()).unwrap()
+    );
+    assert_ne!(
+        p64.challenge_order().unwrap(),
+        BinaryFieldProfile::P128.challenge_order().unwrap()
+    );
+    assert!(
+        matches!(p64.admit_root(p64.modulus(), 2), Err(AkitaError::UnsupportedSchedule(message)) if message.contains("not yet supported"))
+    );
+    for (profile, modulus, degree) in [
+        (p64, p64.modulus(), 1),
+        (p64, BINARY_SETUP_P, 2),
+        (BinaryFieldProfile::P128, p64.modulus(), 1),
+        (BinaryFieldProfile::P128, BINARY_SETUP_P, 2),
+    ] {
+        assert!(matches!(
+            profile.admit_root(modulus, degree),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+    BinaryFieldProfile::P128
+        .admit_root(BINARY_SETUP_P, 1)
+        .unwrap();
+}
+
+#[test]
+fn p64_digit_ranks_match_every_spec_row_and_width_boundary() {
+    let p64 = BinaryFieldProfile::P64;
+    for (b, br, d, dr) in [
+        (486, 2, 562, 2),
+        (1_990_656, 3, 21_293, 2),
+        (62_208, 2, 71_928, 2),
+        (622_080, 3, 77_760, 3),
+        (254_803_968, 5, 2_725_488, 3),
+    ] {
+        assert_eq!(
+            p64.digit_commitment_rank(SetupStreamRole::ImageCommitment, b)
+                .unwrap(),
+            br
+        );
+        assert_eq!(
+            p64.digit_commitment_rank(SetupStreamRole::WitnessCommitment, d)
+                .unwrap(),
+            dr
+        );
+    }
+    for (index, cap) in [296, 76_306, 4_030_488, 106_021_444, 1_826_815_994]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            p64.digit_commitment_rank(SetupStreamRole::ImageCommitment, cap)
+                .unwrap(),
+            index + 1
+        );
+        assert_eq!(
+            p64.digit_commitment_rank(SetupStreamRole::ImageCommitment, cap + 1)
+                .unwrap(),
+            index + 2
+        );
+    }
+    assert!(p64
+        .digit_commitment_rank(SetupStreamRole::WitnessCommitment, usize::MAX)
+        .is_err());
+    assert!(p64
+        .digit_commitment_rank(SetupStreamRole::ImageCommitment, 0)
+        .is_err());
 }

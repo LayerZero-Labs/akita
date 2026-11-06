@@ -288,7 +288,9 @@ pub(super) fn check_group<F: Field + CanonicalEncoding + Valid>(
             manifest
                 .validate_carrier(profile)
                 .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-            crate::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
+            manifest
+                .payload_coefficients()
+                .map_err(|error| SerializationError::InvalidData(error.to_string()))?
         }
     };
     if commitment.rows().coeff_len() != expected_coeffs {
@@ -413,7 +415,9 @@ where
                 manifest
                     .validate_carrier(&descriptor)
                     .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-                crate::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
+                manifest
+                    .payload_coefficients()
+                    .map_err(|error| SerializationError::InvalidData(error.to_string()))?
             }
         };
         if num_coeffs > MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS {
@@ -422,6 +426,13 @@ where
                  {MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS}"
             )));
         }
+        // Binary manifests bind canonical base residues. Reducing an unchecked
+        // residue here would accept several wire encodings of the same payload.
+        #[cfg(feature = "labinius-trinomial")]
+        let validate = match &kind {
+            CommittedGroupKind::Binary(_) => Validate::Yes,
+            CommittedGroupKind::Ordinary => validate,
+        };
         let commitment =
             Commitment::deserialize_with_mode(&mut reader, compress, validate, &num_coeffs)?;
         // The group is checked and its digest computed from the decoded

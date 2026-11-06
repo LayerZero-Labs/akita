@@ -48,7 +48,6 @@ where
 {
     if !(1..=2).contains(&claims.num_groups())
         || handles.len() != claims.num_groups()
-        || Cfg::ExtField::DEGREE != 1
         || basis != BasisMode::Lagrange
     {
         return Err(AkitaError::InvalidInput(
@@ -65,6 +64,10 @@ where
     else {
         return Err(AkitaError::InvalidProof);
     };
+    manifest.field_profile().admit_root(
+        akita_params::field_modulus::<Cfg::Field>()?,
+        Cfg::ExtField::DEGREE,
+    )?;
     let next = schedule
         .recursive_folds
         .first()

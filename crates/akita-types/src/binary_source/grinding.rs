@@ -1,10 +1,10 @@
 //! One grinding plan for a native coefficient root and its ordinary suffix.
 
 use akita_error::AkitaError;
-use akita_params::binary_setup::BINARY_SETUP_P;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{
     multilinear_point_loss_factor, polynomial_identity_loss_factor, powers_batch_loss_factor,
-    ChallengeFieldOrder, DigitRangePlan, GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol,
+    DigitRangePlan, GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol,
 };
 
 /// Replace the ordinary root queries while preserving every ordinary suffix query.
@@ -28,7 +28,9 @@ pub fn binary_root_grinding_plan(
             "invalid native root grinding geometry".into(),
         ));
     }
-    let order = ChallengeFieldOrder::from_field(128, 1, BINARY_SETUP_P)?;
+    // P128 stays selected until the quotient compiler, E64 adjoints and full
+    // security ledger land. The paired profile owns the exact challenge order.
+    let order = BinaryFieldProfile::P128.challenge_order()?;
     let rounds = domain_len.trailing_zeros() as usize;
     let challenges = fold_coordinates
         .iter()

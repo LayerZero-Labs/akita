@@ -3,8 +3,8 @@
 use akita_algebra::ring::{CyclotomicRing, ResidueKernelPoint};
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::{
-    SetupStreamLabel, SetupStreamModulus, SetupStreamRing, SetupStreamRole, TypedSetupStream,
-    BINARY_SETUP_P,
+    BinaryFieldProfile, SetupStreamLabel, SetupStreamModulus, SetupStreamRing, SetupStreamRole,
+    TypedSetupStream,
 };
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
@@ -23,24 +23,35 @@ pub const BINARY_DIGIT_COMMITMENT_DEGREE: usize = 64;
 /// return its row count.
 ///
 /// # Errors
-/// Rejects labels other than the rank-2, degree-64 negacyclic P setup of the
-/// image or witness commitment, and fields other than `2^128 - 275`.
+/// P128 retains rank two. The p64 setup accepts ranks covered by the SIS table;
+/// width admission is performed by the manifest separately for B and D.
 pub fn validate_digit_commitment_label<F: Field>(
     label: SetupStreamLabel,
 ) -> Result<usize, AkitaError> {
+    let (profile, ranks) = match label.modulus {
+        SetupStreamModulus::Prime128Offset275 => (BinaryFieldProfile::P128, 2..=2),
+        SetupStreamModulus::Prime64Offset59 => (
+            BinaryFieldProfile::P64,
+            1..=akita_params::sis::SIS_MAX_MODULE_RANK,
+        ),
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "invalid binary digit modulus".into(),
+            ))
+        }
+    };
     if label.level != 0
         || label.row != 0
         || label.column != 0
-        || label.rank != 2
+        || !ranks.contains(&label.rank)
         || label.degree != BINARY_DIGIT_COMMITMENT_DEGREE as u32
         || label.ring != SetupStreamRing::Negacyclic
-        || label.modulus != SetupStreamModulus::Prime128Offset275
         || !matches!(
             label.role,
             SetupStreamRole::ImageCommitment | SetupStreamRole::WitnessCommitment
         )
-        || F::from_u128(BINARY_SETUP_P) != F::zero()
-        || F::from_u128(BINARY_SETUP_P - 1) != -F::one()
+        || F::from_u128(profile.modulus()) != F::zero()
+        || F::from_u128(profile.modulus() - 1) != -F::one()
     {
         return Err(AkitaError::InvalidSetup(
             "invalid binary digit commitment setup".into(),
@@ -141,6 +152,10 @@ pub fn binary_public_digit_commitment<F: Field>(
             let column = checked::sum([first_column, column]).ok_or(AkitaError::InvalidProof)?;
             accumulate_digit_product(
                 &mut setup_stream(seed, label, row, column)?,
+                match label.modulus {
+                    SetupStreamModulus::Prime64Offset59 => BinaryFieldProfile::P64.modulus(),
+                    _ => BinaryFieldProfile::P128.modulus(),
+                },
                 chunk,
                 &mut image,
             )?;
@@ -163,13 +178,14 @@ pub fn binary_public_digit_commitment<F: Field>(
 /// equals the ring product of [`setup_entry`] and the chunk modulo `P`.
 fn accumulate_digit_product(
     stream: &mut TypedSetupStream,
+    modulus: u128,
     chunk: &[i8],
     image: &mut [(u128, u64); BINARY_DIGIT_COMMITMENT_DEGREE],
 ) -> Result<(), AkitaError> {
     let mut entry = [0u128; BINARY_DIGIT_COMMITMENT_DEGREE];
     stream.fill_p(&mut entry)?;
     for (t, &a) in entry.iter().enumerate() {
-        let negative = if a == 0 { 0 } else { BINARY_SETUP_P - a };
+        let negative = if a == 0 { 0 } else { modulus - a };
         // multiples[4 + e] is the canonical integer of `e * a`, for |e| <= 4.
         let multiples: [(u128, u64); 9] = core::array::from_fn(|index| {
             let (value, factor) = match index {
@@ -493,3 +509,65 @@ impl<E: Field> DigitAuthenticationWeights<E> {
 #[cfg(test)]
 #[path = "authentication_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod p64_tests {
+    use super::*;
+    use jolt_field::{Prime64Offset59 as F, Ring, Zero};
+
+    #[test]
+    fn p64_digit_commitments_match_ring_products_for_each_rank_and_role() {
+        let seed = [8; 32];
+        let digits = (0..150).map(|i| (i % 8) as i8 - 4).collect::<Vec<_>>();
+        for role in [
+            SetupStreamRole::ImageCommitment,
+            SetupStreamRole::WitnessCommitment,
+        ] {
+            for rank in 1..=5 {
+                let label = SetupStreamLabel {
+                    role,
+                    group: 7,
+                    level: 0,
+                    rank,
+                    row: 0,
+                    column: 0,
+                    ring: SetupStreamRing::Negacyclic,
+                    degree: 64,
+                    modulus: SetupStreamModulus::Prime64Offset59,
+                };
+                let payload =
+                    binary_public_digit_commitment::<F>(&seed, label, 5, &digits).unwrap();
+                assert_eq!(payload.len(), 64 * rank as usize);
+                let mut expected = Vec::new();
+                for row in 0..rank {
+                    let mut image = CyclotomicRing::<F, 64>::zero();
+                    for (column, chunk) in digits.chunks(64).enumerate() {
+                        let mut coefficients = [F::zero(); 64];
+                        for (output, &digit) in coefficients.iter_mut().zip(chunk) {
+                            *output = F::from_i64(i64::from(digit));
+                        }
+                        setup_entry::<F>(&seed, label, row, 5 + column)
+                            .unwrap()
+                            .mul_accumulate_into(
+                                &CyclotomicRing::from_coefficients(coefficients),
+                                &mut image,
+                            );
+                    }
+                    expected.extend_from_slice(image.coefficients());
+                }
+                assert_eq!(payload, expected);
+                assert!(
+                    validate_digit_commitment_label::<jolt_field::Prime128Offset275>(label)
+                        .is_err()
+                );
+                for rank in [0, akita_params::sis::SIS_MAX_MODULE_RANK + 1] {
+                    assert!(validate_digit_commitment_label::<F>(SetupStreamLabel {
+                        rank,
+                        ..label
+                    })
+                    .is_err());
+                }
+            }
+        }
+    }
+}

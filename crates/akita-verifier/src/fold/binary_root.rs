@@ -40,10 +40,7 @@ where
         + ChallengeCodec,
 {
     let _span = tracing::info_span!("binary_root_verify").entered();
-    if !(1..=2).contains(&claims.num_groups())
-        || E::DEGREE != 1
-        || akita_params::field_modulus::<F>()? != akita_params::binary_setup::BINARY_SETUP_P
-    {
+    if !(1..=2).contains(&claims.num_groups()) {
         return Err(AkitaError::InvalidSetup(
             "binary root requires its admitted proof prime and at most one ordinary group".into(),
         ));
@@ -57,6 +54,9 @@ where
     else {
         return Err(AkitaError::InvalidProof);
     };
+    manifest
+        .field_profile()
+        .admit_root(akita_params::field_modulus::<F>()?, E::DEGREE)?;
     let ordinary = claims.groups().get(1);
     let ordinary_profile = match ordinary {
         Some(group)

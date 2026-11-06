@@ -31,12 +31,15 @@ where
     E: ExtField<F>,
     S: ProofChannel,
 {
-    if E::DEGREE != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "binary root statement requires extension degree one".into(),
+    manifest.validate()?;
+    manifest
+        .field_profile()
+        .admit_root(akita_params::field_modulus::<F>()?, E::DEGREE)?;
+    if binary_commitment.len() != manifest.payload_coefficients()? {
+        return Err(AkitaError::InvalidInput(
+            "binary root payload shape mismatch".into(),
         ));
     }
-    manifest.validate()?;
     if let Some(claim) = claim {
         claim.validate(manifest.descriptor())?;
     }
