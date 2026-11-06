@@ -1,20 +1,7 @@
 use akita_error::AkitaError;
 #[cfg(test)]
 use akita_types::DigitBlocks;
-
-/// View flat slice-major randomness coefficients as `D`-coefficient rings.
-pub(crate) fn randomness_planes<const D: usize>(
-    randomness: &[i8],
-) -> Result<Vec<[i8; D]>, AkitaError> {
-    randomness
-        .chunks(D)
-        .map(|ring| {
-            <[i8; D]>::try_from(ring).map_err(|_| {
-                AkitaError::Internal("hiding randomness is not a whole number of rings".into())
-            })
-        })
-        .collect()
-}
+use zeroize::Zeroizing;
 
 /// Validate one committed group's per-polynomial plane counts, then stream its
 /// canonical B slices through one reusable physical-width buffer.
@@ -55,7 +42,8 @@ pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
 
     let max_blocks = geometry.max_blocks_per_slice();
     let expected_width = geometry.physical_input_width();
-    let mut input = Vec::with_capacity(expected_width);
+    // Holds digits of the witness and of the hiding randomness: wiped on drop.
+    let mut input = Zeroizing::new(Vec::with_capacity(expected_width));
     let mut slice_randomness = randomness.chunks(geometry.randomness_columns().max(1));
     for range in geometry.block_ranges() {
         input.clear();

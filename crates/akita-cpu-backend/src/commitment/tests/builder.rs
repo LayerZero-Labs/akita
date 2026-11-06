@@ -47,6 +47,7 @@ impl OuterCommitOperation<F> for UnusedOuter {
         &self,
         _plan: &crate::commitment::UncompressedCommitPlan,
         _inner: InnerImageInput<'_, F>,
+        _randomness: &[i8],
     ) -> Result<RingVec<F>, AkitaError> {
         Err(AkitaError::InvalidInput("unused test operation".into()))
     }
@@ -76,9 +77,10 @@ impl OuterCommitOperation<F> for RecordingCpuOuter<'_> {
         &self,
         plan: &crate::commitment::UncompressedCommitPlan,
         inner: InnerImageInput<'_, F>,
+        randomness: &[i8],
     ) -> Result<RingVec<F>, AkitaError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        self.operation.commit_outer(plan, inner)
+        self.operation.commit_outer(plan, inner, randomness)
     }
 }
 

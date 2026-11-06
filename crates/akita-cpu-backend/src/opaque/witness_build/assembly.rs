@@ -13,6 +13,7 @@ use akita_params::{dispatch_for_field, CommittedGroupParams};
 use akita_serialization::AkitaSerialize;
 use akita_types::{RingRelationInstance, RingVec};
 use jolt_algebra::{CanonicalEncoding, Field, Ring};
+use zeroize::Zeroizing;
 
 pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
     inner: Vec<crate::opaque::OpaqueInnerRelationState<F>>,
@@ -29,7 +30,7 @@ pub(crate) struct CpuRecursiveWitnessAssemblyState<F: Field + CanonicalEncoding>
     group_openings: Vec<PreparedOpeningWitness<F>>,
     d_quotients: RelationDQuotientWitness<F>,
     /// D hiding randomness appended to the shared D input; empty when clear.
-    d_randomness: Vec<i8>,
+    d_randomness: Zeroizing<Vec<i8>>,
     inner_relation: Vec<crate::opaque::OpaqueInnerRelationState<F>>,
     compression: Option<CompressionWitnessMaterialization<F>>,
 }
@@ -99,14 +100,13 @@ where
     }
     crate::arithmetic::requirements::warm_relation_ntt_cache(backend, prepared, level)?;
     let dims = level.role_dims();
-    // Extension seam: outer hiding randomness columns, zero width on main (akita#120). No route
-    // samples D randomness, so a level that declares it cannot be opened.
-    if level.open_randomness_columns != 0 {
-        return Err(AkitaError::UnsupportedSchedule(
-            "D hiding randomness has no sampler".into(),
-        ));
-    }
-    let d_randomness = Vec::new();
+    let d_randomness = backend.hiding_rng.sample(
+        level
+            .open_randomness_columns
+            .checked_mul(dims.d_d())
+            .ok_or_else(|| AkitaError::InvalidSetup("D randomness length overflow".into()))?,
+        level.shared_d_digit_log_basis(),
+    )?;
     let (v, d_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Opening),
         F,

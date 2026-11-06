@@ -9,6 +9,7 @@ use akita_params::{CompressionChainPlan, CompressionChainWitness, RingRelationMo
 use akita_types::RingVec;
 use jolt_algebra::Field;
 use std::sync::{Arc, Mutex};
+use zeroize::Zeroizing;
 
 /// Canonical shared host material exported from one retained compression state.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,6 +183,7 @@ pub(crate) struct CommitmentStateComponents<F: Field> {
     mode: CommitmentExecutionMode,
     image: BackendStateRef<InnerImage>,
     compression: Option<BackendStateRef<CompressionState>>,
+    outer_randomness: Zeroizing<Vec<i8>>,
     exporters: CommitmentStateExporters<F>,
 }
 
@@ -191,6 +193,7 @@ impl<F: Field> Clone for CommitmentStateComponents<F> {
             mode: self.mode,
             image: self.image.clone(),
             compression: self.compression.clone(),
+            outer_randomness: self.outer_randomness.clone(),
             exporters: self.exporters.clone(),
         }
     }
@@ -202,6 +205,7 @@ impl<F: Field> CommitmentStateComponents<F> {
         mode: CommitmentExecutionMode,
         image: BackendStateRef<InnerImage>,
         compression: Option<BackendStateRef<CompressionState>>,
+        outer_randomness: Zeroizing<Vec<i8>>,
         exporters: CommitmentStateExporters<F>,
     ) -> Result<Self, AkitaError> {
         let valid = match (mode, compression.as_ref()) {
@@ -218,10 +222,16 @@ impl<F: Field> CommitmentStateComponents<F> {
                 "commitment state components disagree with their execution mode or binding".into(),
             ));
         }
+        if mode == CommitmentExecutionMode::InnerOnly && !outer_randomness.is_empty() {
+            return Err(AkitaError::Internal(
+                "inner-only commitment state cannot carry B randomness".into(),
+            ));
+        }
         Ok(Self {
             mode,
             image,
             compression,
+            outer_randomness,
             exporters,
         })
     }
@@ -234,6 +244,7 @@ fn into_portable<F: Field>(
         mode,
         image,
         compression,
+        outer_randomness,
         exporters,
     } = components;
     let binding = image.binding().clone();
@@ -259,7 +270,7 @@ fn into_portable<F: Field>(
         ),
         None => None,
     };
-    assemble_portable_hint(binding, mode, rows, compression)
+    assemble_portable_hint(binding, mode, rows, compression, outer_randomness)
 }
 
 pub(super) fn assemble_portable_hint<F: Field>(
@@ -267,8 +278,9 @@ pub(super) fn assemble_portable_hint<F: Field>(
     mode: CommitmentExecutionMode,
     rows: Vec<RingVec<F>>,
     compression: Option<PortableCompressionState<F>>,
+    outer_randomness: Zeroizing<Vec<i8>>,
 ) -> Result<PortableCommitmentHandle<F>, AkitaError> {
-    match mode {
+    let handle = match mode {
         CommitmentExecutionMode::InnerOnly | CommitmentExecutionMode::Uncompressed => {
             if compression.is_some() {
                 return Err(AkitaError::Internal(
@@ -321,7 +333,8 @@ pub(super) fn assemble_portable_hint<F: Field>(
                 )),
             }
         }
-    }
+    }?;
+    Ok(handle.with_outer_randomness(outer_randomness))
 }
 
 pub(super) fn validate_portable_export_route<F: Field>(
@@ -379,6 +392,7 @@ pub(crate) struct ResidentCommitmentState<F: Field> {
     mode: CommitmentExecutionMode,
     inner: Arc<Mutex<ResidentInnerState<F>>>,
     compression: Option<Arc<Mutex<ResidentCompressionState<F>>>>,
+    outer_randomness: Arc<Zeroizing<Vec<i8>>>,
     exporters: CommitmentStateExporters<F>,
 }
 
@@ -471,7 +485,8 @@ impl<F: Field> ResidentCommitmentState<F> {
                 )
             })?
             .consume_inner_rows(self.binding.inner_plan(), image)?;
-        let material = InnerRelationStateMaterial::from_binding(&self.binding, rows)?;
+        let material = InnerRelationStateMaterial::from_binding(&self.binding, rows)?
+            .with_outer_randomness(self.outer_randomness.as_ref().clone());
         *inner = ResidentInnerState::Material(material.clone());
         Ok(material)
     }
@@ -539,11 +554,9 @@ pub(crate) struct InnerRelationStateMaterial<F: Field> {
     plan: CommitInnerPlan,
     source_count: usize,
     rows: Arc<Vec<RingVec<F>>>,
-    /// Slice-major B hiding-randomness coefficients the commitment used.
-    ///
-    /// Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
-    /// commitment route samples B randomness, so it is always empty.
-    outer_randomness: Arc<Vec<i8>>,
+    /// Slice-major B hiding-randomness coefficients the commitment used;
+    /// empty for a clear commitment.
+    outer_randomness: Arc<Zeroizing<Vec<i8>>>,
 }
 
 impl<F: Field> InnerRelationStateMaterial<F> {
@@ -569,8 +582,19 @@ impl<F: Field> InnerRelationStateMaterial<F> {
             plan: *plan,
             source_count,
             rows: Arc::new(rows),
-            outer_randomness: Arc::new(Vec::new()),
+            outer_randomness: Arc::new(Zeroizing::new(Vec::new())),
         })
+    }
+
+    /// Attach the B hiding randomness the commitment was made with.
+    pub(crate) fn with_outer_randomness(mut self, outer_randomness: Zeroizing<Vec<i8>>) -> Self {
+        self.outer_randomness = Arc::new(outer_randomness);
+        self
+    }
+
+    /// Slice-major B hiding-randomness coefficients; empty when clear.
+    pub(crate) fn outer_randomness(&self) -> &[i8] {
+        self.outer_randomness.as_slice()
     }
 
     /// Validate and freeze rows exported for one exact commitment request.
@@ -589,11 +613,6 @@ impl<F: Field> InnerRelationStateMaterial<F> {
     /// Borrow the canonical rows in source order.
     pub(crate) fn rows(&self) -> &[RingVec<F>] {
         self.rows.as_slice()
-    }
-
-    /// Slice-major B hiding-randomness coefficients; empty when clear.
-    pub(crate) fn outer_randomness(&self) -> &[i8] {
-        self.outer_randomness.as_slice()
     }
 
     /// Consume the carrier and return the canonical rows.
@@ -773,7 +792,10 @@ impl<F: Field + 'static> InnerRelationState<F> for PortableCommitmentHandle<F> {
         plan: &CommitInnerPlan,
         source_count: usize,
     ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
-        InnerRelationStateMaterial::new(plan, source_count, self.inner_rows()?.into_owned())
+        Ok(
+            InnerRelationStateMaterial::new(plan, source_count, self.inner_rows()?.into_owned())?
+                .with_outer_randomness(Zeroizing::new(self.outer_randomness().to_vec())),
+        )
     }
 }
 
@@ -893,9 +915,15 @@ impl<F: Field> PortableCommitmentState<F> for PortableCommitmentHandle<F> {
 #[cfg(test)]
 impl<F: Field> PortableCommitmentState<F> for ResidentCommitmentState<F> {
     fn portable_hint(&self) -> Result<PortableCommitmentHandle<F>, AkitaError> {
-        let rows = self.frozen_inner_material()?.rows().to_vec();
+        let material = self.frozen_inner_material()?;
         let compression = self.frozen_compression_material()?;
-        assemble_portable_hint(self.binding.clone(), self.mode, rows, compression)
+        assemble_portable_hint(
+            self.binding.clone(),
+            self.mode,
+            material.rows().to_vec(),
+            compression,
+            Zeroizing::new(material.outer_randomness().to_vec()),
+        )
     }
 }
 
@@ -915,11 +943,19 @@ impl<F: Field> IntoPortableCommitmentState<F> for ResidentCommitmentState<F> {
             inner,
             compression,
             exporters,
+            ..
         } = self;
         drop(inner);
         drop(compression);
         drop(exporters);
-        assemble_portable_hint(binding, mode, material.into_rows(), compression_material)
+        let outer_randomness = Zeroizing::new(material.outer_randomness().to_vec());
+        assemble_portable_hint(
+            binding,
+            mode,
+            material.into_rows(),
+            compression_material,
+            outer_randomness,
+        )
     }
 }
 
@@ -931,6 +967,7 @@ impl<F: Field> CommitmentStatePolicy<F> for ResidentStatePolicy {
             mode,
             image,
             compression,
+            outer_randomness,
             exporters,
         } = components;
         let binding = image.binding().clone();
@@ -940,6 +977,7 @@ impl<F: Field> CommitmentStatePolicy<F> for ResidentStatePolicy {
             inner: Arc::new(Mutex::new(ResidentInnerState::Image(image))),
             compression: compression
                 .map(|state| Arc::new(Mutex::new(ResidentCompressionState::Image(state)))),
+            outer_randomness: Arc::new(outer_randomness),
             exporters,
         })
     }
@@ -984,12 +1022,13 @@ impl<F: Field, S> CommitmentExecutionOutput<F, S> {
         policy: &impl CommitmentStatePolicy<F, State = S>,
         exporters: CommitmentStateExporters<F>,
     ) -> Result<Self, AkitaError> {
-        let (image, compression) = output.into_parts();
+        let (image, compression, outer_randomness) = output.into_parts();
         let (terminal_payload, compression) = compression.into_parts();
         let components = CommitmentStateComponents::new(
             CommitmentExecutionMode::Full,
             image,
             Some(compression),
+            outer_randomness,
             exporters,
         )?;
         let prover_state = policy.bind(components)?;
@@ -1004,11 +1043,12 @@ impl<F: Field, S> CommitmentExecutionOutput<F, S> {
         policy: &impl CommitmentStatePolicy<F, State = S>,
         exporters: CommitmentStateExporters<F>,
     ) -> Result<Self, AkitaError> {
-        let (image, terminal_payload) = output.into_parts();
+        let (image, terminal_payload, outer_randomness) = output.into_parts();
         let components = CommitmentStateComponents::new(
             CommitmentExecutionMode::Uncompressed,
             image,
             None,
+            outer_randomness,
             exporters,
         )?;
         let prover_state = policy.bind(components)?;
@@ -1040,8 +1080,9 @@ impl<F: Field, S> CommitmentExecutionOutput<F, S> {
 mod tests {
     use super::*;
     use crate::commitment::StateOwnerCapability;
-    use akita_types::{AkitaSetupDescriptor, PublicMatrixSeed};
+    use akita_types::AkitaSetupDescriptor;
     use jolt_algebra::Prime64Offset59;
+    use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 
     type F = Prime64Offset59;
 
@@ -1074,7 +1115,7 @@ mod tests {
                 max_num_vars: 8,
                 max_num_batched_polys: 1,
                 num_field_elements: 64,
-                setup_seed: PublicMatrixSeed::shake256_paged_v1([7; 32]),
+                setup_seed: AkitaSetupSeed::shake256_paged_v1([7; 32]),
             },
             plan,
             1,
@@ -1089,6 +1130,7 @@ mod tests {
             mode: CommitmentExecutionMode::InnerOnly,
             inner: Arc::new(Mutex::new(ResidentInnerState::Image(image))),
             compression: None,
+            outer_randomness: Arc::new(Zeroizing::new(Vec::new())),
             exporters: CommitmentStateExporters {
                 inner: Some(Arc::new(FailingInnerExport)),
                 compression: None,

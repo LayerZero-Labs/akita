@@ -25,10 +25,19 @@ pub(super) fn base_tile_width<W: PrimeWidth, const K: usize, const D: usize>(
 /// parallelism and reconstructed once. Otherwise columns are partitioned into
 /// `chunk_width` chunks, each reconstructed independently and summed in the
 /// native field. `accumulate` adds the products for column range
-/// `[start, end)` into the per-block CRT accumulators; it is the only
-/// kernel-specific piece.
+/// `[start, end)` into the per-block CRT accumulators, and `finalize`
+/// reconstructs one accumulator to a ring.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn drive_block_chunked_matvec<F, W, const K: usize, const D: usize, Scratch, Init, Acc>(
+pub(super) fn drive_block_chunked_matvec<
+    F,
+    W,
+    const K: usize,
+    const D: usize,
+    Scratch,
+    Init,
+    Acc,
+    Fin,
+>(
     num_live_blocks: usize,
     n_a: usize,
     inner_width: usize,
@@ -38,6 +47,7 @@ pub(super) fn drive_block_chunked_matvec<F, W, const K: usize, const D: usize, S
     params: &CrtNttParamSet<W, K, D>,
     scratch: Init,
     accumulate: Acc,
+    finalize: Fin,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -51,6 +61,7 @@ where
             usize,
         ) -> Result<(), AkitaError>
         + Sync,
+    Fin: Fn(&CyclotomicCrtNtt<W, K, D>, &CrtNttParamSet<W, K, D>) -> CyclotomicRing<F, D> + Sync,
 {
     if inner_width <= safe_width {
         let num_tiles = inner_width.div_ceil(tile_width);
@@ -79,7 +90,7 @@ where
             .map(|row_accs| {
                 row_accs
                     .into_iter()
-                    .map(|acc| acc.to_ring(params))
+                    .map(|acc| finalize(&acc, params))
                     .collect()
             })
             .collect());
@@ -102,7 +113,7 @@ where
             accumulate(&mut accs, &mut scratch, tile_start, tile_end)?;
             for (out_block, acc_block) in out.iter_mut().zip(&accs) {
                 for (dst, acc) in out_block.iter_mut().zip(acc_block) {
-                    *dst += acc.to_ring(params);
+                    *dst += finalize(acc, params);
                 }
             }
             Ok::<_, AkitaError>((out, accs, scratch))

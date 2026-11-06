@@ -44,10 +44,10 @@ fn profile(slices: CommitmentSliceCount) -> GroupCommitPhaseParams {
     .unwrap();
     let profile = GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
+        randomness_columns: 0,
         group: PolynomialGroupLayout::singleton(10),
         blocks: BlockGeometry::new(8, 2, 4),
         outer_slice_count: slices,
-        randomness_columns: 0,
         inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
         outer: RoleParams::new(GadgetDigits::new(3, 43), outer),
     };
@@ -117,6 +117,7 @@ fn mixed_preimage_uses_canonical_multi_block_b_slices() {
             .execute_full_via_outer_image(
                 &backend,
                 profile,
+                None,
                 &source.storage.commitment_sources(),
                 None,
             )
