@@ -14,6 +14,8 @@
 
 The 64-bit migration is specified in
 [binary-source-p64-root.md](binary-source-p64-root.md).
+Several binary and ordinary groups in one opening are specified in
+[binary-source-multigroup.md](binary-source-multigroup.md).
 
 A binary source is a commitment-group kind in the canonical grouped PCS. The
 caller commits, supplies an optional binary word claim over GF(2^128) and/or
