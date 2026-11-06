@@ -141,16 +141,37 @@ where
         let [f_stage, h_stage] = witness.stages() else {
             return Err(AkitaError::InvalidProof);
         };
-        let f = f_stage
-            .expand_rows::<32>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        let h = h_stage
-            .expand_rows::<16>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let (f, h) = match compression.field_bits() {
+            128 => (
+                f_stage
+                    .expand_rows::<32>()?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>(),
+                h_stage
+                    .expand_rows::<16>()?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>(),
+            ),
+            64 => (
+                f_stage
+                    .expand_rows::<64>()?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>(),
+                h_stage
+                    .expand_rows::<32>()?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>(),
+            ),
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "unsupported mixed compression field".into(),
+                ))
+            }
+        };
         if f.len() != f_stage.map().padded_digit_count()
             || h.len() != h_stage.map().padded_digit_count()
         {
@@ -189,7 +210,7 @@ fn source_digits<F: Field + CanonicalEncoding>(
         .map_err(|_| AkitaError::InvalidProof)?;
     bits.try_reserve_exact(bit_count)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let modulus = akita_params::binary_setup::BINARY_SETUP_P;
+    let modulus = akita_params::field_modulus::<F>()?;
     let offset = plan.source_width().map_or(4, |width| width.offset());
     let params = BalancedDecomposePow2Params::<F>::new(digits, 3);
     let ring_digits = checked::product([degree, digits]).ok_or(AkitaError::InvalidProof)?;

@@ -1,6 +1,6 @@
 //! Optional scalar views in the outgoing witness and their compact D layout.
 
-use super::{binary_scalar_geometry, BinaryRootWitnessPlan, PRIME_PLANE_DIGITS};
+use super::{binary_scalar_geometry, BinaryRootWitnessPlan};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_error::{checked, AkitaError};
 
@@ -27,7 +27,7 @@ impl BinaryRootWitnessPlan {
                 geometry: binary_scalar_geometry()?,
                 elements: checked::product([planes, self.descriptor().index_map().columns()])
                     .ok_or(AkitaError::InvalidProof)?,
-                digits: PRIME_PLANE_DIGITS,
+                digits: self.field_profile().prime_plane_digits(),
             });
         }
         self.repacking =

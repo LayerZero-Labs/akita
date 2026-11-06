@@ -234,7 +234,8 @@ impl BinaryTypedPrefix {
         Self::from_plan(manifest, &plan)
     }
 
-    pub(crate) fn from_plan(
+    /// Compile the typed setup layout from the selected common witness plan.
+    pub fn from_plan(
         manifest: &BinaryCommittedGroupManifest,
         plan: &BinaryRootWitnessPlan,
     ) -> Result<Self, AkitaError> {
@@ -245,11 +246,6 @@ impl BinaryTypedPrefix {
         {
             return Err(AkitaError::InvalidInput(
                 "typed prefix manifest mismatch".into(),
-            ));
-        }
-        if manifest.field_profile() == BinaryFieldProfile::P64 && plan.prime_planes != 0 {
-            return Err(AkitaError::UnsupportedSchedule(
-                "p64 typed prime planes are not yet supported".into(),
             ));
         }
         let a = BinaryAPrefixLen::new(manifest.descriptor().index_map(), manifest.a_rank())?;

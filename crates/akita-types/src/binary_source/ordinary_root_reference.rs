@@ -6,13 +6,12 @@
 
 use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::BINARY_SETUP_P;
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
+use jolt_field::Field;
 
 use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
-use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
+use crate::AkitaSetupDescriptor;
 
 impl OrdinaryNativeRootPlan {
     /// Flat reference for [`OrdinaryNativeRootPlan::linear_weights`].
@@ -32,7 +31,7 @@ impl OrdinaryNativeRootPlan {
             || point.len() != self.profile.group.num_vars()
             || batches.len() != self.linear_batch_count
             || payload.len() != self.compression.terminal_coefficients()
-            || E::from_u128(BINARY_SETUP_P) != E::zero()
+            || E::from_u128(self.profile.inner.matrix.sis_modulus_profile().modulus()) != E::zero()
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -66,8 +65,8 @@ impl OrdinaryNativeRootPlan {
                 "mixed root exceeds the admitted setup prefix".into(),
             ));
         }
-        let matrix = derive_public_matrix_prefix::<Prime128Offset275>(required, &setup.setup_seed);
-        let matrix = matrix.as_field_slice();
+        let matrix = self.setup_coefficients::<E>(required, setup)?;
+        let matrix = matrix.as_slice();
         let source_coefficients = checked::product([
             self.segments
                 .first()
@@ -273,6 +272,7 @@ impl OrdinaryNativeRootPlan {
                         first.input_coefficients(),
                         image_coefficient,
                         power,
+                        self.compression.field_bits(),
                     )?;
                     power *= alpha;
                 }
@@ -306,6 +306,7 @@ impl OrdinaryNativeRootPlan {
                         second.input_coefficients(),
                         coefficient,
                         power,
+                        self.compression.field_bits(),
                     )?;
                     power *= alpha;
                 }
@@ -384,7 +385,7 @@ impl OrdinaryNativeRootPlan {
 /// Entry `(row, column)` is the degree-`degree` ring at flat offset
 /// `(row * width + column) * degree` of the ordinary setup prefix.
 struct KernelCache<'a, E: Field> {
-    matrix: &'a [Prime128Offset275],
+    matrix: &'a [E],
     width: usize,
     degree: usize,
     point: ResidueKernelPoint<E>,
@@ -393,7 +394,7 @@ struct KernelCache<'a, E: Field> {
 
 impl<'a, E: Field> KernelCache<'a, E> {
     fn new(
-        matrix: &'a [Prime128Offset275],
+        matrix: &'a [E],
         rows: usize,
         width: usize,
         degree: usize,
@@ -430,14 +431,7 @@ impl<'a, E: Field> KernelCache<'a, E> {
                 .matrix
                 .get(range)
                 .ok_or(AkitaError::InvalidProof)?
-                .iter()
-                .map(|coefficient| {
-                    coefficient
-                        .to_u128_checked()
-                        .map(E::from_u128)
-                        .ok_or(AkitaError::InvalidProof)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                .to_vec();
             let mut weights = vec![E::zero(); self.degree];
             self.point.field_kernel_into(&coefficients, &mut weights)?;
             *slot = Some(weights);
@@ -455,12 +449,13 @@ fn scatter_negative_recomposition<E: Field>(
     image_coefficients: usize,
     coefficient: usize,
     scale: E,
+    bits: usize,
 ) -> Result<(), AkitaError> {
     if coefficient >= image_coefficients {
         return Err(AkitaError::InvalidProof);
     }
     let mut power = scale;
-    for bit in 0..128 {
+    for bit in 0..bits {
         let compact = checked::mul_add(bit, image_coefficients, coefficient)
             .ok_or(AkitaError::InvalidProof)?;
         terms.push((
@@ -687,5 +682,95 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod p64_tests {
+    use super::*;
+    use crate::binary_source::binary_ordinary_profile_fixture;
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
+    type E = Ext2<F>;
+
+    #[test]
+    fn p64_mixed_ordinary_structured_matches_the_flat_reference() {
+        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
+        let plan = OrdinaryNativeRootPlan::new(profile, 0).unwrap();
+        let compression = profile.outer_compression_plan().unwrap();
+        assert_eq!(compression.field_bits(), 64);
+        assert_eq!(compression.terminal_coefficients(), 32);
+        assert_eq!(
+            plan.segments()[2].geometry.polynomial_modulus_dimension(),
+            64
+        );
+        assert_eq!(
+            plan.segments()[3].geometry.polynomial_modulus_dimension(),
+            32
+        );
+        let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
+        assert_eq!(
+            plan.segments()
+                .iter()
+                .map(|shape| shape.elements
+                    * shape.digits
+                    * shape.geometry.polynomial_modulus_dimension())
+                .collect::<Vec<_>>(),
+            vec![1024, 11_264, 8192, 4096]
+        );
+        assert_eq!(plan.linear_batch_count(), 9);
+        assert_eq!(
+            plan.negative_binary_addresses(&repacking).unwrap().len(),
+            12_288
+        );
+        assert_eq!(compression.unpacked_witness_bytes().unwrap(), 12_288);
+        assert_eq!(
+            compression.field_bytes() * compression.terminal_coefficients(),
+            256
+        );
+        let setup = AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+            setup_seed: [41; 32].into(),
+        };
+        let ext = |i: usize| E::from_base_fn(|c| F::from_u64((17 + i * 31 + c * 43) as u64));
+        let point = (0..profile.group.num_vars()).map(ext).collect::<Vec<_>>();
+        let payload = (0..compression.terminal_coefficients())
+            .map(ext)
+            .collect::<Vec<_>>();
+        let batches = (0..plan.linear_batch_count()).map(ext).collect::<Vec<_>>();
+        let structured = plan
+            .linear_weights(
+                &repacking,
+                &setup,
+                &point,
+                &[ext(300)],
+                &payload,
+                ext(400),
+                &batches,
+            )
+            .unwrap();
+        let flat = plan
+            .reference_linear_weights(
+                &repacking,
+                &setup,
+                &point,
+                &[ext(300)],
+                &payload,
+                ext(400),
+                &batches,
+            )
+            .unwrap();
+        assert_eq!(structured.claim(), flat.claim());
+        let mut dense = vec![E::zero(); repacking.domain_len()];
+        for &(address, weight) in flat.terms() {
+            dense[address] += weight;
+        }
+        assert_eq!(structured.materialize().unwrap(), dense);
+        let r = (0..repacking.domain_len().trailing_zeros())
+            .map(|i| ext(500 + i as usize))
+            .collect::<Vec<_>>();
+        assert_eq!(structured.evaluate(&r).unwrap(), flat.evaluate(&r).unwrap());
     }
 }

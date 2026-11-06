@@ -41,6 +41,11 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
             } = &group.kind
             {
                 prime.validate(manifest.descriptor())?;
+                if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
+                    return Err(akita_error::AkitaError::InvalidInput(
+                        "prime plane profile mismatch".into(),
+                    ));
+                }
                 let Some(claim) = claim else {
                     if prime.planes().is_empty() {
                         return Err(akita_error::AkitaError::InvalidInput(

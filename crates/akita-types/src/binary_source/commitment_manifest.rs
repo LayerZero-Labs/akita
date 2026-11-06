@@ -111,10 +111,7 @@ impl BinaryCommittedGroupManifest {
                 "invalid binary D selection".into(),
             ));
         }
-        let digits = match self.field_profile {
-            BinaryFieldProfile::P128 => 43,
-            BinaryFieldProfile::P64 => 22,
-        };
+        let digits = self.field_profile.prime_plane_digits();
         let lanes = checked::sum([
             checked::product([planes, digits]).ok_or(AkitaError::InvalidProof)?,
             if word {

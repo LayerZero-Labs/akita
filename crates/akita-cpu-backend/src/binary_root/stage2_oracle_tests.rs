@@ -310,7 +310,7 @@ mod p64 {
             &natural[2],
         )
         .unwrap();
-        crate::opaque::sumcheck::stage3::p64_root_transcript_tests::word_root_round_trip(
+        crate::opaque::sumcheck::stage3::p64_root_transcript_tests::root_round_trip(
             &manifest,
             &public,
             &matrix,
@@ -318,6 +318,8 @@ mod p64 {
             &witness,
             &b,
             &d,
+            None,
+            None,
         );
         let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
         let batches = (0..public.batch_count()).map(extension).collect::<Vec<_>>();

@@ -3,6 +3,8 @@ mod admission;
 mod backend;
 #[cfg(feature = "labinius-trinomial")]
 mod binary_ordinary;
+#[cfg(all(test, feature = "labinius-trinomial"))]
+pub(crate) mod binary_ordinary_p64_fixture;
 #[cfg(feature = "labinius-trinomial")]
 #[path = "../binary_root/sessions.rs"]
 mod binary_root_sessions;

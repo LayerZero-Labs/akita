@@ -818,3 +818,93 @@ fn multiple_owner_catalog(
     }
     panic!("no fixture schedule holds the multi-polynomial binary root");
 }
+
+#[test]
+fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
+    use akita_algebra::eq_poly::EqPolynomial;
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{
+        binary_word_manifest_fixture, BinaryAProduct, BinaryAReadGuard, BinaryRootWitnessPlan,
+    };
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    type E = Ext2<Base>;
+    let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
+    for word in [false, true] {
+        let plan = BinaryRootWitnessPlan::for_profile(
+            manifest.descriptor(),
+            3,
+            64,
+            BinaryFieldProfile::P64,
+            word,
+            1,
+        )
+        .unwrap();
+        let typed = BinaryTypedPrefix::from_plan(&manifest, &plan).unwrap();
+        let extension =
+            |i: usize| E::from_base_fn(|c| Base::from_u64((17 + i * 31 + c * 43) as u64));
+        let stage2 = (0..plan.repacking().domain_len().trailing_zeros())
+            .map(|i| extension(i as usize))
+            .collect::<Vec<_>>();
+        let rho = (0..3)
+            .map(|r| std::array::from_fn(|k| extension(r * 648 + k)))
+            .collect::<Vec<_>>();
+        let a = BinaryAProduct::new(&plan, &rho, &stage2, typed.domain_len).unwrap();
+        let batches = [
+            vec![extension(3000); manifest.b_rows()],
+            vec![extension(4000); manifest.d_label(word, 1).unwrap().rank as usize],
+        ];
+        let refs = [&batches[0][..], &batches[1][..]];
+        let weights = typed
+            .prover_weights(&a, &stage2, extension(5000), refs, typed.domain_len)
+            .unwrap();
+        let setup = typed
+            .setup_coefficients::<Base>(&[41; 32], &manifest, typed.domain_len)
+            .unwrap();
+        let point = (0..typed.domain_len.trailing_zeros())
+            .map(|i| extension(6000 + i as usize))
+            .collect::<Vec<_>>();
+        let eq = EqPolynomial::evals(&point).unwrap();
+        let value = setup
+            .iter()
+            .zip(&eq)
+            .fold(E::zero(), |sum, (&v, &eq)| sum + E::lift_base(v) * eq);
+        assert_ne!(value.base_coefficient(1), Base::zero());
+        let expected = weights
+            .iter()
+            .zip(eq)
+            .fold(E::zero(), |sum, (&v, eq)| sum + v * eq);
+        let guard = BinaryAReadGuard::forbid();
+        let actual = a.evaluate(&point).unwrap()
+            + typed
+                .digit_weight(&point, &stage2, extension(5000), refs)
+                .unwrap();
+        assert_eq!(actual, expected);
+        drop(guard);
+    }
+    let base_claim = PrimeGroupClaim {
+        point: vec![2; 11],
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: 3,
+        }],
+    };
+    let prime = PrimePlaneManifest::with_field_profile(
+        manifest.descriptor(),
+        Some(base_claim),
+        BinaryFieldProfile::P64,
+    )
+    .unwrap();
+    let mut channel = new_prover_channel(b"p64-prime-public-admission");
+    assert!(matches!(
+        binary_root_statement::<Base, E, _>(
+            &mut channel,
+            &manifest,
+            None,
+            &prime,
+            &vec![Base::zero(); manifest.payload_coefficients().unwrap()],
+            None
+        ),
+        Err(AkitaError::UnsupportedSchedule(_))
+    ));
+    assert!(channel.narg_string().is_empty());
+}

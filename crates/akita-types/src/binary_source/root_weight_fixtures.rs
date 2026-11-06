@@ -91,7 +91,7 @@ impl Stream {
 }
 
 /// One small ordinary group with real audited table cells.
-fn ordinary_profile(field: BinaryFieldProfile) -> GroupCommitPhaseParams {
+pub fn binary_ordinary_profile_fixture(field: BinaryFieldProfile) -> GroupCommitPhaseParams {
     let (modulus, digits) = match field {
         BinaryFieldProfile::P128 => (SisModulusProfileId::Q128Offset275, 43),
         BinaryFieldProfile::P64 => (SisModulusProfileId::Q64Offset59, 22),
@@ -168,7 +168,7 @@ fn public(
     let manifest = BinaryCommittedGroupManifest::new(
         descriptor.clone(),
         0,
-        &ordinary_profile(BinaryFieldProfile::P128),
+        &binary_ordinary_profile_fixture(BinaryFieldProfile::P128),
     )
     .expect("fixture manifest");
     let rows = descriptor.index_map().padded_carriers() / descriptor.index_map().columns();
@@ -205,7 +205,7 @@ fn public(
     };
     let ordinary = shape
         .mixed
-        .then(|| ordinary_profile(BinaryFieldProfile::P128));
+        .then(|| binary_ordinary_profile_fixture(BinaryFieldProfile::P128));
     let build = |logical_len| {
         BinaryRootPublic::new(
             &manifest,
@@ -271,7 +271,7 @@ fn compile(shape: Shape, seed: u64) -> RootWeightFixture {
     let projected: [i128; 7] = std::array::from_fn(|_| i128::from(stream.next() as i64));
     let commitment = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
     let d_payload = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
-    let ordinary = ordinary_profile(BinaryFieldProfile::P128);
+    let ordinary = binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
     let ordinary_point = (0..ordinary.group.num_vars())
         .map(|_| stream.field())
         .collect::<Vec<_>>();
@@ -430,6 +430,11 @@ pub fn binary_word_manifest_fixture(
         profiles,
     )
     .expect("fixture descriptor");
-    BinaryCommittedGroupManifest::with_field_profile(descriptor, 0, &ordinary_profile(field), field)
-        .expect("fixture manifest")
+    BinaryCommittedGroupManifest::with_field_profile(
+        descriptor,
+        0,
+        &binary_ordinary_profile_fixture(field),
+        field,
+    )
+    .expect("fixture manifest")
 }

@@ -258,3 +258,6 @@ fn mixed_root_scalar_relation_rejects_each_segment_and_padding_mutation() {
     input.images[0][0] = Q24Image::from_centered(original + 1).unwrap();
     assert!(build(&input).is_err());
 }
+
+#[path = "binary_root_mixed_tests/p64.rs"]
+mod p64;

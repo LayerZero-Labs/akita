@@ -19,6 +19,13 @@ pub struct SourceAgreementBinding {
 /// the base prime, linked to this exact binding. Returning a matching binding
 /// without verifying that statement does not establish agreement. Akita supplies
 /// no implementation, proof checker, boolean flag, or application reduction.
+///
+/// For P64 the coefficient lift is exact since `2*Gamma + Delta = 4279 < p`.
+/// Its prime-unit argument uses `ord_243(p) = 162`: `Phi_243` is irreducible
+/// over F_p, so every nonzero challenge difference of degree below 162 is a
+/// unit. Its coefficients have magnitude at most two and remain nonzero mod p.
+/// The inverse survives scalar extension to E64. P128 retains the norm
+/// argument using `ord_243(P) = 6` and `P^6 > 276^81`.
 pub trait SourceAgreementProof {
     fn binding(&self) -> &SourceAgreementBinding;
 }

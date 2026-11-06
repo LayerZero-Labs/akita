@@ -1,4 +1,4 @@
-//! Word-root replay through Stage 3, below production catalog admission.
+//! Selected-root replay through Stage 3, below production catalog admission.
 use super::product_table::{SetupProductSource, SetupProductSumcheck};
 use super::UnivariatePoly;
 use crate::opaque::sumcheck::digit_range::{DigitRangeProver, DigitRangeSession};
@@ -53,7 +53,7 @@ impl SumcheckKernel<E> for RelationRounds<'_> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn word_root_round_trip(
+pub(crate) fn root_round_trip(
     manifest: &BinaryCommittedGroupManifest,
     public: &BinaryRootPublic,
     matrix: &[Vec<[i128; 648]>],
@@ -61,9 +61,11 @@ pub(crate) fn word_root_round_trip(
     witness: &[i8],
     b: &[F],
     d: &[F],
+    ordinary: Option<(&[E], E, &[E])>,
+    false_public: Option<&BinaryRootPublic>,
 ) {
     let variables = public.plan().repacking().domain_len().trailing_zeros() as usize;
-    let typed = BinaryTypedPrefix::new(manifest, true, 0, 64).unwrap();
+    let typed = BinaryTypedPrefix::from_plan(manifest, public.plan()).unwrap();
     let setup = typed
         .setup_coefficients::<F>(&[41; 32], manifest, typed.domain_len)
         .unwrap();
@@ -154,10 +156,9 @@ pub(crate) fn word_root_round_trip(
             &[],
             &lift(b),
             &lift(d),
-            None,
+            ordinary,
             Some(BinaryAOperand::new::<F>(matrix)),
         )?;
-        assert!(negative.is_empty());
         let claim = weights.claim();
         let domain = FlatBooleanDomain::new(witness.len(), variables)?;
         let mut range = DigitRangeSession::new(
@@ -223,7 +224,8 @@ pub(crate) fn word_root_round_trip(
             &stage1_point,
             image,
             gamma,
-        )?;
+        )?
+        .with_negative_binary_weights(negative)?;
         let (point, _) = akita_sumcheck::prove_sumcheck::<F, E, _, _>(
             &mut RelationRounds(&mut relation),
             &mut GrindingSumcheckProver::<F, E>::new(&mut grinding, SumcheckProtocol::Stage2, 0, 0),
@@ -260,7 +262,10 @@ pub(crate) fn word_root_round_trip(
             claim_offset,
         ))
     };
-    let verify = |proof: &[u8], committed_witness: &[i8]| -> Result<(), AkitaError> {
+    let verify = |proof: &[u8],
+                  committed_witness: &[i8],
+                  public: &BinaryRootPublic|
+     -> Result<(), AkitaError> {
         let _guard = BinaryAReadGuard::forbid();
         let mut channel = akita_transcript::new_verifier_channel(b"binary-p64-word-stages", proof);
         let mut grinding = VerifierGrinding::new(&mut channel, &plan);
@@ -278,10 +283,9 @@ pub(crate) fn word_root_round_trip(
             &[],
             &lift(b),
             &lift(d),
-            None,
+            ordinary,
             None,
         )?;
-        assert!(negative.is_empty());
         let range = akita_sumcheck::verify_eq_factored_sumcheck_rounds::<F, E, _>(
             &tau,
             E::zero(),
@@ -350,7 +354,12 @@ pub(crate) fn word_root_round_trip(
         if product.output_claim != value * weight {
             return Err(AkitaError::InvalidProof);
         }
+        let eq = EqPolynomial::evals(&relation.challenges)?;
+        let negative = negative.iter().fold(E::zero(), |sum, &(address, weight)| {
+            sum + eq[address] * weight
+        });
         let expected = (weights.evaluate(&relation.challenges)? + claim) * w
+            + negative * w * (w + E::one())
             + gamma
                 * EqPolynomial::mle(&range.challenges, &relation.challenges)?
                 * w
@@ -371,41 +380,54 @@ pub(crate) fn word_root_round_trip(
         Ok(())
     };
     let (proof, stage1_offset, claim_offset) = prove(witness).unwrap();
-    verify(&proof, witness).unwrap();
+    verify(&proof, witness, public).unwrap();
     // A changed K digit still satisfies Stage 1's range check, but cannot
     // satisfy the compiled integer relation. Debug builds check it at
     // construction; release builds check the folded terminal oracle.
-    let mut changed = witness.to_vec();
-    let k = public.plan().quotient_segment().unwrap();
-    let address = public
-        .plan()
-        .repacking()
-        .coefficient_address(k, 0, 0, 0)
-        .unwrap();
-    changed[address] = if changed[address] == 3 {
-        2
-    } else {
-        changed[address] + 1
-    };
-    let error = prove(&changed).expect_err("changed K must not produce a root proof");
-    if cfg!(debug_assertions) {
-        assert!(matches!(error, AkitaError::Internal(message)
+    for k in [
+        public.plan().quotient_segment(),
+        public.plan().prime_segment(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut changed = witness.to_vec();
+        let address = public
+            .plan()
+            .repacking()
+            .coefficient_address(k, 0, 0, 0)
+            .unwrap();
+        changed[address] = if changed[address] == 3 {
+            2
+        } else {
+            changed[address] + 1
+        };
+        let error = prove(&changed).expect_err("changed K must not produce a root proof");
+        if cfg!(debug_assertions) {
+            assert!(matches!(error, AkitaError::Internal(message)
             if message == "materialized relation weights do not match the combined relation claim"));
-    } else {
-        assert!(matches!(error, AkitaError::InvalidInput(message)
+        } else {
+            assert!(matches!(error, AkitaError::InvalidInput(message)
             if message == "relation session final claim disagrees with its folded oracle"));
+        }
+        assert!(matches!(
+            verify(&proof, &changed, public),
+            Err(AkitaError::InvalidProof)
+        ));
     }
-    assert!(matches!(
-        verify(&proof, &changed),
-        Err(AkitaError::InvalidProof)
-    ));
+    if let Some(false_public) = false_public {
+        assert!(matches!(
+            verify(&proof, witness, false_public),
+            Err(AkitaError::InvalidProof)
+        ));
+    }
     // Stage 1 body, Stage 3 product claim and successor endpoint. Replay
     // must reject changes to either coordinate at each boundary.
     for offset in [stage1_offset, claim_offset, proof.len() - 16] {
         for coordinate in [0, 8] {
             let mut changed = proof.clone();
             changed[offset + coordinate] ^= 1;
-            assert!(verify(&changed, witness).is_err());
+            assert!(verify(&changed, witness, public).is_err());
         }
     }
 }

@@ -170,6 +170,18 @@ impl BinaryRootWitnessPlan {
         let first = self
             .quotient_segment()
             .unwrap_or(self.repacking.segments().len());
+        if ordinary
+            .profile()
+            .inner
+            .matrix
+            .sis_modulus_profile()
+            .modulus()
+            != self.field_profile.modulus()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "mixed root field profile mismatch".into(),
+            ));
+        }
         if ordinary.first_segment != first {
             return Err(AkitaError::InvalidProof);
         }

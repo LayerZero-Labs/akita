@@ -3,12 +3,10 @@
 use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
-use akita_params::{binary_setup::BINARY_SETUP_P, RelationPolynomial};
+use akita_params::RelationPolynomial;
 use jolt_field::Field;
 
-use super::{
-    binary_scalar_challenges, BinarySourceDescriptor, PrimePlaneManifest, PRIME_PLANE_DIGITS,
-};
+use super::{binary_scalar_challenges, BinarySourceDescriptor, PrimePlaneManifest};
 use crate::native_root_relation::{
     weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
 };
@@ -20,7 +18,7 @@ use crate::root_repacking::RootCoefficientRepacking;
 /// The first checks `sum e_r V_r - sum c_b EP_b = 0` at `alpha`, with the
 /// complete four-digit response and the signed packing undone. The second
 /// checks `sum col_b <omega, EP_b> = value`. Plane elements are ordered by
-/// polynomial order, then column; their coefficients have 43 digits.
+/// polynomial order, then column; their coefficients use the selected base-coordinate digit depth.
 #[allow(clippy::too_many_arguments)]
 pub fn prime_plane_relation_weights<E: Field>(
     descriptor: &BinarySourceDescriptor,
@@ -33,7 +31,7 @@ pub fn prime_plane_relation_weights<E: Field>(
     batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
     manifest.validate(descriptor)?;
-    if E::from_u128(BINARY_SETUP_P) != E::zero()
+    if E::from_u128(manifest.field_profile().modulus()) != E::zero()
         || batches.len()
             != checked::product([manifest.planes().len(), 2]).ok_or(AkitaError::InvalidProof)?
     {
@@ -53,7 +51,7 @@ pub fn prime_plane_relation_weights<E: Field>(
         (
             plane_segment,
             checked::product([manifest.planes().len(), columns]),
-            PRIME_PLANE_DIGITS,
+            manifest.field_profile().prime_plane_digits(),
             RelationPolynomial::plus_trinomial(162)?,
         ),
     ] {
@@ -216,7 +214,7 @@ impl<E: Field> PrimePlaneWeights<E> {
                 .map_err(|error| AkitaError::Internal(error.to_string()))?;
             kernels.push(kernel);
         }
-        let mut digit_powers = [E::zero(); PRIME_PLANE_DIGITS];
+        let mut digit_powers = vec![E::zero(); self.plane_lanes.digits()];
         let mut power = E::one();
         for slot in &mut digit_powers {
             *slot = power;
