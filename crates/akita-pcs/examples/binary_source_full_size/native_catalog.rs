@@ -314,7 +314,7 @@ mod tests {
             .check(&CatalogIdentity::new(22, "binary-claim"))
             .is_ok());
         assert!(word
-            .check(&CatalogIdentity::new(22, "five-prime-claims"))
+            .check(&CatalogIdentity::new(22, "binary-and-prime-claims"))
             .is_err());
         assert!(word
             .check(&CatalogIdentity::new(23, "binary-claim"))

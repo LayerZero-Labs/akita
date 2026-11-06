@@ -49,7 +49,7 @@ pub fn price_binary_root_planes(
     ordinary: Option<GroupCommitPhaseParams>,
 ) -> Result<BinaryPrimePlanePrice, AkitaError> {
     manifest.validate()?;
-    PrimePlaneManifest::new(manifest.descriptor(), prime.planes())?;
+    prime.validate(manifest.descriptor())?;
     let mut plan = BinaryRootWitnessPlan::new(
         manifest.descriptor(),
         manifest.a_rank(),
@@ -128,7 +128,9 @@ mod tests {
     use super::*;
     use akita_challenges::FoldChallengeDistribution;
     use akita_params::{CommittedGroupParams, PolynomialGroupLayout};
-    use akita_types::binary_source::{BinaryIndexMap, BinarySourceDescriptor, PrimePlaneClaim};
+    use akita_types::binary_source::{
+        BinaryIndexMap, BinarySourceDescriptor, PrimeGroupClaim, PrimePlaneClaim,
+    };
 
     fn manifest(
         carrier_bits: usize,
@@ -172,24 +174,25 @@ mod tests {
             + 8;
         PrimePlaneManifest::new(
             manifest.descriptor(),
-            &(0..planes)
-                .map(|x| PrimePlaneClaim {
-                    polynomial: x % manifest.descriptor().polynomials().len(),
-                    point: vec![x as u128; arity],
-                    tensor_component: 0,
-                    value: 0,
-                })
-                .collect::<Vec<_>>(),
+            (planes > 0).then(|| PrimeGroupClaim {
+                point: vec![2; arity],
+                evaluations: (0..planes)
+                    .map(|polynomial| PrimePlaneClaim {
+                        polynomial,
+                        value: 0,
+                    })
+                    .collect(),
+            }),
         )
         .unwrap()
     }
 
     #[test]
     fn prime_plane_small_fixture_prices_every_plane() {
-        let manifest = manifest(3, 2, 1);
         for (planes, expected_cells, expected_d) in
-            [(1, 79616, 223), (2, 101632, 441), (5, 167680, 1094)]
+            [(1, 79616, 223), (2, 159232, 446), (5, 398080, 1114)]
         {
+            let manifest = manifest(3, 2, planes);
             let price =
                 price_binary_root_planes(&manifest, true, &prime(&manifest, planes), 64, None)
                     .unwrap();
@@ -202,10 +205,11 @@ mod tests {
 
     #[test]
     fn prime_plane_maximum_admission_inputs_at_large_geometries() {
+        let mut typed_lengths = Vec::new();
         for bits in [22, 23] {
-            let manifest = manifest(bits, 256, 1);
             for word in [false, true] {
                 for planes in [1, 2, 5] {
+                    let manifest = manifest(bits, 256, planes);
                     let price = price_binary_root_planes(
                         &manifest,
                         word,
@@ -215,34 +219,34 @@ mod tests {
                     )
                     .unwrap();
                     let base = if bits == 22 { 23138048 } else { 39915264 };
-                    let expected = base + planes * 2818048 - if word { 0 } else { 69376 };
+                    let expected = planes * (base + 2818048 - if word { 0 } else { 69376 });
                     assert_eq!(price.outgoing_physical_cells, expected);
-                    assert_eq!(price.d_columns, planes * 27864 + if word { 648 } else { 0 });
+                    assert_eq!(
+                        price.d_columns,
+                        planes * (27864 + if word { 648 } else { 0 })
+                    );
                     assert_eq!(price.outgoing_domain_len, expected.next_power_of_two());
-                    // B/D copies fill the A tensor's zero padding first. At
-                    // 2^23 up to two planes fit, leaving the A-only 2^25.
-                    let typed = match (bits, word, planes) {
-                        (22, false, 1) => 20179968,
-                        (22, false, 2) => 23746560,
-                        (22, false, _) => 34446336,
-                        (22, true, 1) => 20262912,
-                        (22, true, 2) => 23829504,
-                        (22, true, _) => 34529280,
-                        (_, false, 5) => 43097088,
-                        (_, true, 5) => 43180032,
-                        _ => 33554432,
-                    };
-                    assert_eq!(price.typed_prefix.natural_len, typed);
-                    assert_eq!(price.typed_prefix.domain_len, typed.next_power_of_two());
+                    typed_lengths.push(price.typed_prefix.natural_len);
+                    assert_eq!(
+                        price.typed_prefix.domain_len,
+                        price.typed_prefix.natural_len.next_power_of_two()
+                    );
                     println!("prime_plane n={bits} word={word} planes={planes}: {price:?}");
                 }
             }
         }
+        assert_eq!(
+            typed_lengths,
+            vec![
+                20179968, 31709184, 66296832, 20262912, 31875072, 66711552, 33554432, 40359936,
+                74947584, 33554432, 40525824, 75362304,
+            ]
+        );
     }
 
     #[test]
-    fn prime_plane_polynomials_share_the_group_cap() {
-        let manifest = manifest(3, 2, 2);
+    fn prime_planes_are_bounded_by_the_polynomial_manifest() {
+        let manifest = manifest(3, 2, 5);
         let price =
             price_binary_root_planes(&manifest, false, &prime(&manifest, 5), 64, None).unwrap();
         assert_eq!(price.planes, 5);

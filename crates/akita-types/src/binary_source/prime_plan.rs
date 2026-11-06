@@ -1,6 +1,6 @@
 //! Optional scalar views in the outgoing witness and their compact D layout.
 
-use super::{binary_scalar_geometry, BinaryRootWitnessPlan, PRIME_PLANE_DIGITS, PRIME_POINT_CAP};
+use super::{binary_scalar_geometry, BinaryRootWitnessPlan, PRIME_PLANE_DIGITS};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_error::{checked, AkitaError};
 
@@ -8,7 +8,7 @@ impl BinaryRootWitnessPlan {
     /// Select the word views and append every prime plane before ordinary groups.
     /// An empty prime list with a word preserves the original coefficient map.
     pub fn with_prime_planes(mut self, word: bool, planes: usize) -> Result<Self, AkitaError> {
-        if planes > PRIME_POINT_CAP || (!word && planes == 0) {
+        if planes > self.descriptor().polynomials().len() || (!word && planes == 0) {
             return Err(AkitaError::InvalidInput(
                 "invalid binary plane selection".into(),
             ));

@@ -20,15 +20,14 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         commitment: CommittedGroup<F>,
         claim: BinaryWordClaim,
     ) -> Result<Self, AkitaError> {
-        Self::new_binary_planes(commitment, Some(claim), Vec::new())
+        Self::new_binary_planes(commitment, Some(claim), None)
     }
 
-    /// Select optional word and prime component claims in one grouped opening.
-    /// Exact duplicate prime requests share one authenticated plane.
+    /// Select optional word and single-point prime claims in one grouped opening.
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
         claim: Option<BinaryWordClaim>,
-        primes: Vec<crate::binary_source::PrimePlaneClaim>,
+        primes: Option<crate::binary_source::PrimeGroupClaim>,
     ) -> Result<Self, AkitaError> {
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
             return Err(AkitaError::InvalidInput(
@@ -38,7 +37,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         if let Some(claim) = &claim {
             claim.validate(manifest.descriptor())?;
         }
-        let prime = crate::binary_source::PrimePlaneManifest::new(manifest.descriptor(), &primes)?;
+        let prime = crate::binary_source::PrimePlaneManifest::new(manifest.descriptor(), primes)?;
         if claim.is_none() && prime.planes().is_empty() {
             return Err(AkitaError::InvalidInput(
                 "binary group has no claims".into(),
