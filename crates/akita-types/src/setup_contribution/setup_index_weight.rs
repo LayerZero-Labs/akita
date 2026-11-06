@@ -13,7 +13,7 @@ use akita_algebra::offset_eq::{
 };
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationAddressGeometry, SetupProjectionGeometry};
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 struct ProjectedEqPairTensor<E: Field> {
     ratio: usize,

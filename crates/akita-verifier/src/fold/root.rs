@@ -10,7 +10,7 @@ use akita_transcript::ChallengeCodec;
 use akita_types::CommittedGroup;
 use akita_types::GrindingReplay;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims, RingVec};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_root<F, E>(

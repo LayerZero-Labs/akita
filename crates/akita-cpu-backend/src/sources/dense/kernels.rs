@@ -15,7 +15,7 @@ use crate::opaque::{
 use crate::opaque::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 use crate::sources::block_digits::{RingValueSource, RingValues};
 use akita_error::{checked, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 impl<F, E, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend<F, E>
 where

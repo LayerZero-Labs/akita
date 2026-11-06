@@ -1,7 +1,7 @@
 use super::*;
 use akita_sumcheck::multilinear_eval;
 use akita_types::DigitRangeEqualityPoint;
-use jolt_field::Prime128Offset275;
+use jolt_algebra::Prime128Offset275;
 use jolt_poly::OmittedConstantPoly;
 
 type F = Prime128Offset275;

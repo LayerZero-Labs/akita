@@ -1,6 +1,6 @@
 use super::*;
 use akita_params::{reduce_inner_opening_to_ring_element, BasisMode};
-use jolt_field::{Ext2, Fp32, FpExt4, FpExt8, One, Zero};
+use jolt_algebra::{Ext2, Fp32, FpExt4, FpExt8, One, Zero};
 
 type F = Fp32<251>;
 type AkitaF32 = Fp32<4294967197>;

@@ -12,7 +12,7 @@ use akita_types::{
     ensure_trace_stage2_supported, proof::relation::relation_row_weight, EvaluationTraceInputs,
     FpExtEncoding, OpeningFamily,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Fold-level inputs to the Stage 2 opening semantics.
 pub(crate) struct OpeningSemanticsInput<'a, F: Field, E: Field> {

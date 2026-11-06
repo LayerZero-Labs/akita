@@ -9,7 +9,7 @@ use akita_types::{
     prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode, NttTransformDomain,
     PreparedNttCache,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::any::Any;
 use std::collections::HashMap;
 #[cfg(test)]

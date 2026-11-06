@@ -6,7 +6,7 @@ use akita_types::{
     prepare_compression_ntt_cache, prepare_reduced_compression_ntt_cache, AkitaExpandedSetup,
     PreparedNttCache,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::any::Any;
 use std::collections::HashMap;
 #[cfg(test)]
@@ -133,7 +133,7 @@ mod tests {
     use crate::AkitaProverSetup;
     use akita_params::SetupMatrixCapacity;
     use akita_types::{NttCacheKey, NttTransformDomain};
-    use jolt_field::Prime64Offset59;
+    use jolt_algebra::Prime64Offset59;
 
     type F = Prime64Offset59;
     const D: usize = 32;

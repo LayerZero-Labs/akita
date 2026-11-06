@@ -5,8 +5,8 @@
 /// Gated on `#[cfg(test)]` so the production binary never sees them.
 #[cfg(test)]
 use super::{CyclotomicRing, FlatBlocks, OneHotIndex, OneHotPoly, SparseRingBlockEntry};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Reference ring-space evaluation for [`OneHotPoly`].
 ///

@@ -4,7 +4,7 @@ use akita_sumcheck::SumcheckKernel;
 use akita_types::setup_claims::{
     SetupBatchMemory, SetupBatchStatement, SetupPolynomialId, SetupQuery,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub trait SetupBatchKernel<E: Field>: SumcheckKernel<E> {
     fn setup_evaluation(&self) -> Result<E, AkitaError>;

@@ -1,12 +1,12 @@
 use super::*;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use jolt_field::One;
-use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_algebra::One;
+use jolt_algebra::Prime128OffsetA7F7 as F;
 use std::collections::BTreeMap;
 
 #[test]
 fn folded_extension_round_matches_direct_evaluation_with_mixed_support() {
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as B};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as B};
     type E = Ext2<B>;
     let value = |index: usize| {
         E::from_base_slice(&[

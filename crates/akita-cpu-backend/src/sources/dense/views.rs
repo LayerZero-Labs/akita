@@ -8,7 +8,7 @@
 use super::poly::DensePoly;
 use crate::opaque::{RootOpeningSource, RootPolyMeta, RootPolyShape};
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///

@@ -5,7 +5,7 @@ use super::suffix::{verify_suffix, SuffixVerifierState};
 use akita_config::{transcript_instance_descriptor, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
-use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 use akita_params::{validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile};
 use akita_transcript::VerifierChannel;
@@ -253,7 +253,7 @@ where
 mod tests {
     use super::*;
     use akita_types::{RingVec, RingView};
-    use jolt_field::{Fp32, Zero};
+    use jolt_algebra::{Fp32, Zero};
 
     type F = Fp32<251>;
     const D: usize = 32;

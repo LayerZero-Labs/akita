@@ -1,7 +1,7 @@
 use super::*;
 use akita_params::layout::relation_layout::{RelationGroupRows, RelationRowGeometry};
 use akita_params::{CommitmentRingDims, CommitmentSliceCount, OpeningMethod};
-use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Fp32<251>;
 type E = FpExt2<F, NegOneNr>;

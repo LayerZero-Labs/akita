@@ -21,9 +21,9 @@ use akita_params::{
 use akita_types::AkitaExpandedSetup;
 #[cfg(test)]
 use akita_types::{Commitment, CommittedGroup, FpExtEncoding};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(test)]
-use jolt_field::{Ring, Unreduced};
+use jolt_algebra::{Ring, Unreduced};
 
 /// Ordered groups committed before the current group.
 #[derive(Debug, Clone, Copy)]

@@ -7,7 +7,7 @@ use akita_params::{ChallengeFieldOrder, GrindingRun};
 use akita_transcript::{
     new_prover_channel, new_verifier_channel, FoldPreview, NonceAtom, ProverTranscript,
 };
-use jolt_field::Prime128Offset275 as F;
+use jolt_algebra::Prime128Offset275 as F;
 
 /// The fold proof of work at `level`, priced for `loss` challenges against a
 /// `2^128` set.

@@ -10,7 +10,7 @@ use akita_transcript::{
     ext_challenge, new_prover_channel, new_verifier_channel, public_bytes, ProtocolSiteId,
     VerifierChannel, SITE_FAMILY_SUMCHECK,
 };
-use jolt_field::{CanonicalBytes, Prime128Offset275 as F, Ring};
+use jolt_algebra::{CanonicalBytes, Prime128Offset275 as F, Ring};
 
 pub fn serialization_vec(data: &[u8]) {
     let _ = Vec::<u8>::deserialize_compressed(data, &());

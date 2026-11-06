@@ -11,7 +11,7 @@ use crate::gen::{self, modulus, Domain};
 use crate::input::Reader;
 use crate::stats;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use jolt_field::{
+use jolt_algebra::{
     CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, One,
     PseudoMersenne, Unreduced, WithCommitAccumulator, Zero,
 };

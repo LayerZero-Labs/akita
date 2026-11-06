@@ -1,6 +1,6 @@
 use super::*;
-use jolt_field::{Fp128x8i32, Fp32x2i32, Fp64x4i32, WithCommitAccumulator};
-use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{Fp128x8i32, Fp32x2i32, Fp64x4i32, WithCommitAccumulator};
+use jolt_algebra::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

@@ -14,7 +14,7 @@ orchestration lives in `akita-pcs`.
 | Crate | Role |
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas |
-| `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
+| `jolt-algebra` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
 | `akita-transcript` | Fiat-Shamir transcript and descriptor preamble |
@@ -38,7 +38,7 @@ orchestration lives in `akita-pcs`.
 graph TD
   Error["akita-error"]
   Ser["akita-serialization"]
-  Field["jolt-field (external)"]
+  Field["jolt-algebra (external)"]
   Algebra["akita-algebra"]
   Transcript["akita-transcript"]
   Challenges["akita-challenges"]

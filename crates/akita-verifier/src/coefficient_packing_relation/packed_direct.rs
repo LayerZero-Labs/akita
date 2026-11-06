@@ -7,7 +7,7 @@ use akita_algebra::offset_eq::{PreparedDigits, MAX_PREPARED_STRIDE};
 use akita_error::AkitaError;
 use akita_params::{basis_weights, BasisMode};
 use akita_types::ValidatedCoefficientPackingGroup;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
 /// Bound the materialized block-weight table to at most 2^18 field elements.

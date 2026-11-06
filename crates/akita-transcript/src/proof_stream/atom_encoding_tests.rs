@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{Prime128OffsetA7F7, Prime32Offset99 as F, Ring};
+use jolt_algebra::{Prime128OffsetA7F7, Prime32Offset99 as F, Ring};
 
 #[test]
 fn atom_bytes_encode_inline_and_spilled_lengths() {
@@ -17,9 +17,9 @@ fn atom_encodings_match_frozen_bytes() {
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
-    type E = jolt_field::FpExt4<F>;
+    type E = jolt_algebra::FpExt4<F>;
     type WideF = Prime128OffsetA7F7;
-    type WideE = jolt_field::FpExt4<WideF>;
+    type WideE = jolt_algebra::FpExt4<WideF>;
 
     let wide = WideF::from_u128(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210);
     assert_eq!(

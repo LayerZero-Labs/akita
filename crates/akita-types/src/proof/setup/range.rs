@@ -1,7 +1,7 @@
 //! Bounded sampling of the canonical paged public field stream.
 use super::{AkitaSetupSeed, SetupSeedPageXof};
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Fill a coefficient range without materializing the preceding setup prefix.
 /// Sampling within a page starts at its beginning, preserving rejection sampling.
@@ -45,7 +45,7 @@ pub(super) fn fill_page<F: Field + CanonicalEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fp32, Zero};
+    use jolt_algebra::{Fp32, Zero};
 
     #[test]
     fn ranges_preserve_sampling_and_page_boundaries() {

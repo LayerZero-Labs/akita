@@ -5,8 +5,8 @@ use akita_error::AkitaError;
 use akita_params::balanced_signed_digit_abs_bound;
 use akita_types::{NttCacheKey, NttTransformDomain};
 #[allow(unused_imports)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::ops::Range;
 
 #[tracing::instrument(skip_all, name = "dense_commit_rows_exact_i16")]

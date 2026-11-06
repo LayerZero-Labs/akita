@@ -25,7 +25,7 @@ use akita_types::{
     AkitaExpandedSetup, FpExtEncoding, PreparedRelationAddress, RingRelationInstance,
     SetupContributionGroupInputs, SetupContributionPlan,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use product_table::{SetupProductSource, SetupProductSumcheck};
 use std::sync::Arc;
 

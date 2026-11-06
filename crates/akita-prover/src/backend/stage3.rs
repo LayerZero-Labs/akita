@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, RelationAddressGeometry, SetupPrefixSlotId};
 use akita_types::RingRelationInstance;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_poly::UnivariatePoly;
 
 /// Public inputs fixing one setup-product computation.

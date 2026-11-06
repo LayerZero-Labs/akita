@@ -10,7 +10,7 @@ use akita_params::{
     basis_weights, basis_weights_prefix, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field, BasisMode,
 };
-use jolt_field::{ExtField, Field};
+use jolt_algebra::{ExtField, Field};
 
 pub use ring_multiplier::{PreparedRingMultiplier, RingMultiplierOpeningPoint};
 pub use subfield::SubfieldMultiplierOpeningPoint;
@@ -87,7 +87,7 @@ fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     basis: BasisMode,
 ) -> Result<RingMultiplierOpeningPoint<F>, AkitaError>
 where
-    F: Field + jolt_field::Ring,
+    F: Field + jolt_algebra::Ring,
     E: FpExtEncoding<F>,
 {
     if !num_positions_per_block.is_power_of_two() || num_live_blocks == 0 {
@@ -148,7 +148,7 @@ pub fn prepare_opening_point<F, E, const D: usize>(
     alpha_bits: usize,
 ) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
-    F: Field + jolt_field::Ring,
+    F: Field + jolt_algebra::Ring,
     E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
@@ -303,7 +303,7 @@ mod tests {
 
     use akita_algebra::ring::scalar_powers;
 
-    use jolt_field::{Ext2, ExtField, Fp32, FpExt4, FpExt8, MulBaseUnreduced, Ring, Zero};
+    use jolt_algebra::{Ext2, ExtField, Fp32, FpExt4, FpExt8, MulBaseUnreduced, Ring, Zero};
 
     type F = Fp32<251>;
     type E = FpExt4<F>;

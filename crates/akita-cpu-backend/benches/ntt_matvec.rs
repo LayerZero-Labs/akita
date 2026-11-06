@@ -12,7 +12,9 @@ use criterion::{
     criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, BenchmarkId, Criterion,
     Throughput,
 };
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{
+    CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+};
 
 type F = Prime128OffsetA7F7;
 

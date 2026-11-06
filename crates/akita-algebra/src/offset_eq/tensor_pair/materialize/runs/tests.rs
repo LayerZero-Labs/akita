@@ -1,6 +1,6 @@
 use super::*;
 use crate::offset_eq::{eq_eval_at_index, EqPairTensorAxis, EqPairTensorFamily};
-use jolt_field::{Fp64, One, Ring, Zero};
+use jolt_algebra::{Fp64, One, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 type F = Fp64<4294967197>;
@@ -43,7 +43,7 @@ fn runs_match_scalar_equality_across_carries_and_domain_end() {
 
 #[test]
 fn fp128_runs_match_scalar_equality_across_carries_and_domain_end() {
-    check_runs::<jolt_field::solinas::Prime128OffsetA7F7>();
+    check_runs::<jolt_algebra::solinas::Prime128OffsetA7F7>();
 }
 
 fn check_runs<F: Field>() {

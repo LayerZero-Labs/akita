@@ -14,8 +14,8 @@ use akita_types::GrindingReplay;
 use akita_types::RingRelationGroupOpening;
 use akita_types::RingVec;
 use akita_types::{OpeningFamily, RingRelationInstance};
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_algebra::Unreduced;
+use jolt_algebra::{CanonicalEncoding, Field, Ring};
 
 use super::fold_grind;
 use super::prove::PreparedGroupOpening;
@@ -165,7 +165,7 @@ impl RingRelationProver {
         <F as Unreduced>::Wide: From<F>,
         PointF: akita_types::FpExtEncoding<F>
             + ChallengeCodec
-            + jolt_field::ExtField<F>
+            + jolt_algebra::ExtField<F>
             + akita_serialization::AkitaSerialize,
         B: crate::backend::ProverBackend<F, PointF>,
     {

@@ -1,8 +1,8 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, Throughput};
-use jolt_field::Packed;
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset275, Ring, Zero};
+use jolt_algebra::Packed;
+use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275, Ring, Zero};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::cases::*;
@@ -20,7 +20,7 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
     let mut group = c.benchmark_group("field_arith/kernel/packed_macc");
     group.throughput(Throughput::Elements(n));
 
-    use jolt_field::{Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime64Offset59};
+    use jolt_algebra::{Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime64Offset59};
 
     sumcheck_bench::<Prime31Offset19, P31O19>(&mut group, PRIME31_OFFSET19, &mut rng, n);
     sumcheck_bench::<Mersenne31, PackedMersenne31>(&mut group, MERSENNE31, &mut rng, n);

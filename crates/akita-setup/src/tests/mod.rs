@@ -4,7 +4,7 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::SetupMatrixCapacity;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 #[cfg(feature = "disk-persistence")]
-use jolt_field::Zero;
+use jolt_algebra::Zero;
 
 type Cfg = fp128::Dense;
 type TestF = fp128::Field;

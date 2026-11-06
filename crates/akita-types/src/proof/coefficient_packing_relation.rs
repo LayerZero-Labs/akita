@@ -9,7 +9,7 @@ use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
-use jolt_field::{canonical_extension_basis, CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{canonical_extension_basis, CanonicalEncoding, ExtField, Field};
 
 use super::{
     relation_row_weight, RelationWeightContribution, RelationWeightEvent,

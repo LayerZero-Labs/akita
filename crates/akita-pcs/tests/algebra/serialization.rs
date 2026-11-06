@@ -1,6 +1,6 @@
 use akita_algebra::CyclotomicRing;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError};
-use jolt_field::{Fp32, Fp64, FpExt2, FpExt4, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{Fp32, Fp64, FpExt2, FpExt4, Prime128Offset275, Ring, Zero};
 
 use super::fixtures::NR;
 

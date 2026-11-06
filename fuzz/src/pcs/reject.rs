@@ -8,7 +8,7 @@ use crate::input::Reader;
 use crate::stats;
 use akita_error::AkitaError;
 use akita_params::BasisMode;
-use jolt_field::{Field, One, Zero};
+use jolt_algebra::{Field, One, Zero};
 
 /// Targeted changes applied after the honest baseline verifies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,7 +259,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
 }
 
 /// Change exactly one committed entry while staying admissible.
-fn perturb<F: Field + jolt_field::CanonicalEncoding>(
+fn perturb<F: Field + jolt_algebra::CanonicalEncoding>(
     tables: &Tables<F>,
     reader: &mut Reader<'_>,
     domain: Domain,

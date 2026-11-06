@@ -30,7 +30,7 @@ use common::{
     dense_field_evals, init_rayon_pool, load_workspace_scheme, opening_from_poly_for_layout,
     prove_input, random_point, run_on_large_stack, verify_input, F,
 };
-use jolt_field::{CanonicalEncoding, One, Zero};
+use jolt_algebra::{CanonicalEncoding, One, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};

@@ -3,10 +3,10 @@
 //! The checked packing geometry lives in `layout/subring_packing_geometry.rs`.
 
 use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 #[cfg(test)]
-use jolt_field::{Ring, Zero};
+use jolt_algebra::{Ring, Zero};
 
 use akita_params::layout::subring_packing_geometry::SubringCoefficientPackingGeometry;
 use akita_params::{basis_weights, basis_weights_prefix, BasisMode};
@@ -234,7 +234,7 @@ impl<E: Field> SubringCoefficientPackingTables<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128OffsetA7F7;
 
     #[test]
     fn opening_point_uses_pack_tail_position_block_order() {

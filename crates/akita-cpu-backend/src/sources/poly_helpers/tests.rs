@@ -7,7 +7,7 @@ use super::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use jolt_field::{Fp64, Ring};
+use jolt_algebra::{Fp64, Ring};
 
 /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
 /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /

@@ -6,7 +6,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{AkitaSetupSeed, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::{
     collections::BTreeMap,
     io::{Read, Write},

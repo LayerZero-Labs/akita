@@ -5,12 +5,12 @@ use akita_algebra::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDom
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::Prime128OffsetA7F7;
-use jolt_field::{Field, One, Zero};
+use jolt_algebra::Prime128OffsetA7F7;
+use jolt_algebra::{Field, One, Zero};
 use rand::{rngs::StdRng, SeedableRng};
 
 #[cfg(feature = "parallel")]
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "parallel")]

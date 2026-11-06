@@ -3,7 +3,7 @@ use crate::commitment::CommitmentExecutor;
 
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 pub(crate) fn uses_tensor_source(
     plan: &crate::opaque::ValidatedRecursiveWitnessCommitPlan,
@@ -163,8 +163,8 @@ where
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
-        + jolt_field::Unreduced
-        + jolt_field::WithCommitAccumulator
+        + jolt_algebra::Unreduced
+        + jolt_algebra::WithCommitAccumulator
         + 'static,
     E: ExtField<F> + 'static,
 {

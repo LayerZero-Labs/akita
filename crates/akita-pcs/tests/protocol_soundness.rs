@@ -15,7 +15,7 @@ use akita_types::{
     AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims,
 };
-use jolt_field::{
+use jolt_algebra::{
     CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, One, PseudoMersenne, Ring, Unreduced,
     Zero,
 };
@@ -125,7 +125,7 @@ where
         + Valid
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize
-        + jolt_field::WithCommitAccumulator
+        + jolt_algebra::WithCommitAccumulator
         + 'static,
     <F as Unreduced>::Wide: From<F>,
     Cfg: CommitmentConfig<Field = F>,
@@ -196,7 +196,7 @@ where
         + Valid
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize
-        + jolt_field::WithCommitAccumulator
+        + jolt_algebra::WithCommitAccumulator
         + 'static,
     <F as Unreduced>::Wide: From<F>,
     Cfg: CommitmentConfig<Field = F> + 'static,

@@ -15,7 +15,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{
     Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
-use jolt_field::{One, Ring};
+use jolt_algebra::{One, Ring};
 use std::sync::Arc;
 
 type Cfg = fp128::Dense;

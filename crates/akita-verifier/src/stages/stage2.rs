@@ -20,8 +20,8 @@ use akita_types::{
     AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
     OpeningFamily, ReducedCompressionRelationWeights,
 };
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 pub(crate) struct EvaluationTraceStage2<E: Field> {
     pub(crate) trace: PreparedEvaluationTrace<E>,
@@ -510,8 +510,8 @@ mod tests {
         CoefficientPackingBatchSemanticInputs, PreparedSubringCoefficientPackingPoint,
         RelationRangeImagePlan, RingRelationGroupOpening, RingRelationInstance, RingVec,
     };
-    use jolt_field::Zero;
-    use jolt_field::{Ext2, Prime64Offset59};
+    use jolt_algebra::Zero;
+    use jolt_algebra::{Ext2, Prime64Offset59};
     use std::sync::Arc;
 
     type F = Prime64Offset59;

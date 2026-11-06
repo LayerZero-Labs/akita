@@ -63,7 +63,7 @@ use akita_params::{
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use common::proof_size::prove_matching_byte_model;
 use common::*;
-use jolt_field::{ExtField, One, Ring};
+use jolt_algebra::{ExtField, One, Ring};
 use small_field_drivers::*;
 
 // ============================================================================

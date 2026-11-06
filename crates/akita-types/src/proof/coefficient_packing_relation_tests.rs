@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_algebra::poly::multilinear_eval;
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
     Prime64Offset59, Ring, Zero,
 };

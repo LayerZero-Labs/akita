@@ -13,7 +13,7 @@ use crate::sources::dense::seam_packing_partials;
 use crate::sources::poly_helpers::{element_partitioned_decompose_fold, SignedDigitBasis};
 use akita_challenges::SparseChallenge;
 use akita_error::{checked, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 use std::ops::Range;
 
 macro_rules! with_source {

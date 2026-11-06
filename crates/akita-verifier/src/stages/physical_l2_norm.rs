@@ -8,7 +8,7 @@ use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalResponsePlan};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) point: Vec<E>,
@@ -306,7 +306,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime32Offset99;
+    use jolt_algebra::Prime32Offset99;
 
     #[test]
     fn centered_lift_accepts_both_boundary_representatives() {

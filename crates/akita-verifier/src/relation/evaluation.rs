@@ -24,7 +24,7 @@ use akita_params::{
 use akita_types::{
     AkitaExpandedSetup, FpExtEncoding, PreparedRelationAddress, SetupContributionPlan,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 impl<E: Field> RelationMatrixEvaluator<E> {
     /// Evaluate the canonical relation weights directly in the flattened

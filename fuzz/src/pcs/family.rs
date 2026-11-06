@@ -15,7 +15,7 @@ use akita_params::{BasisMode, OpeningScheduleSelection, PrecommittedGroupProfile
 use akita_pcs::AkitaCommitmentScheme;
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::AkitaVerifier;
-use jolt_field::{ExtField, Field, One, Zero};
+use jolt_algebra::{ExtField, Field, One, Zero};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -328,7 +328,7 @@ pub(super) enum Tables<F> {
     },
 }
 
-impl<F: Field + jolt_field::CanonicalEncoding> Tables<F> {
+impl<F: Field + jolt_algebra::CanonicalEncoding> Tables<F> {
     pub(super) fn evaluate<E: ExtField<F>>(&self, point: &[E], basis: BasisMode) -> Vec<E> {
         let lagrange = matches!(basis, BasisMode::Lagrange);
         match self {

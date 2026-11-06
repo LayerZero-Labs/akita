@@ -15,7 +15,7 @@ use akita_types::{
     PreparedSubringCoefficientPackingPoint, RelationRangeImagePlan, RelationWeightEvent,
     RingRelationGroupOpening, RingRelationInstance, RingVec, SubringCoefficientPackingTables,
 };
-use jolt_field::{Ext2, One, Prime64Offset59, Ring, Zero};
+use jolt_algebra::{Ext2, One, Prime64Offset59, Ring, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;

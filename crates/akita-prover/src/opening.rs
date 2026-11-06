@@ -8,7 +8,7 @@ use akita_params::{
 use akita_transcript::CommitmentDigest;
 use akita_types::GrindingReplay;
 use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 pub struct SelectedProverOpeningData<'a, E: Field, H, F: Field> {
     profile: CommittedGroupBatchProfile,

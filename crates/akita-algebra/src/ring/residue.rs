@@ -1,7 +1,7 @@
 //! Linear-time coefficient functionals for reduced negacyclic relations.
 
 use akita_error::AkitaError;
-use jolt_field::{ExtField, Field};
+use jolt_algebra::{ExtField, Field};
 
 /// Reusable evaluation data for reduced negacyclic residue kernels at one
 /// point and dimension.
@@ -220,7 +220,7 @@ mod tests {
     use crate::offset_eq::OffsetEqWindow;
     use crate::ring::eval::eval_ring_at_pows;
     use crate::ring::{scalar_powers, CyclotomicRing};
-    use jolt_field::{
+    use jolt_algebra::{
         Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring,
         Zero,
     };
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn base_multiplier_matches_literal_oracle_at_genuine_extension_point() {
         use crate::offset_eq::eq_eval_at_index;
-        use jolt_field::{Fp32, FpExt2, MulBaseUnreduced, NegOneNr};
+        use jolt_algebra::{Fp32, FpExt2, MulBaseUnreduced, NegOneNr};
         type B = Fp32<251>;
         type X = FpExt2<B, NegOneNr>;
 

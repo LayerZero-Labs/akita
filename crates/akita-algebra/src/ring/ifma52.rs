@@ -414,7 +414,7 @@ mod tests {
     use super::*;
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::{q128_primes, I16_TAIL_PRIME};
-    use jolt_field::{One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
+    use jolt_algebra::{One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 
     fn assert_limb_major_i16_matvec<const D: usize>() {
         type F = Prime64Offset59;

@@ -4,8 +4,8 @@ use crate::opaque::RootPolyMeta;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
-use jolt_field::Prime128OffsetA7F7 as F;
-use jolt_field::{CanonicalEncoding, Ring, Zero};
+use jolt_algebra::Prime128OffsetA7F7 as F;
+use jolt_algebra::{CanonicalEncoding, Ring, Zero};
 
 #[test]
 fn setup_prefix_sources_share_the_setup_and_survive_owner_drop() {
@@ -399,7 +399,7 @@ fn fold_rejects_unsupported_digit_shapes_with_cold_and_populated_caches() {
 #[test]
 fn single_digit_fold_preserves_signed_i8_i16_boundaries() {
     use akita_challenges::SparseChallenge;
-    use jolt_field::Prime64Offset59;
+    use jolt_algebra::Prime64Offset59;
     const D: usize = 128;
     let challenge = SparseChallenge {
         positions: vec![0].into(),

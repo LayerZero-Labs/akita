@@ -6,7 +6,7 @@ use akita_error::AkitaError;
 use akita_params::{field_modulus, GroupCommitPhaseParams};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{Commitment, CommittedGroup, RingVec};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<F: Field, E> CpuBackend<F, E> {
     /// Finish a root commitment whose canonical outer image `u` was computed

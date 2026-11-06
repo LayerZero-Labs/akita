@@ -14,7 +14,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "akita-serialization",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "rand_core",
  "rayon",
@@ -27,7 +27,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "akita-transcript",
- "jolt-field",
+ "jolt-algebra",
  "serde",
  "smallvec",
 ]
@@ -43,7 +43,7 @@ dependencies = [
  "akita-serialization",
  "akita-transcript",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
 ]
 
 [[package]]
@@ -60,7 +60,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "rayon",
  "tracing",
@@ -92,7 +92,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "libfuzzer-sys",
  "num-bigint",
@@ -133,7 +133,7 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
- "jolt-field",
+ "jolt-algebra",
  "jolt-transcript",
  "serde",
  "sha3",
@@ -155,7 +155,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
- "jolt-field",
+ "jolt-algebra",
  "rayon",
  "tracing",
 ]
@@ -173,7 +173,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "tracing",
 ]
@@ -195,7 +195,7 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "thiserror",
 ]
@@ -210,7 +210,7 @@ dependencies = [
  "akita-params",
  "akita-serialization",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
  "tracing",
 ]
 
@@ -222,7 +222,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "akita-transcript",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
 ]
 
@@ -231,7 +231,7 @@ name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
  "akita-error",
- "jolt-field",
+ "jolt-algebra",
  "jolt-transcript",
  "sha3",
  "spongefish",
@@ -248,7 +248,7 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "rand_core",
  "shake",
@@ -268,7 +268,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "rayon",
  "tracing",
@@ -686,9 +686,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
+name = "jolt-algebra"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
 dependencies = [
  "cc",
  "num-traits",
@@ -700,9 +700,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-field"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
+dependencies = [
+ "jolt-algebra",
+]
+
+[[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -716,7 +724,7 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
 dependencies = [
  "getrandom 0.4.3",
  "jolt-field",
@@ -728,7 +736,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=8f0f5b9edf4ef1b1b837a282357f1061c833dc62#8f0f5b9edf4ef1b1b837a282357f1061c833dc62"
 dependencies = [
  "num-traits",
 ]

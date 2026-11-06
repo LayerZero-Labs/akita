@@ -7,7 +7,7 @@ use akita_params::{DecompositionParams, SetupPrefixSlotId};
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{Commitment, FpExtEncoding};
-use jolt_field::{
+use jolt_algebra::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced,
     WithCommitAccumulator,
 };
@@ -233,7 +233,7 @@ mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-    use jolt_field::One;
+    use jolt_algebra::One;
 
     #[test]
     fn prefix_artifact_import_validates_contents_and_issues_fresh_owner_handles() {

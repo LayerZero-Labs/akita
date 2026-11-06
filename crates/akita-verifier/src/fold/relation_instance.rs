@@ -11,7 +11,7 @@ use akita_types::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, FpExtEncoding, GroupFoldChallenges,
     OpeningFamily, RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Check the opening and commitment payload shapes against the level geometry.
 ///

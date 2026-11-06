@@ -17,8 +17,8 @@ use akita_params::{
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
-use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{Fold, Unreduced, WithCommitAccumulator};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -44,8 +44,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    <FF as Unreduced>::Wide: From<FF> + jolt_field::AdditiveGroup,
-    Cfg::ExtField: jolt_field::MulBaseUnreduced<FF>
+    <FF as Unreduced>::Wide: From<FF> + jolt_algebra::AdditiveGroup,
+    Cfg::ExtField: jolt_algebra::MulBaseUnreduced<FF>
         + ExtField<FF>
         + FpExtEncoding<FF>
         + Unreduced

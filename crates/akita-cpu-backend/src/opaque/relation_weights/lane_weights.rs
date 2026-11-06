@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use akita_error::AkitaError;
 use akita_types::{RelationWeightContribution, RelationWeightEvent};
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 use super::split_disjoint_mut;
 

@@ -14,7 +14,7 @@ use akita_types::{
     relation_claim_from_compressed_rhs_extension, FpExtEncoding, RelationRangeImagePlan,
     RingRelationInstance,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Relation-side Stage 2 inputs fixed by the ring switch.
 pub(crate) struct RelationClaim<E: Field> {

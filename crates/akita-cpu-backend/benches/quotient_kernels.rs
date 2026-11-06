@@ -5,7 +5,7 @@ use akita_cpu_backend::benchmark_support::fused_split_eq_quotients_prover_bounds
 use akita_params::layout::FlatMatrix;
 use akita_types::{prepare_ntt_cache, NttCacheMode};
 use criterion::{criterion_group, criterion_main, Criterion};
-use jolt_field::{CanonicalEncoding, Prime128Offset275};
+use jolt_algebra::{CanonicalEncoding, Prime128Offset275};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::hint::black_box;

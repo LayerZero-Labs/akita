@@ -36,8 +36,8 @@ use akita_types::{
     RelationRangeImagePlan, RingRelationInstance,
 };
 use compiler::RelationWeightCompilation;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use setup_columns::{
     contract_setup_columns, contract_setup_residue_columns, SetupColumnValues, SetupRows,
 };

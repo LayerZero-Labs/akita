@@ -5,7 +5,7 @@ use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced};
 
 /// Load and bind the checked-in workspace artifact at a test or tooling boundary.
 pub(crate) fn load_workspace_scheme<Cfg>(

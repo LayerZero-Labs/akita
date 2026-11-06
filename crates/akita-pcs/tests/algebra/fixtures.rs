@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 use rand::{rngs::StdRng, SeedableRng};
 
-use jolt_field::{CanonicalEncoding, Ext2Config, Field, Fp32, One, PseudoMersenne};
+use jolt_algebra::{CanonicalEncoding, Ext2Config, Field, Fp32, One, PseudoMersenne};
 
 pub(super) fn rand_u128<R: rand_core::RngCore>(rng: &mut R) -> u128 {
     let lo = rng.next_u64() as u128;
