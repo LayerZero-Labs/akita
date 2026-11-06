@@ -20,7 +20,7 @@ identity. Loading a cached coefficient matrix checks that it matches the seed.
 
 ### Exact public-stream derivation
 
-`AkitaSetupSeed` contains two values: a 32-byte public seed and a versioned
+`PublicMatrixSeed` contains two values: a 32-byte public seed and a versioned
 derivation method. The current method is `Shake256PagedV1`. Versioning the
 method prevents a change to page size, domain separation, or field sampling
 from silently changing the setup identified by an existing seed.

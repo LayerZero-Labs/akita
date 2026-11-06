@@ -3,7 +3,7 @@ mod query;
 pub mod transcript;
 mod transport;
 
-use crate::{AkitaExpandedSetup, AkitaSetupSeed, FpExtEncoding};
+use crate::{AkitaExpandedSetup, FpExtEncoding, PublicMatrixSeed};
 use akita_error::AkitaError;
 use akita_params::dispatch::field_modulus_be_bytes;
 use akita_serialization::{AkitaSerialize, Valid};
@@ -14,7 +14,7 @@ pub use query::{SetupQuery, SetupWeightTerm};
 /// Exact flat setup polynomial; the rectangular split is intentionally not its identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetupPolynomialId {
-    seed: AkitaSetupSeed,
+    seed: PublicMatrixSeed,
     modulus: [u8; 32],
     extension_degree: usize,
     field_len: usize,

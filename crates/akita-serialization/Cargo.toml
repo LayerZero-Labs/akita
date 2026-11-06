@@ -14,6 +14,9 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev =
   "solinas",
 ] }
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8a92941b01488ebe2373b51546395a93fbb94a6e", default-features = false }
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8a92941b01488ebe2373b51546395a93fbb94a6e", default-features = false, features = [
+  "lattice",
+] }
 thiserror = "2.0"
 
 [lints]

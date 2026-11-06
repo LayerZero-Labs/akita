@@ -1,7 +1,7 @@
 //! Requirement-backed prover setup construction.
 //!
 //! With `disk-persistence`, the public field prefix is stored by field and
-//! [`akita_types::AkitaSetupSeed`], separately from requirement-bound
+//! [`akita_types::PublicMatrixSeed`], separately from requirement-bound
 //! setup-prefix registries. Backend NTT caches are never persisted.
 
 mod recursive_prefixes;
@@ -20,7 +20,7 @@ use akita_serialization::{Compress, SerializationError, Validate};
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    sample_akita_setup_seed, setup_seed_digest, AkitaSetupDescriptor, AkitaSetupSeed,
+    sample_akita_setup_seed, setup_seed_digest, AkitaSetupDescriptor, PublicMatrixSeed,
 };
 use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_algebra::{Unreduced, WithCommitAccumulator};
@@ -136,7 +136,7 @@ fn prefix_registry_cache_file_name<F: Field + CanonicalEncoding>(
 
 #[cfg(feature = "disk-persistence")]
 fn public_matrix_cache_file_name<F: Field + CanonicalEncoding>(
-    setup_seed: &AkitaSetupSeed,
+    setup_seed: &PublicMatrixSeed,
 ) -> Result<String, AkitaError> {
     let digest = setup_seed_digest(setup_seed)
         .map_err(|err| AkitaError::InvalidSetup(format!("public matrix identity: {err}")))?;
@@ -182,7 +182,7 @@ pub(crate) fn get_prefix_registry_storage_path<F: Field + CanonicalEncoding>(
 
 #[cfg(feature = "disk-persistence")]
 fn get_public_matrix_storage_path<F: Field + CanonicalEncoding>(
-    setup_seed: &AkitaSetupSeed,
+    setup_seed: &PublicMatrixSeed,
 ) -> Result<PathBuf, AkitaError> {
     let mut path = cache_directory().ok_or_else(|| {
         AkitaError::InvalidSetup("could not determine storage directory".to_string())
@@ -492,10 +492,10 @@ pub(crate) fn load_prover_setup<
 fn deserialize_cached_public_matrix<F: Field + Valid + AkitaDeserialize<Context = ()>>(
     reader: &mut impl Read,
     minimum_num_field_elements: usize,
-    expected_setup_seed: &AkitaSetupSeed,
+    expected_setup_seed: &PublicMatrixSeed,
 ) -> Result<AkitaExpandedSetup<F>, SerializationError> {
     let setup_seed =
-        AkitaSetupSeed::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
+        PublicMatrixSeed::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
     if &setup_seed != expected_setup_seed {
         return Err(SerializationError::InvalidData(
             "cached public matrix identity does not match its lineage key".to_string(),

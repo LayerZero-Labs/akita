@@ -294,7 +294,7 @@ mod tests {
             .prefix_len
             .checked_mul(requirement.ring_dimension)
             .expect("setup field count");
-        let seed: akita_types::AkitaSetupSeed = [6; 32].into();
+        let seed: akita_types::PublicMatrixSeed = [6; 32].into();
         let setup = AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

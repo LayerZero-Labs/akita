@@ -37,6 +37,7 @@ impl TrustedBytes {
         self.0.get(count..).map(Self)
     }
 }
+mod lattice_impls;
 mod poly_impls;
 mod ring_impls;
 

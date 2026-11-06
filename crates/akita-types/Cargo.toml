@@ -17,12 +17,14 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev =
   "asm",
   "solinas",
 ] }
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8a92941b01488ebe2373b51546395a93fbb94a6e", default-features = false, features = [
+  "lattice",
+] }
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8a92941b01488ebe2373b51546395a93fbb94a6e", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 rand_core = "0.6"
-shake = "0.1.0"
 tracing = "0.1"
 
 [features]
@@ -46,6 +48,7 @@ parallel = [
   "akita-params/parallel",
   "akita-algebra/parallel",
   "jolt-algebra/parallel",
+  "jolt-crypto/parallel",
 ]
 logging-transcript = [
   "akita-params/logging-transcript",

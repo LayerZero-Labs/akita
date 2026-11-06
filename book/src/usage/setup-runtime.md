@@ -12,7 +12,7 @@ cache expensive transforms without changing commitments or proof bytes.
 
 | Object | What it means | Can local copies differ? |
 | --- | --- | --- |
-| `AkitaSetupSeed` | Identity of the deterministic public matrix stream | No |
+| `PublicMatrixSeed` | Identity of the deterministic public matrix stream | No |
 | Prover setup capacity | How much of that stream the prover materialized | Yes, if every proof requirement is covered |
 | Setup prefix registry | Public commitments used by recursive setup offloading | It must cover the same supported schedules |
 | Prepared backend state | Local transformed matrix prefixes and compute resources | Yes |
@@ -98,7 +98,7 @@ kernels build exact entries as needed. A larger cached prefix can serve a
 smaller request with the same field, ring dimension, and transform domain.
 
 These caches are derived from a matrix view. They are not part of the public
-stream and are not covered by `AkitaSetupSeed`. Two machines may retain
+stream and are not covered by `PublicMatrixSeed`. Two machines may retain
 different transform domains and prefix lengths while producing identical
 commitments and proofs.
 
