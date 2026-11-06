@@ -122,7 +122,7 @@ fn prepare<'a, Base, Extension>(
 )
 where
     Base: Field + CanonicalEncoding + Ring,
-    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base> + jolt_field::Unreduced,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
 {
     prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
         level_params: &fixture.params,

@@ -915,30 +915,6 @@ impl CandidateDecoder<'_> {
         if b > 0 {
             map_to_complement(pm1, pm2, stream.shell.ring_d)?;
         }
-        if weight <= 48 {
-            let signs = read_bits(self.message, start, weight as u32)? as u64;
-            let mut words = [0u64; 6];
-            const ONES: u64 = 0x0101_0101_0101_0101;
-            for (chunk, word) in words.iter_mut().enumerate().take(weight.div_ceil(8)) {
-                let offset = chunk * 8;
-                let mut bits = (signs >> offset) & 255;
-                bits = (bits | (bits << 28)) & 0x0000_000f_0000_000f;
-                bits = (bits | (bits << 14)) & 0x0003_0003_0003_0003;
-                bits = (bits | (bits << 7)) & ONES;
-                let magnitudes = if offset >= a {
-                    ONES * 2
-                } else if offset + 8 <= a {
-                    ONES
-                } else {
-                    ONES + (ONES << ((a - offset) * 8))
-                };
-                *word = ((magnitudes ^ (bits * 255)) + bits).to_le();
-            }
-            // Every i8 bit pattern is valid; six words provide 48 initialized bytes.
-            let bytes = unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<i8>(), weight) };
-            let coeffs = crate::SparseChallengeCoefficients::from_slice(bytes);
-            return Ok(Some(SparseChallenge { positions, coeffs }));
-        }
         let mut coeffs = crate::SparseChallengeCoefficients::with_capacity(weight);
         for offset in (0..weight).step_by(u64::BITS as usize) {
             let take = (weight - offset).min(u64::BITS as usize);

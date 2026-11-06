@@ -318,23 +318,11 @@ fn geometric_axis<E: Field>(
         ]);
     }
     let axis = EqPairTensorAxis::bit_product(left_stride, right_stride, factors)?;
-    if weights.first().copied() != Some(E::one()) {
-        return Err(AkitaError::InvalidSetup(
-            "coefficient-packing tensor weights are not geometric".into(),
-        ));
-    }
-    // Validate each bit-product edge once, instead of recomputing all lower
-    // bit factors for every coordinate. Induction on the highest set bit
-    // gives exactly the original coordinate-weight check, in linear work.
-    for bit in 0..len.trailing_zeros() as usize {
-        let half = 1usize << bit;
-        let high = *weights.get(half).ok_or(AkitaError::InvalidProof)?;
-        for low in 1..half {
-            if weights.get(half + low).copied() != weights.get(low).copied().map(|w| high * w) {
-                return Err(AkitaError::InvalidSetup(
-                    "coefficient-packing tensor weights are not geometric".into(),
-                ));
-            }
+    for coordinate in 0..len {
+        if axis.coordinate_weight(coordinate) != weights.get(coordinate).copied() {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing tensor weights are not geometric".into(),
+            ));
         }
     }
     Ok(axis)
@@ -394,10 +382,7 @@ fn extend_point<E: Field>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaE
     Ok(())
 }
 
-pub(super) fn prepare_compact_factors<
-    F: Field + CanonicalEncoding,
-    E: Field + ExtField<F> + jolt_field::Unreduced,
->(
+pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + ExtField<F>>(
     group: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
 ) -> Result<CoefficientPackingCompactFactors<E>, AkitaError> {
     let s = group.geometry().challenge_subring_dimension();

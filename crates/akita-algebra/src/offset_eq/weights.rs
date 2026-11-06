@@ -16,14 +16,6 @@ pub trait AffineWeight<F: Field>: Clone + Send + Sync {
     /// Add `factor * scale` to `self`.
     fn add_scaled(&mut self, factor: &Self, scale: F);
 
-    /// Add a batch of paired products. Backends may defer reduction across
-    /// the batch; the default preserves the coordinate algebra's scalar path.
-    fn add_scaled_batch(&mut self, factors: &[Self], scales: &[F]) {
-        for (factor, &scale) in factors.iter().zip(scales) {
-            self.add_scaled(factor, scale);
-        }
-    }
-
     /// Add `factor` to `self` without a unit scalar multiplication.
     fn add(&mut self, factor: &Self);
 
@@ -116,11 +108,7 @@ impl<F: Field> AffineWeight<F> for F {
     }
 
     fn add_scaled(&mut self, factor: &Self, scale: F) {
-        *self = factor.mul_add(scale, *self);
-    }
-
-    fn add_scaled_batch(&mut self, factors: &[Self], scales: &[F]) {
-        *self += F::dot_product(factors, scales);
+        *self += *factor * scale;
     }
 
     fn add(&mut self, factor: &Self) {

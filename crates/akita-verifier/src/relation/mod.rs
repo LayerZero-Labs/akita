@@ -369,7 +369,7 @@ fn prepare_challenge_evals<F, E>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: Field + Ring,
-    E: Field + ExtField<F> + jolt_field::Unreduced,
+    E: Field + ExtField<F>,
 {
     if challenges.num_claims() != num_claims {
         return Err(AkitaError::InvalidSize {

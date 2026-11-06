@@ -4,7 +4,7 @@ use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{ExtField, Field, Ring, Unreduced, Zero};
+use jolt_field::{ExtField, Field, Ring};
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
@@ -249,11 +249,12 @@ impl Challenges {
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
         F: Field + Ring,
-        E: Field + ExtField<F> + Unreduced,
+        E: Field + ExtField<F>,
     {
         let _experiment = akita_error::experiment_scope("experiment/alpha");
 
-        if self.len() >= 1024
+        if self.quartet_codes.get().is_some()
+            && self.len() >= 1024
             && self.sampled_family.as_ref().is_some_and(|(d, config)| {
                 *d == alpha_pows.len()
                     && *d / self.embedding_stride == 64
@@ -272,7 +273,7 @@ impl Challenges {
         } else {
             Vec::new()
         };
-        let source = if sampled.is_some() {
+        let source = if sampled.is_some() && !self.challenges.is_empty() {
             self.challenges.as_ref()
         } else {
             self.as_slice()
@@ -281,47 +282,21 @@ impl Challenges {
             if sampled.is_some() {
                 // Sampler provenance guarantees the shape, range and +/-1/2 family.
                 // Bounds-checked indexing is retained at this immutable boundary.
-                if std::mem::size_of::<E::SmallProduct>() > std::mem::size_of::<E>()
-                    && challenge.positions.len() <= 64
-                {
-                    // Bound each deferred sum to 64 unit-scalar terms,
-                    // within every supported small-product backend's headroom.
-                    let mut positive = E::SmallProduct::zero();
-                    let mut negative = E::SmallProduct::zero();
-                    for (&position, &coefficient) in
-                        challenge.positions.iter().zip(&challenge.coeffs)
-                    {
-                        let powers = if coefficient == 2 || coefficient == -2 {
-                            &doubles[..]
-                        } else {
-                            alpha_pows
-                        };
-                        let term = powers[(position as usize) * self.embedding_stride]
-                            .mul_u64_unreduced(1);
-                        if coefficient < 0 {
-                            negative += term;
-                        } else {
-                            positive += term;
-                        }
-                    }
-                    Ok(E::reduce_small_product(positive) - E::reduce_small_product(negative))
-                } else {
-                    Ok(E::signed_sum(
-                        challenge.positions.iter().zip(&challenge.coeffs).map(
-                            |(&position, &coefficient)| {
-                                let powers = if coefficient == 2 || coefficient == -2 {
-                                    &doubles[..]
-                                } else {
-                                    alpha_pows
-                                };
-                                (
-                                    &powers[(position as usize) * self.embedding_stride],
-                                    coefficient < 0,
-                                )
-                            },
-                        ),
-                    ))
-                }
+                Ok(E::signed_sum(
+                    challenge.positions.iter().zip(&challenge.coeffs).map(
+                        |(&position, &coefficient)| {
+                            let powers = if coefficient == 2 || coefficient == -2 {
+                                &doubles[..]
+                            } else {
+                                alpha_pows
+                            };
+                            (
+                                &powers[(position as usize) * self.embedding_stride],
+                                coefficient < 0,
+                            )
+                        },
+                    ),
+                ))
             } else {
                 challenge.eval_at_pows::<F, E>(alpha_pows)
             }
@@ -376,111 +351,10 @@ impl Challenges {
         source.iter().map(evaluate).collect()
     }
 
-    fn evaluate_quartets<F: Field + Ring, E: Field + ExtField<F> + Unreduced>(
+    fn evaluate_quartets<F: Field + Ring, E: Field + ExtField<F>>(
         &self,
         powers: &[E],
     ) -> Result<Vec<E>, AkitaError> {
-        if self.quartet_codes.get().is_none() {
-            let _scope = akita_error::experiment_scope("experiment/alpha_pack");
-            let mut packed = Vec::with_capacity(self.challenges.len());
-            for challenge in self.challenges.iter() {
-                let zero_word = 312u64 | (312 << 10) | (312 << 20) | (312 << 30);
-                let mut words = [zero_word; 4];
-                if challenge.positions.len() != challenge.coeffs.len() {
-                    return Err(AkitaError::InvalidProof);
-                }
-                const DELTAS: [u64; 64] = [
-                    1,
-                    5,
-                    25,
-                    125,
-                    1024,
-                    5120,
-                    25600,
-                    128000,
-                    1048576,
-                    5242880,
-                    26214400,
-                    131072000,
-                    1073741824,
-                    5368709120,
-                    26843545600,
-                    134217728000,
-                    1,
-                    5,
-                    25,
-                    125,
-                    1024,
-                    5120,
-                    25600,
-                    128000,
-                    1048576,
-                    5242880,
-                    26214400,
-                    131072000,
-                    1073741824,
-                    5368709120,
-                    26843545600,
-                    134217728000,
-                    1,
-                    5,
-                    25,
-                    125,
-                    1024,
-                    5120,
-                    25600,
-                    128000,
-                    1048576,
-                    5242880,
-                    26214400,
-                    131072000,
-                    1073741824,
-                    5368709120,
-                    26843545600,
-                    134217728000,
-                    1,
-                    5,
-                    25,
-                    125,
-                    1024,
-                    5120,
-                    25600,
-                    128000,
-                    1048576,
-                    5242880,
-                    26214400,
-                    131072000,
-                    1073741824,
-                    5368709120,
-                    26843545600,
-                    134217728000,
-                ];
-                if challenge.positions.len() != 41 {
-                    return Err(AkitaError::InvalidProof);
-                }
-                for (i, (&position, &coefficient)) in challenge
-                    .positions
-                    .iter()
-                    .zip(&challenge.coeffs)
-                    .enumerate()
-                {
-                    let position = position as usize;
-                    if position >= 64 {
-                        return Err(AkitaError::InvalidProof);
-                    }
-                    // Private sampler provenance fixes the first 31 magnitudes to 1, the last 10 to 2.
-                    let delta = DELTAS[position] << u32::from(i >= 31);
-                    let word = &mut words[position / 16];
-                    if coefficient < 0 {
-                        *word -= delta;
-                    } else {
-                        *word += delta;
-                    }
-                }
-                packed.push(words);
-            }
-            let _ = self.quartet_codes.set(packed);
-        }
         let codes = self.quartet_codes.get().ok_or(AkitaError::InvalidProof)?;
         let mut tables = Vec::with_capacity(16 * 625);
         {
@@ -514,33 +388,12 @@ impl Challenges {
         }
         let mut output = Vec::with_capacity(codes.len());
         for words in codes {
-            // The existing small-product accumulator defers the reduction of
-            // these sixteen field terms. Multiplication by literal one folds
-            // into the accumulator representation on the portable backend.
-            let mut sum = <E as Unreduced>::SmallProduct::zero();
-            macro_rules! add_quartet {
-                ($q:literal) => {{
-                    let code = ((words[$q / 4] >> (10 * ($q % 4))) & 1023) as usize;
-                    sum += tables[$q * 625 + code].mul_u64_unreduced(1);
-                }};
+            let mut sum = E::zero();
+            for q in 0..16 {
+                let code = ((words[q / 4] >> (10 * (q % 4))) & 1023) as usize;
+                sum += *tables.get(q * 625 + code).ok_or(AkitaError::InvalidProof)?;
             }
-            add_quartet!(0);
-            add_quartet!(1);
-            add_quartet!(2);
-            add_quartet!(3);
-            add_quartet!(4);
-            add_quartet!(5);
-            add_quartet!(6);
-            add_quartet!(7);
-            add_quartet!(8);
-            add_quartet!(9);
-            add_quartet!(10);
-            add_quartet!(11);
-            add_quartet!(12);
-            add_quartet!(13);
-            add_quartet!(14);
-            add_quartet!(15);
-            output.push(E::reduce_small_product(sum));
+            output.push(sum);
         }
         Ok(output)
     }
