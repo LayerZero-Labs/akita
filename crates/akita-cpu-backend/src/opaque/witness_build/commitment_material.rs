@@ -227,4 +227,9 @@ impl<F: Field> OpaqueInnerRelationState<F> {
     pub(crate) fn rows(&self) -> &[RingVec<F>] {
         self.material.rows()
     }
+
+    /// Slice-major B hiding randomness of the consumed commitment.
+    pub(crate) fn outer_randomness(&self) -> &[i8] {
+        self.material.outer_randomness()
+    }
 }

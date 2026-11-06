@@ -121,6 +121,14 @@ pub struct CommittedGroupParams {
     /// Endpoints of this fold's inherited own-group block partition.
     #[serde(default)]
     pub witness_chunk_ends: Vec<usize>,
+    /// Hiding-randomness ring columns appended to the shared D matrix after
+    /// every group's opening segment.
+    ///
+    /// Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
+    /// schedule format carries it, so every decoded or planned schedule has
+    /// width 0 and the D matrix width is exactly the opening columns.
+    #[serde(skip)]
+    pub open_randomness_columns: usize,
 }
 
 /// Text formats omit the multi-chunk fields when they are unset, so
@@ -172,6 +180,7 @@ impl CommittedGroupParams {
             witness_chunk,
             successor_block_len: None,
             witness_chunk_ends: Vec::new(),
+            open_randomness_columns: 0,
         })
     }
 

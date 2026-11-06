@@ -201,6 +201,7 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
             group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
             blocks: akita_params::BlockGeometry::new(1, 1, 1),
             outer_slice_count: akita_params::CommitmentSliceCount::ONE,
+            randomness_columns: 0,
             inner: akita_params::RoleParams::new(
                 akita_params::GadgetDigits::new(1, inner_digits),
                 inner_commit_matrix,

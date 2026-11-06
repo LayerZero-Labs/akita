@@ -541,6 +541,11 @@ pub(crate) struct InnerRelationStateMaterial<F: Field> {
     plan: CommitInnerPlan,
     source_count: usize,
     rows: Arc<Vec<RingVec<F>>>,
+    /// Slice-major B hiding-randomness coefficients the commitment used.
+    ///
+    /// Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
+    /// commitment route samples B randomness, so it is always empty.
+    outer_randomness: Arc<Vec<i8>>,
 }
 
 impl<F: Field> InnerRelationStateMaterial<F> {
@@ -566,6 +571,7 @@ impl<F: Field> InnerRelationStateMaterial<F> {
             plan: *plan,
             source_count,
             rows: Arc::new(rows),
+            outer_randomness: Arc::new(Vec::new()),
         })
     }
 
@@ -585,6 +591,11 @@ impl<F: Field> InnerRelationStateMaterial<F> {
     /// Borrow the canonical rows in source order.
     pub(crate) fn rows(&self) -> &[RingVec<F>] {
         self.rows.as_slice()
+    }
+
+    /// Slice-major B hiding-randomness coefficients; empty when clear.
+    pub(crate) fn outer_randomness(&self) -> &[i8] {
+        self.outer_randomness.as_slice()
     }
 
     /// Consume the carrier and return the canonical rows.

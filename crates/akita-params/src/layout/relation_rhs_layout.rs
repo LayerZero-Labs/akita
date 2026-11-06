@@ -81,9 +81,11 @@ impl RelationRhsLayout {
                     n_a,
                     physical_b_rows: physical_b_rows_per_group,
                     outer_slice_count,
+                    randomness_columns: 0,
                     group_index,
                 })
                 .collect(),
+            d_randomness_columns: 0,
             compression: None,
         };
         layout.validate()?;
@@ -276,6 +278,7 @@ fn build_relation_rhs_layout(
                 n_a: lp.inner().matrix.output_rank(),
                 physical_b_rows: lp.outer().matrix.output_rank(),
                 outer_slice_count: lp.outer_slice_count(),
+                randomness_columns: lp.own_group().profile.randomness_columns,
             })
             .collect::<Vec<_>>();
         let compression = if let Some(opening_plan) = opening_plan {
@@ -292,6 +295,7 @@ fn build_relation_rhs_layout(
             d_ring_dimension: role_dims.d_d(),
             n_d,
             groups,
+            d_randomness_columns: lp.open_randomness_columns,
             compression,
         };
         layout.validate()?;
@@ -317,6 +321,7 @@ fn build_relation_rhs_layout(
         n_a: lp.inner().matrix.output_rank(),
         physical_b_rows: lp.outer().matrix.output_rank(),
         outer_slice_count: lp.outer_slice_count(),
+        randomness_columns: lp.own_group().profile.randomness_columns,
     });
     group_indices.push(final_group_index);
     if opening_plan.is_some() {
@@ -337,6 +342,7 @@ fn build_relation_rhs_layout(
             n_a: group.profile.inner.matrix.output_rank(),
             physical_b_rows: group.profile.outer.matrix.output_rank(),
             outer_slice_count: group.profile.outer_slice_count,
+            randomness_columns: group.profile.randomness_columns,
         });
         group_indices.push(group_index);
         if opening_plan.is_some() {
@@ -347,6 +353,7 @@ fn build_relation_rhs_layout(
         d_ring_dimension: final_role_dims.d_d(),
         n_d,
         groups,
+        d_randomness_columns: lp.open_randomness_columns,
         compression: opening_plan.map(|opening_plan| RelationCompressionLayout {
             group_indices,
             group_plans,

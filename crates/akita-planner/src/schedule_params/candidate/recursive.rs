@@ -353,6 +353,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     // new group is the whole list.
                     vec![akita_params::GroupOpenPhaseParams {
                         profile: akita_params::GroupCommitPhaseParams {
+                            randomness_columns: 0,
                             version: akita_params::GroupCommitPhaseParams::VERSION,
                             // It commits one polynomial over the witness arriving at
                             // its level.

@@ -365,6 +365,22 @@ where
                 },
             )?;
         }
+        let slice_geometry = &group_plan.witness.slice_geometry;
+        let randomness_columns = slice_geometry.randomness_columns();
+        if randomness_columns != 0 {
+            let message_width = slice_geometry.message_input_width();
+            scatter_randomness_kernels(
+                &mut dense,
+                compilation.witness_layout.randomness().outer(group_index),
+                group_plan.roles.d_b,
+                (0..slice_geometry.total_randomness_columns()?).map(|column| {
+                    b_setup_kernels.get(
+                        column / randomness_columns,
+                        message_width + column % randomness_columns,
+                    )
+                }),
+            )?;
+        }
         drop(challenge_kernels);
         drop(d_setup_kernels);
         drop(b_setup_kernels);
@@ -403,6 +419,24 @@ where
         }
     }
 
+    let d_randomness = &compilation.plan.d_randomness_columns;
+    if !d_randomness.is_empty() {
+        let d_d = lp.role_dims().d_d();
+        let d_kernels = contract_setup_residue_columns(
+            &setup_sources.d,
+            d_randomness.clone(),
+            &compilation.plan.d_row_weights,
+            1,
+            &ResidueKernelPoint::new(alpha, d_d)?,
+        )?;
+        scatter_randomness_kernels(
+            &mut dense,
+            compilation.witness_layout.randomness().opening(),
+            d_d,
+            (0..d_randomness.len()).map(|column| d_kernels.get(0, column)),
+        )?;
+    }
+
     if lp.payload_mode.is_compressed() {
         let _span = tracing::info_span!("reduced_compression_weights").entered();
         let compression = akita_types::build_reduced_compression_relation_weights::<F, E>(
@@ -423,4 +457,30 @@ where
             live_len: compilation.witness_layout.live_coeff_len(),
         },
     )
+}
+
+/// Add the setup kernel of every hiding-randomness ring in one witness span:
+/// ring `k` sits at `span.start + k * ring_dim` and carries no challenge term.
+fn scatter_randomness_kernels<'k, E: Field + 'k>(
+    dense: &mut [E],
+    span: Range<usize>,
+    ring_dim: usize,
+    kernels: impl ExactSizeIterator<Item = Result<&'k [E], AkitaError>>,
+) -> Result<(), AkitaError> {
+    if span.is_empty() {
+        return Ok(());
+    }
+    if ring_dim == 0 || span.len() != kernels.len() * ring_dim {
+        return Err(AkitaError::Internal(
+            "randomness kernels disagree with their witness span".into(),
+        ));
+    }
+    let [mut window] =
+        super::lane_weights::lane_windows_mut(dense, std::slice::from_ref(&span), 1)?
+            .try_into()
+            .map_err(|_| AkitaError::Internal("randomness span has no weight window".into()))?;
+    for (ring, kernel) in kernels.enumerate() {
+        add_scaled_kernel(&mut window, span.start + ring * ring_dim, kernel?, E::one())?;
+    }
+    Ok(())
 }
