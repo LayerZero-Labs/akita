@@ -15,9 +15,10 @@ use crate::{
 
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
-    dimension_candidates, suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide,
-    FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide,
-    SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
+    dimension_candidates, precommit_openings::packing_precommit_opening_products,
+    suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy,
+    RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide, SetupPrefixSearchCache,
+    SplitBoundPolicy, SuffixCtx, SuffixState,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,78 +89,6 @@ pub(crate) const fn state_allows_terminal_seed(
     has_incoming_setup_prefix: bool,
 ) -> bool {
     !is_root_level && !has_incoming_setup_prefix
-}
-
-/// Maximum number of root precommit opening assignments per opening dimension.
-///
-/// The bound applies to the Cartesian product over distinct interchangeable
-/// classes. Class multiplicity does not count toward it, so any number of
-/// identical producers fits; three to eight distinct classes do, depending on
-/// the per-class domain sizes. A larger product removes coefficient-packing
-/// root openings for that dimension, as an unsupported dimension does. A multi-chunk root
-/// only folds by coefficient packing, so that dimension then offers no root
-/// candidate; other dimensions are unaffected.
-pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
-
-/// Enumerate the root precommit openings for one shared opening dimension.
-///
-/// Each returned assignment holds one opening per interchangeable precommitted
-/// class, in [`precommitted_group_equivalence_classes`] order; every group of a
-/// class opens with its class's opening. The domain is the Cartesian product of
-/// the per-class coefficient-packing domains, so its size depends on the
-/// number of distinct classes and not on how many groups each class holds.
-/// A product beyond [`MAX_PRECOMMIT_OPENING_PRODUCTS`] yields an empty domain
-/// before any assignment is allocated.
-pub(crate) fn packing_precommit_opening_products(
-    policy: &PlannerPolicy,
-    dimensions: CommitmentRingDims,
-    key: &ScheduleLookupKey,
-    precommitted_source_contracts: &[akita_params::sis::CommittedSourceContract],
-) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
-    if !crate::schedule_params::precommitted_groups_support_opening_dimension(
-        key.precommitteds.iter(),
-        dimensions.d_d(),
-    ) {
-        return Ok(Vec::new());
-    }
-    let class_domains =
-        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?
-            .into_iter()
-            .map(|indices| {
-                let profile = &key.precommitteds[indices[0]];
-                crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-                    policy.claim_ext_degree,
-                    CommitmentRingDims {
-                        inner: profile.inner.matrix.ring_dimension(),
-                        outer: profile.outer.matrix.ring_dimension(),
-                        opening: dimensions.d_d(),
-                    },
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-    let Some(product_count) = class_domains.iter().try_fold(1usize, |count, domain| {
-        count
-            .checked_mul(domain.len())
-            .filter(|&count| count <= MAX_PRECOMMIT_OPENING_PRODUCTS)
-    }) else {
-        return Ok(Vec::new());
-    };
-
-    let mut products = vec![Vec::with_capacity(class_domains.len())];
-    for domain in &class_domains {
-        products = products
-            .iter()
-            .flat_map(|product| {
-                domain.iter().map(move |&opening| {
-                    let mut extended = product.clone();
-                    extended.push(opening);
-                    extended
-                })
-            })
-            .collect();
-    }
-    debug_assert_eq!(products.len(), product_count);
-    Ok(products)
 }
 
 /// Enumerate the method/dimension work for one suffix state.

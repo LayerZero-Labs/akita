@@ -663,8 +663,8 @@ pub fn find_schedule(
 /// payload/relation phases, and direct-vs-offloaded edges form a guide. The
 /// grouped root's shared D matrix and every length-, setup-, rank-, response-,
 /// and relation-derived suffix value are rebuilt under `policy`. This guided
-/// search is a conditional search, not the globally optimal search performed
-/// by [`find_schedule`].
+/// search is conditional on that skeleton; [`find_schedule`] searches the full
+/// policy domain, with bounded selection for root opening products above 256.
 ///
 /// When that frozen skeleton is no longer feasible, the guided search reports
 /// [`AkitaError::UnsupportedSchedule`] and adaptation falls back to
@@ -672,7 +672,7 @@ pub fn find_schedule(
 /// full search fails too, or when the request itself is invalid. Invalid
 /// requests (no precommitted group, a mismatched final group, or a main row
 /// that does not pass audit under `policy`) are rejected without a fallback.
-/// A fallback row is the full search's optimum for the key and need not retain
+/// A fallback row is the full search's selected result and need not retain
 /// any part of the main row's skeleton. When both searches fail, the error
 /// carries both reasons.
 ///
@@ -948,8 +948,9 @@ pub(crate) fn find_schedule_in_relation_order(
             }) {
             format!(
                 "; {class_count} distinct precommitted classes can exceed the {}-assignment \
-                 root opening bound, so some coefficient-packing root openings may not have \
-                 been searched",
+                 root opening bound; larger domains keep shared-subring assignments first \
+                 and fill the remaining slots by D width, so some root openings may not \
+                 have been searched",
                 crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
             )
         } else {

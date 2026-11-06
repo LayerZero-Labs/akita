@@ -48,6 +48,15 @@ may use different challenge subring dimensions. A setup prefix inherits the
 method selected by the fold that consumes it. The commitment itself does not
 record that method.
 
+Root planning assigns one challenge subring to each class of precommitted
+groups with equal commit profiles and source contracts. It searches all opening
+assignments when their Cartesian product has at most 256 entries. For larger
+products, it keeps all assignments that use one shared subring first. It fills
+the remaining slots, up to 256, with mixed-subring assignments ranked by total
+D segment width per opening digit, including repeated groups. This width is a
+setup and proof-size estimate. Normal security and response checks still apply.
+The bounded search can miss a feasible or better schedule.
+
 For coefficient packing, ring-switch finalization prepares one compact batch
 of checked group semantics. The batch retains shared sparse challenges, alpha
 powers, row weights, gadgets, and witness addresses. It supplies both the

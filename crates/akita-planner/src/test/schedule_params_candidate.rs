@@ -900,10 +900,14 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         bounded_products(fitting_classes as usize).len(),
         precommit_domain.len().pow(fitting_classes),
     );
-    assert!(
-        bounded_products(fitting_classes as usize + 1).is_empty(),
-        "an oversized product removes coefficient-packing root openings",
+    let bounded = bounded_products(fitting_classes as usize + 1);
+    assert_eq!(
+        bounded.len(),
+        crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
     );
+    for (index, opening) in precommit_domain.iter().enumerate() {
+        assert_eq!(bounded[index], vec![*opening; fitting_classes as usize + 1]);
+    }
 
     let incompatible_products =
         crate::schedule_params::suffix_dp::packing_precommit_opening_products(
