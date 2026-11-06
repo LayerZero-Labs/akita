@@ -15,10 +15,11 @@ use akita_types::binary_source::{
 
 /// Restrict ordinary producers to the mixed root's current preimage geometry.
 pub(super) fn ordinary_policy(mut policy: PlannerPolicy) -> PlannerPolicy {
-    // A fits the root's 648-coordinate budget; B is fixed by preimage extraction.
-    policy.ring_dimension_schedule.potential_a_dimensions = &[64, 128, 256, 512];
-    policy.ring_dimension_schedule.potential_b_dimensions = &[64];
-    // Root search uses only this minimum; retain the producer suffix's range.
+    // Measurement presets supply a validated, sorted dimension domain.
+    policy.ring_dimension_schedule =
+        akita_planner::ordinary_source::mixed_root_producer_domain(policy.ring_dimension_schedule);
+    // Guard against future preset changes: root search uses only this minimum.
+    // Retain the producer suffix's range.
     policy.opening_basis_range.0 = 3;
     policy
 }

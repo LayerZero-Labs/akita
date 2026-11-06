@@ -15,19 +15,17 @@ use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, SetupPrefixSlotId};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::binary_source::{
     BinaryAReadGuard, BinaryCommittedGroupManifest, BinaryTypedPrefix,
 };
 use akita_types::{
-    AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims,
+    AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 use akita_verifier::SetupPolicy;
 use config::MeasurementConfig;
-use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
-use jolt_field::{Fold, MulBaseUnreduced, Unreduced, WithCommitAccumulator};
+use jolt_field::Ring;
 use jolt_transcript::BytesMsg;
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter, Write};
@@ -50,28 +48,7 @@ struct Fixture {
     contexts: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-pub(crate) fn main<C: MeasurementConfig>(arguments: Vec<String>) -> Result<()>
-where
-    C::Field: Field
-        + CanonicalEncoding
-        + AkitaSerialize
-        + Valid
-        + Ring
-        + Unreduced
-        + PseudoMersenne
-        + WithCommitAccumulator
-        + 'static,
-    <C::Field as Unreduced>::Wide: From<C::Field> + AdditiveGroup,
-    C::ExtField: FpExtEncoding<C::Field>
-        + ExtField<C::Field>
-        + Unreduced
-        + Fold
-        + Ring
-        + MulBaseUnreduced<C::Field>
-        + AkitaSerialize
-        + Valid
-        + 'static,
-{
+pub(crate) fn main<C: MeasurementConfig>(arguments: Vec<String>) -> Result<()> {
     let mut log = 22usize;
     let mut shape = "binary-and-prime-claims".to_owned();
     let mut phase = "prove".to_owned();
@@ -123,28 +100,7 @@ where
     outcome
 }
 
-pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &Path) -> Result<()>
-where
-    C::Field: Field
-        + CanonicalEncoding
-        + AkitaSerialize
-        + Valid
-        + Ring
-        + Unreduced
-        + PseudoMersenne
-        + WithCommitAccumulator
-        + 'static,
-    <C::Field as Unreduced>::Wide: From<C::Field> + AdditiveGroup,
-    C::ExtField: FpExtEncoding<C::Field>
-        + ExtField<C::Field>
-        + Unreduced
-        + Fold
-        + Ring
-        + MulBaseUnreduced<C::Field>
-        + AkitaSerialize
-        + Valid
-        + 'static,
-{
+pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let (catalog, key) = {
         let _span = tracing::info_span!("catalog_planning").entered();
         if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
@@ -423,17 +379,7 @@ pub(super) fn verify<C: MeasurementConfig>(
     shape: &str,
     directory: &Path,
     timings: &metrics::Timings,
-) -> Result<()>
-where
-    C::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
-    C::ExtField: FpExtEncoding<C::Field>
-        + ExtField<C::Field>
-        + Ring
-        + Unreduced
-        + Fold
-        + AkitaSerialize
-        + Valid,
-{
+) -> Result<()> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
     let catalog = if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
         TrustedScheduleCatalog::<C>::from_artifact_bytes(

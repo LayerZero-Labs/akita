@@ -180,8 +180,8 @@ The research `binary-source-measurements` example accepts `--field p64` to
 select the p64/E64 native root; omitting it preserves P128. Shapes are
 `binary-claim`, `prime-claim`, `binary-and-prime-claims`, and
 `binary-and-prime-claims-plus-ordinary`. P64 fixtures use `--log-carriers 22`
-and 23, both with C=256; complete replay tests use log 22, the smallest feasible
-measured size. The selected planner/preset refused log 3 under the strict
+and 23, both with C=256; complete replay tests use log 22, the smallest size
+measured (logs 4–21 have not been tried). The selected planner/preset refused log 3 under the strict
 `next_witness_len < request.current_witness_len` rule in
 `crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs`.
 That comparison includes the full-field typed prefix's contribution to the
@@ -202,13 +202,14 @@ planning when its catalog passes identity and row validation. Use a fresh direct
 and unset the cache for fresh planning. Cache names now include the field family;
 legacy P128 cache filenames are not reused. A valid alternate cached row can change
 setup and proof bytes, so byte comparisons must use identical selected rows.
-Research replay catalogs and SHA3-256 proof pins at logs 22/23 live under
+Research replay catalogs at logs 22/23 live under
 `crates/akita-pcs/tests/fixtures/binary-source-p64{,-dev}/`, outside the supported
-schedule artifacts. Required CI replays log 22 in both protocol modes, admits
-all 16 catalogs without proving and checks both pin rosters and the installed
-SHA-256 manifest. Honest log-23 replay against existing pins is a separate Linux
-gate whenever protocol bytes change. To regenerate, run
-the example's three phases for all four shapes, logs 22/23 and both modes in two
-fresh roots; require equal catalog, commitment, setup, claims and proof bytes
-before installing catalogs and `large-pins.txt`. The fixture README provides the
-exact generation commands and installed SHA-256 manifest.
+schedule artifacts. Their shared SHA3-256 proof pins live alongside P128 in
+`scripts/binary-source-full-size-digests.tsv`. Required CI replays log 22 in both
+protocol modes, admits all 16 catalogs without proving and checks the shared pin
+roster and installed catalog hashes. Honest log-23 replay against existing pins
+is a separate Linux gate whenever protocol bytes change. The existing
+`scripts/binary-source-full-size.sh --field p64 --all` runs fresh generation and
+pin checks; its `--reference-dir` option compares two independent executions.
+See the [fixture README](../../../crates/akita-pcs/tests/fixtures/README.md) for the
+single regeneration procedure and evidence requirements.

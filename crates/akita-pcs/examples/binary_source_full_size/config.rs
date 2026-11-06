@@ -3,6 +3,9 @@ use akita_config::{proof_optimized::fp128::DenseBounded, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{sis::CommittedSourceClass, DecompositionParams, SisModulusProfileId};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_types::FpExtEncoding;
+use jolt_field::{AdditiveGroup, Fold, PseudoMersenne, Ring, Unreduced, WithCommitAccumulator};
 
 #[derive(Clone)]
 pub(crate) struct P128;
@@ -10,7 +13,14 @@ pub(crate) struct P128;
 pub(crate) struct P64;
 
 pub(crate) trait MeasurementConfig:
-    CommitmentConfig<Field: akita_serialization::AkitaDeserialize<Context = ()>>
+    CommitmentConfig<
+    Field: AkitaDeserialize<Context = ()>
+        + Unreduced<Wide: From<Self::Field> + AdditiveGroup>
+        + PseudoMersenne
+        + WithCommitAccumulator
+        + 'static,
+    ExtField: FpExtEncoding<Self::Field> + Unreduced + Fold + Ring + AkitaSerialize + 'static,
+>
 {
     const PROFILE: BinaryFieldProfile;
 

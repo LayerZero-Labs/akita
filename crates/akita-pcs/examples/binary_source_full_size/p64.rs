@@ -33,25 +33,38 @@ pub(super) fn fixture_directory() -> std::path::PathBuf {
 
 #[cfg(test)]
 fn compare_baseline(proof: &[u8], log: usize, shape: &str) {
-    let pin = fixture_directory().join("large-pins.txt");
-    let key = format!("{log}-{shape}");
+    let pin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/binary-source-full-size-digests.tsv");
+    let key = format!("p64/{log}");
+    let algorithm = match jolt_transcript::DIGEST_HASH {
+        jolt_transcript::DigestHash::Sha3_256 => "sha3-256",
+        jolt_transcript::DigestHash::Keccak256 => "keccak256",
+    };
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
-    let actual = format!("{key} {} {}", proof.len(), crate::metrics::hex(&digest));
+    let length = proof.len().to_string();
+    let digest = crate::metrics::hex(&digest);
+    let actual = [key.as_str(), shape, &length, &digest, algorithm];
     let pins = std::fs::read_to_string(&pin).unwrap_or_else(|error| {
         panic!(
-            "missing Linux reference pins at {}: {error}; observed {actual}",
+            "missing Linux reference pins at {}: {error}; observed {actual:?}",
             pin.display()
         )
     });
-    let mut entries = pins
-        .lines()
-        .filter(|line| line.split_whitespace().next() == Some(key.as_str()));
+    let mut entries = pins.lines().map(str::split_whitespace).filter(|fields| {
+        let mut fields = fields.clone();
+        fields.next() == Some(key.as_str()) && fields.next() == Some(shape)
+    });
     let expected = entries
         .next()
-        .unwrap_or_else(|| panic!("missing reference pin for {key} in {}", pin.display()));
+        .unwrap_or_else(|| panic!("missing reference pin for {key} {shape} in {}", pin.display()))
+        .collect::<Vec<_>>();
     assert!(
         entries.next().is_none(),
-        "duplicate reference pin for {key}"
+        "duplicate reference pin for {key} {shape}"
     );
-    assert_eq!(actual, expected.trim(), "p64 reference bytes changed");
+    assert_eq!(
+        actual.as_slice(),
+        expected.as_slice(),
+        "p64 reference bytes or digest algorithm changed (selected {algorithm})"
+    );
 }

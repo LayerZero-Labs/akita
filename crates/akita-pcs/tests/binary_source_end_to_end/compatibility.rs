@@ -1,5 +1,5 @@
 //! P128 word-only pins retain the projection and typed Stage 3 protocol.
-//! P64 singleton pins use byte_contract and the full-size example replay tests.
+//! P64 proof pins live in the full-size script's shared TSV and example replay tests.
 
 use super::*;
 

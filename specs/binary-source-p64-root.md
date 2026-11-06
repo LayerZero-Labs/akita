@@ -908,8 +908,10 @@ shapes at logs 22 and 23 in current and dev protocol modes. Two independent root
 matched on catalog, commitments, verifier setup, claims and proof bytes (80/80
 comparisons). Forty additional current-mode proofs also matched their references.
 Catalogs are installed under `crates/akita-pcs/tests/fixtures/binary-source-p64/`
-and `binary-source-p64-dev/`, with length and SHA3-256 proof pins in `large-pins.txt`;
-the enclosing `P64-SHA256SUMS` records the supplied files' SHA-256 digests.
+and `binary-source-p64-dev/`, with shared length and SHA3-256 proof pins in
+`scripts/binary-source-full-size-digests.tsv`. The enclosing `P64-SHA256SUMS`
+retains the 16 catalogs' supplied SHA-256 digests. The fixture README documents
+regeneration through `scripts/binary-source-full-size.sh --field p64`.
 
 The selected planner/preset refused log 3 under the strict shrinking rule in
 `crates/akita-planner/src/schedule_params/candidate/recursive/frontier.rs`:
@@ -922,7 +924,8 @@ outgoing witness. Its padded domain and full-field contribution to the complete
 successor are the relevant costs. This refusal is a property of the selected
 planner and preset, not a theorem excluding every small P64 protocol.
 
-The complete replay tests use log 22, the smallest feasible measured size.
+The complete replay tests use log 22, the smallest size measured; logs 4–21
+have not been tried.
 At `72ef7dbc`, both exact release CI example commands passed all five tests,
 with zero failures, ignored or filtered tests in each mode: four complete
 shape replays with statement, commitment, proof and setup mutations and committed
@@ -930,8 +933,10 @@ K/prime digit faults, plus the catalog identity test. Both measurement-mode
 all-target checks and release example Clippy runs also passed. `421b93a0`
 contains only the two formatting fixes reported by that run; no fresh formatter
 pass at that revision is claimed. Required CI additionally admits all 16
-catalogs across its two modes and checks both complete pin rosters and all 18
-installed SHA-256 hashes. Honest log-23 replay against existing proof pins
+catalogs across its two modes and checks the shared pin roster and all 16
+installed catalog hashes. The dedicated large-runner replay job uses `ci-test`
+with debug assertions and overflow checks, with a 60-minute timeout. Expected
+hosted runtime remains unmeasured. Honest log-23 replay against existing proof pins
 remains a Linux gate whenever protocol bytes change.
 
 Those passing negative tests require `InvalidProof` but do not isolate its

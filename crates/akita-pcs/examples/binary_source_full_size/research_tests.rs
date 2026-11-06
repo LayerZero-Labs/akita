@@ -9,7 +9,7 @@ use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::Ring;
 use std::path::Path;
 
-// Smallest feasible measured geometry for the selected planner and preset.
+// Smallest size measured; logs 4 through 21 have not been tried.
 const LOG: usize = 22;
 
 // Each shape owns an isolated directory; the generator revalidates cached rows.
@@ -25,8 +25,10 @@ fn fixture(shape: &'static str) {
                 |error| panic!("missing research catalog at {}: {error}", catalog.display()),
             );
             run::prove::<P64>(LOG, shape, &directory).unwrap();
-            run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default()).unwrap();
             let proof = std::fs::read(directory.join("proof.bin")).unwrap();
+            super::compare_baseline(&proof, LOG, shape);
+            run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default()).unwrap();
+            // Public mutations check transcript binding; digit faults check the relation.
             mutate_statement(shape, &directory);
             mutate_commitment(shape, &directory);
             mutate_proof(shape, &directory, &proof);
@@ -52,7 +54,6 @@ fn fixture(shape: &'static str) {
                     "committed digit fault must fail verification: {error}"
                 );
             }
-            super::compare_baseline(&proof, LOG, shape);
             std::fs::remove_dir_all(directory).unwrap();
         })
         .unwrap()
@@ -72,6 +73,7 @@ fn rejects(shape: &str, directory: &Path) {
     );
 }
 
+// Transcript-binding check, not an isolated coefficient-relation check.
 fn mutate_statement(shape: &str, directory: &Path) {
     let path = directory.join("claims.json");
     let bytes = std::fs::read(&path).unwrap();
@@ -188,6 +190,7 @@ fn p64_mixed_complete_schedule_and_tampering() {
     fixture("binary-and-prime-claims-plus-ordinary");
 }
 
+// Transcript-binding check, not an isolated coefficient-relation check.
 fn mutate_commitment(shape: &str, directory: &Path) {
     let path = directory.join("commitments.bin");
     let bytes = std::fs::read(&path).unwrap();

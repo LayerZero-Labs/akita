@@ -6,3 +6,13 @@
 23 binary-claim 84590 1b1cd455a1001cc84d21e1c804f928f368f6404e0639b5e8be1c75ad72e27abf
 23 binary-and-prime-claims 84604 a1a95fc9e54d7ae6a1bbd38eacb864b7f2594c06a221e6677a19ced6060578ee
 23 binary-and-prime-claims-plus-ordinary 84613 5c9df1982a941ba3fcc684fa48369376081f3b7b92405ad9bb5f5fa5b11c660a
+# P64 keys are field-qualified; the fifth column names the digest algorithm.
+# field/log_carriers shape proof_bytes digest digest_algorithm
+p64/22	binary-and-prime-claims	80402	ef10d357c779744f07b2af2f28fe5959172c95ac4821a04143f035c03cae7bed	sha3-256
+p64/22	binary-and-prime-claims-plus-ordinary	83497	7cf384aa2ce079cf055a351c52caa2b9a62741a2c7db915e01a9f9e987a00435	sha3-256
+p64/22	binary-claim	79331	32a6766eb7bcd07dcbfb0aa51fa409a3efe92976d2d745e85609e9e6688ed160	sha3-256
+p64/22	prime-claim	77453	54189e928926522db81d59a68cff230df6b8ae2fa1a02c1b2177e2ca7c4edb7f	sha3-256
+p64/23	binary-and-prime-claims	79756	fe7030495b62de699c1542bb7e4a817a13b2d441625564bb6b2da36f39f1968c	sha3-256
+p64/23	binary-and-prime-claims-plus-ordinary	83594	5b7652fdc2259b47982e979f6f068547b4f4af0cec28e55d24cc3746b2088318	sha3-256
+p64/23	binary-claim	79769	cfc64d405e6f083c021baa53e52e25e0a974294a2be7417d6e91f281596a5c7c	sha3-256
+p64/23	prime-claim	76702	55f711d45f20e09e439ff516539ec6a8348008b335b0c7ae4889e6209cfd319d	sha3-256

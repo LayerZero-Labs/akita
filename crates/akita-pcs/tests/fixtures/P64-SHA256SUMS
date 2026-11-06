@@ -6,7 +6,6 @@
 3d65c69dbb042328947396f21ea0f3c40e837a54318ea656b9f998c41e0a23d0  ./binary-source-p64-dev/23-binary-and-prime-claims.json
 67ed7c6c483ba706ef4064025b074dca1784d1a3d0d43be3b91f42401150314b  ./binary-source-p64-dev/23-binary-claim.json
 a807f940200bc458df040b4701261f6c66e3c25e6e1de5a0c35592c3459849d6  ./binary-source-p64-dev/23-prime-claim.json
-09483bebd78523e81ee9471ea01fdbebdf05b526740d55fda8861c00687d6ade  ./binary-source-p64-dev/large-pins.txt
 a11508ff72d7084a4626964f90088a18ce29a125d4855bf106ac73194a244ab4  ./binary-source-p64/22-binary-and-prime-claims-plus-ordinary.json
 aa2a4ccb28f9bf651c032f2d110c95ae2d983b1d19c49a6acd840aef3865dc1a  ./binary-source-p64/22-binary-and-prime-claims.json
 a8fa4158a388cf5834a96164b053de12d3d323c74c71eaad09ce9665e69c0e49  ./binary-source-p64/22-binary-claim.json
@@ -15,4 +14,3 @@ a8fa4158a388cf5834a96164b053de12d3d323c74c71eaad09ce9665e69c0e49  ./binary-sourc
 409c0170346689ccb650ebc88f8a89b380e1aa9ce70c5f4212049baeeb1a4690  ./binary-source-p64/23-binary-and-prime-claims.json
 2d8051a27a0bdbf8347953500c479d5dab94efff1124e4676f397141ed0e3272  ./binary-source-p64/23-binary-claim.json
 15cb7b7866b993ec09f7185223f96a4b18f59caed9bd5a0c97ec2b9864d019be  ./binary-source-p64/23-prime-claim.json
-09483bebd78523e81ee9471ea01fdbebdf05b526740d55fda8861c00687d6ade  ./binary-source-p64/large-pins.txt
