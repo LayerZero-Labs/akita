@@ -96,6 +96,9 @@ impl FixtureCatalog {
         if ordinary.is_some() != (shape == "binary-and-prime-claims-plus-ordinary") {
             return Err(format!("native catalog ordinary rows do not match shape {shape}").into());
         }
+        if ordinary.is_some_and(|profile| profile != profiles.final_group) {
+            return Err("native catalog ordinary producer differs from mixed root profile".into());
+        }
         let price = catalog::plan::<C>(log, shape, carrier, ordinary, 64)?;
         if price.outgoing_physical_cells != self.physical_cells
             || price.typed_prefix.natural_len != self.prefix_cells
@@ -117,9 +120,10 @@ impl FixtureCatalog {
         log: usize,
         shape: &str,
     ) -> Result<TrustedScheduleCatalog<C>> {
+        // Report incompatible mixed geometry before a stale policy digest.
+        self.check_rows::<C>(log, shape)?;
         self.identity
             .check(&CatalogIdentity::new::<C>(log, shape))?;
-        self.check_rows::<C>(log, shape)?;
         let chunking = ChunkedWitnessCfg::default_non_chunked();
         let policy = policy_of::<C>(chunking);
         let transition = NativeRootTransition::new(self.physical_cells, 3, self.prefix_cells)?;
@@ -207,10 +211,7 @@ fn policies<C: MeasurementConfig>() -> (PlannerPolicy, PlannerPolicy) {
     direct_policy.recursive_setup_planning = false;
     direct_policy.selection_policy = SelectionPolicyId::for_policy(false);
     direct_policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
-    // The optional ordinary native relation is degree bounded by the binary
-    // root's 648-coordinate contract. Preserve the ordinary search otherwise.
-    direct_policy.ring_dimension_schedule.potential_a_dimensions = &[64, 128, 256, 512];
-    (policy, direct_policy)
+    (policy, catalog::ordinary_policy(direct_policy))
 }
 
 fn plan<C: MeasurementConfig>(

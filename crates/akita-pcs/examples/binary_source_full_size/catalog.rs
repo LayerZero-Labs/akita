@@ -5,11 +5,23 @@ use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, PolynomialGroupLayout, ScheduleLookupKey,
     SetupContributionMode,
 };
-use akita_schedules::{RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog};
+use akita_schedules::{
+    PlannerPolicy, RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog,
+};
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimeGroupClaim,
     PrimePlaneClaim, PrimePlaneManifest,
 };
+
+/// Restrict ordinary producers to the mixed root's current preimage geometry.
+pub(super) fn ordinary_policy(mut policy: PlannerPolicy) -> PlannerPolicy {
+    // A fits the root's 648-coordinate budget; B is fixed by preimage extraction.
+    policy.ring_dimension_schedule.potential_a_dimensions = &[64, 128, 256, 512];
+    policy.ring_dimension_schedule.potential_b_dimensions = &[64];
+    // Root search uses only this minimum; retain the producer suffix's range.
+    policy.opening_basis_range.0 = 3;
+    policy
+}
 
 pub(super) fn plan<C: MeasurementConfig>(
     log: usize,
@@ -18,6 +30,25 @@ pub(super) fn plan<C: MeasurementConfig>(
     ordinary: Option<akita_params::GroupCommitPhaseParams>,
     dimension: usize,
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
+    if let Some(profile) = ordinary {
+        let outer_degree = profile.outer.matrix.ring_dimension();
+        let outer_basis = profile.outer.digits.log_basis;
+        if outer_degree != 64 || outer_basis != 3 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "mixed root ordinary profile requires outer ring dimension 64 and log basis 3; got {outer_degree} and {outer_basis}"
+            )));
+        }
+        let inner_modulus = profile.inner.matrix.sis_modulus_profile();
+        let outer_modulus = profile.outer.matrix.sis_modulus_profile();
+        if !inner_modulus.matches_modulus(C::PROFILE.modulus())
+            || !outer_modulus.matches_modulus(C::PROFILE.modulus())
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "mixed root ordinary profile requires {:?} SIS moduli; got inner {inner_modulus:?} and outer {outer_modulus:?}",
+                C::PROFILE
+            )));
+        }
+    }
     let descriptor = claims::descriptor::<C>(log)?;
     let manifest = BinaryCommittedGroupManifest::with_field_profile(
         descriptor.clone(),
@@ -109,7 +140,7 @@ pub(super) fn build<C: MeasurementConfig>(
             &ordinary_key,
             C::committed_source_contract()?,
             &[],
-            &direct_policy,
+            &ordinary_policy(direct_policy),
             C::ring_challenge_config,
         )?)
     } else {
@@ -265,7 +296,7 @@ pub(super) fn plan_only<C: MeasurementConfig>(
             &key,
             C::committed_source_contract()?,
             &[],
-            &policy,
+            &ordinary_policy(policy),
             C::ring_challenge_config,
         )?;
         Some(planned.schedule.root.params.own_group().profile)
