@@ -1,4 +1,9 @@
 use super::*;
+use std::collections::hash_map::DefaultHasher;
+#[cfg(feature = "parallel")]
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Result of the suffix DP at one state. Each selection objective retains the
 /// candidates its parent needs because proof-size and setup-envelope pricing
@@ -150,11 +155,28 @@ impl ScheduleMemoKey {
     }
 }
 
+/// Completed suffix states, shared by the search's worker threads.
+///
+/// An entry is the state's result as a function of its key alone, so which
+/// thread computes it, and when, never changes what a reader sees. The
+/// states are split over [`MEMO_SHARDS`] locks by key hash: one lock
+/// serialized every worker's lookups (about a tenth of the pool's time was
+/// spent waiting on it in `jolt:specs/whiteout-o2b-planner.md`'s profile).
 pub(crate) struct ScheduleMemo {
+    shards: Box<[Mutex<MemoStates>]>,
+    pub(super) setup_prefixes: SetupPrefixSearchCache,
+}
+
+const MEMO_SHARDS: usize = 64;
+
+#[derive(Default)]
+struct MemoStates {
     entries: HashMap<ScheduleMemoKey, MemoEntry>,
+    /// States some thread is completing now.
+    #[cfg(feature = "parallel")]
+    claimed: HashSet<ScheduleMemoKey>,
     direct_insertion_order: VecDeque<ScheduleMemoKey>,
     prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
-    pub(super) setup_prefixes: SetupPrefixSearchCache,
 }
 
 pub(super) struct MemoEntry {
@@ -171,6 +193,9 @@ const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 393_216;
 const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
     MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
+// Each shard holds its share of each quota.
+const MAX_DIRECT_ENTRIES_PER_SHARD: usize = MAX_DIRECT_SUFFIX_CACHE_ENTRIES / MEMO_SHARDS;
+const MAX_PREFIXED_ENTRIES_PER_SHARD: usize = MAX_PREFIXED_SUFFIX_CACHE_ENTRIES / MEMO_SHARDS;
 const MAX_SECOND_CHANCE_PROBES: usize = 16;
 
 #[cfg(test)]
@@ -178,7 +203,7 @@ const MAX_SECOND_CHANCE_PROBES: usize = 16;
 #[ignore = "manual peak-RSS measurement with both cache quotas saturated"]
 fn memo_cache_pressure() {
     let multi = std::env::var_os("AKITA_MEMO_MULTI_CHUNK").is_some();
-    let mut memo = ScheduleMemo::new();
+    let memo = ScheduleMemo::new();
     let result = empty_suffix_result();
     for (topology, capacity) in [
         (
@@ -225,7 +250,10 @@ fn memo_cache_pressure() {
             );
         }
     }
-    assert_eq!(memo.len(), MAX_SUFFIX_SEARCH_CACHE_ENTRIES);
+    // Each shard evicts at its own share of the quota, so a shard that
+    // hashes more keys than its share evicts before the memo as a whole is
+    // full: the total is bounded by the quota, not equal to it.
+    assert!(memo.len() <= MAX_SUFFIX_SEARCH_CACHE_ENTRIES);
     eprintln!(
         "multi={multi}, memo_entries={}, key_bytes={}",
         memo.len(),
@@ -258,37 +286,79 @@ pub(super) fn evict_suffix_entry(
 impl ScheduleMemo {
     pub(crate) fn new() -> Self {
         Self {
-            entries: HashMap::new(),
-            direct_insertion_order: VecDeque::new(),
-            prefixed_insertion_order: VecDeque::new(),
+            shards: (0..MEMO_SHARDS)
+                .map(|_| Mutex::new(MemoStates::default()))
+                .collect(),
             setup_prefixes: SetupPrefixSearchCache::default(),
         }
     }
 
+    fn states(&self, key: &ScheduleMemoKey) -> MutexGuard<'_, MemoStates> {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        // The remainder is below `MEMO_SHARDS`, so it fits `usize`.
+        let shard = (hasher.finish() % MEMO_SHARDS as u64) as usize;
+        self.shards[shard]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn all_states(&self) -> impl Iterator<Item = MutexGuard<'_, MemoStates>> {
+        self.shards
+            .iter()
+            .map(|shard| shard.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
-        self.entries.len()
+        self.all_states().map(|states| states.entries.len()).sum()
     }
 
     #[cfg(test)]
     pub(super) fn contains(&self, key: &ScheduleMemoKey) -> bool {
-        self.entries.contains_key(key)
+        self.states(key).entries.contains_key(key)
     }
 
-    pub(super) fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
-        self.entries.get_mut(key).map(|entry| {
+    /// Whether `key` is completed, or some thread is completing it.
+    #[cfg(feature = "parallel")]
+    pub(super) fn is_completed_or_claimed(&self, key: &ScheduleMemoKey) -> bool {
+        let states = self.states(key);
+        states.entries.contains_key(key) || states.claimed.contains(key)
+    }
+
+    /// Records that the caller is completing `key` until the claim drops.
+    #[cfg(feature = "parallel")]
+    /// A claim only steers which successors a thread starts; two threads
+    /// may still complete one state, to the same result.
+    pub(super) fn claim(&self, key: &ScheduleMemoKey) -> MemoClaim<'_> {
+        self.states(key).claimed.insert(key.clone());
+        MemoClaim {
+            memo: self,
+            key: key.clone(),
+        }
+    }
+
+    pub(super) fn get(&self, key: &ScheduleMemoKey) -> Option<Arc<SuffixResult>> {
+        self.states(key).entries.get_mut(key).map(|entry| {
             entry.referenced = true;
-            &entry.result
+            Arc::clone(&entry.result)
         })
     }
 
     pub(super) fn insert(
-        &mut self,
+        &self,
         key: ScheduleMemoKey,
         result: Arc<SuffixResult>,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) {
-        if let Entry::Occupied(mut existing) = self.entries.entry(key.clone()) {
+        let mut states = self.states(&key);
+        let MemoStates {
+            entries,
+            direct_insertion_order,
+            prefixed_insertion_order,
+            ..
+        } = &mut *states;
+        if let Entry::Occupied(mut existing) = entries.entry(key.clone()) {
             existing.insert(MemoEntry {
                 result,
                 referenced: true,
@@ -296,38 +366,54 @@ impl ScheduleMemo {
             return;
         }
         let (insertion_order, capacity) = if key.is_direct() {
-            (
-                &mut self.direct_insertion_order,
-                MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
-            )
+            (&mut *direct_insertion_order, MAX_DIRECT_ENTRIES_PER_SHARD)
         } else {
             (
-                &mut self.prefixed_insertion_order,
-                MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
+                &mut *prefixed_insertion_order,
+                MAX_PREFIXED_ENTRIES_PER_SHARD,
             )
         };
         if insertion_order.len() >= capacity {
-            evict_suffix_entry(&mut self.entries, insertion_order);
+            evict_suffix_entry(entries, insertion_order);
         }
         insertion_order.push_back(key.clone());
-        self.entries.insert(
+        entries.insert(
             key,
             MemoEntry {
                 result,
                 referenced: false,
             },
         );
+        drop(states);
+        // Diagnostics only (`diagnostics` is `None` outside a captured
+        // planner run): totals need every shard's lock, so a search pays it
+        // per insert only when it asked for diagnostics.
         if let Some(diagnostics) = diagnostics {
-            diagnostics.record_memo_occupancy(
-                self.entries.len(),
-                self.direct_insertion_order.len(),
-                self.prefixed_insertion_order.len(),
-            );
+            let (mut total, mut direct, mut prefixed) = (0, 0, 0);
+            for states in self.all_states() {
+                total += states.entries.len();
+                direct += states.direct_insertion_order.len();
+                prefixed += states.prefixed_insertion_order.len();
+            }
+            diagnostics.record_memo_occupancy(total, direct, prefixed);
         }
     }
 
     pub(crate) fn setup_prefix_cache_diagnostics(&self) -> (usize, usize) {
         self.setup_prefixes.diagnostics()
+    }
+}
+
+#[cfg(feature = "parallel")]
+pub(super) struct MemoClaim<'a> {
+    memo: &'a ScheduleMemo,
+    key: ScheduleMemoKey,
+}
+
+#[cfg(feature = "parallel")]
+impl Drop for MemoClaim<'_> {
+    fn drop(&mut self) {
+        self.memo.states(&self.key).claimed.remove(&self.key);
     }
 }
 
@@ -344,14 +430,16 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
 /// nothing can learn the smallest size it excluded.
 pub(crate) struct SetupFieldBudget {
     limit: usize,
-    min_rejected: std::cell::Cell<Option<usize>>,
+    // Successor states complete in parallel, so rejections are recorded
+    // under a lock.
+    min_rejected: Mutex<Option<usize>>,
 }
 
 impl SetupFieldBudget {
     pub(crate) const fn new(limit: usize) -> Self {
         Self {
             limit,
-            min_rejected: std::cell::Cell::new(None),
+            min_rejected: Mutex::new(None),
         }
     }
 
@@ -360,17 +448,21 @@ impl SetupFieldBudget {
         if setup_field_elements <= self.limit {
             return true;
         }
-        self.min_rejected.set(Some(
-            self.min_rejected
-                .get()
-                .map_or(setup_field_elements, |min| min.min(setup_field_elements)),
-        ));
+        let mut min_rejected = self
+            .min_rejected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *min_rejected =
+            Some(min_rejected.map_or(setup_field_elements, |min| min.min(setup_field_elements)));
         false
     }
 
     /// Smallest setup size this budget rejected, if any.
     pub(crate) fn min_rejected(&self) -> Option<usize> {
-        self.min_rejected.get()
+        *self
+            .min_rejected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -383,8 +475,8 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) challenge_order: akita_params::ChallengeFieldOrder,
     pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
-    pub(crate) ring_challenge_config:
-        &'a dyn Fn(usize) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>,
+    pub(crate) ring_challenge_config: &'a (dyn Fn(usize) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>
+             + Sync),
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<&'a SetupFieldBudget>,
     pub(crate) root_lookup_key: Option<&'a ScheduleLookupKey>,

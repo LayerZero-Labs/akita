@@ -270,6 +270,7 @@ dependencies = [
  "akita-types",
  "jolt-algebra",
  "libm",
+ "rayon",
 ]
 
 [[package]]

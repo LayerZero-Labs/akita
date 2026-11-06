@@ -87,6 +87,24 @@ pub(crate) use suffix_dp::{
     SuffixState, SuffixTopology, ZkSearch, MAX_PRECOMMIT_OPENING_PRODUCTS,
 };
 
+/// `f` over `items`, results in `items`' order. With `parallel` the calls
+/// run on rayon's pool; callers that keep the first error in this order see
+/// the error a sequential pass would report.
+pub(crate) fn map_in_order<T: Send, R: Send>(
+    items: Vec<T>,
+    f: impl Fn(T) -> R + Sync + Send,
+) -> Vec<R> {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        items.into_par_iter().map(f).collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        items.into_iter().map(f).collect()
+    }
+}
+
 pub(crate) fn root_inner_basis_source(
     source: akita_params::sis::CommittedSourceContract,
 ) -> InnerBasisSource {
@@ -587,7 +605,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
-    &'a dyn Fn(usize) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>;
+    &'a (dyn Fn(usize) -> Result<akita_challenges::FoldChallengeDistribution, AkitaError> + Sync);
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 
