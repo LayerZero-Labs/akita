@@ -551,6 +551,7 @@ struct BinomialTable {
     max_n: usize,
     max_k: usize,
     entries: Vec<u128>,
+    narrow_entries: Vec<u64>,
 }
 
 impl BinomialTable {
@@ -577,10 +578,16 @@ impl BinomialTable {
                 previous = column;
             }
         }
+        let narrow_entries = if max_n <= 64 {
+            entries.iter().map(|&v| v as u64).collect()
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             max_n,
             max_k,
             entries,
+            narrow_entries,
         })
     }
 
@@ -610,14 +617,48 @@ impl BinomialTable {
         let out = out
             .get_mut(..k)
             .ok_or_else(|| AkitaError::Internal("sparse unrank output is too short".into()))?;
+        if self.max_n <= 64 {
+            let mut rank = u64::try_from(rank).map_err(|_| AkitaError::InvalidProof)?;
+            let mut upper = n;
+            let rows = self.max_n + 1;
+            for (i, slot) in out.iter_mut().enumerate().rev() {
+                let base = (i + 1) * rows;
+                let mut element = upper.checked_sub(1).ok_or(AkitaError::InvalidProof)?;
+                loop {
+                    let value = *self
+                        .narrow_entries
+                        .get(base + element)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    if value <= rank {
+                        rank -= value;
+                        *slot = element as u32;
+                        upper = element;
+                        break;
+                    }
+                    element = element.checked_sub(1).ok_or(AkitaError::InvalidProof)?;
+                }
+            }
+            return if rank == 0 {
+                Ok(())
+            } else {
+                Err(AkitaError::InvalidProof)
+            };
+        }
         let mut upper = n;
         for (i, slot) in out.iter_mut().enumerate().rev() {
             let column = self.column(i + 1, upper)?;
-            let (element, &value) = column
-                .iter()
-                .enumerate()
-                .rfind(|&(_, &value)| value <= rank)
-                .ok_or_else(|| AkitaError::Internal("sparse rank was out of range".into()))?;
+            let (element, value) = if n >= 256 {
+                let end = column.partition_point(|&value| value <= rank);
+                let element = end.checked_sub(1).ok_or(AkitaError::InvalidProof)?;
+                (element, column[element])
+            } else {
+                let (element, &value) = column
+                    .iter()
+                    .enumerate()
+                    .rfind(|&(_, &value)| value <= rank)
+                    .ok_or(AkitaError::InvalidProof)?;
+                (element, value)
+            };
             rank -= value;
             *slot = u32::try_from(element)
                 .map_err(|_| AkitaError::Internal("sparse position exceeds u32".into()))?;
