@@ -33,6 +33,10 @@ where
         b"akita/research/route1/4+4/direct/joint/base-s11a/v1",
     )?;
     for (index, (group, profile)) in claims.groups().iter().zip(profiles).enumerate() {
+        let terminals = group.research_terminals().ok_or_else(|| {
+            AkitaError::InvalidInput("research group lacks typed terminal admission".into())
+        })?;
+        terminals.validate::<F>()?;
         let mut identity = profile.canonical_descriptor_bytes();
         identity.extend_from_slice(
             &u64::try_from(index).map_err(|_| AkitaError::InvalidProof)?.to_le_bytes(),
@@ -56,7 +60,9 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 identity.extend_from_slice(&width.bits().to_le_bytes());
-                for owner in owners { identity.extend_from_slice(owner); }
+                for owner in owners {
+                    identity.extend_from_slice(owner);
+                }
                 compression.maps().last().ok_or(AkitaError::InvalidProof)?.ring_dimension()
             }
             GroupClaimKind::Ordinary | GroupClaimKind::Binary { .. }
@@ -78,10 +84,14 @@ where
             &lifted,
         )?;
         akita_transcript::public_extensions::<F, E, _>(
-            state, crate::FoldSite::RootPoint { group: index }.id()?, group.point(),
+            state,
+            crate::FoldSite::RootPoint { group: index }.id()?,
+            group.point(),
         )?;
         akita_transcript::public_extensions::<F, E, _>(
-            state, crate::FoldSite::Openings { level: 0 }.id()?, group.evaluations(),
+            state,
+            crate::FoldSite::Openings { level: 0 }.id()?,
+            group.evaluations(),
         )?;
     }
     Ok(())

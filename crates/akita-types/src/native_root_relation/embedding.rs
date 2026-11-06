@@ -119,7 +119,7 @@ mod tests {
         let eq = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
         let dense = table.iter().zip(eq).fold(F::zero(), |sum, (&w, e)| sum + w * e);
         assert_eq!(joined.evaluate(&point).unwrap(), dense);
-        let local = NativeRootWeights::new(8, vec![(0, F::one())], F::zero()).unwrap();
+        let local = NativeRootWeights::new(8, vec![(0, F::from_u64(1))], F::zero()).unwrap();
         assert!(NativeRootWeights::concatenate(32, [(3, local.clone())]).is_err());
         assert!(NativeRootWeights::concatenate(4, [(0, local.clone())]).is_err());
         assert!(NativeRootWeights::concatenate(32, [(8, local.clone()), (8, local)]).is_err());

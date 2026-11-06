@@ -38,6 +38,11 @@ where
             if basis != BasisMode::Lagrange {
                 return Err(AkitaError::InvalidProof);
             }
+            if claims.num_groups() == 8 {
+                return super::research_batch::verify_root(
+                    setup, grinding, claims, opening_batch, root_lp, next_fold_params,
+                );
+            }
             super::binary_root::verify_root(
                 setup,
                 grinding,

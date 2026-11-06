@@ -21,6 +21,8 @@ pub struct PolynomialGroupClaims<'a, F: Clone, C = ()> {
     evaluations: Vec<F>,
     commitment: C,
     kind: GroupClaimKind,
+    #[cfg(feature = "labinius-trinomial")]
+    research_terminals: Option<crate::binary_source::ResearchTerminals<F>>,
 }
 
 impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
@@ -40,6 +42,8 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
             evaluations,
             commitment,
             kind: GroupClaimKind::Ordinary,
+            #[cfg(feature = "labinius-trinomial")]
+            research_terminals: None,
         })
     }
 
@@ -79,7 +83,15 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
             evaluations: self.evaluations.clone(),
             commitment: map(&self.commitment),
             kind: self.kind.clone(),
+            #[cfg(feature = "labinius-trinomial")]
+            research_terminals: self.research_terminals.clone(),
         }
+    }
+
+    /// Typed research readings survive commitment mapping without residue casts.
+    #[cfg(feature = "labinius-trinomial")]
+    pub fn research_terminals(&self) -> Option<&crate::binary_source::ResearchTerminals<F>> {
+        self.research_terminals.as_ref()
     }
 
     /// Number of evaluations in this group.
@@ -338,6 +350,8 @@ mod tests {
             evaluations: vec![],
             commitment: (),
             kind: GroupClaimKind::Ordinary,
+            #[cfg(feature = "labinius-trinomial")]
+            research_terminals: None,
         });
         assert!(matches!(
             claims.check(),

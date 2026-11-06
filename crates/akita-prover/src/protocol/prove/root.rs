@@ -94,6 +94,12 @@ where
     match claims.groups().first().map(|group| group.kind()) {
         #[cfg(feature = "labinius-trinomial")]
         Some(akita_types::opening_claims::GroupClaimKind::Binary { .. }) => {
+            if claims.num_groups() == 8 {
+                return super::research_batch::prove_root::<Cfg, B>(
+                    expanded, backend, claims, layout, handles, schedule,
+                    proof_session, grinding, basis,
+                );
+            }
             super::binary_root::prove_root(
                 expanded,
                 prefix_slots,

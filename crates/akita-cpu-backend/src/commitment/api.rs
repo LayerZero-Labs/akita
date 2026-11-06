@@ -96,6 +96,19 @@ impl<'a> GroupContext<'a> {
         }
     }
 
+    /// Freeze an explicit producer profile in its ordered batch position.
+    /// Binary setup labels include this position; ordinary profiles remain reusable.
+    #[must_use]
+    pub const fn explicit_with_precommitted_groups(
+        profile: &'a GroupCommitPhaseParams,
+        precommitteds: &'a PrecommittedGroupProfiles,
+    ) -> Self {
+        Self {
+            precommitted_groups: PrecommittedGroupContext::WithPrecommittedGroups(precommitteds),
+            parameter_source: GroupParameterSource::Explicit(profile),
+        }
+    }
+
     /// Commit a caller-supplied frozen commit profile without catalog lookup.
     ///
     /// The profile fully determines the A/B commitment. Any opening schedule the

@@ -2,7 +2,8 @@
 
 use super::*;
 use akita_types::binary_source::{
-    BinaryRootWitnessRequest, ResearchBatchPlan, ResearchBatchResponse, ResearchBatchWitnessRequest,
+    BinaryRootWitnessRequest, ResearchBatchPlan, ResearchBatchResponse,
+    ResearchBatchWitnessRequest,
 };
 use akita_types::opening_claims::GroupClaimKind;
 
@@ -32,7 +33,9 @@ where
         || request.plan.ordinary_repacking().destination_ring_dimension() != next.params.d_a()
         || next.params.setup_prefix().is_some()
     {
-        return Err(AkitaError::InvalidInput("research witness admission mismatch".into()));
+        return Err(AkitaError::InvalidInput(
+            "research witness admission mismatch".into(),
+        ));
     }
     let mut binary = Vec::with_capacity(4);
     let mut payload = Vec::new();
@@ -45,11 +48,19 @@ where
         let group_context = context.for_group(index);
         let group_binding = backend.binding(session, &group_context)?;
         let local_request = BinaryRootWitnessRequest {
-            manifest: manifest.as_ref().clone(), claim: None, prime: prime.clone(),
+            manifest: manifest.as_ref().clone(),
+            claim: None,
+            prime: prime.clone(),
             plan: local.plan().clone(), ordinary: None,
         };
         let (d, prepared) = prepare_binary(
-            backend, session, group_binding, &group_context, handle, &local_request, true,
+            backend,
+            session,
+            group_binding,
+            &group_context,
+            handle,
+            &local_request,
+            true,
         )?;
         payload.try_reserve_exact(d.len()).map_err(|_| AkitaError::InvalidProof)?;
         payload.extend(d);
@@ -64,8 +75,13 @@ where
         .zip(request.handles.iter().skip(4)).enumerate()
     {
         let group = checked::sum([index, 4]).ok_or(AkitaError::InvalidProof)?;
-        let GroupClaimKind::ResearchOrdinary { owners, width } = request.kinds.get(group)
-            .ok_or(AkitaError::InvalidProof)? else { return Err(AkitaError::InvalidProof); };
+        let GroupClaimKind::ResearchOrdinary { owners, width } = request
+            .kinds
+            .get(group)
+            .ok_or(AkitaError::InvalidProof)?
+        else {
+            return Err(AkitaError::InvalidProof);
+        };
         if schedule.root.params.group_params(&layout, group)?.profile != *plan.profile()
             || Some(*width) != plan.source_width()
             || owners.len() != plan.profile().group.num_polynomials()
@@ -81,7 +97,10 @@ where
         &segments.iter().map(Vec::as_slice).collect::<Vec<_>>(),
     )?;
     Ok((payload, Box::new(Preparation {
-        binding, plan: request.plan.clone(), binary, ordinary,
+        binding,
+        plan: request.plan.clone(),
+        binary,
+        ordinary,
     })))
 }
 
@@ -126,6 +145,11 @@ where
         digits.get_mut(range).ok_or(AkitaError::InvalidProof)?.copy_from_slice(block);
     }
     super::super::binary_root_sessions::import_root_witness(
-        backend, session, context, digits, destination_ring,
-    ).map(Some)
+        backend,
+        session,
+        context,
+        digits,
+        destination_ring,
+    )
+    .map(Some)
 }

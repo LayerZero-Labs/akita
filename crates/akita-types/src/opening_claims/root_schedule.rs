@@ -23,6 +23,39 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                 schedule.root.output_witness_len,
                 next.params.d_a(),
             )?;
+            if self.num_groups() == 8 {
+                if !research_native || next.params.setup_prefix().is_some() {
+                    return Err(AkitaError::UnsupportedSchedule(
+                        "research batch requires explicit direct native admission".into(),
+                    ));
+                }
+                let mut coordinates = Vec::with_capacity(4);
+                for group in self.groups().iter().take(4) {
+                    let super::GroupClaimKind::Binary {
+                        manifest,
+                        claim: None,
+                        ..
+                    } = group.kind()
+                    else {
+                        return Err(AkitaError::InvalidProof);
+                    };
+                    if manifest.field_profile()
+                        != akita_params::binary_setup::BinaryFieldProfile::P64
+                        || manifest.descriptor().polynomials().len() != 1
+                    {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    coordinates.push(manifest.descriptor().index_map().columns());
+                }
+                // Direct setup consumes no root Stage 3. Keep every suffix run.
+                let suffix = GrindingPlan::new(
+                    ordinary.runs().iter().copied().filter(|run| run.site().level() != 0).collect(),
+                    manifest.field_profile().challenge_order()?,
+                )?;
+                return crate::binary_source::binary_root_grinding_plan(
+                    &suffix, manifest.field_profile(), &coordinates, domain_len, 648,
+                );
+            }
             return crate::binary_source::binary_root_grinding_plan(
                 &ordinary,
                 manifest.field_profile(),

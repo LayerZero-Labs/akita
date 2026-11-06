@@ -12,10 +12,14 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
     /// Points retain the challenge-field type so extension terminals need no cast.
     pub fn new_research_ordinary(
         commitment: CommittedGroup<F>,
-        terminal: crate::binary_source::ResearchTerminal<E>,
+        terminals: crate::binary_source::ResearchTerminals<E>,
         owners: Vec<[u8; 32]>,
         width: akita_params::ordinary_source::OrdinarySourceWidth,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, AkitaError>
+    where
+        E: jolt_field::ExtField<F>,
+    {
+        let terminal = terminals.validate::<F>()?;
         if !matches!(commitment.kind(), CommittedGroupKind::Ordinary)
             || owners.len() != commitment.profile().group.num_polynomials()
             || terminal.evaluations.len() != owners.len()
@@ -23,8 +27,44 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         {
             return Err(AkitaError::InvalidInput("research ordinary owner geometry".into()));
         }
-        let mut group = Self::new(terminal.point, terminal.evaluations, commitment)?;
+        let mut group = Self::new(
+            terminal.point.clone(), terminal.evaluations.clone(), commitment,
+        )?;
         group.kind = GroupClaimKind::ResearchOrdinary { owners, width };
+        group.research_terminals = Some(terminals);
+        Ok(group)
+    }
+
+    /// Select the typed base S11a reading of one research binary source.
+    /// Future extension modes retain their readings in this same group record.
+    pub fn new_research_binary(
+        commitment: CommittedGroup<F>,
+        terminals: crate::binary_source::ResearchTerminals<E>,
+    ) -> Result<Self, AkitaError>
+    where
+        E: jolt_field::ExtField<F>,
+    {
+        let terminal = terminals.validate::<F>()?;
+        let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
+            return Err(AkitaError::InvalidProof);
+        };
+        if manifest.field_profile() != akita_params::binary_setup::BinaryFieldProfile::P64
+            || manifest.descriptor().polynomials().len() != 1
+            || terminal.evaluations.len() != 1
+        {
+            return Err(AkitaError::InvalidInput("research binary terminal owner count".into()));
+        }
+        let residue = |value: &E| value.base_coefficient(0).to_u128_checked()
+            .ok_or(AkitaError::InvalidProof);
+        let prime = crate::binary_source::PrimeGroupClaim {
+            point: terminal.point.iter().map(residue).collect::<Result<Vec<_>, _>>()?,
+            evaluations: vec![crate::binary_source::PrimePlaneClaim {
+                polynomial: 0,
+                value: residue(terminal.evaluations.first().ok_or(AkitaError::InvalidProof)?)?,
+            }],
+        };
+        let mut group = Self::new_binary_planes(commitment, None, Some(prime))?;
+        group.research_terminals = Some(terminals);
         Ok(group)
     }
 
@@ -87,6 +127,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
             point: point.into(),
             evaluations,
             commitment,
+            research_terminals: None,
             kind: GroupClaimKind::Binary {
                 manifest: Box::new(manifest),
                 claim,

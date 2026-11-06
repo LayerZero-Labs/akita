@@ -23,6 +23,48 @@ pub struct ResearchTerminal<E> {
     pub evaluations: Vec<E>,
 }
 
+/// Execution mode of the terminal inventory. Further amplification modes must
+/// be explicit variants and must authenticate every reading before admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResearchTerminalMode {
+    BaseS11a,
+}
+
+/// Ordered readings per source. This container retains the field type and point
+/// multiplicity; an E64 two-point mode can use the same owner/reading records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResearchTerminals<E> {
+    pub mode: ResearchTerminalMode,
+    pub readings: Vec<ResearchTerminal<E>>,
+}
+
+impl<E: Field> ResearchTerminals<E> {
+    /// This row admits exactly one base-field reading. Reject extra readings;
+    /// never select the first and silently leave another unauthenticated.
+    pub fn validate<F: Field>(&self) -> Result<&ResearchTerminal<E>, AkitaError>
+    where
+        E: jolt_field::ExtField<F>,
+    {
+        match self.mode {
+            ResearchTerminalMode::BaseS11a => {
+                let [terminal] = self.readings.as_slice() else {
+                    return Err(AkitaError::InvalidInput(
+                        "research base point count".into(),
+                    ));
+                };
+                if terminal.point.iter().chain(&terminal.evaluations).any(|value| {
+                    (1..E::DEGREE).any(|coordinate| !value.base_coefficient(coordinate).is_zero())
+                }) {
+                    return Err(AkitaError::InvalidInput(
+                        "research base terminal has E64 data".into(),
+                    ));
+                }
+                Ok(terminal)
+            }
+        }
+    }
+}
+
 /// Complete local compilers and their aligned positions in one outgoing table.
 #[derive(Clone, Debug)]
 pub struct ResearchBatchPlan {
@@ -30,6 +72,8 @@ pub struct ResearchBatchPlan {
     ordinary: OrdinaryNativeRootBatch,
     ordinary_repacking: RootCoefficientRepacking,
     offsets: Vec<usize>,
+    d_ranges: Vec<std::ops::Range<usize>>,
+    fold_coordinates: Vec<usize>,
     physical_cells: usize,
     domain_len: usize,
     batch_count: usize,
@@ -52,9 +96,14 @@ impl ResearchBatchPlan {
         destination_ring: usize,
     ) -> Result<Self, AkitaError> {
         if kinds.len() != 8 || profiles.len() != 8 {
-            return Err(AkitaError::InvalidInput("research root requires four plus four".into()));
+            return Err(AkitaError::InvalidInput(
+                "research root requires four plus four".into(),
+            ));
         }
         let mut owners = std::collections::BTreeSet::new();
+        let mut d_ranges = Vec::with_capacity(4);
+        let mut d_end = 0;
+        let mut fold_coordinates = Vec::with_capacity(4);
         let mut binary = Vec::with_capacity(4);
         let mut ordinary_sources = Vec::with_capacity(4);
         for (index, (kind, profile)) in kinds.iter().zip(profiles).enumerate() {
@@ -68,19 +117,40 @@ impl ResearchBatchPlan {
                         || claim.is_some()
                         || prime.planes().len() != 1
                     {
-                        return Err(AkitaError::InvalidInput("research binary roster".into()));
+                        return Err(AkitaError::InvalidInput(
+                            "research binary roster".into(),
+                        ));
                     }
+                    let d_len = checked::product([
+                        usize::try_from(manifest.d_label(false, prime.planes().len())?.rank)
+                            .map_err(|_| AkitaError::InvalidProof)?,
+                        manifest.b_ring_dimension(),
+                    ]).ok_or(AkitaError::InvalidProof)?;
+                    let range = checked::range(d_end, d_len).ok_or(AkitaError::InvalidProof)?;
+                    d_end = range.end;
+                    d_ranges.push(range);
+                    fold_coordinates.push(manifest.descriptor().index_map().columns());
                     for owner in manifest.descriptor().polynomials() {
                         if !owners.insert(*owner) {
-                            return Err(AkitaError::InvalidInput("duplicate research owner".into()));
+                            return Err(AkitaError::InvalidInput(
+                                "duplicate research owner".into(),
+                            ));
                         }
                     }
                     let local = BinaryRootWitnessPlan::for_profile(
-                        manifest.descriptor(), manifest.a_rank(), destination_ring,
-                        BinaryFieldProfile::P64, false, prime.planes().len(),
+                        manifest.descriptor(),
+                        manifest.a_rank(),
+                        destination_ring,
+                        BinaryFieldProfile::P64,
+                        false,
+                        prime.planes().len(),
                     )?;
                     binary.push(BinaryRootPublic::new(
-                        manifest, None, prime, setup, local.repacking().domain_len(),
+                        manifest,
+                        None,
+                        prime,
+                        setup,
+                        local.repacking().domain_len(),
                         destination_ring, None,
                     )?);
                 }
@@ -95,11 +165,15 @@ impl ResearchBatchPlan {
                         || profile.inner.matrix.sis_modulus_profile()
                             != akita_params::SisModulusProfileId::Q64Offset59
                     {
-                        return Err(AkitaError::InvalidInput("research ordinary roster".into()));
+                        return Err(AkitaError::InvalidInput(
+                            "research ordinary roster".into(),
+                        ));
                     }
                     for owner in ids {
                         if !owners.insert(*owner) {
-                            return Err(AkitaError::InvalidInput("duplicate research owner".into()));
+                            return Err(AkitaError::InvalidInput(
+                                "duplicate research owner".into(),
+                            ));
                         }
                     }
                     ordinary_sources.push((*profile, *width));
@@ -135,10 +209,22 @@ impl ResearchBatchPlan {
             .chain([ordinary.linear_batch_count(), negative_count]))
             .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
-            binary, ordinary, ordinary_repacking, offsets, physical_cells, domain_len, batch_count,
+            binary,
+            ordinary,
+            ordinary_repacking,
+            offsets,
+            d_ranges,
+            fold_coordinates,
+            physical_cells, domain_len, batch_count,
         })
     }
 
+    pub fn d_ranges(&self) -> &[std::ops::Range<usize>] {
+        &self.d_ranges
+    }
+    pub fn fold_coordinates(&self) -> &[usize] {
+        &self.fold_coordinates
+    }
     pub fn binary(&self) -> &[BinaryRootPublic] {
         &self.binary
     }
@@ -162,7 +248,7 @@ impl ResearchBatchPlan {
     }
 
     /// One independent coefficient per original row, including every K equation.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn relation<E: Field>(
         &self,
         setup: &AkitaSetupDescriptor,
@@ -181,8 +267,15 @@ impl ResearchBatchPlan {
                 .ok_or(AkitaError::InvalidProof)?;
             cursor = range.end;
             let (weights, negative) = local.relation(
-                input.challenges, alpha, batches.get(range).ok_or(AkitaError::InvalidProof)?,
-                &[], &[], input.commitment, input.d_payload, None, Some(input.matrix),
+                input.challenges,
+                alpha,
+                batches.get(range).ok_or(AkitaError::InvalidProof)?,
+                &[],
+                &[],
+                input.commitment,
+                input.d_payload,
+                None,
+                Some(input.matrix),
             )?;
             if !negative.is_empty() {
                 return Err(AkitaError::InvalidProof);
@@ -194,7 +287,10 @@ impl ResearchBatchPlan {
         cursor = range.end;
         let ordinary_offset = *self.offsets.get(4).ok_or(AkitaError::InvalidProof)?;
         components.push((ordinary_offset, self.ordinary.linear_weights(
-            &self.ordinary_repacking, setup, ordinary, alpha,
+            &self.ordinary_repacking,
+            setup,
+            ordinary,
+            alpha,
             batches.get(range).ok_or(AkitaError::InvalidProof)?,
         )?));
         let mut negative = Vec::new();
@@ -225,4 +321,33 @@ pub struct ResearchBatchWitnessRequest<H> {
 /// One joint candidate: challenges are drawn for all four groups before probing.
 pub struct ResearchBatchResponse {
     pub challenges: Vec<Challenges>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
+
+    #[test]
+    fn research_terminal_inventory_rejects_unconsumed_points_and_nonbase_coordinates() {
+        type E = Ext2<F>;
+        let terminal = ResearchTerminal {
+            point: vec![E::lift_base(F::from_u64(7))],
+            evaluations: vec![E::zero()],
+        };
+        let mut terminals = ResearchTerminals {
+            mode: ResearchTerminalMode::BaseS11a,
+            readings: vec![terminal.clone()],
+        };
+        terminals.validate::<F>().unwrap();
+        terminals.readings.push(terminal);
+        assert!(terminals.validate::<F>().is_err());
+        terminals.readings.pop();
+        terminals.readings[0].point[0] = E::from_base_fn(|index| {
+            F::from_u64(if index == 0 { 7 } else { 1 })
+        });
+        assert!(terminals.validate::<F>().is_err());
+        terminals.readings.clear();
+        assert!(terminals.validate::<F>().is_err());
+    }
 }

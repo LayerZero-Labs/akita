@@ -39,6 +39,29 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
             }
         }
         #[cfg(feature = "labinius-trinomial")]
+        if groups.iter().any(|group| {
+            group.research_terminals.is_some()
+                || matches!(&group.kind, GroupClaimKind::ResearchOrdinary { .. })
+        }) {
+            if groups.len() != 8 {
+                return Err(akita_error::AkitaError::InvalidInput(
+                    "research terminals require the complete four-plus-four roster".into(),
+                ));
+            }
+            for (index, group) in groups.iter().enumerate() {
+                let correct_kind = if index < 4 {
+                    matches!(&group.kind, GroupClaimKind::Binary { claim: None, .. })
+                } else {
+                    matches!(&group.kind, GroupClaimKind::ResearchOrdinary { .. })
+                };
+                if !correct_kind || group.research_terminals.is_none() {
+                    return Err(akita_error::AkitaError::InvalidInput(
+                        "research terminals cannot enter another root protocol".into(),
+                    ));
+                }
+            }
+        }
+        #[cfg(feature = "labinius-trinomial")]
         for (position, group) in groups.iter().enumerate() {
             if let GroupClaimKind::Binary {
                 manifest,

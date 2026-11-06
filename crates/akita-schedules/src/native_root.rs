@@ -11,7 +11,8 @@ use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};
 use akita_params::{CommittedGroupBatchProfile, FoldParams, FoldSchedule, OpeningClaimsLayout};
 
-/// Trusted geometry of the native root's balanced-digit output and typed A prefix.
+/// Trusted geometry of a native root's balanced-digit output and setup mode.
+/// A zero prefix is available only through the explicit research direct constructor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeRootTransition {
     physical_cells: usize,
@@ -47,6 +48,19 @@ impl NativeRootTransition {
         })
     }
 
+    /// Research-only direct setup with one concatenated base-eight witness.
+    /// Zero prefix cells select public matrix evaluation, never Stage 3.
+    pub fn research_direct(physical_cells: usize) -> Result<Self, AkitaError> {
+        checked::ceil_log2(physical_cells)
+            .and_then(checked::pow2)
+            .ok_or_else(|| AkitaError::InvalidSetup("research native domain overflow".into()))?;
+        Ok(Self {
+            physical_cells,
+            log_digit_bound: 3,
+            setup_prefix_natural_cells: 0,
+        })
+    }
+
     /// Physical live span, including virtual tails between witness segments.
     pub const fn physical_cells(self) -> usize {
         self.physical_cells
@@ -55,7 +69,7 @@ impl NativeRootTransition {
     pub const fn log_digit_bound(self) -> u32 {
         self.log_digit_bound
     }
-    /// Natural cells of the typed A product's padded rank/coefficient tensor.
+    /// Natural cells of the typed A prefix, or zero for research direct setup.
     pub const fn setup_prefix_natural_cells(self) -> usize {
         self.setup_prefix_natural_cells
     }
@@ -78,11 +92,15 @@ impl RootTransitionValidation for NativeRootTransition {
         schedule: &FoldSchedule,
         _policy: &PlannerPolicy,
     ) -> Result<usize, AkitaError> {
-        Self::new(
-            self.physical_cells,
-            self.log_digit_bound,
-            self.setup_prefix_natural_cells,
-        )?;
+        if self.setup_prefix_natural_cells == 0 {
+            Self::research_direct(self.physical_cells)?;
+        } else {
+            Self::new(
+                self.physical_cells,
+                self.log_digit_bound,
+                self.setup_prefix_natural_cells,
+            )?;
+        }
         if schedule.root.input_witness_len
             != akita_params::root_input_witness_len(&schedule.root.params)
             || !schedule.root.params.witness_chunk_ends.is_empty()
@@ -105,6 +123,20 @@ impl RootTransitionValidation for NativeRootTransition {
         expected_input: usize,
         _policy: &PlannerPolicy,
     ) -> Result<(), AkitaError> {
+        if self.setup_prefix_natural_cells == 0 {
+            if expected_input != self.physical_cells
+                || step.params.setup_prefix().is_some()
+                || step.params.witness_chunk.num_chunks != 1
+                || !step.params.witness_chunk_ends.is_empty()
+                || step.params.inner().digits.log_basis != 3
+                || step.params.inner().digits.num_digits != 1
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "research direct successor geometry".into(),
+                ));
+            }
+            return Ok(());
+        }
         let prefix = step.params.setup_prefix().ok_or_else(|| {
             AkitaError::InvalidSetup("native root requires a typed A prefix successor".into())
         })?;

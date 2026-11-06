@@ -38,6 +38,8 @@ pub(crate) struct ExtensionOpeningReduction<E: Field> {
 
 #[cfg(feature = "labinius-trinomial")]
 mod binary_root;
+#[cfg(feature = "labinius-trinomial")]
+mod research_batch;
 pub mod execution;
 mod fold;
 mod fold_kernels;
