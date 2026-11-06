@@ -65,8 +65,7 @@ dependencies = [
  "akita-error",
  "akita-transcript",
  "jolt-algebra",
- "serde",
- "smallvec",
+ "jolt-crypto",
 ]
 
 [[package]]
@@ -108,6 +107,7 @@ name = "akita-error"
 version = "0.1.0"
 dependencies = [
  "jolt-algebra",
+ "jolt-crypto",
  "thiserror",
 ]
 
@@ -1278,6 +1278,9 @@ dependencies = [
  "rand_core",
  "rayon",
  "serde",
+ "shake",
+ "smallvec",
+ "thiserror",
 ]
 
 [[package]]

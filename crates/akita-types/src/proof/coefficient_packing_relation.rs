@@ -190,6 +190,7 @@ impl<'authority, 'output, F: Field, E: Field>
     {
         self.canonical_challenges
             .evals_at_pows::<F, E>(&self.alpha_powers)
+            .map_err(AkitaError::from)
     }
 
     #[must_use]

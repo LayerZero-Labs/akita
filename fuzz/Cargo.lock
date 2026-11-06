@@ -27,8 +27,7 @@ dependencies = [
  "akita-error",
  "akita-transcript",
  "jolt-algebra",
- "serde",
- "smallvec",
+ "jolt-crypto",
 ]
 
 [[package]]
@@ -70,6 +69,7 @@ name = "akita-error"
 version = "0.1.0"
 dependencies = [
  "jolt-algebra",
+ "jolt-crypto",
  "thiserror",
 ]
 
@@ -689,6 +689,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-crypto"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=8a92941b01488ebe2373b51546395a93fbb94a6e#8a92941b01488ebe2373b51546395a93fbb94a6e"
+dependencies = [
+ "jolt-algebra",
+ "jolt-poly",
+ "jolt-transcript",
+ "rand_core",
+ "rayon",
+ "serde",
+ "shake",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
 name = "jolt-field"
 version = "0.1.0"
 source = "git+https://github.com/a16z/jolt?rev=8a92941b01488ebe2373b51546395a93fbb94a6e#8a92941b01488ebe2373b51546395a93fbb94a6e"
@@ -705,6 +721,7 @@ dependencies = [
  "jolt-utils",
  "num-traits",
  "rand_core",
+ "rayon",
  "serde",
  "thiserror",
  "tracing",

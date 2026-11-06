@@ -383,7 +383,9 @@ where
             actual: challenges.num_live_blocks_per_claim(),
         });
     }
-    challenges.evals_at_pows::<F, E>(alpha_pows)
+    challenges
+        .evals_at_pows::<F, E>(alpha_pows)
+        .map_err(AkitaError::from)
 }
 
 pub(crate) fn setup_contribution_group_inputs<F: Field>(

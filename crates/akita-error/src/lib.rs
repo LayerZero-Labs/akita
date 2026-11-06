@@ -4,6 +4,7 @@
 #![warn(unreachable_pub)]
 
 use jolt_algebra::AlgebraError;
+use jolt_crypto::CryptoError;
 
 /// Errors that can occur in Akita PCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -70,6 +71,20 @@ impl From<AlgebraError> for AkitaError {
                 Self::InvalidSize { expected, actual }
             }
             AlgebraError::InvalidSetup(message) => Self::InvalidSetup(message),
+        }
+    }
+}
+
+/// Lattice-primitive errors keep their classification: each [`CryptoError`]
+/// variant maps to its namesake, and a wrapped [`AlgebraError`] maps as above.
+impl From<CryptoError> for AkitaError {
+    fn from(error: CryptoError) -> Self {
+        match error {
+            CryptoError::InvalidInput(message) => Self::InvalidInput(message),
+            CryptoError::InvalidSize { expected, actual } => Self::InvalidSize { expected, actual },
+            CryptoError::InvalidSetup(message) => Self::InvalidSetup(message),
+            CryptoError::Internal(message) => Self::Internal(message),
+            CryptoError::Algebra(error) => error.into(),
         }
     }
 }

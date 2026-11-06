@@ -476,14 +476,11 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn draw_message(
+        fn draw_message<T>(
             &mut self,
             len: usize,
-            decode: impl FnOnce(
-                &[u8],
-            )
-                -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError>,
-        ) -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError> {
+            decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+        ) -> Result<Option<T>, AkitaError> {
             self.draws += 1;
             decode(&vec![11; len])
         }
