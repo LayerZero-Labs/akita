@@ -83,7 +83,7 @@ where
     let schedule = resolved.schedule();
     let levels = schedule.num_fold_levels();
     let all_ids =
-        akita_config::required_setup_prefix_slot_ids_for_schedule(schedule, input.opening_layout())
+        akita_config::required_setup_prefix_slot_ids_for_schedule(resolved, input.opening_layout())
             .unwrap();
     assert_eq!(!all_ids.is_empty(), Cfg::recursive_setup_planning());
     assert!(schedule.recursive_folds.iter().any(|fold| matches!(

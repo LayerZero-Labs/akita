@@ -207,7 +207,7 @@ where
     {
         let resolved = self.schedules.resolve_selection(opening.selection())?;
         let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
-            resolved.schedule(),
+            resolved,
             opening.opening_layout(),
         )?;
         let prefix_slots =

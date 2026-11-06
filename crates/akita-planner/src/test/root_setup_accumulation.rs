@@ -69,8 +69,17 @@ fn root_accumulation_reuses_the_existing_offloaded_successor_search() {
         if inherited == 0 {
             assert_eq!(planned.schedule, *schedule);
         }
+        let resolved = ResolvedScheduleRow::try_new(
+            CommittedGroupBatchProfile {
+                final_group: planned.schedule.root.params.own_group().profile,
+                precommitteds: key.precommitteds.clone(),
+            },
+            planned.schedule.clone(),
+            &policy,
+        )
+        .unwrap();
         let ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
-            &planned.schedule,
+            &resolved,
             &key.opening_layout().unwrap(),
         )
         .unwrap();

@@ -115,11 +115,9 @@ fn run(signed: bool) {
         .unwrap()
     };
     let selection = opening().selection();
-    let ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
-        row.schedule(),
-        opening().opening_layout(),
-    )
-    .unwrap();
+    let ids =
+        akita_config::required_setup_prefix_slot_ids_for_schedule(row, opening().opening_layout())
+            .unwrap();
     let mut prefixes_a = SetupPrefixProverRegistry::default();
     let mut prefixes_b = SetupPrefixProverRegistry::default();
     for id in ids {

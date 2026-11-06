@@ -102,7 +102,7 @@ fn run(check_failures: bool) -> Result<(), AkitaError> {
     let selection = input.selection();
     let resolved = scheme.schedules().resolve_selection(selection)?;
     let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
-        resolved.schedule(),
+        resolved,
         input.opening_layout(),
     )?;
     let prefixes_private = private.prefixes(&setup, &prefix_ids);

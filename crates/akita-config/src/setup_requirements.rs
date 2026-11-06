@@ -136,7 +136,7 @@ impl<F> SetupRequirements<F> {
             if Cfg::recursive_setup_planning() {
                 prefix_slot_ids.extend(
                     crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
-                        row.schedule(),
+                        row,
                         &row.profiles().opening_layout()?,
                     )?,
                 );

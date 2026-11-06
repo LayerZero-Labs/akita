@@ -77,7 +77,7 @@ pub(crate) fn ensure_setup_prefix_coverage(
     contains: impl Fn(&SetupPrefixSlotId) -> bool,
 ) -> Result<(), AkitaError> {
     let layout = row.profiles().opening_layout()?;
-    for id in required_setup_prefix_slot_ids_for_schedule(row.schedule(), &layout)? {
+    for id in required_setup_prefix_slot_ids_for_schedule(row, &layout)? {
         if !contains(&id) {
             return Err(AkitaError::InvalidSetup(
                 "planned setup-prefix slot is missing from setup".into(),

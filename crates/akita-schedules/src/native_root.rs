@@ -124,8 +124,8 @@ impl RootTransitionValidation for NativeRootTransition {
         Ok(())
     }
 
-    fn is_ordinary(&self) -> bool {
-        false
+    fn native_setup_prefix_natural_len(&self) -> Option<usize> {
+        Some(self.setup_prefix_natural_cells)
     }
 }
 

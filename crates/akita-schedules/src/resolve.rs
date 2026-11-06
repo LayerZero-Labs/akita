@@ -15,7 +15,7 @@ pub struct ResolvedScheduleRow {
     selection: OpeningScheduleSelection,
     profiles: CommittedGroupBatchProfile,
     schedule: FoldSchedule,
-    canonical_root_transition: bool,
+    native_root_setup_prefix_natural_len: Option<usize>,
 }
 
 impl ResolvedScheduleRow {
@@ -63,14 +63,14 @@ impl ResolvedScheduleRow {
             selection,
             profiles,
             schedule,
-            canonical_root_transition: transition.is_ordinary(),
+            native_root_setup_prefix_natural_len: transition.native_setup_prefix_natural_len(),
         })
     }
 
     /// Extension seam: extension rows require explicit admission and cannot be
     /// encoded as ordinary artifacts; <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub(crate) fn require_ordinary_artifact(&self) -> Result<(), AkitaError> {
-        if !self.canonical_root_transition {
+        if self.native_root_setup_prefix_natural_len.is_some() {
             return Err(AkitaError::InvalidSetup(
                 "selected root transition requires explicit catalog admission".into(),
             ));
@@ -91,6 +91,13 @@ impl ResolvedScheduleRow {
     /// Exact expanded schedule consumed by proving and verification.
     pub fn schedule(&self) -> &FoldSchedule {
         &self.schedule
+    }
+
+    /// Extension seam: retain the explicitly admitted native prefix geometry
+    /// for setup sizing; <https://github.com/LayerZero-Labs/akita/issues/285>.
+    /// Ordinary rows instead derive their prefix from the active setup matrices.
+    pub const fn native_root_setup_prefix_natural_len(&self) -> Option<usize> {
+        self.native_root_setup_prefix_natural_len
     }
 
     /// Check that opening claims have the exact layout authorized by this row.
@@ -126,7 +133,7 @@ pub(crate) trait RootTransitionValidation {
         policy: &PlannerPolicy,
     ) -> Result<(), AkitaError>;
 
-    fn is_ordinary(&self) -> bool;
+    fn native_setup_prefix_natural_len(&self) -> Option<usize>;
 }
 
 pub(crate) struct OrdinaryRootTransition;
@@ -190,8 +197,8 @@ impl RootTransitionValidation for OrdinaryRootTransition {
         validate_inherited_chunks(producer, producer_opening, step, expected_input, policy)
     }
 
-    fn is_ordinary(&self) -> bool {
-        true
+    fn native_setup_prefix_natural_len(&self) -> Option<usize> {
+        None
     }
 }
 
