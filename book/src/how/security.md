@@ -402,8 +402,8 @@ Both opening methods squeeze one challenge message per commitment group and
 decode it directly into the group's challenges, one fixed-width slot per
 `(claim, block)` pair in claim-major order. Every message of a fold follows
 one fold proof of work, priced so that a fresh fold message costs about
-$W \cdot 2^{128}/2^K$ hash calls for $W$ pairs and smallest challenge set
-$2^K$. [Transcript and instance binding](./transcript.md#sparse-fold-challenges)
+$W \cdot 2^{128}/2^K$ hash calls for $W$ pairs and a power-of-two lower bound
+$2^K$ on the smallest challenge set. [Transcript and instance binding](./transcript.md#sparse-fold-challenges)
 describes the decoder.
 
 The production primes satisfy the fixed LS18 congruence and shortness
