@@ -3,7 +3,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_params::sis::{HonestFoldPolicy, HonestFoldSizingQuery};
+use akita_params::sis::{FoldFailureTarget, HonestFoldPolicy, HonestFoldSizingQuery};
 use akita_params::PolynomialGroupLayout;
 use akita_params::ScheduleLookupKey;
 
@@ -111,6 +111,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                     .fold_witness,
                 log_basis_response: root.open().digits.log_basis,
                 challenge_config: &root.fold_challenge_config(),
+                failure_target: FoldFailureTarget::PerAttempt,
             })
             .expect("one-hot fold policy");
         assert_eq!(

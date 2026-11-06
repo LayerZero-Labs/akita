@@ -5,8 +5,8 @@ use std::time::Instant;
 use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, CommittedSourceContract, HonestFoldPolicy, HonestFoldSizingQuery,
-    OpenCommitMatrixParams, SisMatrixRole,
+    rounded_up_role_a_inf_norm, CommittedSourceContract, FoldFailureTarget, HonestFoldPolicy,
+    HonestFoldSizingQuery, OpenCommitMatrixParams, SisMatrixRole,
 };
 use akita_params::ScheduleLookupKey;
 use akita_params::{
@@ -149,6 +149,7 @@ fn materialize_precommitted_group_for_open_basis(
             .fold_witness,
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
+        failure_target: FoldFailureTarget::PerAttempt,
     })?;
     let Some(required_a_bound) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,

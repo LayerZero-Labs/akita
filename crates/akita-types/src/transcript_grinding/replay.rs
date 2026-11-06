@@ -1,7 +1,7 @@
 //! Inline Spongefish nonce replay for transcript grinding.
 
 use akita_error::AkitaError;
-use akita_params::{GrindingPlan, GrindingQueryKind, GrindingSite};
+use akita_params::{FoldResponseSearch, GrindingPlan, GrindingQueryKind, GrindingSite};
 #[cfg(feature = "prover")]
 use akita_sumcheck::SumcheckProverChannel;
 use akita_sumcheck::{SumcheckRole, SumcheckVerifierChannel};
@@ -24,6 +24,7 @@ struct GrindingPlanEntry {
     site: GrindingSite,
     grind_bits: u8,
     nonce_bits: u8,
+    fold_search: Option<FoldResponseSearch>,
 }
 
 struct GrindingPlanCursor<'a> {
@@ -47,6 +48,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            fold_search: run.fold_response_search(),
         };
         self.run_offset += 1;
         if self.run_offset == run.multiplicity() {
@@ -63,6 +65,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            fold_search: run.fold_response_search(),
         })
     }
 
@@ -79,6 +82,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            fold_search: run.fold_response_search(),
         })
     }
 
@@ -395,7 +399,8 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
 
     /// Emit the accepted fold-response nonce as a canonical message, then the
     /// fold's proof of work found on its preview, which protects every
-    /// fold-challenge message drawn after it.
+    /// fold-challenge message drawn after it. A one-shot response sends no
+    /// nonce: its counter is 0.
     pub fn commit_fold_response(
         &mut self,
         site: GrindingSite,
@@ -418,24 +423,28 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
                 "fold-response nonce exceeds its scheduled bit width".into(),
             ));
         }
-        let state = self.state.clear_state();
-        prover_context(state, fold_response_record(site, entry.nonce_bits));
-        send_nonce(state, counter);
-        self.serialized_nonce_bytes = self
-            .serialized_nonce_bytes
-            .checked_add(nonce_encoded_len(counter))
-            .ok_or_else(|| {
-                AkitaError::Internal("fold-response serialized nonce byte count overflow".into())
-            })?;
-        tracing::info!(
-            role = "prover",
-            level = site.level(),
-            accepted_nonce = counter,
-            rejected_attempts = counter,
-            attempts = u64::from(counter) + 1,
-            encoded_bytes = nonce_encoded_len(counter),
-            "native fold response nonce"
-        );
+        if entry.fold_search != Some(FoldResponseSearch::OneShot) {
+            let state = self.state.clear_state();
+            prover_context(state, fold_response_record(site, entry.nonce_bits));
+            send_nonce(state, counter);
+            self.serialized_nonce_bytes = self
+                .serialized_nonce_bytes
+                .checked_add(nonce_encoded_len(counter))
+                .ok_or_else(|| {
+                    AkitaError::Internal(
+                        "fold-response serialized nonce byte count overflow".into(),
+                    )
+                })?;
+            tracing::info!(
+                role = "prover",
+                level = site.level(),
+                accepted_nonce = counter,
+                rejected_attempts = counter,
+                attempts = u64::from(counter) + 1,
+                encoded_bytes = nonce_encoded_len(counter),
+                "native fold response nonce"
+            );
+        }
         self.proof_of_work(
             GrindingSite::FoldChallengeWork {
                 level: site.level(),
@@ -445,11 +454,35 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
         )
     }
 
+    /// How the plan searches the fold response at `site`: by counter, or one
+    /// shot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidInput`] when `site` is not the next plan
+    /// entry or not a fold response.
+    pub fn fold_response_search(
+        &self,
+        site: GrindingSite,
+    ) -> Result<FoldResponseSearch, AkitaError> {
+        let entry = self.cursor.peek().ok_or_else(|| {
+            AkitaError::InvalidInput("fold-response search has no remaining plan entry".into())
+        })?;
+        if entry.site != site || site.kind() != GrindingQueryKind::FoldResponse {
+            return Err(AkitaError::InvalidInput(
+                "fold-response search site differs from the next plan entry".into(),
+            ));
+        }
+        entry.fold_search.ok_or_else(|| {
+            AkitaError::InvalidInput("fold-response plan entry has no search".into())
+        })
+    }
+
     /// Preview a fold-response candidate from the current public state
     /// without advancing either the live state or the grinding plan: absorb
-    /// the candidate nonce, then run the fold's proof of work. Pass the
-    /// accepted preview's [`FoldPreview::take_work`] to
-    /// [`commit_fold_response`](Self::commit_fold_response).
+    /// the candidate nonce (none for a one-shot response), then run the fold's
+    /// proof of work. Pass the accepted preview's [`FoldPreview::take_work`]
+    /// to [`commit_fold_response`](Self::commit_fold_response).
     pub fn preview_fold_response(
         &self,
         site: GrindingSite,
@@ -475,6 +508,12 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
                 "fold-response preview nonce exceeds scheduled bit width".into(),
             ));
         }
+        let one_shot = entry.fold_search == Some(FoldResponseSearch::OneShot);
+        if one_shot && counter != 0 {
+            return Err(AkitaError::InvalidInput(
+                "a one-shot fold response has only counter 0".into(),
+            ));
+        }
         let work_site = GrindingSite::FoldChallengeWork {
             level: site.level(),
         };
@@ -490,7 +529,12 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
         let bits = pow_bits(work).ok_or_else(|| {
             AkitaError::Internal("grinding entry nonce width differs from grind_bits + 7".into())
         })?;
-        let mut preview = FoldPreview::new(self.state.clear_state_ref(), counter);
+        let state = self.state.clear_state_ref();
+        let mut preview = if one_shot {
+            FoldPreview::one_shot(state)
+        } else {
+            FoldPreview::new(state, counter)
+        };
         preview.grind(bits)?;
         Ok(preview)
     }
@@ -627,12 +671,19 @@ impl<'proof, 'plan, C: VerifierGrindingChannel<'proof>> VerifierGrinding<'proof,
 
     fn read_fold_response_inner(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::FoldResponse)?;
-        let state = self.state.clear_state();
-        verifier_context(state, fold_response_record(site, entry.nonce_bits));
-        let counter = receive_nonce(state)?;
-        if !value_fits(counter, entry.nonce_bits) {
-            return Err(AkitaError::InvalidProof);
-        }
+        // A one-shot response carries no nonce; reading one would consume a
+        // byte of the next message.
+        let counter = if entry.fold_search == Some(FoldResponseSearch::OneShot) {
+            0
+        } else {
+            let state = self.state.clear_state();
+            verifier_context(state, fold_response_record(site, entry.nonce_bits));
+            let counter = receive_nonce(state)?;
+            if !value_fits(counter, entry.nonce_bits) {
+                return Err(AkitaError::InvalidProof);
+            }
+            counter
+        };
         self.grind_query_inner(
             GrindingSite::FoldChallengeWork {
                 level: site.level(),
@@ -664,8 +715,8 @@ impl<'proof, 'plan, C: VerifierGrindingChannel<'proof>> VerifierGrinding<'proof,
 /// Extension seam: zero knowledge (akita#120). [`VerifierGrinding`] checks the proof; a
 /// replay that only lays out a masked proof implements this trait too.
 pub trait FoldResponseReplay: GrindingReplay {
-    /// Receive the next scheduled fold-response nonce, then check the fold's
-    /// proof of work.
+    /// Receive the next scheduled fold-response nonce (0 for a one-shot
+    /// response), then check the fold's proof of work.
     ///
     /// # Errors
     ///
