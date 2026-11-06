@@ -133,15 +133,16 @@ where
         })
         .transpose()?;
     let span = tracing::info_span!("binary_root_public_new").entered();
-    let public = BinaryRootPublic::new(
+    let mut public = BinaryRootPublic::new(
         manifest,
-        terminal.as_ref(),
+        terminal.is_some(),
         prime,
         &setup.expanded().descriptor,
         logical_len,
         next.params.d_a(),
         ordinary_profile,
     )?;
+    public.bind_terminal(terminal.as_ref())?;
     drop(span);
     let domain_len = public.plan().repacking().domain_len();
     if !domain_len.is_power_of_two() {

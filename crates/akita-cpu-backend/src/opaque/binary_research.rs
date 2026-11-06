@@ -42,14 +42,17 @@ where
     for (index, ((kind, handle), local)) in request.kinds.iter().zip(&request.handles)
         .zip(request.plan.binary()).enumerate()
     {
-        let GroupClaimKind::Binary { manifest, claim: None, prime } = kind else {
+        let GroupClaimKind::Binary { manifest, claim, prime } = kind else {
             return Err(AkitaError::InvalidProof);
         };
+        if claim.is_some() != local.terminal().is_some() || (index != 0 && claim.is_some()) {
+            return Err(AkitaError::InvalidProof);
+        }
         let group_context = context.for_group(index);
         let group_binding = backend.binding(session, &group_context)?;
         let local_request = BinaryRootWitnessRequest {
             manifest: manifest.as_ref().clone(),
-            claim: None,
+            claim: local.terminal().cloned(),
             prime: prime.clone(),
             plan: local.plan().clone(), ordinary: None,
         };

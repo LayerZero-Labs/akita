@@ -46,7 +46,7 @@ where
     }).collect::<Result<Vec<_>, _>>()?;
     let kinds = claims.groups().iter().map(|group| group.kind().clone()).collect::<Vec<_>>();
     let descriptor = &setup.expanded().descriptor;
-    let plan = ResearchBatchPlan::new(&kinds, &profiles, descriptor, next.params.d_a())?;
+    let mut plan = ResearchBatchPlan::new(&kinds, &profiles, descriptor, next.params.d_a())?;
     if plan.physical_cells() != next.input_witness_len {
         return Err(AkitaError::InvalidProof);
     }
@@ -56,6 +56,18 @@ where
         &profiles,
         |commitment| commitment.rows().coeffs(),
     )?;
+    let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
+    let GroupClaimKind::Binary { manifest, claim, .. } = group.kind() else {
+        return Err(AkitaError::InvalidProof);
+    };
+    let terminal = claim.as_ref().map(|claim| {
+        crate::binary_field_switch::verify_field_switch(
+            manifest.descriptor(),
+            claim,
+            grinding.state_mut(),
+        )
+    }).transpose()?;
+    plan.bind_word_terminal(terminal.as_ref())?;
     let d_count = plan.d_ranges().last().ok_or(AkitaError::InvalidProof)?.end;
     let d_payload = akita_transcript::receive_field_group::<F>(
         grinding.state_mut(),

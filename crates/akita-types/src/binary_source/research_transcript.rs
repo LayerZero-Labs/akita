@@ -30,7 +30,7 @@ where
         state,
         ProtocolSiteId { family: SITE_FAMILY_ROOT_STATEMENT, stage: 20,
             ..ProtocolSiteId::default() },
-        b"akita/research/route1/4+4/direct/joint/base-s11a/v1",
+        b"akita/research/route1/4+4/direct/joint/base-s11a/v2",
     )?;
     for (index, (group, profile)) in claims.groups().iter().zip(profiles).enumerate() {
         let terminals = group.research_terminals().ok_or_else(|| {
@@ -43,11 +43,18 @@ where
         );
         let bytes = payload(group.commitment());
         let dimension = match group.kind() {
-            GroupClaimKind::Binary { manifest, claim: None, prime } if index < 4 => {
+            GroupClaimKind::Binary { manifest, claim, prime }
+                if index < 4 && (index == 0 || claim.is_none()) =>
+            {
                 if bytes.len() != manifest.payload_coefficients()? {
                     return Err(AkitaError::InvalidProof);
                 }
                 identity.extend_from_slice(&manifest.canonical_bytes());
+                identity.push(u8::from(claim.is_some()));
+                if let Some(claim) = claim {
+                    claim.validate(manifest.descriptor())?;
+                    identity.extend_from_slice(&claim.canonical_bytes());
+                }
                 identity.extend_from_slice(&prime.canonical_bytes());
                 manifest.b_ring_dimension()
             }

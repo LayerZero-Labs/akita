@@ -47,7 +47,7 @@ where
         schedule.root.params.group_params(layout, index).map(|group| group.profile)
     }).collect::<Result<Vec<_>, _>>()?;
     let kinds = claims.groups().iter().map(|group| group.kind().clone()).collect::<Vec<_>>();
-    let plan = ResearchBatchPlan::new(&kinds, &profiles, expanded, next.params.d_a())?;
+    let mut plan = ResearchBatchPlan::new(&kinds, &profiles, expanded, next.params.d_a())?;
     if plan.physical_cells() != schedule.root.output_witness_len {
         return Err(AkitaError::InvalidProof);
     }
@@ -58,6 +58,32 @@ where
         |commitment| commitment.rows().coeffs(),
     )?;
     let context = backend.proof_context(proof_session, 0)?;
+    let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
+    let akita_types::opening_claims::GroupClaimKind::Binary { manifest, claim, .. } = group.kind()
+    else {
+        return Err(AkitaError::InvalidProof);
+    };
+    let terminal = if let Some(claim) = claim {
+        let (_, source) = backend.prepare_root_group(
+            proof_session,
+            &context.for_group(0),
+            handles.first().ok_or(AkitaError::InvalidProof)?,
+            &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
+                manifest: manifest.as_ref().clone(),
+                polynomial: *claim.polynomial(),
+            },
+        )?;
+        let carriers = source.downcast_ref::<Vec<u128>>().ok_or(AkitaError::InvalidProof)?;
+        Some(crate::binary_field_switch::prove_field_switch(
+            manifest.descriptor(),
+            claim,
+            carriers,
+            grinding.state_mut(),
+        )?)
+    } else {
+        None
+    };
+    plan.bind_word_terminal(terminal.as_ref())?;
     let (d_payload, preparation) = backend.prepare_root_group(
         proof_session,
         &context,

@@ -30,10 +30,10 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                     ));
                 }
                 let mut coordinates = Vec::with_capacity(4);
-                for group in self.groups().iter().take(4) {
+                for (index, group) in self.groups().iter().take(4).enumerate() {
                     let super::GroupClaimKind::Binary {
                         manifest,
-                        claim: None,
+                        claim,
                         ..
                     } = group.kind()
                     else {
@@ -42,6 +42,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                     if manifest.field_profile()
                         != akita_params::binary_setup::BinaryFieldProfile::P64
                         || manifest.descriptor().polynomials().len() != 1
+                        || (index != 0 && claim.is_some())
                     {
                         return Err(AkitaError::InvalidProof);
                     }

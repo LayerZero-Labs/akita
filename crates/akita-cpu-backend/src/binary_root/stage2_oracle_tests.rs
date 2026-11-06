@@ -268,9 +268,9 @@ mod p64 {
             setup_seed: seed.into(),
         };
         let prime = PrimePlaneManifest::new(&descriptor, None).unwrap();
-        let public =
-            BinaryRootPublic::new(&manifest, Some(&claim), &prime, &setup, 1 << 17, 64, None)
-                .unwrap();
+        let mut public =
+            BinaryRootPublic::new(&manifest, true, &prime, &setup, 1 << 17, 64, None).unwrap();
+        public.bind_terminal(Some(&claim)).unwrap();
         let plan = public.plan();
         let quotient = plan.quotient_segment().unwrap();
         let bounds = plan.projection_bounds().quotient().unwrap();

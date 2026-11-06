@@ -114,16 +114,20 @@ impl ResearchBatchPlan {
                         || manifest.setup_group()
                             != u64::try_from(index).map_err(|_| AkitaError::InvalidProof)?
                         || manifest.descriptor().polynomials().len() != 1
-                        || claim.is_some()
+                        || (index != 0 && claim.is_some())
                         || prime.planes().len() != 1
                     {
                         return Err(AkitaError::InvalidInput(
                             "research binary roster".into(),
                         ));
                     }
+                    if let Some(claim) = claim {
+                        claim.validate(manifest.descriptor())?;
+                    }
                     let d_len = checked::product([
-                        usize::try_from(manifest.d_label(false, prime.planes().len())?.rank)
-                            .map_err(|_| AkitaError::InvalidProof)?,
+                        usize::try_from(
+                            manifest.d_label(claim.is_some(), prime.planes().len())?.rank,
+                        ).map_err(|_| AkitaError::InvalidProof)?,
                         manifest.b_ring_dimension(),
                     ]).ok_or(AkitaError::InvalidProof)?;
                     let range = checked::range(d_end, d_len).ok_or(AkitaError::InvalidProof)?;
@@ -142,12 +146,12 @@ impl ResearchBatchPlan {
                         manifest.a_rank(),
                         destination_ring,
                         BinaryFieldProfile::P64,
-                        false,
+                        claim.is_some(),
                         prime.planes().len(),
                     )?;
                     binary.push(BinaryRootPublic::new(
                         manifest,
-                        None,
+                        claim.is_some(),
                         prime,
                         setup,
                         local.repacking().domain_len(),
@@ -217,6 +221,14 @@ impl ResearchBatchPlan {
             fold_coordinates,
             physical_cells, domain_len, batch_count,
         })
+    }
+
+    /// Bind the sole permitted word plane after replaying its field switch.
+    pub fn bind_word_terminal(
+        &mut self,
+        terminal: Option<&super::BinaryTerminalClaim>,
+    ) -> Result<(), AkitaError> {
+        self.binary.first_mut().ok_or(AkitaError::InvalidProof)?.bind_terminal(terminal)
     }
 
     pub fn d_ranges(&self) -> &[std::ops::Range<usize>] {

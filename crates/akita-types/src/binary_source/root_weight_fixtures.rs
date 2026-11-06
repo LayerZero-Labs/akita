@@ -1,6 +1,7 @@
 //! Small compiled binary root relations for prover differential tests.
 
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::sis::{
     sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
@@ -223,15 +224,17 @@ fn public(
         .mixed
         .then(|| binary_ordinary_profile_fixture(BinaryFieldProfile::P128, None));
     let build = |logical_len| {
-        BinaryRootPublic::new(
+        let mut public = BinaryRootPublic::new(
             &manifest,
-            claim.as_ref(),
+            claim.is_some(),
             &prime,
             &setup,
             logical_len,
             64,
             ordinary,
-        )
+        )?;
+        public.bind_terminal(claim.as_ref())?;
+        Ok::<_, AkitaError>(public)
     };
     let natural_end = build(1 << 22)
         .and_then(|public| public.plan().repacking().natural_end())

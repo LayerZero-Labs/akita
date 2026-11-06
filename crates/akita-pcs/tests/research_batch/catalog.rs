@@ -104,7 +104,7 @@ impl Producers {
 }
 
 #[allow(clippy::type_complexity)]
-pub(super) fn batch(producers: &Producers) -> (
+pub(super) fn batch(producers: &Producers, with_word: bool) -> (
     TrustedScheduleCatalog<Config<33>>,
     Vec<BinaryCommittedGroupManifest>,
     Vec<GroupCommitPhaseParams>,
@@ -147,7 +147,9 @@ pub(super) fn batch(producers: &Producers) -> (
         ).unwrap();
         kinds.push(GroupClaimKind::Binary {
             manifest: Box::new(manifest.clone()),
-            claim: None,
+            claim: (with_word && group == 0).then(|| {
+                super::word::claim(manifest.descriptor(), &(1..=8).collect::<Vec<u128>>())
+            }),
             prime,
         });
         manifests.push(manifest);
@@ -164,6 +166,40 @@ pub(super) fn batch(producers: &Producers) -> (
     };
     let plan = ResearchBatchPlan::new(&kinds, &profiles, &descriptor, 64).unwrap();
     for local in plan.binary() { assert!(local.plan().quotient_segment().is_some()); }
+    if with_word {
+        assert_eq!(plan.binary()[0].plan().opening_segments(), vec![2, 5]);
+        assert_eq!(plan.binary()[0].plan().prime_segment(), Some(5));
+        assert_eq!(plan.binary()[0].plan().quotient_segment(), Some(6));
+    }
+    for (index, manifest) in manifests.iter().enumerate() {
+        let rank = manifest.d_label(with_word && index == 0, 1).unwrap().rank;
+        let expected = usize::try_from(rank).unwrap() * manifest.b_ring_dimension();
+        assert_eq!(plan.d_ranges()[index].len(), expected);
+        if !with_word || index != 0 {
+            assert_eq!(plan.binary()[index].plan().opening_segments(), vec![2]);
+        }
+    }
+    let mut prime_only = kinds.clone();
+    let GroupClaimKind::Binary { claim, .. } = &mut prime_only[0] else {
+        unreachable!("first binary group");
+    };
+    *claim = None;
+    let without_word = ResearchBatchPlan::new(&prime_only, &profiles, &descriptor, 64).unwrap();
+    if with_word {
+        assert!(plan.batch_count() >= without_word.batch_count() + 2);
+        assert!(plan.binary()[0].plan().repacking().natural_end().unwrap()
+            > without_word.binary()[0].plan().repacking().natural_end().unwrap());
+        assert!(plan.physical_cells() >= without_word.physical_cells());
+    }
+    let mut wrong_group = prime_only;
+    let GroupClaimKind::Binary { manifest, claim, .. } = &mut wrong_group[1] else {
+        unreachable!("second binary group");
+    };
+    *claim = Some(super::word::claim(manifest.descriptor(), &[2; 8]));
+    assert!(matches!(
+        ResearchBatchPlan::new(&wrong_group, &profiles, &descriptor, 64),
+        Err(AkitaError::InvalidInput(_))
+    ));
     let chunking = ChunkedWitnessCfg::default_non_chunked();
     let policy = policy_of::<Config<33>>(chunking);
     let key = ScheduleLookupKey {

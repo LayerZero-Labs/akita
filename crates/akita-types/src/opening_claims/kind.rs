@@ -50,7 +50,8 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
             }
             for (index, group) in groups.iter().enumerate() {
                 let correct_kind = if index < 4 {
-                    matches!(&group.kind, GroupClaimKind::Binary { claim: None, .. })
+                    matches!(&group.kind, GroupClaimKind::Binary { claim, .. }
+                        if index == 0 || claim.is_none())
                 } else {
                     matches!(&group.kind, GroupClaimKind::ResearchOrdinary { .. })
                 };
@@ -89,8 +90,8 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                         if earlier.polynomial() == claim.polynomial())
                 }) {
                     return Err(akita_error::AkitaError::InvalidInput(
-                        "one binary word claim per polynomial; reduce multiple points before opening"
-                            .into(),
+                        "one binary word claim per polynomial; \
+                         reduce multiple points before opening".into(),
                     ));
                 }
             }

@@ -44,6 +44,19 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
     where
         E: jolt_field::ExtField<F>,
     {
+        Self::new_research_binary_with_word(commitment, terminals, None)
+    }
+
+    /// Select the hash source's word claim alongside its natural prime reading.
+    /// Only group zero of the complete research roster may carry a word claim.
+    pub fn new_research_binary_with_word(
+        commitment: CommittedGroup<F>,
+        terminals: crate::binary_source::ResearchTerminals<E>,
+        claim: Option<BinaryWordClaim>,
+    ) -> Result<Self, AkitaError>
+    where
+        E: jolt_field::ExtField<F>,
+    {
         let terminal = terminals.validate::<F>()?;
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
             return Err(AkitaError::InvalidProof);
@@ -63,7 +76,12 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
                 value: residue(terminal.evaluations.first().ok_or(AkitaError::InvalidProof)?)?,
             }],
         };
-        let mut group = Self::new_binary_planes(commitment, None, Some(prime))?;
+        if claim.is_some() && manifest.setup_group() != 0 {
+            return Err(AkitaError::InvalidInput(
+                "research word claim requires binary group zero".into(),
+            ));
+        }
+        let mut group = Self::new_binary_planes(commitment, claim, Some(prime))?;
         group.research_terminals = Some(terminals);
         Ok(group)
     }

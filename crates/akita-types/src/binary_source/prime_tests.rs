@@ -474,14 +474,14 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
     };
     let legacy = PrimePlaneManifest::new(source, Some(c.clone())).unwrap();
     assert!(matches!(
-        BinaryRootPublic::new(&manifest, None, &legacy, &setup, 1 << 17, 64, None),
+        BinaryRootPublic::new(&manifest, false, &legacy, &setup, 1 << 17, 64, None),
         Err(AkitaError::InvalidInput(_))
     ));
     let prime = PrimePlaneManifest::with_field_profile(source, Some(c), field).unwrap();
     assert!(matches!(
         BinaryRootPublic::new(
             &manifest,
-            None,
+            false,
             &prime,
             &setup,
             1 << 17,

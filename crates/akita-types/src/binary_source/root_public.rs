@@ -78,9 +78,11 @@ pub struct BinaryRootPublic {
 }
 
 impl BinaryRootPublic {
+    /// Size the selected planes before the field-switch terminal is available.
+    /// Call `bind_terminal` before compiling a word-bearing relation.
     pub fn new(
         manifest: &BinaryCommittedGroupManifest,
-        claim: Option<&BinaryTerminalClaim>,
+        word: bool,
         prime: &super::PrimePlaneManifest,
         setup: &AkitaSetupDescriptor,
         logical_len: usize,
@@ -88,9 +90,6 @@ impl BinaryRootPublic {
         ordinary_profile: Option<GroupCommitPhaseParams>,
     ) -> Result<Self, AkitaError> {
         manifest.validate()?;
-        if let Some(claim) = claim {
-            claim.validate(manifest.descriptor())?;
-        }
         prime.validate(manifest.descriptor())?;
         if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
             return Err(AkitaError::InvalidInput(
@@ -103,7 +102,7 @@ impl BinaryRootPublic {
             manifest.a_rank(),
             destination_ring_dimension,
             manifest.field_profile(),
-            claim.is_some(),
+            word,
             prime.planes().len(),
         )?;
         let ordinary = ordinary_profile
@@ -127,12 +126,10 @@ impl BinaryRootPublic {
         }
         let batch_count = checked::sum([
             plan.coefficient_batch_count()?,
-            if claim.is_some() { 2 } else { 0 },
+            if word { 2 } else { 0 },
             checked::product([2, prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
             manifest.b_rows(),
-            manifest
-                .d_label(claim.is_some(), prime.planes().len())?
-                .rank as usize,
+            manifest.d_label(word, prime.planes().len())?.rank as usize,
             ordinary
                 .as_ref()
                 .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
@@ -141,7 +138,7 @@ impl BinaryRootPublic {
         .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
             manifest: manifest.clone(),
-            claim: claim.cloned(),
+            claim: None,
             prime: prime.clone(),
             setup: setup.clone(),
             plan,
@@ -149,6 +146,28 @@ impl BinaryRootPublic {
             negative_binary_addresses,
             batch_count,
         })
+    }
+
+    /// Attach the field-switch result to this already selected plane geometry.
+    /// A word-aware plan cannot compile equations until its terminal is supplied.
+    pub fn bind_terminal(
+        &mut self,
+        terminal: Option<&BinaryTerminalClaim>,
+    ) -> Result<(), AkitaError> {
+        if terminal.is_some() != self.plan.word {
+            return Err(AkitaError::InvalidInput(
+                "binary word plane requires its field-switch terminal".into(),
+            ));
+        }
+        if let Some(terminal) = terminal {
+            terminal.validate(self.manifest.descriptor())?;
+        }
+        self.claim = terminal.cloned();
+        Ok(())
+    }
+
+    pub fn terminal(&self) -> Option<&BinaryTerminalClaim> {
+        self.claim.as_ref()
     }
 
     pub fn plan(&self) -> &BinaryRootWitnessPlan {
@@ -167,7 +186,7 @@ impl BinaryRootPublic {
     fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
         let terminal = checked::range(
             self.plan.coefficient_batch_count()?,
-            if self.claim.is_some() { 2 } else { 0 },
+            if self.plan.word { 2 } else { 0 },
         )
         .ok_or(AkitaError::InvalidProof)?;
         let b =
@@ -175,7 +194,7 @@ impl BinaryRootPublic {
         let d = checked::range(
             b.end,
             self.manifest
-                .d_label(self.claim.is_some(), self.prime.planes().len())?
+                .d_label(self.plan.word, self.prime.planes().len())?
                 .rank as usize,
         )
         .ok_or(AkitaError::InvalidProof)?;
@@ -272,6 +291,9 @@ impl BinaryRootPublic {
         ordinary_claim: Option<(&[E], E, &[E])>,
         matrix: Option<super::BinaryAOperand<'_, E>>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
+        if self.claim.is_some() != self.plan.word {
+            return Err(AkitaError::InvalidProof);
+        }
         if batches.len() != self.batch_count {
             return Err(AkitaError::InvalidSize {
                 expected: self.batch_count,
@@ -351,7 +373,7 @@ impl BinaryRootPublic {
             &self.plan.opening_segments(),
             &self.setup.setup_seed.seed,
             self.manifest
-                .d_label(self.claim.is_some(), self.prime.planes().len())?,
+                .d_label(self.plan.word, self.prime.planes().len())?,
             d_payload,
             alpha,
             batches.get(d).ok_or(AkitaError::InvalidProof)?,

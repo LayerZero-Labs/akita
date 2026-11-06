@@ -139,15 +139,16 @@ where
         None
     };
     drop(span);
-    let public = BinaryRootPublic::new(
+    let mut public = BinaryRootPublic::new(
         manifest,
-        terminal.as_ref(),
+        terminal.is_some(),
         prime,
         expanded,
         logical_len,
         next.params.d_a(),
         ordinary_profile,
     )?;
+    public.bind_terminal(terminal.as_ref())?;
 
     let request = akita_types::binary_source::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),

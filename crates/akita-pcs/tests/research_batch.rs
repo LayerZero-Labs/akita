@@ -4,6 +4,8 @@
 mod common;
 #[path = "research_batch/catalog.rs"]
 mod catalog;
+#[path = "research_batch/word.rs"]
+mod word;
 
 use akita_config::TrustedScheduleCatalog;
 use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
@@ -67,12 +69,18 @@ fn ordinary<const BITS: u32>(
 #[test]
 fn research_four_plus_four_commit_prove_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(run);
+    common::run_on_large_stack(|| run(false));
 }
 
-fn run() {
+#[test]
+fn research_four_plus_four_with_word_commit_prove_replay_and_mutations() {
+    common::init_rayon_pool();
+    common::run_on_large_stack(|| run(true));
+}
+
+fn run(with_word: bool) {
     let producers = catalog::Producers::new();
-    let (catalog, manifests, profiles, plan) = catalog::batch(&producers);
+    let (catalog, manifests, profiles, plan) = catalog::batch(&producers, with_word);
     let scheme = AkitaCommitmentScheme::<Config<33>>::new(catalog);
     let setup = scheme.setup_prover(10, 16).unwrap();
     let backend = Arc::new(CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap());
@@ -106,7 +114,7 @@ fn run() {
                 if (word >> bit) & 1 == 0 { sum } else { sum + equality[carrier * 256 + bit] }
             })
         });
-        groups.push(PolynomialGroupClaims::new_research_binary(
+        groups.push(PolynomialGroupClaims::new_research_binary_with_word(
             committed.committed_group,
             ResearchTerminals {
                 mode: ResearchTerminalMode::BaseS11a,
@@ -115,6 +123,7 @@ fn run() {
                     evaluations: vec![evaluation],
                 }],
             },
+            (with_word && index == 0).then(|| word::claim(manifest.descriptor(), &words)),
         ).unwrap());
         handles.push(committed.private_handle);
     }
@@ -174,6 +183,12 @@ fn run() {
     assert_eq!(root_sites.iter().filter(|(_, kind)| {
         *kind == akita_transcript::ProtocolMessageKind::FoldResponseNonce as u32
     }).count(), 1);
+    assert_eq!(root_sites.iter().filter(|(site, _)| {
+        site.family == akita_transcript::SITE_FAMILY_OPENING_PAYLOAD
+    }).count(), 1);
+    assert_eq!(root_sites.iter().filter(|(site, _)| {
+        site.family == akita_transcript::SITE_FAMILY_NEXT_WITNESS && site.stage == 1
+    }).count(), 1);
     let drawn_groups = root_sites.iter().filter(|(site, _)| {
         site.family == akita_transcript::SITE_FAMILY_FOLD_CHALLENGE
     }).map(|(site, _)| site.group).collect::<Vec<_>>();
@@ -206,6 +221,9 @@ fn run() {
     akita_transcript::clear_thread_events();
     verify(&proof, &claims).expect("honest research replay and exact EOF");
     assert_eq!(akita_transcript::thread_events(), events);
+    if with_word {
+        word::reject_mutations(&claims, |changed| verify(&proof, changed).is_err());
+    }
     let payload = ranges.iter().find(|range| {
         let site = ProtocolSiteId::from_bytes(range.context.site_id);
         site.family == akita_transcript::SITE_FAMILY_OPENING_PAYLOAD && site.level == 0
@@ -215,6 +233,18 @@ fn run() {
         site.level == 0 && range.context.kind
             == akita_transcript::ProtocolMessageKind::FoldResponseNonce as u32
     }).expect("joint response nonce");
+    // The field switch is the only proof payload before the complete D inventory.
+    let switch_bytes = if with_word {
+        let akita_types::opening_claims::GroupClaimKind::Binary {
+            manifest, claim: Some(word), ..
+        } = claims.groups()[0].kind() else {
+            panic!("hash word claim");
+        };
+        128 * 16 + word.carrier_point(manifest.descriptor()).unwrap().len() * 42 + 21
+    } else {
+        0
+    };
+    assert_eq!(payload.start, switch_bytes);
     assert_eq!(payload.len, plan.d_ranges().last().unwrap().end * 8);
     assert!(payload.start + payload.len <= nonce.start);
     let mut bad_d = proof.clone();

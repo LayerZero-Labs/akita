@@ -121,7 +121,7 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             setup_seed: seed.into(),
         };
         let public =
-            BinaryRootPublic::new(&manifest, None, &prime, &setup, 1 << 17, 64, profile).unwrap();
+            BinaryRootPublic::new(&manifest, false, &prime, &setup, 1 << 17, 64, profile).unwrap();
         let plan = public.plan();
         let mut natural = vec![
             BinaryRootRelation::response_digits(&relation.response).unwrap(),
@@ -183,7 +183,7 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
         bad.evaluations[0].value = (bad.evaluations[0].value + 1) % field.modulus();
         let bad = PrimePlaneManifest::with_field_profile(descriptor, Some(bad), field).unwrap();
         let false_public =
-            BinaryRootPublic::new(&manifest, None, &bad, &setup, 1 << 17, 64, profile).unwrap();
+            BinaryRootPublic::new(&manifest, false, &bad, &setup, 1 << 17, 64, profile).unwrap();
         crate::opaque::sumcheck::stage3::p64_root_transcript_tests::root_round_trip(
             &manifest,
             &public,

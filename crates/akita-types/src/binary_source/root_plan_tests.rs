@@ -403,9 +403,9 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                 field_profile,
             )
             .unwrap();
-            let public = BinaryRootPublic::new(
+            let mut public = BinaryRootPublic::new(
                 &manifest,
-                claim.as_ref(),
+                claim.is_some(),
                 &prime,
                 &setup,
                 1 << 22,
@@ -413,6 +413,24 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                 mixed.then_some(ordinary_carrier),
             )
             .unwrap();
+            if word {
+                assert!(matches!(public.bind_terminal(None), Err(AkitaError::InvalidInput(_))));
+                let challenges = Challenges::from_sparse(
+                    vec![SparseChallenge {
+                        positions: Default::default(),
+                        coeffs: Default::default(),
+                    }; 2],
+                    2,
+                    1,
+                ).unwrap();
+                assert!(matches!(
+                    public.relation::<E>(
+                        &challenges, E::one(), &[], &[], &[], &[], &[], None, None,
+                    ),
+                    Err(AkitaError::InvalidProof)
+                ));
+            }
+            public.bind_terminal(claim.as_ref()).unwrap();
             let plan = public.plan();
             let coefficient_count = if field_profile == BinaryFieldProfile::P64 {
                 1944

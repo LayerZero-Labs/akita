@@ -132,15 +132,17 @@ fn public(shape: Shape, rng: &mut StdRng) -> BinaryRootPublic {
     };
     let ordinary = shape.mixed.then(ordinary_profile);
     let build = |logical_len| {
-        BinaryRootPublic::new(
+        let mut public = BinaryRootPublic::new(
             &manifest,
-            claim.as_ref(),
+            claim.is_some(),
             &prime,
             &setup,
             logical_len,
             64,
             ordinary,
-        )
+        )?;
+        public.bind_terminal(claim.as_ref())?;
+        Ok::<_, AkitaError>(public)
     };
     let natural_end = build(1 << 22)
         .unwrap()
