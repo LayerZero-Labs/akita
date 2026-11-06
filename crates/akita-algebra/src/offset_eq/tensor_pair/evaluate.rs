@@ -439,6 +439,12 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
         );
         // A choice's weight and bit factor do not depend on the incoming
         // carry beyond its two parity bits. Combine them once per choice.
+        charge_work(
+            work,
+            choices.len().checked_mul(4).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor factor work overflow".into())
+            })?,
+        )?;
         let weighted_choices = choices
             .into_iter()
             .map(|(l, r, weight)| {
