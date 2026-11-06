@@ -1017,7 +1017,7 @@ fn prime_plane_p64_extension_reading_rejects_each_coordinate_and_plane() {
                 segment,
                 &challenges,
                 extension(0),
-                &[extension(1), extension(2), extension(3), extension(4)],
+                &[extension(1), extension(2)],
             )
             .unwrap()
         };
