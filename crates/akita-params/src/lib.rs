@@ -17,6 +17,8 @@ pub mod proof_size;
 mod ring_relation_mode;
 pub mod schedule;
 pub mod schedule_selection;
+mod setup_mode;
+pub use setup_mode::SetupMode;
 pub mod signed_digit;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
