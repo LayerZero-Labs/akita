@@ -7,6 +7,10 @@
 
 #[cfg(test)]
 mod factored_tests;
+#[cfg(all(test, feature = "labinius-trinomial"))]
+pub(crate) mod p64_root_transcript_tests;
+#[cfg(all(test, feature = "labinius-trinomial"))]
+mod p64_transcript_tests;
 pub(super) mod product_table;
 #[cfg(test)]
 mod session_tests;

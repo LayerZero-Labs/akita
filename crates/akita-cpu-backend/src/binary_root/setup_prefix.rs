@@ -46,6 +46,15 @@ where
         first: &SetupPrefixSlotId,
         remaining: &[SetupPrefixSlotId],
     ) -> Result<SetupPrefixProverRegistry<F, CommitmentHandle<F, E>>, AkitaError> {
+        if akita_params::field_modulus::<F>()? != manifest.field_profile().modulus()
+            || E::DEGREE != manifest.field_profile().extension_degree()
+        {
+            return Err(AkitaError::InvalidInput(
+                "typed prefix field profile mismatch".into(),
+            ));
+        }
+        // Check the manifest/layout binding before deriving the setup table.
+        typed.identity(manifest, first)?;
         if remaining.contains(first) {
             return Err(AkitaError::InvalidInput(
                 "typed prefix slot is reused by a later ordinary level".into(),

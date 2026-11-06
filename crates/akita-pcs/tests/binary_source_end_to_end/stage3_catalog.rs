@@ -167,3 +167,36 @@ fn stage3_catalog_consumes_each_selected_root_prefix() {
     }
     assert_eq!(offloaded_roots, 2);
 }
+
+#[test]
+fn stage3_p64_layout_has_a_distinct_identity_and_remains_outside_the_catalog() {
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{binary_word_manifest_fixture, BinaryTypedPrefix};
+    let row = catalog()
+        .resolve_key(&ScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(18),
+        ))
+        .unwrap()
+        .clone();
+    let slot = row.schedule().recursive_folds[0]
+        .params
+        .setup_prefix()
+        .unwrap()
+        .slot_id()
+        .unwrap();
+    let legacy = binary_word_manifest_fixture(BinaryFieldProfile::P128, 1);
+    let p64 = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
+    let old = BinaryTypedPrefix::new(&legacy, true, 0, 64).unwrap();
+    let new = BinaryTypedPrefix::new(&p64, true, 0, 64).unwrap();
+    let old_id = old.identity(&legacy, &slot).unwrap();
+    let new_id = new.identity(&p64, &slot).unwrap();
+    assert!(old_id.starts_with(b"akita/binary-source/typed-prefix/a-then-digit-pieces/v3"));
+    assert!(new_id.starts_with(b"akita/binary-source/typed-prefix/a-then-digit-pieces/p64-e64/v4"));
+    assert_ne!(old_id, new_id);
+    assert!(new.identity(&legacy, &slot).is_err());
+    assert!(old.identity(&p64, &slot).is_err());
+    assert!(matches!(
+        BinaryFieldProfile::P64.admit_root(BinaryFieldProfile::P64.modulus(), 2),
+        Err(akita_error::AkitaError::UnsupportedSchedule(_))
+    ));
+}

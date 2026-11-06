@@ -4,8 +4,7 @@ use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::BinaryFieldProfile;
-use jolt_field::Field;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
@@ -17,13 +16,56 @@ use crate::native_root_relation::{
 
 /// The prover's A operand for [`binary_direct_a_weights`].
 ///
-/// `matrix[row][column]` holds the centered q setup. `canonical` returns the
-/// canonical integer for the P128 integer adjoint. The P64 field adjoint
-/// does not call it: a genuine extension element has no integer representative.
+/// `matrix[row][column]` holds the centered q setup. The base field is
+/// captured at construction: each extension coordinate passes independently
+/// through the exact integer adjoint, then the results recombine in its basis.
 #[derive(Clone, Copy)]
 pub struct BinaryAOperand<'a, E> {
     pub matrix: &'a [Vec<[i128; 648]>],
-    pub canonical: fn(&E) -> Option<u128>,
+    degree: usize,
+    #[allow(clippy::type_complexity)]
+    adjoint: fn(&[[E; 648]], &[Vec<[i128; 648]>]) -> Result<Vec<[E; 648]>, AkitaError>,
+}
+
+impl<'a, E: Field> BinaryAOperand<'a, E> {
+    pub fn new<F: Field + CanonicalEncoding>(matrix: &'a [Vec<[i128; 648]>]) -> Self
+    where
+        E: ExtField<F>,
+    {
+        Self {
+            matrix,
+            degree: E::DEGREE,
+            adjoint: coordinate_adjoint::<F, E>,
+        }
+    }
+}
+
+fn coordinate_adjoint<F: Field + CanonicalEncoding, E: ExtField<F>>(
+    rho: &[[E; 648]],
+    matrix: &[Vec<[i128; 648]>],
+) -> Result<Vec<[E; 648]>, AkitaError> {
+    let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
+    let mut coordinates = Vec::new();
+    for coordinate in 0..E::DEGREE {
+        let base = rho
+            .iter()
+            .map(|row| row.map(|value| value.base_coefficient(coordinate)))
+            .collect::<Vec<_>>();
+        // Each pass retains the kernel's 43-bit limb CRT check:
+        // 2*3*3*648*B_A*2^43 < 67,091,329*134,217,649*268,433,353.
+        // Canonical p64 representatives occupy at most two limbs; the two
+        // extension coordinates are never joined into an integer.
+        coordinates.push(adjoint.apply_integer_rows(
+            &base,
+            matrix,
+            u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()),
+            F::to_u128_checked,
+        )?);
+    }
+    let columns = matrix.first().map_or(0, Vec::len);
+    Ok((0..columns)
+        .map(|column| std::array::from_fn(|k| E::from_base_fn(|i| coordinates[i][column][k])))
+        .collect())
 }
 
 /// Compile the A identity's coefficient weights. Proving supplies A; online
@@ -113,13 +155,10 @@ pub(crate) struct DirectAWeights<E: Field> {
 }
 
 #[cfg(test)]
-impl<'a, E: Field + jolt_field::CanonicalEncoding> BinaryAOperand<'a, E> {
+impl<'a, E: Field + CanonicalEncoding + ExtField<E>> BinaryAOperand<'a, E> {
     /// Test operand over a field whose canonical integers fit 128 bits.
     pub(crate) fn from_canonical(matrix: &'a [Vec<[i128; 648]>]) -> Self {
-        Self {
-            matrix,
-            canonical: |x| x.to_u128_checked(),
-        }
+        Self::new::<E>(matrix)
     }
 }
 
@@ -134,40 +173,17 @@ impl<E: Field> DirectAWeights<E> {
         if rank == 0 {
             return Err(AkitaError::InvalidSetup("binary A has no rows".into()));
         }
-        let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
+        if operand.degree != plan.field_profile().extension_degree() {
+            return Err(AkitaError::InvalidInput(
+                "A adjoint field degree mismatch".into(),
+            ));
+        }
         let mut columns = Vec::new();
         columns
             .try_reserve_exact(lanes.elements())
             .map_err(|_| AkitaError::InvalidProof)?;
         for owner_rho in rho.chunks_exact(rank) {
-            if plan.field_profile() == BinaryFieldProfile::P128 {
-                columns.extend(adjoint.apply_integer_rows(
-                    owner_rho,
-                    operand.matrix,
-                    u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()),
-                    operand.canonical,
-                )?);
-            } else {
-                // Field arithmetic accepts genuine extension challenges. The
-                // coordinatewise integer optimization belongs to the next stage.
-                let rows = operand
-                    .matrix
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .len();
-                for column in 0..rows {
-                    let mut h = [E::zero(); 648];
-                    for (rho, row) in owner_rho.iter().zip(operand.matrix) {
-                        let a = row.get(column).ok_or(AkitaError::InvalidProof)?;
-                        for (slot, weight) in
-                            h.iter_mut().zip(adjoint.apply(rho, &a.map(E::from_i128))?)
-                        {
-                            *slot += weight;
-                        }
-                    }
-                    columns.push(h);
-                }
-            }
+            columns.extend((operand.adjoint)(owner_rho, operand.matrix)?);
         }
         if lanes.degree() != 648 || columns.len() != lanes.elements() {
             return Err(AkitaError::InvalidSetup(

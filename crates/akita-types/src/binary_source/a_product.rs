@@ -137,7 +137,10 @@ impl<E: Field> BinaryAProduct<E> {
         let owners = plan.descriptor().polynomials().len();
         let size = BinaryAPrefixLen::new(plan.descriptor().index_map(), plan.rank())?;
         let rows = size.rows;
-        if rho.len() != checked::product([owners, plan.rank()]).ok_or(AkitaError::InvalidProof)?
+        if E::from_u128(plan.field_profile().modulus()) != E::zero()
+            || E::from_u128(plan.field_profile().modulus() - 1) != -E::one()
+            || rho.len()
+                != checked::product([owners, plan.rank()]).ok_or(AkitaError::InvalidProof)?
             || checked::product([owners, rows]) != Some(response.elements)
             || !rows.is_power_of_two()
             || response.digits != 4

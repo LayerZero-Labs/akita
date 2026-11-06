@@ -37,7 +37,7 @@ fn signed_remainder(mut polynomial: Vec<i128>) -> [i128; DEGREE] {
     core::array::from_fn(|index| polynomial[index])
 }
 
-fn monomial_row(rho: &[F; DEGREE]) -> Vec<F> {
+fn monomial_row<F: Field>(rho: &[F; DEGREE]) -> Vec<F> {
     (0..2 * DEGREE - 1)
         .map(|degree| {
             let mut monomial = vec![0; 2 * DEGREE - 1];
@@ -53,7 +53,7 @@ fn monomial_row(rho: &[F; DEGREE]) -> Vec<F> {
         .collect()
 }
 
-fn direct_response_weights(
+fn direct_response_weights<F: Field>(
     matrix: &[Vec<[i128; DEGREE]>],
     rho: &[[F; DEGREE]],
 ) -> Vec<[F; DEGREE]> {
@@ -80,7 +80,7 @@ fn direct_response_weights(
     weights
 }
 
-fn matrix_claim(matrix: &[Vec<[i128; DEGREE]>], index: &[F], coefficient: &[F]) -> F {
+fn matrix_claim<F: Field>(matrix: &[Vec<[i128; DEGREE]>], index: &[F], coefficient: &[F]) -> F {
     matrix.iter().enumerate().fold(F::zero(), |sum, (i, row)| {
         sum + row.iter().enumerate().fold(F::zero(), |sum, (j, entry)| {
             sum + entry
@@ -376,4 +376,128 @@ fn full_size_typed_prefix_requires_padded_rank_and_coefficient_axes() {
     let index = BinaryIndexMap::new(128, 1 << 10, 1 << 10, 2).unwrap();
     assert!(BinaryAPrefixLen::new(&index, 0).is_err());
     assert!(BinaryAPrefixLen::new(&index, usize::MAX).is_err());
+}
+
+#[test]
+fn p64_coordinate_integer_adjoint_and_typed_a_match_independent_long_division() {
+    use crate::binary_source::{binary_direct_a_weights, BinaryAOperand, CANONICAL_IMAGE_WINDOW};
+    use akita_challenges::{Challenges, SparseChallenge};
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use jolt_field::{CanonicalEncoding, Ext2, ExtField, Prime64Offset59 as Base};
+    type E = Ext2<Base>;
+    let descriptor = group_plan(2, 3, 2).descriptor().clone();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
+            .unwrap();
+    let mut rng = StdRng::seed_from_u64(59);
+    let matrix = (0..3)
+        .map(|_| {
+            (0..2)
+                .map(|_| {
+                    std::array::from_fn(|_| {
+                        i128::from(
+                            rng.gen_range(CANONICAL_IMAGE_WINDOW.0..=CANONICAL_IMAGE_WINDOW.1),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .collect::<Vec<_>>();
+    let mut rho = (0..6)
+        .map(|_| std::array::from_fn(|_| E::from_base_fn(|_| Base::from_u64(rng.gen()))))
+        .collect::<Vec<_>>();
+    rho[0][0] = E::from_base_fn(|i| {
+        if i == 0 {
+            -Base::one()
+        } else {
+            Base::from_u128((1u128 << 43) - 1)
+        }
+    });
+    rho[0][1] = E::from_base_fn(|i| if i == 0 { Base::zero() } else { -Base::one() });
+    assert!(rho
+        .iter()
+        .flatten()
+        .all(|x| x.base_coefficient(1) != Base::zero()));
+    let expected = direct_response_weights(&matrix, &rho);
+    let challenges = Challenges::from_sparse(
+        vec![
+            SparseChallenge {
+                positions: Default::default(),
+                coeffs: Default::default()
+            };
+            2
+        ],
+        1,
+        2,
+    )
+    .unwrap();
+    let start = std::time::Instant::now();
+    let compiled = binary_direct_a_weights(
+        &plan,
+        Some(BinaryAOperand::new::<Base>(&matrix)),
+        &challenges,
+        &rho,
+    )
+    .unwrap();
+    eprintln!(
+        "p64 coordinate A adjoints rows=2 owners=2 elapsed_us={}",
+        start.elapsed().as_micros()
+    );
+    let dense = compiled.materialize().unwrap();
+    for (element, row) in expected.iter().enumerate() {
+        for digit in 0..4 {
+            for (k, &value) in row.iter().enumerate() {
+                let address = plan
+                    .repacking()
+                    .coefficient_address(0, element, digit, k)
+                    .unwrap();
+                assert_eq!(dense[address], value * E::from_u64(8u64.pow(digit as u32)));
+            }
+        }
+    }
+    let point = (0..plan.repacking().domain_len().trailing_zeros())
+        .map(|_| E::from_base_fn(|_| Base::from_u64(rng.gen())))
+        .collect::<Vec<_>>();
+    let prefix = 2 * 4 * STRIDE;
+    let product = BinaryAProduct::new(&plan, &rho, &point, prefix).unwrap();
+    let (index, coefficient) = product.factors().unwrap();
+    let direct = expected
+        .iter()
+        .enumerate()
+        .fold(E::zero(), |sum, (element, row)| {
+            sum + row.iter().enumerate().fold(E::zero(), |sum, (k, &value)| {
+                sum + (0..4).fold(E::zero(), |sum, digit| {
+                    sum + value
+                        * E::from_u64(8u64.pow(digit as u32))
+                        * eq_eval_at_index(
+                            &point,
+                            plan.repacking()
+                                .coefficient_address(0, element, digit, k)
+                                .unwrap(),
+                        )
+                })
+            })
+        });
+    assert_eq!(matrix_claim(&matrix, &index, &coefficient), direct);
+    for coordinate in 0..2 {
+        // Each independent long-division check also matches the corresponding
+        // coordinate of the extension result, including canonical p-1 values.
+        let base_rho = rho
+            .iter()
+            .map(|row| row.map(|x| x.base_coefficient(coordinate)))
+            .collect::<Vec<_>>();
+        let base_expected = direct_response_weights(&matrix, &base_rho);
+        for (extension, base) in expected
+            .iter()
+            .flatten()
+            .zip(base_expected.iter().flatten())
+        {
+            assert_eq!(extension.base_coefficient(coordinate), *base);
+            assert!(base.to_u128_checked().unwrap() < (1u128 << 86));
+        }
+    }
+    let twice_bound =
+        2 * 3 * 3 * 648 * u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()) * (1u128 << 43);
+    assert_eq!(twice_bound, 731_182_933_063_452_850_126_848);
+    assert!(twice_bound < 67_091_329u128 * 134_217_649 * 268_433_353);
 }

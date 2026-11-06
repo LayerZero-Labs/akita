@@ -10,7 +10,7 @@
 //! Layout. The compact digits of each role (B: the image segment; D: the
 //! opening segments) are cut into setup columns of 64, exactly as the
 //! commitment does. A segment of degree `n` repeats its column pattern every
-//! `P = 64 / gcd(n, 64)` lanes, one period of `P n / 64` whole columns. Each
+//! `period = 64 / gcd(n, 64)` lanes, one period of `period * n / 64` whole columns. Each
 //! period stores its own copy of the columns its digits touch, `J` of them,
 //! with a column shared by two periods or two segments stored in both. Per
 //! row, the copies are split by the binary expansions of the period count and
@@ -29,7 +29,7 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
+use akita_params::binary_setup::{BinaryFieldProfile, SetupStreamLabel};
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::AkitaSerialize;
 #[cfg(feature = "parallel")]
@@ -198,7 +198,9 @@ pub struct BinaryTypedPrefix {
     a: BinaryAPrefixLen,
     /// Live A ranks; the rank axis pads to a power of two.
     a_rank: usize,
-    rows: usize,
+    rows: [usize; 2],
+    labels: [SetupStreamLabel; 2],
+    manifest_identity: Vec<u8>,
     segments: Vec<DigitSegment>,
     regions: Vec<Region>,
     /// Sorted by region, then base.
@@ -221,12 +223,14 @@ impl BinaryTypedPrefix {
         planes: usize,
         destination_ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
-        let plan = BinaryRootWitnessPlan::new(
+        let plan = BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),
             manifest.a_rank(),
             destination_ring_dimension,
-        )?
-        .with_prime_planes(word, planes)?;
+            manifest.field_profile(),
+            word,
+            planes,
+        )?;
         Self::from_plan(manifest, &plan)
     }
 
@@ -234,8 +238,26 @@ impl BinaryTypedPrefix {
         manifest: &BinaryCommittedGroupManifest,
         plan: &BinaryRootWitnessPlan,
     ) -> Result<Self, AkitaError> {
+        manifest.validate()?;
+        if plan.descriptor() != manifest.descriptor()
+            || plan.rank() != manifest.a_rank()
+            || plan.field_profile() != manifest.field_profile()
+        {
+            return Err(AkitaError::InvalidInput(
+                "typed prefix manifest mismatch".into(),
+            ));
+        }
+        if manifest.field_profile() == BinaryFieldProfile::P64 && plan.prime_planes != 0 {
+            return Err(AkitaError::UnsupportedSchedule(
+                "p64 typed prime planes are not yet supported".into(),
+            ));
+        }
         let a = BinaryAPrefixLen::new(manifest.descriptor().index_map(), manifest.a_rank())?;
-        let rows = manifest.b_rows();
+        let labels = [
+            manifest.b_label(),
+            manifest.d_label(plan.word, plan.prime_planes)?,
+        ];
+        let rows = labels.map(|label| label.rank as usize);
         let mut segments = Vec::new();
         let mut role_columns = [0; 2];
         for (role, list) in [vec![1], plan.opening_segments()].into_iter().enumerate() {
@@ -277,7 +299,7 @@ impl BinaryTypedPrefix {
         }
         let mut pieces = Vec::new();
         for (index, segment) in segments.iter().enumerate() {
-            for row in 0..rows {
+            for row in 0..rows[segment.role] {
                 for (q0, period_bits) in binary_runs(segment.periods) {
                     for (first, width_bits) in binary_runs(segment.columns) {
                         pieces.push(DigitPiece {
@@ -341,6 +363,8 @@ impl BinaryTypedPrefix {
             a,
             a_rank: manifest.a_rank(),
             rows,
+            labels,
+            manifest_identity: manifest.canonical_bytes(),
             segments,
             regions,
             pieces,
@@ -368,7 +392,19 @@ impl BinaryTypedPrefix {
         slot: &SetupPrefixSlotId,
     ) -> Result<Vec<u8>, AkitaError> {
         manifest.validate()?;
-        let mut bytes = b"akita/binary-source/typed-prefix/a-then-digit-pieces/v3".to_vec();
+        if self.manifest_identity != manifest.canonical_bytes() {
+            return Err(AkitaError::InvalidInput(
+                "typed prefix identity manifest mismatch".into(),
+            ));
+        }
+        let mut bytes = match manifest.field_profile() {
+            BinaryFieldProfile::P128 => {
+                b"akita/binary-source/typed-prefix/a-then-digit-pieces/v3".to_vec()
+            }
+            BinaryFieldProfile::P64 => {
+                b"akita/binary-source/typed-prefix/a-then-digit-pieces/p64-e64/v4".to_vec()
+            }
+        };
         bytes.extend(manifest.canonical_bytes());
         // Every word is a little-endian u64, independent of the target's
         // pointer width.
@@ -376,7 +412,10 @@ impl BinaryTypedPrefix {
         let mut push = |value: u64| bytes.extend_from_slice(&value.to_le_bytes());
         push(word(self.a.rows)?);
         push(word(self.a.row_stride)?);
-        push(word(self.rows)?);
+        push(word(self.rows[0])?);
+        if manifest.field_profile() == BinaryFieldProfile::P64 {
+            push(word(self.rows[1])?);
+        }
         push(word(self.segments.len())?);
         for segment in &self.segments {
             for value in [
@@ -440,16 +479,14 @@ impl BinaryTypedPrefix {
         prefix_len: usize,
     ) -> Result<Vec<F>, AkitaError> {
         self.validate_prefix(prefix_len)?;
+        if self.manifest_identity != manifest.canonical_bytes() {
+            return Err(AkitaError::InvalidInput(
+                "typed prefix setup manifest mismatch".into(),
+            ));
+        }
         let matrix = binary_root_matrix(seed, manifest)?;
         let mut coefficients = binary_a_setup_coefficients(&matrix, manifest, prefix_len)?;
         drop(matrix);
-        let labels = [
-            manifest.b_label(),
-            SetupStreamLabel {
-                role: SetupStreamRole::WitnessCommitment,
-                ..manifest.b_label()
-            },
-        ];
         let cells = coefficients
             .get_mut(..self.natural_len)
             .ok_or(AkitaError::InvalidProof)?;
@@ -467,7 +504,10 @@ impl BinaryTypedPrefix {
                 if j >= segment.columns || column >= role_columns {
                     return Ok(());
                 }
-                let label = *labels.get(segment.role).ok_or(AkitaError::InvalidProof)?;
+                let label = *self
+                    .labels
+                    .get(segment.role)
+                    .ok_or(AkitaError::InvalidProof)?;
                 let row = u32::try_from(row).map_err(|_| AkitaError::InvalidProof)?;
                 let entry = setup_entry::<F>(seed, label, row, column)?;
                 cells.copy_from_slice(entry.coefficients());
@@ -546,7 +586,7 @@ impl BinaryTypedPrefix {
     /// B/D part of the Stage 3 weight at the prefix point `point`.
     ///
     /// Per segment: `lambda = K(eq(point_slot, .))` and one pass over the
-    /// `P * degree` digits of a period into per-lane column sums; per piece,
+    /// `period * degree` digits of a period into per-lane column sums; per piece,
     /// one contraction with its column equality and one carry recursion per
     /// distinct lane-high value and live period count. No setup entry is read.
     pub fn digit_weight<E: Field>(
@@ -660,7 +700,11 @@ impl BinaryTypedPrefix {
     }
 
     fn validate_batches<E>(&self, batches: [&[E]; 2]) -> Result<(), AkitaError> {
-        if batches.iter().any(|batches| batches.len() != self.rows) {
+        if batches
+            .iter()
+            .zip(self.rows)
+            .any(|(batches, rows)| batches.len() != rows)
+        {
             return Err(AkitaError::InvalidProof);
         }
         Ok(())

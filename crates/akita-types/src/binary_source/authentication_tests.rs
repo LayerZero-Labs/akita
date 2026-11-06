@@ -238,3 +238,107 @@ fn digit_commitment_equals_setup_ring_products() {
     }
     assert_eq!(payload, expected);
 }
+
+#[test]
+fn p64_authentication_keeps_both_extension_coordinates_at_every_rank() {
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    type E = Ext2<Base>;
+    let descriptor = plan().descriptor().clone();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
+            .unwrap();
+    let mut natural = plan
+        .repacking()
+        .segments()
+        .iter()
+        .map(|s| vec![0i8; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()])
+        .collect::<Vec<_>>();
+    for segment in [1, 2] {
+        for (i, digit) in natural[segment].iter_mut().enumerate() {
+            *digit = (i % 8) as i8 - 4;
+        }
+    }
+    let table = plan
+        .repacking()
+        .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+        .unwrap()
+        .into_iter()
+        .map(|d| E::from_i64(i64::from(d)))
+        .collect::<Vec<_>>();
+    let extension = |i: u64| E::from_base_fn(|c| Base::from_u64(i + 19 * c as u64));
+    for (segment, role) in [
+        (1, SetupStreamRole::ImageCommitment),
+        (2, SetupStreamRole::WitnessCommitment),
+    ] {
+        for rank in 1..=5 {
+            let label = SetupStreamLabel {
+                modulus: SetupStreamModulus::Prime64Offset59,
+                rank,
+                ..label(role)
+            };
+            let payload =
+                binary_public_digit_commitment::<Base>(&[41; 32], label, 0, &natural[segment])
+                    .unwrap()
+                    .into_iter()
+                    .map(E::lift_base)
+                    .collect::<Vec<_>>();
+            let batches = (0..rank)
+                .map(|i| extension(31 + u64::from(i)))
+                .collect::<Vec<_>>();
+            let weights = binary_digit_authentication_weights(
+                &plan,
+                &[segment],
+                &[41; 32],
+                label,
+                &payload,
+                extension(17),
+                &batches,
+            )
+            .unwrap();
+            weights.check_table(&table).unwrap();
+            let point = (0..plan.repacking().domain_len().trailing_zeros())
+                .map(|i| extension(101 + u64::from(i)))
+                .collect::<Vec<_>>();
+            let dense = weights.materialize().unwrap();
+            let direct = dense
+                .iter()
+                .zip(akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap())
+                .fold(E::zero(), |sum, (&w, e)| sum + w * e);
+            assert_eq!(weights.evaluate(&point).unwrap(), direct);
+            for coordinate in 0..2 {
+                let mut altered = payload.clone();
+                altered[0] += E::from_base_fn(|c| {
+                    if c == coordinate {
+                        Base::one()
+                    } else {
+                        Base::zero()
+                    }
+                });
+                let altered = binary_digit_authentication_weights(
+                    &plan,
+                    &[segment],
+                    &[41; 32],
+                    label,
+                    &altered,
+                    extension(17),
+                    &batches,
+                )
+                .unwrap();
+                assert!(matches!(
+                    altered.check_table(&table),
+                    Err(AkitaError::InvalidProof)
+                ));
+            }
+            assert!(binary_digit_authentication_weights(
+                &plan,
+                &[segment],
+                &[41; 32],
+                label,
+                &payload,
+                extension(17),
+                &batches[..batches.len() - 1]
+            )
+            .is_err());
+        }
+    }
+}

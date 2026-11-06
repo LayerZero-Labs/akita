@@ -231,6 +231,13 @@ pub fn binary_digit_authentication_weights<E: Field>(
     row_batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
     let rows = validate_digit_commitment_label::<E>(label)?;
+    if E::from_u128(plan.field_profile().modulus()) != E::zero()
+        || E::from_u128(plan.field_profile().modulus() - 1) != -E::one()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "binary authentication field profile mismatch".into(),
+        ));
+    }
     let expected_segments = match label.role {
         SetupStreamRole::ImageCommitment => vec![1],
         SetupStreamRole::WitnessCommitment => plan.opening_segments(),

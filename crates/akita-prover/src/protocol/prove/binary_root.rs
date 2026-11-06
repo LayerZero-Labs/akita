@@ -348,15 +348,11 @@ where
         &payload,
         &d_payload,
         ordinary_claim,
-        Some(akita_types::binary_source::BinaryAOperand {
-            matrix: &witness_a.matrix,
-            canonical: |x: &Cfg::ExtField| {
-                x.degree_one_base().and_then(|base| base.to_u128_checked())
-            },
-        }),
+        Some(akita_types::binary_source::BinaryAOperand::new::<Cfg::Field>(&witness_a.matrix)),
     )?;
     drop(witness_a);
     let authentication = public.authentication_batches(&batches)?.map(<[_]>::to_vec);
+    let (rho, _) = public.coefficient_inputs(&batches, &rho, &projected_values)?;
     drop(batches);
     drop(span);
     let relation_claim = relation.claim();

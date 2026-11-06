@@ -192,7 +192,7 @@ impl BinaryTypedPrefix {
             let degree = segment.lanes.degree();
             let shift = segment.offset % SLOTS;
             // Variant 0 is a full period; variant 1, when present, is the
-            // partial last period with `count mod P` live lanes.
+            // partial last period with `count mod period` live lanes.
             let partial = count % segment.period;
             let mut profiles = Vec::new();
             for live in [segment.period, partial]
@@ -212,7 +212,7 @@ impl BinaryTypedPrefix {
                         if lane >= live {
                             continue;
                         }
-                        // The lane-high value of `first_lane + q P + lane` is
+                        // The lane-high value of `first_lane + q * period + lane` is
                         // `(first_lane >> period_bits) + high + q`.
                         let high = (low_lane + lane) >> period_bits;
                         let side = equality.get_mut(high).ok_or(AkitaError::InvalidProof)?;
