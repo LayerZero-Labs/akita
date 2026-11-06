@@ -2,7 +2,7 @@
 
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::{derive_centered_q_matrix, SetupStreamLabel, SetupStreamRole};
+use akita_params::binary_setup::{derive_centered_q_matrix, BinaryFieldProfile};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
@@ -61,8 +61,8 @@ pub fn binary_root_matrix(
 
 /// Admitted public inputs and non-A weights for one binary group.
 ///
-/// This experimental root uses the fixed proof prime 2^128-275. Its outgoing
-/// coefficient map is authenticated by the ordinary successor commitment;
+/// The selected field profile determines coefficient bounds and batching.
+/// Its outgoing coefficient map is authenticated by the ordinary successor commitment;
 /// source image digits, U, all carries, and every virtual zero share that map.
 /// No security admission of the experimental source matrices is asserted.
 #[derive(Clone, Debug)]
@@ -93,14 +93,22 @@ impl BinaryRootPublic {
         }
         prime.validate(manifest.descriptor())?;
         let domain_len = witness_commitment_domain_len(logical_len, destination_ring_dimension)?;
-        let mut plan = BinaryRootWitnessPlan::new(
+        let mut plan = BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),
             manifest.a_rank(),
             destination_ring_dimension,
-        )?
-        .with_prime_planes(claim.is_some(), prime.planes().len())?;
+            manifest.field_profile(),
+            claim.is_some(),
+            prime.planes().len(),
+        )?;
         let ordinary = ordinary_profile
-            .map(|profile| OrdinaryNativeRootPlan::new(profile, plan.repacking().segments().len()))
+            .map(|profile| {
+                OrdinaryNativeRootPlan::new(
+                    profile,
+                    plan.quotient_segment()
+                        .unwrap_or(plan.repacking().segments().len()),
+                )
+            })
             .transpose()?;
         if let Some(ordinary) = &ordinary {
             plan = plan.with_ordinary(ordinary)?;
@@ -118,20 +126,20 @@ impl BinaryRootPublic {
                 "binary root natural digits exceed the outgoing witness".into(),
             ));
         }
-        let batch_count = checked::product([2, manifest.b_rows()])
-            .and_then(|authentication| {
-                checked::sum([
-                    7,
-                    if claim.is_some() { 2 } else { 0 },
-                    checked::product([2, prime.planes().len()])?,
-                    authentication,
-                    ordinary
-                        .as_ref()
-                        .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
-                    negative_binary_addresses.len(),
-                ])
-            })
-            .ok_or(AkitaError::InvalidProof)?;
+        let batch_count = checked::sum([
+            plan.coefficient_batch_count()?,
+            if claim.is_some() { 2 } else { 0 },
+            checked::product([2, prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+            manifest.b_rows(),
+            manifest
+                .d_label(claim.is_some(), prime.planes().len())?
+                .rank as usize,
+            ordinary
+                .as_ref()
+                .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
+            negative_binary_addresses.len(),
+        ])
+        .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
             manifest: manifest.clone(),
             claim: claim.cloned(),
@@ -148,8 +156,9 @@ impl BinaryRootPublic {
         &self.plan
     }
 
-    /// Seven projection outputs, optional word parity/value, B/D, ordinary
-    /// rows, negative bits, then two batches for every prime plane. No row
+    /// Seven P128 projections or the P64 coefficient coordinates, then word
+    /// parity/value, B/D, ordinary rows, negative bits and two batches per prime
+    /// plane. No row
     /// reads a padding address, and none constrains one.
     pub fn batch_count(&self) -> usize {
         self.batch_count
@@ -157,11 +166,20 @@ impl BinaryRootPublic {
 
     /// Batch ranges: terminal, B, D, ordinary rows, negative bits, prime rows.
     fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
-        let terminal = checked::range(7, if self.claim.is_some() { 2 } else { 0 })
-            .ok_or(AkitaError::InvalidProof)?;
+        let terminal = checked::range(
+            self.plan.coefficient_batch_count()?,
+            if self.claim.is_some() { 2 } else { 0 },
+        )
+        .ok_or(AkitaError::InvalidProof)?;
         let b =
             checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let d = checked::range(b.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
+        let d = checked::range(
+            b.end,
+            self.manifest
+                .d_label(self.claim.is_some(), self.prime.planes().len())?
+                .rank as usize,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
         let ordinary_rows = checked::range(
             d.end,
             self.ordinary
@@ -194,13 +212,54 @@ impl BinaryRootPublic {
         ])
     }
 
+    /// Interpret the profile's independent coordinates once. P64 has no J or y
+    /// inputs: rho comes directly from the first a common batch coordinates.
+    #[allow(clippy::type_complexity)]
+    fn coefficient_inputs<'a, E: Field>(
+        &self,
+        batches: &[E],
+        rho: &'a [[E; 648]],
+        projected_values: &[i128],
+    ) -> Result<(std::borrow::Cow<'a, [[E; 648]]>, E), AkitaError> {
+        if self.manifest.field_profile() == BinaryFieldProfile::P128 {
+            if projected_values.len() != super::BINARY_PROJECTION_COUNT {
+                return Err(AkitaError::InvalidProof);
+            }
+            let mu = batches
+                .get(..super::BINARY_PROJECTION_COUNT)
+                .ok_or(AkitaError::InvalidProof)?;
+            let claim = mu
+                .iter()
+                .zip(projected_values)
+                .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
+            return Ok((std::borrow::Cow::Borrowed(rho), claim));
+        }
+        if !rho.is_empty() || !projected_values.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "p64 relation has no J or y inputs".into(),
+            ));
+        }
+        let coefficients = batches
+            .get(..self.plan.coefficient_batch_count()?)
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(self.plan.projection_bounds().residual_rows())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for row in coefficients.chunks_exact(648) {
+            rows.push(row.try_into().map_err(|_| AkitaError::InvalidProof)?);
+        }
+        Ok((std::borrow::Cow::Owned(rows), E::zero()))
+    }
+
     /// Compile the single linear oracle after the outgoing commitment.
     ///
     /// Batch coordinates are independent field challenges, one per row.
     /// `commitment` is the public B payload; `d_payload`
     /// is the order-three commitment to the selected word and prime views.
     /// Proving supplies A; verification omits A and the B/D weights and
-    /// authenticates their contribution through the typed prefix. `rho` batches the public projection rows with mu.
+    /// authenticates their contribution through the typed prefix. For P128,
+    /// `rho` batches the public J rows. For P64, supply empty `rho` and y slices;
+    /// the independent coefficient weights come directly from `batches`.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn relation<E: Field>(
         &self,
@@ -208,7 +267,7 @@ impl BinaryRootPublic {
         alpha: E,
         batches: &[E],
         rho: &[[E; 648]],
-        projected_values: &[i128; 7],
+        projected_values: &[i128],
         commitment: &[E],
         d_payload: &[E],
         ordinary_claim: Option<(&[E], E, &[E])>,
@@ -220,15 +279,7 @@ impl BinaryRootPublic {
                 actual: batches.len(),
             });
         }
-        let mu: [E; 7] = batches
-            .get(..7)
-            .ok_or(AkitaError::InvalidProof)?
-            .try_into()
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let projection_claim = mu
-            .iter()
-            .zip(projected_values)
-            .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
+        let (rho, projection_claim) = self.coefficient_inputs(batches, rho, projected_values)?;
         let [terminal, b, d, ordinary_rows, negative_bits, prime_rows] = self.batch_ranges()?;
         // The A image and terminal, prime-plane and ordinary components are
         // independent and compiled in parallel. Their errors are checked in
@@ -240,7 +291,7 @@ impl BinaryRootPublic {
                 matrix,
                 challenges,
                 alpha,
-                rho,
+                rho.as_ref(),
                 batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
             )
         };
@@ -300,10 +351,8 @@ impl BinaryRootPublic {
             &self.plan,
             &self.plan.opening_segments(),
             &self.setup.setup_seed.seed,
-            SetupStreamLabel {
-                role: SetupStreamRole::WitnessCommitment,
-                ..self.manifest.b_label()
-            },
+            self.manifest
+                .d_label(self.claim.is_some(), self.prime.planes().len())?,
             d_payload,
             alpha,
             batches.get(d).ok_or(AkitaError::InvalidProof)?,

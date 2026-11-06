@@ -4,10 +4,11 @@ use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::MinusTrinomial;
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
+use akita_params::binary_setup::BinaryFieldProfile;
 use jolt_field::Field;
 
 use crate::binary_source::{
-    binary_scalar_challenges, BinaryRootWitnessPlan, CANONICAL_IMAGE_WINDOW,
+    binary_scalar_challenges, BinaryRootWitnessPlan, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
 };
 use crate::native_root_relation::{
     weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
@@ -17,8 +18,8 @@ use crate::native_root_relation::{
 /// The prover's A operand for [`binary_direct_a_weights`].
 ///
 /// `matrix[row][column]` holds the centered q setup. `canonical` returns the
-/// canonical integer of a proof-field element; the exact integer adjoint
-/// needs it because the proof field has no smooth transform domain.
+/// canonical integer for the P128 integer adjoint. The P64 field adjoint
+/// does not call it: a genuine extension element has no integer representative.
 #[derive(Clone, Copy)]
 pub struct BinaryAOperand<'a, E> {
     pub matrix: &'a [Vec<[i128; 648]>],
@@ -28,9 +29,11 @@ pub struct BinaryAOperand<'a, E> {
 /// Compile the A identity's coefficient weights. Proving supplies A; online
 /// verification omits it and authenticates its contribution through Stage 3.
 /// `rho[polynomial * rank + row][coefficient]` batches all seven public
-/// projections over the joined residual. This compiles the signed remainder
+/// projections over the joined P128 residual, or are independent coefficient
+/// challenges for P64. This compiles the signed remainder
 /// `sum_i <rho_i, rem_Psi(A*z-sum c*T)_i>`; the caller supplies its projection
-/// target. The T terms remain in the root oracle. No term reads a padding
+/// target for P128. P64 also subtracts q times K, with target zero and no
+/// outer batching scalar. The T terms remain in the root oracle. No term reads a padding
 /// address.
 pub fn binary_direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
@@ -72,12 +75,29 @@ pub fn binary_direct_a_weights<E: Field>(
     families.push(RootWeightFamily::Image(ImageWeights::new(
         plan, rho, &scalars,
     )?));
-    NativeRootWeights::structured(
-        plan.repacking().domain_len(),
-        Vec::new(),
-        families,
-        E::zero(),
-    )
+    let mut terms = Vec::new();
+    if let Some(segment) = plan.quotient_segment() {
+        let depth = plan
+            .projection_bounds()
+            .quotient()
+            .ok_or(AkitaError::InvalidProof)?
+            .digits;
+        let count = checked::product([rho.len(), 648, depth]).ok_or(AkitaError::InvalidProof)?;
+        terms
+            .try_reserve_exact(count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for (element, row) in rho.iter().enumerate() {
+            for (coefficient, &weight) in row.iter().enumerate() {
+                terms.extend(plan.repacking().coefficient_weights(
+                    segment,
+                    element,
+                    coefficient,
+                    -E::from_u64(u64::from(BINARY_SOURCE_Q)) * weight,
+                )?);
+            }
+        }
+    }
+    NativeRootWeights::structured(plan.repacking().domain_len(), terms, families, E::zero())
 }
 
 /// The response part `sum_ij <rho_i, rem(A_ij * z_j)>` of the A identity.
@@ -120,12 +140,34 @@ impl<E: Field> DirectAWeights<E> {
             .try_reserve_exact(lanes.elements())
             .map_err(|_| AkitaError::InvalidProof)?;
         for owner_rho in rho.chunks_exact(rank) {
-            columns.extend(adjoint.apply_integer_rows(
-                owner_rho,
-                operand.matrix,
-                u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()),
-                operand.canonical,
-            )?);
+            if plan.field_profile() == BinaryFieldProfile::P128 {
+                columns.extend(adjoint.apply_integer_rows(
+                    owner_rho,
+                    operand.matrix,
+                    u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()),
+                    operand.canonical,
+                )?);
+            } else {
+                // Field arithmetic accepts genuine extension challenges. The
+                // coordinatewise integer optimization belongs to the next stage.
+                let rows = operand
+                    .matrix
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .len();
+                for column in 0..rows {
+                    let mut h = [E::zero(); 648];
+                    for (rho, row) in owner_rho.iter().zip(operand.matrix) {
+                        let a = row.get(column).ok_or(AkitaError::InvalidProof)?;
+                        for (slot, weight) in
+                            h.iter_mut().zip(adjoint.apply(rho, &a.map(E::from_i128))?)
+                        {
+                            *slot += weight;
+                        }
+                    }
+                    columns.push(h);
+                }
+            }
         }
         if lanes.degree() != 648 || columns.len() != lanes.elements() {
             return Err(AkitaError::InvalidSetup(
