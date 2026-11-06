@@ -116,7 +116,7 @@ setup-prefix commitment.
   supported nonterminal edge has a direct alternative. An edge admitted by
   `RecursiveSetupSearchPolicy` may also have an offloaded alternative.
   `Exhaustive` admits every feasible producer level;
-  `RootAndFirstChildV1` admits producer levels zero and one.
+  `RootAndFirstChild` admits producer levels zero and one.
 - **Offloading is never mandatory by level or prefix size.** A large prefix
   makes offloading potentially valuable, but does not determine the transition.
   If an offloaded successor is incompatible or fails the viability rules, the
@@ -374,8 +374,8 @@ The history behind this split is also empirical. The setup-envelope pruning
 experiment first applied an exact envelope objective to adaptive direct rows
 and a padded envelope objective to recursive rows. Exact envelope-first direct
 selection produced shallow, proof-heavy schedules, so commit `a9f8bd814`
-restored direct V2 while retaining padded recursive V3. The padded recursive
-coordinate also made the schedule-wide maximum an early monotone bound; local
+restored the direct-setup objective while retaining the padded setup-envelope
+objective for recursive planning. The padded recursive coordinate also made the schedule-wide maximum an early monotone bound; local
 release measurements during that experiment reduced representative recursive
 searches by roughly 6–16 times. A later output-before-proof experiment in
 commit `9698637df` reduced selected first-direct witnesses but exposed proof-size
@@ -403,17 +403,17 @@ multi-objective planner.
 The external catalog binds:
 
 ```text
-cost model      = NoncePayloadAndSetupEnvelopeV2
-direct policy = MinFirstDirectSetupThenExactProofAndWorkV5
-recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+cost model      = NoncePayloadAndSetupEnvelope
+direct policy = MinFirstDirectSetupThenExactProofAndWork
+recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The selection objective is an explicit catalog-identity input derived from the
 setup mode. Adaptive direct planning selects
-`MinFirstDirectSetupThenExactProofAndWorkV5`. Recursive setup planning selects
-`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`. The scalar boundary
+`MinFirstDirectSetupThenExactProofAndWork`. Recursive setup planning selects
+`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork`. The scalar boundary
 disables recursive setup search and uses the direct objective.
 
 The planner does not use artifact registry contents to decide mode. Registry
@@ -460,7 +460,7 @@ fn recursive_setup_planning() -> bool {
 The adapter overrides it to `true`. `policy_of::<Self>(chunking)` copies the value into
 `PlannerPolicy` for `find_schedule`, including scalar keys selected for the
 recursive companion catalog. Shipped recursive catalogs bind
-`RecursiveSetupSearchPolicy::RootAndFirstChildV1`; audit callers may select
+`RecursiveSetupSearchPolicy::RootAndFirstChild`; audit callers may select
 `Exhaustive` explicitly.
 
 Configs identify only their stable external artifact family and planner policy.
@@ -1271,10 +1271,10 @@ Track:
 
 The catalog identity binds both `RecursiveSplitSearchPolicy` and
 `RecursiveSetupSearchPolicy`. Production catalogs use
-`BoundedBalancedExtremesV1` for recursive splits: states through twelve reduced
+`BoundedBalancedExtremes` for recursive splits: states through twelve reduced
 variables are exhaustive, while larger states search both extremes and a
 radius-two window around the balance estimate. Shipped recursive setup catalogs
-use `RootAndFirstChildV1`, which considers offloaded edges produced at levels
+use `RootAndFirstChild`, which considers offloaded edges produced at levels
 zero and one while retaining direct traversal at every level. `Exhaustive`
 remains available for small-domain oracles and audited workloads. Results under
 either bounded policy are selected under that named domain and are not
@@ -1355,7 +1355,7 @@ runtime lookup, and offline generation aligned.
 ### Exhaustive suffix candidate frontier
 
 Available as the `Exhaustive` catalog-bound policy for oracle coverage and
-explicit workloads. Production uses `BoundedBalancedExtremesV1` because the
+explicit workloads. Production uses `BoundedBalancedExtremes` because the
 full frontier grows quickly with recursion depth. The policy tag prevents the
 two search domains from sharing a catalog identity.
 

@@ -1268,7 +1268,7 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
+Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWork`:
 first-direct padded setup capacity, exact additive proof-and-work score,
 proof bytes, exact total setup field elements, root output-witness
 length, and the canonical descriptor.
@@ -1276,7 +1276,7 @@ length, and the canonical descriptor.
 The additive work term includes each fold's outgoing witness and, for a direct
 edge, twice the natural setup-scan length plus 64 units per common-base ring.
 Offloaded edges have no direct-scan charge. Recursive catalogs use
-`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
+`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork`, which first compares
 the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
 before comparing first-direct capacity, the proof-and-work score, proof bytes, and first-direct

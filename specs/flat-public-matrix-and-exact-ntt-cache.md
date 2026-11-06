@@ -100,7 +100,7 @@ pub struct AkitaSetupSeed {
 }
 
 pub enum PublicMatrixDerivation {
-    Shake256PagedV1,
+    Shake256Paged,
 }
 ```
 
@@ -311,7 +311,7 @@ All A, B, and D matrices, including matrices used to commit a setup-prefix
 object, are overlapping prefix views of this same stream. They are not assigned
 disjoint role labels.
 
-#### `Shake256PagedV1`
+#### `Shake256Paged`
 
 The first derivation algorithm is a fixed-page SHAKE256 construction. A page is
 a derivation unit for deterministic parallelism, not a ring.
@@ -360,7 +360,7 @@ at `offset(i)` in that page. The final requested page MAY stop after the last
 needed element.
 
 This rejection sampler is both the protocol sampling rule for
-`Shake256PagedV1` and the repository-wide meaning of `RandomSampling`.
+`Shake256Paged` and the repository-wide meaning of `RandomSampling`.
 `Fp32`, `Fp64`, and `Fp128` MUST share one canonical helper or equivalent
 cross-checked implementations with identical byte-consumption semantics.
 Extension-field implementations remain coefficient-wise calls to the uniform
@@ -1078,7 +1078,7 @@ This follow-up is not complete until all merge-blocking criteria below are satis
   fp64, and fp128 implementations pass shared distribution/byte-consumption
   vectors.
 - [x] A temporary page-size microbenchmark covered
-  512/1024/2048/4096/8192/16384; `Shake256PagedV1` fixes 4096 as a policy
+  512/1024/2048/4096/8192/16384; `Shake256Paged` fixes 4096 as a policy
   constant without retaining benchmark-only code.
 
 #### Protocol identity

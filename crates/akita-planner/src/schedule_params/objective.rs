@@ -42,13 +42,13 @@ impl CompleteObjectiveBound {
         setup_field_elements: usize,
     ) -> Self {
         match policy.selection_policy {
-            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => Self::SetupFirst {
+            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork => Self::SetupFirst {
                 first_direct_setup_capacity,
                 exact_score,
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork => {
                 Self::PaddedSetupEnvelopeFirst {
                     setup_envelope_capacity: akita_params::padded_setup_prefix_len(
                         setup_field_elements,
@@ -235,7 +235,7 @@ pub(crate) fn complete_schedule_score(
     Ok(CompleteScheduleScore {
         objective: CompleteObjectiveBound::for_candidate(policy, metrics),
         legacy_root_output_witness_len: (policy.selection_policy
-            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
+            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork)
             .then_some(root_output_witness_len),
         descriptor,
     })

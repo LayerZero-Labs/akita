@@ -150,7 +150,7 @@ proof bytes, including every Stage 3 proof, and the first direct output-witness
 length. The canonical descriptor breaks remaining ties.
 
 The shipped recursive catalogs consider offloaded edges produced by the root
-and its direct child. This `RootAndFirstChildV1` domain is part of the catalog
+and its direct child. This `RootAndFirstChild` domain is part of the catalog
 identity; direct traversal remains available at every level. Exhaustive search
 is available for audit workloads. Within the selected domain, the planner may
 select no offloaded levels, one level, or several levels. A prefix size does

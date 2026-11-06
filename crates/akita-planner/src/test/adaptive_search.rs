@@ -277,7 +277,7 @@ fn statically_infeasible_multi_chunk_packing_domain_is_unsupported() {
         potential_b_dimensions: &[128],
         potential_d_dimensions: &[128],
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),
@@ -443,7 +443,7 @@ fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
     );
     assert_eq!(
         bounded.recursive_setup_search_policy,
-        crate::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+        crate::RecursiveSetupSearchPolicy::RootAndFirstChild
     );
     let mut exhaustive = bounded;
     exhaustive.recursive_setup_search_policy = crate::RecursiveSetupSearchPolicy::Exhaustive;

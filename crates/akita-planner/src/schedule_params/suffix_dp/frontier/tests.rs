@@ -11,9 +11,9 @@ use crate::schedule_params::{
 };
 
 const SETUP_FIRST: crate::SelectionPolicyId =
-    crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
+    crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork;
 const PADDED_ENVELOPE_FIRST: crate::SelectionPolicyId =
-    crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6;
+    crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork;
 
 fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
     DescriptorOrderContext {

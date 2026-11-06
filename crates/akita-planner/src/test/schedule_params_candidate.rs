@@ -189,7 +189,7 @@ fn recursive_split_bound_prices_packing_e_at_its_physical_width() {
 fn recursive_split_policy_controls_the_shared_search_domain() {
     assert_eq!(
         recursive_split_search_domain(
-            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremes,
             1 << 12,
             12,
             4,
@@ -200,7 +200,7 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
     );
     assert_eq!(
         recursive_split_search_domain(
-            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremes,
             1 << 16,
             16,
             4,
@@ -927,9 +927,9 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     use akita_params::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    // Only the V5 root prunes slices locally: there the root's padded
+    // Only the direct-setup objective prunes root slices locally: there the root's padded
     // first-direct setup leads the objective.
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork;
     let dimensions = CommitmentRingDims {
         inner: 1024,
         outer: 128,

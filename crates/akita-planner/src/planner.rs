@@ -852,9 +852,9 @@ pub(crate) fn find_schedule_in_relation_order(
     let query_prefix_count = options.query_prefix_count;
     #[cfg(not(test))]
     let query_prefix_count = 0;
-    // V6 searches under widening power-of-two setup budgets. Exactness:
+    // Recursive setup planning searches under widening power-of-two budgets. Exactness:
     // - Admission under a power-of-two budget `B` is padded setup `<= B`, and
-    //   every V6 dominance, bound and level prune keeps a side whose padded
+    //   every dominance, bound and level prune keeps a side whose padded
     //   setup is no larger. A rejected candidate can therefore displace only
     //   candidates that are also over `B`. Frontiers are unbounded dominance
     //   sets, split domains are fixed by geometry, and each pass gets a fresh
@@ -868,7 +868,7 @@ pub(crate) fn find_schedule_in_relation_order(
     //   without a budget. The starting budget changes only the pass count.
     let mut padded_setup_limit = (policy.setup_field_budget.is_none()
         && policy.selection_policy
-            == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
+            == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork)
         .then_some(1);
     let best = loop {
         let pass_budget = padded_setup_limit.or(policy.setup_field_budget);
