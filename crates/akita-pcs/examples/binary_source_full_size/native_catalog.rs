@@ -66,7 +66,9 @@ impl CatalogIdentity {
     }
 }
 
-/// Private process handoff, never a supported schedule artifact or proof input.
+/// Trusted research handoff and replay fixture, never a supported schedule artifact.
+/// Checked-in copies belong under `crates/akita-pcs/tests/fixtures/`, outside the
+/// production artifact catalogs. Every load revalidates identity and native rows.
 #[derive(Serialize, Deserialize)]
 struct FixtureCatalog {
     identity: CatalogIdentity,
@@ -129,13 +131,15 @@ impl FixtureCatalog {
     }
 }
 
-/// Reuse a planned fixture catalog from `BINARY_SOURCE_CATALOG_CACHE`.
+/// Reuse the fixture directory's `native-catalog.json` first, then the optional
+/// `BINARY_SOURCE_CATALOG_CACHE`, and plan only when neither exists.
 ///
-/// Planning is deterministic, so a cached catalog planned for the same
-/// protocol, size, shape and planner policies is the catalog that planning
-/// would produce. Repeated prover measurements use it to skip planning; it is
-/// never a supported artifact. An entry is admitted by the identity and rows
-/// it contains, never by its filename, and a mismatch is an error.
+/// This precedence applies to P128 too, including repeated invocations in a used
+/// directory. Use a fresh directory and unset the cache to measure fresh planning.
+/// Cache filenames include the field-specific family, so legacy P128 cache names
+/// are not reused. Identity and row validation establish admissibility, not that
+/// a cached row equals the current planner's preferred output. A mismatch is an
+/// error; a valid alternate row can select different setup and proof bytes.
 pub(super) fn build(
     log: usize,
     shape: &str,

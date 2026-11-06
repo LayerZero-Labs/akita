@@ -197,7 +197,7 @@ fn stage3_p64_layout_has_a_distinct_identity_and_remains_outside_the_catalog() {
     assert!(old.identity(&p64, &slot).is_err());
     assert!(!row.is_native_root());
     assert!(matches!(
-        BinaryFieldProfile::P64.admit_root(BinaryFieldProfile::P64.modulus(), 2, false),
+        BinaryFieldProfile::P64.admit_root(false),
         Err(akita_error::AkitaError::UnsupportedSchedule(_))
     ));
 }

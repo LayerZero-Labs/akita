@@ -220,13 +220,23 @@ pub(super) fn proof(
     profile: akita_params::binary_setup::BinaryFieldProfile,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use akita_error::checked;
+    use akita_params::binary_setup::BinaryFieldProfile;
+    use akita_types::binary_source::{BINARY_PROJECTION_BYTES, BINARY_PROJECTION_COUNT};
 
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
+    // Keep the legacy label and digest calculation consumed by the P128 pin script.
     println!(
-        "proof bytes={} digest_algorithm=descriptor_digest digest={}",
+        "proof bytes={} digest_algorithm=blake2b256 digest={}",
         proof.len(),
         hex(&digest)
     );
+    if profile == BinaryFieldProfile::P64 {
+        println!(
+            "p64_proof bytes={} digest_algorithm=descriptor_digest digest={}",
+            proof.len(),
+            hex(&digest)
+        );
+    }
     let mut totals = BTreeMap::<(u32, u32, u32, u32), (u64, usize)>::new();
     let mut accounted = 0usize;
     let ranges = akita_transcript::thread_proof_ranges();
@@ -237,6 +247,12 @@ pub(super) fn proof(
         .ok_or("missing outgoing payload range")?;
     let projection_start = checked::sum([outgoing.start, outgoing.len]).ok_or("range overflow")?;
     let mut coverage = Vec::new();
+    let projection_atoms = match profile {
+        BinaryFieldProfile::P128 => BINARY_PROJECTION_COUNT,
+        BinaryFieldProfile::P64 => 0,
+    };
+    let projection_bytes = checked::product([projection_atoms, BINARY_PROJECTION_BYTES])
+        .ok_or("projection byte overflow")?;
     // The binary frontend and integer projections use raw channel exchanges,
     // so the generic field-message range logger does not classify them.
     let frontend_round_bytes = checked::product([42, log_carriers]).ok_or("frontend overflow")?;
@@ -265,9 +281,10 @@ pub(super) fn proof(
             usize::from(word),
         ),
         (
-            "integer_projections", projection_start,
-            if profile == akita_params::binary_setup::BinaryFieldProfile::P128 { 84 } else { 0 },
-            7,
+            "integer_projections",
+            projection_start,
+            projection_bytes,
+            projection_atoms,
         ),
     ] {
         if bytes != 0 {

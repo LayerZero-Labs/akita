@@ -25,12 +25,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .name("binary-full-size".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(|| {
-            let p64 = std::env::args().collect::<Vec<_>>()
-                .windows(2).any(|pair| pair == ["--field", "p64"]);
-            let result = if p64 {
-                p64::run::main()
-            } else {
-                run::main()
+            let mut field = PROFILE;
+            let mut arguments = Vec::new();
+            let mut args = std::env::args().skip(1);
+            while let Some(arg) = args.next() {
+                let value = args.next().ok_or("missing argument value")?;
+                if arg == "--field" {
+                    field = match value.as_str() {
+                        "p64" => akita_params::binary_setup::BinaryFieldProfile::P64,
+                        "p128" => akita_params::binary_setup::BinaryFieldProfile::P128,
+                        _ => return Err(format!("unknown field {value}")),
+                    };
+                } else {
+                    arguments.extend([arg, value]);
+                }
+            }
+            let result = match field {
+                akita_params::binary_setup::BinaryFieldProfile::P64 => p64::run::main(arguments),
+                akita_params::binary_setup::BinaryFieldProfile::P128 => run::main(arguments),
             };
             result.map_err(|error| error.to_string())
         })?

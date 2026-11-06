@@ -1,4 +1,7 @@
-use super::{claims, config::{FullSize, PROFILE}};
+use super::{
+    claims,
+    config::{FullSize, PROFILE},
+};
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::{checked, AkitaError};
 use akita_params::{
@@ -19,7 +22,8 @@ pub(super) fn plan(
     dimension: usize,
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
     let descriptor = claims::descriptor(log)?;
-    let manifest = BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, carrier, PROFILE)?;
+    let manifest =
+        BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, carrier, PROFILE)?;
     let word = shape != "prime-claim";
     let planes = usize::from(shape != "binary-claim");
     let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
@@ -38,11 +42,15 @@ pub(super) fn plan(
         &manifest, word, &prime, dimension, ordinary,
     )?;
     let mut canonical = BinaryRootWitnessPlan::for_profile(
-        &descriptor, manifest.a_rank(), dimension, PROFILE, word, planes,
+        &descriptor,
+        manifest.a_rank(),
+        dimension,
+        PROFILE,
+        word,
+        planes,
     )?;
     if let Some(ordinary) = ordinary {
-        let ordinary =
-            OrdinaryNativeRootPlan::new(ordinary, canonical.quotient_segment().unwrap_or(canonical.repacking().segments().len()))?;
+        let ordinary = OrdinaryNativeRootPlan::new(ordinary, canonical.ordinary_first_segment())?;
         canonical = canonical.with_ordinary(&ordinary)?;
     }
     println!(

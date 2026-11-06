@@ -9,6 +9,10 @@ pub(super) type E = super::super::E;
 pub(super) const PROFILE: BinaryFieldProfile = super::super::PROFILE;
 
 /// Ordinary suffix for an explicitly selected experimental binary fixture.
+/// Both fields deliberately share the P128 search dimensions and basis ranges
+/// to compare the root migration with a fixed degree-64 suffix search space.
+/// P64 still uses Q64Offset59 and 64-bit opening bounds in every admission audit.
+/// This is a controlled research preset, not the canonical fp64::Dense benchmark.
 #[derive(Clone)]
 pub(super) struct FullSize;
 

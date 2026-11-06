@@ -186,3 +186,12 @@ Planning writes a research native catalog; proving writes commitments, induced
 verifier setup and proof. Verification reconstructs and validates that catalog.
 Catalogs must come from trusted local preprocessing. None is a production
 admission certificate.
+
+The measurement driver reuses `<fixture>/native-catalog.json` before consulting
+`BINARY_SOURCE_CATALOG_CACHE`, for both fields. A reused directory therefore skips
+planning when its catalog passes identity and row validation. Use a fresh directory
+and unset the cache for fresh planning. Cache names now include the field family;
+legacy P128 cache filenames are not reused. A valid alternate cached row can change
+setup and proof bytes, so byte comparisons must use identical selected rows.
+Research replay catalogs and pins live under `crates/akita-pcs/tests/fixtures/`,
+outside the supported schedule artifacts.

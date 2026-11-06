@@ -14,6 +14,7 @@ pub(super) struct Claims {
     pub word_point: Option<Vec<[u8; 16]>>,
     pub word_value: [u8; 16],
     pub prime: Option<(Vec<u128>, u128)>,
+    pub ordinary: Option<(Vec<u128>, u128)>,
 }
 
 pub(super) fn descriptor(log_carriers: usize) -> Result<BinarySourceDescriptor, AkitaError> {
@@ -42,6 +43,12 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         word_point: None,
         word_value: [0; 16],
         prime: None,
+        ordinary: (shape == "binary-and-prime-claims-plus-ordinary").then(|| {
+            let point = (0..log.max(18))
+                .map(|axis| 7 + axis as u128 * 11)
+                .collect();
+            (point, 7)
+        }),
     };
     if shape != "prime-claim" {
         let point = (0..log)

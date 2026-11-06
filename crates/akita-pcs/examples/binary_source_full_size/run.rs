@@ -45,7 +45,8 @@ type BinaryTestSuffix = FullSize;
 pub(super) mod fault_backend;
 #[cfg(test)]
 std::thread_local! {
-    pub(super) static FAULT: std::cell::Cell<Option<fault_backend::Fault>> = const { std::cell::Cell::new(None) };
+    pub(super) static FAULT: std::cell::Cell<Option<fault_backend::Fault>> =
+        const { std::cell::Cell::new(None) };
 }
 
 #[derive(Serialize, Deserialize)]
@@ -55,19 +56,15 @@ struct Fixture {
     contexts: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-pub(crate) fn main() -> Result<()> {
+pub(crate) fn main(arguments: Vec<String>) -> Result<()> {
     let mut log = 22usize;
     let mut shape = "binary-and-prime-claims".to_owned();
     let mut phase = "prove".to_owned();
     let mut directory = None;
-    let mut args = std::env::args().skip(1);
+    let mut args = arguments.into_iter();
     while let Some(arg) = args.next() {
         let value = args.next().ok_or("missing argument value")?;
         match arg.as_str() {
-            "--field"
-                if (value == "p64" && PROFILE == BinaryFieldProfile::P64)
-                    || (value == "p128" && PROFILE == BinaryFieldProfile::P128) => {}
-
             "--log-carriers" => log = value.parse()?,
             "--shape" => shape = value,
             "--phase" => phase = value,
@@ -88,7 +85,7 @@ pub(crate) fn main() -> Result<()> {
     }
     let directory = directory.ok_or("missing --fixture directory")?;
     std::fs::create_dir_all(&directory)?;
-    println!("field_profile={PROFILE:?} admission=research production_admitted=false");
+    println!("field_profile={PROFILE:?} production_security_certified=false");
     let timings = metrics::Timings::default();
     tracing_subscriber::registry().with(timings.clone()).init();
     let columns = claims::descriptor(log)?.index_map().columns();
@@ -296,7 +293,7 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         commitments.serialize_compressed(&mut output)?;
         output.flush()?;
     }
-    let groups = groups(log, &claims, &descriptor, &commitments)?;
+    let groups = groups(&claims, &descriptor, &commitments)?;
     let data = SelectedProverOpeningData::from_committed_claims::<FullSize>(
         OpeningClaims::from_groups(groups)?,
         handles,
@@ -349,7 +346,6 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
 }
 
 fn groups(
-    log: usize,
     claims: &claims::Claims,
     descriptor: &akita_types::binary_source::BinarySourceDescriptor,
     commitments: &[CommittedGroup<F>],
@@ -361,10 +357,9 @@ fn groups(
         claims.prime(),
     )?];
     if let Some(ordinary) = commitments.get(1) {
-        let point = (0..log.max(18))
-            .map(|axis| E::from_u64(7 + axis as u64 * 11))
-            .collect::<Vec<_>>();
-        let value = *point.first().ok_or("empty ordinary point")?;
+        let (point, value) = claims.ordinary.as_ref().ok_or("missing ordinary claim")?;
+        let point = point.iter().map(|&value| E::from_u128(value)).collect();
+        let value = E::from_u128(*value);
         groups.push(PolynomialGroupClaims::new(
             point,
             vec![value],
@@ -411,7 +406,7 @@ pub(super) fn verify(
     let descriptor = claims::descriptor(log)?;
     let proof = std::fs::read(directory.join("proof.bin"))?;
     let once = || -> Result<()> {
-        let owned = groups(log, &fixture.claims, &descriptor, &commitments)?;
+        let owned = groups(&fixture.claims, &descriptor, &commitments)?;
         let borrowed = owned
             .into_iter()
             .zip(&commitments)

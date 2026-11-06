@@ -7,9 +7,6 @@ use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::Ring;
 use std::path::Path;
 
-#[path = "../../tests/binary_source_end_to_end/byte_contract.rs"]
-mod byte_contract;
-
 // Each shape owns an isolated directory; the generator revalidates cached rows.
 fn fixture(shape: &'static str) {
     std::thread::Builder::new()
@@ -18,14 +15,7 @@ fn fixture(shape: &'static str) {
             let directory = std::env::temp_dir()
                 .join(format!("akita-p64-{}-{shape}", std::process::id()));
             std::fs::create_dir_all(&directory).unwrap();
-            let catalog = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../artifacts")
-                .join(if akita_params::DEV_PROTOCOL {
-                    "schedules-binary-source-p64-dev"
-                } else {
-                    "schedules-binary-source-p64"
-                })
-                .join(format!("3-{shape}.json"));
+            let catalog = super::fixture_directory().join(format!("3-{shape}.json"));
             std::fs::copy(&catalog, directory.join("native-catalog.json"))
                 .unwrap_or_else(|error| {
                     panic!("Linux catalog pending at {}: {error}", catalog.display())
@@ -50,11 +40,14 @@ fn fixture(shape: &'static str) {
                 let error =
                     run::verify(3, shape, &directory, &metrics::Timings::default()).unwrap_err();
                 assert!(
-                    matches!(error.downcast_ref::<AkitaError>(), Some(AkitaError::InvalidProof)),
+                    matches!(
+                        error.downcast_ref::<AkitaError>(),
+                        Some(AkitaError::InvalidProof)
+                    ),
                     "committed digit fault must fail verification: {error}"
                 );
             }
-            byte_contract::compare_baseline(&proof, &format!("p64-{shape}"));
+            super::compare_baseline(&proof, shape);
             std::fs::remove_dir_all(directory).unwrap();
         })
         .unwrap()
@@ -65,8 +58,11 @@ fn fixture(shape: &'static str) {
 fn rejects(shape: &str, directory: &Path) {
     let error = run::verify(3, shape, directory, &metrics::Timings::default()).unwrap_err();
     assert!(
-        error.downcast_ref::<AkitaError>().is_some(),
-        "mutation must reach a typed protocol rejection: {error}"
+        matches!(
+            error.downcast_ref::<AkitaError>(),
+            Some(AkitaError::InvalidProof)
+        ),
+        "mutation must fail proof verification with InvalidProof: {error}"
     );
 }
 
@@ -95,6 +91,20 @@ fn mutate_statement(shape: &str, directory: &Path) {
         *cell = serde_json::Value::from(cell.as_u64().unwrap() ^ 1);
         std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
         rejects(shape, directory);
+    }
+    if shape == "binary-and-prime-claims-plus-ordinary" {
+        for point in [true, false] {
+            let mut changed = original.clone();
+            let ordinary = &mut changed["claims"]["ordinary"];
+            let cell = if point {
+                &mut ordinary[0][1]
+            } else {
+                &mut ordinary[1]
+            };
+            *cell = serde_json::Value::from(cell.as_u64().unwrap() ^ 1);
+            std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+            rejects(shape, directory);
+        }
     }
     std::fs::write(path, bytes).unwrap();
 }
@@ -140,7 +150,14 @@ fn mutate_setup(shape: &str, directory: &Path) {
     let byte = &mut identity[1][0];
     *byte = serde_json::Value::from(byte.as_u64().unwrap() ^ 1);
     std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
-    rejects(shape, directory);
+    let error = run::verify(3, shape, directory, &metrics::Timings::default()).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<AkitaError>(),
+        Some(&AkitaError::InvalidInput(
+            "binary statement differs from its prepared typed prefix".into()
+        )),
+        "setup mutation must fail the prepared-prefix identity check"
+    );
     std::fs::write(path, bytes).unwrap();
 }
 
@@ -148,10 +165,17 @@ fn mutate_setup(shape: &str, directory: &Path) {
 fn p64_word_complete_schedule_and_tampering() {
     fixture("binary-claim");
 }
+
 #[test]
 fn p64_prime_complete_schedule_and_tampering() {
     fixture("prime-claim");
 }
+
+#[test]
+fn p64_word_and_prime_complete_schedule_and_tampering() {
+    fixture("binary-and-prime-claims");
+}
+
 #[test]
 fn p64_mixed_complete_schedule_and_tampering() {
     fixture("binary-and-prime-claims-plus-ordinary");
@@ -160,23 +184,26 @@ fn p64_mixed_complete_schedule_and_tampering() {
 fn mutate_commitment(shape: &str, directory: &Path) {
     let path = directory.join("commitments.bin");
     let bytes = std::fs::read(&path).unwrap();
-    let mut commitments =
+    let original =
         Vec::<CommittedGroup<F>>::deserialize_compressed(bytes.as_slice(), &()).unwrap();
-    let binary = &commitments[0];
-    let mut payload = binary.commitment().rows().coeffs().to_vec();
-    payload[0] += F::from_u64(1);
-    let akita_types::CommittedGroupKind::Binary(manifest) = binary.kind() else {
-        panic!("fixture must contain a binary commitment");
-    };
-    commitments[0] = CommittedGroup::new_binary(
-        *binary.profile(),
-        Commitment::new(RingVec::from_coeffs(payload)),
-        manifest.clone(),
-    )
-    .unwrap();
-    let mut changed = Vec::new();
-    commitments.serialize_compressed(&mut changed).unwrap();
-    std::fs::write(&path, changed).unwrap();
-    rejects(shape, directory);
+    for (index, commitment) in original.iter().enumerate() {
+        let mut commitments = original.clone();
+        let mut payload = commitment.commitment().rows().coeffs().to_vec();
+        payload[0] += F::from_u64(1);
+        let payload = Commitment::new(RingVec::from_coeffs(payload));
+        commitments[index] = match commitment.kind() {
+            akita_types::CommittedGroupKind::Binary(manifest) => {
+                CommittedGroup::new_binary(*commitment.profile(), payload, manifest.clone())
+                    .unwrap()
+            }
+            akita_types::CommittedGroupKind::Ordinary => {
+                CommittedGroup::new(*commitment.profile(), payload).unwrap()
+            }
+        };
+        let mut changed = Vec::new();
+        commitments.serialize_compressed(&mut changed).unwrap();
+        std::fs::write(&path, changed).unwrap();
+        rejects(shape, directory);
+    }
     std::fs::write(path, bytes).unwrap();
 }

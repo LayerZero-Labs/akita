@@ -296,10 +296,13 @@ Historical audit evidence: [`docs/verifier-panic-audit.md`](../../../docs/verifi
 
 P64 binary openings require a row explicitly admitted through the trusted native
 catalog constructor. An ordinary artifact row or a missing selected row does
-not authorize P64; production admission remains refused. The prover and verifier
-both enforce this before binding the instance or consuming root messages.
-The internal field admission additionally checks the exact base modulus and
-quadratic challenge degree.
+not authorize P64. Native-row selection is the execution admission boundary;
+there is no separate runtime production gate. Production use additionally requires
+closing the open extraction, query-budget, setup/hash-model and induced SIS
+obligations described in the security chapter. The prover and verifier enforce
+catalog admission before binding the instance or consuming root messages.
+Internal field validation separately checks the exact base modulus and quadratic
+challenge degree.
 
 Manifest ranks and payload lengths, strict integer lifts, prime-coordinate
 canonicality, range checks, the common relation, the typed setup identity and
