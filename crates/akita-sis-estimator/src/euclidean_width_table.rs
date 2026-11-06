@@ -20,7 +20,7 @@ pub const DEFAULT_EUCLIDEAN_TARGET_BITS: f64 = SisSecurityPolicy::Quantum169BitA
 pub const EUCLIDEAN_FAMILIES: &[AkitaModulusProfileId] = &[
     AkitaModulusProfileId::Q32Offset99,
     AkitaModulusProfileId::Q64Offset59,
-    AkitaModulusProfileId::Q128OffsetA7F7,
+    AkitaModulusProfileId::Q128Offset801F,
 ];
 /// Exact ring-dimension domain owned by the independent Euclidean table.
 pub const EUCLIDEAN_RING_DIMS: &[u32] = &[32, 64, 128, 256, 512];

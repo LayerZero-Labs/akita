@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn packing_draw_has_one_subring_value_and_derived_a_view() {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset801F,
             128,
             2,
             1,
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn packing_draw_rejects_unaudited_family_before_squeeze() {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset801F,
             128,
             2,
             1,

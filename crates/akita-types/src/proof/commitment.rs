@@ -579,8 +579,8 @@ mod committed_group_tests {
         let rendered = format!("{:?}", group().digest().as_bytes());
         // The digest hash is Jolt's DigestHasher, independent of the sponge.
         let expected = match jolt_transcript::DIGEST_HASH {
-            jolt_transcript::DigestHash::Sha3_256 => "[11, 226, 212, 108, 183, 163, 86, 169, 104, 101, 105, 212, 16, 51, 26, 22, 20, 48, 14, 190, 25, 186, 44, 179, 12, 147, 179, 135, 94, 75, 83, 223]",
-            jolt_transcript::DigestHash::Keccak256 => "[118, 86, 184, 130, 50, 160, 9, 172, 201, 151, 114, 21, 129, 73, 135, 29, 231, 213, 3, 116, 148, 17, 71, 208, 82, 51, 104, 28, 170, 46, 175, 83]",
+            jolt_transcript::DigestHash::Sha3_256 => "[73, 62, 67, 171, 30, 154, 189, 38, 19, 74, 12, 153, 36, 198, 187, 159, 72, 161, 239, 188, 59, 15, 157, 23, 69, 235, 250, 63, 95, 157, 161, 56]",
+            jolt_transcript::DigestHash::Keccak256 => "[160, 206, 95, 98, 108, 7, 165, 225, 224, 162, 25, 84, 191, 8, 58, 72, 40, 184, 48, 254, 178, 237, 78, 89, 247, 136, 220, 214, 17, 141, 113, 196]",
         };
         assert_eq!(rendered, expected);
     }
