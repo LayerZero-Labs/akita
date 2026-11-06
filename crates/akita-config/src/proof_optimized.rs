@@ -107,8 +107,9 @@ pub fn verifier_schedule_fits_setup(
     setup: &AkitaExpandedSetup<impl jolt_field::Field>,
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
+    mode: akita_params::SetupMode,
 ) -> Result<bool, AkitaError> {
-    let required = verifier_setup_matrix_capacity_for_schedule(schedule, layout)?;
+    let required = verifier_setup_matrix_capacity_for_schedule(schedule, layout, mode)?;
     Ok(required.num_field_elements <= setup.shared_matrix.as_field_slice().len())
 }
 
