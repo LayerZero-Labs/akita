@@ -248,7 +248,8 @@ impl OpeningClaimsLayout {
 
     /// [`batched_eval_target`](Self::batched_eval_target) over claims of any
     /// representation `V`: `zero` is the empty sum and `add_scaled(acc, v, c)`
-    /// is `acc + c·v`.
+    /// is `acc + c·v`. A zero-knowledge verifier batches its openings as
+    /// affine forms over the pads this way.
     ///
     /// # Errors
     ///

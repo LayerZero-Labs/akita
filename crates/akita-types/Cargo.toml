@@ -29,13 +29,14 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-featur
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 rand_core = "0.6"
 tracing = "0.1"
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", optional = true }
 
 [features]
 default = ["transcript-keccak"]
 test-support = ["akita-params/test-support"]
 # The masked channels and the counting replay of a zero-knowledge opening's
 # masked levels (`specs/whiteout-akita.md` §4.4–4.5).
-zk = ["akita-error/zk", "akita-params/zk"]
+zk = ["dep:jolt-zk", "akita-error/zk", "akita-params/zk"]
 # Prover-side grinding replay, which searches on a copy of the sponge state.
 prover = ["akita-transcript/prover", "akita-challenges/prover"]
 transcript-blake2b = [
@@ -77,6 +78,10 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
   "test-support",
 ] }
 criterion = { version = "0.8", features = ["html_reports"] }
+# Test-only: the masked claim domains the shared stage checks lower into.
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", features = [
+  "test-support",
+] }
 rand = "0.8"
 spongefish = { version = "=0.8.0", default-features = false }
 

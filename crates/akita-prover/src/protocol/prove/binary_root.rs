@@ -241,6 +241,7 @@ where
         logical_len,
         NextWitnessBindingPolicy::OuterPayload,
         witness,
+        &mut fold::RawPayload,
     )?;
     drop(span);
     let mut witness = committed.witness_handle;
@@ -457,5 +458,6 @@ where
                 setup_prefix_opening: Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
             },
         },
+        range_leaf: stage1.range_leaf,
     })
 }

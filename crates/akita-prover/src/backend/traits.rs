@@ -228,6 +228,36 @@ where
     ) -> Result<crate::backend::Stage1FinalClaims<E>, AkitaError>;
 }
 
+/// A Stage 1 digit-range session, stepped by the fold's Stage 1 and by
+/// [`crate::prove_digit_range`]: the fold's backend session, or a standalone
+/// one.
+pub trait DigitRangeSteps<E: Field> {
+    fn round_polynomial(
+        &mut self,
+        step: crate::backend::Stage1Step,
+        round: usize,
+        previous_claim: E,
+    ) -> Result<crate::backend::Stage1RoundPolynomial<E>, AkitaError>;
+
+    fn bind_challenge(
+        &mut self,
+        step: crate::backend::Stage1Step,
+        round: usize,
+        challenge: E,
+    ) -> Result<(), AkitaError>;
+
+    fn public_transition(
+        &mut self,
+        step: crate::backend::Stage1Step,
+    ) -> Result<crate::backend::Stage1PublicTransition<E>, AkitaError>;
+
+    fn bind_batch_challenge(
+        &mut self,
+        transition: crate::backend::Stage1Transition,
+        challenge: E,
+    ) -> Result<(), AkitaError>;
+}
+
 /// Stage 2 interactive kernel over a private mutable session.
 pub trait OpaqueStage2Kernel<F, E>: OpaqueProverConsumer<F, E>
 where

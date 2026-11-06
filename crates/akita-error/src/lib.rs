@@ -73,6 +73,57 @@ pub enum AkitaError {
     Internal(String),
 }
 
+/// A masked channel's failure (`specs/whiteout-akita.md` §4.4). A transcript
+/// or tape failure rejects the proof; a pad schedule or message field that
+/// disagrees with the schedule is a setup error; a decoded value failing its
+/// check is a failed prover invariant.
+#[cfg(feature = "zk")]
+impl From<jolt_zk::masking::ZkError> for AkitaError {
+    fn from(error: jolt_zk::masking::ZkError) -> Self {
+        use jolt_zk::masking::ZkError;
+        match error {
+            ZkError::TranscriptRejected
+            | ZkError::ChallengeRejected
+            | ZkError::MaskedTapeExhausted
+            | ZkError::MaskedTapeTrailing => Self::InvalidProof,
+            ZkError::PadsExhausted { .. }
+            | ZkError::PadCountMismatch { .. }
+            | ZkError::InvalidLayout { .. }
+            | ZkError::OperandPadsMismatch
+            | ZkError::RoundWidthMismatch { .. }
+            | ZkError::RoundCountMismatch { .. } => Self::InvalidSetup(error.to_string()),
+            ZkError::InvalidRelation { .. }
+            | ZkError::ClaimMismatch(_)
+            | ZkError::Sumcheck(_)
+            | ZkError::BlindFoldShape(_)
+            | ZkError::BlindFoldProver(_)
+            | ZkError::BlindFoldRejected(_)
+            | ZkError::Whiteout(_) => Self::Internal(error.to_string()),
+            ZkError::FoldOverflow { level } => Self::FoldOverflow { level },
+        }
+    }
+}
+
+/// Akita's failures inside a zero-knowledge back end (the response prover,
+/// the masked prefix in Jolt): a one-shot fold overflow stays
+/// [`jolt_zk::masking::ZkError::FoldOverflow`], the failure a caller reruns
+/// on; every other error travels as the back end's erased source.
+#[cfg(feature = "zk")]
+impl From<AkitaError> for jolt_zk::masking::ZkError {
+    fn from(error: AkitaError) -> Self {
+        match error {
+            AkitaError::FoldOverflow { level } => Self::FoldOverflow { level },
+            AkitaError::InvalidProof
+            | AkitaError::InvalidSize { .. }
+            | AkitaError::InvalidPointDimension { .. }
+            | AkitaError::InvalidInput(_)
+            | AkitaError::UnsupportedSchedule(_)
+            | AkitaError::InvalidSetup(_)
+            | AkitaError::Internal(_) => Self::Whiteout(Box::new(error)),
+        }
+    }
+}
+
 /// Algebra errors keep their classification: every [`AlgebraError`] variant
 /// reports a rejected argument, so each maps to the same-named variant.
 impl From<AlgebraError> for AkitaError {
@@ -98,5 +149,28 @@ impl From<CryptoError> for AkitaError {
             CryptoError::Internal(message) => Self::Internal(message),
             CryptoError::Algebra(error) => error.into(),
         }
+    }
+}
+
+#[cfg(all(test, feature = "zk"))]
+mod tests {
+    use super::*;
+    use jolt_zk::masking::ZkError;
+
+    /// A one-shot fold overflow crosses into jolt-zk as its retryable
+    /// variant and comes back as itself; other errors do not become it.
+    #[test]
+    fn fold_overflow_round_trips_through_zk_error() {
+        let level = 1;
+        let crossed = ZkError::from(AkitaError::FoldOverflow { level });
+        assert!(matches!(crossed, ZkError::FoldOverflow { level: 1 }));
+        assert_eq!(
+            AkitaError::from(crossed),
+            AkitaError::FoldOverflow { level }
+        );
+        assert!(matches!(
+            ZkError::from(AkitaError::InvalidProof),
+            ZkError::Whiteout(_)
+        ));
     }
 }

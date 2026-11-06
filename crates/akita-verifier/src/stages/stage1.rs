@@ -16,14 +16,17 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
 use akita_types::DigitRangeEqualityPoint;
 use akita_types::RangeLeaf;
+use akita_types::VerifierGrinding;
 use akita_types::{
     batch_l2_virtual_evaluations, FpExtEncoding, PhysicalResponsePlan, RelationRangeImagePlan,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
-pub(crate) struct Stage1VerifyOutput<E: Field, V = E> {
-    pub(crate) point: Vec<E>,
-    pub(crate) range_image_evaluation: V,
-    pub(crate) physical_l2_virtual_evaluations: Option<Vec<E>>,
+/// A replayed Stage 1: its point, the range image there, and the L2 route's
+/// virtual evaluations.
+pub struct Stage1VerifyOutput<E: Field, V = E> {
+    pub point: Vec<E>,
+    pub range_image_evaluation: V,
+    pub physical_l2_virtual_evaluations: Option<Vec<E>>,
 }
 
 pub(crate) struct RangeLeafVerifierInput<E: Field> {
@@ -49,7 +52,8 @@ impl<E: Field> Stage1Verifier<E> {
 }
 
 impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
-    /// The product stages, which only the clear verifier replays.
+    /// The product stages, which only the clear verifier replays: a masked
+    /// level's basis has none (`specs/whiteout-akita.md` §4.3).
     fn verify_product_prefix<F, G>(
         &self,
         grinding: &mut G,
@@ -125,7 +129,26 @@ impl<E: Field + Ring + AkitaSerialize> Stage1Verifier<E> {
         })
     }
 
-    /// Replay the non-L2 stage-1 proof directly from Spongefish.
+    /// Replay a stage-1 proof in the clear, on the physical L2 route when
+    /// `physical_l2` is given and the L∞ route otherwise.
+    pub fn verify_clear<F>(
+        &self,
+        grinding: &mut VerifierGrinding<'_, '_>,
+        physical_l2: Option<(
+            &akita_types::PhysicalResponsePlan,
+            akita_params::SisModulusProfileId,
+            u128,
+        )>,
+        level: u32,
+    ) -> Result<Stage1VerifyOutput<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + akita_types::FpExtEncoding<F> + ChallengeCodec,
+    {
+        self.verify::<F, _>(grinding, physical_l2, level)
+    }
+
+    /// Replay the stage-1 proof directly from Spongefish.
     pub(crate) fn verify<F, G>(
         &self,
         grinding: &mut G,
@@ -311,4 +334,85 @@ where
         physical_l2_claim,
         physical_l2_families,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_params::{
+        ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol,
+    };
+    use akita_transcript::{
+        exchange_extension_group, new_prover_channel, new_verifier_channel, public_extensions,
+    };
+    use akita_types::{grinding_sumcheck_body_site, GrindingReplay, ProverGrinding};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Zero};
+
+    type F = Prime32Offset99;
+    type E = FpExt4<F>;
+
+    /// A one-round basis-8 leaf proof whose round polynomial is zero, so the
+    /// leaf's output claim is zero, followed by `range_image`.
+    fn verify_leaf(range_image: E) -> Result<Stage1VerifyOutput<E>, AkitaError> {
+        let level = 1;
+        let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+        let round_site = GrindingSite::SumcheckRound {
+            protocol: SumcheckProtocol::Stage1,
+            level,
+            stage: 0,
+            round: 0,
+        };
+        let plan = GrindingPlan::new(
+            vec![GrindingRun::proof_of_work(round_site, 1, order).unwrap()],
+            order,
+        )
+        .unwrap();
+        let mut transcript = new_prover_channel(b"leaf");
+        let mut prover = ProverGrinding::new(&mut transcript, &plan);
+        let claim_site = akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_SUMCHECK,
+            invocation: SumcheckProtocol::Stage1.tag(),
+            level,
+            detail: akita_sumcheck::SumcheckRole::Claim as u32,
+            ..akita_transcript::ProtocolSiteId::default()
+        };
+        public_extensions::<F, E, _>(prover.state_mut(), claim_site, &[E::zero()]).unwrap();
+        exchange_extension_group::<F, E, _>(
+            prover.state_mut(),
+            grinding_sumcheck_body_site(SumcheckProtocol::Stage1, level, 0, 0, 0),
+            &mut [E::zero(); 4],
+        )
+        .unwrap();
+        prover.grinded_ext_challenge::<E>(round_site).unwrap();
+        akita_types::stage1_range_image::<F, E, _>(&mut prover, level, 0, range_image).unwrap();
+        prover.finish().unwrap();
+        let proof = transcript.narg_string().to_vec();
+
+        let mut transcript = new_verifier_channel(b"leaf", &proof);
+        let mut verifier = VerifierGrinding::new(&mut transcript, &plan);
+        let equality_point =
+            DigitRangeEqualityPoint::from_column_then_ring_challenges(&[E::from_u64(5)], 1, 0)
+                .unwrap();
+        Stage1Verifier::new(equality_point, DigitRangePlan::new(8).unwrap()).verify_clear::<F>(
+            &mut verifier,
+            None,
+            level,
+        )
+    }
+
+    #[test]
+    fn leaf_check_accepts_exactly_the_range_roots() {
+        // The basis-8 leaf is Π_{k<4} (X − k(k+1)), so it vanishes exactly at
+        // the range images 0, 2, 6 and 12.
+        for root in [0, 2, 6, 12] {
+            let output = verify_leaf(E::from_u64(root)).unwrap();
+            assert_eq!(output.range_image_evaluation, E::from_u64(root));
+        }
+        for non_root in [1, 3, 7, 13] {
+            assert!(matches!(
+                verify_leaf(E::from_u64(non_root)),
+                Err(AkitaError::InvalidProof)
+            ));
+        }
+    }
 }

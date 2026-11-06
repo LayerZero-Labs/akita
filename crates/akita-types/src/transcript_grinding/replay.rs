@@ -110,7 +110,9 @@ impl<'a> GrindingPlanCursor<'a> {
         self.run_index == self.plan.runs().len() && self.run_offset == 0
     }
 
-    /// Whether every unconsumed entry belongs to a level after `cut_level`.
+    /// Whether every unconsumed entry belongs to a level after `cut_level`:
+    /// a replay that stops at a zero-knowledge cut consumed exactly the
+    /// masked levels' entries (`specs/whiteout-akita.md` §4.4).
     fn is_finished_through(&self, cut_level: u32) -> bool {
         self.run_offset == 0
             && self
@@ -190,11 +192,10 @@ fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRe
     )
 }
 
-/// A prover channel Akita runs its grinding plan over.
-///
-/// Extension seam: zero knowledge (akita#120). A masking channel wraps the clear channel;
-/// proof of work, nonces and context records go to the clear channel
-/// underneath, so they take the same bytes in both modes.
+/// A prover channel Akita runs its grinding plan over: the clear channel, or
+/// a masked channel over it (`specs/whiteout-akita.md` §4.4). Proof of work,
+/// nonces and context records go to the clear channel underneath, so they
+/// take no pad and cost the same bytes in both modes.
 #[cfg(feature = "prover")]
 pub trait ProverGrindingChannel: ProofChannel {
     /// The clear channel underneath.
@@ -202,6 +203,9 @@ pub trait ProverGrindingChannel: ProofChannel {
 
     /// The clear channel underneath, read-only.
     fn clear_state_ref(&self) -> &ProverChannel;
+
+    /// Whether this channel masks its private messages.
+    fn masks(&self) -> bool;
 }
 
 #[cfg(feature = "prover")]
@@ -213,10 +217,14 @@ impl ProverGrindingChannel for ProverChannel {
     fn clear_state_ref(&self) -> &ProverChannel {
         self
     }
+
+    fn masks(&self) -> bool {
+        false
+    }
 }
 
-/// A verifier channel Akita runs its grinding plan over. As
-/// [`ProverGrindingChannel`].
+/// A verifier channel Akita runs its grinding plan over: the clear channel,
+/// or a masked channel over it. As [`ProverGrindingChannel`].
 pub trait VerifierGrindingChannel<'proof>: ProofChannel {
     /// The clear channel underneath.
     fn clear_state(&mut self) -> &mut VerifierChannel<'proof>;
@@ -246,6 +254,21 @@ pub trait GrindingReplay {
 
     /// Mark this replay as failed.
     fn poison(&mut self);
+
+    /// A verifier check on public values read from the proof: rejects when
+    /// it fails. The counting replay, which reads no proof, never rejects.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidProof`] when `holds` is false.
+    fn check_public(&mut self, holds: bool) -> Result<(), AkitaError> {
+        if holds {
+            Ok(())
+        } else {
+            self.poison();
+            Err(AkitaError::InvalidProof)
+        }
+    }
 
     /// Apply one scheduled proof-of-work query: the prover searches and emits
     /// the nonce, the verifier receives and checks it.
@@ -340,8 +363,7 @@ impl<'proof, C: VerifierGrindingChannel<'proof>> GrindingReplay
 /// Prover-side state paired with exact grinding-plan progress.
 ///
 /// The state is borrowed: it is Akita's own standalone channel or a caller's
-/// channel that Akita's messages join, or a channel over either
-/// ([`ProverGrindingChannel`]).
+/// channel that Akita's messages join, or a masked channel over either.
 #[cfg(feature = "prover")]
 pub struct ProverGrinding<'plan, C = ProverChannel> {
     state: &'plan mut C,
@@ -572,10 +594,8 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
     }
 
     /// Require that replay consumed exactly the grinding plan of levels
-    /// `0..=cut_level` without error.
-    ///
-    /// Extension seam: zero knowledge (akita#120). An opening that stops at a cut ends
-    /// its replay here instead of at [`finish`](Self::finish).
+    /// `0..=cut_level` without error: a zero-knowledge opening stops at its
+    /// cut (`specs/whiteout-akita.md` §4.4).
     ///
     /// # Errors
     ///
@@ -617,8 +637,8 @@ impl<'plan, C: ProverGrindingChannel> ProverGrinding<'plan, C> {
 /// Verifier-side state paired with exact grinding-plan progress.
 ///
 /// The state is borrowed: it is Akita's own standalone channel or a caller's
-/// channel whose argument string continues with Akita's proof, or a channel
-/// over either ([`VerifierGrindingChannel`]).
+/// channel whose argument string continues with Akita's proof, or a masked
+/// channel over either.
 pub struct VerifierGrinding<'proof, 'plan, C = VerifierChannel<'proof>> {
     state: &'plan mut C,
     cursor: GrindingPlanCursor<'plan>,
@@ -739,10 +759,7 @@ impl<'proof, 'plan, C: VerifierGrindingChannel<'proof>> VerifierGrinding<'proof,
 
     /// Require that replay consumed exactly the grinding plan of levels
     /// `0..=cut_level` without error. The end of the argument string is the
-    /// caller's to check: its tail follows the cut.
-    ///
-    /// Extension seam: zero knowledge (akita#120). An opening that stops at a cut ends
-    /// its replay here instead of at [`finish`](Self::finish).
+    /// zero-knowledge caller's to check: its tail follows the cut.
     ///
     /// # Errors
     ///
@@ -757,10 +774,9 @@ impl<'proof, 'plan, C: VerifierGrindingChannel<'proof>> VerifierGrinding<'proof,
 }
 
 /// The verifier side of grinding replay beyond [`GrindingReplay`]: the
-/// fold-response reads and fold-challenge records.
-///
-/// Extension seam: zero knowledge (akita#120). [`VerifierGrinding`] checks the proof; a
-/// replay that only lays out a masked proof implements this trait too.
+/// fold-response reads and fold-challenge records. [`VerifierGrinding`]
+/// checks the proof; the zero-knowledge layout replay
+/// (`CountingGrinding`) only counts the pads a masked replay takes.
 pub trait FoldResponseReplay: GrindingReplay {
     /// Receive the next scheduled fold-response nonce (0 for a one-shot
     /// response), then check the fold's proof of work.
@@ -838,8 +854,28 @@ fn grinding_sumcheck_site(
     }
 }
 
-/// Whether a sumcheck's rounds are witness-dependent (private messages) or
-/// public in both modes.
+/// Site of round `round`'s body in `invocation` of a grinding-backed
+/// sumcheck: where a masked replay reads the round it lowers itself.
+#[must_use]
+pub fn grinding_sumcheck_body_site(
+    protocol: akita_params::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    invocation: u32,
+    round: u32,
+) -> ProtocolSiteId {
+    grinding_sumcheck_site(
+        protocol,
+        level,
+        stage,
+        invocation,
+        round,
+        SumcheckRole::RoundBody,
+    )
+}
+
+/// Whether a sumcheck's rounds are witness-dependent (masked on a masked
+/// channel) or public in both modes (`specs/whiteout-akita.md` §4.6).
 #[cfg(feature = "prover")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RoundPrivacy {
@@ -860,8 +896,7 @@ pub struct GrindingSumcheckProver<'context, 'plan, F, E, C = ProverChannel> {
 
 #[cfg(feature = "prover")]
 impl<'context, 'plan, F, E, C> GrindingSumcheckProver<'context, 'plan, F, E, C> {
-    /// Bind one sumcheck invocation to its scheduled grinding-site
-    /// coordinates. Its rounds are private messages.
+    /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
     #[must_use]
     pub fn new(
         grinding: &'context mut ProverGrinding<'plan, C>,
@@ -880,7 +915,7 @@ impl<'context, 'plan, F, E, C> GrindingSumcheckProver<'context, 'plan, F, E, C> 
     }
 
     /// As [`new`](Self::new), for a sumcheck whose rounds are public in both
-    /// modes.
+    /// modes: a masked channel sends them unmasked.
     #[must_use]
     pub fn new_public(
         grinding: &'context mut ProverGrinding<'plan, C>,
@@ -937,7 +972,7 @@ where
         B: Field + CanonicalEncoding,
         E: ExtField<B>,
     {
-        if self.privacy == RoundPrivacy::Private && self.grinding.state.is_masked() {
+        if self.privacy == RoundPrivacy::Private && self.grinding.state.masks() {
             return Ok(());
         }
         akita_transcript::public_extensions::<B, E, _>(
@@ -960,7 +995,8 @@ where
             RoundPrivacy::Private => self
                 .grinding
                 .state
-                .exchange_private_extension_group(site, coefficients),
+                .exchange_private_extension_group(site, coefficients)
+                .map(|_| ()),
             RoundPrivacy::Public => akita_transcript::exchange_extension_group::<B, E, _>(
                 self.grinding.state.clear_state(),
                 site,
@@ -970,8 +1006,9 @@ where
     }
 }
 
-/// Standard-sumcheck channel borrowing a verifier grinding replay. Its
-/// rounds are clear messages.
+/// Standard-sumcheck channel borrowing a verifier grinding context. Its
+/// rounds are clear messages: a clear channel's private rounds, or a public
+/// sumcheck's on any channel.
 pub struct GrindingSumcheckVerifier<'context, F, E, G> {
     grinding: &'context mut G,
     protocol: akita_params::SumcheckProtocol,
@@ -1035,6 +1072,12 @@ where
             })
     }
 }
+
+#[cfg(feature = "zk")]
+#[path = "replay/counting.rs"]
+mod counting;
+#[cfg(feature = "zk")]
+pub use counting::CountingGrinding;
 
 #[cfg(all(test, feature = "prover"))]
 #[path = "replay/tests.rs"]

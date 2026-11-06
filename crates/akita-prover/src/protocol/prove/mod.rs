@@ -8,7 +8,6 @@ use crate::protocol::ring_switch::{ring_switch_finalize, NextWitnessState, RingS
 use crate::protocol::RingRelationProver;
 use crate::SetupPrefixProverRegistry;
 use crate::{ProverOpeningData, RingRelationInstance};
-use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
@@ -25,6 +24,7 @@ use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     Commitment,
 };
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_algebra::{Fold, Unreduced};
 
@@ -41,15 +41,20 @@ mod binary_root;
 pub mod execution;
 mod fold;
 mod fold_kernels;
+#[cfg(feature = "zk")]
+mod masked;
 mod opening_reduction;
 mod ordinary_root;
 mod registry;
 mod root;
 mod suffix;
 
-pub use execution::{batched_prove, batched_prove_embedded};
+pub use execution::{batched_prove, batched_prove_embedded, catch_prover_panic};
 pub(in crate::protocol::prove) use fold::{prepare_fold, prove_fold, PreparedFold};
+pub use fold::{prove_digit_range, DigitRangeOutput};
 pub(in crate::protocol) use fold_kernels::*;
+#[cfg(feature = "zk")]
+pub use masked::{prove_masked_prefix, ResidualOpening};
 pub(crate) use opening_reduction::*;
 pub(crate) use suffix::FoldPublicState;
 pub use suffix::SuffixProverState;
@@ -58,6 +63,26 @@ pub use suffix::SuffixProverState;
 pub struct ProveLevelOutput<F: Field, E: Field, MaterialHandle, WitnessHandle> {
     /// Suffix prover state for the next level.
     pub next_state: SuffixProverState<F, E, MaterialHandle, WitnessHandle>,
+    /// The Stage-1 leaf check's inputs, on the ℓ∞ route.
+    #[cfg_attr(
+        not(feature = "zk"),
+        expect(dead_code, reason = "read only by the zero-knowledge prefix prover")
+    )]
+    pub(crate) range_leaf: Option<RangeLeafClaim<E>>,
+}
+
+/// The decoded inputs of one level's Stage-1 leaf check
+/// (`akita_types::check_range_leaf`): the batched leaf, the range image, and
+/// Stage 1's running output claim. A zero-knowledge opening lowers the check
+/// on them into its auxiliary values.
+#[cfg_attr(
+    not(feature = "zk"),
+    expect(dead_code, reason = "read only by the zero-knowledge prefix prover")
+)]
+pub(crate) struct RangeLeafClaim<E> {
+    pub(crate) leaf: akita_types::RangeLeaf<E>,
+    pub(crate) range_image: E,
+    pub(crate) claim: E,
 }
 
 pub(in crate::protocol::prove) struct Stage3ProveOutput<E: Field> {

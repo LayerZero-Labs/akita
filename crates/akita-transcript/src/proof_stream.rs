@@ -116,6 +116,8 @@ pub const SITE_FAMILY_ROOT_STATEMENT: u32 = 11;
 pub const SITE_FAMILY_TERMINAL: u32 = 12;
 /// Stable family identifier for the protocol tag and descriptor.
 pub const SITE_FAMILY_INSTANCE: u32 = 13;
+/// Stable family identifier for Whiteout's response proof (`specs/whiteout-akita.md` §6.1).
+pub const SITE_FAMILY_RESPONSE: u32 = 14;
 
 /// Proof-stream operation kind recorded by diagnostic context metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -804,7 +806,8 @@ where
 }
 
 /// One group of base-field atoms, exchanged by `exchange`: the shared body of
-/// [`exchange_field_group`] and [`exchange_public_field_group`].
+/// [`exchange_field_group`] and
+/// [`exchange_public_field_group`](private::exchange_public_field_group).
 fn exchange_field_atoms<F, S>(
     state: &mut S,
     site: ProtocolSiteId,
@@ -832,7 +835,8 @@ where
 }
 
 /// One group of extension atoms, exchanged by `exchange`: the shared body of
-/// [`exchange_extension_group`] and [`exchange_public_extension_group`].
+/// [`exchange_extension_group`] and
+/// [`exchange_public_extension_group`](private::exchange_public_extension_group).
 fn exchange_extension_atoms<F, E, S>(
     state: &mut S,
     site: ProtocolSiteId,
@@ -1031,11 +1035,8 @@ impl FoldPreview {
     }
 
     /// Copy the public state for a one-shot fold response, which sends no
-    /// nonce: its counter is 0 and nothing is absorbed before the proof of
-    /// work.
-    ///
-    /// Extension seam: zero knowledge (akita#120). Only a run with `nonce_bits = 0`
-    /// previews this way, and `main` schedules none.
+    /// nonce (`specs/whiteout-akita.md` §2.1): its counter is 0 and nothing
+    /// is absorbed before the proof of work.
     #[must_use]
     pub fn one_shot(state: &ProverChannel) -> Self {
         Self::detached(state, 0)

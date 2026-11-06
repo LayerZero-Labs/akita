@@ -37,9 +37,10 @@ where
     G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     let state = grinding.state_mut();
-    // The integer goes out through a plain exchange, which a masking channel
-    // would publish: a zero-knowledge opening must not take the L2 route at a
-    // masked level. The subclaims below go through the private exchange.
+    // The integer is a clear message: the L2 route is never scheduled at a
+    // masked level (`specs/whiteout-akita.md` §2.5), whose channel
+    // refuses a plain exchange. The subclaims below go through the private
+    // exchange.
     state.context(ProtocolContextRecord::new(
         site(level, ROLE_INTEGER).to_bytes(),
         ProtocolMessageKind::ProofAtoms as u32,

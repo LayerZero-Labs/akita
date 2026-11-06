@@ -87,15 +87,13 @@ where
                 material,
             )
         },
+        &mut fold::RawPayload,
     )?;
     Ok(output.next_state)
 }
 
 /// Proves recursive fold `index + 1` on any prover channel and hands the
 /// successor witness to `handoff`.
-///
-/// Extension seam: zero knowledge (akita#120). A masked prefix proves its recursive
-/// levels through this function on a masking channel, with its own handoff.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub(super) fn prove_recursive_level<Cfg, B, C>(
@@ -120,6 +118,7 @@ pub(super) fn prove_recursive_level<Cfg, B, C>(
         &B::WitnessHandle,
         &B::CommitmentMaterialHandle,
     ) -> Result<(), AkitaError>,
+    payload: &mut impl fold::SuccessorPayload<Cfg::Field>,
 ) -> Result<
     ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
     AkitaError,
@@ -191,6 +190,7 @@ where
         prepared,
         setup_batch,
         handoff,
+        payload,
     )
 }
 
@@ -456,7 +456,6 @@ fn prepare_suffix<F, E, B, C>(
     commitment_ring_dimension: usize,
 ) -> Result<PreparedFold<F, E, B::WitnessHandle>, AkitaError>
 where
-    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
@@ -469,6 +468,7 @@ where
         + AkitaSerialize
         + 'static,
     B: ProverBackend<F, E>,
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
 {
     let SuffixProverState {
         witness_handle,

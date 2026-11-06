@@ -241,6 +241,7 @@ dependencies = [
  "akita-types",
  "jolt-algebra",
  "jolt-poly",
+ "jolt-transcript",
  "tracing",
 ]
 
@@ -409,6 +410,7 @@ dependencies = [
  "akita-types",
  "jolt-algebra",
  "jolt-poly",
+ "jolt-sumcheck",
  "jolt-transcript",
  "rayon",
  "tracing",

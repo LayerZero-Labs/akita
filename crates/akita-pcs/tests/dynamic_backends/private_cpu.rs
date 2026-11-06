@@ -1,12 +1,13 @@
 // A distinct handle family; CPU storage is private to this test backend.
 use super::{Cfg, E, F};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_cpu_backend::{CpuBackend, CpuImportPacket, GroupContext, OneHotPoly};
+use akita_cpu_backend::{CpuBackend, CpuImportPacket, CpuSource, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_types::{AkitaSetupDescriptor, Commitment};
+use jolt_algebra::{One, Zero};
 use jolt_poly::UnivariatePoly;
 use std::cell::Cell;
 
@@ -44,6 +45,20 @@ pub(crate) enum Fault {
     SourceStage1,
     DestinationOpening,
     Finish,
+    /// Panics inside a Stage-1 round kernel instead of returning an error.
+    PanicStage1Round,
+    /// Adds `X − X²` to the last Stage-2 round polynomial and reports the
+    /// matching final claim, `final + r − r²` at the last challenge `r`. Every
+    /// round still sums correctly and the witness evaluation stays honest, so
+    /// the prover's self-checks pass and only the verifier's Stage-2 output
+    /// check can reject the proof.
+    Stage2OracleMiss,
+    /// Adds `X − X²` to the last Stage-3 round polynomial. Every round still
+    /// sums correctly, so the prover's self-checks pass, and the setup-prefix
+    /// evaluation stays honest at the drawn point, so the next level's opening
+    /// of the prefix holds; only the verifier's Stage-3 output check
+    /// (`output = prefix_eval · weight · α̃`) can reject the proof.
+    Stage3OutputMiss,
 }
 
 pub(crate) struct PrivateCpu {
@@ -56,6 +71,15 @@ pub(crate) struct PrivateCpu {
     pub(crate) imports: Cell<usize>,
     pub(crate) exports: Cell<usize>,
     pub(crate) commitments: Cell<usize>,
+    /// Opening fold probes run so far.
+    pub(crate) fold_probes: Cell<usize>,
+    /// Index of an opening fold probe to reject regardless of its response,
+    /// as if the response overflowed its digit range.
+    pub(crate) reject_fold_probe: Cell<Option<usize>>,
+    /// The last Stage-2 challenge, recorded under [`Fault::Stage2OracleMiss`].
+    stage2_last_challenge: Cell<Option<E>>,
+    /// Round count of the running Stage-3 sumcheck.
+    stage3_rounds: Cell<usize>,
 }
 impl PrivateCpu {
     pub(crate) fn new(inner: Cpu) -> Self {
@@ -69,6 +93,10 @@ impl PrivateCpu {
             imports: Cell::new(0),
             exports: Cell::new(0),
             commitments: Cell::new(0),
+            fold_probes: Cell::new(0),
+            reject_fold_probe: Cell::new(None),
+            stage2_last_challenge: Cell::new(None),
+            stage3_rounds: Cell::new(0),
         }
     }
     fn fail(&self, fault: Fault) -> Result<(), AkitaError> {
@@ -100,17 +128,33 @@ impl PrivateCpu {
         }
         prefixes
     }
-    pub(crate) fn commit_onehot(
+    #[allow(dead_code)]
+    pub(crate) fn commit<P: CpuSource<F, E>>(
         &self,
         schedules: &TrustedScheduleCatalog<Cfg>,
-        polys: Vec<OneHotPoly<F, u8>>,
+        polys: Vec<P>,
     ) -> Result<(akita_types::CommittedGroup<F>, OwnedCommitment), AkitaError> {
-        let source = self.inner.import_source(polys)?;
-        let output = self.inner.commit(
+        self.commit_in(
             schedules,
-            &source,
+            polys,
             GroupContext::scheduler_without_precommitted_groups(),
-        )?;
+        )
+    }
+    /// [`commit`](Self::commit) under any family sharing `F` and `E`, in an
+    /// explicit group context.
+    #[allow(dead_code)]
+    pub(crate) fn commit_in<C, P>(
+        &self,
+        schedules: &TrustedScheduleCatalog<C>,
+        polys: Vec<P>,
+        context: GroupContext<'_>,
+    ) -> Result<(akita_types::CommittedGroup<F>, OwnedCommitment), AkitaError>
+    where
+        C: CommitmentConfig<Field = F, ExtField = E>,
+        P: CpuSource<F, E>,
+    {
+        let source = self.inner.import_source(polys)?;
+        let output = self.inner.commit(schedules, &source, context)?;
         Ok((
             output.committed_group,
             OwnedCommitment(output.private_handle),
@@ -315,6 +359,9 @@ impl OpaqueStage1Kernel<F, E> for PrivateCpu {
         round: usize,
         previous_claim: E,
     ) -> Result<Stage1RoundPolynomial<E>, AkitaError> {
+        if self.fault.get() == Fault::PanicStage1Round {
+            panic!("injected Stage-1 kernel panic");
+        }
         self.inner
             .stage1_round_polynomial(session_handle, step, round, previous_claim)
     }
@@ -377,8 +424,19 @@ impl OpaqueStage2Kernel<F, E> for PrivateCpu {
         round: usize,
         previous_claim: E,
     ) -> Result<UnivariatePoly<E>, AkitaError> {
-        self.inner
-            .stage2_round_polynomial(session_handle, round, previous_claim)
+        let poly = self
+            .inner
+            .stage2_round_polynomial(session_handle, round, previous_claim)?;
+        if self.fault.get() != Fault::Stage2OracleMiss
+            || round + 1 != self.inner.stage2_num_rounds(session_handle)?
+        {
+            return Ok(poly);
+        }
+        let mut coefficients = poly.into_coefficients();
+        coefficients.resize(coefficients.len().max(3), E::zero());
+        coefficients[1] += E::one();
+        coefficients[2] -= E::one();
+        Ok(UnivariatePoly::new(coefficients))
     }
     fn bind_stage2_challenge(
         &self,
@@ -386,6 +444,11 @@ impl OpaqueStage2Kernel<F, E> for PrivateCpu {
         round: usize,
         challenge: E,
     ) -> Result<(), AkitaError> {
+        if self.fault.get() == Fault::Stage2OracleMiss
+            && round + 1 == self.inner.stage2_num_rounds(session_handle)?
+        {
+            self.stage2_last_challenge.set(Some(challenge));
+        }
         self.inner
             .bind_stage2_challenge(session_handle, round, challenge)
     }
@@ -393,7 +456,16 @@ impl OpaqueStage2Kernel<F, E> for PrivateCpu {
         &self,
         session_handle: Self::Stage2SessionHandle,
     ) -> Result<RelationWitnessFinalClaims<E>, AkitaError> {
-        self.inner.finish_stage2(session_handle)
+        let claims = self.inner.finish_stage2(session_handle)?;
+        match self.stage2_last_challenge.take() {
+            Some(r) if self.fault.get() == Fault::Stage2OracleMiss => {
+                Ok(RelationWitnessFinalClaims::new(
+                    claims.witness_evaluation(),
+                    claims.final_claim() + r - r * r,
+                ))
+            }
+            _ => Ok(claims),
+        }
     }
 }
 impl OpaqueWitnessOpeningKernel<F, E> for PrivateCpu {
@@ -446,6 +518,11 @@ impl OpaqueOpeningKernel<F, E> for PrivateCpu {
         opening: &Self::PreparedOpeningHandle,
         plan: &ValidatedFoldProbePlan<'_>,
     ) -> Result<FoldProbeOutcome<Self::AcceptedFoldHandle>, AkitaError> {
+        let probe = self.fold_probes.get();
+        self.fold_probes.set(probe + 1);
+        if self.reject_fold_probe.get() == Some(probe) {
+            return Ok(FoldProbeOutcome::Rejected);
+        }
         self.inner.probe_opening_fold(context, opening, plan)
     }
 }
@@ -504,6 +581,12 @@ impl OpaqueStage3Kernel<F, E> for PrivateCpu {
         &self,
         request: Stage3Request<'_, F, E, Self::ProofSessionHandle>,
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
+        let prefix_len = request
+            .prefix
+            .natural_len
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("setup prefix length overflow".into()))?;
+        self.stage3_rounds.set(prefix_len.trailing_zeros() as usize);
         self.inner.begin_stage3(request)
     }
     fn stage3_round_polynomial(
@@ -512,7 +595,15 @@ impl OpaqueStage3Kernel<F, E> for PrivateCpu {
         round: usize,
         claim: E,
     ) -> Result<UnivariatePoly<E>, AkitaError> {
-        self.inner.stage3_round_polynomial(session, round, claim)
+        let poly = self.inner.stage3_round_polynomial(session, round, claim)?;
+        if self.fault.get() != Fault::Stage3OutputMiss || round + 1 != self.stage3_rounds.get() {
+            return Ok(poly);
+        }
+        let mut coefficients = poly.into_coefficients();
+        coefficients.resize(coefficients.len().max(3), E::zero());
+        coefficients[1] += E::one();
+        coefficients[2] -= E::one();
+        Ok(UnivariatePoly::new(coefficients))
     }
     fn bind_stage3_challenge(
         &self,
@@ -524,6 +615,17 @@ impl OpaqueStage3Kernel<F, E> for PrivateCpu {
     }
     fn finish_stage3(&self, session: Self::Stage3SessionHandle) -> Result<E, AkitaError> {
         self.inner.finish_stage3(session)
+    }
+}
+
+impl ResidualExportKernel<F, E> for PrivateCpu {
+    fn export_residual(
+        &self,
+        witness: &Self::WitnessHandle,
+        material: &Self::CommitmentMaterialHandle,
+        params: &akita_params::CommittedGroupParams,
+    ) -> Result<ResidualWitness, AkitaError> {
+        self.inner.export_residual(&witness.0, &material.0, params)
     }
 }
 
