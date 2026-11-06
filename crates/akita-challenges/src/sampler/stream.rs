@@ -356,6 +356,38 @@ impl SparseChallengeStream {
         }
     }
 
+    pub(crate) fn decode_checked_hints(&self, message: &[u8]) -> Result<Vec<[u64; 4]>, AkitaError> {
+        if message.len() != self.message_len
+            || self.shell.ring_d != 64
+            || self.shell.config.count_pm1 != 31
+            || self.shell.config.count_pm2 != 10
+            || self.shell.rejection.is_some()
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let (hints, begin) = crate::checked_hint::take(self.count)?;
+        let mut output = Vec::with_capacity(self.count);
+        for index in 0..self.count {
+            let start = index * self.shell.candidate_bits;
+            let rank = read_bits(message, start + 41, self.shell.rank_bits)?;
+            if rank >= self.shell.rank_space {
+                return Err(AkitaError::InvalidProof);
+            }
+            let two = rank / self.shell.pm1_rank_space;
+            let one = rank - two * self.shell.pm1_rank_space;
+            let signs = read_bits(message, start, 41)? as u64;
+            let pos = begin + index * 4;
+            let words = [hints[pos], hints[pos + 1], hints[pos + 2], hints[pos + 3]];
+            // Upper padding is a canonical zero, so unused bits cannot carry unchecked state.
+            if words.iter().any(|w| w >> 40 != 0) {
+                return Err(AkitaError::InvalidProof);
+            }
+            crate::checked_hint::validate(&words, one as u64, two as u64, signs)?;
+            output.push(words);
+        }
+        Ok(output)
+    }
+
     fn decode_all(
         &self,
         decoder: &CandidateDecoder<'_>,
