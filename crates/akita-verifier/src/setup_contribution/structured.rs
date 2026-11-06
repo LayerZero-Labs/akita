@@ -380,10 +380,50 @@ where
         ));
     }
 
+    // Pull the A-row factor into the low row window. Its Cartesian product
+    // with the existing projection lanes repeats for every challenge block;
+    // contracting it once avoids visiting those rows again for each block.
+    let row_lanes = outer_low.len().max(1);
+    let folded_lanes = group
+        .n_a()
+        .checked_mul(row_lanes)
+        .ok_or(AkitaError::InvalidProof)?;
+    let fold_rows = group.n_a().is_power_of_two()
+        && folded_lanes
+            .checked_mul(commitment_digits.len())
+            .is_some_and(|width| width <= akita_algebra::offset_eq::MAX_PREPARED_STRIDE);
+    let folded_t_low = if fold_rows {
+        if group.a_row_weights().len() != group.n_a() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut low = Vec::new();
+        low.try_reserve_exact(folded_lanes).map_err(|_| {
+            AkitaError::InvalidInput("structured row factor allocation failed".into())
+        })?;
+        for &row_weight in group.a_row_weights() {
+            if outer_low.is_empty() {
+                low.push(row_weight);
+            } else {
+                low.extend(outer_low.iter().map(|&lane| row_weight * lane));
+            }
+        }
+        Some(low)
+    } else {
+        None
+    };
+    let t_low = folded_t_low.as_deref().unwrap_or(outer_low);
+    let t_rows_per_block = if fold_rows { 1 } else { group.n_a() };
+    let t_unit_weight = [E::one()];
+    let t_inner_weights = if fold_rows {
+        &t_unit_weight[..]
+    } else {
+        group.a_row_weights()
+    };
+
     // PreparedDigits caps table preparation and row visits independently of
     // the general evaluator's carry-state work estimate.
     let prepared_t = (group.physical_b().logical_rows()? != 0)
-        .then(|| PreparedDigits::new(point, commitment_digits, outer_low))
+        .then(|| PreparedDigits::new(point, commitment_digits, t_low))
         .transpose()?
         .flatten();
 
@@ -474,12 +514,12 @@ where
         };
 
         if let Some(b_tensor) = b_tensor {
-            let t_high_weights = AffineWeightProduct::new(claim_challenges, group.a_row_weights())?;
+            let t_high_weights = AffineWeightProduct::new(claim_challenges, t_inner_weights)?;
             let t_first_row = global_block_start
-                .checked_mul(group.n_a())
+                .checked_mul(t_rows_per_block)
                 .ok_or(AkitaError::InvalidProof)?;
             let t_rows = unit_blocks
-                .checked_mul(group.n_a())
+                .checked_mul(t_rows_per_block)
                 .ok_or(AkitaError::InvalidProof)?;
             if let Some(prepared) = &prepared_t {
                 prepared.accumulate(
@@ -491,10 +531,10 @@ where
                 )?;
             } else {
                 let t_outer_start = t_first_row
-                    .checked_mul(outer_subcolumns)
+                    .checked_mul(t_low.len().max(1))
                     .ok_or(AkitaError::InvalidProof)?;
                 let t_live_len = t_rows
-                    .checked_mul(outer_subcolumns)
+                    .checked_mul(t_low.len().max(1))
                     .ok_or(AkitaError::InvalidProof)?;
                 contribution += eval_affine_digit_intervals(
                     point,
@@ -505,7 +545,7 @@ where
                     1,
                     commitment_digits,
                     &t_high_weights,
-                    outer_low,
+                    t_low,
                     &[],
                 )?;
             }

@@ -191,7 +191,7 @@ fn prepare_compact_and_oracles<Base, Extension>(
 )
 where
     Base: Field + CanonicalEncoding + Ring,
-    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + jolt_field::Unreduced,
 {
     let points = [(0, &fixture.prepared_point)];
     let compact =
@@ -227,7 +227,7 @@ fn assert_compact_factors_match_dense<Base, Extension>(
     point_seed: u64,
 ) where
     Base: Field + CanonicalEncoding + Ring,
-    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + jolt_field::Unreduced,
 {
     for alpha in alphas {
         let (compact, oracles) = prepare_compact_and_oracles(fixture, alpha, point_seed);
@@ -310,7 +310,7 @@ fn assert_compact_factors_match_dense_at_genuine_extension_values<Base, Extensio
     mut fixture: CoefficientPackingFixture<Base, Extension>,
 ) where
     Base: Field + CanonicalEncoding + Ring,
-    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + jolt_field::Unreduced,
 {
     assert!(Extension::DEGREE > 1);
     for (index, tau) in fixture.tau1.iter_mut().enumerate() {

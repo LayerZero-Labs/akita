@@ -5,8 +5,8 @@ use akita_error::AkitaError;
 use super::setup_prefix_slots::{active_setup_field_len, suffix_opening_layout};
 use crate::{
     CommitmentSliceCount, CommittedGroupParams, CompressionChainPlan, FoldSchedule,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupPrefixSlotId,
-    TerminalFoldParams,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMode,
+    SetupPrefixSlotId, TerminalFoldParams,
 };
 
 /// Exact base-field capacity of the shared public setup vector.
@@ -117,15 +117,22 @@ pub fn setup_matrix_field_elements_for_schedule(
 /// offloaded chain does. Terminal commitment verification always requires its
 /// exact inner matrix. Every compressed level still requires its F/H map
 /// prefixes, including an offloaded producer. The returned capacity is the
-/// maximum of those uses.
+/// maximum of those uses in Check mode.
+///
+/// Defer mode retains only the F/H compression maps: direct A/B/D queries
+/// become accumulator obligations, and terminal verification must use an
+/// authenticated prepared NTT cache instead of raw terminal coefficients.
 pub fn verifier_setup_matrix_capacity_for_schedule(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
+    mode: SetupMode,
 ) -> Result<SetupMatrixCapacity, AkitaError> {
     schedule.validate_structure()?;
 
     let mut num_field_elements = 1usize;
-    accumulate_terminal_matrix_field_elements(&schedule.terminal, &mut num_field_elements)?;
+    if mode == SetupMode::Check {
+        accumulate_terminal_matrix_field_elements(&schedule.terminal, &mut num_field_elements)?;
+    }
     accumulate_compression_matrix_field_elements_for_level(
         &schedule.root.params,
         &mut num_field_elements,
@@ -135,6 +142,10 @@ pub fn verifier_setup_matrix_capacity_for_schedule(
             &fold.params,
             &mut num_field_elements,
         )?;
+    }
+
+    if mode == SetupMode::Defer {
+        return Ok(SetupMatrixCapacity { num_field_elements });
     }
 
     for producer_index in 0..=schedule.recursive_folds.len() {

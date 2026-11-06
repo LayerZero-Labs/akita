@@ -1,6 +1,6 @@
 use akita_algebra::offset_eq::{
-    eq_eval_at_index, eval_affine_digit_intervals, eval_boolean_pair_tensor_families,
-    EqPairTensorAxis, EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
+    eval_affine_digit_intervals, eval_boolean_pair_tensor_families, EqPairTensorAxis,
+    EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
 };
 use akita_error::AkitaError;
 use jolt_field::solinas::parallel::*;
@@ -118,15 +118,20 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
         let (coefficient_point, _) = point
             .split_at_checked(coefficient_bits)
             .ok_or(AkitaError::InvalidProof)?;
-        Ok(self
+        let powers = self
             .coefficient_weights
             .get(..coefficient_len)
-            .ok_or(AkitaError::InvalidProof)?
-            .iter()
-            .enumerate()
-            .fold(E::zero(), |sum, (coefficient, &weight)| {
-                sum + weight * eq_eval_at_index(coefficient_point, coefficient)
-            }))
+            .ok_or(AkitaError::InvalidProof)?;
+        // These are the validated group's immutable powers [1, alpha, ...].
+        // A power-of-two prefix separates into one factor per index bit:
+        // sum_i alpha^i eq(r,i) = product_b (1-r_b + r_b alpha^(2^b)).
+        // This identity also holds at Boolean points and at alpha = 0 or 1.
+        let mut evaluation = E::one();
+        for (bit, &challenge) in coefficient_point.iter().enumerate() {
+            let power = *powers.get(1usize << bit).ok_or(AkitaError::InvalidProof)?;
+            evaluation *= E::one() + challenge * (power - E::one());
+        }
+        Ok(evaluation)
     }
 
     fn validate_point(&self, point: &[E]) -> Result<(), AkitaError> {
@@ -267,6 +272,7 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
             }
             DirectOpening::Families(families) => evaluate(&self.direct_opening_point, families)?,
         };
+
         let z = evaluate(&self.packing_z_point, &self.packing_z_families)?;
         Ok(direct + z)
     }
@@ -317,11 +323,23 @@ fn geometric_axis<E: Field>(
         ]);
     }
     let axis = EqPairTensorAxis::bit_product(left_stride, right_stride, factors)?;
-    for coordinate in 0..len {
-        if axis.coordinate_weight(coordinate) != weights.get(coordinate).copied() {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient-packing tensor weights are not geometric".into(),
-            ));
+    if weights.first().copied() != Some(E::one()) {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing tensor weights are not geometric".into(),
+        ));
+    }
+    // Validate each bit-product edge once, instead of recomputing all lower
+    // bit factors for every coordinate. Induction on the highest set bit
+    // gives exactly the original coordinate-weight check, in linear work.
+    for bit in 0..len.trailing_zeros() as usize {
+        let half = 1usize << bit;
+        let high = *weights.get(half).ok_or(AkitaError::InvalidProof)?;
+        for low in 1..half {
+            if weights.get(half + low).copied() != weights.get(low).copied().map(|w| high * w) {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient-packing tensor weights are not geometric".into(),
+                ));
+            }
         }
     }
     Ok(axis)
@@ -381,7 +399,10 @@ fn extend_point<E: Field>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaE
     Ok(())
 }
 
-pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + ExtField<F>>(
+pub(super) fn prepare_compact_factors<
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F> + jolt_field::Unreduced,
+>(
     group: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
 ) -> Result<CoefficientPackingCompactFactors<E>, AkitaError> {
     let s = group.geometry().challenge_subring_dimension();

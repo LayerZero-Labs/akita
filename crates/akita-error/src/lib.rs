@@ -63,3 +63,30 @@ pub enum AkitaError {
     #[error("Internal error: {0}")]
     Internal(String),
 }
+
+#[doc(hidden)]
+pub struct ExperimentScope(&'static str);
+#[doc(hidden)]
+#[inline(always)]
+pub fn experiment_scope(name: &'static str) -> ExperimentScope {
+    experiment_mark(name, 1);
+    ExperimentScope(name)
+}
+impl Drop for ExperimentScope {
+    #[inline(always)]
+    fn drop(&mut self) {
+        experiment_mark(self.0, 2);
+    }
+}
+#[inline(always)]
+fn experiment_mark(name: &str, event: u32) {
+    #[cfg(target_arch = "riscv64")]
+    unsafe {
+        core::arch::asm!(
+        ".insn i 0x5B, 2, x0, x0, 0", in("x10") 0xC7C1Eu32,
+        in("x11") name.as_ptr() as u32, in("x12") name.len() as u32,
+        in("x13") event, options(nostack, preserves_flags));
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    let _ = (name, event);
+}

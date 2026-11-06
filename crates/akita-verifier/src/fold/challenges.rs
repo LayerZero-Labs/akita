@@ -20,6 +20,7 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F>,
 {
+    let _experiment = akita_error::experiment_scope("experiment/generation");
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;

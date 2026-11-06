@@ -189,7 +189,7 @@ fn pack_relation_events<F, E>(
 ) -> Result<Vec<Option<usize>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F>,
+    E: ExtField<F> + FpExtEncoding<F> + jolt_field::Unreduced,
 {
     let mut packing_a_ring_dims = vec![None; num_groups];
     if packing_required != packing_semantics.is_some() {

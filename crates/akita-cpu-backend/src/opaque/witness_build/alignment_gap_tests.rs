@@ -194,6 +194,7 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
                 catalog,
                 selection,
                 None,
+                akita_verifier::SetupMode::Check,
             )
             .unwrap();
             for proof in [&zero_proof, &filler_proof] {

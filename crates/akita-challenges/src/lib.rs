@@ -37,3 +37,9 @@ pub use fold_draw::{
     FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
 };
 pub use sampler::SparseChallengeStream;
+
+mod checked_hint;
+pub use checked_hint::{finish_checked_hints, install_checked_hints};
+
+#[cfg(test)]
+mod experiment_checked_hints;

@@ -19,7 +19,8 @@ pub struct PreparedVerifierNttCacheBinding {
     pub setup_seed_digest: [u8; 32],
     /// Exact generated schedule row that consumes the cache.
     pub schedule_row_digest: ScheduleRowDigest,
-    /// Materialized field count in the verifier setup.
+    /// Public coefficient capacity covered by this artifact. Verifier terminal
+    /// caches bind their exact terminal footprint, independent of raw key storage.
     pub setup_field_elements: usize,
 }
 

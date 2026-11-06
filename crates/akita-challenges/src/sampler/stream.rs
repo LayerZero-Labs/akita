@@ -320,6 +320,46 @@ impl SparseChallengeStream {
     /// length, and [`AkitaError::InvalidSetup`] when the predicate table is
     /// unavailable.
     pub fn decode(&self, message: &[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some() {
+            let mut text = format!(
+                "EXPERIMENT_MESSAGE {} {} {} {} {} ",
+                self.shell.ring_d,
+                self.shell.config.count_pm1,
+                self.shell.config.count_pm2,
+                self.count,
+                usize::from(self.shell.rejection.is_some())
+            );
+            use std::fmt::Write;
+            for byte in message {
+                write!(&mut text, "{byte:02x}").map_err(|_| AkitaError::InvalidProof)?;
+            }
+            eprintln!("{text}");
+        }
+
+        #[cfg(all(target_arch = "riscv64", feature = "experiment-capture"))]
+        {
+            let mut text = format!(
+                "EXPERIMENT_MESSAGE {} {} {} {} {} ",
+                self.shell.ring_d,
+                self.shell.config.count_pm1,
+                self.shell.config.count_pm2,
+                self.count,
+                usize::from(self.shell.rejection.is_some())
+            )
+            .into_bytes();
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            for &byte in message {
+                text.push(HEX[(byte >> 4) as usize]);
+                text.push(HEX[(byte & 15) as usize]);
+            }
+            unsafe {
+                core::arch::asm!(".insn i 0x5B, 2, x0, x0, 0",
+                in("x10") 0x505249u32, in("x11") text.as_ptr() as u32,
+                in("x12") text.len() as u32, in("x13") 2u32, options(nostack));
+            }
+        }
+
         if message.len() != self.message_len() {
             return Err(AkitaError::InvalidInput(
                 "sparse challenge message has the wrong length".into(),
@@ -331,7 +371,9 @@ impl SparseChallengeStream {
             self.shell.ring_d,
             self.shell.config.count_pm1.max(self.shell.config.count_pm2),
         )?;
+        let position_hints = crate::checked_hint::positions_active();
         let decoder = CandidateDecoder {
+            position_hints,
             stream: self,
             message,
             binomials: &binomials,
@@ -356,6 +398,52 @@ impl SparseChallengeStream {
         }
     }
 
+    pub(crate) fn decode_checked_hints(&self, message: &[u8]) -> Result<Vec<[u64; 4]>, AkitaError> {
+        if message.len() != self.message_len
+            || self.shell.ring_d != 64
+            || self.shell.config.count_pm1 != 31
+            || self.shell.config.count_pm2 != 10
+            || self.shell.rejection.is_some()
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let _scope = akita_error::experiment_scope("experiment/checked_decode");
+        if self.shell.candidate_bits != 128 {
+            return Err(AkitaError::InvalidProof);
+        }
+        let scratch;
+        let message_words: &[u64] = if message.as_ptr().align_offset(8) == 0 {
+            // The message is whole aligned words; every u64 bit pattern is valid.
+            unsafe { std::slice::from_raw_parts(message.as_ptr().cast::<u64>(), message.len() / 8) }
+        } else {
+            scratch = message
+                .chunks_exact(8)
+                .map(|c| u64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+                .collect::<Vec<_>>();
+            &scratch
+        };
+        let (hints, begin) = crate::checked_hint::take(self.count)?;
+        let mut output = Vec::with_capacity(self.count);
+        for index in 0..self.count {
+            let low = u64::from_le(message_words[index * 2]);
+            let high = u64::from_le(message_words[index * 2 + 1]);
+            let rank = ((high as u128) << 23) | ((low >> 41) as u128);
+            if rank >= self.shell.rank_space {
+                return Err(AkitaError::InvalidProof);
+            }
+            let signs = low & ((1u64 << 41) - 1);
+            let pos = begin + index * 4;
+            let words = [hints[pos], hints[pos + 1], hints[pos + 2], hints[pos + 3]];
+            // Upper padding is a canonical zero, so unused bits cannot carry unchecked state.
+            if (words[0] | words[1] | words[2] | words[3]) >> 40 != 0 {
+                return Err(AkitaError::InvalidProof);
+            }
+            crate::checked_hint::validate(&words, rank, signs)?;
+            output.push(words);
+        }
+        Ok(output)
+    }
+
     fn decode_all(
         &self,
         decoder: &CandidateDecoder<'_>,
@@ -369,7 +457,14 @@ impl SparseChallengeStream {
         if self.parallel() {
             return (0..self.count).into_par_iter().map(decode).collect();
         }
-        (0..self.count).map(decode).collect()
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(self.count)
+            .map_err(|_| AkitaError::InvalidInput("challenge allocation failed".into()))?;
+        for index in 0..self.count {
+            result.push(decode(index)?);
+        }
+        Ok(result)
     }
 
     fn first_accepted(
@@ -418,7 +513,13 @@ impl SparseChallengeStream {
     /// is, and every parallel region wakes the whole thread pool.
     #[cfg(feature = "parallel")]
     fn parallel(&self) -> bool {
-        self.count.saturating_mul(self.shell.config.weight()) >= PARALLEL_DECODE_WORK_THRESHOLD
+        #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some() {
+            return false;
+        }
+        !crate::checked_hint::positions_active()
+            && self.count.saturating_mul(self.shell.config.weight())
+                >= PARALLEL_DECODE_WORK_THRESHOLD
     }
 }
 
@@ -551,6 +652,7 @@ struct BinomialTable {
     max_n: usize,
     max_k: usize,
     entries: Vec<u128>,
+    narrow_entries: Vec<u64>,
 }
 
 impl BinomialTable {
@@ -577,10 +679,16 @@ impl BinomialTable {
                 previous = column;
             }
         }
+        let narrow_entries = if max_n <= 64 {
+            entries.iter().map(|&v| v as u64).collect()
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             max_n,
             max_k,
             entries,
+            narrow_entries,
         })
     }
 
@@ -591,6 +699,66 @@ impl BinomialTable {
             .then(|| self.entries.get(k * rows..k * rows + upper))
             .flatten()
             .ok_or_else(|| AkitaError::Internal("sparse binomial table is too small".into()))
+    }
+
+    /// Strictly increasing in-range positions have the unique colex rank
+    /// sum_i C(position_i, i+1). Checking that sum authenticates the hint
+    /// without searching Pascal columns to invert the rank.
+    fn check_positions(
+        &self,
+        rank: u128,
+        n: usize,
+        words: &[u64],
+        first: usize,
+        out: &mut [u32],
+    ) -> Result<(), AkitaError> {
+        let count = out.len();
+        if n > self.max_n || count > self.max_k || count > n {
+            return Err(AkitaError::InvalidProof);
+        }
+        let rows = self.max_n + 1;
+        // Construction checked rows*(max_k+1). A strict increasing k-subset
+        // has colex rank < C(n,k); reject saturation before summing unchecked.
+        let limit = *self
+            .entries
+            .get(count * rows + n)
+            .ok_or(AkitaError::InvalidProof)?;
+        if limit == u128::MAX || rank >= limit {
+            return Err(AkitaError::InvalidProof);
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        let mut word_index = first / 4;
+        let mut packed =
+            *words.get(word_index).ok_or(AkitaError::InvalidProof)? >> (16 * (first % 4));
+        word_index += 1;
+        let mut available = 4 - first % 4;
+        let mut maximum = n - count;
+        let mut previous = None;
+        let mut sum = 0u128;
+        for (column, slot) in self.entries.chunks_exact(rows).skip(1).zip(out) {
+            if available == 0 {
+                packed = *words.get(word_index).ok_or(AkitaError::InvalidProof)?;
+                word_index += 1;
+                available = 4;
+            }
+            let position = (packed & 65535) as usize;
+            packed >>= 16;
+            available -= 1;
+            if position > maximum || previous.is_some_and(|p| position <= p) {
+                return Err(AkitaError::InvalidProof);
+            }
+            let value = *column.get(position).ok_or(AkitaError::InvalidProof)?;
+            sum += value;
+            *slot = position as u32;
+            previous = Some(position);
+            maximum += 1;
+        }
+        if sum != rank {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
     }
 
     /// Unrank `rank < C(n, k)` into a `k`-subset of `0..n`, colexicographic,
@@ -610,14 +778,48 @@ impl BinomialTable {
         let out = out
             .get_mut(..k)
             .ok_or_else(|| AkitaError::Internal("sparse unrank output is too short".into()))?;
+        if self.max_n <= 64 {
+            let mut rank = u64::try_from(rank).map_err(|_| AkitaError::InvalidProof)?;
+            let mut upper = n;
+            let rows = self.max_n + 1;
+            for (i, slot) in out.iter_mut().enumerate().rev() {
+                let base = (i + 1) * rows;
+                let mut element = upper.checked_sub(1).ok_or(AkitaError::InvalidProof)?;
+                loop {
+                    let value = *self
+                        .narrow_entries
+                        .get(base + element)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    if value <= rank {
+                        rank -= value;
+                        *slot = element as u32;
+                        upper = element;
+                        break;
+                    }
+                    element = element.checked_sub(1).ok_or(AkitaError::InvalidProof)?;
+                }
+            }
+            return if rank == 0 {
+                Ok(())
+            } else {
+                Err(AkitaError::InvalidProof)
+            };
+        }
         let mut upper = n;
         for (i, slot) in out.iter_mut().enumerate().rev() {
             let column = self.column(i + 1, upper)?;
-            let (element, &value) = column
-                .iter()
-                .enumerate()
-                .rfind(|&(_, &value)| value <= rank)
-                .ok_or_else(|| AkitaError::Internal("sparse rank was out of range".into()))?;
+            let (element, value) = if n >= 256 {
+                let end = column.partition_point(|&value| value <= rank);
+                let element = end.checked_sub(1).ok_or(AkitaError::InvalidProof)?;
+                (element, column[element])
+            } else {
+                let (element, &value) = column
+                    .iter()
+                    .enumerate()
+                    .rfind(|&(_, &value)| value <= rank)
+                    .ok_or(AkitaError::InvalidProof)?;
+                (element, value)
+            };
             rank -= value;
             *slot = u32::try_from(element)
                 .map_err(|_| AkitaError::Internal("sparse position exceeds u32".into()))?;
@@ -631,6 +833,7 @@ impl BinomialTable {
 }
 
 struct CandidateDecoder<'a> {
+    position_hints: bool,
     stream: &'a SparseChallengeStream,
     message: &'a [u8],
     binomials: &'a BinomialTable,
@@ -657,14 +860,84 @@ impl CandidateDecoder<'_> {
             rank / stream.shell.pm1_rank_space
         };
         let pm1_rank = rank - pm2_rank * stream.shell.pm1_rank_space;
+        #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some()
+            && !(stream.shell.ring_d == 64
+                && a == 31
+                && b == 10
+                && stream.count >= 1024
+                && stream.shell.rejection.is_none())
+        {
+            eprintln!(
+                "EXPERIMENT_RANK {} {} {} {} {}",
+                stream.shell.ring_d, a, b, pm1_rank, pm2_rank
+            );
+        }
+        #[cfg(all(target_arch = "riscv64", feature = "experiment-capture"))]
+        {
+            let text = format!(
+                "EXPERIMENT_RANK {} {} {} {} {}",
+                stream.shell.ring_d, a, b, pm1_rank, pm2_rank
+            )
+            .into_bytes();
+            unsafe {
+                core::arch::asm!(".insn i 0x5B, 2, x0, x0, 0",
+                in("x10") 0x505249u32, in("x11") text.as_ptr() as u32,
+                in("x12") text.len() as u32, in("x13") 2u32, options(nostack));
+            }
+        }
         let mut positions = crate::SparseChallengePositions::from_elem(0, weight);
         let (pm1, pm2) = positions.split_at_mut(a);
-        self.binomials
-            .unrank(pm1_rank, stream.shell.ring_d, a, pm1)?;
-        if b > 0 {
+        if self.position_hints {
+            let width = weight.div_ceil(4);
+            let (hints, offset) =
+                crate::checked_hint::take_positions(width)?.ok_or(AkitaError::InvalidProof)?;
+            let words = hints
+                .get(offset..offset.checked_add(width).ok_or(AkitaError::InvalidProof)?)
+                .ok_or(AkitaError::InvalidProof)?;
+            if !weight.is_multiple_of(4)
+                && words.last().is_some_and(|&w| w >> (16 * (weight % 4)) != 0)
+            {
+                return Err(AkitaError::InvalidProof);
+            }
             self.binomials
-                .unrank(pm2_rank, stream.shell.ring_d - a, b, pm2)?;
+                .check_positions(pm1_rank, stream.shell.ring_d, words, 0, pm1)?;
+            self.binomials
+                .check_positions(pm2_rank, stream.shell.ring_d - a, words, a, pm2)?;
+        } else {
+            self.binomials
+                .unrank(pm1_rank, stream.shell.ring_d, a, pm1)?;
+            if b > 0 {
+                self.binomials
+                    .unrank(pm2_rank, stream.shell.ring_d - a, b, pm2)?;
+            }
+        }
+        if b > 0 {
             map_to_complement(pm1, pm2, stream.shell.ring_d)?;
+        }
+        if weight <= 48 {
+            let signs = read_bits(self.message, start, weight as u32)? as u64;
+            let mut words = [0u64; 6];
+            const ONES: u64 = 0x0101_0101_0101_0101;
+            for (chunk, word) in words.iter_mut().enumerate().take(weight.div_ceil(8)) {
+                let offset = chunk * 8;
+                let mut bits = (signs >> offset) & 255;
+                bits = (bits | (bits << 28)) & 0x0000_000f_0000_000f;
+                bits = (bits | (bits << 14)) & 0x0003_0003_0003_0003;
+                bits = (bits | (bits << 7)) & ONES;
+                let magnitudes = if offset >= a {
+                    ONES * 2
+                } else if offset + 8 <= a {
+                    ONES
+                } else {
+                    ONES + (ONES << ((a - offset) * 8))
+                };
+                *word = ((magnitudes ^ (bits * 255)) + bits).to_le();
+            }
+            // Every i8 bit pattern is valid; six words provide 48 initialized bytes.
+            let bytes = unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<i8>(), weight) };
+            let coeffs = crate::SparseChallengeCoefficients::from_slice(bytes);
+            return Ok(Some(SparseChallenge { positions, coeffs }));
         }
         let mut coeffs = crate::SparseChallengeCoefficients::with_capacity(weight);
         for offset in (0..weight).step_by(u64::BITS as usize) {
