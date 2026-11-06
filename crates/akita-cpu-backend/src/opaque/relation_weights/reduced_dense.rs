@@ -7,11 +7,11 @@
 //! stream.
 
 use super::*;
-use akita_algebra::ring::ResidueKernelPoint;
-use akita_challenges::Challenges;
 use akita_params::dispatch_for_field;
 use akita_types::RingMultiplierOpeningPoint;
+use jolt_algebra::ring::ResidueKernelPoint;
 use jolt_algebra::{ExtField, MulBaseUnreduced};
+use jolt_crypto::challenge::Challenges;
 
 fn sparse_challenge_kernel<F, E>(
     challenges: &Challenges,
@@ -449,7 +449,7 @@ where
             opening_ring_dim,
             compilation.physical_field_len,
         )?;
-        compression.accumulate_dense(setup, &mut dense)?;
+        compression.accumulate_dense(setup, 0, &mut dense)?;
     }
     Ok(
         crate::opaque::RelationWeightDescription::ReducedEvaluations {

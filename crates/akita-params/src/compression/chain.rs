@@ -3,6 +3,7 @@
 use std::sync::OnceLock;
 
 use super::*;
+use crate::sis::compression::compression_sis_cell;
 
 // The protocol cap makes the complete key domain small and finite. One cell
 // per admitted nonzero source length gives exact, eviction-free reuse without
@@ -66,6 +67,32 @@ impl CompressionChainPlan {
         source_coefficients: usize,
         maps: [CompressionMapPlan; COMPRESSION_MAP_COUNT],
     ) -> Result<Self, AkitaError> {
+        let source_bytes = source_coefficients
+            .checked_mul(profile_field_bytes(modulus_profile))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression source byte length overflow".into())
+            })?;
+        if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
+            return Err(AkitaError::InvalidInput(format!(
+                "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
+            )));
+        }
+        Self::certified(
+            COMPRESSION_POLICY,
+            modulus_profile,
+            source_coefficients,
+            maps,
+        )
+    }
+
+    /// Validate a chain of `policy` against its maps' SIS certification
+    /// alone; the caller enforces the policy's source cap.
+    fn certified(
+        policy: CompressionPolicyId,
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+        maps: [CompressionMapPlan; COMPRESSION_MAP_COUNT],
+    ) -> Result<Self, AkitaError> {
         let field_bits = profile_field_bits(modulus_profile);
         let field_bytes = profile_field_bytes(modulus_profile);
         let source_bytes = source_coefficients
@@ -77,11 +104,6 @@ impl CompressionChainPlan {
             return Err(AkitaError::InvalidInput(
                 "compression source must be nonempty".into(),
             ));
-        }
-        if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
-            return Err(AkitaError::InvalidInput(format!(
-                "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
-            )));
         }
         let mut expected_input = source_coefficients;
         let mut previous_dimension: Option<usize> = None;
@@ -115,7 +137,7 @@ impl CompressionChainPlan {
             )));
         }
         Ok(Self {
-            policy: COMPRESSION_POLICY,
+            policy,
             modulus_profile,
             field_bits,
             field_bytes,
@@ -187,6 +209,65 @@ impl CompressionChainPlan {
         Self::derive_complete_source(modulus_profile, source_coefficients)
     }
 
+    /// The chain of `source_coefficients` under the maps' SIS certification
+    /// alone, without the 8 KiB source cap of [`COMPRESSION_POLICY`]: the
+    /// same two rank-one negative-binary maps, the same 128-byte terminal,
+    /// under [`CompressionPolicyId::NegativeBinaryTwoMapSisBoundV1`].
+    /// The cap bounds the B/D images of clear schedules; Whiteout's split
+    /// images (`specs/whiteout-akita.md` §6.3) chunk at
+    /// [`Self::max_certified_source_coefficients`] instead, the paper's
+    /// `FCHAIN_MAX_IMAGE`.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError`] if no certified chain compresses the source.
+    pub fn for_certified_source(
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+    ) -> Result<Self, AkitaError> {
+        if source_coefficients == 0 {
+            return Err(AkitaError::InvalidInput(
+                "compression source must be nonempty".into(),
+            ));
+        }
+        Self::derive_maps(
+            CompressionPolicyId::NegativeBinaryTwoMapSisBoundV1,
+            modulus_profile,
+            source_coefficients,
+        )
+    }
+
+    /// The largest source [`Self::for_certified_source`] compresses: the
+    /// first map's rank-one SIS width, in source coefficients
+    /// (`⌊w₁·d₁/field_bits⌋`, 15,115 at q128). The second map's input is the
+    /// first map's fixed `d₁`-coefficient output, so it does not bound the
+    /// source.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidSetup`] if the profile's first map has no
+    /// certified cell or its chain fails to derive.
+    pub fn max_certified_source_coefficients(
+        modulus_profile: SisModulusProfileId,
+    ) -> Result<usize, AkitaError> {
+        let [first_dimension, _] = compression_ring_dimensions(modulus_profile);
+        let cell = u32::try_from(first_dimension)
+            .ok()
+            .and_then(|dimension| {
+                compression_sis_cell(modulus_profile, dimension, COMPRESSION_SIS_COEFF_LINF_BOUND)
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression first map has no SIS cell".into())
+            })?;
+        let max = usize::try_from(cell.sis_max_width)
+            .ok()
+            .and_then(|width| width.checked_mul(first_dimension))
+            .map(|digits| digits / profile_field_bits(modulus_profile))
+            .ok_or_else(|| AkitaError::InvalidSetup("compression width overflow".into()))?;
+        Self::for_certified_source(modulus_profile, max)?;
+        Ok(max)
+    }
+
     fn derive_complete_source(
         modulus_profile: SisModulusProfileId,
         source_coefficients: usize,
@@ -212,6 +293,19 @@ impl CompressionChainPlan {
         if let Some(plan) = cache.get() {
             return Ok(Some(plan.clone()));
         }
+        let plan = Self::derive_maps(COMPRESSION_POLICY, modulus_profile, source_coefficients)?;
+        let _ = cache.set(plan.clone());
+        Ok(Some(plan))
+    }
+
+    /// The canonical two-map ladder of a nonempty source, certified map by
+    /// map, uncached and uncapped.
+    fn derive_maps(
+        policy: CompressionPolicyId,
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+    ) -> Result<Self, AkitaError> {
+        let field_bytes = profile_field_bytes(modulus_profile);
         let mut maps = [None; COMPRESSION_MAP_COUNT];
         let mut input_coefficients = source_coefficients;
         for (map_count, ring_dimension) in compression_ring_dimensions(modulus_profile)
@@ -236,9 +330,12 @@ impl CompressionChainPlan {
                         "compression chain must contain exactly {COMPRESSION_MAP_COUNT} maps"
                     )));
                 };
-                let plan = Self::new(modulus_profile, source_coefficients, [first, second])?;
-                let _ = cache.set(plan.clone());
-                return Ok(Some(plan));
+                return Self::certified(
+                    policy,
+                    modulus_profile,
+                    source_coefficients,
+                    [first, second],
+                );
             }
             if output_bytes < COMPRESSION_TARGET_BYTES {
                 return Err(AkitaError::InvalidSetup(

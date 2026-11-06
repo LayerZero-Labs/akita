@@ -2,7 +2,9 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_params::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
+use akita_params::{
+    ChallengeFieldOrder, DigitRangePlan, FoldSchedule, GrindingPlan, OpeningClaimsLayout,
+};
 use jolt_algebra::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
@@ -11,6 +13,42 @@ pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
     root_layout: &OpeningClaimsLayout,
     setup_batch_level: Option<u32>,
 ) -> Result<GrindingPlan, AkitaError>
+where
+    Cfg::Field: CanonicalEncoding,
+    Cfg::ExtField: ExtField<Cfg::Field>,
+{
+    let (challenge_order, extension_degree) = challenge_order::<Cfg>()?;
+    akita_params::derive_transcript_grinding_plan_from_public_shape(
+        schedule,
+        root_layout,
+        challenge_order,
+        extension_degree,
+        setup_batch_level,
+    )
+}
+
+/// Derive the only accepted grinding plan of a standalone digit-range
+/// reduction over `rounds` variables at `level`.
+pub fn derive_digit_range_grinding_plan<Cfg: CommitmentConfig>(
+    range: DigitRangePlan,
+    rounds: usize,
+    level: u32,
+) -> Result<GrindingPlan, AkitaError>
+where
+    Cfg::Field: CanonicalEncoding,
+    Cfg::ExtField: ExtField<Cfg::Field>,
+{
+    let (challenge_order, _) = challenge_order::<Cfg>()?;
+    akita_params::derive_digit_range_grinding_plan_from_public_shape(
+        range,
+        rounds,
+        level,
+        challenge_order,
+    )
+}
+
+/// The challenge field's order and extension degree for `Cfg`.
+fn challenge_order<Cfg: CommitmentConfig>() -> Result<(ChallengeFieldOrder, usize), AkitaError>
 where
     Cfg::Field: CanonicalEncoding,
     Cfg::ExtField: ExtField<Cfg::Field>,
@@ -27,13 +65,7 @@ where
         extension_degree,
         Cfg::sis_modulus_profile().modulus(),
     )?;
-    akita_params::derive_transcript_grinding_plan_from_public_shape(
-        schedule,
-        root_layout,
-        challenge_order,
-        extension_degree,
-        setup_batch_level,
-    )
+    Ok((challenge_order, extension_degree))
 }
 
 #[cfg(test)]
