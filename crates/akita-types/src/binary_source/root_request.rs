@@ -5,7 +5,9 @@ use akita_params::GroupCommitPhaseParams;
 
 /// Typed request consumed only by an explicitly selected binary root backend.
 /// The ordinary handle, when present, supplies a full commitment preimage to the
-/// same outgoing witness. It does not introduce another opening or transcript.
+/// same outgoing witness. The profile-bound plan includes coefficient quotients
+/// for P64; neither J rows nor y messages are witness-request fields.
+/// It does not introduce another opening or transcript.
 pub struct BinaryRootWitnessRequest<H> {
     pub manifest: BinaryCommittedGroupManifest,
     pub claim: Option<BinaryTerminalClaim>,

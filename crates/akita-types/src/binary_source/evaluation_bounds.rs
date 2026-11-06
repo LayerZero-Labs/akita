@@ -1,4 +1,6 @@
 //! Integer lift admission for the committed binary parity and value carries.
+//! The selected profile supplies its base characteristic, including for
+//! extension challenges: the extension cardinality is never a lift modulus.
 
 use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};

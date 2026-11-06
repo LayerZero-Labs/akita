@@ -20,6 +20,11 @@ impl BinaryProjectionRows {
         channel: &mut impl ProofChannel,
         bounds: &BinaryProjectionBounds,
     ) -> Result<Self, AkitaError> {
+        if bounds.quotient().is_some() {
+            return Err(AkitaError::InvalidInput(
+                "quotient profile has no J rows".into(),
+            ));
+        }
         akita_transcript::public_bytes(
             channel,
             ProtocolSiteId {
@@ -88,7 +93,8 @@ impl BinaryProjectionRows {
         residual: &[[i128; 648]],
         bounds: &BinaryProjectionBounds,
     ) -> Result<[i128; BINARY_PROJECTION_COUNT], AkitaError> {
-        if residual.len() != self.rank
+        if bounds.quotient().is_some()
+            || residual.len() != self.rank
             || bounds.residual_rows() != self.rank
             || residual
                 .iter()

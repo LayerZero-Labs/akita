@@ -82,7 +82,15 @@ pub(crate) fn direct_a_weights<E: Field>(
     };
     let image_terms = checked::product([owners, plan.rank(), columns, 648, image_digits])
         .ok_or(AkitaError::InvalidProof)?;
-    let term_count = checked::sum([response_terms, image_terms]).ok_or(AkitaError::InvalidProof)?;
+    let quotient_terms = plan
+        .projection_bounds()
+        .quotient()
+        .map_or(Some(0), |bounds| {
+            checked::product([rho.len(), 648, bounds.digits])
+        })
+        .ok_or(AkitaError::InvalidProof)?;
+    let term_count = checked::sum([response_terms, image_terms, quotient_terms])
+        .ok_or(AkitaError::InvalidProof)?;
     let mut terms = Vec::new();
     terms
         .try_reserve_exact(term_count)
@@ -124,7 +132,57 @@ pub(crate) fn direct_a_weights<E: Field>(
             }
         }
     }
+    if let Some(segment) = plan.quotient_segment() {
+        let shape = plan
+            .repacking()
+            .segments()
+            .get(segment)
+            .ok_or(AkitaError::InvalidProof)?;
+        for (element, row) in rho.iter().enumerate() {
+            for digit in 0..shape.digits {
+                let power = (0..digit).fold(E::one(), |power, _| power * E::from_u64(8));
+                for (coefficient, &weight) in row.iter().enumerate() {
+                    let address = plan.repacking().coefficient_address(
+                        segment,
+                        element,
+                        digit,
+                        coefficient,
+                    )?;
+                    terms.push((
+                        address,
+                        -E::from_u64(u64::from(super::super::BINARY_SOURCE_Q)) * power * weight,
+                    ));
+                }
+            }
+        }
+    }
     NativeRootWeights::new(plan.repacking().domain_len(), terms, E::zero())
+}
+
+/// Dense, slow coefficient-defect evaluation, independent of weight emission.
+/// Recompose each natural K coefficient before applying its independent rho.
+pub(crate) fn coefficient_defect<E: Field>(
+    plan: &BinaryRootWitnessPlan,
+    residuals: &[[i128; 648]],
+    table: &[E],
+    rho: &[[E; 648]],
+) -> Result<E, AkitaError> {
+    let segment = plan.quotient_segment().ok_or(AkitaError::InvalidProof)?;
+    if residuals.len() != plan.projection_bounds().residual_rows() || rho.len() != residuals.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut sum = E::zero();
+    for (element, (residual, weights)) in residuals.iter().zip(rho).enumerate() {
+        for (coefficient, (&residual, &weight)) in residual.iter().zip(weights).enumerate() {
+            let quotient =
+                plan.repacking()
+                    .recompose_coefficient(table, segment, element, coefficient)?;
+            sum += weight
+                * (E::from_i128(residual)
+                    - E::from_u64(u64::from(super::super::BINARY_SOURCE_Q)) * quotient);
+        }
+    }
+    Ok(sum)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -507,7 +565,7 @@ pub(crate) fn plan_weights<E: Field>(
             .as_ref()
             .try_into()
             .map_err(|_| AkitaError::InvalidProof)?,
-        BINARY_SETUP_P,
+        plan.field_profile().modulus(),
     )?;
     NativeRootWeights::merge(plan.repacking().domain_len(), [a, terminal], E::zero())
 }
@@ -519,7 +577,7 @@ pub(crate) fn root_relation<E: Field>(
     alpha: E,
     batches: &[E],
     rho: &[[E; 648]],
-    projected_values: &[i128; 7],
+    projected_values: &[i128],
     commitment: &[E],
     d_payload: &[E],
     ordinary_claim: Option<(&[E], E, &[E])>,
@@ -531,20 +589,22 @@ pub(crate) fn root_relation<E: Field>(
             actual: batches.len(),
         });
     }
-    let mu: [E; 7] = batches
-        .get(..7)
-        .ok_or(AkitaError::InvalidProof)?
-        .try_into()
-        .map_err(|_| AkitaError::InvalidProof)?;
-    let projection_claim = mu
-        .iter()
-        .zip(projected_values)
-        .fold(E::zero(), |sum, (&mu, &y)| sum + mu * E::from_i128(y));
-    let terminal = checked::range(7, if public.claim.is_some() { 2 } else { 0 })
-        .ok_or(AkitaError::InvalidProof)?;
+    let (rho, projection_claim) = public.coefficient_inputs(batches, rho, projected_values)?;
+    let terminal = checked::range(
+        public.plan.coefficient_batch_count()?,
+        if public.claim.is_some() { 2 } else { 0 },
+    )
+    .ok_or(AkitaError::InvalidProof)?;
     let b =
         checked::range(terminal.end, public.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-    let d = checked::range(b.end, public.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
+    let d = checked::range(
+        b.end,
+        public
+            .manifest
+            .d_label(public.claim.is_some(), public.prime.planes().len())?
+            .rank as usize,
+    )
+    .ok_or(AkitaError::InvalidProof)?;
     let ordinary_rows = checked::range(
         d.end,
         public
@@ -566,7 +626,7 @@ pub(crate) fn root_relation<E: Field>(
         matrix,
         challenges,
         alpha,
-        rho,
+        rho.as_ref(),
         batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
     )?;
     let prime_weights = if let Some(segment) = public.plan.prime_segment() {
@@ -596,10 +656,9 @@ pub(crate) fn root_relation<E: Field>(
         &public.plan,
         &public.plan.opening_segments(),
         &public.setup.setup_seed.seed,
-        SetupStreamLabel {
-            role: SetupStreamRole::WitnessCommitment,
-            ..public.manifest.b_label()
-        },
+        public
+            .manifest
+            .d_label(public.claim.is_some(), public.prime.planes().len())?,
         d_payload,
         alpha,
         batches.get(d).ok_or(AkitaError::InvalidProof)?,

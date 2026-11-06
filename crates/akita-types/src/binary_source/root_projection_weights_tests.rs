@@ -121,3 +121,292 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     )
     .is_err());
 }
+
+use jolt_field::{Ext2, Prime64Offset59};
+use rand::{rngs::StdRng, Rng, SeedableRng};
+type E64 = Ext2<Prime64Offset59>;
+
+fn extension(rng: &mut StdRng) -> E64 {
+    E64::new(
+        Prime64Offset59::from_u64(rng.gen()),
+        Prime64Offset59::from_u64(rng.gen::<u64>() | 1),
+    )
+}
+
+fn quotient_plan(owners: usize, rows: usize, columns: usize) -> BinaryRootWitnessPlan {
+    use akita_params::binary_setup::BinaryFieldProfile;
+    let descriptor = BinarySourceDescriptor::new(
+        BinaryIndexMap::new(128, 4 * rows * columns, 4 * rows * columns, columns).unwrap(),
+        (0..owners).map(|owner| [owner as u8; 32]).collect(),
+        BinaryCommitmentProfiles {
+            a: [2; 32],
+            b: [3; 32],
+        },
+    )
+    .unwrap();
+    BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P64, true, 0)
+        .unwrap()
+}
+
+#[test]
+fn p64_generic_adjoint_and_quotient_weights_match_dense_reference_at_extension_rho() {
+    let u = E64::new(Prime64Offset59::zero(), Prime64Offset59::one());
+    assert_eq!(u * u, E64::from_u64(2));
+    let mut rng = StdRng::seed_from_u64(0x0006_4864);
+    for (owners, rows, columns) in [(1, 1, 2), (2, 1, 2), (1, 2, 1)] {
+        let plan = quotient_plan(owners, rows, columns);
+        let challenges = Challenges::from_sparse(
+            (0..owners * columns)
+                .map(|_| SparseChallenge {
+                    positions: vec![0, 81, 161].into(),
+                    coeffs: vec![1, -1, 1].into(),
+                })
+                .collect(),
+            columns,
+            owners,
+        )
+        .unwrap();
+        let matrix = (0..3)
+            .map(|_| {
+                (0..rows)
+                    .map(|_| std::array::from_fn(|_| rng.gen_range(-100..=100)))
+                    .collect()
+            })
+            .collect::<Vec<Vec<[i128; 648]>>>();
+        let rho = (0..3 * owners)
+            .map(|_| std::array::from_fn(|_| extension(&mut rng)))
+            .collect::<Vec<_>>();
+        for with_a in [false, true] {
+            let operand = with_a.then_some(BinaryAOperand {
+                matrix: &matrix,
+                // A quadratic element has no integer representative. The
+                // generic field path must never call this callback.
+                canonical: |_| None,
+            });
+            let fast = binary_direct_a_weights(&plan, operand, &challenges, &rho).unwrap();
+            let reference = crate::binary_source::root_public::reference::direct_a_weights(
+                &plan,
+                with_a.then_some(matrix.as_slice()),
+                &challenges,
+                &rho,
+            )
+            .unwrap();
+            let dense = fast.materialize().unwrap();
+            assert_eq!(dense, reference.materialize().unwrap());
+            if with_a {
+                let natural = plan
+                    .repacking()
+                    .segments()
+                    .iter()
+                    .map(|shape| {
+                        (0..shape.elements
+                            * shape.digits
+                            * shape.geometry.polynomial_modulus_dimension())
+                            .map(|_| rng.gen_range(-4..=3))
+                            .collect::<Vec<i8>>()
+                    })
+                    .collect::<Vec<_>>();
+                let integer = plan
+                    .repacking()
+                    .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+                    .unwrap();
+                let table = integer
+                    .into_iter()
+                    .map(|digit| E64::from_i64(i64::from(digit)))
+                    .collect::<Vec<_>>();
+                let recompose = |segment: usize, element: usize| {
+                    let shape = plan.repacking().segments()[segment];
+                    std::array::from_fn::<_, 648, _>(|coefficient| {
+                        (0..shape.digits)
+                            .map(|digit| {
+                                i128::from(
+                                    natural[segment]
+                                        [(element * shape.digits + digit) * 648 + coefficient],
+                                ) * 8i128.pow(digit as u32)
+                            })
+                            .sum::<i128>()
+                    })
+                };
+                let scalars = binary_scalar_challenges(plan.descriptor(), &challenges).unwrap();
+                let mut residuals = vec![[0i128; 648]; 3 * owners];
+                for owner in 0..owners {
+                    for (row_index, matrix_row) in matrix.iter().enumerate() {
+                        let residual = &mut residuals[owner * 3 + row_index];
+                        for (column, a) in matrix_row.iter().enumerate() {
+                            let z = recompose(0, owner * rows + column);
+                            let product =
+                                signed_trinomial_product::<648, MinusTrinomial>(a, &z).unwrap();
+                            for (slot, term) in residual.iter_mut().zip(product) {
+                                *slot += term;
+                            }
+                        }
+                        for column in 0..columns {
+                            let scalar = scalars[owner * columns + column];
+                            let challenge =
+                                pack_signed_components(&[scalar, [0; 162], [0; 162], [0; 162]])
+                                    .unwrap();
+                            let image = recompose(1, (owner * columns + column) * 3 + row_index);
+                            let product =
+                                signed_trinomial_product::<648, MinusTrinomial>(&challenge, &image)
+                                    .unwrap();
+                            for (slot, term) in residual.iter_mut().zip(product) {
+                                *slot -= term;
+                            }
+                        }
+                    }
+                }
+                let expected = crate::binary_source::root_public::reference::coefficient_defect(
+                    &plan, &residuals, &table, &rho,
+                )
+                .unwrap();
+                let actual = dense
+                    .iter()
+                    .zip(&table)
+                    .fold(E64::zero(), |sum, (&weight, &value)| sum + weight * value);
+                assert_eq!(actual, expected);
+            }
+            let point = (0..plan.repacking().domain_len().trailing_zeros())
+                .map(|_| extension(&mut rng))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                fast.evaluate(&point).unwrap(),
+                reference.evaluate(&point).unwrap()
+            );
+            let segment = plan.quotient_segment().unwrap();
+            let depth = plan.projection_bounds().quotient().unwrap().digits;
+            for (element, row) in rho.iter().enumerate() {
+                let mut power = E64::one();
+                for digit in 0..depth {
+                    for (coefficient, &weight) in row.iter().enumerate() {
+                        let address = plan
+                            .repacking()
+                            .coefficient_address(segment, element, digit, coefficient)
+                            .unwrap();
+                        assert_eq!(dense[address], -E64::from_u64(14_253_409) * power * weight);
+                    }
+                    power *= E64::from_u64(8);
+                }
+            }
+            for (address, &weight) in dense.iter().enumerate() {
+                if plan.repacking().is_padding_address(address).unwrap() {
+                    assert_eq!(weight, E64::zero());
+                }
+            }
+        }
+    }
+}
+
+fn write_balanced(natural: &mut [i8], digits: usize, coefficient: usize, mut value: i128) {
+    for digit in 0..digits {
+        let residue = value.rem_euclid(8);
+        let next = if residue >= 4 { residue - 8 } else { residue };
+        natural[digit * 648 + coefficient] = next as i8;
+        value = (value - next) / 8;
+    }
+    assert_eq!(value, 0);
+}
+
+#[test]
+fn p64_coefficient_relation_vanishes_exactly_for_planted_quotients() {
+    let plan = quotient_plan(1, 1, 2);
+    let challenges = Challenges::from_sparse(
+        vec![
+            SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into()
+            };
+            2
+        ],
+        2,
+        1,
+    )
+    .unwrap();
+    let mut matrix = vec![vec![[0i128; 648]]; 3];
+    matrix[0][0][0] = i128::from(CANONICAL_IMAGE_WINDOW.1);
+    let mut rng = StdRng::seed_from_u64(59);
+    let rho = (0..3)
+        .map(|_| std::array::from_fn(|_| extension(&mut rng)))
+        .collect::<Vec<_>>();
+    let weights = binary_direct_a_weights(
+        &plan,
+        Some(BinaryAOperand {
+            matrix: &matrix,
+            canonical: |_| None,
+        }),
+        &challenges,
+        &rho,
+    )
+    .unwrap();
+    let segment = plan.quotient_segment().unwrap();
+    let depth = plan.projection_bounds().quotient().unwrap().digits;
+    for quotient in [-4, -1, 1, 3] {
+        let mut natural = plan
+            .repacking()
+            .segments()
+            .iter()
+            .map(|shape| {
+                vec![
+                    0i8;
+                    shape.elements * shape.digits * shape.geometry.polynomial_modulus_dimension()
+                ]
+            })
+            .collect::<Vec<_>>();
+        // A*(2*k) - (-k) = (q-1)*k + k = q*k.
+        write_balanced(&mut natural[0], 4, 0, 2 * quotient);
+        write_balanced(&mut natural[1], 8, 0, -quotient);
+        write_balanced(&mut natural[segment], depth, 0, quotient);
+        let table = plan
+            .repacking()
+            .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+            .unwrap()
+            .into_iter()
+            .map(|digit| E64::from_i64(i64::from(digit)))
+            .collect::<Vec<_>>();
+        let mut residuals = vec![[0i128; 648]; 3];
+        residuals[0][0] = 14_253_409 * quotient;
+        assert_eq!(
+            crate::binary_source::root_public::reference::coefficient_defect(
+                &plan, &residuals, &table, &rho
+            )
+            .unwrap(),
+            E64::zero()
+        );
+        weights.check_table(&table).unwrap();
+        let reference = crate::binary_source::root_public::reference::direct_a_weights(
+            &plan,
+            Some(&matrix),
+            &challenges,
+            &rho,
+        )
+        .unwrap();
+        reference.check_table(&table).unwrap();
+        for digit in [0, depth - 1] {
+            let mut altered = table.clone();
+            let address = plan
+                .repacking()
+                .coefficient_address(segment, 0, digit, 0)
+                .unwrap();
+            // Move either endpoint inward, keeping the digit accepted.
+            altered[address] += if quotient == 3 && digit == 0 {
+                -E64::one()
+            } else {
+                E64::one()
+            };
+            let defect = crate::binary_source::root_public::reference::coefficient_defect(
+                &plan, &residuals, &altered, &rho,
+            )
+            .unwrap();
+            assert_ne!(defect, E64::zero());
+            let evaluated = weights
+                .materialize()
+                .unwrap()
+                .iter()
+                .zip(&altered)
+                .fold(E64::zero(), |sum, (&weight, &value)| sum + weight * value);
+            assert_eq!(evaluated, defect);
+            assert!(weights.check_table(&altered).is_err());
+            assert!(reference.check_table(&altered).is_err());
+        }
+    }
+    assert!(binary_direct_a_weights(&plan, None, &challenges, &rho[..2]).is_err());
+}
