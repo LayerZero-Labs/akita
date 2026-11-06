@@ -894,16 +894,13 @@ fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
     )
     .unwrap();
     let mut channel = new_prover_channel(b"p64-prime-public-admission");
-    assert!(matches!(
-        binary_root_statement::<Base, E, _>(
-            &mut channel,
-            &manifest,
-            None,
-            &prime,
-            &vec![Base::zero(); manifest.payload_coefficients().unwrap()],
-            None
-        ),
-        Err(AkitaError::UnsupportedSchedule(_))
-    ));
-    assert!(channel.narg_string().is_empty());
+    binary_root_statement::<Base, E, _>(
+        &mut channel,
+        &manifest,
+        None,
+        &prime,
+        &vec![Base::zero(); manifest.payload_coefficients().unwrap()],
+        None,
+    )
+    .unwrap();
 }

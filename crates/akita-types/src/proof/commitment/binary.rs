@@ -269,7 +269,7 @@ mod binary_source_tests {
     }
 
     #[test]
-    fn p64_binary_root_statement_rejects_on_both_channels() {
+    fn p64_binary_root_statement_binds_on_both_channels() {
         use akita_transcript::{new_prover_channel, new_verifier_channel};
         type F = Prime64Offset59;
         type E = jolt_field::Ext2<F>;
@@ -295,12 +295,8 @@ mod binary_source_tests {
             &payload,
             None,
         );
-        for result in [prove, verify] {
-            assert!(
-                matches!(result, Err(AkitaError::UnsupportedSchedule(message))
-                if message.contains("not yet supported"))
-            );
-        }
+        prove.unwrap();
+        verify.unwrap();
     }
 
     #[test]
