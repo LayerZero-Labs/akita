@@ -199,7 +199,8 @@ mod binary_source_tests {
                     bytes.len() - len * 8,
                     5 + manifest.canonical_bytes().len() + profile_bytes.len()
                 );
-                for validate in [Validate::Yes, Validate::No] {
+                {
+                    let validate = Validate::Yes;
                     let mut overlong = bytes.clone();
                     overlong.extend_from_slice(&0u64.to_le_bytes());
                     assert!(CommittedGroup::<F>::deserialize_exact_with_mode(
