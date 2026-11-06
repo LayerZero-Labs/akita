@@ -87,7 +87,16 @@ pub fn find_native_root_schedule(
     let mut memo = ScheduleMemo::new();
     let suffix = derive_selected_suffix_schedule(&ctx, &mut memo, state, 0, QuerySearch::Root(0))?;
     let best = if transition.setup_prefix_natural_cells() == 0 {
-        select_complete_candidate(policy, suffix.payload_candidates(), None)?
+        // Direct payload frontiers also contain terminal-only candidates. Native
+        // admission requires an ordinary successor fold, just as the typed-prefix
+        // path does; complete-schedule scoring likewise requires a first fold.
+        select_complete_candidate(
+            policy,
+            suffix
+                .payload_candidates()
+                .filter(|candidate| !candidate.folds.is_empty()),
+            None,
+        )?
     } else {
         select_complete_candidate(policy, suffix.setup_candidates(), None)?
     }

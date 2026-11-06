@@ -95,15 +95,15 @@ fn producer<const BITS: u32>(slots: usize) -> TrustedScheduleCatalog<Config<BITS
 }
 
 pub(super) struct Producers {
-    pub binary: TrustedScheduleCatalog<Config<3>>,
-    pub width2: TrustedScheduleCatalog<Config<2>>,
-    pub width9: TrustedScheduleCatalog<Config<9>>,
-    pub width18: TrustedScheduleCatalog<Config<18>>,
-    pub width33: TrustedScheduleCatalog<Config<33>>,
+    pub(crate) binary: TrustedScheduleCatalog<Config<3>>,
+    pub(crate) width2: TrustedScheduleCatalog<Config<2>>,
+    pub(crate) width9: TrustedScheduleCatalog<Config<9>>,
+    pub(crate) width18: TrustedScheduleCatalog<Config<18>>,
+    pub(crate) width33: TrustedScheduleCatalog<Config<33>>,
 }
 
 impl Producers {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             binary: producer(1),
             width2: producer(3),
@@ -309,6 +309,14 @@ pub(super) fn batch(
         Config::<33>::ring_challenge_config,
     )
     .expect("exact research native suffix");
+    assert_eq!(schedule.root.params, seed.schedule().root.params);
+    assert_eq!(schedule.root.output_witness_len, plan.physical_cells());
+    let successor = schedule
+        .recursive_folds
+        .first()
+        .expect("research native root requires an ordinary successor fold");
+    assert_eq!(successor.input_witness_len, plan.physical_cells());
+    assert!(successor.params.setup_prefix().is_none());
     assert!(
         ResolvedScheduleRow::try_new(batch_profiles.clone(), schedule.clone(), &policy).is_err()
     );
