@@ -312,9 +312,11 @@ fold (Q5, answered).
   5,879 one shot at k = 3, under the K = 16 source chunk). No test
   asserts the total ZK bound: it would be arithmetic on the paper's
   constants, and the paper gives no value for Q_tot (Q6).
-- **W2-d.** At every masked level of the 36:1 row (levels 0, 1 and 2 at
-  k = 3), the re-priced A ranks equal the clear ranks, as paper §6.2
-  states. If they differ, the test fails.
+- **W2-d.** At every masked level of the clear 36:1 row (levels 0, 1 and 2
+  at k = 3), re-pricing that row's fixed geometry with the one-shot digit
+  ranges keeps each level's A rank, as paper §6.2 states. If it does not,
+  the test fails. This does not compare against the ZK row, which the
+  planner plans separately with its own geometry and ranks.
 
 ### 2.5 One-shot responses under #255's operator-norm families
 

@@ -4,8 +4,8 @@ use akita_config::{
 };
 use akita_params::zk::{MaskedFoldSizing, ZkOpeningSchedule, ZK_CUT_LEVEL};
 
-/// W2-d: at k = 2 the one-shot digit ranges of levels 0 and 1 re-price A at
-/// the ranks the clear schedule already has.
+/// W2-d: at every masked level, re-pricing the clear schedule's fixed
+/// geometry with the one-shot digit ranges keeps the clear A rank.
 #[test]
 fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
     type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
@@ -54,7 +54,7 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
             .unwrap()
             .expect("admitted candidate")
         };
-        // Neither masked level of main's K = 16 catalog row is capped (its
+        // No masked level of main's K = 16 catalog row is capped (its
         // scheduled digits equal the clear derivation's), so this compares
         // uncapped levels only; dev's K = 256 row capped level 1.
         assert_eq!(
