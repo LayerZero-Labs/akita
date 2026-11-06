@@ -86,6 +86,34 @@ pub trait SumcheckProverChannel<E> {
 
     /// Apply scheduled work and draw the challenge for `round`.
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError>;
+
+    /// Binds the instance's input claim. A clear channel absorbs it as a
+    /// public value.
+    ///
+    /// Extension seam: zero knowledge (akita#120). A masking channel binds nothing here,
+    /// since the masked messages the claim derives from already bind it.
+    fn bind_input_claim<F>(&mut self, site: ProtocolSiteId, claim: &E) -> Result<(), AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        public_extensions::<F, E, _>(self.state_mut(), site, slice::from_ref(claim))
+    }
+
+    /// Sends one round's coefficients.
+    ///
+    /// Extension seam: zero knowledge (akita#120). A masking channel masks them.
+    fn exchange_round_body<F>(
+        &mut self,
+        site: ProtocolSiteId,
+        coefficients: &mut [E],
+    ) -> Result<(), AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        exchange_extension_group::<F, E, _>(self.state_mut(), site, coefficients)
+    }
 }
 
 /// Verifier-side operations required by the standard sumcheck driver.
@@ -130,7 +158,7 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_extensions::<F, E, _>(channel.state_mut(), claim_site, slice::from_ref(&claim))?;
+    channel.bind_input_claim::<F>(claim_site, &claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
@@ -156,7 +184,7 @@ where
         }
         coefficients.resize(degree_bound, E::zero());
         let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
-        exchange_extension_group::<F, E, _>(channel.state_mut(), body_site, &mut coefficients)?;
+        channel.exchange_round_body::<F>(body_site, &mut coefficients)?;
         let compressed = CompressedPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
@@ -245,7 +273,7 @@ where
     let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, SumcheckRole::Claim);
-    public_extensions::<F, E, _>(channel.state_mut(), claim_site, slice::from_ref(&claim))?;
+    channel.bind_input_claim::<F>(claim_site, &claim)?;
     let mut challenges = Vec::with_capacity(num_rounds);
 
     for round in 0..num_rounds {
@@ -261,7 +289,7 @@ where
         }
         coefficients.resize(degree_bound, E::zero());
         let body_site = channel.sumcheck_site(invocation, round_id, SumcheckRole::RoundBody);
-        exchange_extension_group::<F, E, _>(channel.state_mut(), body_site, &mut coefficients)?;
+        channel.exchange_round_body::<F>(body_site, &mut coefficients)?;
         let poly = OmittedConstantPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = advance_eq_factored_claim(claim, prover.current_tau(), &poly, challenge);

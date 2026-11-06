@@ -1,9 +1,14 @@
 //! Proof-stream grammar for recursive setup-product stage 3.
+//!
+//! Every stage-3 message is public: the setup-product claim and the prefix
+//! evaluation depend only on the public setup and public challenges, so they
+//! go through [`exchange_public_extension_group`], never a private exchange.
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_transcript::{
-    exchange_extension_group, public_bytes, ProtocolSiteId, SITE_FAMILY_STAGE3,
+    exchange_public_extension_group, public_bytes, PrivateProofChannel, ProtocolSiteId,
+    SITE_FAMILY_STAGE3,
 };
 use core::slice;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
@@ -39,7 +44,7 @@ pub fn stage3_claim<F, E, G>(grinding: &mut G, level: u32, claim: E) -> Result<E
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     exchange_one::<F, E, G>(grinding, site(level, ROLE_INPUT_CLAIM), claim)
 }
@@ -53,7 +58,7 @@ pub fn stage3_prefix_eval<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     exchange_one::<F, E, G>(grinding, site(level, ROLE_PREFIX_EVAL), evaluation)
 }
@@ -66,9 +71,13 @@ fn exchange_one<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    exchange_extension_group::<F, E, _>(grinding.state_mut(), site, slice::from_mut(&mut value))?;
+    exchange_public_extension_group::<F, E, _>(
+        grinding.state_mut(),
+        site,
+        slice::from_mut(&mut value),
+    )?;
     Ok(value)
 }
 

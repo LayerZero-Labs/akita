@@ -40,7 +40,7 @@ where
     let coefficients = batch_coefficients::<F, E, _>(&mut grinding, 0, statement.claims().len())?;
     let input_claim = statement.input_claim(&coefficients)?;
     let replay = verify_sumcheck_rounds::<F, E, _>(
-        &mut GrindingSumcheckVerifier::<F, E>::new(
+        &mut GrindingSumcheckVerifier::<F, E, _>::new(
             &mut grinding,
             akita_params::SumcheckProtocol::SetupBatch,
             0,

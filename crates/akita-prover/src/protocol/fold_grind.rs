@@ -206,15 +206,16 @@ fn first_jointly_accepted_nonce<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn replay_multi_group_fold_decompose_witnesses<F, E, B>(
+fn replay_multi_group_fold_decompose_witnesses<F, E, B, C>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, B::PreparedOpeningHandle>],
     max_grind_attempts: u32,
 ) -> Result<Vec<FoldProbeOutput<B::AcceptedFoldHandle>>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: akita_types::FpExtEncoding<F>
@@ -308,7 +309,8 @@ where
             let challenges = {
                 let group_index = u32::try_from(group.group_index)
                     .map_err(|_| AkitaError::Internal("fold group index exceeds u32".into()))?;
-                let mut live = ProverFoldDraw::new(grinding.state_mut(), level, group_index);
+                let mut live =
+                    ProverFoldDraw::new(grinding.state_mut().clear_state(), level, group_index);
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
@@ -389,9 +391,9 @@ where
 /// When `tail_t_vectors` is set, the terminal response must fit the exact cap
 /// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B, C>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -399,6 +401,7 @@ pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
     _tail_t_vectors: Option<usize>,
 ) -> Result<Vec<FoldProbeOutput<B::AcceptedFoldHandle>>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: akita_types::FpExtEncoding<F>
@@ -452,7 +455,7 @@ where
             ),
         });
     }
-    replay_multi_group_fold_decompose_witnesses::<F, E, B>(
+    replay_multi_group_fold_decompose_witnesses::<F, E, B, C>(
         opening_ctx,
         grinding,
         level,

@@ -26,7 +26,7 @@ pub use field_reduction::{
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
     recover_ring_subfield_inner_product, trace_h, FpExtEncoding, SubfieldParams,
 };
-pub use fold_sites::FoldSite;
+pub use fold_sites::{bind_fold_openings, FoldSite};
 pub use instance_descriptor::{
     digest_effective_schedule, digest_serializable, setup_seed_digest, AkitaInstanceDescriptor,
     AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet, SetupSection,
@@ -102,10 +102,11 @@ pub use trace_weight::{
     EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
-    GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance, VerifierGrinding,
+    FoldResponseReplay, GrindingReplay, GrindingSumcheckVerifier, PendingEof, ProofAcceptance,
+    VerifierGrinding, VerifierGrindingChannel,
 };
 #[cfg(feature = "prover")]
-pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding};
+pub use transcript_grinding::{GrindingSumcheckProver, ProverGrinding, ProverGrindingChannel};
 
 #[cfg(test)]
 mod schedule_tests;

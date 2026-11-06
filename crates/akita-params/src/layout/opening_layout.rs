@@ -238,6 +238,29 @@ impl OpeningClaimsLayout {
     where
         E: Field,
     {
+        self.batched_claim(
+            row_coefficients,
+            openings,
+            E::zero(),
+            |acc, opening, coefficient| *acc + coefficient * *opening,
+        )
+    }
+
+    /// [`batched_eval_target`](Self::batched_eval_target) over claims of any
+    /// representation `V`: `zero` is the empty sum and `add_scaled(acc, v, c)`
+    /// is `acc + c·v`.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidSize`] if either slice differs from the batch's
+    /// total polynomial count.
+    pub fn batched_claim<E: Copy, V>(
+        &self,
+        row_coefficients: &[E],
+        openings: &[V],
+        zero: V,
+        add_scaled: impl Fn(&V, &V, E) -> V,
+    ) -> Result<V, AkitaError> {
         if row_coefficients.len() != self.num_total_polynomials() {
             return Err(AkitaError::InvalidSize {
                 expected: self.num_total_polynomials(),
@@ -250,12 +273,12 @@ impl OpeningClaimsLayout {
                 actual: openings.len(),
             });
         }
-        row_coefficients
+        Ok(row_coefficients
             .iter()
-            .zip(openings.iter())
-            .try_fold(E::zero(), |acc, (&coefficient, &opening)| {
-                Ok(acc + coefficient * opening)
-            })
+            .zip(openings)
+            .fold(zero, |acc, (&coefficient, opening)| {
+                add_scaled(&acc, opening, coefficient)
+            }))
     }
 
     /// Scale flat row coefficients by one transparent reduction factor per

@@ -4,7 +4,7 @@ use crate::{tensor_opening_split, GrindingReplay};
 use akita_error::AkitaError;
 use akita_params::{GrindingSite, OpeningClaimsLayout};
 use akita_transcript::{
-    exchange_extension_group, public_extensions, ChallengeCodec, ProtocolSiteId,
+    public_extensions, ChallengeCodec, PrivateProofChannel, ProtocolSiteId,
     SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
 };
 use jolt_algebra::checked;
@@ -101,7 +101,7 @@ pub fn eor_prefix<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     let (split_bits, _) = validate_shape::<F, E>(opening_batch, openings, partials.len())?;
     public_extensions::<F, E, _>(
@@ -109,11 +109,9 @@ where
         eor_site(level, STAGE_OPENINGS),
         openings,
     )?;
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        eor_site(level, STAGE_PARTIALS),
-        &mut partials,
-    )?;
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(eor_site(level, STAGE_PARTIALS), &mut partials)?;
     let (eta, claim_coefficients) =
         batch_challenges::<E>(opening_batch, level, split_bits, |site, count| {
             grinding.grinded_ext_challenges::<E>(site, count)
@@ -135,7 +133,7 @@ pub fn eor_final_claims<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     if final_claims.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
@@ -143,11 +141,10 @@ where
             actual: final_claims.len(),
         });
     }
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        eor_site(level, STAGE_FINAL_CLAIMS),
-        final_claims,
-    )
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(eor_site(level, STAGE_FINAL_CLAIMS), final_claims)?;
+    Ok(())
 }
 
 #[cfg(all(test, feature = "prover"))]
