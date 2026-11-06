@@ -30,7 +30,6 @@ where
         + MulBaseUnreduced<F>
         + ChallengeCodec,
 {
-    let _profile_scope = akita_error::experiment_scope("outer_profile/verify_terminal_suffix");
     if current_state.witness_len != scheduled.input_witness_len
         || current_state.setup_prefix_opening.is_some()
     {

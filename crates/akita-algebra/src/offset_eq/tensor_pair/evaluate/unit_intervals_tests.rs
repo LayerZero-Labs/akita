@@ -61,22 +61,6 @@ fn cached_unit_intervals_match_dense_in_all_bases() {
     differential::<false, true, 8>();
     differential::<true, false, 8>();
     differential::<true, true, 8>();
-    differential::<false, false, 10>();
-    differential::<false, true, 10>();
-    differential::<true, false, 10>();
-    differential::<true, true, 10>();
-    differential::<false, false, 12>();
-    differential::<false, true, 12>();
-    differential::<true, false, 12>();
-    differential::<true, true, 12>();
-    differential::<false, false, 14>();
-    differential::<false, true, 14>();
-    differential::<true, false, 14>();
-    differential::<true, true, 14>();
-    differential::<false, false, 16>();
-    differential::<false, true, 16>();
-    differential::<true, false, 16>();
-    differential::<true, true, 16>();
 }
 #[test]
 fn cached_unit_intervals_enforce_address_and_work_bounds() {

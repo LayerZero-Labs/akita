@@ -23,7 +23,6 @@ pub fn eval_boolean_pair_tensor_families<
     right: &[E],
     families: &[EqPairTensorFamily<E>],
 ) -> Result<E, AkitaError> {
-    let _profile_scope = akita_error::experiment_scope("outer_profile/tensor_families");
     let mut work = 0usize;
     if RIGHT_MONOMIAL || left.len() >= usize::BITS as usize || right.len() >= usize::BITS as usize {
         return eval_unfactored_tensor_families::<E, LEFT_MONOMIAL, RIGHT_MONOMIAL>(

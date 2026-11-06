@@ -87,7 +87,6 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + ChallengeCodec,
 {
-    let _profile_scope = akita_error::experiment_scope("outer_profile/verify_stage3");
     let singleton;
     let unit_coefficient = [E::one()];
     let (statement, coefficients, claim) = if let FoldSetup::Offloaded(outer) = fold_setup {

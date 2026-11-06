@@ -105,7 +105,6 @@ where
         + MulBaseUnreduced<F>
         + ChallengeCodec,
 {
-    let _profile_scope = akita_error::experiment_scope("outer_profile/verify_fold");
     let level = prepared.level;
     let relation_geometry = validate_fold_payloads(&prepared)?;
     grinding.read_fold_response(akita_params::GrindingSite::FoldResponse { level })?;

@@ -39,7 +39,6 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
 {
-    let _profile_scope = akita_error::experiment_scope("outer_profile/prepare_relation_claim");
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         relation_geometry.rhs_layout(),
         &rs.tau1,

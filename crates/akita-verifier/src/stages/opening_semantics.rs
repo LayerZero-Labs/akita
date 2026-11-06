@@ -34,7 +34,6 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let _profile_scope = akita_error::experiment_scope("outer_profile/prepare_opening_semantics");
     let trace_domain = rs.relation_address_geometry.digit_witness_domain();
     if trace_domain.live_len() != input.w_len {
         return Err(AkitaError::InvalidSize {

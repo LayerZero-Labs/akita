@@ -821,10 +821,6 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
                 3 => cached_interval!(4),
                 5 => cached_interval!(6),
                 7 => cached_interval!(8),
-                9 => cached_interval!(10),
-                11 => cached_interval!(12),
-                13 => cached_interval!(14),
-                15 => cached_interval!(16),
                 _ => {}
             }
         }
