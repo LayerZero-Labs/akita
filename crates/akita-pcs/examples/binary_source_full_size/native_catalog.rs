@@ -160,9 +160,9 @@ pub(super) fn build(
     let cached = if local.is_file() {
         Some((local.clone(), std::fs::read(&local)?))
     } else {
-        cache.as_ref().and_then(|path| {
-            std::fs::read(path).ok().map(|bytes| (path.clone(), bytes))
-        })
+        cache
+            .as_ref()
+            .and_then(|path| std::fs::read(path).ok().map(|bytes| (path.clone(), bytes)))
     };
     if let Some((path, bytes)) = cached {
         let rejected = |error: Box<dyn std::error::Error>| {

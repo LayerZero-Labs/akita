@@ -28,8 +28,9 @@ use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
 /// commitment compression's negative-binary digits. Their `{-1,0}` predicates
 /// are compression constraints, independent of the binary source agreement.
 /// Explicit signed plans append negative offset bits and link them to S. With
-/// widths at most 64 and canonical base-eight depth, both sides of this link
-/// have absolute value below 2^67, so equality modulo P has no integer wrap.
+/// the selected field and canonical base-eight depth, OrdinarySourceWidth
+/// bounds the complete malicious residual strictly below the modulus before
+/// compilation. Equality in the field therefore proves the integer link.
 #[derive(Clone, Debug)]
 pub struct OrdinaryNativeRootPlan {
     profile: GroupCommitPhaseParams,

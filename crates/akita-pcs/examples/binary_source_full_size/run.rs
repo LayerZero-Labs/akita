@@ -177,9 +177,8 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     };
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
     let descriptor = claims::descriptor(log)?;
-    let manifest = BinaryCommittedGroupManifest::with_field_profile(
-        descriptor.clone(), 0, &carrier, PROFILE,
-    )?;
+    let manifest =
+        BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, &carrier, PROFILE)?;
     let count = checked::pow2(log).ok_or("carrier count overflow")?;
     let words = claims::words(count);
     #[cfg(test)]
@@ -333,7 +332,12 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         )?;
     }
     akita_transcript::finish_proof_ranges(&prover);
-    metrics::proof(prover.narg_string(), log, claims.word_point.is_some(), PROFILE)?;
+    metrics::proof(
+        prover.narg_string(),
+        log,
+        claims.word_point.is_some(),
+        PROFILE,
+    )?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
     prover.public_message(&BytesMsg(b"application-suffix"));
     let fixture = Fixture {

@@ -44,9 +44,7 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         word_value: [0; 16],
         prime: None,
         ordinary: (shape == "binary-and-prime-claims-plus-ordinary").then(|| {
-            let point = (0..log.max(18))
-                .map(|axis| 7 + axis as u128 * 11)
-                .collect();
+            let point = (0..log.max(18)).map(|axis| 7 + axis as u128 * 11).collect();
             (point, 7)
         }),
     };

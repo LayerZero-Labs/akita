@@ -22,9 +22,17 @@ pub fn plan_signed_ordinary_source(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     // Validate the caller's complete domain before selecting a sorted prefix.
     akita_schedules::planner_support::validate_policy(policy)?;
-    if policy.sis_modulus_profile != SisModulusProfileId::Q128Offset275
-        || policy.claim_ext_degree != 1
-        || policy.chal_ext_degree != 1
+    let extension_degree = match policy.sis_modulus_profile {
+        SisModulusProfileId::Q128Offset275 => 1,
+        SisModulusProfileId::Q64Offset59 => 2,
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "unsupported signed native producer field".into(),
+            ))
+        }
+    };
+    if policy.claim_ext_degree != extension_degree
+        || policy.chal_ext_degree != extension_degree
         || !(policy.inner_basis_range.0..=policy.inner_basis_range.1).contains(&3)
         || !(policy.opening_basis_range.0..=policy.opening_basis_range.1).contains(&3)
         || !policy
@@ -41,7 +49,7 @@ pub fn plan_signed_ordinary_source(
         ));
     }
     let mut selected = *policy;
-    selected.decomposition = width.decomposition();
+    selected.decomposition = width.decomposition(policy.sis_modulus_profile)?;
     selected.inner_basis_range = (3, 3);
     selected.opening_basis_range = (3, 3);
     // Restrict the caller's dimension domain to the native compiler's current
@@ -55,7 +63,7 @@ pub fn plan_signed_ordinary_source(
     selected.ring_dimension_schedule.suffix_dimensions = &[64];
     let planned = find_schedule(
         &ScheduleLookupKey::single(group),
-        width.producer_contract()?,
+        width.producer_contract(policy.sis_modulus_profile)?,
         &[],
         &selected,
         ring_challenge_config,
@@ -97,7 +105,10 @@ mod tests {
             .unwrap();
             let offset = 1u128 << (bits - 1);
             assert_eq!(contract.declared_bounds(), (Some(offset), Some(offset - 1)));
-            assert_eq!(width.producer_contract().unwrap(), contract);
+            assert_eq!(
+                width.producer_contract(policy.sis_modulus_profile).unwrap(),
+                contract
+            );
             let planned = plan_signed_ordinary_source(
                 group,
                 width,
@@ -179,5 +190,47 @@ mod tests {
             AkitaError::InvalidSetup(message)
                 if message == "adaptive A domain must be strictly sorted and duplicate-free"
         ));
+    }
+
+    #[test]
+    fn p64_signed_producer_plans_a_quadratic_field_suffix() {
+        use akita_config::proof_optimized::fp64::Dense;
+        let mut policy = policy_of::<Dense>(ChunkedWitnessCfg::default_non_chunked());
+        policy.ring_dimension_schedule.potential_a_dimensions = &[64, 128];
+        policy.ring_dimension_schedule.potential_b_dimensions = &[64];
+        policy.ring_dimension_schedule.potential_d_dimensions = &[64];
+        policy.ring_dimension_schedule.suffix_dimensions = &[64];
+        let width = OrdinarySourceWidth::new(9).unwrap();
+        let planned = plan_signed_ordinary_source(
+            PolynomialGroupLayout::new(18, 3),
+            width,
+            &policy,
+            Dense::ring_challenge_config,
+        )
+        .unwrap();
+        planned.schedule.validate_structure().unwrap();
+        let profile = &planned.schedule.root.params.own_group().profile;
+        width.validate_profile(profile).unwrap();
+        assert_eq!(profile.group.num_polynomials(), 3);
+        assert_eq!(profile.inner.digits.num_digits, 4);
+        assert_eq!(profile.outer.digits.num_digits, 22);
+        assert_eq!(
+            profile.inner.matrix.sis_modulus_profile(),
+            SisModulusProfileId::Q64Offset59
+        );
+        assert_eq!(
+            profile.outer.matrix.sis_modulus_profile(),
+            SisModulusProfileId::Q64Offset59
+        );
+        assert_eq!(policy.claim_ext_degree, 2);
+        assert_eq!(policy.chal_ext_degree, 2);
+        policy.claim_ext_degree = 1;
+        assert!(plan_signed_ordinary_source(
+            PolynomialGroupLayout::new(18, 3),
+            width,
+            &policy,
+            Dense::ring_challenge_config,
+        )
+        .is_err());
     }
 }

@@ -12,14 +12,13 @@ fn fixture(shape: &'static str) {
     std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let directory = std::env::temp_dir()
-                .join(format!("akita-p64-{}-{shape}", std::process::id()));
+            let directory =
+                std::env::temp_dir().join(format!("akita-p64-{}-{shape}", std::process::id()));
             std::fs::create_dir_all(&directory).unwrap();
             let catalog = super::fixture_directory().join(format!("3-{shape}.json"));
-            std::fs::copy(&catalog, directory.join("native-catalog.json"))
-                .unwrap_or_else(|error| {
-                    panic!("Linux catalog pending at {}: {error}", catalog.display())
-                });
+            std::fs::copy(&catalog, directory.join("native-catalog.json")).unwrap_or_else(
+                |error| panic!("Linux catalog pending at {}: {error}", catalog.display()),
+            );
             run::prove(3, shape, &directory).unwrap();
             run::verify(3, shape, &directory, &metrics::Timings::default()).unwrap();
             let proof = std::fs::read(directory.join("proof.bin")).unwrap();
@@ -184,8 +183,7 @@ fn p64_mixed_complete_schedule_and_tampering() {
 fn mutate_commitment(shape: &str, directory: &Path) {
     let path = directory.join("commitments.bin");
     let bytes = std::fs::read(&path).unwrap();
-    let original =
-        Vec::<CommittedGroup<F>>::deserialize_compressed(bytes.as_slice(), &()).unwrap();
+    let original = Vec::<CommittedGroup<F>>::deserialize_compressed(bytes.as_slice(), &()).unwrap();
     for (index, commitment) in original.iter().enumerate() {
         let mut commitments = original.clone();
         let mut payload = commitment.commitment().rows().coeffs().to_vec();

@@ -303,7 +303,7 @@ fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
         let manifest = BinaryCommittedGroupManifest::with_field_profile(
             source,
             0,
-            &binary_ordinary_profile_fixture(field),
+            &binary_ordinary_profile_fixture(field, None),
             field,
         )
         .unwrap();
@@ -486,7 +486,10 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
             &setup,
             1 << 17,
             64,
-            Some(binary_ordinary_profile_fixture(BinaryFieldProfile::P128))
+            Some(binary_ordinary_profile_fixture(
+                BinaryFieldProfile::P128,
+                None
+            ))
         ),
         Err(AkitaError::InvalidSetup(_))
     ));

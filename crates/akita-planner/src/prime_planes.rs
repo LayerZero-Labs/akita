@@ -52,7 +52,9 @@ pub fn price_binary_root_planes(
     manifest.validate()?;
     prime.validate(manifest.descriptor())?;
     if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
-        return Err(AkitaError::InvalidInput("prime plane profile mismatch".into()));
+        return Err(AkitaError::InvalidInput(
+            "prime plane profile mismatch".into(),
+        ));
     }
     let mut plan = BinaryRootWitnessPlan::for_profile(
         manifest.descriptor(),
@@ -273,14 +275,9 @@ mod tests {
         for (log, columns, rank) in [(3, 2, 1), (22, 256, 2)] {
             let manifest = manifest(log, columns, 1, BinaryFieldProfile::P64);
             for (word, planes) in [(true, 0), (false, 1), (true, 1)] {
-                let price = price_binary_root_planes(
-                    &manifest,
-                    word,
-                    &prime(&manifest, planes),
-                    64,
-                    None,
-                )
-                .unwrap();
+                let price =
+                    price_binary_root_planes(&manifest, word, &prime(&manifest, planes), 64, None)
+                        .unwrap();
                 assert_eq!(price.d_rank, rank);
                 assert_eq!(price.d_table_min_rank, Some(rank));
                 assert_eq!(

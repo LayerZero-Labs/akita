@@ -113,7 +113,7 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
         let prime =
             PrimePlaneManifest::with_field_profile(descriptor, Some(prime_claim.clone()), field)
                 .unwrap();
-        let profile = mixed.then(|| binary_ordinary_profile_fixture(field));
+        let profile = mixed.then(|| binary_ordinary_profile_fixture(field, None));
         let setup = akita_types::AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
@@ -141,7 +141,7 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
                     .collect::<Vec<_>>(),
                 vec![64, 32]
             );
-            let (segments, point, evaluation, payload) =
+            let (segments, point, evaluations, payload) =
                 crate::opaque::binary_ordinary_p64_fixture::ordinary_preimage(profile, &ordinary);
             assert_eq!(
                 segments[2].len(),
@@ -152,7 +152,8 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
                 compression.maps()[1].padded_digit_count()
             );
             natural.extend(segments);
-            (point, evaluation, payload)
+            assert_eq!(evaluations.len(), 1);
+            (point, evaluations[0], payload)
         });
         natural.push(
             BinaryRootRelation::quotient_digits(
