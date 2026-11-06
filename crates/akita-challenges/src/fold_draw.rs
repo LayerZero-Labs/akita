@@ -82,8 +82,8 @@ impl FoldChallengeFamily {
     }
 
     /// Guaranteed `log2` size of the set each challenge is uniform on, for
-    /// any challenge count: `K` for an unfiltered family, the certified
-    /// exponent for an operator-norm one.
+    /// any challenge count: `floor(log2 |S|)` for an unfiltered family, the
+    /// certified exponent for an operator-norm one.
     #[must_use]
     pub const fn set_bits(&self) -> u32 {
         self.shell.set_bits()
@@ -112,7 +112,7 @@ impl FoldChallengeFamily {
 
 pub trait FoldDraw {
     /// Squeeze one group's challenge message of exactly `len` bytes and
-    /// decode it. `decode` returns `None` when an operator-norm pool runs out;
+    /// decode it. `decode` returns `None` when the message's pool runs out;
     /// the verifier adapter rejects then.
     fn draw_message(
         &mut self,
@@ -123,7 +123,7 @@ pub trait FoldDraw {
     /// Draw one group's challenges: squeeze and decode one message of the
     /// family's fixed length.
     ///
-    /// Returns `None` when the message's operator-norm pool runs out, which
+    /// Returns `None` when the message's candidate pool runs out, which
     /// a prover treats as a failed fold-response candidate. The verifier
     /// adapter rejects instead, so it never returns `None`.
     fn draw_fold_challenges(

@@ -209,43 +209,55 @@ $$
 |S| = \binom{d}{a} \binom{d-a}{b} 2^w
 $$
 
-elements. The message is a whole number of 8-byte words, read as a
-little-endian bit stream over little-endian `u64` words. Every challenge of a
-group occupies $K$ consecutive bits of that stream, and the bits after the
-last candidate are ignored. The decoder splits a challenge's bits into two
+elements, where $R = \binom{d}{a} \binom{d-a}{b}$ counts the position
+patterns and $|S| = R \cdot 2^w$. The message is a whole number of 8-byte
+words, read as a little-endian bit stream over little-endian `u64` words.
+Every candidate of a group occupies $K = w + m$ consecutive bits of that
+stream, with $m = \min(\lceil \log_2 R \rceil + 16, 128)$, and the bits after
+the last candidate are ignored. The decoder splits a candidate's bits into two
 fields:
 
 - the low $w$ bits are the signs. The output lists the magnitude-1 positions
   in ascending order, then the magnitude-2 positions in ascending order. Bit
   $t$, least significant first, is the sign of output coefficient $t$.
-- the next $K - w$ bits are a rank $r$. Write
-  $r = r_a + \binom{d}{a} r_b$ with $r_a < \binom{d}{a}$. The value $r_a$
-  names the magnitude-1 positions as a subset of `0..d`, and $r_b$ names the
-  magnitude-2 positions as a subset of the $d - a$ remaining positions.
+- the next $m$ bits are a rank word $x$. The decoder forms the exact product
+  $x R = \mathit{hi} \cdot 2^m + \mathit{lo}$ with $\mathit{lo} < 2^m$ and
+  rejects the candidate when $\mathit{lo} < 2^m \bmod R$. Otherwise the rank
+  is $r = \mathit{hi}$. This is Lemire's multiply-shift reduction: every rank
+  in $[0, R)$ has exactly $\lfloor 2^m / R \rfloor$ accepted words, so an
+  accepted rank is exactly uniform, and a word is rejected with probability
+  below $2^{-(m - \lceil \log_2 R \rceil)}$, below $2^{-16}$ for the families
+  the standard profile uses.
+
+Write $r = r_a + \binom{d}{a} r_b$ with $r_a < \binom{d}{a}$. The value $r_a$
+names the magnitude-1 positions as a subset of `0..d`, and $r_b$ names the
+magnitude-2 positions as a subset of the $d - a$ remaining positions.
 
 A rank names a subset by colexicographic order: for $k$ from the subset size
 down to 1, take the largest $c$ with $\binom{c}{k} \le r$, emit position $c$,
 and subtract $\binom{c}{k}$ from $r$. Every binomial coefficient the decoder
-needs fits in 128 bits, and so does every field it reads. The map from
-$[0, |S|)$ to $S$ is a bijection.
+needs fits in 128 bits, and so does every field it reads. Signs and rank
+together name every element of $S$ exactly once, so an accepted candidate is
+exactly uniform on the whole shell.
 
-**Families without a norm filter.** $K = \lfloor \log_2 |S| \rfloor$. Every
-$K$-bit value is accepted, so the challenge set is the first $2^K$ elements of
-the shell in this order. A subset of the shell keeps everything the fold
-argument uses: the difference of two distinct challenges is still invertible,
-and every challenge has the same norms. The message holds exactly one $K$-bit
-slot per challenge, padded to a word.
+**Families without a norm filter.** Every candidate with an accepted rank
+word is a challenge, so the challenge set is the whole shell. The shell keeps
+everything the fold argument uses: the difference of two distinct challenges
+is invertible, and every challenge has the same norms. It is also closed
+under negacyclic rotation and the ring automorphisms, and every coefficient
+position is used.
 
 **Families with operator-norm rejection.** An L2 fold may require a challenge
 whose negacyclic convolution operator norm is below a scheduled threshold. The
-certificate for that threshold counts accepted elements of the whole shell, so
-these families decode over the whole shell: $K = \lceil \log_2 |S| \rceil$.
-A candidate whose rank is at least $\binom{d}{a}\binom{d-a}{b}$ is rejected;
-an in-range candidate is accepted when the certified predicate accepts it.
-The first accepted candidates, in message order, are the challenges.
+certificate for that threshold counts accepted elements of the whole shell. A
+candidate with an accepted rank word is accepted when the certified predicate
+also accepts it.
 
-The message holds a fixed pool of candidates, sized so that an honest message
-runs out with negligible probability. If a message does run out, the
+In both cases the first accepted candidates, in message order, are the
+challenges. The message holds a fixed pool of candidates, sized so that an
+honest message runs out with probability at most $2^{-161}$: exactly for a
+family without a norm filter, at a measured predicate rate for an
+operator-norm family. If a message does run out, the
 verifier rejects and the honest prover tries the next fold-response nonce.
 Running out depends only on which candidates pass, never on the values of the
 accepted ones, so conditioned on not running out the challenges are
@@ -258,8 +270,9 @@ security route and reject an operator-norm policy.
 Every Akita challenge message is priced so that one hash call buys at most
 about $2^{-128}$ chance of breaking soundness. Fold extraction fails at a
 fixed transcript prefix with probability at most $W / 2^K$, where $W$ is the
-number of pairs in the fold and $2^K$ is the size of the smallest challenge
-set among its groups. With $W$ in the thousands at the first fold, one message
+number of pairs in the fold and $2^K$ is a power-of-two lower bound on the
+smallest challenge set among its groups: $K = \lfloor \log_2 |S| \rfloor$ for a
+family without a norm filter. With $W$ in the thousands at the first fold, one message
 would miss the target by up to 15 bits in the current catalogs. The proof of work restores it: the
 plan chooses the least $g$ with $W \cdot 2^{128} \le 2^K \cdot 2^g$, so a
 fresh fold message costs about $2^g$ hash calls. The prover pays this once per
