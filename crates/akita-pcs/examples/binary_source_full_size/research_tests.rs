@@ -41,8 +41,9 @@ fn fixture(shape: &'static str) {
                 FAULT.with(|selected| selected.set(Some(fault)));
                 run::prove::<P64>(LOG, shape, &directory).unwrap();
                 FAULT.with(|selected| selected.set(None));
-                let error = run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default())
-                    .unwrap_err();
+                let error =
+                    run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default())
+                        .unwrap_err();
                 assert!(
                     matches!(
                         error.downcast_ref::<AkitaError>(),

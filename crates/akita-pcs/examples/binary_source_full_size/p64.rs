@@ -49,6 +49,9 @@ fn compare_baseline(proof: &[u8], log: usize, shape: &str) {
     let expected = entries
         .next()
         .unwrap_or_else(|| panic!("missing reference pin for {key} in {}", pin.display()));
-    assert!(entries.next().is_none(), "duplicate reference pin for {key}");
+    assert!(
+        entries.next().is_none(),
+        "duplicate reference pin for {key}"
+    );
     assert_eq!(actual, expected.trim(), "p64 reference bytes changed");
 }
