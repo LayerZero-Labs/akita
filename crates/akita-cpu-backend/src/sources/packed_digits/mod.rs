@@ -94,6 +94,24 @@ impl From<Arc<[i8]>> for PackedSignedDigits {
 
 impl PackedSignedDigits {
     pub(crate) fn from_i8_digits_auto(digits: Vec<i8>) -> Self {
+        // Width selection is a full pass before encoding. Chunk-local extrema
+        // combine exactly, including i8::MIN, without depending on task order.
+        #[cfg(feature = "parallel")]
+        let bounds = if digits.len() >= PARALLEL_ENCODE_THRESHOLD {
+            digits
+                .par_chunks(PARALLEL_ENCODE_THRESHOLD)
+                .map(|chunk| signed_digit_bounds(chunk.iter().copied()))
+                .reduce(
+                    || SignedDigitBounds::ZERO,
+                    |mut bounds, task| {
+                        bounds.include_bounds(task);
+                        bounds
+                    },
+                )
+        } else {
+            signed_digit_bounds(digits.iter().copied())
+        };
+        #[cfg(not(feature = "parallel"))]
         let bounds = signed_digit_bounds(digits.iter().copied());
         let bit_width = minimum_signed_bit_width(bounds);
         let len = digits.len();

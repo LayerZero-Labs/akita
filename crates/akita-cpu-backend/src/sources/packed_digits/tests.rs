@@ -349,12 +349,20 @@ fn auto_storage_matches_explicit_width_for_every_tail_and_signed_extreme() {
         PackedSignedDigits::from_i8_digits_auto(vec![])
     );
     for width in 1..=8 {
-        for len in [0, 1, 7, 8, 63, 64, 65, 127, 128, 129] {
+        for len in [
+            0, 1, 7, 8, 63, 64, 65, 127, 128, 129, 65_535, 65_536, 65_537, 131_073,
+        ] {
             let mut digits = random_digits(&mut rng, len, width);
-            if let Some(first) = digits.first_mut() {
-                *first = -(1i16 << (width - 1)) as i8;
+            if let Some(last) = digits.last_mut() {
+                *last = -(1i16 << (width - 1)) as i8;
+            }
+            if len > 1 {
+                digits[len / 2] = ((1i16 << (width - 1)) - 1) as i8;
             }
             let automatic = PackedSignedDigits::from_i8_digits_auto(digits.clone());
+            if len != 0 {
+                assert_eq!(automatic.bit_width(), width);
+            }
             let explicit =
                 PackedSignedDigits::from_i8_digits(digits, automatic.bit_width()).unwrap();
             assert_eq!(automatic, explicit);
