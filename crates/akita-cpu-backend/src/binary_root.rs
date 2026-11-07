@@ -33,6 +33,9 @@ pub(crate) mod evaluation;
 mod residual;
 mod setup_prefix;
 pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
+pub use setup_prefix::{
+    CompositePrefixPreparationCost, PreparedCompositePrefix, TrustedCompositePrefixDefinition,
+};
 
 /// An integer identity `sum A*z - sum iota(c)*T = remainder + Psi*quotient`.
 /// These values are construction witnesses, not unauthenticated proof messages.
