@@ -7,7 +7,7 @@ use jolt_field::{ExtField, Field};
 
 use super::{
     BinaryScalarChallengeSource, BinarySourceDescriptor, PreparedBinaryScalarChallenges,
-    PrimePlaneManifest,
+    PrimePlaneManifest, ScalarChallengeSupport,
 };
 use crate::native_root_relation::{
     weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
@@ -186,7 +186,11 @@ impl<E: Field> PrimePlaneWeights<E> {
         self.table_len
     }
 
-    fn support(&self, polynomial: usize, column: usize) -> Result<&[(usize, bool)], AkitaError> {
+    fn support(
+        &self,
+        polynomial: usize,
+        column: usize,
+    ) -> Result<&ScalarChallengeSupport, AkitaError> {
         let index =
             checked::mul_add(polynomial, self.columns, column).ok_or(AkitaError::InvalidProof)?;
         self.challenges.support(index)

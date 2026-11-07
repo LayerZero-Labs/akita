@@ -18,10 +18,13 @@ use crate::native_root_relation::{
 };
 use crate::root_repacking::RootCoefficientRepacking;
 
+/// Nonzero scalar coefficients, as `(position, negative)` in coefficient order.
+pub(crate) type ScalarChallengeSupport = Vec<(usize, bool)>;
+
 /// Checked replayed fold challenges shared by the root relation compilers.
 #[derive(Clone, Debug)]
 pub struct PreparedBinaryScalarChallenges {
-    rows: Arc<[Vec<(usize, bool)>]>,
+    rows: Arc<[ScalarChallengeSupport]>,
     owners: usize,
     columns: usize,
 }
@@ -31,11 +34,8 @@ impl PreparedBinaryScalarChallenges {
         self.rows.len()
     }
 
-    pub(crate) fn support(&self, index: usize) -> Result<&[(usize, bool)], AkitaError> {
-        self.rows
-            .get(index)
-            .map(Vec::as_slice)
-            .ok_or(AkitaError::InvalidProof)
+    pub(crate) fn support(&self, index: usize) -> Result<&ScalarChallengeSupport, AkitaError> {
+        self.rows.get(index).ok_or(AkitaError::InvalidProof)
     }
 }
 

@@ -7,7 +7,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 use crate::binary_source::{
     BinaryRootWitnessPlan, BinaryScalarChallengeSource, PreparedBinaryScalarChallenges,
-    BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
+    ScalarChallengeSupport, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
 };
 use crate::native_root_relation::{
     weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
@@ -313,7 +313,7 @@ impl<E: Field> ImageWeights<E> {
         &self,
         row_index: usize,
         column: usize,
-    ) -> Result<(usize, &[(usize, bool)]), AkitaError> {
+    ) -> Result<(usize, &ScalarChallengeSupport), AkitaError> {
         let owner = row_index / self.rank;
         let row = row_index % self.rank;
         let index =
