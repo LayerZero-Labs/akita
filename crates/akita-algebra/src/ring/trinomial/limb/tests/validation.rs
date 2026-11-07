@@ -4,8 +4,10 @@ use super::*;
 fn limb_wrong_lengths_leave_destinations_unchanged() {
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         let domain = TrinomialLimbDomain::new(prime).unwrap();
-        let mut slots = transform(&domain, &[1; DEGREE]);
+        let mut slots = domain.zero_slots();
+        slots.values.fill(17);
         let original = slots.clone();
+        assert!(domain.interleaved_first_level.get().is_none());
         for len in [0, 1, 10, 12, 100] {
             assert_eq!(
                 domain.forward_interleaved_bits(&vec![0; len], &mut slots),
@@ -14,6 +16,7 @@ fn limb_wrong_lengths_leave_destinations_unchanged() {
                     actual: len
                 })
             );
+            assert!(domain.interleaved_first_level.get().is_none());
         }
         for len in [0, 1, 647, 649, 1000] {
             assert_eq!(
@@ -59,15 +62,20 @@ fn limb_invalid_primes_tail_bits_and_coefficients_are_rejected() {
     }
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         let domain = TrinomialLimbDomain::new(prime).unwrap();
-        let mut slots = transform(&domain, &[1; DEGREE]);
+        let mut slots = domain.zero_slots();
+        slots.values.fill(17);
         let original = slots.clone();
+        assert!(domain.interleaved_first_level.get().is_none());
         for bit in 8..64 {
             let mut bits = [0; 11];
             bits[10] = 1 << bit;
-            assert!(matches!(
+            assert_eq!(
                 domain.forward_interleaved_bits(&bits, &mut slots),
-                Err(TrinomialError::LimbInput { .. })
-            ));
+                Err(TrinomialError::LimbInput {
+                    reason: "unused tail bits must be zero",
+                })
+            );
+            assert!(domain.interleaved_first_level.get().is_none());
         }
         let half = (prime / 2) as i32;
         for position in [0, 323, 324, 647] {
@@ -91,16 +99,21 @@ fn limb_cross_prime_slots_are_rejected_without_mutation() {
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         let domain = TrinomialLimbDomain::new(prime).unwrap();
         let slots = transform(&domain, &[1; DEGREE]);
+        assert!(domain.interleaved_first_level.get().is_none());
         for other in TrinomialLimbDomain::ADMITTED_PRIMES
             .into_iter()
             .filter(|&p| p != prime)
         {
             let mut wrong = TrinomialLimbDomain::new(other).unwrap().zero_slots();
+            wrong.values.fill(17);
             let original = wrong.clone();
-            assert!(matches!(
+            assert_eq!(
                 domain.forward_interleaved_bits(&[0; 11], &mut wrong),
-                Err(TrinomialError::LimbInput { .. })
-            ));
+                Err(TrinomialError::LimbInput {
+                    reason: "slot prime does not match the domain",
+                })
+            );
+            assert!(domain.interleaved_first_level.get().is_none());
             assert!(matches!(
                 domain.forward_centered(&[0; DEGREE], &mut wrong),
                 Err(TrinomialError::LimbInput { .. })
@@ -139,7 +152,7 @@ fn limb_cross_prime_slots_are_rejected_without_mutation() {
 }
 
 #[test]
-fn limb_column_rows_reject_wrong_tags_without_mutation() {
+fn limb_product_rejects_wrong_tags_without_mutation() {
     let backends = available_backends();
     for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
         let domain = TrinomialLimbDomain::new(prime).unwrap();
@@ -149,38 +162,30 @@ fn limb_column_rows_reject_wrong_tags_without_mutation() {
             .find(|&p| p != prime)
             .unwrap();
         let wrong = TrinomialLimbDomain::new(other).unwrap().zero_slots();
-        for rank in 1..=4 {
-            for backend in backends.iter().copied() {
-                let mut accumulators = vec![TrinomialLimbAccumulator::new(&domain); rank];
-                for accumulator in &mut accumulators {
-                    accumulator
-                        .add_product_backend(&slots, &slots, backend)
-                        .unwrap();
-                }
-                let original = accumulators.clone();
-                for accumulator in &mut accumulators {
-                    for (lhs, rhs) in [(&wrong, &slots), (&slots, &wrong), (&wrong, &wrong)] {
-                        assert!(matches!(
-                            accumulator.add_product_backend(lhs, rhs, backend),
-                            Err(TrinomialError::LimbInput { .. })
-                        ));
-                    }
-                }
-                for (actual, expected) in accumulators.iter().zip(&original) {
-                    assert_eq!(actual.sums, expected.sums);
-                    assert_eq!(actual.terms, expected.terms);
-                }
-                let other_domain = TrinomialLimbDomain::new(other).unwrap();
-                let mut mixed = TrinomialLimbAccumulator::new(&other_domain);
-                mixed.add_product_backend(&wrong, &wrong, backend).unwrap();
-                let before = mixed.clone();
+        for backend in backends.iter().copied() {
+            let mut accumulator = TrinomialLimbAccumulator::new(&domain);
+            accumulator
+                .add_product_backend(&slots, &slots, backend)
+                .unwrap();
+            let original = accumulator.clone();
+            for (lhs, rhs) in [(&wrong, &slots), (&slots, &wrong), (&wrong, &wrong)] {
                 assert!(matches!(
-                    mixed.add_product_backend(&slots, &slots, backend),
+                    accumulator.add_product_backend(lhs, rhs, backend),
                     Err(TrinomialError::LimbInput { .. })
                 ));
-                assert_eq!(mixed.sums, before.sums);
-                assert_eq!(mixed.terms, before.terms);
+                assert_eq!(accumulator.sums, original.sums);
+                assert_eq!(accumulator.terms, original.terms);
             }
+            let other_domain = TrinomialLimbDomain::new(other).unwrap();
+            let mut mixed = TrinomialLimbAccumulator::new(&other_domain);
+            mixed.add_product_backend(&wrong, &wrong, backend).unwrap();
+            let before = mixed.clone();
+            assert!(matches!(
+                mixed.add_product_backend(&slots, &slots, backend),
+                Err(TrinomialError::LimbInput { .. })
+            ));
+            assert_eq!(mixed.sums, before.sums);
+            assert_eq!(mixed.terms, before.terms);
         }
     }
 }
