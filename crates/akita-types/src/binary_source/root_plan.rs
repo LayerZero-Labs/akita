@@ -160,6 +160,29 @@ impl BinaryRootWitnessPlan {
         }
     }
 
+    /// Counts shared by singleton and roster accounting. B and D ranks come
+    /// from the selected commitment manifest, independently for each role.
+    pub fn row_counts(
+        &self,
+        b_rows: usize,
+        d_rows: usize,
+    ) -> Result<super::BinaryRootRowCounts, AkitaError> {
+        if !(1..=5).contains(&b_rows) || !(1..=5).contains(&d_rows) {
+            return Err(AkitaError::InvalidInput(
+                "invalid binary authentication rank".into(),
+            ));
+        }
+        Ok(super::BinaryRootRowCounts {
+            coefficients: self.coefficient_batch_count()?,
+            word: if self.word { 2 } else { 0 },
+            prime: checked::exact_div(self.prime_planes, self.field_profile.extension_degree())
+                .and_then(|claims| checked::product([2, claims]))
+                .ok_or(AkitaError::InvalidProof)?,
+            b: b_rows,
+            d: d_rows,
+        })
+    }
+
     pub fn projection_bounds(&self) -> &BinaryResidualBounds {
         &self.projection_bounds
     }
