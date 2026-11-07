@@ -58,7 +58,7 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
     direct_policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
     let contract = BinaryTestSuffix::committed_source_contract().expect("fixture contract");
     let singleton = |vars| ScheduleLookupKey::single(PolynomialGroupLayout::singleton(vars));
-    let direct_rows = [23, 18]
+    let direct_rows: Vec<_> = [23, 18]
         .into_iter()
         .map(|vars| {
             let planned = akita_planner::find_schedule(

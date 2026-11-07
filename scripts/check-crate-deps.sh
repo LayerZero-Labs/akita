@@ -94,7 +94,7 @@ for label in default all-features; do
   esac
   for candidate in "${forbidden[@]}"; do
     # The withdrawn standalone prover now calls the canonical CPU arithmetic.
-    if [ "$pkg" = "akita-labinius-prover" ] && [ "$candidate" = "akita-cpu-backend" ]; then
+    if [ "$#" -eq 0 ] && [ "$pkg" = "akita-labinius-prover" ] && [ "$candidate" = "akita-cpu-backend" ]; then
       continue
     fi
     if grep -qE "(^|[[:space:]])${candidate}([[:space:]]|$)" <<<"${tree}"; then
