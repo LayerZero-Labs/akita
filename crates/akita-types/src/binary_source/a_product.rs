@@ -233,7 +233,7 @@ impl<E: Field> BinaryAProduct<E> {
             .iter()
             .zip(eq)
             .fold(E::zero(), |acc, (&a, b)| acc + a * b);
-        Ok(coefficient * truncated_equality_product(&self.row_point, row_point, self.rows)?)
+        Ok(coefficient * truncated_equality_product(&self.row_point, row_point)?)
     }
 }
 
@@ -247,45 +247,16 @@ fn field_buffer<F: Field>(len: usize) -> Result<Vec<F>, AkitaError> {
 }
 
 // Sum eq(a,j) eq(b,j) over the real rows, without expansion or division.
-fn truncated_equality_product<E: Field>(a: &[E], b: &[E], rows: usize) -> Result<E, AkitaError> {
-    let bits = a.len().max(b.len());
-    let capacity = checked::pow2(bits).ok_or(AkitaError::InvalidProof)?;
-    if rows > checked::pow2(a.len()).ok_or(AkitaError::InvalidProof)?
-        || rows > checked::pow2(b.len()).ok_or(AkitaError::InvalidProof)?
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let mut lower = vec![E::one()];
-    let mut branches = Vec::new();
-    for bit in 0..bits {
-        let x = a.get(bit).copied().unwrap_or(E::zero());
-        let y = b.get(bit).copied().unwrap_or(E::zero());
-        let left = (E::one() - x) * (E::one() - y);
-        let right = x * y;
-        lower.push(*lower.last().ok_or(AkitaError::InvalidProof)? * (left + right));
-        branches.push((left, right));
-    }
-    if rows == capacity {
-        return lower.last().copied().ok_or(AkitaError::InvalidProof);
-    }
-    let mut result = E::zero();
-    let mut equal = E::one();
-    for bit in (0..bits).rev() {
-        let &(left, right) = branches.get(bit).ok_or(AkitaError::InvalidProof)?;
-        if (rows >> bit) & 1 != 0 {
-            result += equal * left * lower.get(bit).copied().ok_or(AkitaError::InvalidProof)?;
-            equal *= right;
-        } else {
-            equal *= left;
-        }
-    }
-    Ok(result)
+fn truncated_equality_product<E: Field>(a: &[E], b: &[E]) -> Result<E, AkitaError> {
+    let (shared, tail) = b
+        .split_at_checked(a.len())
+        .ok_or(AkitaError::InvalidProof)?;
+    Ok(EqPolynomial::mle(a, shared)?
+        * tail.iter().fold(E::one(), |product, &coordinate| {
+            product * (E::one() - coordinate)
+        }))
 }
 
 #[cfg(test)]
 #[path = "a_product_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "a_product_measurements.rs"]
-mod measurements;

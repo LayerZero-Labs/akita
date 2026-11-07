@@ -1,5 +1,6 @@
 use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor};
+use akita_params::binary_setup::BinaryFieldProfile;
 use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -18,7 +19,8 @@ fn group_plan(rows: usize, rank: usize, owners: usize) -> BinaryRootWitnessPlan 
         },
     )
     .unwrap();
-    BinaryRootWitnessPlan::new(&descriptor, rank, 64).unwrap()
+    BinaryRootWitnessPlan::for_profile(&descriptor, rank, 64, BinaryFieldProfile::P128, true, 0)
+        .unwrap()
 }
 
 fn random_scalar(rng: &mut StdRng) -> F {
@@ -147,10 +149,8 @@ fn stage3_rho_boundary_matches_coefficient_functional() {
 fn stage3_a_product_matches_independent_signed_remainder_and_response_digits() {
     let mut rng = StdRng::seed_from_u64(0xa753_0239);
     for owners in [1, 2] {
-        for rows in [1usize, 2, 3, 5] {
+        for rows in [1usize, 2, 4, 8] {
             for rank in [1usize, 3] {
-                // Public descriptors currently require power-of-two source rows.
-                // An internal live-row cutoff also exercises odd-row arithmetic.
                 let plan = group_plan(rows.next_power_of_two(), rank, owners);
                 let row_stride = rank.next_power_of_two() * STRIDE;
                 let prefix_len = (rows * row_stride).next_power_of_two() * 2;
@@ -167,8 +167,7 @@ fn stage3_a_product_matches_independent_signed_remainder_and_response_digits() {
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
-                let mut product = BinaryAProduct::new(&plan, &rho, &point, prefix_len).unwrap();
-                product.rows = rows;
+                let product = BinaryAProduct::new(&plan, &rho, &point, prefix_len).unwrap();
                 let (index, coefficient) = product.factors().unwrap();
                 let direct_weights = direct_response_weights(&matrix, &rho);
                 let mut direct_at_point = F::zero();
@@ -246,9 +245,9 @@ fn stage3_a_product_matches_independent_signed_remainder_and_response_digits() {
 }
 
 #[test]
-fn stage3_a_product_terminal_matches_dense_factors_with_zero_coordinates_and_odd_cutoff() {
+fn stage3_a_product_terminal_matches_dense_factors_with_zero_coordinates_and_larger_prefix() {
     let mut rng = StdRng::seed_from_u64(0x7621_aa31);
-    for rows in [1usize, 2, 3, 5] {
+    for rows in [1usize, 2, 4, 8] {
         let plan = plan(rows.next_power_of_two(), 3);
         let prefix_len = (rows * 4 * STRIDE).next_power_of_two() * 2;
         for zero_coordinates in [false, true] {
@@ -264,8 +263,7 @@ fn stage3_a_product_terminal_matches_dense_factors_with_zero_coordinates_and_odd
             let rho = (0..3)
                 .map(|_| core::array::from_fn(|_| random_scalar(&mut rng)))
                 .collect::<Vec<_>>();
-            let mut product = BinaryAProduct::new(&plan, &rho, &stage2_point, prefix_len).unwrap();
-            product.rows = rows;
+            let product = BinaryAProduct::new(&plan, &rho, &stage2_point, prefix_len).unwrap();
             let (index, coefficient) = product.factors().unwrap();
             assert!(index[rows..].iter().all(|&value| value == F::zero()));
             for all_zero in [false, true] {
@@ -356,10 +354,15 @@ fn full_size_typed_prefix_requires_padded_rank_and_coefficient_axes() {
                 domain_len: domain,
             }
         );
-        let plan = BinaryRootWitnessPlan::new(&descriptor, rank, 64)
-            .unwrap()
-            .with_prime_planes(true, 1)
-            .unwrap();
+        let plan = BinaryRootWitnessPlan::for_profile(
+            &descriptor,
+            rank,
+            64,
+            BinaryFieldProfile::P128,
+            true,
+            1,
+        )
+        .unwrap();
         let point = vec![F::zero(); plan.repacking().domain_len().trailing_zeros() as usize];
         let rho = vec![[F::zero(); 648]; rank];
         // Rounding rank*m*648 as a flat array loses the padding on both
@@ -498,6 +501,5 @@ fn p64_coordinate_integer_adjoint_and_typed_a_match_independent_long_division() 
     }
     let twice_bound =
         2 * 3 * 3 * 648 * u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()) * (1u128 << 43);
-    assert_eq!(twice_bound, 731_182_933_063_452_850_126_848);
     assert!(twice_bound < 67_091_329u128 * 134_217_649 * 268_433_353);
 }

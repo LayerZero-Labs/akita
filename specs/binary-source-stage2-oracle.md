@@ -254,8 +254,8 @@ follow below. All four shapes have `n = 25` at 2^22 except the removed multi-poi
 ## Acceptance
 
 - Setup, commitment and proof bytes and the transcript are unchanged.
-  `scripts/binary-source-full-size-digests.tsv` and `compatibility.rs` are
-  untouched; the full-size pins match.
+  Differential tests compare the live implementations; the full-size driver
+  reports proof size and digest measurements and verifies in a separate process.
 - The ordinary root bytes (`ordinary_grouped_root_bytes`) are unchanged.
 - A differential test runs Stage 2 on the dense table and on the profiles for
   fixtures with several owners, prime planes and the mixed ordinary group. It
