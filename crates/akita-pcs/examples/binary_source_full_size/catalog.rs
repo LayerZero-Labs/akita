@@ -218,14 +218,25 @@ pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::erro
     policy.recursive_setup_planning = false;
     policy.selection_policy = SelectionPolicyId::for_policy(false);
     policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(23));
     let direct = akita_planner::find_schedule(
-        &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(23)),
+        &key,
         FullSize::committed_source_contract()?,
         &[],
         &policy,
         FullSize::ring_challenge_config,
     )?;
-    let carrier = direct.schedule.root.params.own_group().profile;
+    let profiles = CommittedGroupBatchProfile {
+        final_group: direct.schedule.root.params.own_group().profile,
+        precommitteds: Vec::new(),
+    };
+    let direct = ValidatedScheduleCatalog::try_new(
+        FullSize::schedule_family_name(),
+        [(profiles, direct.schedule)],
+        &policy,
+        FullSize::ring_challenge_config,
+    )?;
+    let carrier = direct.resolve_key(&key)?.profiles().final_group;
     let ordinary = if shape == "binary-and-prime-claims-plus-ordinary" {
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
         let planned = akita_planner::find_schedule(
