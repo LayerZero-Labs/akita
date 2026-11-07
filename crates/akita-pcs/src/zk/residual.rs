@@ -52,8 +52,10 @@ pub struct ResidualShape {
 /// The residual's opening matrices `A` and `[B | B′]` over `R_D`
 /// ([`ResidualShape::matrices`]).
 pub struct ResidualMatrices<const D: usize> {
-    a: Arc<PreparedMatrix<F, D>>,
-    b: Arc<PreparedMatrix<F, D>>,
+    /// Inner witness map; `ResidualShape::blocks` checks its shape before use.
+    pub a: Arc<PreparedMatrix<F, D>>,
+    /// Outer commitment map, checked by `ResidualShape::blocks`.
+    pub b: Arc<PreparedMatrix<F, D>>,
 }
 
 impl ResidualShape {
@@ -238,7 +240,7 @@ impl ResidualShape {
     }
 
     /// The shapes of `A` and `[B | B′]` over the residual ring.
-    fn matrix_shapes(&self) -> (MatrixShape, MatrixShape) {
+    pub fn matrix_shapes(&self) -> (MatrixShape, MatrixShape) {
         let ring_dim = self.ring_dim();
         let profile = self.geometry.profile;
         let rows = profile.inner.matrix.output_rank();
@@ -255,6 +257,12 @@ impl ResidualShape {
                 ring_dim,
             },
         )
+    }
+
+    /// Matrix geometry of the residual blocks, with whether each target is compressed.
+    pub fn block_shapes(&self) -> impl Iterator<Item = (MatrixShape, bool)> {
+        let (a, b) = self.matrix_shapes();
+        std::iter::repeat_n((a, false), self.block_segments.len()).chain(std::iter::once((b, true)))
     }
 
     /// How many field elements of Akita's setup stream [`Self::matrices`]
