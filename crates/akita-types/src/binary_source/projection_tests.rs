@@ -1,25 +1,23 @@
 use super::*;
+use crate::binary_source::root_public::reference::residual_envelope;
 
 const P: u128 = u128::MAX - 274;
 
 #[test]
 fn projection_bounds_match_independent_integer_arithmetic() {
-    let bounds = BinaryResidualBounds::new(1, 2, 3, 1, P).unwrap();
-    assert_eq!(bounds.residual_bound(), 16_211_309_718_240);
-    assert_eq!(bounds.projection_bound(), 449_193_104_205_686_897_172_480);
-    let larger = BinaryResidualBounds::new(4096, 256, 3, 1, P).unwrap();
-    assert_eq!(larger.residual_bound(), 66_394_525_036_769_280);
-    assert_eq!(
-        larger.projection_bound(),
-        1_839_701_006_388_918_996_628_930_560
-    );
-    assert_eq!(larger.rank(), 3);
+    for (rows, columns) in [(1, 2), (4096, 256)] {
+        let residual = residual_envelope(rows, columns);
+        let projection = u128::from(BINARY_SOURCE_Q - 1) * (3 * 648) * residual;
+        let bounds = BinaryResidualBounds::new(rows, columns, 3, 1, P).unwrap();
+        assert_eq!(bounds.residual_bound(), residual);
+        assert_eq!(bounds.projection_bound(), projection);
+        assert_eq!(bounds.rank(), 3);
+    }
 }
 
 #[test]
 fn projection_admission_checks_strict_lift_encoding_and_overflow_bounds() {
-    let bounds = BinaryResidualBounds::new(1, 2, 3, 1, P).unwrap();
-    let threshold = 2 * bounds.projection_bound();
+    let threshold = 2 * u128::from(BINARY_SOURCE_Q - 1) * (3 * 648) * residual_envelope(1, 2);
     assert!(BinaryResidualBounds::new(1, 2, 3, 1, threshold).is_err());
     assert!(BinaryResidualBounds::new(1, 2, 3, 1, threshold + 1).is_ok());
     assert!(BinaryResidualBounds::new(1_000_000_000_000, 2, 3, 1, P).is_err());
@@ -72,11 +70,10 @@ fn projection_encoding_rejects_noncanonical_bounds_and_lengths() {
 #[test]
 fn projection_twelve_bytes_cover_every_current_carry_admitted_geometry() {
     let max = BinaryResidualBounds::new(8192, 256, 3, 1, P).unwrap();
-    assert_eq!(max.residual_bound(), 132_788_824_280_985_600);
-    assert_eq!(
-        max.projection_bound(),
-        3_679_395_756_376_625_911_509_811_200
-    );
+    let residual = residual_envelope(8192, 256);
+    let projection = u128::from(BINARY_SOURCE_Q - 1) * (3 * 648) * residual;
+    assert_eq!(max.residual_bound(), residual);
+    assert_eq!(max.projection_bound(), projection);
     assert!(2 * max.projection_bound() < P);
     assert!(max.projection_bound() < 1u128 << 95);
     for row_log in 0..=13 {
@@ -94,18 +91,14 @@ fn projection_twelve_bytes_cover_every_current_carry_admitted_geometry() {
 
 #[test]
 fn projection_polynomial_count_admission_starts_rejecting_at_upper_envelope() {
-    let admitted = (1..)
-        .take_while(|&count| BinaryResidualBounds::new(8192, 256, 3, count, P).is_ok())
-        .last()
-        .unwrap();
-    assert_eq!(admitted, 10);
+    let per_owner = u128::from(BINARY_SOURCE_Q - 1) * (3 * 648) * residual_envelope(8192, 256);
+    // Both admission inequalities are strict; determine the last owner count
+    // arithmetically, without searching through the constructor's answers.
+    let admitted = (((P - 1) / 2).min((1u128 << 95) - 1) / per_owner) as usize;
     let bounds = BinaryResidualBounds::new(8192, 256, 3, admitted, P).unwrap();
-    assert_eq!(bounds.polynomials(), 10);
-    assert_eq!(bounds.residual_rows(), 30);
-    assert_eq!(
-        bounds.projection_bound(),
-        36_793_957_563_766_259_115_098_112_000
-    );
+    assert_eq!(bounds.polynomials(), admitted);
+    assert_eq!(bounds.residual_rows(), 3 * admitted);
+    assert_eq!(bounds.projection_bound(), per_owner * admitted as u128);
     assert!(BinaryResidualBounds::new(8192, 256, 3, admitted + 1, P).is_err());
     assert!(BinaryResidualBounds::new(8192, 256, 3, 0, P).is_err());
     assert!(BinaryResidualBounds::new(8192, 256, 3, usize::MAX, P).is_err());

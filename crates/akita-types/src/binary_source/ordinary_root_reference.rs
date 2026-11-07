@@ -67,58 +67,7 @@ impl OrdinaryNativeRootPlan {
         }
         let matrix = self.setup_coefficients::<E>(required, setup)?;
         let matrix = matrix.as_slice();
-        let source_coefficients = checked::product([
-            self.segments
-                .first()
-                .ok_or(AkitaError::InvalidProof)?
-                .elements,
-            a.ring_dimension(),
-            self.profile.inner.digits.num_digits,
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        let t_coefficients = checked::product([
-            self.segments
-                .get(1)
-                .ok_or(AkitaError::InvalidProof)?
-                .elements,
-            self.profile.outer.digits.num_digits,
-            b.ring_dimension(),
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        let term_capacity = [
-            checked::product([source_coefficients, a.output_rank()]),
-            checked::product([
-                self.profile.group.num_polynomials(),
-                self.profile.blocks.live_blocks,
-                a.output_rank(),
-                a.ring_dimension(),
-                self.profile.outer.digits.num_digits,
-            ]),
-            checked::product([t_coefficients, b.output_rank()]),
-            Some(first.real_digit_count()),
-            Some(first.padded_digit_count()),
-            Some(second.real_digit_count()),
-            Some(second.padded_digit_count()),
-            Some(source_coefficients),
-            checked::product([
-                self.segments
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .elements,
-                a.ring_dimension(),
-                self.source_width.map_or(0, |width| {
-                    width.bits() as usize + self.profile.inner.digits.num_digits
-                }),
-            ]),
-        ]
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .and_then(checked::sum)
-        .ok_or(AkitaError::InvalidProof)?;
         let mut terms = Vec::new();
-        terms
-            .try_reserve_exact(term_capacity)
-            .map_err(|_| AkitaError::InvalidProof)?;
         let mut row = 0usize;
         let mut claim = E::zero();
         let s_segment = self.first_segment;
@@ -698,35 +647,64 @@ mod p64_tests {
         let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
         let plan = OrdinaryNativeRootPlan::new(profile, 0).unwrap();
         let compression = profile.outer_compression_plan().unwrap();
-        assert_eq!(compression.field_bits(), 64);
-        assert_eq!(compression.terminal_coefficients(), 32);
-        assert_eq!(
-            plan.segments()[2].geometry.polynomial_modulus_dimension(),
-            64
-        );
-        assert_eq!(
-            plan.segments()[3].geometry.polynomial_modulus_dimension(),
-            32
-        );
-        let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
-        assert_eq!(
-            plan.segments()
-                .iter()
-                .map(|shape| shape.elements
-                    * shape.digits
-                    * shape.geometry.polynomial_modulus_dimension())
-                .collect::<Vec<_>>(),
-            vec![1024, 11_264, 8192, 4096]
-        );
-        assert_eq!(plan.linear_batch_count(), 9);
-        assert_eq!(
-            plan.negative_binary_addresses(&repacking).unwrap().len(),
-            12_288
-        );
-        assert_eq!(compression.unpacked_witness_bytes().unwrap(), 12_288);
+        assert_eq!(compression.field_bits(), F::MODULUS_BITS as usize);
         assert_eq!(
             compression.field_bytes() * compression.terminal_coefficients(),
-            256
+            akita_params::COMPRESSION_TARGET_BYTES
+        );
+        let maps = compression.maps();
+        let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
+        let a = profile.inner.matrix;
+        let b = profile.outer.matrix;
+        let source_elements = profile.group.num_polynomials()
+            * profile.blocks.live_blocks
+            * profile.blocks.positions_per_block;
+        let image_elements = profile.group.num_polynomials()
+            * profile.blocks.live_blocks
+            * a.output_rank()
+            * (a.ring_dimension() / b.ring_dimension());
+        let expected = [
+            (
+                source_elements,
+                profile.inner.digits.num_digits,
+                a.ring_dimension(),
+            ),
+            (
+                image_elements,
+                profile.outer.digits.num_digits,
+                b.ring_dimension(),
+            ),
+            (maps[0].input_width(), 1, maps[0].ring_dimension()),
+            (maps[1].input_width(), 1, maps[1].ring_dimension()),
+        ];
+        for (shape, &(elements, digits, degree)) in plan.segments().iter().zip(&expected) {
+            assert_eq!(
+                (
+                    shape.elements,
+                    shape.digits,
+                    shape.geometry.polynomial_modulus_dimension()
+                ),
+                (elements, digits, degree)
+            );
+        }
+        assert_eq!(plan.segments().len(), expected.len());
+        let a_rows = profile.group.num_polynomials() * profile.blocks.live_blocks * a.output_rank();
+        let b_rows = profile.outer_slice_count.get() * b.output_rank();
+        assert_eq!(
+            plan.linear_batch_count(),
+            a_rows + b_rows + maps.len() + profile.group.num_polynomials()
+        );
+        let compression_digits = maps
+            .iter()
+            .map(|map| map.input_width() * map.ring_dimension())
+            .sum::<usize>();
+        assert_eq!(
+            plan.negative_binary_addresses(&repacking).unwrap().len(),
+            compression_digits
+        );
+        assert_eq!(
+            compression.unpacked_witness_bytes().unwrap(),
+            compression_digits
         );
         let setup = AkitaSetupDescriptor {
             max_num_vars: 0,

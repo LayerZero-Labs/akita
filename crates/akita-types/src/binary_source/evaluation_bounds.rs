@@ -96,36 +96,69 @@ mod tests {
     use super::*;
     const P: u128 = u128::MAX - 274;
 
+    fn expected_envelopes(rows: usize, columns: usize) -> BinaryEvaluationBounds {
+        let reach = |digits, digit| (0..digits).map(|i| digit * 8u128.pow(i)).sum::<u128>();
+        // Reduce each monomial modulo X^162 + X^81 + 1 and count the
+        // unreduced coefficients that can contribute to any output coefficient.
+        let mut fan_in = [0u128; 162];
+        for power in 0..2 * 162 - 1 {
+            if power < 162 {
+                fan_in[power] += 1;
+            } else if power < 243 {
+                fan_in[power - 162] += 1;
+                fan_in[power - 81] += 1;
+            } else {
+                fan_in[power - 243] += 1;
+            }
+        }
+        let reduction = *fan_in.iter().max().unwrap();
+        let weight = FoldChallengeDistribution::BinaryRoot.weight() as u128;
+        let parity_residual = reduction * (162 * rows as u128 * 4 + columns as u128 * weight * 4);
+        let honest_value_residual = reduction * 162 * columns as u128 + 1;
+        // Soundness includes every malicious U digit in [-4,3], not just bits.
+        let malicious_value_residual = reduction * 162 * columns as u128 * 4 + 1;
+        let parity_carry_bound = reach(BINARY_PARITY_CARRY_DIGITS as u32, 4);
+        let value_carry_bound = reach(BINARY_VALUE_CARRY_DIGITS as u32, 4);
+        let parity_no_wrap_bound = parity_residual + 2 * parity_carry_bound;
+        let value_no_wrap_bound = malicious_value_residual + 2 * value_carry_bound;
+        BinaryEvaluationBounds {
+            parity_honest_carry: parity_residual / 2,
+            value_honest_carry: honest_value_residual / 2,
+            parity_carry_bound,
+            value_carry_bound,
+            parity_no_wrap_bound,
+            value_no_wrap_bound,
+            parity_margin: P - parity_no_wrap_bound,
+            value_margin: P - value_no_wrap_bound,
+        }
+    }
+
     #[test]
     fn full_malicious_digit_envelopes_match_integer_calculation() {
-        let bounds = BinaryEvaluationBounds::new(16_384, 256, P).unwrap();
-        assert_eq!(bounds.parity_honest_carry, 15_995_904);
-        assert_eq!(bounds.parity_carry_bound, 76_695_844);
-        assert_eq!(bounds.value_carry_bound, 149_796);
-        assert_eq!(bounds.value_honest_carry, 62_208);
-        assert_eq!(bounds.parity_no_wrap_bound, 185_383_496);
-        assert_eq!(bounds.value_no_wrap_bound, 797_257);
-        assert_eq!(bounds.parity_margin, P - 185_383_496);
-        assert_eq!(bounds.value_margin, P - 797_257);
-        assert_eq!(
-            BinaryEvaluationBounds::new(32_768, 256, P)
-                .unwrap()
-                .parity_no_wrap_bound,
-            217_233_992
-        );
+        for rows in [16_384, 32_768] {
+            let expected = expected_envelopes(rows, 256);
+            assert_eq!(BinaryEvaluationBounds::new(rows, 256, P).unwrap(), expected);
+            let positive = (0..BINARY_PARITY_CARRY_DIGITS)
+                .map(|i| 3 * 8u128.pow(i as u32))
+                .sum::<u128>();
+            assert!(expected.parity_honest_carry <= positive);
+        }
+        let next = expected_envelopes(65_536, 256);
+        let positive = (0..BINARY_PARITY_CARRY_DIGITS)
+            .map(|i| 3 * 8u128.pow(i as u32))
+            .sum::<u128>();
+        assert!(next.parity_honest_carry > positive);
         assert!(BinaryEvaluationBounds::new(65_536, 256, P).is_err());
     }
 
     #[test]
     fn strict_thresholds_and_overflow_reject() {
+        let expected = expected_envelopes(4, 2);
         let bounds = BinaryEvaluationBounds::new(4, 2, P).unwrap();
-        assert_eq!(bounds.parity_honest_carry, 4_440);
-        assert_eq!(bounds.value_honest_carry, 486);
-        assert_eq!(bounds.parity_no_wrap_bound, 153_400_568);
-        assert_eq!(bounds.value_no_wrap_bound, 303_481);
-        assert!(BinaryEvaluationBounds::new(4, 2, bounds.parity_no_wrap_bound).is_err());
+        assert_eq!(bounds, expected);
+        assert!(BinaryEvaluationBounds::new(4, 2, expected.parity_no_wrap_bound).is_err());
         assert_eq!(
-            BinaryEvaluationBounds::new(4, 2, bounds.parity_no_wrap_bound + 1)
+            BinaryEvaluationBounds::new(4, 2, expected.parity_no_wrap_bound + 1)
                 .unwrap()
                 .parity_margin,
             1
