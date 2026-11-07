@@ -4,7 +4,9 @@ use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::GroupCommitPhaseParams;
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_iter, cfg_join, Field};
 
 use super::{
     BinaryAOperand, BinaryRootPublic, BinaryRootWitnessPlan, OrdinaryNativeRootBatch,
@@ -299,61 +301,76 @@ impl ResearchBatchPlan {
         {
             return Err(AkitaError::InvalidProof);
         }
-        let mut components = Vec::with_capacity(5);
+        let mut tasks = Vec::with_capacity(4);
         let mut cursor = 0;
         for ((local, input), &offset) in self.binary.iter().zip(binary).zip(&self.offsets) {
             let range =
                 checked::range(cursor, local.batch_count()).ok_or(AkitaError::InvalidProof)?;
             cursor = range.end;
-            let (weights, negative) = local.relation(
-                input.challenges,
-                alpha,
+            tasks.push((
+                local,
+                input,
+                offset,
                 batches.get(range).ok_or(AkitaError::InvalidProof)?,
-                &[],
-                &[],
-                input.commitment,
-                input.d_payload,
-                None,
-                Some(input.matrix),
-            )?;
-            if !negative.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-            components.push((offset, weights));
+            ));
         }
         let range = checked::range(cursor, self.ordinary.linear_batch_count())
             .ok_or(AkitaError::InvalidProof)?;
         cursor = range.end;
         let ordinary_offset = *self.offsets.get(4).ok_or(AkitaError::InvalidProof)?;
-        let mut ordinary_weights = vec![self.ordinary.linear_weights(
-            &self.ordinary_repacking,
-            setup,
-            ordinary.get(..4).ok_or(AkitaError::InvalidProof)?,
-            alpha,
-            batches.get(range).ok_or(AkitaError::InvalidProof)?,
-        )?];
-        for (local, reading) in self.ordinary.plans().iter().zip(ordinary.iter().skip(4)) {
-            if reading.profile != local.profile() || Some(reading.width) != local.source_width() {
-                return Err(AkitaError::InvalidProof);
+        let ordinary_batches = batches.get(range).ok_or(AkitaError::InvalidProof)?;
+        let (binary_weights, ordinary_weights) = cfg_join!(
+            || cfg_iter!(tasks)
+                .map(|&(local, input, offset, batches)| {
+                    let (weights, negative) = local.relation(
+                        input.challenges,
+                        alpha,
+                        batches,
+                        &[],
+                        &[],
+                        input.commitment,
+                        input.d_payload,
+                        None,
+                        Some(input.matrix),
+                    )?;
+                    if !negative.is_empty() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    Ok((offset, weights))
+                })
+                .collect::<Vec<_>>(),
+            || {
+                let mut weights = vec![self.ordinary.linear_weights(
+                    &self.ordinary_repacking,
+                    setup,
+                    ordinary.get(..4).ok_or(AkitaError::InvalidProof)?,
+                    alpha,
+                    ordinary_batches,
+                )?];
+                // E64's second readings follow all first-pass linear rows and
+                // precede negative-bit rows in the original challenge order.
+                for (local, reading) in self.ordinary.plans().iter().zip(ordinary.iter().skip(4)) {
+                    if reading.profile != local.profile()
+                        || Some(reading.width) != local.source_width()
+                    {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let range = checked::range(cursor, local.profile().group.num_polynomials())
+                        .ok_or(AkitaError::InvalidProof)?;
+                    cursor = range.end;
+                    weights.push(local.evaluation_weights(
+                        &self.ordinary_repacking,
+                        reading.point,
+                        reading.evaluations,
+                        batches.get(range).ok_or(AkitaError::InvalidProof)?,
+                    )?);
+                }
+                NativeRootWeights::merge(self.ordinary_repacking.domain_len(), weights, E::zero())
             }
-            let range = checked::range(cursor, local.profile().group.num_polynomials())
-                .ok_or(AkitaError::InvalidProof)?;
-            cursor = range.end;
-            ordinary_weights.push(local.evaluation_weights(
-                &self.ordinary_repacking,
-                reading.point,
-                reading.evaluations,
-                batches.get(range).ok_or(AkitaError::InvalidProof)?,
-            )?);
-        }
-        components.push((
-            ordinary_offset,
-            NativeRootWeights::merge(
-                self.ordinary_repacking.domain_len(),
-                ordinary_weights,
-                E::zero(),
-            )?,
-        ));
+        );
+        // Indexed collection preserves source/error order before translation.
+        let mut components = binary_weights.into_iter().collect::<Result<Vec<_>, _>>()?;
+        components.push((ordinary_offset, ordinary_weights?));
         let mut negative = Vec::new();
         for plan in self.ordinary.plans() {
             for address in plan.negative_binary_addresses(&self.ordinary_repacking)? {

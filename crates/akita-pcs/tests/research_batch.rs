@@ -1,6 +1,8 @@
 //! Small real four-plus-four research proof; no production admission.
 #![cfg(all(feature = "binary-source-measurements", feature = "logging-transcript"))]
 
+#[path = "binary_source_end_to_end/byte_contract.rs"]
+mod byte_contract;
 #[path = "research_batch/catalog.rs"]
 mod catalog;
 mod common;
@@ -258,6 +260,15 @@ fn run(with_word: bool, mode: ResearchTerminalMode) {
     )
     .unwrap();
     let proof = prover.narg_string().to_vec();
+    byte_contract::compare_baseline(
+        &proof,
+        match (mode, with_word) {
+            (ResearchTerminalMode::BaseS11a, false) => "research-four-plus-four.bin",
+            (ResearchTerminalMode::BaseS11a, true) => "research-four-plus-four-word.bin",
+            (ResearchTerminalMode::E64TwoPointS11a, false) => "research-four-plus-four-e64.bin",
+            (ResearchTerminalMode::E64TwoPointS11a, true) => "research-four-plus-four-e64-word.bin",
+        },
+    );
     let continuation = prover
         .challenge_message(32, |bytes| Ok::<_, AkitaError>(bytes.to_vec()))
         .unwrap();

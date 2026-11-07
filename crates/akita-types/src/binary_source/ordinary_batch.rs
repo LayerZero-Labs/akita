@@ -3,7 +3,9 @@
 use akita_error::{checked, AkitaError};
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::GroupCommitPhaseParams;
-use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_iter, Field};
 
 use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;
@@ -79,28 +81,41 @@ impl OrdinaryNativeRootBatch {
         if claims.len() != self.plans.len() || batches.len() != self.linear_batch_count {
             return Err(AkitaError::InvalidProof);
         }
-        let mut components = Vec::new();
-        components
+        let mut tasks = Vec::new();
+        tasks
             .try_reserve_exact(self.plans.len())
             .map_err(|_| AkitaError::InvalidProof)?;
         let mut offset = 0;
         for (plan, public) in self.plans.iter().zip(claims) {
-            if public.profile != plan.profile() || Some(public.width) != plan.source_width() {
-                return Err(AkitaError::InvalidProof);
-            }
             let range = checked::range(offset, plan.linear_batch_count())
                 .ok_or(AkitaError::InvalidProof)?;
             offset = range.end;
-            components.push(plan.linear_weights(
-                repacking,
-                setup,
-                public.point,
-                public.evaluations,
-                public.payload,
-                alpha,
+            tasks.push((
+                plan,
+                public,
                 batches.get(range).ok_or(AkitaError::InvalidProof)?,
-            )?);
+            ));
         }
+        // Keep both successful weights and errors in source order. No task
+        // draws challenges or mutates the shared setup/statement.
+        let components = cfg_iter!(tasks)
+            .map(|&(plan, public, batches)| {
+                if public.profile != plan.profile() || Some(public.width) != plan.source_width() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                plan.linear_weights(
+                    repacking,
+                    setup,
+                    public.point,
+                    public.evaluations,
+                    public.payload,
+                    alpha,
+                    batches,
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
         NativeRootWeights::merge(repacking.domain_len(), components, E::zero())
     }
 }

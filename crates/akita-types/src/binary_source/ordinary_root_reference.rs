@@ -698,6 +698,8 @@ mod p64_tests {
 
     #[test]
     fn p64_mixed_ordinary_structured_matches_the_flat_reference() {
+        let mut inputs = Vec::new();
+        let ext = |i: usize| E::from_base_fn(|c| F::from_u64((17 + i * 31 + c * 43) as u64));
         for signed in [
             None,
             Some((2, 3)),
@@ -764,7 +766,6 @@ mod p64_tests {
                 num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
                 setup_seed: [41; 32].into(),
             };
-            let ext = |i: usize| E::from_base_fn(|c| F::from_u64((17 + i * 31 + c * 43) as u64));
             let point = (0..profile.group.num_vars()).map(ext).collect::<Vec<_>>();
             let payload = (0..compression.terminal_coefficients())
                 .map(ext)
@@ -805,7 +806,114 @@ mod p64_tests {
                 .map(|i| ext(500 + i as usize))
                 .collect::<Vec<_>>();
             assert_eq!(structured.evaluate(&r).unwrap(), flat.evaluate(&r).unwrap());
+            if let Some(width) = plan.source_width() {
+                inputs.push((profile, width, point, evaluations, payload));
+            }
         }
+        // Exercise the ordered batch seam using all four signed profiles and
+        // distinct E64 batches, against the same independent flat compiler.
+        let sources = inputs
+            .iter()
+            .map(|(profile, width, ..)| (*profile, *width))
+            .collect::<Vec<_>>();
+        let batch = crate::binary_source::OrdinaryNativeRootBatch::new(&sources, 0).unwrap();
+        let repacking = RootCoefficientRepacking::new(
+            batch
+                .plans()
+                .iter()
+                .flat_map(|plan| plan.segments().iter().copied())
+                .collect(),
+            64,
+        )
+        .unwrap();
+        let setup = AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+            setup_seed: [41; 32].into(),
+        };
+        let mut claims = inputs
+            .iter()
+            .map(|(profile, width, point, evaluations, payload)| {
+                crate::binary_source::OrdinaryNativeRootClaim {
+                    profile,
+                    width: *width,
+                    point,
+                    evaluations,
+                    payload,
+                }
+            })
+            .collect::<Vec<_>>();
+        let batches = (0..batch.linear_batch_count())
+            .map(|i| ext(1000 + i))
+            .collect::<Vec<_>>();
+        let weights = batch
+            .linear_weights(&repacking, &setup, &claims, ext(400), &batches)
+            .unwrap();
+        let mut cursor = 0;
+        let reference = batch
+            .plans()
+            .iter()
+            .zip(&claims)
+            .map(|(plan, claim)| {
+                let end = cursor + plan.linear_batch_count();
+                let weights = plan
+                    .reference_linear_weights(
+                        &repacking,
+                        &setup,
+                        claim.point,
+                        claim.evaluations,
+                        claim.payload,
+                        ext(400),
+                        &batches[cursor..end],
+                    )
+                    .unwrap();
+                cursor = end;
+                weights
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(cursor, batches.len());
+        let reference =
+            NativeRootWeights::merge(repacking.domain_len(), reference, E::zero()).unwrap();
+        assert_eq!(weights.claim(), reference.claim());
+        assert_eq!(
+            weights.materialize().unwrap(),
+            reference.materialize().unwrap()
+        );
+        let point = (0..repacking.domain_len().trailing_zeros())
+            .map(|i| ext(500 + i as usize))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            weights.evaluate(&point).unwrap(),
+            reference.evaluate(&point).unwrap()
+        );
+        let embedded = NativeRootWeights::concatenate(
+            4 * repacking.domain_len(),
+            [(repacking.domain_len(), weights)],
+        )
+        .unwrap();
+        let mut dense = vec![E::zero(); embedded.table_len()];
+        dense[repacking.domain_len()..2 * repacking.domain_len()]
+            .copy_from_slice(&reference.materialize().unwrap());
+        let mut profiles = embedded.profiles(8).unwrap();
+        for round in 0..8 {
+            assert_eq!(profiles.clone().take_dense(), dense);
+            let challenge = match round % 3 {
+                0 => E::zero(),
+                1 => E::lift_base(F::from_u64(1)),
+                _ => ext(700 + round),
+            };
+            profiles.bind(challenge);
+            akita_algebra::poly::fold_evals_in_place(&mut dense, challenge);
+        }
+        assert_eq!(profiles.take_dense(), dense);
+        assert!(batch
+            .linear_weights(&repacking, &setup, &claims, ext(400), &batches[1..])
+            .is_err());
+        claims[2].width = claims[0].width;
+        assert!(batch
+            .linear_weights(&repacking, &setup, &claims, ext(400), &batches)
+            .is_err());
     }
 
     #[test]
