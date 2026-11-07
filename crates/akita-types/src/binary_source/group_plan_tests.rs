@@ -278,7 +278,8 @@ fn translations_cross_boundaries_with_unaligned_group_and_quotient_starts() {
     let binary = [
         occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, true, 2),
         occurrence(1, 4, 1, 2, BinaryFieldProfile::P64, false, 2),
-        occurrence(2, 2, 4, 1, BinaryFieldProfile::P64, true, 0),
+        // Keep the quotient bank nonaligned with two coordinate planes per claim.
+        occurrence(2, 2, 2, 1, BinaryFieldProfile::P64, true, 0),
     ];
     let plan =
         BinaryRootGroupPlan::new(&binary, &[ordinary(3, BinaryFieldProfile::P64)], 256).unwrap();
