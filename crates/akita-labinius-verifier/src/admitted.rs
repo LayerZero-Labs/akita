@@ -63,20 +63,6 @@ pub fn derive_trinomial_matrix<P: Field + CanonicalEncoding, M: TrinomialModulus
     Ok(matrix)
 }
 
-/// Characteristic of the prime field `F`, which must fit in 128 bits.
-///
-/// This is the prime used by proof-field admission.
-pub fn field_characteristic<F: Field + CanonicalEncoding>() -> Result<u128, AkitaError> {
-    let too_wide = || AkitaError::InvalidSetup("field characteristic exceeds 128 bits".into());
-    let modulus_bytes = akita_params::field_modulus_be_bytes::<F>()?;
-    let (high, low) = modulus_bytes.split_at_checked(16).ok_or_else(too_wide)?;
-    <[u8; 16]>::try_from(low)
-        .ok()
-        .map(u128::from_be_bytes)
-        .filter(|_| high.iter().all(|&byte| byte == 0))
-        .ok_or_else(too_wide)
-}
-
 /// A root shape admitted by the certified table, with its seed-derived matrix.
 ///
 /// The only constructor is [`Self::derive`]; a caller-supplied matrix cannot

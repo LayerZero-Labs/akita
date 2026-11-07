@@ -110,6 +110,12 @@ jobs:
           cargo test -p akita-planner --lib --no-default-features --features labinius-trinomial,transcript-keccak ordinary_source
       - name: Clippy trinomial bridge and ordinary seams
         run: cargo clippy -p akita-types -p akita-cpu-backend -p akita-params -p akita-planner --all-targets --no-default-features --features labinius-trinomial,transcript-keccak -- -D warnings
+      - name: Test owned binary source kernels
+        run: |
+          for backend in transcript-blake2b transcript-keccak; do
+            cargo test -p akita-cpu-backend --test binary_source --no-default-features --features "labinius-trinomial,$backend"
+            cargo test -p akita-cpu-backend --test binary_source --no-default-features --features "parallel,labinius-trinomial,$backend"
+          done
       - name: Test binary source end-to-end opening
         run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-keccak
 

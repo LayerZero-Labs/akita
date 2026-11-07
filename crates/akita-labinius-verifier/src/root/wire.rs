@@ -36,7 +36,7 @@ where
 {
     let invalid = || AkitaError::InvalidSetup("root wire size overflow".into());
     let element = checked::product([E::DEGREE, F::NUM_BYTES]).ok_or_else(invalid)?;
-    let encoding = shape.derive_encoding(crate::admitted::field_characteristic::<F>()?)?;
+    let encoding = shape.derive_encoding(akita_params::field_modulus::<F>()?)?;
     let clear_integers = |len: usize, bits: u32| {
         checked::div_ceil(bits as usize, 8).and_then(|width| checked::product([len, width]))
     };

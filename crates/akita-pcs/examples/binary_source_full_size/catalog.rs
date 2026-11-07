@@ -218,27 +218,14 @@ pub(super) fn plan_only(log: usize, shape: &str) -> Result<(), Box<dyn std::erro
     policy.recursive_setup_planning = false;
     policy.selection_policy = SelectionPolicyId::for_policy(false);
     policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
-    let directory = if akita_params::DEV_PROTOCOL {
-        "schedules-labinius-dev"
-    } else {
-        "schedules-labinius"
-    };
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../artifacts")
-        .join(directory)
-        .join("labinius_fp128_digits_b4.aks");
-    let direct = ValidatedScheduleCatalog::from_artifact_bytes(
-        &std::fs::read(path)?,
-        "labinius_fp128_digits_b4",
+    let direct = akita_planner::find_schedule(
+        &ScheduleLookupKey::single(PolynomialGroupLayout::singleton(23)),
+        FullSize::committed_source_contract()?,
+        &[],
         &policy,
         FullSize::ring_challenge_config,
     )?;
-    let carrier = direct
-        .resolve_key(&ScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(23),
-        ))?
-        .profiles()
-        .final_group;
+    let carrier = direct.schedule.root.params.own_group().profile;
     let ordinary = if shape == "binary-and-prime-claims-plus-ordinary" {
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
         let planned = akita_planner::find_schedule(

@@ -27,7 +27,7 @@ impl FoldDraw for Draw {
 }
 
 /// Response weights over the base field `F` and the challenge field `E`. The
-/// matrix comes from the `Prime128Offset275` stream for both pairs.
+/// matrix comes from the exact typed q stream for both pairs.
 fn pair<F: Field + CanonicalEncoding, E: ExtField<F>>(criterion: &mut Criterion, name: &str) {
     let profile = LabiniusRootProfile::D648Q25BoundedW46;
     let admitted = AdmittedRootSetup::<648, MinusTrinomial>::derive::<Prime128Offset275>(

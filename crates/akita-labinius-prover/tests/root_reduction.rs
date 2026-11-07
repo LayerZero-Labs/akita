@@ -4,14 +4,13 @@ mod common;
 
 use akita_algebra::binary::{BinaryField128, BinaryField192};
 use akita_challenges::BinaryChallengeSampler;
+use akita_cpu_backend::kernels::binary_source::fold::fold_integer;
 use akita_error::AkitaError;
 use akita_labinius_prover::{
-    fold_kernel::fold_integer,
     lowered::{encode_witness, prime_left_opening},
     prove_binary_clear_bytes,
 };
 use akita_labinius_verifier::{
-    admitted::field_characteristic,
     channel::{self, RootSumcheckVerifierChannel},
     grinding::RootGrindingPlan,
     lowered::{
@@ -215,7 +214,7 @@ fn tampered<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(mode:
     }
     let region = |name: &str| *regions.iter().find(|region| region.0 == name).unwrap();
     // The characteristic itself is the least noncanonical coordinate encoding.
-    let characteristic = field_characteristic::<F>().unwrap().to_le_bytes();
+    let characteristic = akita_params::field_modulus::<F>().unwrap().to_le_bytes();
     let prime_elements = ["uP", "y_P", "prime round", "p_eval"];
     for name in ["y_Y", "response round", "w_eval", "image round", "y_eval"]
         .into_iter()

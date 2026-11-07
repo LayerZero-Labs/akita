@@ -26,17 +26,23 @@ orchestration lives in `akita-pcs`.
 | `akita-setup` | Config-backed setup construction and optional setup cache |
 | `akita-verifier` | Verifier replay without prover-only polynomial backends; directly `<Cfg>`-generic |
 | `akita-prover` | Protocol sequencing, public geometry checks, proof assembly, opaque operation contracts |
-| `akita-cpu-backend` | Backend-owned sources, commitment and witness arithmetic, prepared setup resources, caches |
+| `akita-cpu-backend` | Backend-owned sources, native binary-source kernels, commitment and witness arithmetic, prepared setup resources, caches |
 | `akita-pcs` | Umbrella crate: `AkitaCommitmentScheme`, re-exports, examples, benches, integration tests |
-| `akita-labinius-verifier` (`dev`) | Opt-in LaBinius extension: admitted root setup, lowered root relation, and verification of the root reduction |
-| `akita-labinius-prover` (`dev`) | Opt-in LaBinius extension: binary source commitment, lowered root witness, and the root reduction prover |
-| `akita-labinius-pcs` (`dev`) | Opt-in LaBinius extension: a polynomial commitment for a binary source that discharges the root reduction's claims with a nested Akita proof; ships its own schedule catalogs |
+| `akita-labinius-verifier` (`dev`) | Withdrawn standalone clear and root verification APIs; retained temporarily for removal |
+| `akita-labinius-prover` (`dev`) | Withdrawn standalone clear and root prover APIs; retained temporarily for removal |
+| `akita-labinius-pcs` (`dev`) | Withdrawn standalone binary-source PCS and catalog generator; retained temporarily for removal |
 
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](https://github.com/LayerZero-Labs/akita/blob/main/docs/crate-graph.md).
 CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
-The LaBinius prover crate depends on its verifier crate, never the reverse.
+The LaBinius prover crate depends on its verifier crate and on the CPU kernels;
+the verifier does not depend on the prover.
 The LaBinius PCS crate depends on both and on `akita-pcs`.
-No Akita proof-path crate depends on this opt-in extension.
+The native grouped binary root is the binary-source product. Its fold, limb
+commitment, weighted-source, and weighted integer convolution kernels live in
+`crates/akita-cpu-backend/src/kernels/binary_source/`. No crate outside the three
+withdrawn standalone crates depends on those standalone crates. The F192 host
+path, arbitrary prime functionals, and old Family64 PCS are withdrawn with those
+APIs.
 
 Key structural facts:
 

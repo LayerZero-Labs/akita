@@ -1900,11 +1900,11 @@ The remaining N=2^22 `binary-and-prime-claims` cost splits into three kinds.
   ordinary 2^24-variable opening of a comparable 15.6M-cell level-0 witness
   proves in about 200 ms on the same host.
 
-The kernels shared with the earlier binary prototype in `akita-labinius-prover`
-are not the bottleneck. The response fold uses its bit-sliced carry-save
-kernel, and the image hint uses its prepared limb commitment. Scaled to this
-geometry, each spends about 20–30% more CPU time than that crate's own
-single-threaded benchmark.
+The kernels in `akita-cpu-backend/src/kernels/binary_source/` are not the
+bottleneck. The response fold uses the bit-sliced carry-save kernel, and the
+image hint uses the prepared limb commitment. Scaled to this geometry, each
+spends about 20–30% more CPU time than the corresponding single-threaded
+benchmark.
 
 #### Structured Stage 2
 
@@ -3375,7 +3375,7 @@ the median run, 202 ms of Stage 1, 104 ms of Stage 2 and 88 ms of
 - **The removed multi-point shape's prime digits, 56 ms.** Most of it is now the parallel subset
   sums of `weighted_source_bits`: about 16 field additions per source word
   per plane. Accumulating them as unreduced integers would need a
-  field-specific path through that generic labinius-prover boundary;
+  field-specific path through the generic CPU weighted-source kernel;
   inferred gain 15–25 ms, not measured.
 - **The response fold, 52–68 ms, and root Stage 3, 46–76 ms,** are
   unchanged.
@@ -4351,7 +4351,8 @@ the driver now uses buffered readers and writers. That change affects fixture
 transport, not proof encoding or transcript messages.
 
 Parity construction reuses the existing parallel set-bit integer accumulation
-kernel from `akita-labinius-prover`. It unpacks each response ring's low digits
+kernel in `akita-cpu-backend/src/kernels/binary_source/weighted_integer_convolution.rs`.
+It unpacks each response ring's low digits
 once, sums unreduced scalar products, then calls the canonical trinomial
 remainder once. The previous path performed a dense checked product and
 reduction separately for every scalar row. The following are source-level

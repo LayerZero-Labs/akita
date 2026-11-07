@@ -9,10 +9,6 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-# Extension seam: https://github.com/LayerZero-Labs/akita/issues/285
-akita-labinius-prover = { version = "0.1.0", path = "../akita-labinius-prover", default-features = false, features = [
-  "labinius",
-], optional = true }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -51,7 +47,6 @@ akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-featur
 [features]
 default = ["transcript-keccak"]
 transcript-blake2b = [
-  "akita-labinius-prover?/transcript-blake2b",
   "akita-prover/transcript-blake2b",
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -61,7 +56,6 @@ transcript-blake2b = [
   "akita-params/transcript-blake2b",
 ]
 transcript-keccak = [
-  "akita-labinius-prover?/transcript-keccak",
   "akita-prover/transcript-keccak",
   "akita-challenges/transcript-keccak",
   "akita-config/transcript-keccak",
@@ -80,7 +74,7 @@ logging-transcript = [
 response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 disk-persistence = []
 labinius-trinomial = [
-  "dep:akita-labinius-prover",
+  "akita-challenges/labinius-challenges",
   "akita-algebra/labinius-binary",
   "akita-prover/labinius-trinomial",
   "akita-verifier/labinius-trinomial",
@@ -90,7 +84,6 @@ labinius-trinomial = [
 parallel = [
   "akita-prover/parallel",
   "dep:rayon",
-  "akita-labinius-prover?/parallel",
   "akita-challenges/parallel",
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
@@ -130,3 +123,13 @@ harness = false
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "binary_source_fold"
+harness = false
+required-features = ["labinius-trinomial"]
+
+[[bench]]
+name = "binary_source_limb_commit"
+harness = false
+required-features = ["labinius-trinomial"]

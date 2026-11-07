@@ -1,13 +1,14 @@
 //! Compact private carriers and the existing packed arithmetic kernels.
 
 use super::*;
+use crate::kernels::binary_source::{
+    fold::fold_integer,
+    limb_commit::{commit_binary_clear_limb_prepared, PreparedLimbCommitMatrix},
+};
 use akita_algebra::{binary::BinaryField128, ring::trinomial::module_map::pack_signed_components};
 use akita_challenges::{
     BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing, Challenges,
     FoldChallengeDistribution,
-};
-use akita_labinius_prover::{
-    commit_binary_clear_limb_prepared, fold_kernel::fold_integer, PreparedLimbCommitMatrix,
 };
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
 

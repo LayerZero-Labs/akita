@@ -1,22 +1,16 @@
-#![cfg(feature = "labinius")]
-
-mod common;
-
+use super::common::{FixedDraw, TestHost};
 use akita_algebra::binary::{BinaryField128 as F128, BinaryField192 as F192};
 use akita_challenges::{
     BinaryChallenge, BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing,
 };
+use akita_cpu_backend::kernels::binary_source::fold::{
+    fold_integer as kernel, fold_integer_wide as reference,
+};
 use akita_error::AkitaError;
-use akita_labinius_prover::fold_kernel::fold_integer as kernel;
-use akita_labinius_verifier::endpoint::fold_integer as reference;
-use akita_params::sis::labinius::LabiniusRootProfile;
-use common::{FixedDraw, TestHost};
 use rand::{rngs::StdRng, SeedableRng};
 
 fn root_profile() -> BinaryChallengeProfile {
-    LabiniusRootProfile::D648Q25BoundedW46
-        .challenge_profile()
-        .unwrap()
+    BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 46).unwrap()
 }
 
 fn challenges(profile: &BinaryChallengeProfile, columns: usize) -> Vec<BinaryChallenge> {

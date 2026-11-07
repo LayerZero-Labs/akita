@@ -5,17 +5,19 @@
 //! untimed. Criterion reports rows per second; the median smoke measurements
 //! below additionally print the extrapolated 16,384-row time and speed ratio.
 
-#![cfg(feature = "labinius")]
+#![cfg(feature = "labinius-trinomial")]
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use akita_algebra::binary::BinaryField128;
-use akita_challenges::{BinaryChallengeSampler, FoldDraw};
+use akita_challenges::{
+    BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing, FoldDraw,
+};
+use akita_cpu_backend::kernels::binary_source::fold::{
+    fold_integer as kernel, fold_integer_wide as reference,
+};
 use akita_error::AkitaError;
-use akita_labinius_prover::fold_kernel::fold_integer as kernel;
-use akita_labinius_verifier::endpoint::fold_integer as reference;
-use akita_params::sis::labinius::LabiniusRootProfile;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -45,8 +47,7 @@ fn median_seconds(mut run: impl FnMut()) -> f64 {
 }
 
 fn benchmarks(criterion: &mut Criterion) {
-    let profile = LabiniusRootProfile::D648Q25BoundedW46
-        .challenge_profile()
+    let profile = BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 46)
         .expect("first root challenge profile is valid");
     let challenges = BinaryChallengeSampler::new(profile.clone())
         .sample_challenges(&mut SeedDraw, COLUMNS)

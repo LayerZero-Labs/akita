@@ -12,3 +12,6 @@ pub(crate) mod trinomial_relation;
 pub(crate) use decompose_fold_avx as avx_decompose_fold;
 #[cfg(target_arch = "aarch64")]
 pub(crate) use decompose_fold_neon as neon_decompose_fold;
+
+#[cfg(feature = "labinius-trinomial")]
+pub mod binary_source;

@@ -23,18 +23,17 @@
     clippy::unwrap_used
 )]
 
-use akita_algebra::binary::field_switch::SwitchField;
+use akita_algebra::binary::field_switch::{embed_source, SwitchField};
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
 use akita_error::{checked, AkitaError};
-use akita_labinius_verifier::{endpoint, source::challenge_binary};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Fold source columns with the reference endpoint's validation and integer semantics.
+/// Fold source columns with the scalar-ring validation and integer semantics.
 ///
 /// Count the shifted source words separately for positive and negative terms,
 /// subtract their integer counts, and reduce modulo `Y^162 + Y^81 + 1`.
-/// The checked weight sum selects the bounded counter or the reference endpoint.
+/// The checked weight sum selects the bounded counter or the checked wide accumulator.
 /// With `parallel`, independent rows write disjoint response slots; without it,
 /// the same row kernel runs serially.
 pub fn fold_integer<H: SwitchField>(
@@ -44,23 +43,10 @@ pub fn fold_integer<H: SwitchField>(
     challenges: &[BinaryChallenge],
     profile: &BinaryChallengeProfile,
 ) -> Result<Vec<[i64; 162]>, AkitaError> {
-    let length = checked::product([scalar_rows, columns])
-        .ok_or_else(|| AkitaError::InvalidInput("integer fold size overflow".into()))?;
-    if !scalar_rows.is_power_of_two()
-        || !columns.is_power_of_two()
-        || source.len() != length
-        || challenges.len() != columns
-    {
-        return Err(AkitaError::InvalidInput(
-            "integer fold geometry mismatch".into(),
-        ));
-    }
-    for challenge in challenges {
-        challenge_binary(challenge, profile)?;
-    }
+    validate_fold(source.len(), scalar_rows, columns, challenges, profile)?;
     let bound = checked::sum(challenges.iter().map(BinaryChallenge::weight));
     if bound.is_none_or(|bound| bound > i16::MAX as usize) {
-        return endpoint::fold_integer::<H>(source, scalar_rows, columns, challenges, profile);
+        return fold_integer_wide::<H>(source, scalar_rows, columns, challenges, profile);
     }
     let mut result = Vec::new();
     result
@@ -205,4 +191,96 @@ fn carry_save(a: [u64; 6], b: [u64; 6], c: [u64; 6]) -> ([u64; 6], [u64; 6]) {
         *carry = (a & b) | (pair & c);
     }
     (carry, sum)
+}
+
+/// Fold binary source columns in the integer scalar trinomial ring.
+///
+/// Accumulation and reduction are checked signed integer operations, prior to
+/// either the prime embedding or the modulo-two projection.
+pub fn fold_integer_wide<H: SwitchField>(
+    source: &[H::Source],
+    scalar_rows: usize,
+    columns: usize,
+    challenges: &[BinaryChallenge],
+    profile: &BinaryChallengeProfile,
+) -> Result<Vec<[i64; 162]>, AkitaError> {
+    validate_fold(source.len(), scalar_rows, columns, challenges, profile)?;
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(scalar_rows)
+        .map_err(|_| AkitaError::InvalidInput("integer response allocation failed".into()))?;
+    for row in 0..scalar_rows {
+        let mut product = [0i128; 323];
+        for (column, challenge) in challenges.iter().enumerate() {
+            let index =
+                checked::mul_add(column, scalar_rows, row).ok_or(AkitaError::InvalidProof)?;
+            let word = *source.get(index).ok_or(AkitaError::InvalidProof)?;
+            let bits = embed_source::<H>(word).to_bytes();
+            for term in challenge.terms() {
+                for bit in 0..162 {
+                    let byte = bits.get(bit / 8).ok_or(AkitaError::InvalidProof)?;
+                    if byte & (1u8 << (bit % 8)) == 0 {
+                        continue;
+                    }
+                    let position = usize::from(term.position)
+                        .checked_add(bit)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let accumulator = product.get_mut(position).ok_or(AkitaError::InvalidProof)?;
+                    *accumulator = accumulator
+                        .checked_add(i128::from(term.coefficient))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("integer fold accumulator overflow".into())
+                        })?;
+                }
+            }
+        }
+        for degree in (162..323).rev() {
+            let leading = *product.get(degree).ok_or(AkitaError::InvalidProof)?;
+            *product.get_mut(degree).ok_or(AkitaError::InvalidProof)? = 0;
+            let reduced = degree - 162;
+            for position in [reduced, reduced + 81] {
+                let accumulator = product.get_mut(position).ok_or(AkitaError::InvalidProof)?;
+                *accumulator = accumulator.checked_sub(leading).ok_or_else(|| {
+                    AkitaError::InvalidInput("integer fold reduction overflow".into())
+                })?;
+            }
+        }
+        let mut response = [0i64; 162];
+        for (destination, &coefficient) in response.iter_mut().zip(product.iter()) {
+            *destination = i64::try_from(coefficient)
+                .map_err(|_| AkitaError::InvalidInput("integer response exceeds i64".into()))?;
+        }
+        result.push(response);
+    }
+    Ok(result)
+}
+
+/// Validate the characteristic-zero fold boundary before allocating responses.
+fn validate_fold(
+    source_len: usize,
+    scalar_rows: usize,
+    columns: usize,
+    challenges: &[BinaryChallenge],
+    profile: &BinaryChallengeProfile,
+) -> Result<(), AkitaError> {
+    let length = checked::product([scalar_rows, columns])
+        .ok_or_else(|| AkitaError::InvalidInput("integer fold size overflow".into()))?;
+    if !scalar_rows.is_power_of_two()
+        || !columns.is_power_of_two()
+        || source_len != length
+        || challenges.len() != columns
+    {
+        return Err(AkitaError::InvalidInput(
+            "integer fold geometry mismatch".into(),
+        ));
+    }
+    for challenge in challenges {
+        if profile.scalar_ring().degree() != 162 {
+            return Err(AkitaError::InvalidInput(
+                "binary challenge parity requires scalar degree 162".into(),
+            ));
+        }
+        challenge.validate(profile)?;
+    }
+    Ok(())
 }
