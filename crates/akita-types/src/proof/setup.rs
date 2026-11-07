@@ -577,10 +577,7 @@ impl AkitaDeserialize for AkitaSetupDescriptor {
 
 impl<F: Field + CanonicalEncoding + Valid> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.descriptor.check()?;
-        self.shared_matrix.check()?;
-        validate_public_matrix_matches_seed(&self.shared_matrix, &self.descriptor)?;
-        Ok(())
+        validate_public_matrix_matches_seed(&self.shared_matrix, &self.descriptor)
     }
 }
 
