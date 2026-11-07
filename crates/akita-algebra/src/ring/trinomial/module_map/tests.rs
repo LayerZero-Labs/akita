@@ -11,14 +11,6 @@ fn embed(c: [i128; 162]) -> [i128; 648] {
     pack_signed_components(&[c, [0; 162], [0; 162], [0; 162]]).unwrap()
 }
 
-fn field(x: i128) -> F {
-    if x < 0 {
-        -F::from_u128(x.unsigned_abs())
-    } else {
-        F::from_u128(x as u128)
-    }
-}
-
 #[test]
 fn module_maps_agree_with_existing_packing_and_round_trip() {
     let components: [[i128; 162]; 4] = std::array::from_fn(|a| {
@@ -28,10 +20,12 @@ fn module_maps_agree_with_existing_packing_and_round_trip() {
     assert_eq!(unpack_signed_components(&packed).unwrap(), components);
     let rings: Vec<_> = components
         .iter()
-        .map(|c| TrinomialRing::<F, 162, PlusTrinomial>::from_coefficients(c.map(field)).unwrap())
+        .map(|c| {
+            TrinomialRing::<F, 162, PlusTrinomial>::from_coefficients(c.map(F::from_i128)).unwrap()
+        })
         .collect();
     let existing = pack_scalar_components::<F, 162, 648, MinusTrinomial>(&rings).unwrap();
-    assert_eq!(existing.coefficients(), &packed.map(field));
+    assert_eq!(existing.coefficients(), &packed.map(F::from_i128));
     // Every signed basis vector, including the top coordinate of each component.
     for t in 0..648 {
         let mut r = [0; 648];

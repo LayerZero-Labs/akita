@@ -163,28 +163,12 @@ impl XofCursor {
         }
     }
 
-    #[inline]
-    fn next_u32(&mut self) -> u32 {
-        if self.pos + 4 <= self.len {
-            let mut bytes = [0u8; 4];
-            bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
-            self.pos += 4;
-            u32::from_le_bytes(bytes)
-        } else {
-            let mut tmp = [0u8; 4];
-            for b in &mut tmp {
-                *b = self.next_u8();
-            }
-            u32::from_le_bytes(tmp)
-        }
-    }
-
     /// Uniformly sample from `0..modulus` using bitmask rejection sampling
     /// with minimal XOF consumption. Uses 1-byte reads when the modulus
-    /// fits in 8 bits, 2-byte reads for 16 bits, else 4 bytes.
+    /// is at most 256, and 2-byte reads for the remaining moduli up to 486.
     #[inline]
     pub(crate) fn next_usize_mod(&mut self, modulus: usize) -> usize {
-        debug_assert!(modulus > 0);
+        debug_assert!((1..=486).contains(&modulus));
         if modulus == 1 {
             return 0;
         }
@@ -197,20 +181,12 @@ impl XofCursor {
                     return val;
                 }
             }
-        } else if bits <= 16 {
+        } else {
             let mask = (1usize << bits) - 1;
             loop {
                 let lo = self.next_u8() as usize;
                 let hi = self.next_u8() as usize;
                 let val = (lo | (hi << 8)) & mask;
-                if val < modulus {
-                    return val;
-                }
-            }
-        } else {
-            let mask: usize = (1 << bits) - 1;
-            loop {
-                let val = (self.next_u32() as usize) & mask;
                 if val < modulus {
                     return val;
                 }
@@ -270,23 +246,43 @@ mod tests {
     }
 
     #[test]
-    fn next_u32_preserves_stream_bytes_across_a_refill_boundary() {
-        let prefix = IndexedXofPrefix::new(&[0x3cu8; GROUP_ROOT_LEN]).unwrap();
-        let mut expected_cursor = XofCursor::from_indexed_prefix(&prefix, 17);
-        let mut expected = [0u8; XOF_BUFFER_SIZE + 4];
-        expected_cursor.fill_bytes(&mut expected);
+    fn bounded_reads_use_minimal_stream_bytes_across_refills() {
+        let seed = [0x3cu8; GROUP_ROOT_LEN];
+        let mut expected_xof = Shake256::default();
+        expected_xof.update(&seed);
+        expected_xof.update(&17u64.to_le_bytes());
+        let mut expected_reader = expected_xof.finalize_xof();
+        let mut expected = [0u8; 512];
+        expected_reader.read(&mut expected);
+        let prefix = IndexedXofPrefix::new(&seed).unwrap();
 
-        let mut cursor = XofCursor::from_indexed_prefix(&prefix, 17);
-        let mut prefix_bytes = [0u8; XOF_BUFFER_SIZE - 2];
-        cursor.fill_bytes(&mut prefix_bytes);
-        assert_eq!(prefix_bytes, expected[..XOF_BUFFER_SIZE - 2]);
-        assert_eq!(
-            cursor.next_u32(),
-            u32::from_le_bytes(
-                expected[XOF_BUFFER_SIZE - 2..XOF_BUFFER_SIZE + 2]
-                    .try_into()
-                    .unwrap()
-            )
-        );
+        for modulus in 1usize..=486 {
+            for offset in [0, XOF_BUFFER_SIZE - 1, XOF_BUFFER_SIZE] {
+                let mut consumed = offset;
+                let value = if modulus == 1 {
+                    0
+                } else {
+                    let mask = modulus.next_power_of_two() - 1;
+                    let width = usize::from(modulus > 256) + 1;
+                    loop {
+                        let mut word = 0;
+                        for byte in 0..width {
+                            word |= usize::from(expected[consumed]) << (8 * byte);
+                            consumed += 1;
+                        }
+                        let candidate = word & mask;
+                        if candidate < modulus {
+                            break candidate;
+                        }
+                    }
+                };
+                let mut cursor = XofCursor::from_indexed_prefix(&prefix, 17);
+                cursor.fill_bytes(&mut vec![0; offset]);
+                assert_eq!(cursor.next_usize_mod(modulus), value);
+                let mut continuation = [0u8; 16];
+                cursor.fill_bytes(&mut continuation);
+                assert_eq!(continuation, expected[consumed..consumed + 16]);
+            }
+        }
     }
 }

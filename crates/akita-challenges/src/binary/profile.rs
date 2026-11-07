@@ -429,34 +429,4 @@ mod tests {
         assert_eq!(nonzero.coefficient_l2_squared_bound(), 46);
         assert_eq!(nonzero.multiplication_linf_operator_bound(), 92);
     }
-
-    fn reduce_monomial(degree: usize, exponent: usize) -> Vec<(usize, i64)> {
-        let half = degree / 2;
-        if exponent < degree {
-            vec![(exponent, 1)]
-        } else if exponent < degree + half {
-            vec![(exponent - degree, -1), (exponent - half, -1)]
-        } else {
-            vec![(exponent - degree - half, 1)]
-        }
-    }
-
-    #[test]
-    fn trinomial_wraparound_has_the_certified_factor_two() {
-        for ring in [
-            BinaryScalarRing::Cyclotomic243,
-            BinaryScalarRing::Cyclotomic729,
-        ] {
-            let degree = ring.degree();
-            let half = degree / 2;
-            assert_eq!(reduce_monomial(degree, degree - 1), vec![(degree - 1, 1)]);
-            assert_eq!(reduce_monomial(degree, degree), vec![(0, -1), (half, -1)]);
-            assert_eq!(
-                reduce_monomial(degree, degree + half - 1),
-                vec![(half - 1, -1), (degree - 1, -1)]
-            );
-            assert_eq!(reduce_monomial(degree, degree + half), vec![(0, 1)]);
-            assert_eq!(reduce_monomial(degree, 2 * degree - 2), vec![(half - 2, 1)]);
-        }
-    }
 }

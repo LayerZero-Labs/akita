@@ -43,10 +43,10 @@ struct LimbColumn {
 }
 
 impl LimbColumn {
-    fn prepare(prime: u32, source: &[Bits], rng: &mut StdRng) -> Self {
+    fn prepare(prime: u32, source: &[Bits], rows: usize, rng: &mut StdRng) -> Self {
         let domain = TrinomialLimbDomain::new(prime).expect("admitted benchmark prime");
         let half = (prime / 2) as i32;
-        let matrix = (0..MAX_ROWS * M)
+        let matrix = (0..rows * M)
             .map(|_| {
                 let coefficients = std::array::from_fn::<_, D, _>(|_| rng.gen_range(-half..=half));
                 let mut slots = domain.zero_slots();
@@ -56,6 +56,13 @@ impl LimbColumn {
                 slots
             })
             .collect();
+        // Advance past omitted rows so later primes and word sources keep
+        // their deterministic input sequence without retaining unused slots.
+        for _ in rows * M..MAX_ROWS * M {
+            for _ in 0..D {
+                let _ = rng.gen_range(-half..=half);
+            }
+        }
         let transformed = source
             .iter()
             .map(|bits| {
@@ -112,19 +119,20 @@ impl LimbColumn {
 
 fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
     let mut rng = StdRng::seed_from_u64(SEED + 3);
-    let mut columns = TrinomialLimbDomain::ADMITTED_PRIMES
-        .map(|prime| LimbColumn::prepare(prime, source, &mut rng));
+    let mut sweep_column = None;
     let mut group = criterion.benchmark_group("trinomial_limb/commit_column");
     group.sample_size(20);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(2));
     group.throughput(Throughput::Elements(BITS));
-    for column in &mut columns {
-        for rows in 1..=MAX_ROWS {
-            if ![Q24_PRIME, SWEEP_PRIME].contains(&column.domain.prime()) && rows != COMPARISON_ROWS
-            {
-                continue;
-            }
+    for prime in TrinomialLimbDomain::ADMITTED_PRIMES {
+        let ranks = if [Q24_PRIME, SWEEP_PRIME].contains(&prime) {
+            1..=MAX_ROWS
+        } else {
+            COMPARISON_ROWS..=COMPARISON_ROWS
+        };
+        let mut column = LimbColumn::prepare(prime, source, *ranks.end(), &mut rng);
+        for rows in ranks {
             let parameter = format!("p={}/rank={rows}/width={M}", column.domain.prime());
             group.bench_with_input(
                 BenchmarkId::new("signed_commit_column", parameter),
@@ -132,13 +140,13 @@ fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
                 |b, &rows| b.iter(|| column.commit(black_box(source), rows)),
             );
         }
+        if prime == SWEEP_PRIME {
+            sweep_column = Some(column);
+        }
     }
     group.finish();
 
-    let column = columns
-        .iter_mut()
-        .find(|column| column.domain.prime() == SWEEP_PRIME)
-        .expect("the sweep prime is admitted");
+    let mut column = sweep_column.expect("the sweep prime is admitted");
     let mut group = criterion.benchmark_group(format!(
         "trinomial_limb/phases/p={}/rank=1/width={M}",
         column.domain.prime()
@@ -161,9 +169,10 @@ fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
     // Exercise direct four-word sources through normal runtime selection.
     // Unsupported backends have no direct-word benchmark to time.
     let words: Vec<[u128; 4]> = (0..M).map(|_| rng.gen()).collect();
+    let mut word_outputs = vec![column.domain.zero_slots(); M];
     if column
         .domain
-        .try_forward_interleaved_words_batch(&words[..1], &mut column.transformed[..1])
+        .try_forward_interleaved_words_batch(&words[..1], &mut word_outputs[..1])
         .expect("matching source count and prime")
     {
         group.throughput(Throughput::Elements((M * 512) as u64));
@@ -172,14 +181,14 @@ fn limb_benchmarks(criterion: &mut Criterion, source: &[Bits]) {
                 b.iter(|| {
                     for (words, outputs) in black_box(&words)
                         .chunks(batch)
-                        .zip(column.transformed.chunks_mut(batch))
+                        .zip(word_outputs.chunks_mut(batch))
                     {
                         assert!(column
                             .domain
                             .try_forward_interleaved_words_batch(words, outputs)
                             .expect("matching source count and prime"));
                     }
-                    black_box(&column.transformed);
+                    black_box(&word_outputs);
                 });
             });
         }

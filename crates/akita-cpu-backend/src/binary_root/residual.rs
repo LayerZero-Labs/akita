@@ -12,7 +12,7 @@
 //! the first residue. The result equals the remainder of
 //! [`BinaryRootRelation::from_response`] exactly.
 
-use super::{dimensions, embed_challenges, invalid, relation_bound, BinaryRootRelation, D};
+use super::{embed_challenges, invalid, validate_relation_operands, BinaryRootRelation, D};
 use akita_algebra::ring::trinomial::image::{Q24Image, Q24};
 use akita_algebra::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
@@ -88,9 +88,9 @@ impl BinaryRootRelation {
         challenges: &Challenges,
         family: FoldChallengeDistribution,
     ) -> Result<Vec<[i128; D]>, AkitaError> {
-        let (polynomials, columns, source_rows) = dimensions(descriptor, matrix)?;
+        let ((polynomials, columns, source_rows), bound) =
+            validate_relation_operands(descriptor, matrix, response, images, family)?;
         let rank = matrix.len();
-        let bound = relation_bound(descriptor, matrix, response, images, family)?;
         let modulus = PRIMES
             .iter()
             .try_fold(1u128, |product, &prime| {
