@@ -327,9 +327,7 @@ impl<E: Field> RootWeightFamily<E> {
     /// profile per element; the others add per-address weights by lane.
     pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
         match self {
-            Self::Embedded(weights) => {
-                weights.visit(&mut |address, value| profiles.add(address, value))
-            }
+            Self::Embedded(weights) => profiles.add_embedded(weights.offset, &weights.local),
             Self::DirectA(direct) => {
                 let _span = tracing::info_span!("root_weights_emit_direct_a").entered();
                 direct.emit(profiles)

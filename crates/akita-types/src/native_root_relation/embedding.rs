@@ -6,8 +6,8 @@ use jolt_field::Field;
 
 #[derive(Clone, Debug)]
 pub(crate) struct EmbeddedWeights<E: Field> {
-    local: Box<NativeRootWeights<E>>,
-    offset: usize,
+    pub(super) local: Box<NativeRootWeights<E>>,
+    pub(super) offset: usize,
     table_len: usize,
 }
 
@@ -94,7 +94,7 @@ impl<E: Field> EmbeddedWeights<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Prime64Offset59 as F, Ring, Zero};
+    use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as F, Ring, Zero};
 
     #[test]
     fn nested_root_embeddings_preserve_weights_and_visitor_errors() {
@@ -125,19 +125,54 @@ mod tests {
 
     #[test]
     fn translated_root_weights_preserve_dense_and_mle_evaluations() {
-        let a = NativeRootWeights::new(4, vec![(1, F::from_u64(3))], F::zero()).unwrap();
-        let b = NativeRootWeights::new(8, vec![(6, F::from_u64(7))], F::zero()).unwrap();
+        type E = Ext2<F>;
+        let ext = |value| E::from_base_fn(|coordinate| F::from_u64(value + coordinate as u64));
+        let a = NativeRootWeights::new(4, vec![(1, ext(3))], E::zero()).unwrap();
+        let b = NativeRootWeights::new(8, vec![(6, ext(7))], E::zero()).unwrap();
         let joined = NativeRootWeights::concatenate(32, [(0, a), (16, b)]).unwrap();
         let table = joined.materialize().unwrap();
-        assert_eq!(table[1], F::from_u64(3));
-        assert_eq!(table[22], F::from_u64(7));
-        let point = [2, 3, 5, 7, 11].map(F::from_u64);
+        assert_eq!(table[1], ext(3));
+        assert_eq!(table[22], ext(7));
+        let point = [2, 3, 5, 7, 11].map(ext);
         let eq = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
         let dense = table
             .iter()
             .zip(eq)
-            .fold(F::zero(), |sum, (&w, e)| sum + w * e);
+            .fold(E::zero(), |sum, (&w, e)| sum + w * e);
         assert_eq!(joined.evaluate(&point).unwrap(), dense);
+        let nested = NativeRootWeights::concatenate(128, [(32, joined.clone())]).unwrap();
+        // Explicit terms before the embedding force additive overlap; a second
+        // embedding also overlaps the first. Neither may overwrite existing rows.
+        let overlapping = NativeRootWeights::merge(
+            32,
+            [
+                NativeRootWeights::new(32, vec![(1, ext(19))], E::zero()).unwrap(),
+                joined.clone(),
+                joined,
+            ],
+            E::zero(),
+        )
+        .unwrap();
+        for weights in [nested, overlapping] {
+            for bits in [0, 1, 3, 5] {
+                let mut expected = weights.materialize().unwrap();
+                let mut profiles = weights.profiles(bits).unwrap();
+                assert_eq!(profiles.clone().take_dense(), expected);
+                for round in 0..bits {
+                    for left in (0..expected.len()).step_by(2) {
+                        assert_eq!(profiles.pair(left), (expected[left], expected[left + 1]));
+                    }
+                    let challenge = match round % 3 {
+                        0 => E::zero(),
+                        1 => E::one(),
+                        _ => ext(23),
+                    };
+                    profiles.bind(challenge);
+                    akita_algebra::poly::fold_evals_in_place(&mut expected, challenge);
+                }
+                assert_eq!(profiles.take_dense(), expected);
+            }
+        }
         let local = NativeRootWeights::new(8, vec![(0, F::from_u64(1))], F::zero()).unwrap();
         assert!(NativeRootWeights::concatenate(32, [(3, local.clone())]).is_err());
         assert!(NativeRootWeights::concatenate(4, [(0, local.clone())]).is_err());

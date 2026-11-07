@@ -15,7 +15,7 @@ use jolt_field::solinas::parallel::*;
 use akita_error::{checked, AkitaError};
 use jolt_field::{Field, Fold};
 
-use super::SegmentLanes;
+use super::{NativeRootWeights, SegmentLanes};
 
 /// One aligned block: `scale * row[shared] + row[own]`. Row zero is all zeros.
 #[derive(Clone, Copy, Debug)]
@@ -143,6 +143,84 @@ impl<E: Field> ProfileBuilder<E> {
 
     pub(crate) fn width(&self) -> usize {
         1 << self.block_bits
+    }
+
+    /// Relocate disjoint local profiles without expanding shared digit rows.
+    /// Narrow or overlapping blocks still add their exact per-address weights.
+    pub(crate) fn add_embedded(
+        &mut self,
+        offset: usize,
+        weights: &NativeRootWeights<E>,
+    ) -> Result<(), AkitaError> {
+        let width = self.width();
+        let range = checked::range(offset, weights.table_len()).ok_or(AkitaError::InvalidProof)?;
+        let table_len =
+            checked::product([self.blocks.len(), width]).ok_or(AkitaError::InvalidProof)?;
+        if range.end > table_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        let blocks = range.start / width..range.end / width;
+        if !offset.is_multiple_of(width)
+            || !weights.table_len().is_multiple_of(width)
+            || self
+                .blocks
+                .get(blocks.clone())
+                .ok_or(AkitaError::InvalidProof)?
+                .iter()
+                .any(|block| block.own != 0 || block.shared != 0)
+        {
+            let mut add = |address, value| {
+                let address = checked::sum([offset, address]).ok_or(AkitaError::InvalidProof)?;
+                self.add(address, value)
+            };
+            for &(address, value) in weights.terms() {
+                add(address, value)?;
+            }
+            for family in &weights.families {
+                family.visit(&mut add)?;
+            }
+            return Ok(());
+        }
+
+        let local = weights.profiles(self.block_bits)?;
+        // Row zero remains the one global zero row. All other row indices
+        // shift by the number of nonzero-index rows already in the builder.
+        let base = (self.rows.len() / width)
+            .checked_sub(1)
+            .ok_or(AkitaError::InvalidProof)?;
+        let extra = local
+            .rows
+            .len()
+            .checked_sub(width)
+            .ok_or(AkitaError::InvalidProof)?;
+        let last = checked::sum([base, extra / width]).ok_or(AkitaError::InvalidProof)?;
+        u32::try_from(last).map_err(|_| AkitaError::InvalidProof)?;
+        let base = u32::try_from(base).map_err(|_| AkitaError::InvalidProof)?;
+        self.rows
+            .try_reserve(extra)
+            .map_err(|_| AkitaError::InvalidSetup("root weight profile allocation".into()))?;
+        let remap = |row: u32| {
+            if row == 0 {
+                Ok(0)
+            } else {
+                row.checked_add(base).ok_or(AkitaError::InvalidProof)
+            }
+        };
+        for (target, block) in self
+            .blocks
+            .get_mut(blocks)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter_mut()
+            .zip(local.blocks)
+        {
+            *target = BlockWeight {
+                scale: block.scale,
+                shared: remap(block.shared)?,
+                own: remap(block.own)?,
+            };
+        }
+        self.rows.extend(local.rows.into_iter().skip(width));
+        Ok(())
     }
 
     /// Append one zero row and return its index.

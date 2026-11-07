@@ -1,6 +1,6 @@
 use crate::binary_source::{root_weight_fixtures, RootFixtureField as F};
 use akita_algebra::poly::fold_evals_in_place;
-use jolt_field::Ring;
+use jolt_field::{Ring, Zero};
 
 /// Every block width, including widths that send the 256-stride lanes
 /// through the per-address fallback, folds like the materialized table.
@@ -11,6 +11,25 @@ fn profiles_fold_like_the_materialized_table() {
         let num_vars = dense.len().trailing_zeros() as usize;
         for block_bits in [0, 3, 8, 10].into_iter().filter(|&bits| bits <= num_vars) {
             let mut profiles = fixture.weights.profiles(block_bits).unwrap();
+            let embedded = super::NativeRootWeights::concatenate(
+                4 * dense.len(),
+                [
+                    (dense.len(), fixture.weights.clone()),
+                    (2 * dense.len(), fixture.weights.clone()),
+                ],
+            )
+            .unwrap();
+            let mut embedded_profiles = embedded.profiles(block_bits).unwrap();
+            // Embedding keeps both sets of local rows and only one zero row;
+            // a per-address visitor can be numerically right and fail this.
+            assert_eq!(
+                embedded_profiles.rows.len(),
+                2 * profiles.rows.len() - (1 << block_bits)
+            );
+            let mut embedded_dense = vec![F::zero(); 4 * dense.len()];
+            embedded_dense[dense.len()..2 * dense.len()].copy_from_slice(&dense);
+            embedded_dense[2 * dense.len()..3 * dense.len()].copy_from_slice(&dense);
+            assert_eq!(embedded_profiles.clone().take_dense(), embedded_dense);
             assert_eq!(profiles.len(), dense.len());
             assert_eq!(profiles.clone().take_dense(), dense, "{}", fixture.name);
             let mut folded = dense.clone();
@@ -23,10 +42,17 @@ fn profiles_fold_like_the_materialized_table() {
                         fixture.name
                     );
                 }
-                let challenge = F::from_u64(1_000_003 + 7 * round as u64);
+                let challenge = F::from_u64(match round % 3 {
+                    0 => 0,
+                    1 => 1,
+                    _ => 1_000_003 + 7 * round as u64,
+                });
                 profiles.bind(challenge);
+                embedded_profiles.bind(challenge);
+                fold_evals_in_place(&mut embedded_dense, challenge);
                 fold_evals_in_place(&mut folded, challenge);
                 assert_eq!(profiles.len(), folded.len());
+                assert_eq!(embedded_profiles.clone().take_dense(), embedded_dense);
             }
             assert_eq!(
                 profiles.take_dense(),
