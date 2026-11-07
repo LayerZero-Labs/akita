@@ -8,6 +8,8 @@ mod messages;
 mod metadata;
 mod opening;
 mod plans;
+#[cfg(feature = "zk")]
+mod residual;
 mod scope;
 mod stage3;
 mod traits;
@@ -47,14 +49,17 @@ pub use plans::{
     ValidatedRelationSessionPlan, ValidatedRelationWitnessPlan, ValidatedStage1Plan,
     ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan, WitnessCommitmentParameters,
 };
+#[cfg(feature = "zk")]
+pub use residual::{ResidualExportKernel, ResidualWitness};
 pub use scope::{ProofScope, ProofScopeConsumer, ProofScopeId};
 #[cfg(feature = "labinius-trinomial")]
 pub use stage3::TypedStage3Request;
 pub use stage3::{FactoredStage3Request, OpaqueStage3Kernel, Stage3Request};
 pub use traits::{
-    OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel, OpaqueRelationWitnessKernel,
-    OpaqueResourceReleaseKernel, OpaqueStage1Kernel, OpaqueStage2Kernel, OpaqueTerminalFoldKernel,
-    OpaqueWitnessCommitKernel, OpaqueWitnessOpeningKernel, ProverHandleFamily,
+    DigitRangeSteps, OpaqueProverConsumer, OpaqueRecursiveWitnessBuildKernel,
+    OpaqueRelationWitnessKernel, OpaqueResourceReleaseKernel, OpaqueStage1Kernel,
+    OpaqueStage2Kernel, OpaqueTerminalFoldKernel, OpaqueWitnessCommitKernel,
+    OpaqueWitnessOpeningKernel, ProverHandleFamily,
 };
 
 /// Complete protocol capability implemented by a concrete prover backend.

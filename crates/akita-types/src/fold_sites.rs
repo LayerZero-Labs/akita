@@ -112,10 +112,9 @@ impl FoldSite {
 /// point, so it stays public. `derived` holds every other opening, the
 /// statement claims (level 0) or the predecessor's witness evaluation, which
 /// the verifier derives from earlier messages. A clear channel absorbs all of
-/// them as one public message, in group order.
-///
-/// Extension seam: zero knowledge (akita#120). A masking channel absorbs only the prefix,
-/// since the masked messages the derived claims come from already bind them.
+/// them as one public message, in group order; a masked channel absorbs only
+/// the prefix, since the masked messages the derived claims come from already
+/// bind them (`specs/whiteout-paper-deltas.md`).
 ///
 /// # Errors
 ///

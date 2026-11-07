@@ -15,14 +15,17 @@ use super::{
     AKITA_INSTANCE_DESCRIPTOR_VERSION, MAX_TRUSTED_CATALOG_ROWS,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
+use crate::audit::ScheduleAdmission;
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Format magic; its last byte is the binary view version. Version 2 added
-/// `FoldSchedule::root_accumulated_setup_prefix_len` to every carried row, so
-/// views written by an earlier version must be regenerated.
-const VERIFIER_MAGIC: [u8; 8] = *b"AKSCVFY2";
+/// `FoldSchedule::root_accumulated_setup_prefix_len` to every carried row on
+/// `main`, and Whiteout's view version 2 (`AKSCVFY2` on the integration
+/// branch) wrote every row's `zk` option. This view carries both, so it is
+/// version 3: views written by either version 2 must be regenerated.
+const VERIFIER_MAGIC: [u8; 8] = *b"AKSCVFY3";
 
 /// Byte bound for a view: the full identity list plus one JSON row's budget
 /// for the carried rows. It bounds decoding before any count check runs.
@@ -131,6 +134,28 @@ impl ValidatedScheduleCatalog {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     ) -> Result<Self, AkitaError> {
+        Self::from_verifier_view_admitting(
+            bytes,
+            expected_family_name,
+            policy,
+            ring_challenge_config,
+            ScheduleAdmission::Clear,
+        )
+    }
+
+    /// [`Self::from_verifier_view`] for a view whose rows `admission`
+    /// accepts.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_verifier_view`], and for every row `admission` refuses.
+    pub fn from_verifier_view_admitting(
+        bytes: &[u8],
+        expected_family_name: &str,
+        policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
+        admission: ScheduleAdmission,
+    ) -> Result<Self, AkitaError> {
         if bytes.len() > MAX_VERIFIER_VIEW_BYTES {
             return Err(AkitaError::InvalidSetup(
                 "verifier catalog exceeds byte limit".into(),
@@ -192,7 +217,13 @@ impl ValidatedScheduleCatalog {
             .collect::<Result<Vec<_>, _>>()?;
         // The JSON catalog's semantic audit owns the carried rows. No supplied
         // identity can replace the digest computed from a row's validated contents.
-        let mut catalog = Self::try_new(artifact.family_name, rows, policy, ring_challenge_config)?;
+        let mut catalog = Self::try_new_admitting(
+            artifact.family_name,
+            rows,
+            policy,
+            ring_challenge_config,
+            admission,
+        )?;
         for row in catalog.rows() {
             if row_digests
                 .binary_search(row.selection().row_digest.as_bytes())

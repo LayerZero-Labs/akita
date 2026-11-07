@@ -88,10 +88,8 @@ pub trait SumcheckProverChannel<E> {
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError>;
 
     /// Binds the instance's input claim. A clear channel absorbs it as a
-    /// public value.
-    ///
-    /// Extension seam: zero knowledge (akita#120). A masking channel binds nothing here,
-    /// since the masked messages the claim derives from already bind it.
+    /// public value; a masked channel binds nothing, since the masked
+    /// messages it derives from already do (`specs/whiteout-akita.md` §4.4).
     fn bind_input_claim<F>(&mut self, site: ProtocolSiteId, claim: &E) -> Result<(), AkitaError>
     where
         F: Field + CanonicalEncoding,
@@ -100,9 +98,7 @@ pub trait SumcheckProverChannel<E> {
         public_extensions::<F, E, _>(self.state_mut(), site, slice::from_ref(claim))
     }
 
-    /// Sends one round's coefficients.
-    ///
-    /// Extension seam: zero knowledge (akita#120). A masking channel masks them.
+    /// Sends one round's coefficients. A masked channel sends them masked.
     fn exchange_round_body<F>(
         &mut self,
         site: ProtocolSiteId,

@@ -9,6 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false, features = [
@@ -30,6 +31,10 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 ] }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 tracing = "0.1"
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", optional = true }
+zeroize = { version = "1.8", default-features = false, features = [
+  "alloc",
+], optional = true }
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
@@ -67,7 +72,14 @@ logging-transcript = [
 response-model-diagnostics = []
 # The masked prefix of a zero-knowledge opening (`specs/whiteout-akita.md`
 # §4.4–4.7). It selects nothing: a zero-knowledge configuration does.
-zk = ["akita-types/zk", "akita-params/zk", "akita-config/zk"]
+zk = [
+  "dep:jolt-zk",
+  "jolt-zk/whiteout",
+  "dep:zeroize",
+  "akita-types/zk",
+  "akita-params/zk",
+  "akita-config/zk",
+]
 parallel = [
   "akita-challenges/parallel",
   "jolt-algebra/parallel",

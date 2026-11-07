@@ -30,6 +30,8 @@ pub(crate) mod plans;
 mod prepared_opening;
 pub(crate) mod recursive;
 pub(crate) mod relation_weights;
+#[cfg(feature = "zk")]
+mod residual;
 mod source;
 #[doc(hidden)]
 pub mod standalone;
@@ -202,7 +204,7 @@ where
         session: &Self::ProofSessionHandle,
         context: &crate::opaque::ProofContext,
         preparation: &dyn std::any::Any,
-        challenges: &akita_challenges::Challenges,
+        challenges: &jolt_crypto::challenge::Challenges,
         logical_len: usize,
         destination_ring_dimension: usize,
     ) -> Result<Option<Self::WitnessHandle>, AkitaError> {

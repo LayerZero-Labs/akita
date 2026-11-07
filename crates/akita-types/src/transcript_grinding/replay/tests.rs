@@ -574,3 +574,124 @@ fn fold_candidate_replays_all_groups_as_one_transaction() {
     assert_eq!(verified, live);
     verifier.finish().unwrap().check_eof(state).unwrap();
 }
+
+/// A public check rejects in the verifier's replay and is skipped by the
+/// counting replay, which runs over arbitrary bytes and gives no verdict.
+#[test]
+fn public_checks_reject_unless_counting() {
+    let plan = plan();
+    let mut state = new_verifier_channel(b"public-check", &[]);
+    let mut verifier = VerifierGrinding::new(&mut state, &plan);
+    assert_eq!(verifier.check_public(true), Ok(()));
+    assert_eq!(verifier.check_public(false), Err(AkitaError::InvalidProof));
+    #[cfg(feature = "zk")]
+    {
+        let mut state = new_verifier_channel(b"public-check", &[]);
+        let mut counting = CountingGrinding::new(&mut state, &plan);
+        assert_eq!(counting.check_public(false), Ok(()));
+    }
+}
+
+/// A dense multilinear table summed by a degree-1 sumcheck, binding its top
+/// variable first.
+struct DenseSum(Vec<F>);
+
+impl DenseSum {
+    fn bind(&mut self, challenge: F) {
+        let half = self.0.len() / 2;
+        let (low, high) = self.0.split_at(half);
+        self.0 = low
+            .iter()
+            .zip(high)
+            .map(|(&low, &high)| low + challenge * (high - low))
+            .collect();
+    }
+}
+
+impl akita_sumcheck::SumcheckInstanceProver<F> for DenseSum {
+    fn num_rounds(&self) -> usize {
+        self.0.len().trailing_zeros() as usize
+    }
+
+    fn degree_bound(&self) -> usize {
+        1
+    }
+
+    fn input_claim(&self) -> F {
+        self.0.iter().copied().sum()
+    }
+
+    fn compute_round_univariate(
+        &mut self,
+        _round: usize,
+        _previous_claim: F,
+    ) -> jolt_poly::UnivariatePoly<F> {
+        let half = self.0.len() / 2;
+        let low: F = self.0[..half].iter().copied().sum();
+        let high: F = self.0[half..].iter().copied().sum();
+        jolt_poly::UnivariatePoly::new(vec![low, high - low])
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, challenge: F) {
+        self.bind(challenge);
+    }
+}
+
+/// Over the clear transcript, a sumcheck proved through
+/// [`GrindingSumcheckProver::new_public`] sends exactly the bytes it sends
+/// through [`GrindingSumcheckProver::new`], so moving Stage 3 onto public
+/// rounds leaves clear proofs unchanged.
+#[test]
+fn public_rounds_send_the_clear_bytes() {
+    const ROUNDS: u32 = 3;
+    let protocol = akita_params::SumcheckProtocol::Stage3;
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let plan = GrindingPlan::new(
+        (0..ROUNDS)
+            .map(|round| {
+                GrindingRun::proof_of_work(
+                    GrindingSite::SumcheckRound {
+                        protocol,
+                        level: 0,
+                        stage: 0,
+                        round,
+                    },
+                    2,
+                    order,
+                )
+                .unwrap()
+            })
+            .collect(),
+        order,
+    )
+    .unwrap();
+    use jolt_algebra::Ring;
+    let table: Vec<F> = (0..1u64 << ROUNDS)
+        .map(|value| F::from_u64(3 * value + 1))
+        .collect();
+    let shape = akita_sumcheck::SumcheckShape::new(ROUNDS as usize, 1).unwrap();
+    let prove = |public: bool| {
+        let mut transcript = new_prover_channel(b"public-rounds");
+        let mut grinding = ProverGrinding::new(&mut transcript, &plan);
+        let mut member = DenseSum(table.clone());
+        let mut channel = if public {
+            GrindingSumcheckProver::<F, F>::new_public(&mut grinding, protocol, 0, 0)
+        } else {
+            GrindingSumcheckProver::<F, F>::new(&mut grinding, protocol, 0, 0)
+        };
+        let (challenges, _) = akita_sumcheck::prove_sumcheck::<F, F, _, _>(
+            &mut akita_sumcheck::InfallibleSumcheck(&mut member),
+            &mut channel,
+            shape,
+            0,
+        )
+        .unwrap();
+        grinding.finish().unwrap();
+        (transcript.narg_string().to_vec(), challenges)
+    };
+    let (clear, clear_challenges) = prove(false);
+    let (public, public_challenges) = prove(true);
+    assert!(!clear.is_empty());
+    assert_eq!(public, clear);
+    assert_eq!(public_challenges, clear_challenges);
+}

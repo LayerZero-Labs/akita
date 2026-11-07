@@ -104,6 +104,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-algebra",
  "jolt-crypto",
+ "jolt-zk",
  "thiserror",
 ]
 
@@ -282,7 +283,10 @@ dependencies = [
  "akita-types",
  "jolt-algebra",
  "jolt-poly",
+ "jolt-transcript",
+ "jolt-zk",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -380,6 +384,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-zk",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "shake",
@@ -403,7 +408,9 @@ dependencies = [
  "criterion",
  "jolt-algebra",
  "jolt-poly",
+ "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "rayon",
  "tracing",
 ]
