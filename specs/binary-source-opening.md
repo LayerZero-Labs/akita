@@ -941,10 +941,10 @@ Typed Stage 3 acceptance coverage is explicit:
 
 | Mutation or property | Test |
 | --- | --- |
-| Every quadratic round coefficient, setup product claim, and prefix evaluation | `stage3_binary_group_opens_once_inside_the_callers_transcript`; `stage3_binary_and_ordinary_groups_share_one_opening` |
-| A different typed prefix table; the ordinary stream's prefix commitment | `stage3_binary_group_opens_once_inside_the_callers_transcript`, through `reject_foreign_prefixes` |
+| Every quadratic round coefficient, setup product claim, and prefix evaluation | `projection_binary_group_opens_once_inside_the_callers_transcript`; `binary_and_ordinary_groups_share_one_opening` |
+| A different typed prefix table; the ordinary stream's prefix commitment | `projection_binary_group_opens_once_inside_the_callers_transcript`, through `reject_foreign_prefixes` |
 | Same-geometry manifest swap; missing typed installation identity | `stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof` |
-| No online A read, including an accessor negative control | Both successful `stage3_binary_*` openings |
+| No online A read, including an accessor negative control | Both successful binary-only and mixed openings |
 | Rank-one/rank-three differential, one/two polynomials, rows 1/2/3/5, independent signed reduction | `stage3_a_product_matches_independent_signed_remainder_and_response_digits` |
 | Zero equality coordinates, odd live-row cutoffs, larger padded prefixes | `stage3_a_product_terminal_matches_dense_factors_with_zero_coordinates_and_odd_cutoff` |
 | Malformed rho, point, and prefix geometry reject without panic | `stage3_a_product_rejects_malformed_rho_point_and_prefix_without_panic` |
