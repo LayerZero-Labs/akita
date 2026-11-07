@@ -2,16 +2,16 @@
 
 use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
 use akita_algebra::ring::trinomial::MinusTrinomial;
-use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 use crate::binary_source::{
-    binary_scalar_challenges, BinaryRootWitnessPlan, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
+    BinaryRootWitnessPlan, BinaryScalarChallengeSource, PreparedBinaryScalarChallenges,
+    ScalarChallengeSupport, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,
 };
 use crate::native_root_relation::{
     weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
-    WEIGH_BATCH,
+    TranslatedLanes, WEIGH_BATCH,
 };
 
 /// The prover's A operand for [`binary_direct_a_weights`].
@@ -80,7 +80,7 @@ fn coordinate_adjoint<F: Field + CanonicalEncoding, E: ExtField<F>>(
 pub fn binary_direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
     matrix: Option<BinaryAOperand<'_, E>>,
-    challenges: &Challenges,
+    challenges: &impl BinaryScalarChallengeSource,
     rho: &[[E; 648]],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
     let descriptor = plan.descriptor();
@@ -106,7 +106,7 @@ pub fn binary_direct_a_weights<E: Field>(
             ));
         }
     }
-    let scalars = binary_scalar_challenges(descriptor, challenges)?;
+    let scalars = challenges.prepare(descriptor)?;
     let mut families = Vec::new();
     if let Some(operand) = matrix {
         let _span = tracing::info_span!("binary_root_weights_direct_a").entered();
@@ -117,29 +117,48 @@ pub fn binary_direct_a_weights<E: Field>(
     families.push(RootWeightFamily::Image(ImageWeights::new(
         plan, rho, &scalars,
     )?));
-    let mut terms = Vec::new();
     if let Some(segment) = plan.quotient_segment() {
         let depth = plan
             .projection_bounds()
             .quotient()
             .ok_or(AkitaError::InvalidProof)?
             .digits;
-        let count = checked::product([rho.len(), 648, depth]).ok_or(AkitaError::InvalidProof)?;
-        terms
-            .try_reserve_exact(count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for (element, row) in rho.iter().enumerate() {
-            for (coefficient, &weight) in row.iter().enumerate() {
-                terms.extend(plan.repacking().coefficient_weights(
-                    segment,
-                    element,
-                    coefficient,
-                    -E::from_u64(u64::from(BINARY_SOURCE_Q)) * weight,
-                )?);
-            }
-        }
+        let start = plan.repacking().segment_range(segment)?.start;
+        let mut power = E::one();
+        let copies = (0..depth)
+            .map(|digit| {
+                let base = checked::mul_add(digit, 1024, start).ok_or(AkitaError::InvalidProof)?;
+                let scale = power;
+                power *= E::from_u64(8);
+                Ok((base, scale))
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let lanes = rho
+            .iter()
+            .enumerate()
+            .map(|(element, row)| {
+                let offset =
+                    checked::product([element, depth, 1024]).ok_or(AkitaError::InvalidProof)?;
+                let weights = row
+                    .iter()
+                    .map(|&weight| -E::from_u64(u64::from(BINARY_SOURCE_Q)) * weight)
+                    .collect();
+                Ok((offset, weights))
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        families.push(RootWeightFamily::Translated(TranslatedLanes::new(
+            plan.repacking().domain_len(),
+            copies,
+            lanes,
+            None,
+        )?));
     }
-    NativeRootWeights::structured(plan.repacking().domain_len(), terms, families, E::zero())
+    NativeRootWeights::structured(
+        plan.repacking().domain_len(),
+        Vec::new(),
+        families,
+        E::zero(),
+    )
 }
 
 /// The response part `sum_ij <rho_i, rem(A_ij * z_j)>` of the A identity.
@@ -152,14 +171,6 @@ pub(crate) struct DirectAWeights<E: Field> {
     lanes: SegmentLanes,
     table_len: usize,
     columns: Vec<[E; 648]>,
-}
-
-#[cfg(test)]
-impl<'a, E: Field + CanonicalEncoding + ExtField<E>> BinaryAOperand<'a, E> {
-    /// Test operand over a field whose canonical integers fit 128 bits.
-    pub(crate) fn from_canonical(matrix: &'a [Vec<[i128; 648]>]) -> Self {
-        Self::new::<E>(matrix)
-    }
 }
 
 impl<E: Field> DirectAWeights<E> {
@@ -239,10 +250,6 @@ impl<E: Field> DirectAWeights<E> {
     }
 }
 
-/// Nonzero entries of one embedded challenge, as `(coefficient, negative)`:
-/// every entry is `1` or `-1`.
-type ChallengeSupport = Vec<(usize, bool)>;
-
 /// The image part `-sum_j <rho_i, rem(c_j * T_ji)>` of the A identity.
 ///
 /// It keeps rho and the sparse embedded challenges instead of one term per
@@ -260,8 +267,8 @@ pub(crate) struct ImageWeights<E: Field> {
     columns: usize,
     /// `rho[owner * rank + row]`.
     rho: Vec<[E; 648]>,
-    /// Nonzero embedded coefficients for `owner * columns + column`.
-    challenges: Vec<ChallengeSupport>,
+    /// Scalar supports for `owner * columns + column`, embedded on use.
+    challenges: PreparedBinaryScalarChallenges,
 }
 
 impl<E: Field> ImageWeights<E> {
@@ -272,7 +279,7 @@ impl<E: Field> ImageWeights<E> {
     fn new(
         plan: &BinaryRootWitnessPlan,
         rho: &[[E; 648]],
-        scalars: &[[i128; 162]],
+        scalars: &PreparedBinaryScalarChallenges,
     ) -> Result<Self, AkitaError> {
         let columns = plan.descriptor().index_map().columns();
         let lanes = SegmentLanes::new(plan.repacking(), 1)?;
@@ -286,30 +293,13 @@ impl<E: Field> ImageWeights<E> {
                 "binary image lanes differ from the challenge geometry".into(),
             ));
         }
-        let mut challenges = Vec::new();
-        challenges
-            .try_reserve_exact(scalars.len())
-            .map_err(|_| AkitaError::InvalidProof)?;
-        for scalar in scalars {
-            let mut support = Vec::new();
-            for (s, &coefficient) in scalar.iter().enumerate() {
-                let negative = match coefficient {
-                    0 => continue,
-                    1 => false,
-                    -1 => true,
-                    _ => return Err(AkitaError::InvalidProof),
-                };
-                support.push((4 * s, negative != (s % 2 == 1)));
-            }
-            challenges.push(support);
-        }
         Ok(Self {
             lanes,
             table_len: plan.repacking().domain_len(),
             rank: plan.rank(),
             columns,
             rho: rho.to_vec(),
-            challenges,
+            challenges: scalars.clone(),
         })
     }
 
@@ -323,12 +313,12 @@ impl<E: Field> ImageWeights<E> {
         &self,
         row_index: usize,
         column: usize,
-    ) -> Result<(usize, &ChallengeSupport), AkitaError> {
+    ) -> Result<(usize, &ScalarChallengeSupport), AkitaError> {
         let owner = row_index / self.rank;
         let row = row_index % self.rank;
         let index =
             checked::mul_add(owner, self.columns, column).ok_or(AkitaError::InvalidProof)?;
-        let support = self.challenges.get(index).ok_or(AkitaError::InvalidProof)?;
+        let support = self.challenges.support(index)?;
         let element = checked::mul_add(index, self.rank, row).ok_or(AkitaError::InvalidProof)?;
         Ok((element, support))
     }
@@ -343,8 +333,9 @@ impl<E: Field> ImageWeights<E> {
             for column in 0..self.columns {
                 let (element, support) = self.row_column(row_index, column)?;
                 let mut dot = E::zero();
-                for &(k, negative) in support {
-                    let value = *adjoint_low.get(k).ok_or(AkitaError::InvalidProof)?;
+                for &(s, negative) in support {
+                    let negative = negative != (s % 2 == 1);
+                    let value = *adjoint_low.get(4 * s).ok_or(AkitaError::InvalidProof)?;
                     if negative {
                         dot -= value;
                     } else {
@@ -374,7 +365,9 @@ impl<E: Field> ImageWeights<E> {
         let (element, support) = self.row_column(row_index, column)?;
         let extended = extended.get(row_index).ok_or(AkitaError::InvalidProof)?;
         let mut h = [E::zero(); 648];
-        for &(k, negative) in support {
+        for &(s, negative) in support {
+            let negative = negative != (s % 2 == 1);
+            let k = 4 * s;
             let shifted = extended.get(k..k + 648).ok_or(AkitaError::InvalidProof)?;
             if negative {
                 for (slot, &g) in h.iter_mut().zip(shifted) {

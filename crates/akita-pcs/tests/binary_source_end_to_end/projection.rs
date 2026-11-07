@@ -2,8 +2,8 @@
 use super::*;
 use akita_transcript::{ext_challenge, ProofChannel, ProtocolSiteId};
 use akita_types::binary_source::{
-    binary_projection_values, decode_binary_projection, BinaryProjectionBounds,
-    BinaryProjectionRows, BINARY_SOURCE_Q,
+    binary_projection_values, decode_binary_projection, BinaryProjectionRows, BinaryResidualBounds,
+    BINARY_SOURCE_Q,
 };
 
 pub(super) fn mutate_values(
@@ -23,7 +23,7 @@ pub(super) fn mutate_values(
         + 1;
     let outgoing = nonce_start + nonce_len;
     let start = outgoing + successor_coefficients * 16;
-    let bounds = BinaryProjectionBounds::new(1, 2, 3, polynomials, u128::MAX - 274).unwrap();
+    let bounds = BinaryResidualBounds::new(1, 2, 3, polynomials, u128::MAX - 274).unwrap();
     let signed_bytes = |value: i128| {
         let mut bytes = value.unsigned_abs().to_le_bytes()[..12].to_vec();
         if value < 0 {
@@ -98,7 +98,7 @@ const MU_SITE: ProtocolSiteId = ProtocolSiteId {
 
 #[test]
 fn projection_challenges_bind_commitment_and_every_output() {
-    let bounds = BinaryProjectionBounds::new(1, 2, 3, 1, u128::MAX - 274).unwrap();
+    let bounds = BinaryResidualBounds::new(1, 2, 3, 1, u128::MAX - 274).unwrap();
     let run = |commitment: u8, values: [i128; 7]| {
         let mut prover = new_prover_channel(b"binary-projection-fixation");
         // Stand in for the outgoing commitment atom; test the production sampler

@@ -3,6 +3,7 @@ use akita_algebra::binary::BinaryField162;
 use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
 use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::{
     BinaryCommitmentProfiles, BinaryIndexMap, BinaryTerminalClaim, PrimeGroupClaim,
     PrimePlaneClaim, PrimePlaneManifest,
@@ -185,7 +186,7 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
                 .unwrap(),
             crate::binary_root::binary_row_partials(&descriptor, &terminal, &expanded).unwrap()
         );
-        let primes = PrimePlaneManifest::new(
+        let primes = PrimePlaneManifest::with_field_profile(
             &descriptor,
             Some(PrimeGroupClaim {
                 point: (0..12).map(|i| ((i + 3) as u128).into()).collect(),
@@ -194,6 +195,7 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
                     value: 0.into(),
                 }],
             }),
+            BinaryFieldProfile::P128,
         )
         .unwrap();
         assert_eq!(

@@ -87,6 +87,7 @@ where
         prime.planes().len(),
         next.params.d_a(),
     )?;
+    let typed_prefix_len = typed_prefix.n_prefix()?;
     let typed_identity = typed.identity(manifest, &typed_prefix)?;
     if setup.prefix_context(&typed_prefix) != Some(typed_identity.as_slice()) {
         return Err(AkitaError::InvalidInput(
@@ -278,24 +279,19 @@ where
         E::zero(),
     )?
     .evaluate(&replay.challenges)?;
-    let prefix = next
-        .params
-        .setup_prefix()
-        .and_then(|p| p.slot_id())
-        .ok_or(AkitaError::InvalidProof)?;
-    if setup.prefix_slots().get(&prefix).is_none() {
+    if setup.prefix_slots().get(&typed_prefix).is_none() {
         return Err(AkitaError::InvalidProof);
     }
     let mut replay_stage3 = || {
-        let _span = tracing::info_span!("binary_root_a_stage3").entered();
+        let _span = tracing::info_span!("binary_root_typed_stage3").entered();
         let product = akita_types::binary_source::BinaryAProduct::new(
             public.plan(),
             &rho,
             &replay.challenges,
-            prefix.n_prefix()?,
+            typed_prefix_len,
         )?;
         crate::stages::stage3::verify_stage3_session::<F, E>(
-            prefix.n_prefix()?.trailing_zeros() as usize,
+            typed_prefix_len.trailing_zeros() as usize,
             &typed_identity,
             grinding,
             0,

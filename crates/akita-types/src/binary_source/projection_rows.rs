@@ -4,7 +4,7 @@ use akita_error::{checked, AkitaError};
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
 use jolt_field::Field;
 
-use super::{challenge_block, BinaryProjectionBounds, BINARY_PROJECTION_COUNT, BINARY_SOURCE_Q};
+use super::{challenge_block, BinaryResidualBounds, BINARY_PROJECTION_COUNT, BINARY_SOURCE_Q};
 
 /// Seven independent rows, each covering every polynomial/rank/coefficient residual entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,7 +18,7 @@ impl BinaryProjectionRows {
     /// Every three-byte candidate is accepted iff it is strictly below q.
     pub fn draw(
         channel: &mut impl ProofChannel,
-        bounds: &BinaryProjectionBounds,
+        bounds: &BinaryResidualBounds,
     ) -> Result<Self, AkitaError> {
         if bounds.quotient().is_some() {
             return Err(AkitaError::InvalidInput(
@@ -91,7 +91,7 @@ impl BinaryProjectionRows {
     pub fn project(
         &self,
         residual: &[[i128; 648]],
-        bounds: &BinaryProjectionBounds,
+        bounds: &BinaryResidualBounds,
     ) -> Result<[i128; BINARY_PROJECTION_COUNT], AkitaError> {
         if bounds.quotient().is_some()
             || residual.len() != self.rank
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn projection_integer_dot_products_check_shape_and_envelope() {
-        let bounds = BinaryProjectionBounds::new(1, 2, 1, 1, u128::MAX - 274).unwrap();
+        let bounds = BinaryResidualBounds::new(1, 2, 1, 1, u128::MAX - 274).unwrap();
         let rows = BinaryProjectionRows::from_blocks(1, || {
             let mut bytes = [0; 32];
             for chunk in bytes.chunks_exact_mut(3) {
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn projection_rows_join_every_polynomial_before_integer_batching() {
-        let bounds = BinaryProjectionBounds::new(1, 2, 3, 2, u128::MAX - 274).unwrap();
+        let bounds = BinaryResidualBounds::new(1, 2, 3, 2, u128::MAX - 274).unwrap();
         let rows = BinaryProjectionRows::from_blocks(bounds.residual_rows(), || {
             let mut bytes = [0; 32];
             for chunk in bytes.chunks_exact_mut(3) {
