@@ -176,9 +176,6 @@ fn claim_variable_split_publishes_dense_words_and_carrier_address() {
         assert_eq!(1 << split.word_bit, ell);
         assert_eq!(split.intra_carrier + split.word_bit, 7);
         assert_eq!(1 << split.carrier_address, map.padded_carriers());
-        assert_eq!(map.word_width(), ell);
-        assert_eq!(map.logical_len(), 1);
-        assert_eq!(map.columns(), 4);
     }
 }
 

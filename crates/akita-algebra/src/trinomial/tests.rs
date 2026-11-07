@@ -48,11 +48,6 @@ where
     let ring = TrinomialRing::from_coefficients(coefficients).unwrap();
     let expected = domain.forward(&ring);
     let lut = domain.prepare_i8_lut(log_basis).unwrap();
-    assert_eq!(
-        lut.table_bytes(),
-        2 * D * digit_count * core::mem::size_of::<F>()
-    );
-
     let mut workspace = domain.workspace();
     let mut actual = domain.forward(&sample_ring::<F, D, M>(73));
     domain

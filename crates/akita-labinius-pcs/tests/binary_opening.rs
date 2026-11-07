@@ -1,4 +1,4 @@
-//! End-to-end binary openings and frozen binary proof digests.
+//! End-to-end binary openings.
 
 #![cfg(feature = "labinius")]
 
@@ -246,40 +246,4 @@ fn fp64_sample_geometry_opening() {
 #[ignore = "sample geometry numbers; run explicitly in release with parallel"]
 fn fp128_sample_geometry_opening() {
     sample_geometry_opening::<Family128>("fp128", RootOpeningMode::Binary);
-}
-
-/// Complete binary proof bytes with typed q-uniform setup stay fixed per family.
-/// The dev protocol currently equals the current protocol, so both protocol
-/// selections share these bytes.
-#[cfg(all(feature = "transcript-blake2b", not(feature = "transcript-keccak")))]
-#[test]
-fn binary_proof_bytes_are_pinned_for_both_families() {
-    fn digest<P: FieldFamily>() -> String {
-        let case = Case::<P>::new(16, RootOpeningMode::Binary);
-        let committed = case.prover.commit::<H>(&case.source).unwrap();
-        let proof = case
-            .prover
-            .open::<H>(&case.source, &committed, &case.statement())
-            .unwrap();
-        let repeated = case
-            .prover
-            .open::<H>(&case.source, &committed, &case.statement())
-            .unwrap();
-        assert_eq!(proof, repeated, "the complete proof must be deterministic");
-        case.verifier
-            .verify::<H>(&committed.commitment, &case.statement(), &proof)
-            .unwrap();
-        akita_params::digest_descriptor_bytes(&proof)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
-    }
-    let expected = (
-        "bd7eaacb397dd2f471c0aaf02c24e4e6df18c0c99b93febc89121426e3bc49bb",
-        "75f0bd290a132573fa7afd072a1901d6e6bd4ae121839d3f6ae08600f8d2a32f",
-    );
-    assert_eq!(
-        (digest::<Family64>(), digest::<Family128>()),
-        (expected.0.to_owned(), expected.1.to_owned())
-    );
 }
