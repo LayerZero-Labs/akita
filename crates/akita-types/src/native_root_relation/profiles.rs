@@ -182,7 +182,10 @@ impl<E: Field> ProfileBuilder<E> {
             return Ok(());
         }
 
+        let phase = tracing::info_span!("root_weights_embedded_profiles", offset).entered();
         let local = weights.profiles(self.block_bits)?;
+        drop(phase);
+        let _phase = tracing::info_span!("root_weights_relocate_profiles", offset).entered();
         // Row zero remains the one global zero row. All other row indices
         // shift by the number of nonzero-index rows already in the builder.
         let base = (self.rows.len() / width)
@@ -206,20 +209,40 @@ impl<E: Field> ProfileBuilder<E> {
                 row.checked_add(base).ok_or(AkitaError::InvalidProof)
             }
         };
-        for (target, block) in self
+        let targets = self
             .blocks
             .get_mut(blocks)
-            .ok_or(AkitaError::InvalidProof)?
-            .iter_mut()
-            .zip(local.blocks)
-        {
+            .ok_or(AkitaError::InvalidProof)?;
+        if targets.len() != local.blocks.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let relocate = |(target, block): (&mut BlockWeight<E>, &BlockWeight<E>)| {
             *target = BlockWeight {
                 scale: block.scale,
                 shared: remap(block.shared)?,
                 own: remap(block.own)?,
             };
+            Ok::<_, AkitaError>(())
+        };
+        // Local families already fill disjoint rows in parallel. Keep their
+        // relocation parallel too: each worker owns a distinct block/header
+        // range, and indexed row extension retains the original row order.
+        #[cfg(feature = "parallel")]
+        {
+            targets
+                .par_iter_mut()
+                .zip(local.blocks.par_iter())
+                .try_for_each(relocate)?;
+            self.rows.par_extend(local.rows.into_par_iter().skip(width));
         }
-        self.rows.extend(local.rows.into_iter().skip(width));
+        #[cfg(not(feature = "parallel"))]
+        {
+            targets
+                .iter_mut()
+                .zip(&local.blocks)
+                .try_for_each(relocate)?;
+            self.rows.extend(local.rows.into_iter().skip(width));
+        }
         Ok(())
     }
 
