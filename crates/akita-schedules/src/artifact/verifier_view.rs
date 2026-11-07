@@ -11,7 +11,7 @@
 
 use super::{
     catalog_digest, policy_digest, AkitaError, CatalogCoverage, PlannerPolicy,
-    ScheduleCatalogArtifactRowV1, SparseChallengeConfig, ValidatedScheduleCatalog,
+    ScheduleCatalogArtifactRow, SparseChallengeConfig, ValidatedScheduleCatalog,
     AKITA_INSTANCE_DESCRIPTOR_VERSION, MAX_TRUSTED_CATALOG_ROWS,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
@@ -48,7 +48,7 @@ struct BinaryVerifierCatalog {
     /// every byte as its own element.
     #[serde(with = "serde_bytes")]
     row_digests: Vec<u8>,
-    rows: Vec<ScheduleCatalogArtifactRowV1>,
+    rows: Vec<ScheduleCatalogArtifactRow>,
 }
 
 impl ValidatedScheduleCatalog {
@@ -79,7 +79,7 @@ impl ValidatedScheduleCatalog {
             .into_iter()
             .map(|row_digest| {
                 self.resolve_selection(OpeningScheduleSelection { row_digest })
-                    .map(|row| ScheduleCatalogArtifactRowV1 {
+                    .map(|row| ScheduleCatalogArtifactRow {
                         schedule: row.schedule().clone(),
                     })
             })
@@ -185,7 +185,7 @@ impl ValidatedScheduleCatalog {
         let rows = artifact
             .rows
             .into_iter()
-            .map(ScheduleCatalogArtifactRowV1::into_profile_and_schedule)
+            .map(ScheduleCatalogArtifactRow::into_profile_and_schedule)
             .collect::<Result<Vec<_>, _>>()?;
         // The JSON catalog's semantic audit owns the carried rows. No supplied
         // identity can replace the digest computed from a row's validated contents.

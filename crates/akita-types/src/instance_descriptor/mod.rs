@@ -201,7 +201,7 @@ impl SetupSection {
 /// Per-proof effective schedule binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSection {
-    /// Explicit v1 catalog and row identity selected by the public statement.
+    /// Explicit catalog and row identity selected by the public statement.
     pub schedule_selection: akita_params::OpeningScheduleSelection,
     /// Digest of the final effective verifier schedule.
     pub effective_schedule_digest: DescriptorDigest,

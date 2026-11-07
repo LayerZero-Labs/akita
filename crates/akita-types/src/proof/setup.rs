@@ -22,7 +22,7 @@ pub use range::derive_public_matrix_range;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicMatrixDerivation {
     /// Fixed 4096-field-element SHAKE256 pages with exact field sampling.
-    Shake256PagedV1,
+    Shake256Paged,
 }
 
 impl PublicMatrixDerivation {
@@ -30,7 +30,7 @@ impl PublicMatrixDerivation {
     #[must_use]
     pub const fn page_field_elements(self) -> usize {
         match self {
-            Self::Shake256PagedV1 => 4096,
+            Self::Shake256Paged => 4096,
         }
     }
 }
@@ -45,11 +45,11 @@ pub struct AkitaSetupSeed {
 }
 
 impl AkitaSetupSeed {
-    /// Construct a v1 paged SHAKE256 public-matrix identity.
+    /// Construct a paged SHAKE256 public-matrix identity.
     #[must_use]
-    pub const fn shake256_paged_v1(seed: [u8; 32]) -> Self {
+    pub const fn shake256_paged(seed: [u8; 32]) -> Self {
         Self {
-            derivation: PublicMatrixDerivation::Shake256PagedV1,
+            derivation: PublicMatrixDerivation::Shake256Paged,
             seed,
         }
     }
@@ -57,7 +57,7 @@ impl AkitaSetupSeed {
 
 impl From<[u8; 32]> for AkitaSetupSeed {
     fn from(seed: [u8; 32]) -> Self {
-        Self::shake256_paged_v1(seed)
+        Self::shake256_paged(seed)
     }
 }
 
@@ -222,7 +222,7 @@ where
 pub fn sample_akita_setup_seed() -> AkitaSetupSeed {
     let mut seed = [0u8; 32];
     seed[..8].copy_from_slice(&0xDEAD_BEEF_CAFE_BABEu64.to_le_bytes());
-    AkitaSetupSeed::shake256_paged_v1(seed)
+    AkitaSetupSeed::shake256_paged(seed)
 }
 
 /// Derive an exact flat prefix of public field elements from a seed.
@@ -318,7 +318,7 @@ impl SetupSeedPageXof {
         let mut xof = Shake256::default();
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
         let derivation_tag = match id.derivation {
-            PublicMatrixDerivation::Shake256PagedV1 => PUBLIC_MATRIX_DERIVATION_TAG,
+            PublicMatrixDerivation::Shake256Paged => PUBLIC_MATRIX_DERIVATION_TAG,
         };
         absorb_len_prefixed(&mut xof, b"derivation", derivation_tag);
         absorb_len_prefixed(
@@ -385,7 +385,7 @@ impl AkitaSerialize for PublicMatrixDerivation {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         let tag = match self {
-            Self::Shake256PagedV1 => 1u8,
+            Self::Shake256Paged => 1u8,
         };
         tag.serialize_with_mode(&mut writer, compress)
     }
@@ -405,7 +405,7 @@ impl AkitaDeserialize for PublicMatrixDerivation {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         match u8::deserialize_with_mode(&mut reader, compress, validate, &())? {
-            1 => Ok(Self::Shake256PagedV1),
+            1 => Ok(Self::Shake256Paged),
             tag => Err(SerializationError::InvalidData(format!(
                 "unsupported public matrix derivation tag {tag}"
             ))),
@@ -940,7 +940,7 @@ mod tests {
             ),
         );
         let foreign_registry =
-            SetupPrefixVerifierRegistry::new(AkitaSetupSeed::shake256_paged_v1([9u8; 32]));
+            SetupPrefixVerifierRegistry::new(AkitaSetupSeed::shake256_paged([9u8; 32]));
 
         let err = AkitaVerifierSetup::from_parts(expanded, foreign_registry)
             .expect_err("cross-seed prefix registry must be rejected");
@@ -951,7 +951,7 @@ mod tests {
     fn strict_verifier_setup_decode_rejects_matrix_not_derived_from_seed() {
         let descriptor = seed([7u8; 32]);
         let setup_seed = descriptor.setup_seed.clone();
-        let wrong_seed = AkitaSetupSeed::shake256_paged_v1([9u8; 32]);
+        let wrong_seed = AkitaSetupSeed::shake256_paged([9u8; 32]);
         let wrong_matrix = derive_public_matrix_prefix::<F>(2 * D, &wrong_seed);
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
@@ -1044,7 +1044,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_deterministic_for_same_seed() {
-        let seed = AkitaSetupSeed::shake256_paged_v1([42u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([42u8; 32]);
         let m1 = derive_public_matrix_prefix::<SmallF>(15 * SMALL_D, &seed);
         let m2 = derive_public_matrix_prefix::<SmallF>(15 * SMALL_D, &seed);
         assert_eq!(m1, m2);
@@ -1052,7 +1052,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_prefix_stable() {
-        let seed = AkitaSetupSeed::shake256_paged_v1([7u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([7u8; 32]);
         let small = derive_public_matrix_prefix::<SmallF>(6 * SMALL_D, &seed);
         let large = derive_public_matrix_prefix::<SmallF>(24 * SMALL_D, &seed);
         let small_view = small.ring_view::<SMALL_D>(1, 6).unwrap();
@@ -1064,7 +1064,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_matches_sequential_page_stream() {
-        let seed = AkitaSetupSeed::shake256_paged_v1([5u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([5u8; 32]);
         let got = derive_public_matrix_prefix::<SmallF>(6 * SMALL_D, &seed);
         let mut page = SetupSeedPageXof::new::<SmallF>(&seed, 0);
         let expected = (0..6 * SMALL_D)
@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_independent_of_ring_dimension() {
-        let seed = AkitaSetupSeed::shake256_paged_v1([17u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([17u8; 32]);
         let d64 = derive_public_matrix_prefix::<SmallF>(8 * 64, &seed);
         let d128 = derive_public_matrix_prefix::<SmallF>(4 * 128, &seed);
 
@@ -1085,7 +1085,7 @@ mod tests {
 
     #[test]
     fn flat_derivation_is_prefix_stable_across_page_boundary() {
-        let seed = AkitaSetupSeed::shake256_paged_v1([23u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([23u8; 32]);
         let page_field_elements = seed.derivation.page_field_elements();
         let through_page_zero = derive_public_matrix_prefix::<SmallF>(page_field_elements, &seed);
         let into_page_one = derive_public_matrix_prefix::<SmallF>(page_field_elements + 64, &seed);
@@ -1098,7 +1098,7 @@ mod tests {
 
     #[test]
     fn paged_derivation_golden_vector() {
-        let seed = AkitaSetupSeed::shake256_paged_v1([31u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([31u8; 32]);
         fn samples<F: Field + CanonicalEncoding>(seed: &AkitaSetupSeed) -> [u128; 3] {
             let page_field_elements = seed.derivation.page_field_elements();
             let derived = derive_public_matrix_prefix::<F>(page_field_elements + 64, seed);
@@ -1144,7 +1144,7 @@ mod tests {
     fn page_xof_binds_the_field_modulus() {
         type OtherF = Fp32<4294967291>;
 
-        let seed = AkitaSetupSeed::shake256_paged_v1([29u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([29u8; 32]);
         let mut small = SetupSeedPageXof::new::<SmallF>(&seed, 0);
         let mut other = SetupSeedPageXof::new::<OtherF>(&seed, 0);
         let mut small_bytes = [0u8; 32];
@@ -1157,7 +1157,7 @@ mod tests {
 
     #[test]
     fn different_shapes_from_same_flat() {
-        let seed = AkitaSetupSeed::shake256_paged_v1([13u8; 32]);
+        let seed = AkitaSetupSeed::shake256_paged([13u8; 32]);
         let flat = derive_public_matrix_prefix::<SmallF>(12 * SMALL_D, &seed);
         let view_3x4 = flat.ring_view::<SMALL_D>(3, 4).unwrap();
         let view_2x6 = flat.ring_view::<SMALL_D>(2, 6).unwrap();

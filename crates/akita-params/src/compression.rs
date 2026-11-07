@@ -201,21 +201,21 @@ pub enum CompressionPolicyId {
     /// Two-map exact monotone cutover with a minimum two-fold compressed prefix
     /// and a 256-byte terminal image.
     #[default]
-    NegativeBinaryTwoMapExactMonotoneCutover8KiBV4,
+    NegativeBinaryTwoMapExactMonotoneCutover8KiB,
 }
 
 impl CompressionPolicyId {
     /// Stable descriptor tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4 => 4,
+            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiB => 4,
         }
     }
 
     /// Parse the stable descriptor tag.
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
-            4 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4),
+            4 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiB),
             _ => None,
         }
     }
@@ -223,8 +223,8 @@ impl CompressionPolicyId {
     /// Descriptive policy name used in reports and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4 => {
-                "NegativeBinaryTwoMapExactMonotoneCutover8KiBV4"
+            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiB => {
+                "NegativeBinaryTwoMapExactMonotoneCutover8KiB"
             }
         }
     }
@@ -232,7 +232,7 @@ impl CompressionPolicyId {
 
 /// The only compression policy supported by this protocol epoch.
 pub const COMPRESSION_POLICY: CompressionPolicyId =
-    CompressionPolicyId::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4;
+    CompressionPolicyId::NegativeBinaryTwoMapExactMonotoneCutover8KiB;
 
 /// The two compression-only ring dimensions for one modulus profile.
 ///

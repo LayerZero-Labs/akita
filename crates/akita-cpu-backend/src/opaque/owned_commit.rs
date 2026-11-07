@@ -256,7 +256,7 @@ mod tests {
                         .unwrap();
                     assert_eq!(transferred.committed.retained, expected.prover_state);
                     let mut other_descriptor = setup.expanded.descriptor().clone();
-                    other_descriptor.setup_seed = AkitaSetupSeed::shake256_paged_v1([0xA5; 32]);
+                    other_descriptor.setup_seed = AkitaSetupSeed::shake256_paged([0xA5; 32]);
                     let other_matrix = akita_types::derive_public_matrix_prefix::<F>(
                         other_descriptor.num_field_elements,
                         &other_descriptor.setup_seed,

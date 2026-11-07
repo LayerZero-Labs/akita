@@ -50,7 +50,7 @@ remains an automatic failure.
 ## Current fp32 nv20 adaptive objective
 
 The two fp32 dense nv20 rows have a sharp choice between setup size and proof
-size. Adaptive direct schedules retain the first-direct-first V2 objective:
+size. Adaptive direct schedules retain the first-direct-first objective:
 first-direct setup capacity, proof bytes, total setup, root output-witness
 length, then the canonical descriptor. Recursive schedules use a separate
 power-of-two-bucketed setup objective. No amortized or weighted objective is

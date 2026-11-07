@@ -91,14 +91,14 @@ pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 pub fn policy_of<Cfg: CommitmentConfig>(chunking: ChunkedWitnessCfg) -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
-        cost_model: akita_schedules::PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
+        cost_model: akita_schedules::PlannerCostModelId::NoncePayloadAndSetupEnvelope,
         selective_l2_response_model:
-            akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
+            akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMoments,
         selection_policy: Cfg::selection_policy(),
         recursive_split_search_policy:
-            akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+            akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremes,
         recursive_setup_search_policy: if recursive_setup_planning {
-            akita_schedules::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+            akita_schedules::RecursiveSetupSearchPolicy::RootAndFirstChild
         } else {
             akita_schedules::RecursiveSetupSearchPolicy::Exhaustive
         },
