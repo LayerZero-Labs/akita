@@ -3,7 +3,7 @@ use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::RelationRowGeometry;
-use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Ring, Zero};
+use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as Base, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 type E = Ext2<Base>;
