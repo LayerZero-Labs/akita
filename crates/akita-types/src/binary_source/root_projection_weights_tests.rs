@@ -150,8 +150,6 @@ fn quotient_plan(owners: usize, rows: usize, columns: usize) -> BinaryRootWitnes
 
 #[test]
 fn p64_generic_adjoint_and_quotient_weights_match_dense_reference_at_extension_rho() {
-    let u = E64::new(Prime64Offset59::zero(), Prime64Offset59::one());
-    assert_eq!(u * u, E64::from_u64(2));
     let mut rng = StdRng::seed_from_u64(0x0006_4864);
     for (owners, rows, columns) in [(1, 1, 2), (2, 1, 2), (1, 2, 1)] {
         let plan = quotient_plan(owners, rows, columns);

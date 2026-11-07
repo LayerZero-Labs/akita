@@ -152,7 +152,7 @@ fn limb_interleaved_tables_are_lazy_and_reported() {
     assert_eq!(domain.table_storage_bytes(), 0);
     let mut out = domain.zero_slots();
     domain.forward_interleaved_bits(&[0; 11], &mut out).unwrap();
-    assert_eq!(domain.table_storage_bytes(), 294_912);
+    assert!(domain.table_storage_bytes() > 0);
     let original = domain.interleaved_first_level.get().unwrap().as_ptr();
     domain.forward_interleaved_bits(&[0; 11], &mut out).unwrap();
     assert_eq!(

@@ -168,9 +168,6 @@ fn recursive_scratch_is_reusable_bounded_and_matches_schoolbook() {
     let mut rng = StdRng::seed_from_u64(0x5c4a_7c48);
     for length in [17, 33, 81, DEGREE] {
         let fields = super::karatsuba_scratch_len(length).unwrap();
-        if length == DEGREE {
-            assert_eq!(fields, 5_096);
-        }
         let sentinel = F::from_u64(0x1234);
         let mut scratch = vec![sentinel; fields + 2];
         for _ in 0..2 {

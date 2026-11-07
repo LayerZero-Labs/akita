@@ -1314,14 +1314,12 @@ verification passing. Only prime-bearing shapes were re-pinned. All five
 remaining prime-bearing rows, including the mixed 2^10 smoke shape, passed
 verification with their new pins.
 
-### Proof digest pins
+### Proof size and digest measurements
 
-[`scripts/binary-source-full-size-digests.tsv`](../scripts/binary-source-full-size-digests.tsv)
-pins the proof size and Blake2b-256 digest of every full-size and smoke shape.
-The driver fails when a proof differs from its row. The dev protocol now equals
-the current protocol, so the file has one row per `(log_carriers, shape)` and
-`--dev-protocol` checks the same row. Before the single-point cutover, the
-`--dev-protocol` smoke reproduced the 82,308-byte pin.
+The full-size driver prints each proof's size and Blake2b-256 digest as
+measurement output, then reloads and verifies the proof in a separate process.
+These measurements describe the selected protocol at the measured revision;
+the driver does not require equality with historical outputs.
 
 The single-point prime pins were re-captured at `31e0f9c40`; the two
 `binary-claim` rows reproduce unchanged. The pre-cutover pins were
@@ -4386,9 +4384,9 @@ is likewise released after its last use.
 
 The intermediate current-protocol `binary-and-prime-claims` runs in
 `$CARGO_TARGET_DIR/n22-parity-lifetime.txt` and
-`$CARGO_TARGET_DIR/n23-parity-lifetime.txt` both report
-`proof_digest_pin matched=True` and `verification passed=true`. Their exact
-proof bytes and digests match the initial full-size pins. The drivers logged
+`$CARGO_TARGET_DIR/n23-parity-lifetime.txt` both report successful verification.
+At those measured revisions, their proof bytes and digests matched the initial
+full-size measurements. The drivers logged
 dirty HEADs `f6c1b1b45` and `082dd6278`, respectively; these are combined-change
 measurements, not isolated timing attribution to one optimization.
 

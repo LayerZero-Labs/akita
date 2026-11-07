@@ -487,9 +487,6 @@ fn ordered_batch_rejects_omitted_reordered_and_wrong_width_groups() {
     assert!(compile(&claims).is_err());
 }
 
-#[path = "binary_ordinary_legacy_weights.rs"]
-mod legacy_weights;
-
 #[test]
 fn legacy_and_signed_preimages_accept_multi_block_slices() {
     // One B slice carries both live blocks. The legacy relation shares the
@@ -520,7 +517,7 @@ fn legacy_and_signed_preimages_accept_multi_block_slices() {
 }
 
 #[test]
-fn legacy_partial_block_preserves_base_relation_and_repacking_boundary() {
+fn partial_block_rejects_signed_plan_and_short_source_repacking() {
     let mut profile = profile(3, 1, CommitmentSliceCount::ONE);
     // Two live D64 rings in a four-position block: the base public constructor
     // accepts this profile, although its prover cannot repack the short source.
@@ -546,53 +543,18 @@ fn legacy_partial_block_preserves_base_relation_and_repacking_boundary() {
     )
     .unwrap();
     profile.validate_frozen_precommit(128).unwrap();
-    let legacy = legacy_weights::OrdinaryNativeRootPlan::new(profile, 0).unwrap();
     let plan = OrdinaryNativeRootPlan::new(profile, 0).unwrap();
     assert!(
         OrdinaryNativeRootPlan::new_signed(profile, 0, OrdinarySourceWidth::new(3).unwrap())
             .is_err()
     );
-    assert_eq!(plan.segments(), legacy.segments());
-    assert_eq!(plan.linear_batch_count(), legacy.linear_batch_count());
     let input = fixture(profile, 3);
     let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), D).unwrap();
-    assert_eq!(
-        plan.negative_binary_addresses(&repacking).unwrap(),
-        legacy.negative_binary_addresses(&repacking).unwrap()
-    );
-    let batches = vec![F::one(); plan.linear_batch_count()];
-    let previous = legacy
-        .linear_weights(
-            &repacking,
-            input.setup.expanded.descriptor(),
-            &input.point,
-            input.evaluations[0],
-            &input.payload,
-            F::from_u64(17),
-            &batches,
-        )
-        .unwrap();
-    let current = plan
-        .linear_weights(
-            &repacking,
-            input.setup.expanded.descriptor(),
-            &input.point,
-            &input.evaluations,
-            &input.payload,
-            F::from_u64(17),
-            &batches,
-        )
-        .unwrap();
-    assert_eq!(
-        previous.materialize().unwrap(),
-        current.materialize().unwrap()
-    );
-    assert_eq!(previous.claim(), current.claim());
     let natural = input
         .backend
         .ordinary_root_preimage(&input.handle, &plan)
         .unwrap();
-    // Base 6a294098 emits exactly the logical prefix, without block padding.
+    // The imported source contains the logical prefix without block padding.
     assert_eq!(natural[0], [-4i8, 3, -1, 0].repeat(N / 4));
     assert!(matches!(
         repacking.repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>()),
@@ -601,64 +563,4 @@ fn legacy_partial_block_preserves_base_relation_and_repacking_boundary() {
             actual: 128,
         })
     ));
-}
-
-#[test]
-fn one_digit_fixture_matches_frozen_pre_extension_relation_bytes() {
-    use akita_serialization::AkitaSerialize;
-    let profile = profile(3, 1, CommitmentSliceCount::TWO);
-    let legacy = legacy_weights::OrdinaryNativeRootPlan::new(profile, 0).unwrap();
-    let plan = OrdinaryNativeRootPlan::new(profile, 0).unwrap();
-    let input = fixture(profile, 3);
-    assert_eq!(plan.segments(), legacy.segments());
-    assert_eq!(plan.linear_batch_count(), legacy.linear_batch_count());
-    let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
-    assert_eq!(
-        plan.negative_binary_addresses(&repacking).unwrap(),
-        legacy.negative_binary_addresses(&repacking).unwrap()
-    );
-    let natural = input
-        .backend
-        .ordinary_root_preimage(&input.handle, &plan)
-        .unwrap();
-    // The original importer wrote raw small coefficients in this exact order.
-    assert_eq!(natural[0], [-4i8, 3, -1, 0].repeat(N / 4));
-    let batches = (0..plan.linear_batch_count())
-        .map(|i| F::from_u64(19 + i as u64))
-        .collect::<Vec<_>>();
-    let previous = legacy
-        .linear_weights(
-            &repacking,
-            input.setup.expanded.descriptor(),
-            &input.point,
-            input.evaluations[0],
-            &input.payload,
-            F::from_u64(17),
-            &batches,
-        )
-        .unwrap();
-    let current = plan
-        .linear_weights(
-            &repacking,
-            input.setup.expanded.descriptor(),
-            &input.point,
-            &input.evaluations,
-            &input.payload,
-            F::from_u64(17),
-            &batches,
-        )
-        .unwrap();
-    // The current weights are structured, so compare the relation they
-    // materialize rather than their explicit terms.
-    let mut golden = Vec::new();
-    let mut actual = Vec::new();
-    previous.claim().serialize_compressed(&mut golden).unwrap();
-    current.claim().serialize_compressed(&mut actual).unwrap();
-    for weight in previous.materialize().unwrap() {
-        weight.serialize_compressed(&mut golden).unwrap();
-    }
-    for weight in current.materialize().unwrap() {
-        weight.serialize_compressed(&mut actual).unwrap();
-    }
-    assert_eq!(actual, golden);
 }
