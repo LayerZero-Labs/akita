@@ -210,6 +210,55 @@ mod tests {
         .unwrap()
     }
 
+    fn ordinary_profile(field: BinaryFieldProfile) -> GroupCommitPhaseParams {
+        use akita_params::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
+        use akita_params::{
+            BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits, RoleParams,
+        };
+        let modulus = match field {
+            BinaryFieldProfile::P128 => SisModulusProfileId::Q128Offset275,
+            BinaryFieldProfile::P64 => SisModulusProfileId::Q64Offset59,
+        };
+        let key = |role, degree| {
+            sis_table_key_for_linf_bound(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                modulus,
+                role,
+                degree,
+                8,
+            )
+            .unwrap()
+        };
+        let inner =
+            InnerCommitMatrixParams::try_new_with_min_rank(key(SisMatrixRole::Inner, 128), 2)
+                .unwrap();
+        let digits = field.prime_plane_digits();
+        let geometry = CommitmentSliceGeometry::try_new(
+            CommitmentSliceCount::ONE,
+            4,
+            1,
+            inner.output_rank(),
+            digits,
+            128,
+            64,
+        )
+        .unwrap();
+        let outer = OuterCommitMatrixParams::try_new_with_min_rank(
+            key(SisMatrixRole::Outer, 64),
+            geometry.physical_input_width(),
+        )
+        .unwrap();
+        GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
+            group: PolynomialGroupLayout::singleton(10),
+            blocks: BlockGeometry::new(8, 2, 4),
+            outer_slice_count: CommitmentSliceCount::ONE,
+            inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
+            outer: RoleParams::new(GadgetDigits::new(3, digits), outer),
+        }
+    }
+
     fn assert_price_matches_verifier_plan(
         manifest: &BinaryCommittedGroupManifest,
         word: bool,
@@ -338,7 +387,12 @@ mod tests {
             assert_eq!(price.d_table_min_rank, Some(price.d_rank));
             assert_ne!(price.d_rank, manifest.b_rows());
             assert_price_matches_verifier_plan(&manifest, word, &prime, None);
-            assert_price_matches_verifier_plan(&manifest, word, &prime, Some(carrier));
+            assert_price_matches_verifier_plan(
+                &manifest,
+                word,
+                &prime,
+                Some(ordinary_profile(field)),
+            );
         }
         let foreign_prime = PrimePlaneManifest::with_field_profile(
             descriptor,
