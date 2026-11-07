@@ -110,6 +110,14 @@ impl PrimeGroupClaim {
         if coordinates.len() > E::DEGREE {
             return Err(AkitaError::InvalidProof);
         }
+        if coordinates.len() == 2 {
+            // P64 coordinates are in the canonical E64 basis, even when E is
+            // supplied through the generic extension-field interface.
+            let basis = E::from_base_fn(|i| F::from_bool(i == 1));
+            if basis.square() != E::lift_base(F::from_u64(2)) {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
         let (rows, columns, omega) = coordinates.first().ok_or(AkitaError::InvalidProof)?;
         let mut native = (
             vec![E::zero(); rows.len()],

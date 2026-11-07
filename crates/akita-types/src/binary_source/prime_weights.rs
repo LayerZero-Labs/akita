@@ -291,14 +291,7 @@ impl<E: Field> PrimePlaneWeights<E> {
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
             let (mut reading, mut relation) = (E::zero(), E::zero());
-            for column in 0..self.columns {
-                let scale = plane.reading
-                    * *self
-                        .reading
-                        .columns
-                        .get(column)
-                        .ok_or(AkitaError::InvalidProof)?;
-                let reading_dots = base_dots.iter().map(|&dot| dot * scale).collect::<Vec<_>>();
+            for (column, &column_weight) in self.reading.columns.iter().enumerate() {
                 let element = checked::mul_add(plane_index, self.columns, column)
                     .ok_or(AkitaError::InvalidProof)?;
                 // The digit lanes of one element cycle through the
@@ -312,13 +305,13 @@ impl<E: Field> PrimePlaneWeights<E> {
                 }
                 let column_dots = dots.get(column).ok_or(AkitaError::InvalidProof)?;
                 let mut omega_sum = E::zero();
-                for (slot, (&high, &dot)) in highs.iter().zip(column_dots).enumerate() {
-                    omega_sum += high * *reading_dots.get(slot).ok_or(AkitaError::InvalidProof)?;
+                for ((&high, &dot), &base_dot) in highs.iter().zip(column_dots).zip(&base_dots) {
+                    omega_sum += high * base_dot;
                     relation += high * dot;
                 }
-                reading += omega_sum;
+                reading += column_weight * omega_sum;
             }
-            sum += reading - plane.relation * relation;
+            sum += plane.reading * reading - plane.relation * relation;
         }
         Ok(sum)
     }
@@ -334,9 +327,10 @@ impl<E: Field> PrimePlaneWeights<E> {
             .columns
             .get(column)
             .ok_or(AkitaError::InvalidProof)?;
+        let scale = plane.reading * column;
         let mut weights = [E::zero(); 162];
         for (weight, &omega) in weights.iter_mut().zip(&self.reading.omega) {
-            *weight = plane.reading * column * omega;
+            *weight = scale * omega;
         }
         Ok(weights)
     }

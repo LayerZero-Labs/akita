@@ -767,3 +767,91 @@ fn p64_native_tensors_and_readings_match_naive_evaluation() {
     assert_eq!(reference.materialize().unwrap(), dense);
     assert_eq!(reference.claim(), weights.claim());
 }
+
+#[test]
+fn p64_prime_compilers_reject_a_different_quadratic_basis() {
+    use jolt_field::{Ext2Config, ExtField, FpExt2, Prime64Offset59 as Base, Zero};
+
+    struct EightNr;
+    impl Ext2Config<Base> for EightNr {
+        fn non_residue() -> Base {
+            Base::from_u64(8)
+        }
+    }
+    type E = FpExt2<Base, EightNr>;
+
+    // Euler's criterion establishes that this is another valid quadratic field.
+    let exponent = (BinaryFieldProfile::P64.modulus() - 1) / 2;
+    let legendre = (0..64).rev().fold(Base::one(), |power, bit| {
+        let square = power.square();
+        if exponent >> bit & 1 == 1 {
+            square * EightNr::non_residue()
+        } else {
+            square
+        }
+    });
+    assert_eq!(legendre, -Base::one());
+    assert_eq!(E::DEGREE, 2);
+    assert_eq!(E::from_u128(BinaryFieldProfile::P64.modulus()), E::zero());
+    let basis = E::from_base_fn(|i| Base::from_bool(i == 1));
+    assert_eq!(basis.square(), E::from_u64(8));
+
+    let source = descriptor();
+    let claim = PrimeGroupClaim {
+        point: vec![[2, 1].into(); 11],
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: [3, 5].into(),
+        }],
+    };
+    assert!(claim.field_weights::<Base, super::E64>(&source).is_ok());
+    assert!(matches!(
+        claim.field_weights::<Base, E>(&source),
+        Err(AkitaError::InvalidProof)
+    ));
+    let manifest =
+        PrimePlaneManifest::with_field_profile(&source, Some(claim), BinaryFieldProfile::P64)
+            .unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, false, 2)
+            .unwrap();
+    let challenges = Challenges::from_sparse(
+        (0..4)
+            .map(|_| SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        2,
+        2,
+    )
+    .unwrap();
+    let alpha = E::one() + basis;
+    let batches = [E::one(); 2];
+    assert!(matches!(
+        prime_plane_relation_weights(
+            &source,
+            &manifest,
+            plan.repacking(),
+            0,
+            plan.prime_segment().unwrap(),
+            &challenges,
+            alpha,
+            &batches,
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
+    assert!(matches!(
+        crate::binary_source::root_public::reference::prime_plane_weights(
+            &source,
+            &manifest,
+            plan.repacking(),
+            0,
+            plan.prime_segment().unwrap(),
+            &challenges,
+            alpha,
+            &batches,
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
+}
