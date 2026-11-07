@@ -807,4 +807,79 @@ mod p64_tests {
             assert_eq!(structured.evaluate(&r).unwrap(), flat.evaluate(&r).unwrap());
         }
     }
+
+    #[test]
+    fn p64_second_reading_matches_independent_flat_rows() {
+        for (bits, slots) in [(2, 3), (9, 3), (18, 5), (33, 1)] {
+            let profile =
+                binary_ordinary_profile_fixture(BinaryFieldProfile::P64, Some((bits, slots)));
+            let plan = OrdinaryNativeRootPlan::new_signed(
+                profile,
+                0,
+                akita_params::ordinary_source::OrdinarySourceWidth::new(bits).unwrap(),
+            )
+            .unwrap();
+            let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
+            let setup = AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+                setup_seed: [41; 32].into(),
+            };
+            let ext = |i| E::from_base_fn(|c| F::from_u64(i + 43 * u64::try_from(c).unwrap()));
+            let mut point = (0..profile.group.num_vars())
+                .map(|i| ext(17 + u64::try_from(i).unwrap()))
+                .collect::<Vec<_>>();
+            let evaluations = (0..slots)
+                .map(|i| ext(300 + u64::try_from(i).unwrap()))
+                .collect::<Vec<_>>();
+            let coefficients = (0..slots)
+                .map(|i| ext(500 + u64::try_from(i).unwrap()))
+                .collect::<Vec<_>>();
+            let payload = vec![
+                E::zero();
+                profile
+                    .outer_compression_plan()
+                    .unwrap()
+                    .terminal_coefficients()
+            ];
+            let mut batches = vec![E::zero(); plan.linear_batch_count()];
+            let start = plan.linear_batch_count() - plan.segments()[0].elements - slots;
+            batches[start..start + slots].copy_from_slice(&coefficients);
+            for pass in 0..2 {
+                point[0] += ext(1 + pass);
+                let weights = plan
+                    .evaluation_weights(&repacking, &point, &evaluations, &coefficients)
+                    .unwrap();
+                let reference = plan
+                    .reference_linear_weights(
+                        &repacking,
+                        &setup,
+                        &point,
+                        &evaluations,
+                        &payload,
+                        ext(700),
+                        &batches,
+                    )
+                    .unwrap();
+                assert_eq!(weights.claim(), reference.claim());
+                assert_eq!(
+                    weights.materialize().unwrap(),
+                    reference.materialize().unwrap()
+                );
+                let mut bad_point = point.clone();
+                bad_point[0] += E::from_u64(1);
+                let changed = plan
+                    .evaluation_weights(&repacking, &bad_point, &evaluations, &coefficients)
+                    .unwrap();
+                assert_ne!(weights.materialize().unwrap(), changed.materialize().unwrap());
+                let mut bad_values = evaluations.clone();
+                bad_values[slots - 1] += E::from_u64(1);
+                let changed = plan
+                    .evaluation_weights(&repacking, &point, &bad_values, &coefficients)
+                    .unwrap();
+                assert_ne!(weights.claim(), changed.claim());
+            }
+        }
+    }
 }

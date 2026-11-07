@@ -105,12 +105,15 @@ impl BinaryCommittedGroupManifest {
 
     /// D setup for the selected word U and base-coordinate prime planes.
     /// Each role selects its own least rank from its actual compact width.
+    /// This is a capacity check; validate the claim shape with `PrimePlaneManifest`
+    /// and pass its actual plane count before selecting this label.
     pub fn d_label(&self, word: bool, planes: usize) -> Result<SetupStreamLabel, AkitaError> {
-        if planes > self.descriptor.polynomials().len() || (!word && planes == 0) {
-            return Err(AkitaError::InvalidInput(
-                "invalid binary D selection".into(),
-            ));
-        }
+        super::prime_plan::validate_prime_plane_count(
+            &self.descriptor,
+            self.field_profile,
+            word,
+            planes,
+        )?;
         let digits = self.field_profile.prime_plane_digits();
         let lanes = checked::sum([
             checked::product([planes, digits]).ok_or(AkitaError::InvalidProof)?,

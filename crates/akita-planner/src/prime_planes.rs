@@ -189,14 +189,17 @@ mod tests {
             + 8;
         PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
-            (planes > 0).then(|| PrimeGroupClaim {
-                point: vec![2; arity],
-                evaluations: (0..planes)
-                    .map(|polynomial| PrimePlaneClaim {
-                        polynomial,
-                        value: 0,
-                    })
-                    .collect(),
+            (planes > 0).then(|| {
+                PrimeGroupClaim {
+                    point: vec![2; arity],
+                    evaluations: (0..planes)
+                        .map(|polynomial| PrimePlaneClaim {
+                            polynomial,
+                            value: 0u128,
+                        })
+                        .collect(),
+                }
+                .into()
             }),
             manifest.field_profile(),
         )
@@ -288,6 +291,63 @@ mod tests {
                     assert_eq!(price.outgoing_physical_cells, 82_176);
                     assert_eq!(price.outgoing_domain_len, 131_072);
                     assert_eq!(manifest.b_rows(), 2);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn p64_extension_geometry_counts_coordinate_planes() {
+        use akita_types::binary_source::PrimeClaims;
+        let field = BinaryFieldProfile::P64;
+        for owners in [1, 2] {
+            let manifest = manifest(22, 256, owners, field);
+            for points in [1, 2] {
+                let claims = PrimeClaims::Extension(
+                    (0..points)
+                        .map(|point| PrimeGroupClaim {
+                            point: vec![[2 + point, 3]; 30],
+                            evaluations: (0..owners)
+                                .map(|polynomial| PrimePlaneClaim {
+                                    polynomial,
+                                    value: [0, 0],
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                );
+                let extension = PrimePlaneManifest::with_field_profile(
+                    manifest.descriptor(),
+                    Some(claims),
+                    field,
+                )
+                .unwrap();
+                let planes = 2 * points as usize * owners;
+                for word in [false, true] {
+                    let price =
+                        price_binary_root_planes(&manifest, word, &extension, 64, None).unwrap();
+                    let base = price_binary_root_planes(
+                        &manifest,
+                        word,
+                        &prime(&manifest, owners),
+                        64,
+                        None,
+                    )
+                    .unwrap();
+                    assert_eq!(price.planes, planes);
+                    assert_eq!(
+                        price.d_live_digits,
+                        (22 * planes + usize::from(word) * owners) * 162 * 256
+                    );
+                    assert_eq!(
+                        price.outgoing_physical_cells - base.outgoing_physical_cells,
+                        (planes - owners) * 22 * 256 * 256
+                    );
+                    assert_eq!(
+                        price.d_rank,
+                        manifest.d_label(word, planes).unwrap().rank as usize
+                    );
+                    assert_ne!(price.typed_prefix, base.typed_prefix);
                 }
             }
         }

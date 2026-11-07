@@ -1,8 +1,10 @@
 //! Complete public PCS replay using the same generator as the measurements.
-use super::{run, F};
+use super::{fault_backend, F, FAULT};
 use crate::metrics;
+use crate::run::{self, config::P64};
 use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_types::proof::commitment::CommittedGroupKind;
 use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::Ring;
 use std::path::Path;
@@ -19,25 +21,25 @@ fn fixture(shape: &'static str) {
             std::fs::copy(&catalog, directory.join("native-catalog.json")).unwrap_or_else(
                 |error| panic!("Linux catalog pending at {}: {error}", catalog.display()),
             );
-            run::prove(3, shape, &directory).unwrap();
-            run::verify(3, shape, &directory, &metrics::Timings::default()).unwrap();
+            run::prove::<P64>(3, shape, &directory).unwrap();
+            run::verify::<P64>(3, shape, &directory, &metrics::Timings::default()).unwrap();
             let proof = std::fs::read(directory.join("proof.bin")).unwrap();
             mutate_statement(shape, &directory);
             mutate_commitment(shape, &directory);
             mutate_proof(shape, &directory, &proof);
             mutate_setup(shape, &directory);
             for fault in [
-                Some(run::fault_backend::Fault::Quotient),
-                (shape != "binary-claim").then_some(run::fault_backend::Fault::PrimePlane),
+                Some(fault_backend::Fault::Quotient),
+                (shape != "binary-claim").then_some(fault_backend::Fault::PrimePlane),
             ]
             .into_iter()
             .flatten()
             {
-                run::FAULT.with(|selected| selected.set(Some(fault)));
-                run::prove(3, shape, &directory).unwrap();
-                run::FAULT.with(|selected| selected.set(None));
-                let error =
-                    run::verify(3, shape, &directory, &metrics::Timings::default()).unwrap_err();
+                FAULT.with(|selected| selected.set(Some(fault)));
+                run::prove::<P64>(3, shape, &directory).unwrap();
+                FAULT.with(|selected| selected.set(None));
+                let error = run::verify::<P64>(3, shape, &directory, &metrics::Timings::default())
+                    .unwrap_err();
                 assert!(
                     matches!(
                         error.downcast_ref::<AkitaError>(),
@@ -55,7 +57,7 @@ fn fixture(shape: &'static str) {
 }
 
 fn rejects(shape: &str, directory: &Path) {
-    let error = run::verify(3, shape, directory, &metrics::Timings::default()).unwrap_err();
+    let error = run::verify::<P64>(3, shape, directory, &metrics::Timings::default()).unwrap_err();
     assert!(
         matches!(
             error.downcast_ref::<AkitaError>(),
@@ -149,7 +151,7 @@ fn mutate_setup(shape: &str, directory: &Path) {
     let byte = &mut identity[1][0];
     *byte = serde_json::Value::from(byte.as_u64().unwrap() ^ 1);
     std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
-    let error = run::verify(3, shape, directory, &metrics::Timings::default()).unwrap_err();
+    let error = run::verify::<P64>(3, shape, directory, &metrics::Timings::default()).unwrap_err();
     assert_eq!(
         error.downcast_ref::<AkitaError>(),
         Some(&AkitaError::InvalidInput(
@@ -190,11 +192,11 @@ fn mutate_commitment(shape: &str, directory: &Path) {
         payload[0] += F::from_u64(1);
         let payload = Commitment::new(RingVec::from_coeffs(payload));
         commitments[index] = match commitment.kind() {
-            akita_types::CommittedGroupKind::Binary(manifest) => {
+            CommittedGroupKind::Binary(manifest) => {
                 CommittedGroup::new_binary(*commitment.profile(), payload, manifest.clone())
                     .unwrap()
             }
-            akita_types::CommittedGroupKind::Ordinary => {
+            CommittedGroupKind::Ordinary => {
                 CommittedGroup::new(*commitment.profile(), payload).unwrap()
             }
         };

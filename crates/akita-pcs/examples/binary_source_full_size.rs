@@ -5,13 +5,6 @@
 mod metrics;
 
 #[cfg(feature = "binary-source-measurements")]
-type F = jolt_field::Prime128Offset275;
-#[cfg(feature = "binary-source-measurements")]
-type E = F;
-#[cfg(feature = "binary-source-measurements")]
-const PROFILE: akita_params::binary_setup::BinaryFieldProfile =
-    akita_params::binary_setup::BinaryFieldProfile::P128;
-#[cfg(feature = "binary-source-measurements")]
 #[path = "binary_source_full_size/p64.rs"]
 mod p64;
 
@@ -21,19 +14,21 @@ mod run;
 
 #[cfg(feature = "binary-source-measurements")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use akita_params::binary_setup::BinaryFieldProfile;
+
     std::thread::Builder::new()
         .name("binary-full-size".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(|| {
-            let mut field = PROFILE;
+            let mut field = BinaryFieldProfile::P128;
             let mut arguments = Vec::new();
             let mut args = std::env::args().skip(1);
             while let Some(arg) = args.next() {
                 let value = args.next().ok_or("missing argument value")?;
                 if arg == "--field" {
                     field = match value.as_str() {
-                        "p64" => akita_params::binary_setup::BinaryFieldProfile::P64,
-                        "p128" => akita_params::binary_setup::BinaryFieldProfile::P128,
+                        "p64" => BinaryFieldProfile::P64,
+                        "p128" => BinaryFieldProfile::P128,
                         _ => return Err(format!("unknown field {value}")),
                     };
                 } else {
@@ -41,8 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let result = match field {
-                akita_params::binary_setup::BinaryFieldProfile::P64 => p64::run::main(arguments),
-                akita_params::binary_setup::BinaryFieldProfile::P128 => run::main(arguments),
+                BinaryFieldProfile::P64 => run::main::<run::config::P64>(arguments),
+                BinaryFieldProfile::P128 => run::main::<run::config::P128>(arguments),
             };
             result.map_err(|error| error.to_string())
         })?

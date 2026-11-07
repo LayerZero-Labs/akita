@@ -393,12 +393,15 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
             });
             let prime = PrimePlaneManifest::with_field_profile(
                 &descriptor,
-                (planes > 0).then(|| PrimeGroupClaim {
-                    point: vec![0; 11],
-                    evaluations: vec![PrimePlaneClaim {
-                        polynomial: 0,
-                        value: 0,
-                    }],
+                (planes > 0).then(|| {
+                    PrimeGroupClaim {
+                        point: vec![0; 11],
+                        evaluations: vec![PrimePlaneClaim {
+                            polynomial: 0,
+                            value: 0u128,
+                        }],
+                    }
+                    .into()
                 }),
                 field_profile,
             )

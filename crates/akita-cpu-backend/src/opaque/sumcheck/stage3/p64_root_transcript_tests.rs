@@ -1,4 +1,4 @@
-//! Selected-root replay through Stage 3, below production catalog admission.
+//! Isolated selected-root replay through Stage 3; public PCS coverage is separate.
 use super::product_table::{SetupProductSource, SetupProductSumcheck};
 use super::UnivariatePoly;
 use crate::opaque::sumcheck::digit_range::{DigitRangeProver, DigitRangeSession};
@@ -71,8 +71,8 @@ pub(crate) fn root_round_trip(
         .unwrap();
     let stage3_rounds = typed.domain_len.trailing_zeros() as usize;
     let order = BinaryFieldProfile::P64.challenge_order().unwrap();
-    // Test-only transport pricing; production catalog/security admission is
-    // intentionally still P128 until the later catalog stage.
+    // Test-only transport pricing. The public PCS derives its work plan from
+    // the selected native catalog row; this replay isolates the three stages.
     let mut runs = [
         GrindingSite::RingSwitchAlpha { level: 0 },
         GrindingSite::Tau0Point { level: 0 },
@@ -381,31 +381,42 @@ pub(crate) fn root_round_trip(
     };
     let (proof, stage1_offset, claim_offset) = prove(witness).unwrap();
     verify(&proof, witness, public).unwrap();
-    // A changed K digit still satisfies Stage 1's range check, but cannot
+    // A changed quotient or EP digit still satisfies Stage 1's range check, but cannot
     // satisfy the compiled integer relation. Debug builds check it at
     // construction; release builds check the folded terminal oracle.
-    for k in [
-        public.plan().quotient_segment(),
-        public.plan().prime_segment(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    let mut mutations = public
+        .plan()
+        .quotient_segment()
+        .map(|segment| vec![(segment, 0)])
+        .unwrap_or_default();
+    if let Some(segment) = public.plan().prime_segment() {
+        let columns = manifest.descriptor().index_map().columns();
+        let elements = public.plan().repacking().segments()[segment].elements;
+        mutations.extend(
+            (0..elements)
+                .step_by(columns)
+                .map(|element| (segment, element)),
+        );
+    }
+    for (segment, element) in mutations {
         let mut changed = witness.to_vec();
         let address = public
             .plan()
             .repacking()
-            .coefficient_address(k, 0, 0, 0)
+            .coefficient_address(segment, element, 0, 0)
             .unwrap();
         changed[address] = if changed[address] == 3 {
             2
         } else {
             changed[address] + 1
         };
-        let error = prove(&changed).expect_err("changed K must not produce a root proof");
+        let error = prove(&changed).expect_err("changed root digit must not produce a root proof");
         if cfg!(debug_assertions) {
-            assert!(matches!(error, AkitaError::Internal(message)
-            if message == "materialized relation weights do not match the combined relation claim"));
+            assert!(matches!(
+                error,
+                AkitaError::Internal(message) if message
+                    == "materialized relation weights do not match the combined relation claim"
+            ));
         } else {
             assert!(matches!(error, AkitaError::InvalidInput(message)
             if message == "relation session final claim disagrees with its folded oracle"));

@@ -3,30 +3,33 @@ use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BinaryFieldProfile;
 use jolt_field::Field;
 
+#[path = "prime_extension.rs"]
+mod extension;
+pub use extension::{PrimeClaims, PrimePlaneFactors};
+
 /// Number of balanced base-eight digits for a centered prime coefficient.
 /// The interval contains `[-(P-1)/2, (P-1)/2]` for `P = 2^128-275`.
 pub const PRIME_PLANE_DIGITS: usize = BinaryFieldProfile::P128.prime_plane_digits();
 
 /// One claimed polynomial value at the group's prime-field point.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrimePlaneClaim {
+pub struct PrimePlaneClaim<T = u128> {
     pub polynomial: usize,
-    pub value: u128,
+    pub value: T,
 }
 
 /// One prime-field opening point and at most one value per committed polynomial.
 ///
-/// Coordinates and values are canonical base residues in the selected profile.
-/// Extension points and values have no encoding in this API: each claim owns
-/// exactly one base-coordinate plane. An extension claim would require two
-/// planes and separate resource admission. The point
+/// Each base coordinate is a canonical residue in the selected profile.
+/// The default coordinate type selects base residues; `[u64; 2]` selects E64
+/// coordinates in basis order `(1, u)`. The point
 /// order is eight low coefficient bits, low carrier-column bits, then scalar-row
 /// bits. Virtual coefficients 162..255 are zero. Each claimed polynomial owns
-/// one evaluation plane, as in an ordinary grouped opening.
+/// one plane for a base reading or two for an extension reading.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrimeGroupClaim {
-    pub point: Vec<u128>,
-    pub evaluations: Vec<PrimePlaneClaim>,
+pub struct PrimeGroupClaim<T = u128> {
+    pub point: Vec<T>,
+    pub evaluations: Vec<PrimePlaneClaim<T>>,
 }
 
 impl PrimeGroupClaim {
@@ -90,10 +93,11 @@ impl PrimeGroupClaim {
     }
 }
 
-/// Checked single-point statement, with evaluation planes in polynomial order.
+/// Checked statement with planes in point, polynomial, coordinate order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimePlaneManifest {
-    claim: Option<PrimeGroupClaim>,
+    claim: Option<PrimeClaims>,
+    planes: Vec<PrimePlaneClaim>,
     field: BinaryFieldProfile,
 }
 impl PrimePlaneManifest {
@@ -101,21 +105,59 @@ impl PrimePlaneManifest {
         source: &BinarySourceDescriptor,
         claim: Option<PrimeGroupClaim>,
     ) -> Result<Self, AkitaError> {
-        Self::with_field_profile(source, claim, BinaryFieldProfile::P128)
+        Self::with_field_profile(source, claim.map(PrimeClaims::Base), BinaryFieldProfile::P128)
     }
 
     pub fn with_field_profile(
         source: &BinarySourceDescriptor,
-        mut claim: Option<PrimeGroupClaim>,
+        mut claim: Option<PrimeClaims>,
         field: BinaryFieldProfile,
     ) -> Result<Self, AkitaError> {
+        let mut planes = Vec::new();
         if let Some(claim) = &mut claim {
             claim.validate(source, field)?;
-            claim
-                .evaluations
-                .sort_unstable_by_key(|value| value.polynomial);
+            let count = match claim {
+                PrimeClaims::Base(claim) => claim.evaluations.len(),
+                PrimeClaims::Extension(points) => {
+                    points.iter().try_fold(0usize, |count, point| {
+                        checked::product([point.evaluations.len(), 2])
+                            .and_then(|n| checked::sum([count, n]))
+                            .ok_or(AkitaError::InvalidProof)
+                    })?
+                }
+            };
+            planes
+                .try_reserve_exact(count)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            match claim {
+                PrimeClaims::Base(claim) => {
+                    claim
+                        .evaluations
+                        .sort_unstable_by_key(|value| value.polynomial);
+                    planes.extend_from_slice(&claim.evaluations);
+                }
+                PrimeClaims::Extension(points) => {
+                    for point in points {
+                        point
+                            .evaluations
+                            .sort_unstable_by_key(|value| value.polynomial);
+                        for value in &point.evaluations {
+                            for coordinate in value.value {
+                                planes.push(PrimePlaneClaim {
+                                    polynomial: value.polynomial,
+                                    value: u128::from(coordinate),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
         }
-        Ok(Self { claim, field })
+        Ok(Self {
+            claim,
+            planes,
+            field,
+        })
     }
 
     /// Revalidate against the commitment's descriptor without copying the claim.
@@ -126,7 +168,7 @@ impl PrimePlaneManifest {
         Ok(())
     }
 
-    pub fn claim(&self) -> Option<&PrimeGroupClaim> {
+    pub fn claim(&self) -> Option<&PrimeClaims> {
         self.claim.as_ref()
     }
 
@@ -135,11 +177,31 @@ impl PrimePlaneManifest {
     }
 
     pub fn planes(&self) -> &[PrimePlaneClaim] {
-        self.claim.as_ref().map_or(&[], |claim| &claim.evaluations)
+        &self.planes
     }
 
-    /// Order zero binds the shared point once, then polynomial/value pairs.
+    /// Order zero binds every point once, then its ordered polynomial/value pairs.
     pub fn canonical_bytes(&self) -> Vec<u8> {
+        if let Some(PrimeClaims::Extension(points)) = &self.claim {
+            let mut bytes = b"AkitaPrimePlanes/e64\x04".to_vec();
+            bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
+            for point in points {
+                bytes.extend_from_slice(&(point.point.len() as u64).to_le_bytes());
+                for coordinate in &point.point {
+                    for limb in coordinate {
+                        bytes.extend_from_slice(&limb.to_le_bytes());
+                    }
+                }
+                bytes.extend_from_slice(&(point.evaluations.len() as u64).to_le_bytes());
+                for value in &point.evaluations {
+                    bytes.extend_from_slice(&(value.polynomial as u64).to_le_bytes());
+                    for limb in value.value {
+                        bytes.extend_from_slice(&limb.to_le_bytes());
+                    }
+                }
+            }
+            return bytes;
+        }
         let mut bytes = match self.field {
             BinaryFieldProfile::P128 => b"AkitaPrimePlanes\x02".to_vec(),
             BinaryFieldProfile::P64 => b"AkitaPrimePlanes/p64\x03".to_vec(),
@@ -151,7 +213,11 @@ impl PrimePlaneManifest {
         let point = self
             .claim
             .as_ref()
-            .map_or(&[][..], |claim| claim.point.as_slice());
+            .and_then(|claim| match claim {
+                PrimeClaims::Base(claim) => Some(claim.point.as_slice()),
+                PrimeClaims::Extension(_) => None,
+            })
+            .unwrap_or(&[]);
         bytes.extend_from_slice(&(point.len() as u64).to_le_bytes());
         for coordinate in point {
             bytes.extend_from_slice(&coordinate.to_le_bytes()[..coordinate_bytes]);
@@ -188,3 +254,7 @@ fn tensor<E: Field>(point: &[u128]) -> Result<Vec<E>, AkitaError> {
 #[cfg(test)]
 #[path = "prime_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "prime_extension_tests.rs"]
+mod extension_tests;

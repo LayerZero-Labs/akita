@@ -12,6 +12,7 @@ pub enum GroupClaimKind {
     ResearchOrdinary {
         owners: Vec<[u8; 32]>,
         width: akita_params::ordinary_source::OrdinarySourceWidth,
+        mode: crate::binary_source::ResearchTerminalMode,
     },
     /// A binary word claim supplied by the caller.
     #[cfg(feature = "labinius-trinomial")]
@@ -20,7 +21,7 @@ pub enum GroupClaimKind {
         manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
         /// The caller's logical word MLE evaluation over GF(2^128).
         claim: Option<crate::binary_source::BinaryWordClaim>,
-        /// Checked single-point prime claim, in polynomial order.
+        /// Checked base or extension claims, in point/polynomial/coordinate order.
         prime: crate::binary_source::PrimePlaneManifest,
     },
 }
@@ -48,6 +49,10 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                     "research terminals require the complete four-plus-four roster".into(),
                 ));
             }
+            let mode = groups
+                .first()
+                .and_then(|group| group.research_terminals.as_ref())
+                .map(|terminals| terminals.mode);
             for (index, group) in groups.iter().enumerate() {
                 let correct_kind = if index < 4 {
                     matches!(&group.kind, GroupClaimKind::Binary { claim, .. }
@@ -55,7 +60,14 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                 } else {
                     matches!(&group.kind, GroupClaimKind::ResearchOrdinary { .. })
                 };
-                if !correct_kind || group.research_terminals.is_none() {
+                if !correct_kind
+                    || mode.is_none()
+                    || group
+                        .research_terminals
+                        .as_ref()
+                        .map(|terminals| terminals.mode)
+                        != mode
+                {
                     return Err(akita_error::AkitaError::InvalidInput(
                         "research terminals cannot enter another root protocol".into(),
                     ));

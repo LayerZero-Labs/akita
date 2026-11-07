@@ -102,10 +102,17 @@ jobs:
       - name: Test trinomial relation geometry
         run: cargo test -p akita-types --lib --no-default-features --features labinius-trinomial,transcript-keccak
       - name: Test trinomial quotient kernel
-        run: cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-keccak -- kernels::trinomial_relation
+        run: >-
+          cargo test --release -p akita-cpu-backend --lib --no-default-features
+          --features labinius-trinomial,transcript-keccak -- kernels::trinomial_relation
       - name: Test compact imports and signed ordinary seams
         run: |
-          cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-keccak opaque::binary_
+          cargo test --release -p akita-cpu-backend --lib --no-default-features \
+            --features labinius-trinomial,transcript-keccak opaque::binary_
+          cargo test --release -p akita-cpu-backend --lib --no-default-features \
+            --features labinius-trinomial,transcript-keccak binary_root::tests::mixed::p64
+          cargo test --release -p akita-cpu-backend --lib --no-default-features \
+            --features labinius-trinomial,transcript-keccak binary_root::prime::p64_tests
           cargo test -p akita-params --lib --no-default-features --features labinius-trinomial,transcript-keccak ordinary_source
           cargo test -p akita-planner --lib --no-default-features --features labinius-trinomial,transcript-keccak ordinary_source
       - name: Clippy trinomial bridge and ordinary seams

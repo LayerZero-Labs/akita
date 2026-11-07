@@ -219,7 +219,9 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
         bad[address] += F::one();
         assert!(weights.check_table(&bad).is_err());
     }
-    let mut false_claim = manifest.claim().unwrap().clone();
+    let PrimeClaims::Base(mut false_claim) = manifest.claim().unwrap().clone() else {
+        panic!("expected base claim");
+    };
     false_claim.evaluations[0].value += 1;
     let false_manifest = PrimePlaneManifest::new(&source, Some(false_claim)).unwrap();
     assert!(prime_plane_relation_weights(
@@ -246,7 +248,8 @@ fn p64_prime_manifest_uses_base_residues_and_eight_byte_coordinates() {
     let mut c = claim();
     c.point.fill(field.modulus() - 1);
     c.evaluations[0].value = field.modulus() - 1;
-    let manifest = PrimePlaneManifest::with_field_profile(&source, Some(c.clone()), field).unwrap();
+    let manifest =
+        PrimePlaneManifest::with_field_profile(&source, Some(c.clone().into()), field).unwrap();
     let mut expected = b"AkitaPrimePlanes/p64\x03".to_vec();
     expected.extend_from_slice(&11u64.to_le_bytes());
     for _ in 0..11 {
@@ -266,7 +269,7 @@ fn p64_prime_manifest_uses_base_residues_and_eight_byte_coordinates() {
                 bad.evaluations[0].value = raw;
             }
             assert!(matches!(
-                PrimePlaneManifest::with_field_profile(&source, Some(bad), field),
+                PrimePlaneManifest::with_field_profile(&source, Some(bad.into()), field),
                 Err(AkitaError::InvalidInput(_))
             ));
         }
@@ -364,7 +367,7 @@ fn p64_prime_structured_and_reference_weights_match_over_e64() {
     let mut c = claim();
     c.point[..8].fill(2);
     c.evaluations[0].value = field.modulus() - 18;
-    let manifest = PrimePlaneManifest::with_field_profile(&source, Some(c), field).unwrap();
+    let manifest = PrimePlaneManifest::with_field_profile(&source, Some(c.into()), field).unwrap();
     let plan = BinaryRootWitnessPlan::for_profile(&source, 3, 64, field, false, 1).unwrap();
     let repacking = plan.repacking();
     let segment = plan.prime_segment().unwrap();
@@ -477,7 +480,7 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
         BinaryRootPublic::new(&manifest, false, &legacy, &setup, 1 << 17, 64, None),
         Err(AkitaError::InvalidInput(_))
     ));
-    let prime = PrimePlaneManifest::with_field_profile(source, Some(c), field).unwrap();
+    let prime = PrimePlaneManifest::with_field_profile(source, Some(c.into()), field).unwrap();
     assert!(matches!(
         BinaryRootPublic::new(
             &manifest,

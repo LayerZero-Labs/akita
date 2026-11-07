@@ -61,7 +61,9 @@ impl OrdinaryNativeRootPlan {
             || profile.outer.matrix.sis_modulus_profile().modulus() != field.modulus()
         {
             return Err(AkitaError::InvalidSetup(
-                "mixed root requires one ordinary small coefficient source and base-eight image digits".into(),
+                "mixed root requires one ordinary small coefficient source \
+                     and base-eight image digits"
+                    .into(),
             ));
         }
         Self::compile(profile, first_segment, None)
@@ -561,6 +563,52 @@ impl OrdinaryNativeRootPlan {
             translated(s_copies, s_pattern, None)?;
             translated(bit_copies, bit_pattern, None)?;
         }
+        let mut claim = second_batch
+            * payload
+                .iter()
+                .rev()
+                .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
+        if let Some(width) = self.source_width {
+            let powers = coefficient_powers(E::one())
+                .into_iter()
+                .fold(E::zero(), |sum, power| sum + power);
+            let offset = E::from_u128(width.offset());
+            for &batch in signed_batches {
+                claim -= batch * powers * offset;
+            }
+        }
+        NativeRootWeights::merge(
+            table_len,
+            vec![
+                NativeRootWeights::structured(table_len, Vec::new(), families, claim)?,
+                self.evaluation_weights(repacking, point, evaluations, evaluation_batches)?,
+            ],
+            E::zero(),
+        )
+    }
+
+    /// Source reading rows shared by the ordinary compiler and research second pass.
+    pub fn evaluation_weights<E: Field>(
+        &self,
+        repacking: &RootCoefficientRepacking,
+        point: &[E],
+        evaluations: &[E],
+        batches: &[E],
+    ) -> Result<NativeRootWeights<E>, AkitaError> {
+        self.validate_repacking(repacking)?;
+        if point.len() != self.profile.group.num_vars()
+            || evaluations.len() != self.profile.group.num_polynomials()
+            || batches.len() != evaluations.len()
+            || E::from_u128(self.profile.inner.matrix.sis_modulus_profile().modulus()) != E::zero()
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let a = self.profile.inner.matrix;
+        let positions = self.profile.blocks.positions_per_block;
+        let source_digits = self.profile.inner.digits.num_digits;
+        let table_len = repacking.domain_len();
+        let s_lanes = ContiguousLanes::new(repacking, self.first_segment)?;
+        let mut families = Vec::new();
         let mut terms = Vec::new();
         let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
         let owner_coefficients = checked::product([
@@ -569,7 +617,7 @@ impl OrdinaryNativeRootPlan {
             a.ring_dimension(),
         ])
         .ok_or(AkitaError::InvalidProof)?;
-        for (owner, &batch) in evaluation_batches.iter().enumerate() {
+        for (owner, &batch) in batches.iter().enumerate() {
             let start =
                 checked::product([owner, owner_coefficients]).ok_or(AkitaError::InvalidProof)?;
             if source_digits == 1 {
@@ -598,23 +646,10 @@ impl OrdinaryNativeRootPlan {
                 }
             }
         }
-        let mut claim = second_batch
-            * payload
-                .iter()
-                .rev()
-                .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
-        for (&batch, &evaluation) in evaluation_batches.iter().zip(evaluations) {
-            claim += batch * evaluation;
-        }
-        if let Some(width) = self.source_width {
-            let powers = coefficient_powers(E::one())
-                .into_iter()
-                .fold(E::zero(), |sum, power| sum + power);
-            let offset = E::from_u128(width.offset());
-            for &batch in signed_batches {
-                claim -= batch * powers * offset;
-            }
-        }
+        let claim = batches
+            .iter()
+            .zip(evaluations)
+            .fold(E::zero(), |sum, (&batch, &value)| sum + batch * value);
         NativeRootWeights::structured(table_len, terms, families, claim)
     }
 

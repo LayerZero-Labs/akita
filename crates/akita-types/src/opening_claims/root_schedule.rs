@@ -32,7 +32,9 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                 let mut coordinates = Vec::with_capacity(4);
                 for (index, group) in self.groups().iter().take(4).enumerate() {
                     let super::GroupClaimKind::Binary {
-                        manifest, claim, ..
+                        manifest,
+                        claim,
+                        prime,
                     } = group.kind()
                     else {
                         return Err(AkitaError::InvalidProof);
@@ -44,6 +46,18 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                     {
                         return Err(AkitaError::InvalidProof);
                     }
+                    prime.validate(manifest.descriptor())?;
+                    let terminals = group.research_terminals().ok_or(AkitaError::InvalidProof)?;
+                    let planes = match terminals.mode {
+                        crate::binary_source::ResearchTerminalMode::BaseS11a => 1,
+                        crate::binary_source::ResearchTerminalMode::E64TwoPointS11a => 4,
+                    };
+                    if prime.planes().len() != planes {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    // Price D with every coordinate plane. All planes share the group's
+                    // column challenges; extra planes enlarge the witness, not the draws.
+                    manifest.d_label(claim.is_some(), planes)?;
                     coordinates.push(manifest.descriptor().index_map().columns());
                 }
                 // Direct setup consumes no root Stage 3. Keep every suffix run.

@@ -107,7 +107,7 @@ where
         .enumerate()
     {
         let group = checked::sum([index, 4]).ok_or(AkitaError::InvalidProof)?;
-        let GroupClaimKind::ResearchOrdinary { owners, width } =
+        let GroupClaimKind::ResearchOrdinary { owners, width, .. } =
             request.kinds.get(group).ok_or(AkitaError::InvalidProof)?
         else {
             return Err(AkitaError::InvalidProof);

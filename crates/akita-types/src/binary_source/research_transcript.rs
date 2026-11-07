@@ -8,7 +8,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 use crate::opening_claims::GroupClaimKind;
 use crate::OpeningClaims;
 
-/// Explicit research wire identity: direct setup, joint retry, base S11a points.
+/// Explicit research wire identity: direct setup, joint retry and S11a reading mode.
 /// The caller sends the concatenated rank-sized D payload only after this call.
 /// The sole response nonce follows that complete payload on both sides.
 pub fn research_batch_statement<F, E, C>(
@@ -26,6 +26,20 @@ where
     }
     akita_params::binary_setup::BinaryFieldProfile::P64
         .check_field_pair(akita_params::field_modulus::<F>()?, E::DEGREE)?;
+    let mode = claims
+        .groups()
+        .first()
+        .and_then(|group| group.research_terminals())
+        .ok_or(AkitaError::InvalidProof)?
+        .mode;
+    let identity: &[u8] = match mode {
+        super::ResearchTerminalMode::BaseS11a => {
+            b"akita/research/route1/4+4/direct/joint/base-s11a/v2"
+        }
+        super::ResearchTerminalMode::E64TwoPointS11a => {
+            b"akita/research/route1/4+4/direct/joint/e64-two-point-s11a/v3"
+        }
+    };
     akita_transcript::public_bytes(
         state,
         ProtocolSiteId {
@@ -33,13 +47,16 @@ where
             stage: 20,
             ..ProtocolSiteId::default()
         },
-        b"akita/research/route1/4+4/direct/joint/base-s11a/v2",
+        identity,
     )?;
     for (index, (group, profile)) in claims.groups().iter().zip(profiles).enumerate() {
         let terminals = group.research_terminals().ok_or_else(|| {
             AkitaError::InvalidInput("research group lacks typed terminal admission".into())
         })?;
         terminals.validate::<F>()?;
+        if terminals.mode != mode {
+            return Err(AkitaError::InvalidProof);
+        }
         let mut identity = profile.canonical_descriptor_bytes();
         identity.extend_from_slice(
             &u64::try_from(index)
@@ -65,9 +82,14 @@ where
                 identity.extend_from_slice(&prime.canonical_bytes());
                 manifest.b_ring_dimension()
             }
-            GroupClaimKind::ResearchOrdinary { owners, width } if index >= 4 => {
+            GroupClaimKind::ResearchOrdinary {
+                owners,
+                width,
+                mode: selected,
+            } if index >= 4 => {
                 let compression = profile.outer_compression_plan()?;
-                if bytes.len() != compression.terminal_coefficients()
+                if *selected != mode
+                    || bytes.len() != compression.terminal_coefficients()
                     || group.evaluations().len() != owners.len()
                     || group.point().len() != profile.group.num_vars()
                 {
@@ -106,16 +128,27 @@ where
             .id()?,
             &lifted,
         )?;
-        akita_transcript::public_extensions::<F, E, _>(
-            state,
-            crate::FoldSite::RootPoint { group: index }.id()?,
-            group.point(),
-        )?;
-        akita_transcript::public_extensions::<F, E, _>(
-            state,
-            crate::FoldSite::Openings { level: 0 }.id()?,
-            group.evaluations(),
-        )?;
+        // Base mode retains its original wire bytes. E64 binds both source-batched passes.
+        let readings: Vec<(&[E], &[E])> = match mode {
+            super::ResearchTerminalMode::BaseS11a => vec![(group.point(), group.evaluations())],
+            super::ResearchTerminalMode::E64TwoPointS11a => terminals
+                .readings
+                .iter()
+                .map(|terminal| (terminal.point.as_slice(), terminal.evaluations.as_slice()))
+                .collect(),
+        };
+        for (point, evaluations) in readings {
+            akita_transcript::public_extensions::<F, E, _>(
+                state,
+                crate::FoldSite::RootPoint { group: index }.id()?,
+                point,
+            )?;
+            akita_transcript::public_extensions::<F, E, _>(
+                state,
+                crate::FoldSite::Openings { level: 0 }.id()?,
+                evaluations,
+            )?;
+        }
     }
     Ok(())
 }

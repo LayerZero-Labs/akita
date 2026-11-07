@@ -1,18 +1,17 @@
 //! Optional scalar views in the outgoing witness and their compact D layout.
 
-use super::{binary_scalar_geometry, BinaryRootWitnessPlan};
+use super::{binary_scalar_geometry, BinaryRootWitnessPlan, BinarySourceDescriptor};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_error::{checked, AkitaError};
+use akita_params::binary_setup::BinaryFieldProfile;
 
 impl BinaryRootWitnessPlan {
     /// Select the word views and append every prime plane before ordinary groups.
     /// An empty prime list with a word preserves the original coefficient map.
+    /// This checks capacity only; callers must validate the selected claim shape
+    /// with `PrimePlaneManifest` and pass its actual plane count.
     pub fn with_prime_planes(mut self, word: bool, planes: usize) -> Result<Self, AkitaError> {
-        if planes > self.descriptor().polynomials().len() || (!word && planes == 0) {
-            return Err(AkitaError::InvalidInput(
-                "invalid binary plane selection".into(),
-            ));
-        }
+        validate_prime_plane_count(self.descriptor(), self.field_profile(), word, planes)?;
         if self.prime_planes != 0 || self.repacking.segments().len() != 5 {
             return Err(AkitaError::InvalidInput(
                 "prime planes must precede ordinary segments".into(),
@@ -50,4 +49,26 @@ impl BinaryRootWitnessPlan {
         segments.extend(self.prime_segment());
         segments
     }
+}
+
+/// Capacity of the selected field profile; the manifest separately checks each
+/// point's owner roster and the selected base/extension shape.
+pub(super) fn validate_prime_plane_count(
+    source: &BinarySourceDescriptor,
+    field: BinaryFieldProfile,
+    word: bool,
+    planes: usize,
+) -> Result<(), AkitaError> {
+    let per_owner = match field {
+        BinaryFieldProfile::P128 => 1,
+        BinaryFieldProfile::P64 => 4,
+    };
+    let cap =
+        checked::product([source.polynomials().len(), per_owner]).ok_or(AkitaError::InvalidProof)?;
+    if planes > cap || (!word && planes == 0) {
+        return Err(AkitaError::InvalidInput(
+            "invalid binary plane selection".into(),
+        ));
+    }
+    Ok(())
 }

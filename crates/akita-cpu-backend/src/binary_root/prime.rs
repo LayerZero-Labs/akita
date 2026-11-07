@@ -11,7 +11,7 @@ use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field};
 /// Build the committed prime planes before drawing column fold challenges.
 ///
 /// Sources are polynomial/column/ring-row ordered. Returned natural digits
-/// are polynomial/column/digit/coefficient ordered. Each coefficient is first
+/// follow manifest plane, column, digit, then coefficient order. Each coefficient is first
 /// reduced modulo the selected proof prime and centered; the profile digit
 /// depth covers that entire centered interval.
 pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
@@ -50,11 +50,9 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
         .try_reserve_exact(width)
         .map_err(|_| AkitaError::InvalidProof)?;
     digits.resize(width, 0);
-    let Some(prime) = manifest.claim() else {
-        return Ok(digits);
-    };
-    let (rows, _, _) = prime.weights::<F>(descriptor)?;
-    for (plane, claim) in manifest.planes().iter().enumerate() {
+    let factors = manifest.plane_factors::<F>(descriptor)?;
+    for (plane, (claim, factors)) in manifest.planes().iter().zip(factors).enumerate() {
+        let rows = factors.rows;
         for column in 0..columns {
             let mut partial = [F::zero(); 162];
             for (row, row_weight) in rows.iter().enumerate() {
@@ -125,15 +123,14 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
     digits.resize(width, 0);
     let plane_width =
         checked::product([columns, column_digits_len]).ok_or(AkitaError::InvalidProof)?;
-    let Some(prime) = manifest.claim() else {
-        return Ok(digits);
-    };
-    let (rows, _, _) = prime.weights::<F>(descriptor)?;
-    for (claim, plane_digits) in manifest
+    let factors = manifest.plane_factors::<F>(descriptor)?;
+    for ((claim, plane_digits), factors) in manifest
         .planes()
         .iter()
         .zip(digits.chunks_exact_mut(plane_width))
+        .zip(factors)
     {
+        let rows = factors.rows;
         let start = checked::product([claim.polynomial, index.padded_carriers()])
             .ok_or(AkitaError::InvalidProof)?;
         let range =
@@ -345,13 +342,16 @@ mod p64_tests {
         .unwrap();
         let manifest = PrimePlaneManifest::with_field_profile(
             &descriptor,
-            Some(PrimeGroupClaim {
-                point: vec![2; 10],
-                evaluations: vec![PrimePlaneClaim {
-                    polynomial: 0,
-                    value: 0,
-                }],
-            }),
+            Some(
+                PrimeGroupClaim {
+                    point: vec![2; 10],
+                    evaluations: vec![PrimePlaneClaim {
+                        polynomial: 0,
+                        value: 0u128,
+                    }],
+                }
+                .into(),
+            ),
             field,
         )
         .unwrap();
@@ -366,7 +366,29 @@ mod p64_tests {
             prime_plane_digits::<F>(&descriptor, &manifest, &[source]).unwrap(),
             packed_prime_plane_digits::<F>(&descriptor, &manifest, &words).unwrap()
         );
-        let wrong = PrimePlaneManifest::new(&descriptor, manifest.claim().cloned()).unwrap();
+        let extension = akita_types::binary_source::PrimeClaims::Extension(
+            (0..2)
+                .map(|copy| PrimeGroupClaim {
+                    point: (0..10).map(|i| [2 + i, 3 + i + copy]).collect(),
+                    evaluations: vec![PrimePlaneClaim {
+                        polynomial: 0,
+                        value: [0, 0],
+                    }],
+                })
+                .collect(),
+        );
+        let extension =
+            PrimePlaneManifest::with_field_profile(&descriptor, Some(extension), field).unwrap();
+        assert_eq!(
+            prime_plane_digits::<F>(&descriptor, &extension, &[source]).unwrap(),
+            packed_prime_plane_digits::<F>(&descriptor, &extension, &words).unwrap()
+        );
+        let wrong = PrimePlaneManifest::with_field_profile(
+            &descriptor,
+            manifest.claim().cloned(),
+            BinaryFieldProfile::P128,
+        )
+        .unwrap();
         assert!(matches!(
             prime_plane_digits::<F>(&descriptor, &wrong, &[source]),
             Err(AkitaError::InvalidSetup(_))

@@ -3,7 +3,7 @@ mod catalog;
 #[path = "claims.rs"]
 mod claims;
 #[path = "config.rs"]
-mod config;
+pub(crate) mod config;
 #[path = "native_catalog.rs"]
 mod native_catalog;
 
@@ -15,17 +15,19 @@ use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, SetupPrefixSlotId};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::binary_source::{
-    BinaryAReadGuard, BinaryCommittedGroupManifest, BinaryTypedPrefix,
+    BinaryAReadGuard, BinaryCommittedGroupManifest, BinaryTypedPrefix, PrimePlaneManifest,
 };
 use akita_types::{
-    AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims,
 };
 use akita_verifier::SetupPolicy;
-use config::{FullSize, E, F, PROFILE};
-use jolt_field::Ring;
+use config::MeasurementConfig;
+use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, MulBaseUnreduced, Unreduced, WithCommitAccumulator};
 use jolt_transcript::BytesMsg;
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter, Write};
@@ -36,19 +38,6 @@ use tracing_subscriber::prelude::*;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const PROTOCOL: &[u8] = b"binary-source-full-size-v1";
 
-#[cfg(test)]
-type BinaryTestSuffix = FullSize;
-// The shared backend also contains frontend helpers used by the P128 suite.
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../tests/binary_source_end_to_end/fault_backend.rs"]
-pub(super) mod fault_backend;
-#[cfg(test)]
-std::thread_local! {
-    pub(super) static FAULT: std::cell::Cell<Option<fault_backend::Fault>> =
-        const { std::cell::Cell::new(None) };
-}
-
 #[derive(Serialize, Deserialize)]
 struct Fixture {
     claims: claims::Claims,
@@ -56,7 +45,28 @@ struct Fixture {
     contexts: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-pub(crate) fn main(arguments: Vec<String>) -> Result<()> {
+pub(crate) fn main<C: MeasurementConfig>(arguments: Vec<String>) -> Result<()>
+where
+    C::Field: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + Valid
+        + Ring
+        + Unreduced
+        + PseudoMersenne
+        + WithCommitAccumulator
+        + 'static,
+    <C::Field as Unreduced>::Wide: From<C::Field> + AdditiveGroup,
+    C::ExtField: FpExtEncoding<C::Field>
+        + ExtField<C::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<C::Field>
+        + AkitaSerialize
+        + Valid
+        + 'static,
+{
     let mut log = 22usize;
     let mut shape = "binary-and-prime-claims".to_owned();
     let mut phase = "prove".to_owned();
@@ -78,6 +88,10 @@ pub(crate) fn main(arguments: Vec<String>) -> Result<()> {
             "prime-claim",
             "binary-and-prime-claims",
             "binary-and-prime-claims-plus-ordinary",
+            "prime-extension-one",
+            "prime-extension-two",
+            "binary-and-prime-extension-two",
+            "binary-and-prime-extension-two-plus-ordinary",
         ]
         .contains(&shape.as_str())
     {
@@ -85,16 +99,19 @@ pub(crate) fn main(arguments: Vec<String>) -> Result<()> {
     }
     let directory = directory.ok_or("missing --fixture directory")?;
     std::fs::create_dir_all(&directory)?;
-    println!("field_profile={PROFILE:?} production_security_certified=false");
+    println!("field_profile={:?}", C::PROFILE);
+    if C::PROFILE == BinaryFieldProfile::P64 {
+        println!("production_security_certified=false");
+    }
     let timings = metrics::Timings::default();
     tracing_subscriber::registry().with(timings.clone()).init();
-    let columns = claims::descriptor(log)?.index_map().columns();
+    let columns = claims::descriptor::<C>(log)?.index_map().columns();
     println!("fixture log_carriers={log} shape={shape} columns={columns} rank=3 dev_protocol={} security_claim=false", akita_params::DEV_PROTOCOL);
     let outcome = match phase.as_str() {
-        "prove" => prove(log, &shape, &directory),
-        "verify" => verify(log, &shape, &directory, &timings),
-        "plan" if PROFILE == BinaryFieldProfile::P128 => catalog::plan_only(log, &shape),
-        "plan" => native_catalog::build(log, &shape, &directory).map(|_| ()),
+        "prove" => prove::<C>(log, &shape, &directory),
+        "verify" => verify::<C>(log, &shape, &directory, &timings),
+        "plan" if C::PROFILE == BinaryFieldProfile::P128 => catalog::plan_only::<C>(log, &shape),
+        "plan" => native_catalog::build::<C>(log, &shape, &directory).map(|_| ()),
         _ => Err("phase must be prove, verify or plan".into()),
     };
     timings.print(&phase);
@@ -105,16 +122,37 @@ pub(crate) fn main(arguments: Vec<String>) -> Result<()> {
     outcome
 }
 
-pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
+pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &Path) -> Result<()>
+where
+    C::Field: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + Valid
+        + Ring
+        + Unreduced
+        + PseudoMersenne
+        + WithCommitAccumulator
+        + 'static,
+    <C::Field as Unreduced>::Wide: From<C::Field> + AdditiveGroup,
+    C::ExtField: FpExtEncoding<C::Field>
+        + ExtField<C::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<C::Field>
+        + AkitaSerialize
+        + Valid
+        + 'static,
+{
     let (catalog, key) = {
         let _span = tracing::info_span!("catalog_planning").entered();
-        if log == 10 && PROFILE == BinaryFieldProfile::P128 {
-            catalog::build(log, shape)?
+        if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
+            catalog::build::<C>(log, shape)?
         } else {
-            native_catalog::build(log, shape, directory)?
+            native_catalog::build::<C>(log, shape, directory)?
         }
     };
-    if log == 10 && PROFILE == BinaryFieldProfile::P128 {
+    if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
         std::fs::write(
             directory.join("catalog.aks"),
             catalog.catalog().to_artifact_bytes()?,
@@ -124,7 +162,7 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         "catalog_digest={}",
         metrics::hex(&catalog.catalog().catalog_digest())
     );
-    let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
+    let scheme = AkitaCommitmentScheme::<C>::new(catalog);
     let selected = scheme.schedules().resolve_key(&key)?;
     let schedule = selected.schedule();
     let profiles = selected.profiles().clone();
@@ -153,8 +191,8 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let mut setup = {
         let _span = tracing::info_span!("cold_prover_setup").entered();
         let max_vars = carrier.group.num_vars().max(log);
-        let max_polynomials = 1 + usize::from(shape == "binary-and-prime-claims-plus-ordinary");
-        if log == 10 && PROFILE == BinaryFieldProfile::P128 {
+        let max_polynomials = 1 + usize::from(shape.ends_with("-plus-ordinary"));
+        if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
             scheme.setup_prover(max_vars, max_polynomials)?
         } else {
             // This trusted fixture prepares the typed root prefix explicitly.
@@ -175,17 +213,23 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
             )?
         }
     };
-    let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
-    let descriptor = claims::descriptor(log)?;
-    let manifest =
-        BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, &carrier, PROFILE)?;
+    let backend = Arc::new(CpuBackend::<C::Field, C::ExtField>::new(
+        setup.expanded.clone(),
+    )?);
+    let descriptor = claims::descriptor::<C>(log)?;
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        C::PROFILE,
+    )?;
     let count = checked::pow2(log).ok_or("carrier count overflow")?;
     let words = claims::words(count);
     #[cfg(test)]
     let fault_words = words.clone();
     let claims = {
         let _span = tracing::info_span!("fixture_claim_evaluation").entered();
-        claims::evaluate(log, shape, &words)?
+        claims::evaluate::<C>(log, shape, &words)?
     };
     let committed = {
         let _span = tracing::info_span!("binary_commit").entered();
@@ -198,13 +242,13 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     };
     let mut commitments = vec![committed.committed_group];
     let mut handles = vec![committed.private_handle];
-    if shape == "binary-and-prime-claims-plus-ordinary" {
+    if shape.ends_with("-plus-ordinary") {
         let _span = tracing::info_span!("ordinary_commit").entered();
         let ordinary_log = log.max(18);
         let ordinary_count = checked::pow2(ordinary_log).ok_or("ordinary count overflow")?;
         println!("ordinary_source coefficients={ordinary_count}");
         let coefficients = (0..ordinary_count)
-            .map(|i| F::from_u64((i & 1) as u64))
+            .map(|i| C::Field::from_u64((i & 1) as u64))
             .collect::<Vec<_>>();
         let source = backend.import_source(vec![DensePoly::from_field_evals(
             ordinary_log,
@@ -227,10 +271,9 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let typed = BinaryTypedPrefix::new(
         &manifest,
         claims.word(&descriptor)?.is_some(),
-        claims
-            .prime()
-            .as_ref()
-            .map_or(0, |prime| prime.evaluations.len()),
+        PrimePlaneManifest::with_field_profile(&descriptor, claims.prime()?, C::PROFILE)?
+            .planes()
+            .len(),
         schedule.recursive_folds[0].params.d_a(),
     )?;
     let later = schedule
@@ -246,7 +289,7 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let prefixes = {
         let _span = tracing::info_span!("cold_prefix_preparation").entered();
         let prefixes = backend.prepare_binary_a_prefixes(&manifest, &typed, &first, &later)?;
-        if log != 10 || PROFILE == BinaryFieldProfile::P64 {
+        if log != 10 || C::PROFILE == BinaryFieldProfile::P64 {
             let ordinary_ids = later
                 .iter()
                 .cloned()
@@ -292,8 +335,8 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         commitments.serialize_compressed(&mut output)?;
         output.flush()?;
     }
-    let groups = groups(&claims, &descriptor, &commitments)?;
-    let data = SelectedProverOpeningData::from_committed_claims::<FullSize>(
+    let groups = groups::<C>(&claims, &descriptor, &commitments)?;
+    let data = SelectedProverOpeningData::from_committed_claims::<C>(
         OpeningClaims::from_groups(groups)?,
         handles,
         scheme.schedules(),
@@ -304,15 +347,12 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     {
         let _span = tracing::info_span!("prove_complete_opening").entered();
         #[cfg(test)]
-        let attacker = FAULT.with(|selected| selected.get()).map(|fault| {
-            fault_backend::FaultBackend::new(
-                backend.clone(),
-                setup.expanded.descriptor().setup_seed.seed,
-                fault_words,
-                fault,
-            )
-        });
-        let mut registry = akita_prover::BackendRegistry::<FullSize>::new()?;
+        let attacker = C::attacker(
+            backend.clone(),
+            setup.expanded.descriptor().setup_seed.seed,
+            fault_words,
+        );
+        let mut registry = akita_prover::BackendRegistry::<C>::new()?;
         #[cfg(test)]
         let root = match &attacker {
             Some(attacker) => registry.register(attacker, &prefixes)?,
@@ -321,7 +361,7 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         #[cfg(not(test))]
         let root = registry.register(backend.as_ref(), &prefixes)?;
         let mut route = akita_prover::FixedFoldRoute::new(vec![root; schedule.num_fold_levels()]);
-        akita_prover::batched_prove_embedded::<FullSize, _>(
+        akita_prover::batched_prove_embedded::<C, _>(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
@@ -336,7 +376,7 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         prover.narg_string(),
         log,
         claims.word_point.is_some(),
-        PROFILE,
+        C::PROFILE,
     )?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
     prover.public_message(&BytesMsg(b"application-suffix"));
@@ -349,21 +389,24 @@ pub(super) fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     Ok(())
 }
 
-fn groups(
+fn groups<C: MeasurementConfig>(
     claims: &claims::Claims,
     descriptor: &akita_types::binary_source::BinarySourceDescriptor,
-    commitments: &[CommittedGroup<F>],
-) -> Result<Vec<PolynomialGroupClaims<'static, E, CommittedGroup<F>>>> {
+    commitments: &[CommittedGroup<C::Field>],
+) -> Result<Vec<PolynomialGroupClaims<'static, C::ExtField, CommittedGroup<C::Field>>>> {
     let binary = commitments.first().ok_or("missing binary commitment")?;
     let mut groups = vec![PolynomialGroupClaims::new_binary_planes(
         binary.clone(),
         claims.word(descriptor)?,
-        claims.prime(),
+        claims.prime()?,
     )?];
     if let Some(ordinary) = commitments.get(1) {
         let (point, value) = claims.ordinary.as_ref().ok_or("missing ordinary claim")?;
-        let point = point.iter().map(|&value| E::from_u128(value)).collect();
-        let value = E::from_u128(*value);
+        let point: Vec<_> = point
+            .iter()
+            .map(|&value| C::ExtField::from_u128(value))
+            .collect();
+        let value = C::ExtField::from_u128(*value);
         groups.push(PolynomialGroupClaims::new(
             point,
             vec![value],
@@ -373,25 +416,35 @@ fn groups(
     Ok(groups)
 }
 
-pub(super) fn verify(
+pub(super) fn verify<C: MeasurementConfig>(
     log: usize,
     shape: &str,
     directory: &Path,
     timings: &metrics::Timings,
-) -> Result<()> {
+) -> Result<()>
+where
+    C::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    C::ExtField: FpExtEncoding<C::Field>
+        + ExtField<C::Field>
+        + Ring
+        + Unreduced
+        + Fold
+        + AkitaSerialize
+        + Valid,
+{
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
-    let catalog = if log == 10 && PROFILE == BinaryFieldProfile::P128 {
-        TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
+    let catalog = if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
+        TrustedScheduleCatalog::<C>::from_artifact_bytes(
             &std::fs::read(directory.join("catalog.aks"))?,
             ChunkedWitnessCfg::default_non_chunked(),
         )?
     } else {
-        native_catalog::load(log, shape, directory)?
+        native_catalog::load::<C>(log, shape, directory)?
     };
-    let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
+    let scheme = AkitaCommitmentScheme::<C>::new(catalog);
     let mut setup = {
         let _span = tracing::info_span!("fixture_setup_deserialization").entered();
-        AkitaVerifierSetup::<F>::deserialize_compressed(
+        AkitaVerifierSetup::<C::Field>::deserialize_compressed(
             BufReader::new(std::fs::File::open(directory.join("verifier.bin"))?),
             &(),
         )?
@@ -403,14 +456,14 @@ pub(super) fn verify(
         )?;
     }
     let verifier = scheme.verifier(setup)?;
-    let commitments = Vec::<CommittedGroup<F>>::deserialize_compressed(
+    let commitments = Vec::<CommittedGroup<C::Field>>::deserialize_compressed(
         BufReader::new(std::fs::File::open(directory.join("commitments.bin"))?),
         &(),
     )?;
-    let descriptor = claims::descriptor(log)?;
+    let descriptor = claims::descriptor::<C>(log)?;
     let proof = std::fs::read(directory.join("proof.bin"))?;
     let once = || -> Result<()> {
-        let owned = groups(&fixture.claims, &descriptor, &commitments)?;
+        let owned = groups::<C>(&fixture.claims, &descriptor, &commitments)?;
         let borrowed = owned
             .into_iter()
             .zip(&commitments)
@@ -425,11 +478,22 @@ pub(super) fn verify(
                 .map(|g| *g.commitment().profile())
                 .collect(),
         };
-        let selection = scheme
-            .schedules()
-            .resolve_profiles(&profiles, 0)?
-            .selection();
-        let statement = GroupBatchStatement::new(selection, claims)?;
+        let row = scheme.schedules().resolve_profiles(&profiles, 0)?;
+        #[cfg(test)]
+        if C::PROFILE == BinaryFieldProfile::P64 {
+            assert!(row.is_native_root());
+            let ordinary = akita_params::GrindingPlan::new(vec![], C::PROFILE.challenge_order()?)?;
+            claims
+                .root_grinding_plan(ordinary.clone(), row.schedule(), row.is_native_root())
+                .unwrap();
+            assert_eq!(
+                claims.root_grinding_plan(ordinary, row.schedule(), false),
+                Err(akita_error::AkitaError::UnsupportedSchedule(
+                    "p64 root requires an explicitly selected native catalog row".into()
+                ))
+            );
+        }
+        let statement = GroupBatchStatement::new(row.selection(), claims)?;
         let mut replay = new_verifier_channel(PROTOCOL, &proof);
         replay.public_message(&BytesMsg(b"application-prefix"));
         let guard = BinaryAReadGuard::forbid();

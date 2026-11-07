@@ -376,18 +376,15 @@ pub(crate) fn prime_plane_weights<E: Field>(
     terms
         .try_reserve_exact(term_count)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let (rows, column_weights, omega) = manifest
-        .claim()
-        .ok_or(AkitaError::InvalidProof)?
-        .weights::<E>(descriptor)?;
     let mut target = E::zero();
-    for (plane_index, claim) in manifest.planes().iter().enumerate() {
+    let factors = manifest.plane_factors::<E>(descriptor)?;
+    for (plane_index, (claim, factors)) in manifest.planes().iter().zip(factors).enumerate() {
         let batch_index = checked::product([plane_index, 2]).ok_or(AkitaError::InvalidProof)?;
         let relation_batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
         let reading_batch = *batches
             .get(checked::sum([batch_index, 1]).ok_or(AkitaError::InvalidProof)?)
             .ok_or(AkitaError::InvalidProof)?;
-        for (row, row_weight) in rows.iter().copied().enumerate() {
+        for (row, row_weight) in factors.rows.iter().copied().enumerate() {
             if row_weight == E::zero() {
                 continue;
             }
@@ -407,7 +404,8 @@ pub(crate) fn prime_plane_weights<E: Field>(
                 power *= alpha;
             }
         }
-        for (column, column_weight) in column_weights.iter().copied().enumerate() {
+        let reading_columns = factors.reading_columns(batches)?;
+        for (column, column_weight) in reading_columns.enumerate() {
             let challenge_index = checked::mul_add(claim.polynomial, columns, column)
                 .ok_or(AkitaError::InvalidProof)?;
             let multiplier = scalar_challenges
@@ -420,9 +418,11 @@ pub(crate) fn prime_plane_weights<E: Field>(
             let element =
                 checked::mul_add(plane_index, columns, column).ok_or(AkitaError::InvalidProof)?;
             for (coefficient, relation) in kernel.into_iter().enumerate() {
-                let weight = reading_batch
-                    * column_weight
-                    * *omega.get(coefficient).ok_or(AkitaError::InvalidProof)?
+                let omega = factors
+                    .omega
+                    .get(coefficient)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let weight = column_weight[0] * omega[0] + column_weight[1] * omega[1]
                     - relation_batch * relation;
                 terms.extend(repacking.coefficient_weights(
                     plane_segment,

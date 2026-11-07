@@ -417,6 +417,11 @@ New digit depths and ranks still change the prefix layout identity.
 
 #### Prime planes
 
+The explicit extension claim shape and its two-point capacity are specified in
+[binary-source-p64-extension-planes.md](binary-source-p64-extension-planes.md).
+That amendment supersedes the base-only API discussion below for that shape;
+the base single-point encoding remains unchanged. Admission is still separate.
+
 Use 22 balanced base-eight digits for each base coordinate, replacing 43.
 Centered F_p coefficients have endpoints
 `+/-9,223,372,036,854,775,778`.

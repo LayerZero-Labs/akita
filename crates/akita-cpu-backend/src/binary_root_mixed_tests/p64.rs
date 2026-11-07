@@ -1,4 +1,4 @@
-//! Fixture-sized P64 prime and mixed roots, below public schedule admission.
+//! Fixture-sized P64 prime and mixed roots with isolated three-stage replay.
 use crate::binary_root::{prime_plane_digits, BinaryRootRelation};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::trinomial::{
@@ -9,14 +9,21 @@ use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::{
     binary_ordinary_profile_fixture, binary_public_digit_commitment, binary_root_matrix,
-    binary_word_manifest_fixture, BinaryRootPublic, OrdinaryNativeRootPlan, PrimeGroupClaim,
-    PrimePlaneClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
+    binary_word_manifest_fixture, BinaryRootPublic, OrdinaryNativeRootPlan, PrimeClaims,
+    PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
 };
-use jolt_field::{CanonicalEncoding, Prime64Offset59 as F, Ring, Zero};
+use jolt_field::{CanonicalEncoding, Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
 
 #[test]
 fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
-    for mixed in [false, true] {
+    for (mixed, copies) in [
+        (false, 0),
+        (true, 0),
+        (false, 1),
+        (true, 1),
+        (false, 2),
+        (true, 2),
+    ] {
         let field = BinaryFieldProfile::P64;
         let manifest = binary_word_manifest_fixture(field, 1);
         let descriptor = manifest.descriptor();
@@ -110,6 +117,45 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
                 value: value.to_u128_checked().unwrap(),
             }],
         };
+        let prime_claim = if copies == 0 {
+            PrimeClaims::Base(prime_claim)
+        } else {
+            PrimeClaims::Extension(
+                (0..copies)
+                    .map(|copy| {
+                        let point = (0..11)
+                            .map(|i| [19 + i * 7, 3 + copy * 11 + i])
+                            .collect::<Vec<[u64; 2]>>();
+                        let extension = point
+                            .iter()
+                            .map(|x| Ext2::<F>::from_base_fn(|i| F::from_u64(x[i])))
+                            .collect::<Vec<_>>();
+                        let eq = EqPolynomial::evals(&extension).unwrap();
+                        let mut value = Ext2::<F>::zero();
+                        for (column, source) in sources.iter().enumerate() {
+                            for (row, component) in
+                                unpack_signed_components(source).unwrap().iter().enumerate()
+                            {
+                                for (coefficient, &v) in component.iter().enumerate() {
+                                    value += eq[coefficient + 256 * (column + 2 * row)]
+                                        * Ext2::<F>::from_i128(v);
+                                }
+                            }
+                        }
+                        assert_ne!(value.base_coefficient(1), F::zero());
+                        PrimeGroupClaim {
+                            point,
+                            evaluations: vec![PrimePlaneClaim {
+                                polynomial: 0,
+                                value: std::array::from_fn(|i| {
+                                    value.base_coefficient(i).to_u128_checked().unwrap() as u64
+                                }),
+                            }],
+                        }
+                    })
+                    .collect(),
+            )
+        };
         let prime =
             PrimePlaneManifest::with_field_profile(descriptor, Some(prime_claim.clone()), field)
                 .unwrap();
@@ -128,7 +174,7 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             BinaryRootRelation::image_digits(&images).unwrap(),
             prime_plane_digits::<F>(descriptor, &prime, &sources).unwrap(),
         ];
-        assert_eq!(natural[2].len(), 2 * 22 * 162);
+        assert_eq!(natural[2].len(), prime.planes().len() * 2 * 22 * 162);
         let ordinary = profile.map(|profile| {
             let ordinary = OrdinaryNativeRootPlan::new(profile, 3).unwrap();
             let compression = profile.outer_compression_plan().unwrap();
@@ -174,13 +220,21 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             binary_public_digit_commitment::<F>(&seed, manifest.b_label(), 0, &natural[1]).unwrap();
         let d = binary_public_digit_commitment::<F>(
             &seed,
-            manifest.d_label(false, 1).unwrap(),
+            manifest.d_label(false, prime.planes().len()).unwrap(),
             0,
             &natural[2],
         )
         .unwrap();
         let mut bad = prime_claim;
-        bad.evaluations[0].value = (bad.evaluations[0].value + 1) % field.modulus();
+        match &mut bad {
+            PrimeClaims::Base(claim) => {
+                claim.evaluations[0].value = (claim.evaluations[0].value + 1) % field.modulus();
+            }
+            PrimeClaims::Extension(points) => {
+                points[0].evaluations[0].value[1] =
+                    (points[0].evaluations[0].value[1] + 1) % field.modulus() as u64;
+            }
+        }
         let bad = PrimePlaneManifest::with_field_profile(descriptor, Some(bad), field).unwrap();
         let false_public =
             BinaryRootPublic::new(&manifest, false, &bad, &setup, 1 << 17, 64, profile).unwrap();

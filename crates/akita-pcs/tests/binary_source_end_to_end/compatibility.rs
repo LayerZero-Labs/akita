@@ -127,8 +127,10 @@ fn p64_cannot_use_an_ordinary_catalog_row() {
     assert!(!row.is_native_root());
     let ordinary =
         akita_params::GrindingPlan::new(vec![], profile.challenge_order().unwrap()).unwrap();
-    assert!(matches!(
+    assert_eq!(
         claims.root_grinding_plan(ordinary, row.schedule(), row.is_native_root()),
-        Err(AkitaError::UnsupportedSchedule(_))
-    ));
+        Err(AkitaError::UnsupportedSchedule(
+            "p64 root requires an explicitly selected native catalog row".into()
+        ))
+    );
 }

@@ -10,6 +10,12 @@
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
+The binary one-point rule below is amended, for explicit extension claims only,
+by [binary-source-p64-extension-planes.md](binary-source-p64-extension-planes.md).
+Two distinct E64 points may use different nonempty subsets of the committed
+owner roster. Each owner shares one response across its readings; each reading
+uses two coordinate planes. Repeated commitment occurrences remain forbidden.
+
 ## Summary
 
 Open several independently committed binary and ordinary groups in one Akita
@@ -997,13 +1003,14 @@ Let X be binary carriers divided by 2^22 and Y ordinary coefficients divided by
 ```
 Prove A (seconds) = 0.2893 + 0.3788*X + 0.0608*Y
 Prove B (seconds) = 0.2893 + 0.1351*G_b + 0.2437*X + 0.0608*Y
-Verify A (ms) = 5.62 + 3.98*X + 5.81*Y
-Verify B (ms) = 5.62 + 3.04*G_b + 0.94*X + 5.81*Y.
+Verify A (ms) = 5.70 + 3.98*X + 5.81*Y
+Verify B (ms) = 5.70 + 3.04*G_b + 0.94*X + 5.81*Y.
 ```
 
 A scales each root linearly. B fits the binary root's fixed/variable cost from
 the two available sizes, using the 4.92 ms verifier root at 2^23. Both pay the
-single anchor suffix once and use measured ordinary marginal differences.
+single 2^22 anchor suffix, `9.68-3.98=5.70` ms, once and use measured
+ordinary marginal differences.
 Neither is a lower/upper bound. They omit the change in the aggregate suffix and
 Stage 1/2/3 geometry, p64/E64 kernels, quotient work, retries, carry widening
 and offload. Because the root anchor itself includes shared stages, these models
@@ -1030,7 +1037,7 @@ does not predict the unknown shared migration delta.
 | Byte proxy before deltas | 95,629 bytes (95.629 KB) | 95,167 bytes (95.167 KB) |
 | Actual complete bytes | `95,629 + Delta_nonce + Delta_column_work + Delta_framing + Delta_shared` | `95,167 + Delta_nonce + Delta_column_work + Delta_framing + Delta_shared` |
 | Prove A / B | 7.2951 s / 5.5388 s | 1.2632 s / 1.499625 s |
-| Verify A / B | 127.385625 ms / 87.865625 ms | 26.1950 ms / 31.5150 ms |
+| Verify A / B | 127.465625 ms / 87.945625 ms | 26.2750 ms / 31.5950 ms |
 
 These explicit estimates are useful for initial capacity planning only. The
 aggregate schedule determines the complete total and latency. Required next

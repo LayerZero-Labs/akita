@@ -4,7 +4,10 @@ use akita_error::AkitaError;
 /// Exact context that an application proof must discharge. Session/group IDs
 /// come from the caller's authenticated transcript. The terminal digest binds
 /// ordered prime points, values, plane manifest and ownership consumed by that
-/// same opening, using canonical field encodings and domain separation.
+/// same opening, using canonical field encodings and domain separation. For
+/// extension claims this includes every point and both coordinate planes; a
+/// proof token must establish membership on the common extracted source, not
+/// independently chosen sources for the individual readings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceAgreementBinding {
     pub session: [u8; 32],

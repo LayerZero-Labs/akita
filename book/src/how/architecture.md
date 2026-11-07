@@ -279,9 +279,10 @@ Implementation: `crates/akita-prover/src/protocol/prove/registry.rs`,
 
 ## Research binary root over p64
 
-An explicitly selected binary commitment can open one word claim, one base-prime
-point, or both, optionally alongside one ordinary Q64Offset59 group. Its base
-field is p=2^64-59 and its testing field is the quadratic extension with u²=2.
+An explicitly selected binary commitment can open one word claim, prime claims,
+or both, optionally alongside one ordinary Q64Offset59 group. Prime claims use
+one base-field point or one or two distinct E64 points. The base field is
+p=2^64-59 and the testing field is its quadratic extension with u²=2.
 The public PCS resolves an explicitly admitted native catalog row before running
 this root. Native-root catalog selection is the execution admission boundary;
 ordinary artifact loading does not admit it. There is no separate production
@@ -294,9 +295,57 @@ with the accepted response. The common range proof bounds those digits; one
 independent extension weight per residual coefficient authenticates R-qK=0.
 One typed A/B/D setup product and one ordinary suffix finish the opening in the
 caller's transcript. Prime coordinates use 22 digits. Multiple binary groups
-and extension-valued prime claims are outside this driver.
+are outside this driver; extension-valued prime claims are described below.
 
 The enforcement path is `crates/akita-types/src/opening_claims/root_schedule.rs`,
 `crates/akita-types/src/binary_source/root_public.rs`, and the public prover and
 verifier root dispatch. `crates/akita-schedules/src/native_root.rs` audits exact
 native transition geometry and retains the ordinary suffix checks.
+
+### Extension prime readings
+
+The experimental binary-source root can represent a base reading with
+`PrimeClaims::Base`, or one or two distinct extension points with
+`PrimeClaims::Extension`. Each extension element supplies two canonical base
+coordinates in basis order `(1, u)`. Each polynomial value at each point consumes
+two coordinate planes, including when its second coordinate is zero. All
+readings for an owner share its committed source and response.
+
+The base single-point manifest keeps its encoding. Extension records select
+the new manifest encoding by type; points and values are supplied by the caller
+and fixed before the root's commitments and testing randomness. The public PCS
+uses the native catalog path described above for either claim shape. Geometry,
+D rank, relation batches and typed-prefix identity use the actual plane count;
+the full-size example prices one/two E64 points as two/four planes per owner.
+Its catalog cache distinguishes these shapes and revalidates their geometry.
+Common-source extraction and the complete security ledger remain open.
+
+Design and implementation:
+[extension plane design](../../../specs/binary-source-p64-extension-planes.md),
+[claim encoding](../../../crates/akita-types/src/binary_source/prime.rs), and
+[coordinate relations](../../../crates/akita-types/src/binary_source/prime_weights.rs).
+
+### Fixed four-plus-four direct research driver
+
+`ResearchBatchPlan` also admits a fixed roster of four binary sources and four
+signed ordinary groups, with 3/3/5/1 ordinary slots and widths 2/9/18/33.
+`ResearchTerminalMode::BaseS11a` retains the measured base proof regression path.
+`ResearchTerminalMode::E64TwoPointS11a` requires two ordered, distinct E64 readings
+in every group and is used for new route-1 work. Each binary reading contributes
+two coordinate planes, so the
+batch authenticates sixteen planes. Both ordinary readings cover every slot.
+
+The ordinary source evaluation compiler supplies an independent row for each
+second-pass slot. Commitment, compression, signed-width and negative-bit rows
+remain shared. All rows feed one outgoing witness and ordinary suffix. The
+selected native row uses the complete plane geometry and D ranks; the joint
+grinding plan uses that witness domain and one response nonce for all four
+binary groups. Planes share their source's column challenges. The E64 mode has
+a distinct transcript identity and binds both readings before the all-D barrier.
+The first binary group may also carry H; its field-switch terminal feeds the
+same joint root. E64 uses a v3 transcript identity; the base v2 identity stays
+fixed for regression replay. This direct-setup research path does not close
+the security obligations above.
+
+Implementation: [research batch](../../../crates/akita-types/src/binary_source/research_batch.rs)
+and [ordinary readings](../../../crates/akita-types/src/binary_source/ordinary_root.rs).

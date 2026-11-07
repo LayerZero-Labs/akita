@@ -91,7 +91,7 @@ struct FaultPreparation {
     plan: BinaryRootWitnessPlan,
 }
 
-pub(super) struct FaultBackend {
+pub(crate) struct FaultBackend {
     inner: Arc<NativeBackend>,
     seed: [u8; 32],
     words: Vec<u128>,
@@ -125,7 +125,7 @@ impl FaultBackend {
         )
     }
 
-    pub(super) fn new(
+    pub(crate) fn new(
         inner: Arc<NativeBackend>,
         seed: [u8; 32],
         words: Vec<u128>,

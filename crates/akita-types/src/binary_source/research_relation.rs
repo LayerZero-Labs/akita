@@ -60,19 +60,35 @@ where
             matrix: BinaryAOperand::new::<F>(matrices.get(index).ok_or(AkitaError::InvalidProof)?),
         });
     }
-    let mut ordinary = Vec::with_capacity(4);
-    for (index, group) in claims.groups().iter().enumerate().skip(4) {
-        let crate::opening_claims::GroupClaimKind::ResearchOrdinary { width, .. } = group.kind()
-        else {
-            return Err(AkitaError::InvalidProof);
-        };
-        ordinary.push(OrdinaryNativeRootClaim {
-            profile: profiles.get(index).ok_or(AkitaError::InvalidProof)?,
-            width: *width,
-            point: group.point(),
-            evaluations: group.evaluations(),
-            payload: commitments.get(index).ok_or(AkitaError::InvalidProof)?,
-        });
+    let mut ordinary = Vec::with_capacity(8);
+    let passes = if plan.mode() == super::ResearchTerminalMode::E64TwoPointS11a {
+        2
+    } else {
+        1
+    };
+    for pass in 0..passes {
+        for (index, group) in claims.groups().iter().enumerate().skip(4) {
+            let crate::opening_claims::GroupClaimKind::ResearchOrdinary { width, mode, .. } =
+                group.kind()
+            else {
+                return Err(AkitaError::InvalidProof);
+            };
+            let terminals = group.research_terminals().ok_or(AkitaError::InvalidProof)?;
+            if *mode != plan.mode() || terminals.mode != plan.mode() {
+                return Err(AkitaError::InvalidProof);
+            }
+            let terminal = terminals
+                .validate::<F>()?
+                .get(pass)
+                .ok_or(AkitaError::InvalidProof)?;
+            ordinary.push(OrdinaryNativeRootClaim {
+                profile: profiles.get(index).ok_or(AkitaError::InvalidProof)?,
+                width: *width,
+                point: &terminal.point,
+                evaluations: &terminal.evaluations,
+                payload: commitments.get(index).ok_or(AkitaError::InvalidProof)?,
+            });
+        }
     }
     plan.relation(setup, &binary, &ordinary, alpha, batches)
 }

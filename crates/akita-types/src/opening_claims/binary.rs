@@ -19,28 +19,34 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
     where
         E: jolt_field::ExtField<F>,
     {
-        let terminal = terminals.validate::<F>()?;
+        let readings = terminals.validate::<F>()?;
         if !matches!(commitment.kind(), CommittedGroupKind::Ordinary)
             || owners.len() != commitment.profile().group.num_polynomials()
-            || terminal.evaluations.len() != owners.len()
-            || terminal.point.len() != commitment.profile().group.num_vars()
+            || readings.iter().any(|terminal| {
+                terminal.evaluations.len() != owners.len()
+                    || terminal.point.len() != commitment.profile().group.num_vars()
+            })
         {
             return Err(AkitaError::InvalidInput(
                 "research ordinary owner geometry".into(),
             ));
         }
+        let terminal = readings.first().ok_or(AkitaError::InvalidProof)?;
         let mut group = Self::new(
             terminal.point.clone(),
             terminal.evaluations.clone(),
             commitment,
         )?;
-        group.kind = GroupClaimKind::ResearchOrdinary { owners, width };
+        group.kind = GroupClaimKind::ResearchOrdinary {
+            owners,
+            width,
+            mode: terminals.mode,
+        };
         group.research_terminals = Some(terminals);
         Ok(group)
     }
 
-    /// Select the typed base S11a reading of one research binary source.
-    /// Future extension modes retain their readings in this same group record.
+    /// Select one base reading or two E64 readings of one research binary source.
     pub fn new_research_binary(
         commitment: CommittedGroup<F>,
         terminals: crate::binary_source::ResearchTerminals<E>,
@@ -61,39 +67,76 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
     where
         E: jolt_field::ExtField<F>,
     {
-        let terminal = terminals.validate::<F>()?;
+        use crate::binary_source::{
+            PrimeClaims, PrimeGroupClaim, PrimePlaneClaim, ResearchTerminalMode,
+        };
+        let readings = terminals.validate::<F>()?;
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
             return Err(AkitaError::InvalidProof);
         };
         if manifest.field_profile() != akita_params::binary_setup::BinaryFieldProfile::P64
             || manifest.descriptor().polynomials().len() != 1
-            || terminal.evaluations.len() != 1
+            || readings.iter().any(|terminal| terminal.evaluations.len() != 1)
         {
             return Err(AkitaError::InvalidInput(
                 "research binary terminal owner count".into(),
             ));
         }
-        let residue = |value: &E| {
+        let residue = |value: &E, index| {
             value
-                .base_coefficient(0)
+                .base_coefficient(index)
                 .to_u128_checked()
                 .ok_or(AkitaError::InvalidProof)
         };
-        let prime = crate::binary_source::PrimeGroupClaim {
-            point: terminal
-                .point
-                .iter()
-                .map(residue)
-                .collect::<Result<Vec<_>, _>>()?,
-            evaluations: vec![crate::binary_source::PrimePlaneClaim {
-                polynomial: 0,
-                value: residue(
-                    terminal
-                        .evaluations
-                        .first()
-                        .ok_or(AkitaError::InvalidProof)?,
-                )?,
-            }],
+        let prime = match terminals.mode {
+            ResearchTerminalMode::BaseS11a => {
+                let terminal = readings.first().ok_or(AkitaError::InvalidProof)?;
+                PrimeClaims::Base(PrimeGroupClaim {
+                    point: terminal
+                        .point
+                        .iter()
+                        .map(|value| residue(value, 0))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    evaluations: vec![PrimePlaneClaim {
+                        polynomial: 0,
+                        value: residue(
+                            terminal.evaluations.first().ok_or(AkitaError::InvalidProof)?,
+                            0,
+                        )?,
+                    }],
+                })
+            }
+            ResearchTerminalMode::E64TwoPointS11a => {
+                let coordinates = |value: &E| -> Result<[u64; 2], AkitaError> {
+                    Ok([
+                        u64::try_from(residue(value, 0)?).map_err(|_| AkitaError::InvalidProof)?,
+                        u64::try_from(residue(value, 1)?).map_err(|_| AkitaError::InvalidProof)?,
+                    ])
+                };
+                PrimeClaims::Extension(
+                    readings
+                        .iter()
+                        .map(|terminal| {
+                            Ok(PrimeGroupClaim {
+                                point: terminal
+                                    .point
+                                    .iter()
+                                    .map(coordinates)
+                                    .collect::<Result<Vec<_>, AkitaError>>()?,
+                                evaluations: vec![PrimePlaneClaim {
+                                    polynomial: 0,
+                                    value: coordinates(
+                                        terminal
+                                            .evaluations
+                                            .first()
+                                            .ok_or(AkitaError::InvalidProof)?,
+                                    )?,
+                                }],
+                            })
+                        })
+                        .collect::<Result<Vec<_>, AkitaError>>()?,
+                )
+            }
         };
         if claim.is_some() && manifest.setup_group() != 0 {
             return Err(AkitaError::InvalidInput(
@@ -120,11 +163,11 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         Self::new_binary_planes(commitment, Some(claim), None)
     }
 
-    /// Select optional word and single-point prime claims in one grouped opening.
+    /// Select optional word and base or extension prime claims in one grouped opening.
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
         claim: Option<BinaryWordClaim>,
-        primes: Option<crate::binary_source::PrimeGroupClaim>,
+        primes: Option<crate::binary_source::PrimeClaims>,
     ) -> Result<Self, AkitaError> {
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
             return Err(AkitaError::InvalidInput(

@@ -4,6 +4,8 @@
 #[path = "research_batch/catalog.rs"]
 mod catalog;
 mod common;
+#[path = "research_batch/e64.rs"]
+mod e64;
 #[path = "research_batch/word.rs"]
 mod word;
 
@@ -27,6 +29,7 @@ fn ordinary<const BITS: u32>(
     producer: &TrustedScheduleCatalog<Config<BITS>>,
     profile: GroupCommitPhaseParams,
     owner_start: u8,
+    mode: ResearchTerminalMode,
 ) -> (
     PolynomialGroupClaims<'static, E, CommittedGroup<F>>,
     CommitmentHandle<F, E>,
@@ -61,34 +64,43 @@ fn ordinary<const BITS: u32>(
     let committed = backend
         .commit(producer, &source, GroupContext::explicit(&profile))
         .unwrap();
-    let point = (0..profile.group.num_vars())
-        .map(|axis| E::lift_base(F::from_u64(2 + 3 * u64::try_from(axis).unwrap())))
-        .collect::<Vec<_>>();
-    let weights = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
-    let terminal = ResearchTerminal {
-        point,
-        evaluations: values
-            .iter()
-            .map(|values| {
-                values
-                    .iter()
-                    .zip(&weights)
-                    .fold(E::zero(), |sum, (&value, &weight)| {
-                        sum + E::lift_base(value) * weight
-                    })
-            })
-            .collect(),
+    let passes = if mode == ResearchTerminalMode::BaseS11a {
+        1
+    } else {
+        2
     };
+    let readings = (0..passes)
+        .map(|pass| {
+            let point = (0..profile.group.num_vars())
+                .map(|axis| {
+                    let base = 2 + 3 * u64::try_from(axis).unwrap();
+                    point_coordinate(mode, base, pass)
+                })
+                .collect::<Vec<_>>();
+            let weights = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
+            ResearchTerminal {
+                point,
+                evaluations: values
+                    .iter()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .zip(&weights)
+                            .fold(E::zero(), |sum, (&value, &weight)| {
+                                sum + E::lift_base(value) * weight
+                            })
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
     let owners = (0..profile.group.num_polynomials())
         .map(|slot| [owner_start + u8::try_from(slot).unwrap(); 32])
         .collect();
     (
         PolynomialGroupClaims::new_research_ordinary(
             committed.committed_group,
-            ResearchTerminals {
-                mode: ResearchTerminalMode::BaseS11a,
-                readings: vec![terminal],
-            },
+            ResearchTerminals { mode, readings },
             owners,
             width,
         )
@@ -100,18 +112,42 @@ fn ordinary<const BITS: u32>(
 #[test]
 fn research_four_plus_four_commit_prove_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run(false));
+    common::run_on_large_stack(|| run(false, ResearchTerminalMode::BaseS11a));
 }
 
 #[test]
 fn research_four_plus_four_with_word_commit_prove_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run(true));
+    common::run_on_large_stack(|| run(true, ResearchTerminalMode::BaseS11a));
 }
 
-fn run(with_word: bool) {
+#[test]
+fn research_four_plus_four_e64_two_point_replay_and_mutations() {
+    common::init_rayon_pool();
+    common::run_on_large_stack(|| run(false, ResearchTerminalMode::E64TwoPointS11a));
+}
+
+#[test]
+fn research_four_plus_four_e64_two_point_with_word_replay_and_mutations() {
+    common::init_rayon_pool();
+    common::run_on_large_stack(|| run(true, ResearchTerminalMode::E64TwoPointS11a));
+}
+
+fn point_coordinate(mode: ResearchTerminalMode, base: u64, pass: u64) -> E {
+    E::from_base_fn(|index| {
+        F::from_u64(if index == 0 {
+            base + pass
+        } else if mode == ResearchTerminalMode::BaseS11a {
+            0
+        } else {
+            1 + pass
+        })
+    })
+}
+
+fn run(with_word: bool, mode: ResearchTerminalMode) {
     let producers = catalog::Producers::new();
-    let (catalog, manifests, profiles, plan) = catalog::batch(&producers, with_word);
+    let (catalog, manifests, profiles, plan) = catalog::batch(&producers, with_word, mode);
     let scheme = AkitaCommitmentScheme::<Config<33>>::new(catalog);
     let setup = scheme.setup_prover(10, 16).unwrap();
     let backend = Arc::new(CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap());
@@ -132,32 +168,41 @@ fn run(with_word: bool) {
             |preceding| GroupContext::explicit_with_precommitted_groups(&profile, preceding),
         );
         let committed = backend.commit(&producers.binary, &source, context).unwrap();
-        let point = (0..11)
-            .map(|axis| E::lift_base(F::from_u64(19 + 7 * u64::try_from(axis).unwrap())))
-            .collect::<Vec<_>>();
-        let equality = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
-        let evaluation = words
-            .iter()
-            .enumerate()
-            .fold(E::zero(), |sum, (carrier, word)| {
-                (0..128).fold(sum, |sum, bit| {
-                    if (word >> bit) & 1 == 0 {
-                        sum
-                    } else {
-                        sum + equality[carrier * 256 + bit]
-                    }
-                })
-            });
+        let passes = if mode == ResearchTerminalMode::BaseS11a {
+            1
+        } else {
+            2
+        };
+        let readings = (0..passes)
+            .map(|pass| {
+                let point = (0..11)
+                    .map(|axis| {
+                        point_coordinate(mode, 19 + 7 * u64::try_from(axis).unwrap(), pass)
+                    })
+                    .collect::<Vec<_>>();
+                let equality = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
+                let evaluation = words
+                    .iter()
+                    .enumerate()
+                    .fold(E::zero(), |sum, (carrier, word)| {
+                        (0..128).fold(sum, |sum, bit| {
+                            if (word >> bit) & 1 == 0 {
+                                sum
+                            } else {
+                                sum + equality[carrier * 256 + bit]
+                            }
+                        })
+                    });
+                ResearchTerminal {
+                    point,
+                    evaluations: vec![evaluation],
+                }
+            })
+            .collect();
         groups.push(
             PolynomialGroupClaims::new_research_binary_with_word(
                 committed.committed_group,
-                ResearchTerminals {
-                    mode: ResearchTerminalMode::BaseS11a,
-                    readings: vec![ResearchTerminal {
-                        point,
-                        evaluations: vec![evaluation],
-                    }],
-                },
+                ResearchTerminals { mode, readings },
                 (with_word && index == 0).then(|| word::claim(manifest.descriptor(), &words)),
             )
             .unwrap(),
@@ -165,10 +210,10 @@ fn run(with_word: bool) {
         handles.push(committed.private_handle);
     }
     let ordinary = [
-        ordinary(&backend, &producers.width2, profiles[4], 20),
-        ordinary(&backend, &producers.width9, profiles[5], 30),
-        ordinary(&backend, &producers.width18, profiles[6], 40),
-        ordinary(&backend, &producers.width33, profiles[7], 50),
+        ordinary(&backend, &producers.width2, profiles[4], 20, mode),
+        ordinary(&backend, &producers.width9, profiles[5], 30, mode),
+        ordinary(&backend, &producers.width18, profiles[6], 40, mode),
+        ordinary(&backend, &producers.width33, profiles[7], 50, mode),
     ];
     for (group, handle) in ordinary {
         groups.push(group);
@@ -181,6 +226,7 @@ fn run(with_word: bool) {
     let mut reordered = claims.groups().to_vec();
     reordered.swap(0, 4);
     assert!(OpeningClaims::from_groups(reordered).is_err());
+    e64::check_geometry(&claims, &profiles, &plan, setup.expanded.descriptor());
     let data =
         common::selected_prover_data::<Config<33>>(claims.clone(), handles, scheme.schedules());
     let selection = data.selection();
@@ -294,6 +340,11 @@ fn run(with_word: bool) {
     akita_transcript::clear_thread_events();
     verify(&proof, &claims).expect("honest research replay and exact EOF");
     assert_eq!(akita_transcript::thread_events(), events);
+    if mode == ResearchTerminalMode::E64TwoPointS11a {
+        for changed in e64::mutations(&claims) {
+            assert!(verify(&proof, &changed).is_err(), "E64 reading mutation");
+        }
+    }
     if with_word {
         word::reject_mutations(&claims, |changed| verify(&proof, changed).is_err());
     }
@@ -340,13 +391,7 @@ fn run(with_word: bool) {
     let group = &wrong_groups[5];
     let changed = PolynomialGroupClaims::new_research_ordinary(
         group.commitment().clone(),
-        ResearchTerminals {
-            mode: ResearchTerminalMode::BaseS11a,
-            readings: vec![ResearchTerminal {
-                point: group.point().to_vec(),
-                evaluations: group.evaluations().to_vec(),
-            }],
-        },
+        group.research_terminals().unwrap().clone(),
         vec![[90; 32], [31; 32], [32; 32]],
         OrdinarySourceWidth::new(9).unwrap(),
     )
@@ -367,6 +412,22 @@ fn run(with_word: bool) {
             .unwrap(),
     )
     .unwrap();
+    let joint = claims
+        .root_grinding_plan(ordinary_plan.clone(), row.schedule(), true)
+        .unwrap();
+    assert_eq!(
+        joint.runs()[1].loss_factor(),
+        u64::try_from(plan.fold_coordinates().iter().sum::<usize>()).unwrap()
+    );
+    assert!(joint.runs().iter().any(|run| {
+        run.site()
+            == akita_params::GrindingSite::SumcheckRound {
+                protocol: akita_params::SumcheckProtocol::Stage2,
+                level: 0,
+                stage: 0,
+                round: plan.domain_len().trailing_zeros() - 1,
+            }
+    }));
     assert!(claims
         .root_grinding_plan(ordinary_plan, row.schedule(), false)
         .is_err());

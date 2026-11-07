@@ -160,7 +160,7 @@ mod binary_source_tests {
             let manifest = manifest(BinaryFieldProfile::P64, columns, owners);
             assert_eq!(manifest.b_rows(), b);
             // The spec table prices a word plus five prime planes; a group has
-            // at most one plane per committed polynomial.
+            // at most one base reading per committed polynomial.
             let planes = owners.min(5);
             let d_label = manifest.d_label(true, planes).unwrap();
             if planes == 5 {
@@ -171,7 +171,7 @@ mod binary_source_tests {
             assert_eq!(d_label.role, SetupStreamRole::WitnessCommitment);
             assert_eq!(d_label.modulus, SetupStreamModulus::Prime64Offset59);
             assert!(manifest.d_label(false, 0).is_err());
-            assert!(manifest.d_label(true, owners + 1).is_err());
+            assert!(manifest.d_label(true, 4 * owners + 1).is_err());
         }
     }
 
@@ -297,6 +297,33 @@ mod binary_source_tests {
         );
         prove.unwrap();
         verify.unwrap();
+        let sent: [u8; 32] = prover.verifier_message();
+        let received: [u8; 32] = verifier.verifier_message();
+        assert_eq!(sent, received);
+
+        // Statement binding is field validation, not catalog admission.
+        // The PCS boundary supplies the selected row's native marker.
+        manifest.field_profile().admit_root(true).unwrap();
+        assert_eq!(
+            manifest.field_profile().admit_root(false),
+            Err(AkitaError::UnsupportedSchedule(
+                "p64 root requires an explicitly selected native catalog row".into()
+            ))
+        );
+        let mut wrong_field = new_prover_channel(b"p64-admission");
+        assert_eq!(
+            crate::binary_source::binary_root_statement::<F, F, _>(
+                &mut wrong_field,
+                &manifest,
+                None,
+                &prime,
+                &payload,
+                None,
+            ),
+            Err(AkitaError::InvalidSetup(
+                "binary root field profile mismatch".into()
+            ))
+        );
     }
 
     #[test]

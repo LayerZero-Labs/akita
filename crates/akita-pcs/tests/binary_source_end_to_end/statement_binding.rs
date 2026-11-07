@@ -237,7 +237,7 @@ fn p64_prime_statement_changes_the_first_challenge_on_both_sides() {
     let first = |payload: &[Base], prime: PrimeGroupClaim| {
         let prime = PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
-            Some(prime),
+            Some(prime.into()),
             BinaryFieldProfile::P64,
         )
         .unwrap();

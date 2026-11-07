@@ -143,6 +143,12 @@ assert 24576*256 == 6_291_456 and 5632*256 == 1_441_792
 assert [3072*d for d in (11, 12, 13)] == [33_792, 36_864, 39_936]
 assert 243*256 == 62_208 and ceildiv(23*162*256, 64) == 14_904
 
+verify_total_anchor = F(968, 100)
+verify_root_anchor = F(398, 100)
+verify_suffix = verify_total_anchor - verify_root_anchor
+assert verify_suffix == F(570, 100)
+assert verify_suffix + F(304, 100) + F(94, 100) == verify_total_anchor
+
 print('scenario binaryN ordinaryN X Y binarycells minWincludingOrdSource frontbytes proofproxy proveA proveB verifyA verifyB work_bits')
 for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
                          ('small', [20, 21, 21, 22], [20, 20, 21, 22])]:
@@ -154,11 +160,11 @@ for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
     proof = 84392 - 2993 - 2048 - 84 + front + 4096
     pa = F(2893, 10000) + F(3788, 10000)*x + F(608, 10000)*y
     pb = F(2893, 10000) + 4*F(1351, 10000) + F(2437, 10000)*x + F(608, 10000)*y
-    va = F(562, 100) + F(398, 100)*x + F(581, 100)*y
-    vb = F(562, 100) + 4*F(304, 100) + F(94, 100)*x + F(581, 100)*y
+    va = verify_suffix + F(398, 100)*x + F(581, 100)*y
+    vb = verify_suffix + 4*F(304, 100) + F(94, 100)*x + F(581, 100)*y
     exact_times = {
-        'large': tuple(map(F, ('7.2951', '5.5388', '127.385625', '87.865625'))),
-        'small': tuple(map(F, ('1.2632', '1.499625', '26.195', '31.515'))),
+        'large': tuple(map(F, ('7.2951', '5.5388', '127.465625', '87.945625'))),
+        'small': tuple(map(F, ('1.2632', '1.499625', '26.275', '31.595'))),
     }
     assert (pa, pb, va, vb) == exact_times[name]
     expected = {'large': (316_574_464, 536_870_912, 12266, 95629),

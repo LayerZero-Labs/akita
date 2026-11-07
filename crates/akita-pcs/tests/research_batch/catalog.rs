@@ -14,8 +14,8 @@ use akita_params::{
 use akita_schedules::native_root::NativeRootTransition;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, PrimeGroupClaim,
-    PrimePlaneClaim, PrimePlaneManifest, ResearchBatchPlan,
+    BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, PrimeClaims,
+    PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest, ResearchBatchPlan, ResearchTerminalMode,
 };
 use akita_types::opening_claims::GroupClaimKind;
 use jolt_field::{Ext2, Prime64Offset59};
@@ -118,6 +118,7 @@ impl Producers {
 pub(super) fn batch(
     producers: &Producers,
     with_word: bool,
+    mode: ResearchTerminalMode,
 ) -> (
     TrustedScheduleCatalog<Config<33>>,
     Vec<BinaryCommittedGroupManifest>,
@@ -191,15 +192,29 @@ pub(super) fn batch(
             BinaryFieldProfile::P64,
         )
         .unwrap();
-        let prime = PrimePlaneManifest::with_field_profile(
-            manifest.descriptor(),
-            Some(PrimeGroupClaim {
+        let readings = match mode {
+            ResearchTerminalMode::BaseS11a => PrimeClaims::Base(PrimeGroupClaim {
                 point: vec![0; 11],
                 evaluations: vec![PrimePlaneClaim {
                     polynomial: 0,
                     value: u128::from((group + 1) & 1),
                 }],
             }),
+            ResearchTerminalMode::E64TwoPointS11a => PrimeClaims::Extension(
+                [1, 2]
+                    .map(|pass| PrimeGroupClaim {
+                        point: vec![[0, pass]; 11],
+                        evaluations: vec![PrimePlaneClaim {
+                            polynomial: 0,
+                            value: [0, 0],
+                        }],
+                    })
+                    .to_vec(),
+            ),
+        };
+        let prime = PrimePlaneManifest::with_field_profile(
+            manifest.descriptor(),
+            Some(readings),
             BinaryFieldProfile::P64,
         )
         .unwrap();
@@ -216,6 +231,7 @@ pub(super) fn batch(
         kinds.push(GroupClaimKind::ResearchOrdinary {
             owners: (0..slots).map(|slot| [start + slot; 32]).collect(),
             width: OrdinarySourceWidth::new(bits).unwrap(),
+            mode,
         });
     }
     let descriptor = akita_types::AkitaSetupDescriptor {
@@ -234,7 +250,11 @@ pub(super) fn batch(
         assert_eq!(plan.binary()[0].plan().quotient_segment(), Some(6));
     }
     for (index, manifest) in manifests.iter().enumerate() {
-        let rank = manifest.d_label(with_word && index == 0, 1).unwrap().rank;
+        let GroupClaimKind::Binary { prime, .. } = &kinds[index] else {
+            unreachable!("binary inventory");
+        };
+        let planes = prime.planes().len();
+        let rank = manifest.d_label(with_word && index == 0, planes).unwrap().rank;
         let expected = usize::try_from(rank).unwrap() * manifest.b_ring_dimension();
         assert_eq!(plan.d_ranges()[index].len(), expected);
         if !with_word || index != 0 {

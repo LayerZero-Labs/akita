@@ -1,14 +1,28 @@
-//! Instantiate the shared measurement driver with the research field pair.
+//! Research replay fixtures and the P64 adversarial backend.
+#[cfg(test)]
 type F = jolt_field::Prime64Offset59;
+#[cfg(test)]
 type E = jolt_field::Ext2<F>;
-const PROFILE: akita_params::binary_setup::BinaryFieldProfile =
-    akita_params::binary_setup::BinaryFieldProfile::P64;
-#[path = "run.rs"]
-pub(super) mod run;
+#[cfg(test)]
+type BinaryTestSuffix = crate::run::config::P64;
+// The shared backend also contains frontend helpers used by the P128 suite.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../tests/binary_source_end_to_end/fault_backend.rs"]
+pub(crate) mod fault_backend;
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static FAULT: std::cell::Cell<Option<fault_backend::Fault>> =
+        const { std::cell::Cell::new(None) };
+}
 
 #[cfg(test)]
 #[path = "research_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "extension_tests.rs"]
+mod extension_tests;
 
 #[cfg(test)]
 fn fixture_directory() -> std::path::PathBuf {
