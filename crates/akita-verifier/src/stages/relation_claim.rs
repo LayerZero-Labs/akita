@@ -78,6 +78,7 @@ where
                 tau1: &rs.tau1,
                 claim_coefficients: &prefix.trace_claim_coefficients,
             },
+            Some(&rs.relation_matrix_evaluator.groups),
         )?)
     };
     Ok(RelationClaim {

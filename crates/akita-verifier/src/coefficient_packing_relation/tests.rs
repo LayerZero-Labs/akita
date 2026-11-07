@@ -194,11 +194,13 @@ where
     Extension: ExtField<Base> + FpExtEncoding<Base> + Ring,
 {
     let points = [(0, &fixture.prepared_point)];
-    let compact =
-        prepare_coefficient_packing_verifier_batch_semantics(batch_inputs(fixture, &points, alpha))
-            .unwrap()
-            .groups()[0]
-            .clone();
+    let compact = prepare_coefficient_packing_verifier_batch_semantics(
+        batch_inputs(fixture, &points, alpha),
+        None,
+    )
+    .unwrap()
+    .groups()[0]
+        .clone();
     let expanded =
         prepare_coefficient_packing_batch_semantics(batch_inputs(fixture, &points, alpha)).unwrap();
     let events = expanded
@@ -486,7 +488,8 @@ fn multi_group_compact_factors_follow_relation_group_order() {
         tau1: &fixture.tau1,
         claim_coefficients: &fixture.claim_coefficients,
     };
-    let compact_batch = prepare_coefficient_packing_verifier_batch_semantics(inputs()).unwrap();
+    let compact_batch =
+        prepare_coefficient_packing_verifier_batch_semantics(inputs(), None).unwrap();
     let expanded = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
     let events = expanded
         .groups()
@@ -660,4 +663,62 @@ fn affine_coefficient_length_is_checked_before_the_contraction_cache() {
     assert!(compact(vec![family(2), family(6)])
         .evaluate_relation_at_point(&point)
         .is_err());
+}
+
+#[test]
+fn replayed_challenge_evaluations_preserve_packing_oracles() {
+    type Base = Prime128OffsetA7F7;
+    type Ext = Base;
+    use crate::relation::{
+        PreparedRelationGroups, QuotientRelationMultipliers, RelationMatrixGroupEvaluator,
+    };
+    for d_a in [64usize, 256] {
+        let fixture = coefficient_packing_fixture::<Base, Ext>(
+            SisModulusProfileId::Q128OffsetA7F7,
+            d_a,
+            64,
+            64,
+            6,
+            4,
+            d_a.trailing_zeros() as usize + 3,
+            2,
+            2,
+        );
+        for alpha in [Ext::zero(), Ext::one(), Ext::from_u64(41)] {
+            let values = fixture
+                .relation
+                .group_ambient_a_challenges(0)
+                .unwrap()
+                .evals_at_pows::<Base, Ext>(&scalar_powers(alpha, d_a))
+                .unwrap();
+            let replayed =
+                PreparedRelationGroups::QuotientLift(vec![RelationMatrixGroupEvaluator {
+                    group_id: 0,
+                    num_claims: 2,
+                    depth_fold: 0,
+                    a_row_start: 0,
+                    b_row_start: 0,
+                    multipliers: QuotientRelationMultipliers {
+                        c_alphas: values,
+                        opening_a_evals: Vec::new(),
+                    },
+                }]);
+            let points = [(0, &fixture.prepared_point)];
+            let compact = prepare_coefficient_packing_verifier_batch_semantics(
+                batch_inputs(&fixture, &points, alpha),
+                Some(&replayed),
+            )
+            .unwrap();
+            let (_, oracle) = prepare_compact_and_oracles(&fixture, alpha, 29);
+            let factors = compact.groups()[0].compact_factors();
+            assert_eq!(
+                factors.evaluate_relation_at_point(&oracle.point).unwrap(),
+                multilinear_eval(&oracle.relation, &oracle.point).unwrap()
+            );
+            assert_eq!(
+                factors.evaluate_stage2_at_point(&oracle.point).unwrap(),
+                multilinear_eval(&oracle.stage2, &oracle.point).unwrap()
+            );
+        }
+    }
 }

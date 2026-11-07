@@ -645,6 +645,7 @@ mod tests {
                 tau1: &tau1,
                 claim_coefficients: &claim_coefficients,
             },
+            None,
         )
         .unwrap();
         let expanded_oracle =

@@ -400,6 +400,7 @@ fn extend_point<E: Field>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaE
 
 pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + ExtField<F>>(
     group: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
+    challenge_alpha_values: &[E],
 ) -> Result<CoefficientPackingCompactFactors<E>, AkitaError> {
     let s = group.geometry().challenge_subring_dimension();
     let k = group.geometry().extension_degree();
@@ -422,7 +423,6 @@ pub(super) fn prepare_compact_factors<F: Field + CanonicalEncoding, E: Field + E
     let mut affine_relation_families = Vec::new();
     let mut quotient_families = Vec::new();
     let mut direct_opening_families = Vec::new();
-    let challenge_alpha_values = group.challenge_alpha_values()?;
     for unit in group
         .witness_layout()
         .units_for_group(group.group_index())?

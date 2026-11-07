@@ -7,8 +7,7 @@
 
 use akita_error::AkitaError;
 use akita_types::{
-    validate_coefficient_packing_batch_groups, CoefficientPackingBatchSemanticInputs,
-    FpExtEncoding, ValidatedCoefficientPackingGroup,
+    validate_coefficient_packing_batch_groups, CoefficientPackingBatchSemanticInputs, FpExtEncoding,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
@@ -18,33 +17,59 @@ pub(crate) use compact::{
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
 
-fn prepare_coefficient_packing_verifier_group<F, E>(
-    validated: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
-) -> Result<CoefficientPackingVerifierGroupSemantics<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let compact_factors = compact::prepare_compact_factors(validated)?;
-    Ok(CoefficientPackingVerifierGroupSemantics {
-        group_index: validated.group_index(),
-        group_claim_range: validated.group_claim_range(),
-        scalar_claim_weight: validated.scalar_claim_weight(),
-        compact_factors,
-    })
-}
-
 /// Prepare the compact packing factors used by the Stage 2 verifier without
 /// constructing the prover's expanded event or segment tables.
 pub(crate) fn prepare_coefficient_packing_verifier_batch_semantics<F, E>(
     inputs: CoefficientPackingBatchSemanticInputs<'_, '_, '_, F, E>,
+    replayed: Option<&crate::relation::PreparedRelationGroups<E>>,
 ) -> Result<CoefficientPackingVerifierBatchSemantics<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
     let groups = validate_coefficient_packing_batch_groups(&inputs, |group| {
-        prepare_coefficient_packing_verifier_group(&group)
+        let computed;
+        // Ambient A challenges represent C(X^(d_a/s)). Reuse their value at
+        // this fold's alpha only when d_a == s, so both consumers need C(alpha).
+        let shared = match replayed {
+            Some(crate::relation::PreparedRelationGroups::QuotientLift(groups))
+                if group.geometry().a_ring_dimension()
+                    == group.geometry().challenge_subring_dimension() =>
+            {
+                Some(
+                    groups
+                        .iter()
+                        .find(|g| g.group_id == group.group_index())
+                        .ok_or(AkitaError::InvalidProof)?
+                        .multipliers
+                        .c_alphas
+                        .as_slice(),
+                )
+            }
+            _ => None,
+        };
+        let values = if let Some(values) = shared {
+            values
+        } else {
+            computed = group.challenge_alpha_values()?;
+            &computed
+        };
+        let expected = group
+            .num_claims()
+            .checked_mul(group.num_live_blocks())
+            .ok_or(AkitaError::InvalidProof)?;
+        if values.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: values.len(),
+            });
+        }
+        Ok(CoefficientPackingVerifierGroupSemantics {
+            group_index: group.group_index(),
+            group_claim_range: group.group_claim_range(),
+            scalar_claim_weight: group.scalar_claim_weight(),
+            compact_factors: compact::prepare_compact_factors(&group, values)?,
+        })
     })?;
     Ok(CoefficientPackingVerifierBatchSemantics { groups })
 }
