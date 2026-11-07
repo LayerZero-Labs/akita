@@ -5,9 +5,9 @@ use akita_types::binary_source::{
     BinaryRootWitnessRequest, ResearchBatchPlan, ResearchBatchResponse, ResearchBatchWitnessRequest,
 };
 use akita_types::opening_claims::GroupClaimKind;
-use jolt_field::cfg_into_iter;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_into_iter, cfg_iter};
 
 struct Preparation {
     binding: OperationBinding,
@@ -180,10 +180,20 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let stage = tracing::info_span!("mldsa.port.opening.build_binary").entered();
+    let parent = tracing::Span::current();
+    let results = cfg_iter!(preparation.binary)
+        .zip(cfg_iter!(response.challenges))
+        .map(|(prepared, challenges)| {
+            let _span = parent.enter();
+            build_digits(prepared, challenges, prepared.plan.repacking().domain_len())
+        })
+        .collect::<Vec<_>>();
+    // Preserve the first error/rejection in roster order, even when a later
+    // group finishes first. A rejected nonce never imports a witness; the next
+    // accepted attempt overwrites every group's private response cache.
     let mut local = Vec::with_capacity(4);
-    for (prepared, challenges) in preparation.binary.iter().zip(&response.challenges) {
-        let len = prepared.plan.repacking().domain_len();
-        let Some(digits) = build_digits(prepared, challenges, len)? else {
+    for result in results {
+        let Some(digits) = result? else {
             return Ok(None);
         };
         local.push(digits);

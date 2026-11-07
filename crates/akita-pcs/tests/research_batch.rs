@@ -114,25 +114,51 @@ fn ordinary<const BITS: u32>(
 #[test]
 fn research_four_plus_four_commit_prove_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run(false, ResearchTerminalMode::BaseS11a));
+    common::run_on_large_stack(|| run_with_workers(ResearchTerminalMode::BaseS11a));
 }
 
 #[test]
 fn research_four_plus_four_with_word_commit_prove_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run(true, ResearchTerminalMode::BaseS11a));
+    common::run_on_large_stack(|| {
+        run(true, ResearchTerminalMode::BaseS11a);
+    });
 }
 
 #[test]
 fn research_four_plus_four_e64_two_point_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run(false, ResearchTerminalMode::E64TwoPointS11a));
+    common::run_on_large_stack(|| run_with_workers(ResearchTerminalMode::E64TwoPointS11a));
 }
 
 #[test]
 fn research_four_plus_four_e64_two_point_with_word_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run(true, ResearchTerminalMode::E64TwoPointS11a));
+    common::run_on_large_stack(|| {
+        run(true, ResearchTerminalMode::E64TwoPointS11a);
+    });
+}
+
+fn run_with_workers(mode: ResearchTerminalMode) {
+    #[cfg(feature = "parallel")]
+    {
+        let mut reference = None;
+        for threads in [1, 4] {
+            let proof = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .stack_size(common::STACK_SIZE)
+                .build()
+                .unwrap()
+                .install(|| run(false, mode));
+            if let Some(reference) = &reference {
+                assert_eq!(&proof, reference, "worker count changed the proof");
+            } else {
+                reference = Some(proof);
+            }
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    run(false, mode);
 }
 
 fn point_coordinate(mode: ResearchTerminalMode, base: u64, pass: u64) -> E {
@@ -147,7 +173,7 @@ fn point_coordinate(mode: ResearchTerminalMode, base: u64, pass: u64) -> E {
     })
 }
 
-fn run(with_word: bool, mode: ResearchTerminalMode) {
+fn run(with_word: bool, mode: ResearchTerminalMode) -> Vec<u8> {
     let producers = catalog::Producers::new();
     let (catalog, manifests, profiles, plan) = catalog::batch(&producers, with_word, mode);
     let scheme = AkitaCommitmentScheme::<Config<33>>::new(catalog);
@@ -445,4 +471,5 @@ fn run(with_word: bool, mode: ResearchTerminalMode) {
         "research=true binary_groups=4 ordinary_groups=4 witnesses=1 suffixes=1 bytes={}",
         proof.len()
     );
+    proof
 }
