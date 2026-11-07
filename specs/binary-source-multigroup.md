@@ -593,8 +593,9 @@ retain the legacy local order:
 | EP_b, if prime | `t_b C_b` | 22 | 162 | 256 |
 | K_b, in final quotient bank | `3s_b` | dK_b | 648 | 1024 |
 
-The all-owner U/carry shapes preserve current layout; only the selected word
-owner's reading rows are active. An optimization to omit unused owner views
+When a word is selected, the all-owner U/carry shapes preserve current layout;
+only the selected word owner's reading rows are active. A group without a word
+has no U, Cpar or Cval segments. An optimization to omit unused owner views
 would need a new layout version. The prime subset is in increasing owner order.
 There is no EP for an unclaimed polynomial and no per-point expansion.
 

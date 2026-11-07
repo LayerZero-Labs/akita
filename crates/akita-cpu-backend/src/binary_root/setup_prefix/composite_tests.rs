@@ -116,7 +116,7 @@ fn trusted_composite_preparation_preserves_singleton_and_authenticates_distinct_
         .collect::<Vec<_>>();
     let singleton = CompositePrefixLayout::new(&blocks[..1], b"singleton root", &slots[0]).unwrap();
     let original = backend
-        .prepare_binary_a_prefixes(&manifests[0], &typed[0], &slots[0], &[])
+        .prepare_binary_typed_prefixes(&manifests[0], &typed[0], &slots[0], &[])
         .unwrap();
     let prepared = backend
         .prepare_composite_prefix(&singleton, &definitions[..1], typed[0].domain_len)
