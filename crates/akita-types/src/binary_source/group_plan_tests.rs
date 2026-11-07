@@ -291,7 +291,7 @@ fn translations_cross_boundaries_with_unaligned_group_and_quotient_starts() {
             let start = plan
                 .coefficient_address(group.global_index, segment, 0, 0, 0)
                 .unwrap();
-            unaligned |= start % 1024 != 0;
+            unaligned |= !start.is_multiple_of(1024);
             let last = plan
                 .coefficient_address(
                     group.global_index,
@@ -353,7 +353,7 @@ fn translations_cross_boundaries_with_unaligned_group_and_quotient_starts() {
             .segment_range(group.quotient_segment.unwrap())
             .unwrap();
         assert_eq!(range.start, next);
-        assert_ne!(range.start % 1024, 0);
+        assert!(!range.start.is_multiple_of(1024));
         next = range.end;
     }
     for (group, segment, element, digit, coefficient) in [
