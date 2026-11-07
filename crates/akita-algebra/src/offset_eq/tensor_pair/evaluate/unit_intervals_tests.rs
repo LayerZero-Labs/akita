@@ -94,7 +94,7 @@ fn cached_unit_intervals_enforce_address_and_work_bounds() {
 }
 
 #[test]
-fn power_two_right_intervals_match_dense_and_memo_charges_collisions() {
+fn power_two_right_intervals_match_dense() {
     let left = (0..9).map(|i| F::from_u64(i + 2)).collect::<Vec<_>>();
     let right = (0..10).map(|i| F::from_u64(i + 11)).collect::<Vec<_>>();
     for stride in [2, 4, 8, 16] {
@@ -120,21 +120,6 @@ fn power_two_right_intervals_match_dense_and_memo_charges_collisions() {
             expected
         );
     }
-    let mut memo = super::unit_intervals_cache::Memo::new();
-    let mut work = 0;
-    for key in (0..2048).map(|i| i * 127) {
-        memo.insert(key, F::from_u64(key as u64), &mut work)
-            .unwrap();
-    }
-    for key in (0..2048).map(|i| i * 127) {
-        assert_eq!(
-            memo.get(key, &mut work).unwrap(),
-            Some(F::from_u64(key as u64))
-        );
-    }
-    assert_eq!(memo.get(usize::MAX, &mut work).unwrap(), None);
-    work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
-    assert!(memo.get(0, &mut work).is_err());
 }
 
 fn scaled_differential<const LM: bool, const RM: bool>() {

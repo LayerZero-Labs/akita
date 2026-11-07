@@ -8,7 +8,6 @@ use crate::Field;
 use akita_error::{checked, AkitaError};
 use std::collections::BTreeMap;
 mod unit_intervals;
-mod unit_intervals_cache;
 
 /// Evaluate tensor-native paired Boolean-basis families.
 ///

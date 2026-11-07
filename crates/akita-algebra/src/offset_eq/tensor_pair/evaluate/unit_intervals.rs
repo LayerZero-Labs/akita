@@ -1,5 +1,4 @@
 //! Exact unit-stride intervals via shared binary-addition contractions.
-use super::unit_intervals_cache::Memo;
 use super::{basis_bit_factor, basis_pair_factors, charge_work, checked_axis_offset, EqPairSeed};
 use crate::Field;
 use akita_error::AkitaError;
@@ -9,28 +8,37 @@ fn high_eval<F: Field, const MONOMIAL: bool>(
     point: &[F],
     bit: usize,
     index: usize,
-    cache: &mut [Memo<F>],
+    cache: &mut [BTreeMap<usize, F>],
     work: &mut usize,
 ) -> Result<F, AkitaError> {
     let Some(&challenge) = point.get(bit) else {
         return Ok(if index == 0 { F::one() } else { F::zero() });
     };
-    if let Some(value) = cache
+    let memo = cache
         .get(bit)
-        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?
-        .get(index, work)?
-    {
-        return Ok(value);
+        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?;
+    // Ordered-map operations have logarithmic work, including cache hits.
+    charge_work(
+        work,
+        1 + (usize::BITS - memo.len().leading_zeros()) as usize,
+    )?;
+    if let Some(value) = memo.get(&index) {
+        return Ok(*value);
     }
     charge_work(work, 1)?;
     let high = high_eval::<F, MONOMIAL>(point, bit + 1, index >> 1, cache, work)?;
     let factor = basis_bit_factor::<F, MONOMIAL>(Some(challenge), index & 1)
         .ok_or_else(|| AkitaError::Internal("interval high bit factor is absent".into()))?;
     let value = high * factor;
-    cache
+    let memo = cache
         .get_mut(bit)
-        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?
-        .insert(index, value, work)?;
+        .ok_or_else(|| AkitaError::Internal("interval high cache is absent".into()))?;
+    // Charge the tree update and storage before inserting a computed suffix.
+    charge_work(
+        work,
+        2 + (usize::BITS - memo.len().leading_zeros()) as usize,
+    )?;
+    memo.insert(index, value);
     Ok(value)
 }
 
@@ -130,8 +138,10 @@ pub(super) fn eval<
         factors.push([a, b, c, d]);
     }
     let mut low_cache = (0..=bits).map(|_| BTreeMap::new()).collect::<Vec<_>>();
-    let mut left_cache = (0..left.len()).map(|_| Memo::new()).collect::<Vec<_>>();
-    let mut right_cache = (0..right.len()).map(|_| Memo::new()).collect::<Vec<_>>();
+    let mut left_cache = (0..left.len()).map(|_| BTreeMap::new()).collect::<Vec<_>>();
+    let mut right_cache = (0..right.len())
+        .map(|_| BTreeMap::new())
+        .collect::<Vec<_>>();
     let mut out = F::zero();
     for seed in seeds {
         checked_axis_offset(seed.left_offset, 1, len - 1, "left")?;
@@ -234,4 +244,23 @@ pub(super) fn eval_scaled_right<F: Field, const LM: bool, const RM: bool, const 
         });
     }
     eval::<F, LM, RM, STATES>(left, high, len, &reduced, work)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{One, Prime128OffsetA7F7 as F};
+
+    #[test]
+    fn suffix_cache_hits_and_misses_respect_the_work_limit() {
+        let point = [F::one(); 4];
+        let mut cache = (0..point.len())
+            .map(|_| BTreeMap::new())
+            .collect::<Vec<_>>();
+        high_eval::<F, false>(&point, 0, 0, &mut cache, &mut 0).unwrap();
+        for index in [0, 1] {
+            let mut work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
+            assert!(high_eval::<F, false>(&point, 0, index, &mut cache, &mut work).is_err());
+        }
+    }
 }
