@@ -470,9 +470,11 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                     .as_ref()
                     .map(|ordinary| {
                         ordinary
-                            .negative_binary_addresses(plan.repacking())
+                            .negative_binary_ranges(plan.repacking())
                             .unwrap()
-                            .len()
+                            .iter()
+                            .map(|range| range.len())
+                            .sum::<usize>()
                     })
                     .unwrap_or(0);
             assert_eq!(public.batch_count(), coefficient_count + other);

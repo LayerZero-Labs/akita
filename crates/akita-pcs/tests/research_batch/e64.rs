@@ -49,9 +49,11 @@ pub(super) fn check_geometry(
         .iter()
         .map(|local| {
             local
-                .negative_binary_addresses(plan.ordinary_repacking())
+                .negative_binary_ranges(plan.ordinary_repacking())
                 .unwrap()
-                .len()
+                .iter()
+                .map(|range| range.len())
+                .sum::<usize>()
         })
         .sum::<usize>();
     let binary = plan

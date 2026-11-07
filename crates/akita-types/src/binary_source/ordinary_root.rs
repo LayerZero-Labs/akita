@@ -227,40 +227,41 @@ impl OrdinaryNativeRootPlan {
         Ok(())
     }
 
-    /// Addresses of compression digits and signed offset bits requiring `w(w+1)=0`.
-    pub fn negative_binary_addresses(
+    /// Ordered natural-coefficient ranges requiring `w(w+1)=0`.
+    /// Padding is excluded. Contiguous segments need only one range, rather
+    /// than one address allocation and checked layout lookup per bit.
+    pub fn negative_binary_ranges(
         &self,
         repacking: &RootCoefficientRepacking,
-    ) -> Result<Vec<usize>, AkitaError> {
+    ) -> Result<Vec<std::ops::Range<usize>>, AkitaError> {
         self.validate_repacking(repacking)?;
-        let mut addresses = Vec::new();
+        let mut ranges = Vec::new();
         for offset in 2..self.segments.len() {
             let segment =
                 checked::sum([self.first_segment, offset]).ok_or(AkitaError::InvalidProof)?;
             let shape = self.segments.get(offset).ok_or(AkitaError::InvalidProof)?;
-            let count = checked::product([
-                shape.elements,
-                shape.digits,
-                shape.geometry.polynomial_modulus_dimension(),
-            ])
-            .ok_or(AkitaError::InvalidProof)?;
-            addresses
-                .try_reserve_exact(count)
+            let degree = shape.geometry.polynomial_modulus_dimension();
+            let contiguous = shape.geometry.physical_coefficient_width() == degree;
+            let count = if contiguous {
+                1
+            } else {
+                checked::product([shape.elements, shape.digits]).ok_or(AkitaError::InvalidProof)?
+            };
+            ranges
+                .try_reserve(count)
                 .map_err(|_| AkitaError::InvalidProof)?;
+            if contiguous {
+                ranges.push(repacking.segment_range(segment)?);
+                continue;
+            }
             for element in 0..shape.elements {
                 for digit in 0..shape.digits {
-                    for coefficient in 0..shape.geometry.polynomial_modulus_dimension() {
-                        addresses.push(repacking.coefficient_address(
-                            segment,
-                            element,
-                            digit,
-                            coefficient,
-                        )?);
-                    }
+                    let start = repacking.coefficient_address(segment, element, digit, 0)?;
+                    ranges.push(checked::range(start, degree).ok_or(AkitaError::InvalidProof)?);
                 }
             }
         }
-        Ok(addresses)
+        Ok(ranges)
     }
 
     /// Direct public A/B/compression and source-evaluation identities.

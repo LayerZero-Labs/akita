@@ -202,7 +202,12 @@ impl ResearchBatchPlan {
         let negative_count = ordinary.plans().iter().try_fold(0, |total, plan| {
             checked::sum([
                 total,
-                plan.negative_binary_addresses(&ordinary_repacking)?.len(),
+                checked::sum(
+                    plan.negative_binary_ranges(&ordinary_repacking)?
+                        .iter()
+                        .map(|range| range.len()),
+                )
+                .ok_or(AkitaError::InvalidProof)?,
             ])
             .ok_or(AkitaError::InvalidProof)
         })?;
@@ -371,21 +376,55 @@ impl ResearchBatchPlan {
         // Indexed collection preserves source/error order before translation.
         let mut components = binary_weights.into_iter().collect::<Result<Vec<_>, _>>()?;
         components.push((ordinary_offset, ordinary_weights?));
-        let mut negative = Vec::new();
+        let negative_count = batches
+            .len()
+            .checked_sub(cursor)
+            .ok_or(AkitaError::InvalidProof)?;
+        let _span = tracing::info_span!(
+            "research_root_negative_weights",
+            count = negative_count,
+            ranges = tracing::field::Empty
+        )
+        .entered();
+        let mut tasks = Vec::new();
         for plan in self.ordinary.plans() {
-            for address in plan.negative_binary_addresses(&self.ordinary_repacking)? {
-                negative
-                    .try_reserve(1)
-                    .map_err(|_| AkitaError::InvalidProof)?;
-                negative.push((
-                    checked::sum([ordinary_offset, address]).ok_or(AkitaError::InvalidProof)?,
-                    *batches.get(cursor).ok_or(AkitaError::InvalidProof)?,
+            for addresses in plan.negative_binary_ranges(&self.ordinary_repacking)? {
+                let range =
+                    checked::range(cursor, addresses.len()).ok_or(AkitaError::InvalidProof)?;
+                cursor = range.end;
+                let start = checked::sum([ordinary_offset, addresses.start])
+                    .ok_or(AkitaError::InvalidProof)?;
+                let translated =
+                    checked::range(start, addresses.len()).ok_or(AkitaError::InvalidProof)?;
+                if translated.end > self.domain_len {
+                    return Err(AkitaError::InvalidProof);
+                }
+                tasks.try_reserve(1).map_err(|_| AkitaError::InvalidProof)?;
+                tasks.push((
+                    translated,
+                    batches.get(range).ok_or(AkitaError::InvalidProof)?,
                 ));
-                cursor = checked::sum([cursor, 1]).ok_or(AkitaError::InvalidProof)?;
             }
         }
         if cursor != batches.len() {
             return Err(AkitaError::InvalidProof);
+        }
+        _span.record("ranges", tasks.len());
+        let mut negative = Vec::new();
+        negative
+            .try_reserve_exact(negative_count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        // Range and challenge slices have equal lengths. Indexed extension
+        // retains the original segment/element/digit/coefficient pairing.
+        for (addresses, coefficients) in tasks {
+            #[cfg(feature = "parallel")]
+            negative.par_extend(
+                addresses
+                    .into_par_iter()
+                    .zip(coefficients.par_iter().copied()),
+            );
+            #[cfg(not(feature = "parallel"))]
+            negative.extend(addresses.zip(coefficients.iter().copied()));
         }
         Ok((
             NativeRootWeights::concatenate(self.domain_len, components)?,

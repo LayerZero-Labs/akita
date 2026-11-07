@@ -739,6 +739,28 @@ mod p64_tests {
                 32
             );
             let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
+            let ranges = plan.negative_binary_ranges(&repacking).unwrap();
+            let mut expected = Vec::new();
+            for (segment, shape) in plan.segments().iter().enumerate().skip(2) {
+                for element in 0..shape.elements {
+                    for digit in 0..shape.digits {
+                        for coefficient in 0..shape.geometry.polynomial_modulus_dimension() {
+                            expected.push(
+                                repacking
+                                    .coefficient_address(segment, element, digit, coefficient)
+                                    .unwrap(),
+                            );
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                ranges.iter().map(|range| range.len()).sum::<usize>(),
+                expected.len()
+            );
+            assert_eq!(ranges.into_iter().flatten().collect::<Vec<_>>(), expected);
+            let wrong = RootCoefficientRepacking::new(plan.segments()[1..].to_vec(), 64).unwrap();
+            assert!(plan.negative_binary_ranges(&wrong).is_err());
             if signed.is_none() {
                 assert_eq!(
                     plan.segments()
@@ -751,7 +773,12 @@ mod p64_tests {
                 );
                 assert_eq!(plan.linear_batch_count(), 9);
                 assert_eq!(
-                    plan.negative_binary_addresses(&repacking).unwrap().len(),
+                    plan.negative_binary_ranges(&repacking)
+                        .unwrap()
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .len(),
                     12_288
                 );
                 assert_eq!(compression.unpacked_witness_bytes().unwrap(), 12_288);

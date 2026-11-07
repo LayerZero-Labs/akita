@@ -114,32 +114,28 @@ fn ordinary<const BITS: u32>(
 #[test]
 fn research_four_plus_four_commit_prove_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run_with_workers(ResearchTerminalMode::BaseS11a));
+    common::run_on_large_stack(|| run_with_workers(false, ResearchTerminalMode::BaseS11a));
 }
 
 #[test]
 fn research_four_plus_four_with_word_commit_prove_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| {
-        run(true, ResearchTerminalMode::BaseS11a);
-    });
+    common::run_on_large_stack(|| run_with_workers(true, ResearchTerminalMode::BaseS11a));
 }
 
 #[test]
 fn research_four_plus_four_e64_two_point_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| run_with_workers(ResearchTerminalMode::E64TwoPointS11a));
+    common::run_on_large_stack(|| run_with_workers(false, ResearchTerminalMode::E64TwoPointS11a));
 }
 
 #[test]
 fn research_four_plus_four_e64_two_point_with_word_replay_and_mutations() {
     common::init_rayon_pool();
-    common::run_on_large_stack(|| {
-        run(true, ResearchTerminalMode::E64TwoPointS11a);
-    });
+    common::run_on_large_stack(|| run_with_workers(true, ResearchTerminalMode::E64TwoPointS11a));
 }
 
-fn run_with_workers(mode: ResearchTerminalMode) {
+fn run_with_workers(with_word: bool, mode: ResearchTerminalMode) {
     #[cfg(feature = "parallel")]
     {
         let mut reference = None;
@@ -149,7 +145,7 @@ fn run_with_workers(mode: ResearchTerminalMode) {
                 .stack_size(common::STACK_SIZE)
                 .build()
                 .unwrap()
-                .install(|| run(false, mode));
+                .install(|| run(with_word, mode));
             if let Some(reference) = &reference {
                 assert_eq!(
                     &proof, reference,
@@ -161,7 +157,7 @@ fn run_with_workers(mode: ResearchTerminalMode) {
         }
     }
     #[cfg(not(feature = "parallel"))]
-    run(false, mode);
+    run(with_word, mode);
 }
 
 fn point_coordinate(mode: ResearchTerminalMode, base: u64, pass: u64) -> E {

@@ -227,7 +227,12 @@ fn signed_extrema_all_slots_and_all_commitment_rows_authenticate() {
                     }
                 }
             }
-            let addresses = plan.negative_binary_addresses(&repacking).unwrap();
+            let addresses = plan
+                .negative_binary_ranges(&repacking)
+                .unwrap()
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
             assert_eq!(addresses.len(), expected_addresses.len());
             assert_eq!(
                 addresses.iter().copied().collect::<BTreeSet<_>>(),
@@ -388,7 +393,12 @@ fn signed_offset_membership_rejects_non_boolean_linear_preserving_mutation() {
         .iter()
         .map(|&digit| F::from_i64(i64::from(digit)))
         .collect::<Vec<_>>();
-    let addresses = plan.negative_binary_addresses(&repacking).unwrap();
+    let addresses = plan
+        .negative_binary_ranges(&repacking)
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     assert!(addresses
         .iter()
         .all(|&address| (table[address] * (table[address] + F::one())).is_zero()));
@@ -560,7 +570,11 @@ fn legacy_partial_block_preserves_base_relation_and_repacking_boundary() {
     let input = fixture(profile, 3);
     let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), D).unwrap();
     assert_eq!(
-        plan.negative_binary_addresses(&repacking).unwrap(),
+        plan.negative_binary_ranges(&repacking)
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
         legacy.negative_binary_addresses(&repacking).unwrap()
     );
     let batches = vec![F::one(); plan.linear_batch_count()];
@@ -617,7 +631,11 @@ fn one_digit_fixture_matches_frozen_pre_extension_relation_bytes() {
     assert_eq!(plan.linear_batch_count(), legacy.linear_batch_count());
     let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
     assert_eq!(
-        plan.negative_binary_addresses(&repacking).unwrap(),
+        plan.negative_binary_ranges(&repacking)
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
         legacy.negative_binary_addresses(&repacking).unwrap()
     );
     let natural = input

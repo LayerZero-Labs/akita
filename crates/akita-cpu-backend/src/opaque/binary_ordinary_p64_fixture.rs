@@ -209,7 +209,13 @@ fn p64_four_signed_ordinary_groups_match_actual_commitments() {
                 .unwrap();
         }
         first_batch += plan.linear_batch_count();
-        for address in plan.negative_binary_addresses(&repacking).unwrap() {
+        for address in plan
+            .negative_binary_ranges(&repacking)
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+        {
             assert!(table[address] == E::zero() || table[address] == -E::one());
         }
         // Every source, image, compression and signed-offset digit bank matters.

@@ -114,7 +114,17 @@ impl BinaryRootPublic {
         let plan = plan.with_domain_len(domain_len)?;
         let negative_binary_addresses = ordinary
             .as_ref()
-            .map(|ordinary| ordinary.negative_binary_addresses(plan.repacking()))
+            .map(|ordinary| {
+                let ranges = ordinary.negative_binary_ranges(plan.repacking())?;
+                let count = checked::sum(ranges.iter().map(|range| range.len()))
+                    .ok_or(AkitaError::InvalidProof)?;
+                let mut addresses = Vec::new();
+                addresses
+                    .try_reserve_exact(count)
+                    .map_err(|_| AkitaError::InvalidProof)?;
+                addresses.extend(ranges.into_iter().flatten());
+                Ok::<_, AkitaError>(addresses)
+            })
             .transpose()?
             .unwrap_or_default();
         // Every root row reads an address below the natural end, so this one
