@@ -355,3 +355,62 @@ fn construction_rejects_unsorted_linear_weights() {
     )
     .is_err());
 }
+
+#[cfg(feature = "labinius-trinomial")]
+#[test]
+fn negative_binary_attachment_checks_chunk_boundaries_before_installing() {
+    use super::super::RelationRangeImageProver;
+    type F = jolt_field::Ext2<jolt_field::Prime64Offset59>;
+    let len = (1 << 14) + 3;
+    let domain = 1 << 15;
+    let point = vec![F::zero(); 15];
+    let fresh = || {
+        RelationRangeImageProver::new_virtual_only(
+            vec![0; domain],
+            &point,
+            F::zero(),
+            8,
+            domain,
+            15,
+            0,
+        )
+        .unwrap()
+    };
+    let weights = (0..len)
+        .map(|index| (index, F::from_u64(index as u64 + 17)))
+        .collect::<Vec<_>>();
+    for position in [1, (1 << 14) - 1, 1 << 14, len - 1] {
+        for bad_index in [position - 1, domain] {
+            let mut malformed = weights.clone();
+            malformed[position].0 = bad_index;
+            let mut session = fresh();
+            assert!(matches!(session.attach_negative_binary_weights(malformed),
+                Err(AkitaError::InvalidInput(message)) if message ==
+                "negative-binary weights are outside the domain or not strictly sorted"));
+            assert!(session.state.additional_relation_terms.is_none());
+            session
+                .attach_negative_binary_weights(weights.clone())
+                .unwrap();
+        }
+    }
+    for count in [0, 1, (1 << 14) - 1, 1 << 14, len] {
+        let mut session = fresh();
+        session
+            .attach_negative_binary_weights(weights[..count].to_vec())
+            .unwrap();
+        if count == 0 {
+            assert!(session.state.additional_relation_terms.is_none());
+            continue;
+        }
+        let installed = session.state.additional_relation_terms.as_ref().unwrap();
+        assert_eq!(installed.weights.len(), count);
+        for (actual, &(index, binary)) in installed.weights.iter().zip(&weights) {
+            assert_eq!(actual.index, index);
+            assert_eq!(actual.binary, binary);
+            assert_eq!(actual.linear, F::zero());
+        }
+        assert!(session
+            .attach_negative_binary_weights(weights.clone())
+            .is_err());
+    }
+}
