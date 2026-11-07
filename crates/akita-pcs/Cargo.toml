@@ -118,10 +118,11 @@ response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
 # Dev-only terminal wire variant; see `akita-params`.
 dev-protocol = ["akita-params/dev-protocol"]
 # Zero knowledge (`specs/whiteout-akita.md`): `ZkCommitmentConfig`, the
-# masked prefix's prover and verifier, and Whiteout's response prover
-# (`zk::AkitaResponseProver`). It selects nothing: a zero-knowledge
-# configuration does. It compiles no hiding sampler (jolt-zk's `whiteout`
-# only, I6), so a hiding commitment fails without `zk-prover` (A46).
+# masked prefix's prover and verifier, and Whiteout's response verifier
+# (`zk::AkitaResponseVerifier`; the prover is under `zk-prover`). It selects
+# nothing: a zero-knowledge configuration does. It compiles no hiding sampler
+# (jolt-zk's `whiteout` only, I6), so a hiding commitment fails without
+# `zk-prover` (A46).
 zk = [
   "dep:jolt-zk",
   "dep:akita-sumcheck",

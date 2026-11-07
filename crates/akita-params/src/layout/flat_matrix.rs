@@ -16,6 +16,7 @@ use akita_serialization::{
 use jolt_algebra::CyclotomicRing;
 use jolt_algebra::Field;
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 /// Flat 1D vector of field elements, independent of ring dimension.
 ///
@@ -26,9 +27,10 @@ use std::io::{Read, Write};
 /// Any prefix of a uniformly random vector is uniformly random, so role matrices
 /// derived from prefixes of the same flat vector are binding.
 ///
-/// The coefficients are owned, or viewed for the program's lifetime when a
-/// verifier uses its own trusted setup bytes in place
-/// ([`Self::borrow_trusted_with_expected_shape`]).
+/// The coefficients are owned and shared by every clone, or viewed for the
+/// program's lifetime when a verifier uses its own trusted setup bytes in
+/// place ([`Self::borrow_trusted_with_expected_shape`]). They are never
+/// mutated, so a clone is a cheap view of the same coefficients.
 #[derive(Debug, Clone)]
 pub struct FlatMatrix<F: Field> {
     data: FlatStorage<F>,
@@ -38,7 +40,7 @@ pub struct FlatMatrix<F: Field> {
 /// forcing a `'static` bound onto every `Field` parameter.
 #[derive(Debug, Clone)]
 enum FlatStorage<F> {
-    Owned(Vec<F>),
+    Owned(Arc<Vec<F>>),
     /// Invariant: `ptr` and `len` were taken from a `&'static [F]`.
     Static {
         ptr: *const F,
@@ -72,7 +74,7 @@ impl<F: Field> FlatMatrix<F> {
     #[inline]
     pub fn as_field_slice(&self) -> &[F] {
         match &self.data {
-            FlatStorage::Owned(data) => data,
+            FlatStorage::Owned(data) => data.as_slice(),
             // SAFETY: by the `Static` invariant, `ptr`/`len` describe a live
             // `&'static [F]`.
             FlatStorage::Static { ptr, len } => unsafe { std::slice::from_raw_parts(*ptr, *len) },
@@ -82,7 +84,7 @@ impl<F: Field> FlatMatrix<F> {
     /// Build from pre-flattened field-element data.
     pub fn from_flat_data(data: Vec<F>) -> Self {
         Self {
-            data: FlatStorage::Owned(data),
+            data: FlatStorage::Owned(Arc::new(data)),
         }
     }
 

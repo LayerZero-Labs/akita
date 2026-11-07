@@ -1,22 +1,31 @@
-//! `AkitaResponseProver` on jolt-zk's synthetic Σ-protocol statements
+//! `AkitaResponseProver` and `AkitaResponseVerifier` on jolt-zk's synthetic Σ-protocol statements
 //! (`specs/whiteout-akita.md` §5.6): acceptance where the statement's own
 //! checker accepts (W5-a), rejection of each item's violation (W5-a), and the
 //! batched weights against `H` contracted column by column through the
 //! statement's own row maps (W5-b).
 
-use super::rows::BatchWeights;
+use super::rounds::{FusedKernel, SplitB};
+use super::rows::{batch_rows, BatchWeights};
 use super::*;
 use akita_config::policy_of;
 use akita_config::proof_optimized::fp128::ResponseDigits;
-use akita_params::{ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams};
+use akita_config::SetupRequirements;
+use akita_cpu_backend::AkitaProverSetup;
+use akita_params::{
+    ChunkedWitnessCfg, CommittedGroupBatchProfile, FlatMatrix, GroupCommitPhaseParams,
+};
 use akita_schedules::ValidatedScheduleCatalog;
+use akita_transcript::ProverChannel;
+use akita_types::{sample_akita_setup_seed, AkitaSetupDescriptor, SetupPrefixVerifierRegistry};
 use jolt_algebra::cfg_into_iter;
 #[cfg(feature = "parallel")]
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, Ring, Zero};
+use jolt_crypto::lattice::derive_public_matrix_prefix;
 use jolt_zk::whiteout::test_support::{CheckingResponseProver, SyntheticSigma};
-use jolt_zk::whiteout::ResponseSegment;
-use std::sync::Mutex;
+use jolt_zk::whiteout::{ResponseProver, ResponseSegment, ResponseWitness};
+use std::sync::{Arc, Mutex};
+use zeroize::Zeroizing;
 
 use akita_params::PackedNegativeBinary;
 use akita_sumcheck::{multilinear_eval, SumcheckKernel};
@@ -273,7 +282,7 @@ impl<const D: usize> ResponseProver<F, D> for Cheating<'_> {
         statement: &ResponseStatement<'_, F, D>,
         transcript: &mut VerifierChannel<'_>,
     ) -> Result<(), ZkError> {
-        self.akita.verify_response(statement, transcript)
+        self.akita.verifier().verify(statement, transcript)
     }
 }
 
@@ -399,7 +408,7 @@ impl<const D: usize> ResponseProver<F, D> for WeightOracle<'_> {
         transcript: &mut ProverChannel,
     ) -> Result<(), ZkError> {
         let shape = ResponseShape::new(statement.layout().unwrap().len()).unwrap();
-        let chains = self.akita.chains(statement).unwrap();
+        let chains = self.akita.verifier().chains(statement).unwrap();
         let alpha: F = ext_challenge(transcript, site(step::ALPHA)).unwrap();
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
         let product_point =
@@ -549,7 +558,7 @@ fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
     on_big_stack(|| {
         let sigma = SyntheticSigma::<64>::new(10, 1);
         let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
-        let stream = akita.expanded().shared_matrix().as_field_slice();
+        let stream = akita.verifier().expanded().shared_matrix().as_field_slice();
         let profile = Cfg::sis_modulus_profile();
         let mut rng = rand::thread_rng();
         for image_len in [64, 884, 1216] {
@@ -595,7 +604,7 @@ fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
             }
             let chains = compression::Chains::of_targets(
                 profile,
-                akita.expanded(),
+                akita.verifier().expanded(),
                 vec![CompressedTarget {
                     digits: 0..len,
                     image_len,
@@ -658,7 +667,12 @@ impl Forging<'_> {
     /// Edits `compressed` in place and returns the chunk's rows after the
     /// edit.
     fn forge(&self, compressed: &mut CompressedImage<F>) -> [Vec<F>; 2] {
-        let stream = self.akita.expanded().shared_matrix().as_field_slice();
+        let stream = self
+            .akita
+            .verifier()
+            .expanded()
+            .shared_matrix()
+            .as_field_slice();
         let chunks = compression::chunks(Cfg::sis_modulus_profile(), self.image_len).unwrap();
         let chunk = &chunks[self.chunk];
         let digit: usize = chunks[..self.chunk]
@@ -837,7 +851,7 @@ fn rejects_prover_chosen_compressions() {
             );
             let chains = compression::Chains::of_targets(
                 profile,
-                akita.expanded(),
+                akita.verifier().expanded(),
                 vec![CompressedTarget {
                     digits: 0..compressed.witness.len(),
                     image_len,
@@ -920,6 +934,40 @@ fn refuses_a_setup_without_the_chains_maps() {
     AkitaResponseProver::new(scheme, setup).unwrap();
 }
 
+/// A response verifier that reads, at its own capacity, a wider seed-derived
+/// matrix sized by [`AkitaResponseVerifier::setup_field_elements`] accepts
+/// the prover's proof: the verifier needs no prover setup.
+#[test]
+fn verifies_from_a_shared_seed_derived_matrix() {
+    on_big_stack(|| {
+        let sigma = SyntheticSigma::<64>::new(3, 1);
+        let len = sigma.response_len(&CompressionShape::<Cfg>::default());
+        let proof = sigma.prove(&akita_for(len), 3).unwrap();
+        let (scheme, num_vars) = scheme_for(len);
+        let needed =
+            AkitaResponseVerifier::setup_field_elements(scheme.schedules(), num_vars).unwrap();
+        let seed = sample_akita_setup_seed();
+        let shared = AkitaVerifierSetup::from_parts(
+            Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    AkitaSetupDescriptor {
+                        max_num_vars: num_vars + 4,
+                        max_num_batched_polys: 8,
+                        num_field_elements: needed,
+                        setup_seed: seed.clone(),
+                    },
+                    FlatMatrix::from_flat_data(derive_public_matrix_prefix(needed, &seed).unwrap()),
+                ),
+            ),
+            SetupPrefixVerifierRegistry::new(seed),
+        )
+        .unwrap();
+        let verifier =
+            AkitaResponseVerifier::new(scheme, shared.with_capacity(num_vars, 1)).unwrap();
+        sigma.verify(&proof, &verifier).unwrap();
+    });
+}
+
 /// The chains' relation at a point against the MLE of its dense weights,
 /// for images of one to three chunks placed at unaligned offsets.
 #[test]
@@ -935,7 +983,7 @@ fn chain_relation_at_a_point_matches_its_dense_weights() {
             let len = compressed.witness.len();
             let chains = compression::Chains::of_targets(
                 profile,
-                akita.expanded(),
+                akita.verifier().expanded(),
                 vec![CompressedTarget {
                     digits: offset..offset + len,
                     image_len,
@@ -1018,7 +1066,7 @@ impl<const D: usize> ResponseProver<F, D> for FusedOracle<'_> {
         let mut rng = rand::thread_rng();
         let shape = ResponseShape::new(statement.layout().unwrap().len()).unwrap();
         let padded = shape.padded_len();
-        let chains = self.akita.chains(statement).unwrap();
+        let chains = self.akita.verifier().chains(statement).unwrap();
         let alpha = F::random(&mut rng);
         let product_vars = ceil_log2(statement.row_shape().products.max(1));
         let product_point: Vec<F> = (0..product_vars).map(|_| F::random(&mut rng)).collect();

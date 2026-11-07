@@ -138,6 +138,29 @@ impl<F: Field> AkitaVerifierSetup<F> {
         self.prefix_contexts.get(id).map(Vec::as_slice)
     }
 
+    /// This setup, sharing its matrix coefficients and prefix commitments,
+    /// under the polynomial capacity `max_num_vars` ×
+    /// `max_num_batched_polys`. A verifier admits a catalog row only when it
+    /// fits both that capacity and the matrix (akita-config's
+    /// `TrustedScheduleCatalog::verifier_admits`), so one seed-derived matrix
+    /// serves catalogs of different capacities without admitting rows it
+    /// does not hold.
+    #[must_use]
+    pub fn with_capacity(&self, max_num_vars: usize, max_num_batched_polys: usize) -> Self {
+        Self {
+            expanded: Arc::new(AkitaExpandedSetup {
+                descriptor: AkitaSetupDescriptor {
+                    max_num_vars,
+                    max_num_batched_polys,
+                    ..self.expanded.descriptor.clone()
+                },
+                shared_matrix: self.expanded.shared_matrix.clone(),
+            }),
+            prefix_slots: self.prefix_slots.clone(),
+            prefix_contexts: self.prefix_contexts.clone(),
+        }
+    }
+
     /// Construct verifier setup state from expanded setup and structurally checked prefix metadata.
     ///
     /// This constructor binds the registry to the public matrix identity. It

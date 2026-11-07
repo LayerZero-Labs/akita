@@ -13,25 +13,28 @@
 //! them with jolt-zk's rows. The prover's chain is Akita's compression
 //! executor.
 
+#[cfg(any(test, feature = "zk-prover"))]
 use akita_config::CommitmentConfig;
+#[cfg(any(test, feature = "zk-prover"))]
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
-use akita_params::{
-    CompressionChainPlan, CompressionMapPlan, PackedNegativeBinary, RingRelationMode,
-    SisModulusProfileId,
-};
-use akita_types::{
-    AkitaExpandedSetup, NegativeBinarySupport, ReducedCompressionRelationWeights, RingVec,
-};
+use akita_params::{CompressionChainPlan, CompressionMapPlan, SisModulusProfileId};
+#[cfg(any(test, feature = "zk-prover"))]
+use akita_params::{PackedNegativeBinary, RingRelationMode};
+#[cfg(any(test, feature = "zk-prover"))]
+use akita_types::RingVec;
+use akita_types::{AkitaExpandedSetup, NegativeBinarySupport, ReducedCompressionRelationWeights};
 #[cfg(test)]
 use jolt_algebra::Ring;
 use jolt_algebra::{lift_ct, One, Zero};
 use jolt_zk::masking::ZkError;
-use jolt_zk::whiteout::{
-    CompressedImage, CompressedTarget, ImageCompression, ResponseStatement, WhiteoutError,
-};
+#[cfg(any(test, feature = "zk-prover"))]
+use jolt_zk::whiteout::{CompressedImage, ImageCompression};
+use jolt_zk::whiteout::{CompressedTarget, ResponseStatement, WhiteoutError};
 
-use super::{CompressionShape, F};
+#[cfg(any(test, feature = "zk-prover"))]
+use super::CompressionShape;
+use super::F;
 
 /// One chunk of an image and its chain.
 pub(crate) struct Chunk {
@@ -105,6 +108,7 @@ pub(crate) fn chunks(
 }
 
 /// `(cm(t), witness)` for `image`, by Akita's compression executor.
+#[cfg(any(test, feature = "zk-prover"))]
 pub(crate) fn compress(
     backend: &CpuBackend<F, F>,
     profile: SisModulusProfileId,
@@ -147,6 +151,7 @@ pub(crate) fn compress(
 }
 
 /// The `{−1, 0}` digits of one packed stage, its real digits only.
+#[cfg(any(test, feature = "zk-prover"))]
 pub(crate) fn digits(stage: &PackedNegativeBinary) -> impl Iterator<Item = i8> + '_ {
     (0..stage.map().real_digit_count())
         .map(|index| -i8::from(stage.bytes()[index / 8] >> (index % 8) & 1 == 1))
@@ -439,6 +444,7 @@ impl<'a> Chains<'a> {
 
     /// `⟨weights, chain rows at α⟩`'s weights over `e` padded to
     /// `padded_len`, on `window`, which must hold every chain's digits.
+    #[cfg(any(test, feature = "zk-prover"))]
     pub(crate) fn accumulate(
         &self,
         alpha: F,
@@ -469,6 +475,7 @@ impl<'a> Chains<'a> {
 /// chains' maps: the response prover's (`specs/whiteout-akita.md` A47). It
 /// runs in constant time in the image (A36). Public under `test-support`
 /// only, for tests that compress without a response prover.
+#[cfg(any(test, feature = "zk-prover"))]
 #[cfg_attr(
     not(feature = "test-support"),
     expect(unreachable_pub, reason = "public under test-support only")
@@ -478,6 +485,7 @@ pub struct BackendCompression<'a, Cfg> {
     config: std::marker::PhantomData<Cfg>,
 }
 
+#[cfg(any(test, feature = "zk-prover"))]
 impl<'a, Cfg> BackendCompression<'a, Cfg> {
     /// Compression on `backend`; compressing fails if its setup does not
     /// hold the chains' maps.
@@ -493,6 +501,7 @@ impl<'a, Cfg> BackendCompression<'a, Cfg> {
     }
 }
 
+#[cfg(any(test, feature = "zk-prover"))]
 impl<Cfg: CommitmentConfig> ImageCompression<F> for BackendCompression<'_, Cfg> {
     fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
         CompressionShape::<Cfg>::default().payload_len(image_len)

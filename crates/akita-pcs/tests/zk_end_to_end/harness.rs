@@ -11,8 +11,8 @@ use akita_error::AkitaError;
 use akita_params::zk::AdmittedZkSchedule;
 use akita_params::{ChunkedWitnessCfg, CompressionChainPlan};
 use akita_pcs::zk::{
-    AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualOpening, ResidualShape,
-    UncheckedResponseProver,
+    AkitaResponseProver, AkitaResponseVerifier, CompressionShape, MaskedPrefix, ResidualOpening,
+    ResidualShape, UncheckedResponseProver,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_transcript::{
@@ -125,7 +125,7 @@ impl SigmaPublic<'_> {
                 )
                 .unwrap();
             let layout = sigma.response_layout(&CompressionShape::<ResponseCfg>::default())?;
-            Ok(AkitaResponseProver::<ResponseCfg>::num_vars(&layout).unwrap())
+            Ok(AkitaResponseVerifier::<ResponseCfg>::num_vars(&layout).unwrap())
         })
     }
 }

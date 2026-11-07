@@ -12,7 +12,9 @@ use akita_types::NegativeBinarySupport;
 use jolt_algebra::{JoltField, Zero};
 use jolt_poly::EqPolynomial;
 use jolt_zk::masking::ZkError;
-use jolt_zk::whiteout::{ResponseRows, ResponseStatement, ResponseWeights};
+#[cfg(any(test, feature = "zk-prover"))]
+use jolt_zk::whiteout::ResponseWeights;
+use jolt_zk::whiteout::{ResponseRows, ResponseStatement};
 
 use super::compression::Chains;
 use super::F;
@@ -62,6 +64,7 @@ pub(crate) struct ProductClaims<F> {
 }
 
 /// `⟨A, e⟩ = b`, with `A` over the padded `e`.
+#[cfg(any(test, feature = "zk-prover"))]
 pub(crate) struct BatchedRows {
     pub(crate) a: BatchWeights,
     pub(crate) b: F,
@@ -72,6 +75,7 @@ pub(crate) struct BatchedRows {
 /// digits, and the padding term past `e`'s end. No table of `e`'s length
 /// is held: the fused sumcheck streams `A` for its first rounds
 /// ([`super::rounds::FusedKernel`]).
+#[cfg(any(test, feature = "zk-prover"))]
 pub(crate) struct BatchWeights {
     shape: ResponseShape,
     rows: ResponseWeights<F>,
@@ -81,6 +85,7 @@ pub(crate) struct BatchWeights {
     padding: PaddingWeights,
 }
 
+#[cfg(any(test, feature = "zk-prover"))]
 impl BatchWeights {
     /// The padded length of `e`.
     pub(crate) fn len(&self) -> usize {
@@ -118,12 +123,14 @@ impl BatchWeights {
 }
 
 /// `eq(τ_pad, j)`, from the tables of `τ_pad`'s low and high halves.
+#[cfg(any(test, feature = "zk-prover"))]
 pub(crate) struct PaddingWeights {
     lo: Vec<F>,
     hi: Vec<F>,
     bits: usize,
 }
 
+#[cfg(any(test, feature = "zk-prover"))]
 impl PaddingWeights {
     pub(crate) fn at(&self, j: usize) -> F {
         self.lo[j & ((1 << self.bits) - 1)] * self.hi[j >> self.bits]
@@ -208,6 +215,7 @@ impl PaddingTerm<F> {
     }
 
     /// The term's weight `eq(τ_pad, j)` on each padding entry `j` of `e`.
+    #[cfg(any(test, feature = "zk-prover"))]
     pub(crate) fn weights(&self, shape: ResponseShape) -> Result<PaddingWeights, AkitaError> {
         if self.point.len() != shape.num_vars {
             return Err(AkitaError::InvalidInput("padding point width".into()));
@@ -301,6 +309,7 @@ pub(crate) fn batch_target<const D: usize>(
 
 /// Batches every row at `η` for the prover: `A_j = Σ_l eq(η, l) H_{l,j}`
 /// through the rows' transpose, plus the padding term, and `b_η`.
+#[cfg(any(test, feature = "zk-prover"))]
 pub(crate) fn batch_rows<const D: usize>(
     statement: &ResponseStatement<'_, F, D>,
     shape: ResponseShape,
