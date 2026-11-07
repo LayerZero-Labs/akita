@@ -30,6 +30,12 @@ pub trait AffineWeight<F: Field>: Clone + Send + Sync {
     /// Add the embedded scalar `scale` to `self`.
     fn add_scalar(&mut self, scale: F) -> Result<(), AkitaError>;
 
+    /// Whether multiplying by this factor is the identity. The conservative
+    /// default preserves the ordinary path for arbitrary coefficient algebras.
+    fn is_one(&self) -> bool {
+        false
+    }
+
     /// Multiply two outer factors.
     fn multiply(&self, rhs: &Self) -> Self;
 }
@@ -96,6 +102,9 @@ impl<F: Field, A: AffineWeight<F>> AffineWeightSource<F, A> for AffineWeightProd
         }
         let outer = self.outer.get(index / self.inner.len())?;
         let inner = self.inner.get(index % self.inner.len())?;
+        if inner.is_one() {
+            return Some(consume(outer));
+        }
         let product = outer.multiply(inner);
         Some(consume(&product))
     }
@@ -121,6 +130,10 @@ impl<F: Field> AffineWeight<F> for F {
     fn add_scalar(&mut self, scale: F) -> Result<(), AkitaError> {
         *self += scale;
         Ok(())
+    }
+
+    fn is_one(&self) -> bool {
+        *self == F::one()
     }
 
     fn multiply(&self, rhs: &Self) -> Self {
