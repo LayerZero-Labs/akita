@@ -267,7 +267,9 @@ mod p64 {
             num_field_elements: akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
             setup_seed: seed.into(),
         };
-        let prime = PrimePlaneManifest::new(&descriptor, None).unwrap();
+        let prime =
+            PrimePlaneManifest::with_field_profile(&descriptor, None, BinaryFieldProfile::P128)
+                .unwrap();
         let public =
             BinaryRootPublic::new(&manifest, Some(&claim), &prime, &setup, 1 << 17, 64, None)
                 .unwrap();

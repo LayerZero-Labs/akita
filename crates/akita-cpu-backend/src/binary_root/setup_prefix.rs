@@ -227,7 +227,7 @@ where
     /// other registries. This operation never inserts typed material into the
     /// backend's ordinary prefix cache. `remaining` lists the later schedule
     /// prefixes; repeating `first` there would make the two streams ambiguous.
-    pub fn prepare_binary_a_prefixes(
+    pub fn prepare_binary_typed_prefixes(
         &self,
         manifest: &BinaryCommittedGroupManifest,
         typed: &BinaryTypedPrefix,
@@ -274,7 +274,7 @@ where
     /// the ordinary stream exclusively. The installed transient context binds
     /// the prefix to this exact manifest and layout.
     /// Reprepare this view after loading a persisted ordinary setup.
-    pub fn prepare_binary_a_verifier_setup(
+    pub fn prepare_binary_typed_verifier_setup(
         &self,
         ordinary: &AkitaVerifierSetup<F>,
         manifest: &BinaryCommittedGroupManifest,
@@ -289,7 +289,7 @@ where
                 "typed prefix and verifier setup have different seeds".into(),
             ));
         }
-        let expected = self.prepare_binary_a_prefixes(manifest, typed, first, &[])?;
+        let expected = self.prepare_binary_typed_prefixes(manifest, typed, first, &[])?;
         let expected = &expected
             .get(first)
             .ok_or_else(|| AkitaError::Internal("prepared typed prefix is missing".into()))?

@@ -4,6 +4,7 @@ use super::F;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
 use akita_types::binary_source::{
@@ -298,11 +299,22 @@ pub(super) fn authenticate_terminal(
     source: &[u128],
     challenges: &akita_challenges::Challenges,
 ) -> Result<(), AkitaError> {
-    let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
+    let plan = BinaryRootWitnessPlan::for_profile(
+        manifest.descriptor(),
+        manifest.a_rank(),
+        256,
+        BinaryFieldProfile::P128,
+        true,
+        0,
+    )?;
     fault_witness::reconstruct(
         manifest,
         Some(claim),
-        &PrimePlaneManifest::new(manifest.descriptor(), None)?,
+        &PrimePlaneManifest::with_field_profile(
+            manifest.descriptor(),
+            None,
+            BinaryFieldProfile::P128,
+        )?,
         &plan,
         &[53; 32],
         source,
@@ -320,11 +332,22 @@ pub(super) fn authenticate_terminal_relation(
     source: &[u128],
     challenges: &akita_challenges::Challenges,
 ) -> Result<(), AkitaError> {
-    let plan = BinaryRootWitnessPlan::new(manifest.descriptor(), manifest.a_rank(), 256)?;
+    let plan = BinaryRootWitnessPlan::for_profile(
+        manifest.descriptor(),
+        manifest.a_rank(),
+        256,
+        BinaryFieldProfile::P128,
+        true,
+        0,
+    )?;
     let digits = fault_witness::reconstruct(
         manifest,
         Some(honest),
-        &PrimePlaneManifest::new(manifest.descriptor(), None)?,
+        &PrimePlaneManifest::with_field_profile(
+            manifest.descriptor(),
+            None,
+            BinaryFieldProfile::P128,
+        )?,
         &plan,
         &[53; 32],
         source,

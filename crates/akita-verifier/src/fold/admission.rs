@@ -137,7 +137,9 @@ mod tests {
                 [0; 16],
             )
             .unwrap();
-            let prime = PrimePlaneManifest::new(&descriptor, None).unwrap();
+            let prime =
+                PrimePlaneManifest::with_field_profile(&descriptor, None, BinaryFieldProfile::P128)
+                    .unwrap();
             let manifest = BinaryCommittedGroupManifest::with_field_profile(
                 descriptor,
                 7,

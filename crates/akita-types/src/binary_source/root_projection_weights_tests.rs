@@ -1,8 +1,11 @@
 use super::*;
-use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor};
+use crate::binary_source::{
+    binary_scalar_challenges, BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor,
+};
 use akita_algebra::ring::trinomial::module_map::pack_signed_components;
 use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{Challenges, SparseChallenge};
+use akita_params::binary_setup::BinaryFieldProfile;
 use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
 
 #[test]
@@ -16,7 +19,9 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
         },
     )
     .unwrap();
-    let plan = BinaryRootWitnessPlan::new(&descriptor, 3, 256).unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P128, true, 0)
+            .unwrap();
     let challenges = Challenges::from_sparse(
         (0..4)
             .map(|column| SparseChallenge {
@@ -88,7 +93,7 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     }
     let weights = binary_direct_a_weights(
         &plan,
-        Some(BinaryAOperand::from_canonical(&matrix)),
+        Some(BinaryAOperand::new::<F>(&matrix)),
         &challenges,
         &rho,
     )
@@ -115,7 +120,7 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     assert!(relation.check_table(&changed).is_err());
     assert!(binary_direct_a_weights(
         &plan,
-        Some(BinaryAOperand::from_canonical(&matrix)),
+        Some(BinaryAOperand::new::<F>(&matrix)),
         &challenges,
         &rho[..2]
     )
@@ -146,6 +151,46 @@ fn quotient_plan(owners: usize, rows: usize, columns: usize) -> BinaryRootWitnes
     .unwrap();
     BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P64, true, 0)
         .unwrap()
+}
+
+#[test]
+fn scalar_preparation_rejects_malformed_challenges_and_reuse_for_other_geometry() {
+    let plan = quotient_plan(1, 1, 2);
+    let raw = |challenge| Challenges::from_sparse(vec![challenge; 2], 2, 1).unwrap();
+    let valid = raw(SparseChallenge {
+        positions: vec![0, 81, 161].into(),
+        coeffs: vec![1, -1, 1].into(),
+    });
+    let prepared = valid.prepare(plan.descriptor()).unwrap();
+    for other in [quotient_plan(2, 1, 2), quotient_plan(1, 2, 1)] {
+        assert!(prepared.as_ref().prepare(other.descriptor()).is_err());
+    }
+    let excessive_weight = akita_challenges::FoldChallengeDistribution::BinaryRoot.weight() + 1;
+    for malformed in [
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![2].into(),
+        },
+        SparseChallenge {
+            positions: vec![0, 0].into(),
+            coeffs: vec![1, -1].into(),
+        },
+        SparseChallenge {
+            positions: vec![162].into(),
+            coeffs: vec![1].into(),
+        },
+        SparseChallenge {
+            positions: (0..excessive_weight).map(|s| s as u32).collect(),
+            coeffs: vec![1; excessive_weight].into(),
+        },
+    ] {
+        let challenges = raw(malformed);
+        assert!(challenges.prepare(plan.descriptor()).is_err());
+        assert!(
+            binary_direct_a_weights::<E64>(&plan, None, &challenges, &[[E64::zero(); 648]; 3],)
+                .is_err()
+        );
+    }
 }
 
 #[test]
@@ -186,6 +231,20 @@ fn p64_generic_adjoint_and_quotient_weights_match_dense_reference_at_extension_r
             .unwrap();
             let dense = fast.materialize().unwrap();
             assert_eq!(dense, reference.materialize().unwrap());
+            // Quotient lanes may start inside an equality block. Both the
+            // bulk profile path and its per-address fallback must preserve
+            // their coefficients before and after a sumcheck fold.
+            for block_bits in [0, 8, 10] {
+                let mut profiles = fast.profiles(block_bits).unwrap();
+                assert_eq!(profiles.clone().take_dense(), dense);
+                if block_bits != 0 {
+                    let challenge = extension(&mut rng);
+                    let mut folded = dense.clone();
+                    akita_algebra::poly::fold_evals_in_place(&mut folded, challenge);
+                    profiles.bind(challenge);
+                    assert_eq!(profiles.take_dense(), folded);
+                }
+            }
             if with_a {
                 let natural = plan
                     .repacking()

@@ -52,16 +52,22 @@ fn prime_manifest_rejects_repeated_owners_empty_values_and_noncanonical_fields()
         }
         assert!(
             matches!(
-                PrimePlaneManifest::new(&source, Some(bad)),
+                PrimePlaneManifest::with_field_profile(
+                    &source,
+                    Some(bad),
+                    BinaryFieldProfile::P128
+                ),
                 Err(AkitaError::InvalidInput(_))
             ),
             "mutation {change}"
         );
     }
-    assert!(PrimePlaneManifest::new(&source, None)
-        .unwrap()
-        .planes()
-        .is_empty());
+    assert!(
+        PrimePlaneManifest::with_field_profile(&source, None, BinaryFieldProfile::P128)
+            .unwrap()
+            .planes()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -82,7 +88,12 @@ fn prime_manifest_orders_one_plane_per_polynomial_without_a_separate_cap() {
             })
             .collect(),
     };
-    let checked = PrimePlaneManifest::new(&source, Some(claim.clone())).unwrap();
+    let checked = PrimePlaneManifest::with_field_profile(
+        &source,
+        Some(claim.clone()),
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     assert_eq!(checked.planes().len(), 6);
     assert_eq!(
         checked
@@ -96,7 +107,8 @@ fn prime_manifest_orders_one_plane_per_polynomial_without_a_separate_cap() {
     sorted.evaluations.reverse();
     assert_eq!(
         checked,
-        PrimePlaneManifest::new(&source, Some(sorted)).unwrap()
+        PrimePlaneManifest::with_field_profile(&source, Some(sorted), BinaryFieldProfile::P128)
+            .unwrap()
     );
     let bytes = checked.canonical_bytes();
     let mut expected = b"AkitaPrimePlanes\x02".to_vec();
@@ -110,9 +122,14 @@ fn prime_manifest_orders_one_plane_per_polynomial_without_a_separate_cap() {
         expected.extend_from_slice(&u128::from(i).to_le_bytes());
     }
     assert_eq!(bytes, expected);
-    let plan = BinaryRootWitnessPlan::new(&source, 3, 64).unwrap();
-    assert!(plan.clone().with_prime_planes(false, 6).is_ok());
-    assert!(plan.with_prime_planes(false, 7).is_err());
+    assert!(
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P128, false, 6)
+            .is_ok()
+    );
+    assert!(
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P128, false, 7)
+            .is_err()
+    );
 }
 
 #[test]
@@ -139,7 +156,8 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
     // Coefficient equality at point (2,...,2) reads EP_0 as -18.
     c.point[..8].fill(2.into());
     c.evaluations[0].value = (BINARY_SETUP_P - 18).into();
-    let manifest = PrimePlaneManifest::new(&source, Some(c)).unwrap();
+    let manifest =
+        PrimePlaneManifest::with_field_profile(&source, Some(c), BinaryFieldProfile::P128).unwrap();
     let repacking = RootCoefficientRepacking::new(
         vec![
             RootRepackingSegment {
@@ -160,7 +178,7 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
                 )
                 .unwrap(),
                 elements: 2,
-                digits: PRIME_PLANE_DIGITS,
+                digits: manifest.field_profile().prime_plane_digits(),
             },
         ],
         64,
@@ -171,7 +189,7 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
         response[digit * 648] = -1;
         response[digit * 648 + 324] = 1; // undo signed packing at scalar coefficient 81.
     }
-    let mut planes = vec![0i8; 2 * PRIME_PLANE_DIGITS * 162];
+    let mut planes = vec![0i8; 2 * manifest.field_profile().prime_plane_digits() * 162];
     for digit in 0..2 {
         planes[digit * 162 + 1] = 1;
     }
@@ -222,7 +240,12 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
     let mut false_claim = manifest.claim().unwrap().clone();
     false_claim.evaluations[0].value =
         (false_claim.evaluations[0].value.coordinates()[0] + 1).into();
-    let false_manifest = PrimePlaneManifest::new(&source, Some(false_claim)).unwrap();
+    let false_manifest = PrimePlaneManifest::with_field_profile(
+        &source,
+        Some(false_claim),
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     assert!(prime_plane_relation_weights(
         &source,
         &false_manifest,
@@ -263,7 +286,9 @@ fn p64_prime_manifest_binds_both_canonical_coordinates_and_rejects_other_version
         manifest
     );
     assert!(PrimePlaneManifest::from_bytes(&source, BinaryFieldProfile::P128, &expected).is_err());
-    let p128 = PrimePlaneManifest::new(&source, Some(claim())).unwrap();
+    let p128 =
+        PrimePlaneManifest::with_field_profile(&source, Some(claim()), BinaryFieldProfile::P128)
+            .unwrap();
     assert_eq!(
         PrimePlaneManifest::from_bytes(&source, BinaryFieldProfile::P128, &p128.canonical_bytes())
             .unwrap(),
@@ -324,7 +349,9 @@ fn p64_prime_manifest_binds_both_canonical_coordinates_and_rejects_other_version
             }
         }
     }
-    assert!(PrimePlaneManifest::new(&source, Some(c)).is_err());
+    assert!(
+        PrimePlaneManifest::with_field_profile(&source, Some(c), BinaryFieldProfile::P128).is_err()
+    );
     assert!(PrimePlaneManifest::with_field_profile(&source, Some(claim()), field).is_err());
 }
 
@@ -540,7 +567,9 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
         num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         setup_seed: [41; 32].into(),
     };
-    let legacy = PrimePlaneManifest::new(source, Some(c.clone())).unwrap();
+    let legacy =
+        PrimePlaneManifest::with_field_profile(source, Some(c.clone()), BinaryFieldProfile::P128)
+            .unwrap();
     assert!(matches!(
         BinaryRootPublic::new(&manifest, None, &legacy, &setup, 1 << 17, 64, None),
         Err(AkitaError::InvalidInput(_))
