@@ -644,9 +644,10 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
         setup_seed: [41; 32].into(),
     };
     for field in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
-        for (word, claims) in [(true, 0), (false, 1), (true, 1)] {
+        for (word, claims) in [(true, 0), (false, 1), (true, 1), (false, 2), (true, 2)] {
             let planes = claims * field.extension_degree();
-            let input = occurrence(0, 1, 2, 1, field, word, planes);
+            let owners = claims.max(1);
+            let input = occurrence(0, 1, 2, owners, field, word, planes);
             let descriptor = input.manifest.descriptor();
             let terminal = word.then(|| {
                 BinaryTerminalClaim::new(
@@ -666,10 +667,12 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
                 descriptor,
                 (planes > 0).then(|| PrimeGroupClaim {
                     point: vec![element; 11],
-                    evaluations: vec![PrimePlaneClaim {
-                        polynomial: 0,
-                        value: element,
-                    }],
+                    evaluations: (0..claims)
+                        .map(|polynomial| PrimePlaneClaim {
+                            polynomial,
+                            value: element,
+                        })
+                        .collect(),
                 }),
                 field,
             )
@@ -697,7 +700,7 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
                 // The singleton retains dev's order: ordinary rows precede prime rows.
                 let coefficients = match field {
                     BinaryFieldProfile::P128 => 7,
-                    BinaryFieldProfile::P64 => 1944,
+                    BinaryFieldProfile::P64 => 1944 * owners,
                 };
                 let word_end = coefficients + 2 * usize::from(word);
                 let b_end = word_end + input.manifest.b_rows();
