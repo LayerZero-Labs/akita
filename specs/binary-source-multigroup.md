@@ -593,10 +593,9 @@ retain the legacy local order:
 | EP_b, if prime | `t_b C_b` | 22 | 162 | 256 |
 | K_b, in final quotient bank | `3s_b` | dK_b | 648 | 1024 |
 
-When a word is selected, the all-owner U/carry shapes preserve current layout;
-only the selected word owner's reading rows are active. A group without a word
-has no U or carry segments. Omitting unused owner views from a word-selected
-group would need a new layout version. The prime subset is in increasing owner order.
+The all-owner U/carry shapes preserve current layout; only the selected word
+owner's reading rows are active. An optimization to omit unused owner views
+would need a new layout version. The prime subset is in increasing owner order.
 There is no EP for an unclaimed polynomial and no per-point expansion.
 
 Global segment order is: binary legacy blocks b=0..G_b-1; ordinary blocks
