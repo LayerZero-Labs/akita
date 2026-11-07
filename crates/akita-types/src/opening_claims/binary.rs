@@ -23,11 +23,11 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         Self::new_binary_planes(commitment, Some(claim), None)
     }
 
-    /// Select optional word and single-point prime claims in one grouped opening.
+    /// Select optional word and ordered prime claims in one grouped opening.
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
         claim: Option<BinaryWordClaim>,
-        primes: Option<crate::binary_source::PrimeGroupClaim>,
+        primes: impl IntoIterator<Item = crate::binary_source::PrimeGroupClaim>,
     ) -> Result<Self, AkitaError> {
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
             return Err(AkitaError::InvalidInput(
@@ -66,6 +66,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         Ok(Self {
             point: point.into(),
             evaluations,
+            second_point: None,
             commitment,
             kind: GroupClaimKind::Binary {
                 manifest: Box::new(manifest),

@@ -14,7 +14,7 @@ pub enum GroupClaimKind {
         manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
         /// The caller's logical word MLE evaluation over GF(2^128).
         claim: Option<crate::binary_source::BinaryWordClaim>,
-        /// Checked single-point prime claim, in polynomial order.
+        /// Checked base or extension claims, in point/polynomial/coordinate order.
         prime: crate::binary_source::PrimePlaneManifest,
     },
 }
@@ -29,6 +29,22 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
             if group.evaluations.is_empty() {
                 return Err(akita_error::AkitaError::InvalidInput(
                     "opening claim group evaluations must be nonempty".into(),
+                ));
+            }
+        }
+        if groups.iter().any(|group| group.num_points() == 2) {
+            #[cfg(feature = "labinius-trinomial")]
+            let supported = matches!(
+                groups.first().map(|group| group.kind()),
+                Some(GroupClaimKind::Binary { manifest, .. })
+                    if manifest.field_profile()
+                        == akita_params::binary_setup::BinaryFieldProfile::P64
+            );
+            #[cfg(not(feature = "labinius-trinomial"))]
+            let supported = false;
+            if !supported {
+                return Err(akita_error::AkitaError::InvalidInput(
+                    "two-point ordinary claims require a shared p64 binary root".into(),
                 ));
             }
         }
@@ -60,7 +76,8 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                         if earlier.polynomial() == claim.polynomial())
                 }) {
                     return Err(akita_error::AkitaError::InvalidInput(
-                        "one binary word claim per polynomial; reduce multiple points before opening"
+                        "one binary word claim per polynomial; reduce multiple points before \
+                         opening"
                             .into(),
                     ));
                 }

@@ -70,9 +70,17 @@ jobs:
       - name: Clippy (dev protocol)
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak,dev-protocol -- -D warnings
       - name: Clippy (binary source measurement tests)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,binary-source-measurements,transcript-keccak -- -D warnings
+        run: |
+          cargo clippy -p akita-pcs --all-targets --release \
+            --no-default-features \
+            --features parallel,binary-source-measurements,transcript-keccak \
+            -- -D warnings
       - name: Clippy (binary source measurement tests, dev protocol)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,binary-source-measurements,transcript-keccak,dev-protocol -- -D warnings
+        run: |
+          cargo clippy -p akita-pcs --all-targets --release \
+            --no-default-features \
+            --features parallel,binary-source-measurements,transcript-keccak,dev-protocol \
+            -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier

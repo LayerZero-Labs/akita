@@ -3,8 +3,10 @@
 #[cfg(feature = "labinius-trinomial")]
 mod binary;
 mod kind;
+mod ordinary;
 mod root_schedule;
 pub use kind::GroupClaimKind;
+pub use ordinary::OrdinaryPointEvaluation;
 
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
@@ -19,6 +21,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 pub struct PolynomialGroupClaims<'a, F: Clone, C = ()> {
     point: OpeningPoints<'a, F>,
     evaluations: Vec<F>,
+    second_point: Option<(OpeningPoints<'a, F>, Vec<F>)>,
     commitment: C,
     kind: GroupClaimKind,
 }
@@ -38,12 +41,13 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
         Ok(Self {
             point: point.into(),
             evaluations,
+            second_point: None,
             commitment,
             kind: GroupClaimKind::Ordinary,
         })
     }
 
-    /// Complete opening point owned by this group.
+    /// First opening point, also used for the group's layout.
     pub fn point(&self) -> &[F] {
         self.point.as_ref()
     }
@@ -53,7 +57,7 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
         self.point.len()
     }
 
-    /// Claimed evaluations, one per committed polynomial.
+    /// First-point evaluations, one per committed polynomial.
     pub fn evaluations(&self) -> &[F] {
         &self.evaluations
     }
@@ -77,12 +81,13 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
         PolynomialGroupClaims {
             point: self.point.clone(),
             evaluations: self.evaluations.clone(),
+            second_point: self.second_point.clone(),
             commitment: map(&self.commitment),
             kind: self.kind.clone(),
         }
     }
 
-    /// Number of evaluations in this group.
+    /// Number of polynomial slots (at each point) in this group.
     pub fn num_evaluations(&self) -> usize {
         self.evaluations.len()
     }
@@ -228,7 +233,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         })
     }
 
-    /// Borrow one group's evaluations.
+    /// Borrow one group's first-point evaluations.
     pub fn group_evaluations(&self, g: usize) -> Result<&[F], AkitaError> {
         self.groups
             .get(g)
@@ -238,7 +243,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             })
     }
 
-    /// Borrow one group's complete opening point.
+    /// Borrow one group's first complete opening point.
     pub fn group_point(&self, g: usize) -> Result<&[F], AkitaError> {
         self.groups
             .get(g)
@@ -276,7 +281,8 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 }
 
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
-    /// Claimed openings flattened in canonical claim order.
+    /// First-point openings flattened in layout order.
+    /// Native multipoint roots consume `point_evaluations` instead.
     pub fn flat_evaluations(&self) -> Vec<F> {
         self.groups
             .iter()
@@ -336,6 +342,7 @@ mod tests {
         claims.groups.push(PolynomialGroupClaims {
             point: vec![F::zero()].into(),
             evaluations: vec![],
+            second_point: None,
             commitment: (),
             kind: GroupClaimKind::Ordinary,
         });

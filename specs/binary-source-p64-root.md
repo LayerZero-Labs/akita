@@ -313,8 +313,8 @@ For P64 prime claims, let
 Here `[word]` is one when the word frontend is selected and zero otherwise.
 The values r_B and r_D are the B and D authentication ranks.
 O counts the selected ordinary linear rows and negative-bit addresses.
-Here `planes = 2*claims`, with at most one prime point per group and at most
-one claimed value per committed polynomial. Each claim has one independent
+Here `planes = 2*claims`, with at most two distinct prime points per group and at most
+one claimed value per committed polynomial at each point. Each claim has one independent
 ring-identity batch and one independent reading batch. These are two identities
 over E64; the two physical planes enter with canonical basis weights 1 and u.
 The relation batch has `a + H_other` independent coordinates instead of
@@ -450,12 +450,22 @@ Word U adds `s*162*C` compact digits before division into degree-64 columns.
 P64 prime points and values are E64 elements. `PrimeClaimValue` represents
 one P128 residue or two P64 coordinates `c0 + c1*u`. Both P64 coordinates
 are canonical residues below p, encoded as eight-byte little-endian integers.
-P64 uses `AkitaPrimePlanes/p64\x04`; the old P64 version 3 is rejected.
+P64 uses `AkitaPrimePlanes/p64\x04` for zero or one point and version 5 for
+two ordered point records. The old P64 version 3 is rejected.
+Version 5 contains exactly two records and no leading record count. Each record
+has a u64 arity, E64 coordinate pairs, a u64 value count and sorted owner/value
+records. All integers and residues are little endian; each owner uses u64 and
+each E64 value uses two canonical u64 residues. The decoder rejects duplicate
+points, unsorted or duplicate owners, noncanonical limbs and trailing data.
+An ordinary second point uses the stage-8 root-statement message described in the
+[Book transcript chapter](../book/src/how/transcript.md#p64-binary-root-ordering).
+It precedes field switching and root challenges, and adds only one reading over
+the existing ordinary source and preimage lanes.
 P128 retains `AkitaPrimePlanes\x02`, its 43-digit planes and all existing bytes.
 A profile's decoder rejects the other profile's tag and coordinate shape.
 
-Each P64 claim owns two EP planes, ordered by polynomial and then coordinate.
-The single shared point has E64 coordinates. For row tensor weights `e_r`,
+Each P64 claim owns two EP planes, ordered by point, polynomial and coordinate.
+Each point has E64 coordinates. For row tensor weights `e_r`,
 write `EP_b = sum_r e_r*T_rb` in E64. Commit the two base coordinates of
 EP_b separately, each with 22 centered base-eight digits. Recombine them as
 `EP_b = EP0_b + u*EP1_b`. Each claim contributes exactly two Stage 2 rows:
@@ -479,9 +489,10 @@ each remain one identity over E, with coordinate t weighted by beta_t = u^t.
 Physical plane count controls storage and D sizing; claim count controls the
 two independent Stage 2 batches.
 
-At most one point per group and one value per committed polynomial are allowed.
-For s committed polynomials, at most s claims and 2s coordinate planes are
-admitted. D's compact width, label and independent rank use this actual plane
+At most two distinct points per group and one value per polynomial at each point
+are allowed. For s committed polynomials, at most 2s claims and 4s coordinate
+planes are admitted. The single-point tables below retain their stated geometry.
+D's compact width, label and independent rank use this actual plane
 count through the manifest. A claim with even a base-valued P64 point still
 owns two planes. E64 challenges are used for both identities per claim.
 

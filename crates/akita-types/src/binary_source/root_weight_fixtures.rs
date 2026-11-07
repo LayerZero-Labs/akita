@@ -350,6 +350,12 @@ impl RootWeightScenario {
 
     /// Compile only the Stage 2 root relation, including its A operand.
     pub fn compile_stage2(&self) -> RootWeightFixture {
+        let ordinary_points = self.ordinary_claim.as_ref().map(|(point, value, _)| {
+            [crate::opening_claims::OrdinaryPointEvaluation {
+                point,
+                evaluations: core::slice::from_ref(value),
+            }]
+        });
         let (weights, negative_binary_weights) = self
             .public
             .relation(
@@ -360,9 +366,8 @@ impl RootWeightScenario {
                 &self.projected,
                 &self.commitment,
                 &self.d_payload,
-                self.ordinary_claim
-                    .as_ref()
-                    .map(|(point, value, payload)| (point.as_slice(), *value, payload.as_slice())),
+                ordinary_points.as_ref().zip(self.ordinary_claim.as_ref())
+                    .map(|(points, (_, _, payload))| (points.as_slice(), payload.as_slice())),
                 Some(BinaryAOperand::new::<RootFixtureField>(&self.matrix)),
             )
             .expect("fixture relation");

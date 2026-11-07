@@ -775,3 +775,9 @@ Use the coefficient lift and unit proof in
 [binary-source-p64-root.md](binary-source-p64-root.md), including `L + q B_K < p`.
 The same indexed column-extraction premise remains open in its complete-schedule
 security ledger. Catalog admission and arithmetic tests do not close that premise.
+
+Two prime points and a second ordinary point are public statement data bound
+before root challenges. The v5 prime manifest and stage-8 ordinary statement
+message are specified in the
+[Book transcript chapter](../book/src/how/transcript.md#p64-binary-root-ordering).
+They do not move the fixation checkpoint or create a second outgoing source.

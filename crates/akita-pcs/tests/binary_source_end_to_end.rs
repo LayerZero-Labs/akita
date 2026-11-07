@@ -7,6 +7,8 @@ mod common;
 #[cfg(feature = "transcript-keccak")]
 #[path = "binary_source_end_to_end/compatibility.rs"]
 mod compatibility;
+// Shared fault variants are exercised across separate integration targets.
+#[allow(dead_code)]
 #[path = "binary_source_end_to_end/fault_backend.rs"]
 mod fault_backend;
 #[path = "binary_source_end_to_end/field_switch.rs"]

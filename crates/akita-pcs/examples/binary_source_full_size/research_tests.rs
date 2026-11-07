@@ -1,5 +1,5 @@
 //! Complete public PCS replay using the same generator as the measurements.
-use super::{fault_backend, F, FAULT};
+use super::{fault_backend, F, LOG};
 use crate::metrics;
 use crate::run::{self, config::P64};
 use akita_error::AkitaError;
@@ -9,59 +9,31 @@ use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::Ring;
 use std::path::Path;
 
-// Smallest size measured; logs 4 through 21 have not been tried.
-const LOG: usize = 22;
-
-// Each shape owns an isolated directory; the generator revalidates cached rows.
 fn fixture(shape: &'static str) {
-    std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || {
-            let directory =
-                std::env::temp_dir().join(format!("akita-p64-{}-{shape}", std::process::id()));
-            std::fs::create_dir_all(&directory).unwrap();
-            let catalog = super::fixture_directory().join(format!("{LOG}-{shape}.json"));
-            std::fs::copy(&catalog, directory.join("native-catalog.json")).unwrap_or_else(
-                |error| panic!("missing research catalog at {}: {error}", catalog.display()),
-            );
-            run::prove::<P64>(LOG, shape, &directory).unwrap();
-            let proof = std::fs::read(directory.join("proof.bin")).unwrap();
-            run::prove::<P64>(LOG, shape, &directory).unwrap();
-            assert_eq!(proof, std::fs::read(directory.join("proof.bin")).unwrap());
-            run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default()).unwrap();
-            // Public mutations check transcript binding; digit faults check the relation.
-            mutate_statement(shape, &directory);
-            mutate_commitment(shape, &directory);
-            mutate_proof(shape, &directory, &proof);
-            mutate_setup(shape, &directory);
-            for fault in [
-                Some(fault_backend::Fault::Quotient),
-                (shape != "binary-claim").then_some(fault_backend::Fault::PrimePlane),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                FAULT.with(|selected| selected.set(Some(fault)));
-                run::prove::<P64>(LOG, shape, &directory).unwrap();
-                FAULT.with(|selected| selected.set(None));
-                let (result, rejections) = super::root_relation_rejections(|| {
-                    run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default())
-                });
-                let error = result.unwrap_err();
-                assert_eq!(rejections, 1, "fault must reach the final root equation");
-                assert!(
-                    matches!(
-                        error.downcast_ref::<AkitaError>(),
-                        Some(AkitaError::InvalidProof)
-                    ),
-                    "committed digit fault must fail verification: {error}"
-                );
-            }
-            std::fs::remove_dir_all(directory).unwrap();
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    super::with_replay(shape, move |directory| {
+        let proof = std::fs::read(directory.join("proof.bin")).unwrap();
+        run::prove::<P64>(LOG, shape, directory).unwrap();
+        assert_eq!(proof, std::fs::read(directory.join("proof.bin")).unwrap());
+        run::verify::<P64>(LOG, shape, directory, &metrics::Timings::default()).unwrap();
+        // Public mutations check transcript binding; digit faults check the relation.
+        mutate_statement(shape, directory);
+        mutate_commitment(shape, directory);
+        mutate_proof(shape, directory, &proof);
+        mutate_setup(shape, directory);
+        for fault in [
+            Some(fault_backend::Fault::Quotient),
+            (shape != "binary-claim").then_some(fault_backend::Fault::PrimePlane {
+                owner: 0,
+                point: 0,
+                coordinate: 0,
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            super::rejects_fault(shape, directory, fault);
+        }
+    });
 }
 
 fn rejects(shape: &str, directory: &Path) {

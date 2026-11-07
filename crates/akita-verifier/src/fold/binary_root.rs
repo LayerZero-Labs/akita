@@ -123,6 +123,13 @@ where
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
+    let ordinary_points = ordinary.map(|group| group.point_evaluations().collect::<Vec<_>>());
+    if let Some(second) = ordinary_points.as_ref().and_then(|points| points.get(1)) {
+        akita_types::binary_source::ordinary_second_point_statement::<F, E, _>(
+            grinding.state_mut(),
+            *second,
+        )?;
+    }
     let terminal = claim
         .as_ref()
         .map(|claim| {
@@ -143,6 +150,10 @@ where
         next.params.d_a(),
         ordinary_profile,
     )?;
+    let public = match ordinary {
+        Some(group) => public.with_ordinary_point_count(group.num_points())?,
+        None => public,
+    };
     drop(span);
     let domain_len = public.plan().repacking().domain_len();
     if !domain_len.is_power_of_two() {
@@ -213,19 +224,7 @@ where
     };
     let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
     let ordinary_payload = ordinary.map(|group| lift(group.commitment().rows().coeffs()));
-    let ordinary_claim = ordinary
-        .zip(ordinary_payload.as_deref())
-        .map(|(group, payload)| {
-            Ok::<_, AkitaError>((
-                group.point(),
-                *group
-                    .evaluations()
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?,
-                payload,
-            ))
-        })
-        .transpose()?;
+    let ordinary_claim = ordinary_points.as_deref().zip(ordinary_payload.as_deref());
     let rho = match &projections {
         Some(projections) => projections.batch(
             &batches

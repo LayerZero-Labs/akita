@@ -64,6 +64,14 @@ pub(crate) fn root_round_trip(
     ordinary: Option<(&[E], E, &[E])>,
     false_publics: &[&BinaryRootPublic],
 ) {
+    let ordinary_points = ordinary.as_ref().map(|(point, value, _)| {
+        [akita_types::opening_claims::OrdinaryPointEvaluation {
+            point,
+            evaluations: core::slice::from_ref(value),
+        }]
+    });
+    let ordinary = ordinary_points.as_ref().zip(ordinary.as_ref())
+        .map(|(points, (_, _, payload))| (points.as_slice(), *payload));
     let variables = public.plan().repacking().domain_len().trailing_zeros() as usize;
     let typed = BinaryTypedPrefix::from_plan(manifest, public.plan()).unwrap();
     let setup = typed
@@ -416,7 +424,8 @@ pub(crate) fn root_round_trip(
             let error = prove(&changed).expect_err("changed K must not produce a root proof");
             if cfg!(debug_assertions) {
                 assert!(matches!(error, AkitaError::Internal(message)
-            if message == "materialized relation weights do not match the combined relation claim"));
+            if message
+                == "materialized relation weights do not match the combined relation claim"));
             } else {
                 assert!(matches!(error, AkitaError::InvalidInput(message)
             if message == "relation session final claim disagrees with its folded oracle"));

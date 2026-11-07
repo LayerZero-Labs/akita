@@ -40,6 +40,14 @@ impl BinaryFieldProfile {
         }
     }
 
+    /// Maximum distinct prime opening points admitted for one committed group.
+    pub const fn maximum_prime_points(self) -> usize {
+        match self {
+            Self::P128 => 1,
+            Self::P64 => 2,
+        }
+    }
+
     /// Extension degree of testing challenges over the base field.
     pub const fn extension_degree(self) -> usize {
         match self {

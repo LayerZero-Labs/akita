@@ -309,3 +309,13 @@ to the ordinary successor. No online materialization of the full A matrix is
 required. A failed final root equality returns `AkitaError::InvalidProof`;
 its diagnostic event lets forged-proof tests distinguish this failure from an
 earlier rejection. Diagnostics do not affect acceptance.
+
+The second ordinary point is bound before any root challenge and contributes
+one additional evaluation equation over the existing source lanes. Prime v5
+has two implicit records; its decoder bounds each record's counts before
+allocation and rejects duplicate points/owners, invalid residues, unsorted
+owners, truncation and trailing bytes with typed serialization errors. The
+public transcript binds the canonical manifest bytes, rather than accepting a
+separate decoded proof record. Byte-mutation tests therefore protect the codec
+contract as well as the constructor's validation, without claiming a new
+production decoder call site.

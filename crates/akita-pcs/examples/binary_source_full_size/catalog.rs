@@ -1,7 +1,6 @@
 use super::{claims, config::MeasurementConfig};
 use akita_config::{policy_of, TrustedScheduleCatalog};
 use akita_error::{checked, AkitaError};
-use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, PolynomialGroupLayout, ScheduleLookupKey,
     SetupContributionMode,
@@ -10,8 +9,7 @@ use akita_schedules::{
     PlannerPolicy, RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog,
 };
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimeClaimValue,
-    PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest,
+    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimePlaneManifest,
 };
 
 /// Restrict ordinary producers to the mixed root's current preimage geometry.
@@ -39,24 +37,13 @@ pub(super) fn plan<C: MeasurementConfig>(
         carrier,
         C::PROFILE,
     )?;
-    let word = shape != "prime-claim";
-    let planes = usize::from(shape != "binary-claim") * C::PROFILE.extension_degree();
-    let encode = |value| match C::PROFILE {
-        BinaryFieldProfile::P128 => PrimeClaimValue::Base(value),
-        BinaryFieldProfile::P64 => PrimeClaimValue::Extension([value, 0]),
-    };
-    let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
+    let word = !shape.starts_with("prime-");
     let prime = PrimePlaneManifest::with_field_profile(
         &descriptor,
-        (planes > 0).then(|| PrimeGroupClaim {
-            point: vec![encode(2); arity],
-            evaluations: vec![PrimePlaneClaim {
-                polynomial: 0,
-                value: encode(0),
-            }],
-        }),
+        claims::Claims::new::<C>(log, shape)?.prime::<C>()?,
         C::PROFILE,
     )?;
+    let planes = prime.planes().len();
     let price = akita_planner::prime_planes::price_binary_root_planes(
         &manifest, word, &prime, dimension, ordinary,
     )?;
@@ -96,8 +83,11 @@ pub(super) fn plan<C: MeasurementConfig>(
             canonical.repacking().segment_range(index)?.len()
         );
     }
-    println!("witness natural_cells={live} physical_cells={physical} minimal_domain={} destination_dimension={dimension}",
-        canonical.repacking().domain_len());
+    println!(
+        "witness natural_cells={live} physical_cells={physical} minimal_domain={} \
+         destination_dimension={dimension}",
+        canonical.repacking().domain_len()
+    );
     if price.outgoing_domain_len != canonical.repacking().domain_len()
         || price.outgoing_physical_cells != physical
     {
@@ -105,7 +95,15 @@ pub(super) fn plan<C: MeasurementConfig>(
             "planner and canonical witness disagree".into(),
         ));
     }
-    println!("planner_price planes={} d_live_digits={} d_columns={} d_rank={} outgoing_ring_elements={} canonical_plan_matches=true", price.planes, price.d_live_digits, price.d_columns, price.d_rank, price.outgoing_ring_elements);
+    println!(
+        "planner_price planes={} d_live_digits={} d_columns={} d_rank={} \
+         outgoing_ring_elements={} canonical_plan_matches=true",
+        price.planes,
+        price.d_live_digits,
+        price.d_columns,
+        price.d_rank,
+        price.outgoing_ring_elements,
+    );
     Ok(price)
 }
 
@@ -122,7 +120,7 @@ pub(super) fn build<C: MeasurementConfig>(
     // Smoke retains the existing 18-variable ordinary fixture while reducing
     // the binary source; a 10-variable mixed search has no admitted schedule.
     let ordinary_key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
-    let ordinary_row = if shape == "binary-and-prime-claims-plus-ordinary" {
+    let ordinary_row = if shape.ends_with("-plus-ordinary") {
         Some(akita_planner::find_schedule(
             &ordinary_key,
             C::committed_source_contract()?,
@@ -195,7 +193,9 @@ pub(super) fn build<C: MeasurementConfig>(
             dimension,
         )?;
         println!(
-            "schedule_candidate carrier_vars={carrier_vars} root_output={} scheduled_domain={scheduled_domain} prefix_domain={} typed_a_prefix_required_domain={}",
+            "schedule_candidate carrier_vars={carrier_vars} root_output={} \
+             scheduled_domain={scheduled_domain} prefix_domain={} \
+             typed_a_prefix_required_domain={}",
             schedule.root.output_witness_len,
             prefix.n_prefix()?,
             price.typed_prefix.domain_len
@@ -277,7 +277,7 @@ pub(super) fn plan_only<C: MeasurementConfig>(
         ))?
         .profiles()
         .final_group;
-    let ordinary = if shape == "binary-and-prime-claims-plus-ordinary" {
+    let ordinary = if shape.ends_with("-plus-ordinary") {
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
         let planned = akita_planner::find_schedule(
             &key,

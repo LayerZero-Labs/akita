@@ -43,7 +43,8 @@ impl CatalogIdentity {
 
     fn describe(&self) -> String {
         format!(
-            "dev_protocol={} log_carriers={} shape={} family={} policy_digest={} direct_policy_digest={}",
+            "dev_protocol={} log_carriers={} shape={} family={} policy_digest={} \
+             direct_policy_digest={}",
             self.dev_protocol,
             self.log_carriers,
             self.shape,
@@ -93,7 +94,7 @@ impl FixtureCatalog {
             .ordinary
             .first()
             .map(|(profiles, _)| profiles.final_group);
-        if ordinary.is_some() != (shape == "binary-and-prime-claims-plus-ordinary") {
+        if ordinary.is_some() != shape.ends_with("-plus-ordinary") {
             return Err(format!("native catalog ordinary rows do not match shape {shape}").into());
         }
         if ordinary.is_some_and(|profile| profile != profiles.final_group) {
@@ -104,7 +105,8 @@ impl FixtureCatalog {
             || price.typed_prefix.natural_len != self.prefix_cells
         {
             return Err(format!(
-                "native catalog stores physical_cells={} prefix_cells={}, but log_carriers={log} shape={shape} needs {} and {}",
+                "native catalog stores physical_cells={} prefix_cells={}, but log_carriers={log} \
+                 shape={shape} needs {} and {}",
                 self.physical_cells,
                 self.prefix_cells,
                 price.outgoing_physical_cells,
@@ -145,8 +147,10 @@ impl FixtureCatalog {
 ///
 /// This precedence applies to P128 too, including repeated invocations in a used
 /// directory. Use a fresh directory and unset the cache to measure fresh planning.
-/// Cache filenames include the field-specific family, so legacy P128 cache names
-/// are not reused. Identity and row validation establish admissibility, not that
+/// Cache filenames include the field-specific family and explicit claim shape,
+/// including one/two E64 points (two/four coordinate planes per owner). Claim
+/// shapes cannot alias even when padded domains coincide.
+/// Identity and row validation establish admissibility, not that
 /// a cached row equals the current planner's preferred output. A mismatch is an
 /// error; a valid alternate row can select different setup and proof bytes.
 pub(super) fn build<C: MeasurementConfig>(
@@ -214,7 +218,7 @@ fn policies<C: MeasurementConfig>() -> (PlannerPolicy, PlannerPolicy) {
     (policy, catalog::ordinary_policy(direct_policy))
 }
 
-fn plan<C: MeasurementConfig>(
+pub(super) fn plan<C: MeasurementConfig>(
     log: usize,
     shape: &str,
     directory: &Path,
@@ -223,7 +227,7 @@ fn plan<C: MeasurementConfig>(
     let singleton = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log.max(18)));
     let contract = C::committed_source_contract()?;
     let mut ordinary = Vec::new();
-    let producer = if shape == "binary-and-prime-claims-plus-ordinary" {
+    let producer = if shape.ends_with("-plus-ordinary") {
         Some(akita_planner::find_schedule(
             &singleton,
             contract,
@@ -289,7 +293,11 @@ fn plan<C: MeasurementConfig>(
     if actual_price.outgoing_physical_cells != price.outgoing_physical_cells {
         return Err("native physical witness changed with the destination dimension".into());
     }
-    println!("native_transition physical_cells={} prefix_cells={prefix_cells} canonical_plan_matches=true", price.outgoing_physical_cells);
+    println!(
+        "native_transition physical_cells={} prefix_cells={prefix_cells} \
+         canonical_plan_matches=true",
+        price.outgoing_physical_cells,
+    );
     let fixture = FixtureCatalog {
         identity: CatalogIdentity::new::<C>(log, shape),
         ordinary,
@@ -319,8 +327,8 @@ mod tests {
     use super::{CatalogIdentity, FixtureCatalog};
     use crate::run::config::{P128, P64};
 
-    // The two required CI invocations admit eight catalogs each, covering all
-    // 16 files without planning, setup generation or proving.
+    // The two required CI invocations admit 16 catalogs each, covering all
+    // 32 files without planning, setup generation or proving.
     #[test]
     fn p64_committed_catalogs_admit_both_sizes() {
         let directory = crate::p64::fixture_directory();
@@ -330,6 +338,10 @@ mod tests {
                 "prime-claim",
                 "binary-and-prime-claims",
                 "binary-and-prime-claims-plus-ordinary",
+                "prime-extension-one",
+                "prime-extension-two",
+                "binary-and-prime-extension-two",
+                "binary-and-prime-extension-two-plus-ordinary",
             ] {
                 let path = directory.join(format!("{log}-{shape}.json"));
                 let bytes = std::fs::read(&path).unwrap();
@@ -356,5 +368,11 @@ mod tests {
         assert!(word
             .check(&CatalogIdentity::new::<P64>(23, "binary-claim"))
             .is_err());
+        let extension = CatalogIdentity::new::<P64>(3, "prime-extension-two");
+        for shape in ["prime-claim", "prime-extension-one"] {
+            assert!(extension
+                .check(&CatalogIdentity::new::<P64>(3, shape))
+                .is_err());
+        }
     }
 }

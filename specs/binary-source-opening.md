@@ -4908,3 +4908,9 @@ J/y at order 6, and draws independent E64 coefficient weights at order 7.
 The no-wrap condition uses p, not the extension cardinality. The P64 unit proof
 and complete-schedule security ledger are maintained in that spec. Native-row
 admission validates geometry and the successor; it is not production certification.
+
+P64 accepts two ordered prime points using the v5 layout documented in the
+[Book transcript chapter](../book/src/how/transcript.md#p64-binary-root-ordering).
+An optional second ordinary reading adds the stage-8 statement message before
+root challenges and one evaluation relation, reusing its committed preimage.
+The one-polynomial and degree-64 outer-profile admission restrictions still apply.

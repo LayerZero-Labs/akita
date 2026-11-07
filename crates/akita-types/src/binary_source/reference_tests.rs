@@ -34,6 +34,12 @@ fn compile(shape: Shape, seed: u64) -> (BinaryRootPublic, Vec<Compiled>, Vec<Vec
     let ordinary_claim = ordinary_claim
         .as_ref()
         .map(|(point, value, payload)| (point.as_slice(), *value, payload.as_slice()));
+    let ordinary_points = ordinary_claim.map(|(point, value, _)| (point, [value]));
+    let ordinary_points = ordinary_points.as_ref().map(|(point, values)| {
+        [crate::opening_claims::OrdinaryPointEvaluation { point, evaluations: values }]
+    });
+    let native_ordinary = ordinary_points.as_ref().zip(ordinary_claim)
+        .map(|(points, (_, _, payload))| (&points[..], payload));
     let num_vars = public.plan().repacking().domain_len().trailing_zeros() as usize;
     let points = (0..2)
         .map(|_| (0..num_vars).map(|_| stream.field()).collect::<Vec<_>>())
@@ -50,7 +56,7 @@ fn compile(shape: Shape, seed: u64) -> (BinaryRootPublic, Vec<Compiled>, Vec<Vec
                     &projected,
                     &commitment,
                     &d_payload,
-                    ordinary_claim,
+                    native_ordinary,
                     matrix,
                 )
                 .unwrap();

@@ -50,13 +50,13 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
         .try_reserve_exact(width)
         .map_err(|_| AkitaError::InvalidProof)?;
     digits.resize(width, 0);
-    let Some(prime) = manifest.claim() else {
-        return Ok(digits);
-    };
-    let weights = prime.weights::<F>(descriptor)?;
+    let weights = manifest.claims().iter()
+        .map(|prime| prime.weights::<F>(descriptor))
+        .collect::<Result<Vec<_>, _>>()?;
     for (plane, claim) in manifest.planes().iter().enumerate() {
         let (rows, _, _) = weights
-            .get(claim.coordinate)
+            .get(claim.point)
+            .and_then(|point| point.get(claim.coordinate))
             .ok_or(AkitaError::InvalidProof)?;
         for column in 0..columns {
             let mut partial = [F::zero(); 162];
@@ -128,17 +128,17 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
     digits.resize(width, 0);
     let plane_width =
         checked::product([columns, column_digits_len]).ok_or(AkitaError::InvalidProof)?;
-    let Some(prime) = manifest.claim() else {
-        return Ok(digits);
-    };
-    let weights = prime.weights::<F>(descriptor)?;
+    let weights = manifest.claims().iter()
+        .map(|prime| prime.weights::<F>(descriptor))
+        .collect::<Result<Vec<_>, _>>()?;
     for (claim, plane_digits) in manifest
         .planes()
         .iter()
         .zip(digits.chunks_exact_mut(plane_width))
     {
         let (rows, _, _) = weights
-            .get(claim.coordinate)
+            .get(claim.point)
+            .and_then(|point| point.get(claim.coordinate))
             .ok_or(AkitaError::InvalidProof)?;
         let start = checked::product([claim.polynomial, index.padded_carriers()])
             .ok_or(AkitaError::InvalidProof)?;
@@ -353,45 +353,48 @@ mod p64_tests {
             },
         )
         .unwrap();
-        let manifest = PrimePlaneManifest::with_field_profile(
-            &descriptor,
-            Some(PrimeGroupClaim {
-                point: vec![[2, 3].into(); 10],
-                evaluations: vec![PrimePlaneClaim {
-                    polynomial: 0,
-                    value: [0, 0].into(),
-                }],
-            }),
-            field,
-        )
-        .unwrap();
-        let words = [u128::MAX, 0x1234_5678, 1 << 127, 0];
-        let mut source = [0i128; 648];
-        for (row, word) in words.iter().enumerate() {
-            for c in 0..128 {
-                source[4 * c + row] = ((word >> c) & 1) as i128 * if c % 2 == 0 { 1 } else { -1 };
+        for points in [1, 2] {
+            let manifest = PrimePlaneManifest::with_field_profile(
+                &descriptor,
+                (0..points).map(|point| PrimeGroupClaim {
+                    point: vec![[2, 3 + point].into(); 10],
+                    evaluations: vec![PrimePlaneClaim {
+                        polynomial: 0,
+                        value: [0, 0].into(),
+                    }],
+                }),
+                field,
+            )
+            .unwrap();
+            let words = [u128::MAX, 0x1234_5678, 1 << 127, 0];
+            let mut source = [0i128; 648];
+            for (row, word) in words.iter().enumerate() {
+                for c in 0..128 {
+                    source[4 * c + row] =
+                        ((word >> c) & 1) as i128 * if c % 2 == 0 { 1 } else { -1 };
+                }
             }
+            assert_eq!(
+                prime_plane_digits::<F>(&descriptor, &manifest, &[source]).unwrap(),
+                packed_prime_plane_digits::<F>(&descriptor, &manifest, &words).unwrap()
+            );
+            let wrong = PrimePlaneManifest::with_field_profile(
+                &descriptor,
+                Some(PrimeGroupClaim {
+                    point: vec![2.into(); 10],
+                    evaluations: vec![PrimePlaneClaim {
+                        polynomial: 0,
+                        value: 0.into(),
+                    }],
+                }),
+                BinaryFieldProfile::P128,
+            )
+            .unwrap();
+            assert!(matches!(
+                prime_plane_digits::<F>(&descriptor, &wrong, &[source]),
+                Err(AkitaError::InvalidSetup(_))
+            ));
+            assert_eq!(F::from_u128(modulus - 1), -F::one());
         }
-        assert_eq!(
-            prime_plane_digits::<F>(&descriptor, &manifest, &[source]).unwrap(),
-            packed_prime_plane_digits::<F>(&descriptor, &manifest, &words).unwrap()
-        );
-        let wrong = PrimePlaneManifest::with_field_profile(
-            &descriptor,
-            Some(PrimeGroupClaim {
-                point: vec![2.into(); 10],
-                evaluations: vec![PrimePlaneClaim {
-                    polynomial: 0,
-                    value: 0.into(),
-                }],
-            }),
-            BinaryFieldProfile::P128,
-        )
-        .unwrap();
-        assert!(matches!(
-            prime_plane_digits::<F>(&descriptor, &wrong, &[source]),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-        assert_eq!(F::from_u128(modulus - 1), -F::one());
     }
 }

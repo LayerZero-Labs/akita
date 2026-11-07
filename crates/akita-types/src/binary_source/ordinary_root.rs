@@ -42,7 +42,7 @@ pub struct OrdinaryNativeRootPlan {
 
 impl OrdinaryNativeRootPlan {
     /// Admit the ordinary preimage geometry executed by the current root driver.
-    /// The outer ring must have dimension 64; signed arithmetic plans are separate.
+    /// The group must have one polynomial and outer ring dimension 64.
     pub fn new(profile: GroupCommitPhaseParams, first_segment: usize) -> Result<Self, AkitaError> {
         let field = match profile.inner.matrix.sis_modulus_profile() {
             SisModulusProfileId::Q128Offset275 => BinaryFieldProfile::P128,
@@ -55,14 +55,18 @@ impl OrdinaryNativeRootPlan {
         };
         profile
             .validate_frozen_precommit(profile.inner.matrix.sis_modulus_profile().field_bits())?;
-        if profile.group.num_polynomials() != 1
-            || profile.inner.digits.num_digits != 1
+        if profile.group.num_polynomials() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "mixed root ordinary group requires exactly one polynomial".into(),
+            ));
+        }
+        if profile.inner.digits.num_digits != 1
             || profile.inner.digits.log_basis < 3
             || profile.outer.digits.log_basis != 3
             || profile.outer.matrix.sis_modulus_profile().modulus() != field.modulus()
         {
             return Err(AkitaError::InvalidSetup(
-                "mixed root requires one ordinary small coefficient source and base-eight image digits".into(),
+                "mixed root requires small coefficient sources and base-eight image digits".into(),
             ));
         }
         let outer_degree = profile.outer.matrix.ring_dimension();
@@ -74,11 +78,11 @@ impl OrdinaryNativeRootPlan {
         Self::compile(profile, first_segment, None)
     }
 
-    /// Select exact signed bounds and all polynomial slots explicitly.
+    /// Compile signed arithmetic for every polynomial slot in the profile.
     ///
-    /// This compiles arithmetic only. The existing root driver continues to
-    /// select `new`; a production driver needs separate schedule/extraction
-    /// admission before selecting this wider relation.
+    /// This does not admit a native root. Both one-point and two-point root
+    /// openings use `new`, which admits only one ordinary polynomial. Signed
+    /// multi-slot roots need separate schedule and extraction admission.
     pub fn new_signed(
         profile: GroupCommitPhaseParams,
         first_segment: usize,
@@ -568,51 +572,11 @@ impl OrdinaryNativeRootPlan {
             translated(s_copies, s_pattern, None)?;
             translated(bit_copies, bit_pattern, None)?;
         }
-        let mut terms = Vec::new();
-        let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
-        let owner_coefficients = checked::product([
-            self.profile.blocks.live_blocks,
-            positions,
-            a.ring_dimension(),
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        for (owner, &batch) in evaluation_batches.iter().enumerate() {
-            let start =
-                checked::product([owner, owner_coefficients]).ok_or(AkitaError::InvalidProof)?;
-            if source_digits == 1 {
-                families.push(RootWeightFamily::SourceEvaluation(
-                    SourceEvaluationWeights::new(
-                        table_len,
-                        s_lanes.contiguous(start, source_len)?,
-                        point,
-                        batch,
-                    )?,
-                ));
-            } else {
-                // Multi-digit sources interleave digits, so the slot's
-                // evaluation is not one address interval; keep its terms.
-                let equality = OffsetEqWindow::new(point)?;
-                for coefficient in 0..source_len {
-                    let element = checked::sum([start, coefficient])
-                        .map(|flat| flat / a.ring_dimension())
-                        .ok_or(AkitaError::InvalidProof)?;
-                    terms.extend(repacking.coefficient_weights(
-                        self.first_segment,
-                        element,
-                        coefficient % a.ring_dimension(),
-                        batch * equality.eval(coefficient),
-                    )?);
-                }
-            }
-        }
         let mut claim = second_batch
             * payload
                 .iter()
                 .rev()
                 .fold(E::zero(), |sum, &coefficient| sum * alpha + coefficient);
-        for (&batch, &evaluation) in evaluation_batches.iter().zip(evaluations) {
-            claim += batch * evaluation;
-        }
         if let Some(width) = self.source_width {
             let powers = coefficient_powers(E::one())
                 .into_iter()
@@ -622,7 +586,14 @@ impl OrdinaryNativeRootPlan {
                 claim -= batch * powers * offset;
             }
         }
-        NativeRootWeights::structured(table_len, terms, families, claim)
+        NativeRootWeights::merge(
+            table_len,
+            [
+                NativeRootWeights::structured(table_len, Vec::new(), families, claim)?,
+                self.evaluation_weights(repacking, point, evaluations, evaluation_batches)?,
+            ],
+            E::zero(),
+        )
     }
 
     /// Derive ordinary setup in its declared base field before lifting to the
@@ -887,3 +858,6 @@ mod admission_tests;
 #[cfg(test)]
 #[path = "ordinary_root_reference.rs"]
 mod reference;
+
+#[path = "ordinary_evaluation.rs"]
+mod evaluation;

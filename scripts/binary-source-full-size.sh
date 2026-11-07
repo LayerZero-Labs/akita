@@ -29,7 +29,7 @@ while (($#)); do
       echo 'Usage: scripts/binary-source-full-size.sh [--field p128|p64] --shape SHAPE'
       echo '  --log-carriers 10|22|23 [--dev-protocol] [--plan-only]'
       echo 'Shapes: binary-claim, prime-claim (P64), binary-and-prime-claims,'
-      echo '  binary-and-prime-claims-plus-ordinary.'
+      echo '  binary-and-prime-claims-plus-ordinary and P64 extension shapes.'
       echo 'P64: --all runs logs 22/23, all shapes and both modes; --shape all selects all shapes.'
       echo 'P64: --check-catalogs freshly plans every installed catalog and requires byte equality.'
       echo 'P64: --output-dir DIR retains fresh fixtures.'
@@ -54,7 +54,8 @@ if [[ "$field" = p64 ]]; then
   esac
   case "$shape" in
     all|binary-claim|prime-claim|binary-and-prime-claims|\
-    binary-and-prime-claims-plus-ordinary) ;;
+    binary-and-prime-claims-plus-ordinary|prime-extension-one|prime-extension-two|\
+    binary-and-prime-extension-two|binary-and-prime-extension-two-plus-ordinary) ;;
     *) echo "unknown shape: $shape" >&2; exit 2 ;;
   esac
   : "${CARGO_TARGET_DIR:?use the supplied CARGO_TARGET_DIR}"
@@ -66,6 +67,8 @@ if [[ "$field" = p64 ]]; then
   if ((all)) || [[ "$shape" = all ]]; then
     shapes=(
       binary-claim prime-claim binary-and-prime-claims binary-and-prime-claims-plus-ordinary
+      prime-extension-one prime-extension-two
+      binary-and-prime-extension-two binary-and-prime-extension-two-plus-ordinary
     )
   fi
   if [[ -z "$output_dir" ]]; then output_dir=$(mktemp -d "${TMPDIR:-/tmp}/akita-p64.XXXXXX"); fi

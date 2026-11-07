@@ -191,3 +191,15 @@ Catalog freshness is checked by
 every installed case must equal fresh planner output. The gate disables caches and
 never installs files; admission and replay alone are insufficient. It is a release
 check run when catalogs change, not a CI job.
+
+P64 prime groups accept one or two distinct ordered E64 points using
+`PrimeGroupClaim` records with `PrimeClaimValue::Extension` coordinates. Each
+polynomial value contributes two physical planes and two independent E64 identities.
+Two points on one polynomial therefore use four planes and four relation batches.
+The shared source is stored once; point collisions reject without resampling.
+
+`PolynomialGroupClaims::new_two_points` also supplies two ordinary readings in a
+mixed P64 root. Both readings constrain the same ordinary source. Native ordinary
+roots admit exactly one polynomial; signed multi-slot arithmetic does not establish
+native admission. The existing single-point transcript encoding remains unchanged.
+Common-source extraction and composition for two points remain open obligations.

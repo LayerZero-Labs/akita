@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn p64_prime_plane_price_uses_two_planes_and_independent_d_rank() {
+    fn p64_prime_plane_price_counts_points_owners_and_independent_d_rank() {
         use akita_types::binary_source::PrimeClaimValue;
         let field = BinaryFieldProfile::P64;
         let params = CommittedGroupParams::params_only(
@@ -348,61 +348,65 @@ mod tests {
             PolynomialGroupLayout::singleton(6),
             &params,
         );
-        let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
-        let profiles =
-            BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, field).unwrap();
-        let descriptor = BinarySourceDescriptor::new(index, vec![[1; 32]], profiles).unwrap();
-        let manifest =
-            BinaryCommittedGroupManifest::with_field_profile(descriptor, 0, &carrier, field)
-                .unwrap();
-        let descriptor = manifest.descriptor();
-        let prime = PrimePlaneManifest::with_field_profile(
-            descriptor,
-            Some(PrimeGroupClaim {
-                point: vec![PrimeClaimValue::from([2, 3]); 11],
-                evaluations: vec![PrimePlaneClaim {
-                    polynomial: 0,
-                    value: [5, 7].into(),
-                }],
-            }),
-            BinaryFieldProfile::P64,
-        )
-        .unwrap();
-        for word in [false, true] {
-            let price = price_binary_root_planes(&manifest, word, &prime, 64, None).unwrap();
-            assert_eq!(price.planes, 2);
-            assert_eq!(
-                price.d_live_digits,
-                (prime.planes().len() * field.prime_plane_digits() + usize::from(word)) * 162 * 2
-            );
-            assert_eq!(price.d_columns, price.d_live_digits.div_ceil(64));
-            assert_eq!(
-                price.d_rank,
-                manifest.d_label(word, 2).unwrap().rank as usize
-            );
-            assert_eq!(price.d_table_min_rank, Some(price.d_rank));
-            assert_ne!(price.d_rank, manifest.b_rows());
-            assert_price_matches_verifier_plan(&manifest, word, &prime, None);
-            assert_price_matches_verifier_plan(
-                &manifest,
-                word,
-                &prime,
-                Some(ordinary_profile(field)),
-            );
+        for owners in [1, 2] {
+            let index = BinaryIndexMap::new(128, 1024, 1024, 256).unwrap();
+            let profiles = BinaryCommittedGroupManifest::profiles_for_field(
+                &index, owners, 0, field,
+            ).unwrap();
+            let descriptor = BinarySourceDescriptor::new(
+                index, (0..owners).map(|owner| [1 + owner as u8; 32]).collect(), profiles,
+            ).unwrap();
+            let manifest = BinaryCommittedGroupManifest::with_field_profile(
+                descriptor, 0, &carrier, field,
+            ).unwrap();
+            let descriptor = manifest.descriptor();
+            for word in [false, true] {
+                let mut one_point: Option<BinaryPrimePlanePrice> = None;
+                for points in [1, 2] {
+                    let prime = PrimePlaneManifest::with_field_profile(
+                        descriptor,
+                        (0..points).map(|point| PrimeGroupClaim {
+                            point: vec![PrimeClaimValue::from([2, 3 + point as u128]); 18],
+                            evaluations: (0..owners).map(|owner| PrimePlaneClaim {
+                                polynomial: owner,
+                                value: [5 + owner as u128, 7].into(),
+                            }).collect(),
+                        }),
+                        field,
+                    ).unwrap();
+                    let planes = 2 * owners * points;
+                    let price = price_binary_root_planes(&manifest, word, &prime, 64, None)
+                        .unwrap();
+                    assert_eq!(price.planes, planes);
+                    assert_eq!(price.d_live_digits,
+                        (22 * planes + usize::from(word) * owners) * 162 * 256);
+                    assert_eq!(price.d_columns, price.d_live_digits.div_ceil(64));
+                    assert_eq!(price.d_rank, manifest.d_label(word, planes).unwrap().rank as usize);
+                    assert_eq!(price.d_table_min_rank, Some(price.d_rank));
+                    assert_price_matches_verifier_plan(&manifest, word, &prime, None);
+                    assert_price_matches_verifier_plan(
+                        &manifest, word, &prime, Some(ordinary_profile(field)),
+                    );
+                    if let Some(previous) = one_point.as_ref() {
+                        assert!(price.outgoing_physical_cells > previous.outgoing_physical_cells);
+                        assert!(price.typed_prefix.natural_len > previous.typed_prefix.natural_len);
+                        assert_eq!(price.d_live_digits - previous.d_live_digits,
+                            22 * 2 * owners * 162 * 256);
+                    } else {
+                        one_point = Some(price);
+                    }
+                }
+            }
+            let foreign_prime = PrimePlaneManifest::with_field_profile(
+                descriptor,
+                Some(PrimeGroupClaim {
+                    point: vec![2.into(); 18],
+                    evaluations: vec![PrimePlaneClaim { polynomial: 0, value: 5.into() }],
+                }),
+                BinaryFieldProfile::P128,
+            ).unwrap();
+            assert!(price_binary_root_planes(&manifest, true, &foreign_prime, 64, None).is_err());
         }
-        let foreign_prime = PrimePlaneManifest::with_field_profile(
-            descriptor,
-            Some(PrimeGroupClaim {
-                point: vec![2.into(); 11],
-                evaluations: vec![PrimePlaneClaim {
-                    polynomial: 0,
-                    value: 5.into(),
-                }],
-            }),
-            BinaryFieldProfile::P128,
-        )
-        .unwrap();
-        assert!(price_binary_root_planes(&manifest, true, &foreign_prime, 64, None).is_err());
     }
 
     #[test]

@@ -18,7 +18,7 @@ use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::binary_source::{
-    BinaryAReadGuard, BinaryCommittedGroupManifest, BinaryTypedPrefix,
+    BinaryAReadGuard, BinaryCommittedGroupManifest, BinaryTypedPrefix, PrimePlaneManifest,
 };
 use akita_types::{
     AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
@@ -70,6 +70,10 @@ pub(crate) fn main<C: MeasurementConfig>(arguments: Vec<String>) -> Result<()> {
             "prime-claim",
             "binary-and-prime-claims",
             "binary-and-prime-claims-plus-ordinary",
+            "prime-extension-one",
+            "prime-extension-two",
+            "binary-and-prime-extension-two",
+            "binary-and-prime-extension-two-plus-ordinary",
         ]
         .contains(&shape.as_str())
     {
@@ -84,7 +88,11 @@ pub(crate) fn main<C: MeasurementConfig>(arguments: Vec<String>) -> Result<()> {
     let timings = metrics::Timings::default();
     tracing_subscriber::registry().with(timings.clone()).init();
     let columns = claims::descriptor::<C>(log)?.index_map().columns();
-    println!("fixture log_carriers={log} shape={shape} columns={columns} rank=3 dev_protocol={} security_claim=false", akita_params::DEV_PROTOCOL);
+    println!(
+        "fixture log_carriers={log} shape={shape} columns={columns} rank=3 dev_protocol={} \
+         security_claim=false",
+        akita_params::DEV_PROTOCOL,
+    );
     let outcome = match phase.as_str() {
         "prove" => prove::<C>(log, &shape, &directory),
         "verify" => verify::<C>(log, &shape, &directory, &timings),
@@ -140,7 +148,8 @@ pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &P
         destination_dimension,
     )?;
     println!(
-        "selected_witness scheduled_live_len={} scheduled_domain={scheduled_domain} suffix_recursive_folds={} total_fold_levels={}",
+        "selected_witness scheduled_live_len={} scheduled_domain={scheduled_domain} \
+         suffix_recursive_folds={} total_fold_levels={}",
         schedule.root.output_witness_len,
         schedule.recursive_folds.len(),
         schedule.num_fold_levels()
@@ -148,7 +157,7 @@ pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &P
     let mut setup = {
         let _span = tracing::info_span!("cold_prover_setup").entered();
         let max_vars = carrier.group.num_vars().max(log);
-        let max_polynomials = 1 + usize::from(shape == "binary-and-prime-claims-plus-ordinary");
+        let max_polynomials = 1 + usize::from(shape.ends_with("-plus-ordinary"));
         if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
             scheme.setup_prover(max_vars, max_polynomials)?
         } else {
@@ -199,7 +208,7 @@ pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &P
     };
     let mut commitments = vec![committed.committed_group];
     let mut handles = vec![committed.private_handle];
-    if shape == "binary-and-prime-claims-plus-ordinary" {
+    if shape.ends_with("-plus-ordinary") {
         let _span = tracing::info_span!("ordinary_commit").entered();
         let ordinary_log = log.max(18);
         let ordinary_count = checked::pow2(ordinary_log).ok_or("ordinary count overflow")?;
@@ -228,9 +237,9 @@ pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &P
     let typed = BinaryTypedPrefix::new(
         &manifest,
         claims.word(&descriptor)?.is_some(),
-        claims.prime::<C>().as_ref().map_or(0, |prime| {
-            prime.evaluations.len() * C::PROFILE.extension_degree()
-        }),
+        PrimePlaneManifest::with_field_profile(&descriptor, claims.prime::<C>()?, C::PROFILE)?
+            .planes()
+            .len(),
         schedule.recursive_folds[0].params.d_a(),
     )?;
     let later = schedule
@@ -355,7 +364,7 @@ fn groups<C: MeasurementConfig>(
     let mut groups = vec![PolynomialGroupClaims::new_binary_planes(
         binary.clone(),
         claims.word(descriptor)?,
-        claims.prime::<C>(),
+        claims.prime::<C>()?,
     )?];
     if let Some(ordinary) = commitments.get(1) {
         let (point, value) = claims.ordinary.as_ref().ok_or("missing ordinary claim")?;
@@ -489,6 +498,13 @@ pub(super) fn verify<C: MeasurementConfig>(
             std::env::var("RAYON_NUM_THREADS").unwrap_or_else(|_| "default".into()),
         );
     }
-    println!("verification passed=true caller_transcript_continuation_matches=true online_a_reads=forbidden");
+    println!(
+        "verification passed=true caller_transcript_continuation_matches=true \
+         online_a_reads=forbidden"
+    );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "ordinary_two_points.rs"]
+mod ordinary_two_points;

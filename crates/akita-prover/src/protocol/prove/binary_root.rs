@@ -112,6 +112,13 @@ where
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
+    let ordinary_points = ordinary_group.map(|group| group.point_evaluations().collect::<Vec<_>>());
+    if let Some(second) = ordinary_points.as_ref().and_then(|points| points.get(1)) {
+        akita_types::binary_source::ordinary_second_point_statement::<Cfg::Field, Cfg::ExtField, _>(
+            grinding.state_mut(),
+            *second,
+        )?;
+    }
     let context = backend.proof_context(proof_session, 0)?;
     let span = tracing::info_span!("binary_root_field_switch").entered();
     let terminal = if let Some(claim) = claim {
@@ -149,6 +156,10 @@ where
         ordinary_profile,
     )?;
 
+    let public = match ordinary_group {
+        Some(group) => public.with_ordinary_point_count(group.num_points())?,
+        None => public,
+    };
     let request = akita_types::binary_source::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),
         claim: terminal,
@@ -315,19 +326,7 @@ where
             .map(Cfg::ExtField::lift_base)
             .collect::<Vec<_>>()
     });
-    let ordinary_claim = ordinary_group
-        .zip(ordinary_payload.as_ref())
-        .map(|(group, payload)| {
-            Ok::<_, AkitaError>((
-                group.point(),
-                *group
-                    .evaluations()
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?,
-                payload.as_slice(),
-            ))
-        })
-        .transpose()?;
+    let ordinary_claim = ordinary_points.as_deref().zip(ordinary_payload.as_deref());
     let rho = match &projections {
         Some(projections) => projections.batch(
             &batches

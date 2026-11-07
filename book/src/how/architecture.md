@@ -297,3 +297,10 @@ The optional ordinary group has one polynomial and a degree-64 outer commitment.
 Its field and source compression must satisfy the canonical ordinary-root plan.
 B and D have independently derived ranks: D commits the natural reading digits,
 while the successor stores all physical cells, including padding and quotients.
+
+P64 prime claims accept at most two distinct ordered E64 points. Each value has
+two coordinate planes, ordered by point, owner, then coordinate. Two owners at
+two points therefore need eight planes and eight relation batches: one ring
+identity and one scalar reading per value. Both planes enter each identity with
+the basis weights `1,u`. Adding an ordinary second point reuses its source and
+commitment preimage lanes and adds only a reading relation, without another root.

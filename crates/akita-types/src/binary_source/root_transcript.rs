@@ -110,6 +110,54 @@ where
     Ok(())
 }
 
+/// Bind the second ordinary record after the legacy first-point statement.
+/// The new domain is emitted only for the explicit two-point shape.
+pub fn ordinary_second_point_statement<F, E, S>(
+    state: &mut S,
+    second: crate::opening_claims::OrdinaryPointEvaluation<'_, E>,
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    S: ProofChannel,
+{
+    akita_params::binary_setup::BinaryFieldProfile::P64
+        .check_field_pair(akita_params::field_modulus::<F>()?, E::DEGREE)?;
+    let mut bytes = b"AkitaOrdinaryPoints/e64".to_vec();
+    bytes.push(1);
+    bytes.extend_from_slice(&2u64.to_le_bytes());
+    for values in [second.point, second.evaluations] {
+        bytes.extend_from_slice(
+            &u64::try_from(values.len())
+                .map_err(|_| AkitaError::InvalidProof)?
+                .to_le_bytes(),
+        );
+        let additional = checked::product([16, values.len()]).ok_or(AkitaError::InvalidProof)?;
+        bytes
+            .try_reserve_exact(additional)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for value in values {
+            for coordinate in 0..2 {
+                let residue = value
+                    .base_coefficient(coordinate)
+                    .to_u128_checked()
+                    .and_then(|value| u64::try_from(value).ok())
+                    .ok_or(AkitaError::InvalidProof)?;
+                bytes.extend_from_slice(&residue.to_le_bytes());
+            }
+        }
+    }
+    akita_transcript::public_bytes(
+        state,
+        ProtocolSiteId {
+            family: SITE_FAMILY_ROOT_STATEMENT,
+            stage: 8,
+            ..ProtocolSiteId::default()
+        },
+        &bytes,
+    )
+}
+
 /// Elements per Tau1 challenge message. `jolt-transcript` caps one challenge
 /// message at 16 MiB, and a mixed root draws millions of coefficients.
 const BATCH_CHALLENGE_CHUNK: usize = 1 << 18;

@@ -237,7 +237,7 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
         bad[address] += F::one();
         assert!(weights.check_table(&bad).is_err());
     }
-    let mut false_claim = manifest.claim().unwrap().clone();
+    let mut false_claim = manifest.claims().first().unwrap().clone();
     false_claim.evaluations[0].value =
         (false_claim.evaluations[0].value.coordinates()[0] + 1).into();
     let false_manifest = PrimePlaneManifest::with_field_profile(
@@ -400,10 +400,10 @@ fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
             64,
             field,
             false,
-            planes + 2
+            2 * planes + 2
         )
         .is_err());
-        assert!(manifest.d_label(false, planes + 2).is_err());
+        assert!(manifest.d_label(false, 2 * planes + 2).is_err());
         assert!(manifest.d_label(false, planes - 1).is_err());
         let segment = plan.prime_segment().unwrap();
         let shape = &plan.repacking().segments()[segment];
@@ -899,4 +899,187 @@ fn p64_prime_compilers_reject_a_different_quadratic_basis() {
         ),
         Err(AkitaError::InvalidProof)
     ));
+}
+
+#[test]
+fn p64_two_points_bind_order_and_match_reference_weights() {
+    use jolt_field::{ExtField, Prime64Offset59 as Base, Zero};
+    type E = Ext2<Base>;
+    let source = descriptor();
+    let field = BinaryFieldProfile::P64;
+    let claims = (0..2).map(|point| PrimeGroupClaim {
+        point: (0..11).map(|axis| [2 + axis, 3 + point].into()).collect(),
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: [7 + point, 11 + point].into(),
+        }],
+    }).collect::<Vec<_>>();
+    let manifest = PrimePlaneManifest::with_field_profile(&source, claims.clone(), field).unwrap();
+    assert_eq!(manifest.planes().len(), 4);
+    assert_eq!(manifest.planes().iter().map(|p| (p.point, p.polynomial, p.coordinate))
+        .collect::<Vec<_>>(), vec![(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]);
+    let bytes = manifest.canonical_bytes();
+    assert!(bytes.starts_with(b"AkitaPrimePlanes/p64\x05"));
+    assert_eq!(PrimePlaneManifest::from_bytes(&source, field, &bytes).unwrap(), manifest);
+    for end in 0..bytes.len() {
+        assert!(PrimePlaneManifest::from_bytes(&source, field, &bytes[..end]).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(PrimePlaneManifest::from_bytes(&source, field, &trailing).is_err());
+    let mut reversed = claims.clone();
+    reversed.reverse();
+    assert_ne!(bytes, PrimePlaneManifest::with_field_profile(&source, reversed, field)
+        .unwrap().canonical_bytes());
+    assert!(PrimePlaneManifest::with_field_profile(
+        &source, [claims[0].clone(), claims[0].clone()], field,
+    ).is_err());
+    assert!(PrimePlaneManifest::with_field_profile(
+        &source, claims.iter().cloned().chain([claims[0].clone()]), field,
+    ).is_err());
+    let base = claim();
+    assert!(PrimePlaneManifest::with_field_profile(
+        &source, [base.clone(), base], BinaryFieldProfile::P128,
+    ).is_err());
+    let mut short = claims.clone();
+    short[1].point.pop();
+    assert!(PrimePlaneManifest::with_field_profile(&source, short, field).is_err());
+    let mut duplicate_owner = claims.clone();
+    let value = duplicate_owner[1].evaluations[0].clone();
+    duplicate_owner[1].evaluations.push(value);
+    assert!(PrimePlaneManifest::with_field_profile(&source, duplicate_owner, field).is_err());
+    for point in 0..2 {
+        for coordinate in 0..2 {
+            let mut changed = claims.clone();
+            let PrimeClaimValue::Extension(value) = &mut changed[point].evaluations[0].value
+                else { unreachable!() };
+            value[coordinate] = field.modulus();
+            assert!(PrimePlaneManifest::with_field_profile(&source, changed, field).is_err());
+        }
+    }
+    let plan = BinaryRootWitnessPlan::for_profile(&source, 3, 64, field, false, 4).unwrap();
+    let repacking = plan.repacking();
+    let segment = plan.prime_segment().unwrap();
+    let challenges = Challenges::from_sparse(
+        (0..4).map(|_| SparseChallenge {
+            positions: vec![0, 161].into(), coeffs: vec![1, -1].into(),
+        }).collect(), 2, 2,
+    ).unwrap();
+    let ext = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + i * 31 + c * 43) as u64));
+    let batches = [ext(1), ext(2), ext(3), ext(4)];
+    let compiled = prime_plane_relation_weights(
+        &source, &manifest, repacking, 0, segment, &challenges, ext(0), &batches,
+    ).unwrap();
+    let reference = crate::binary_source::root_public::reference::prime_plane_weights(
+        &source, &manifest, repacking, 0, segment, &challenges, ext(0), &batches,
+    ).unwrap();
+    assert_eq!(compiled.claim(), reference.claim());
+    assert_eq!(compiled.materialize().unwrap(), reference.materialize().unwrap());
+    let evaluation_point = (0..repacking.domain_len().trailing_zeros())
+        .map(|i| ext(20 + i as usize)).collect::<Vec<_>>();
+    assert_eq!(compiled.evaluate(&evaluation_point).unwrap(),
+        reference.evaluate(&evaluation_point).unwrap());
+    // Each point keeps two E64 identities, independent of physical plane count.
+    assert!(prime_plane_relation_weights(
+        &source, &manifest, repacking, 0, segment, &challenges, ext(0), &[E::zero(); 8],
+    ).is_err());
+}
+
+#[test]
+fn p64_v5_literal_and_malformed_records() {
+    use akita_serialization::SerializationError;
+    let source = descriptor();
+    let field = BinaryFieldProfile::P64;
+    let claims = (0..2).map(|point| PrimeGroupClaim {
+        point: vec![[2, 3 + point].into(); 11],
+        evaluations: vec![
+            PrimePlaneClaim { polynomial: 0, value: [5, 7].into() },
+            PrimePlaneClaim { polynomial: 1, value: [11, 13].into() },
+        ],
+    }).collect::<Vec<_>>();
+    let manifest = PrimePlaneManifest::with_field_profile(&source, claims, field).unwrap();
+    // Literal layout, independent of canonical_bytes: no leading record count.
+    let mut literal = b"AkitaPrimePlanes/p64\x05".to_vec();
+    for second_coordinate in [3u64, 4] {
+        literal.extend_from_slice(&11u64.to_le_bytes());
+        for _ in 0..11 {
+            literal.extend_from_slice(&2u64.to_le_bytes());
+            literal.extend_from_slice(&second_coordinate.to_le_bytes());
+        }
+        for word in [2u64, 0, 5, 7, 1, 11, 13] {
+            literal.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    assert_eq!(manifest.canonical_bytes(), literal);
+    assert_eq!(PrimePlaneManifest::from_bytes(&source, field, &literal).unwrap(), manifest);
+    let reject = |bytes: &[u8], profile, truncated: bool| {
+        let result = std::panic::catch_unwind(|| {
+            PrimePlaneManifest::from_bytes(&source, profile, bytes)
+        }).expect("malformed v5 bytes must not panic");
+        match result {
+            Err(SerializationError::InvalidData(_)) => (),
+            Err(SerializationError::IoError(error)) if truncated => {
+                assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+            }
+            other => panic!("expected typed v5 rejection, got {other:?}"),
+        }
+    };
+    let tag = b"AkitaPrimePlanes/p64\x05".len();
+    let record = 8 + 11 * 16 + 8 + 2 * 24;
+    for point in 0..2 {
+        let start = tag + point * record;
+        let values = start + 8 + 11 * 16;
+        // Huge, zero and wrong per-record counts, before allocation.
+        for (offset, counts) in [(start, [u64::MAX, 0, 10]), (values, [u64::MAX, 0, 3])] {
+            for count in counts {
+                let mut bytes = literal.clone();
+                bytes[offset..offset + 8].copy_from_slice(&count.to_le_bytes());
+                reject(&bytes, field, false);
+            }
+        }
+        // A smaller value count shifts the next record boundary or leaves trailing data.
+        let mut bytes = literal.clone();
+        bytes[values..values + 8].copy_from_slice(&1u64.to_le_bytes());
+        reject(&bytes, field, false);
+        for owner in [0u64, 2, u64::MAX] {
+            let mut bytes = literal.clone();
+            let offset = values + 8 + 24;
+            bytes[offset..offset + 8].copy_from_slice(&owner.to_le_bytes());
+            reject(&bytes, field, false);
+        }
+        for offset in [start + 8, start + 16, values + 16, values + 24,
+            values + 40, values + 48]
+        {
+            let mut bytes = literal.clone();
+            bytes[offset..offset + 8].copy_from_slice(&(field.modulus() as u64).to_le_bytes());
+            reject(&bytes, field, false);
+        }
+        let mut bytes = literal.clone();
+        for byte in 0..24 {
+            bytes.swap(values + 8 + byte, values + 32 + byte);
+        }
+        reject(&bytes, field, false); // valid owners, noncanonical order
+    }
+    let mut duplicate = literal.clone();
+    duplicate.copy_within(tag..tag + record, tag + record);
+    reject(&duplicate, field, false);
+    reject(&literal, BinaryFieldProfile::P128, false);
+    for version in [0, 2, 4, 6] {
+        let mut bytes = literal.clone();
+        bytes[tag - 1] = version;
+        reject(&bytes, field, false);
+    }
+    let mut wrong_tag = literal.clone();
+    wrong_tag[0] ^= 1;
+    reject(&wrong_tag, field, false);
+    // Includes missing second record, and every partial record/limb boundary.
+    for end in 0..literal.len() {
+        reject(&literal[..end], field, true);
+    }
+    let mut extra = literal.clone();
+    extra.extend_from_slice(&literal[tag..tag + record]);
+    reject(&extra, field, false);
+    let mut trailing = literal;
+    trailing.push(0);
+    reject(&trailing, field, false);
 }

@@ -40,7 +40,19 @@ pub(crate) enum Fault {
     ParityCarry,
     ValueCarry,
     Padding,
-    PrimePlane,
+    /// First digit of one owner's coordinate plane at one prime claim point.
+    PrimePlane {
+        owner: usize,
+        point: usize,
+        coordinate: usize,
+    },
+    /// Honest coordinate planes; the caller binds a false prime value limb.
+    PrimeValue {
+        point: usize,
+        coordinate: usize,
+    },
+    /// Honest witness; the caller binds a false ordinary reading.
+    OrdinaryValue,
     Quotient,
 }
 
@@ -61,10 +73,31 @@ impl Fault {
         matches!(self, Self::Padding)
     }
 
-    pub(super) fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
+    pub(super) fn address(
+        self,
+        plan: &BinaryRootWitnessPlan,
+        prime: Option<(&PrimePlaneManifest, usize)>,
+    ) -> usize {
+        let mut element = 0;
         let segment = match self {
-            Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
-            Self::PrimePlane => plan.prime_segment().unwrap(),
+            Self::ForeignCommitment
+            | Self::ForeignPartials
+            | Self::PrimeValue { .. }
+            | Self::OrdinaryValue => unreachable!(),
+            Self::PrimePlane {
+                owner,
+                point,
+                coordinate,
+            } => {
+                let (prime, columns) = prime.unwrap();
+                let plane = prime.planes().iter().position(|plane| {
+                    plane.polynomial == owner && plane.point == point
+                        && plane.coordinate == coordinate
+                }).unwrap();
+                assert!(plane < prime.planes().len());
+                element = plane * columns;
+                plan.prime_segment().unwrap()
+            }
             Self::Quotient => plan.quotient_segment().unwrap(),
             Self::Response => 0,
             Self::Image => 1,
@@ -78,7 +111,7 @@ impl Fault {
             }
         };
         plan.repacking()
-            .coefficient_address(segment, 0, 0, 0)
+            .coefficient_address(segment, element, 0, 0)
             .unwrap()
     }
 }
@@ -101,7 +134,7 @@ pub(crate) struct FaultBackend {
 
 impl FaultBackend {
     /// Complete an adversarial opening with its deliberately false public oracle.
-    pub(super) fn prove_prime_fault(
+    pub(crate) fn prove_prime_fault(
         &self,
         setup: &akita_cpu_backend::AkitaProverSetup<F>,
         schedules: &TrustedScheduleCatalog<super::BinaryTestSuffix>,
@@ -225,9 +258,18 @@ impl FaultBackend {
         digits.truncate(logical_len);
         if !matches!(
             self.fault,
-            Fault::ForeignCommitment | Fault::ForeignPartials
+            Fault::ForeignCommitment
+                | Fault::ForeignPartials
+                | Fault::PrimeValue { .. }
+                | Fault::OrdinaryValue
         ) {
-            let address = self.fault.address(&preparation.plan);
+            let address = self.fault.address(
+                &preparation.plan,
+                Some((
+                    &preparation.prime,
+                    preparation.manifest.descriptor().index_map().columns(),
+                )),
+            );
             let old = digits[address];
             digits[address] = if old == 3 { 2 } else { old + 1 };
             assert_ne!(digits[address], old);

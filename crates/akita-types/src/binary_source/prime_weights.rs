@@ -37,7 +37,8 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
             && E::DEGREE != 2)
         || batches.len()
             != checked::product([
-                manifest.claim().map_or(0, |claim| claim.evaluations.len()),
+                checked::sum(manifest.claims().iter().map(|claim| claim.evaluations.len()))
+                    .ok_or(AkitaError::InvalidProof)?,
                 2,
             ])
             .ok_or(AkitaError::InvalidProof)?
@@ -81,14 +82,27 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
     planes
         .try_reserve_exact(manifest.planes().len())
         .map_err(|_| AkitaError::InvalidProof)?;
-    let claim = manifest.claim().ok_or(AkitaError::InvalidProof)?;
-    let (rows, columns_weights, omega) = claim.field_weights::<F, E>(descriptor)?;
-    if rows.len() != scalar_rows || columns_weights.len() != columns || omega.len() != 256 {
-        return Err(AkitaError::InvalidProof);
+    let mut rows = Vec::new();
+    let mut readings = Vec::new();
+    for claim in manifest.claims() {
+        let (row, column, omega) = claim.field_weights::<F, E>(descriptor)?;
+        if row.len() != scalar_rows || column.len() != columns || omega.len() != 256 {
+            return Err(AkitaError::InvalidProof);
+        }
+        rows.push(row);
+        readings.push(PrimeReading {
+            columns: column,
+            omega: omega[..162].to_vec(),
+        });
     }
     let degree = manifest.field_profile().extension_degree();
     let mut target = E::zero();
-    for (index, value) in claim.evaluations.iter().enumerate() {
+    for (index, value) in manifest
+        .claims()
+        .iter()
+        .flat_map(|claim| &claim.evaluations)
+        .enumerate()
+    {
         let reading_batch = *batches.get(2 * index + 1).ok_or(AkitaError::InvalidProof)?;
         let value = E::from_base_fn(|i| {
             F::from_u128(value.value.coordinates().get(i).copied().unwrap_or(0))
@@ -105,6 +119,7 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
         let basis = E::from_base_fn(|i| F::from_bool(i == plane.coordinate));
         planes.push(PlaneInputs {
             polynomial: plane.polynomial,
+            point: plane.point,
             relation: batch * basis,
             // The response is already E-valued, so it enters only once per claim.
             response: if plane.coordinate == 0 {
@@ -125,10 +140,7 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
         challenges: scalar_challenges.into_owned(),
         planes,
         rows,
-        reading: PrimeReading {
-            columns: columns_weights,
-            omega: omega[..162].to_vec(),
-        },
+        readings,
     };
     NativeRootWeights::structured(
         repacking.domain_len(),
@@ -141,6 +153,7 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
 /// Basis-weighted contributions of one physical plane to its claim's identities.
 #[derive(Clone, Debug)]
 struct PlaneInputs<E: Field> {
+    point: usize,
     polynomial: usize,
     relation: E,
     response: E,
@@ -177,8 +190,8 @@ pub(crate) struct PrimePlaneWeights<E: Field> {
     /// as `(position, negative)`: every coefficient is `-1` or `1`.
     challenges: PreparedBinaryScalarChallenges,
     planes: Vec<PlaneInputs<E>>,
-    rows: Vec<E>,
-    reading: PrimeReading<E>,
+    rows: Vec<Vec<E>>,
+    readings: Vec<PrimeReading<E>>,
 }
 
 impl<E: Field> PrimePlaneWeights<E> {
@@ -237,25 +250,23 @@ impl<E: Field> PrimePlaneWeights<E> {
             *slot = power;
             power *= E::from_u64(8);
         }
-        let base_dots = (0..slots)
-            .map(|slot| {
+        let mut highs = vec![E::zero(); slots];
+        let mut sum = E::zero();
+        let base_dots = self.readings.iter().map(|reading| {
+            (0..slots).map(|slot| {
                 let window = low
                     .get(slot * stride..slot * stride + 162)
                     .ok_or(AkitaError::InvalidProof)?;
-                Ok(self
-                    .reading
-                    .omega
-                    .iter()
-                    .zip(window)
+                Ok(reading.omega.iter().zip(window)
                     .fold(E::zero(), |sum, (&omega, &low)| sum + omega * low))
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        let mut highs = vec![E::zero(); slots];
-        let mut sum = E::zero();
+            }).collect::<Result<Vec<_>, AkitaError>>()
+        }).collect::<Result<Vec<_>, AkitaError>>()?;
         for (plane_index, plane) in self.planes.iter().enumerate() {
+            let reading_factors = self.readings.get(plane.point).ok_or(AkitaError::InvalidProof)?;
+            let base_dots = base_dots.get(plane.point).ok_or(AkitaError::InvalidProof)?;
             let polynomial = plane.polynomial;
             let mut response = E::zero();
-            let rows = &self.rows;
+            let rows = self.rows.get(plane.point).ok_or(AkitaError::InvalidProof)?;
             for (quad, rows) in rows.chunks(4).enumerate() {
                 let element = checked::mul_add(polynomial, self.ring_rows, quad)
                     .ok_or(AkitaError::InvalidProof)?;
@@ -282,7 +293,7 @@ impl<E: Field> PrimePlaneWeights<E> {
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
             let (mut reading, mut relation) = (E::zero(), E::zero());
-            for (column, &column_weight) in self.reading.columns.iter().enumerate() {
+            for (column, &column_weight) in reading_factors.columns.iter().enumerate() {
                 let element = checked::mul_add(plane_index, self.columns, column)
                     .ok_or(AkitaError::InvalidProof)?;
                 // The digit lanes of one element cycle through the
@@ -296,7 +307,7 @@ impl<E: Field> PrimePlaneWeights<E> {
                 }
                 let column_dots = dots.get(column).ok_or(AkitaError::InvalidProof)?;
                 let mut omega_sum = E::zero();
-                for ((&high, &dot), &base_dot) in highs.iter().zip(column_dots).zip(&base_dots) {
+                for ((&high, &dot), &base_dot) in highs.iter().zip(column_dots).zip(base_dots) {
                     omega_sum += high * base_dot;
                     relation += high * dot;
                 }
@@ -313,14 +324,14 @@ impl<E: Field> PrimePlaneWeights<E> {
         plane: &PlaneInputs<E>,
         column: usize,
     ) -> Result<[E; 162], AkitaError> {
-        let column = *self
-            .reading
+        let reading_factors = self.readings.get(plane.point).ok_or(AkitaError::InvalidProof)?;
+        let column = *reading_factors
             .columns
             .get(column)
             .ok_or(AkitaError::InvalidProof)?;
         let scale = plane.reading * column;
         let mut weights = [E::zero(); 162];
-        for (weight, &omega) in weights.iter_mut().zip(&self.reading.omega) {
+        for (weight, &omega) in weights.iter_mut().zip(&reading_factors.omega) {
             *weight = scale * omega;
         }
         Ok(weights)
@@ -358,7 +369,8 @@ impl<E: Field> PrimePlaneWeights<E> {
                 for k in 0..4 {
                     let row_weight = *self
                         .rows
-                        .get(4 * ring_row + k)
+                        .get(plane.point)
+                        .and_then(|rows| rows.get(4 * ring_row + k))
                         .ok_or(AkitaError::InvalidProof)?;
                     if row_weight == E::zero() {
                         continue;
@@ -395,7 +407,7 @@ impl<E: Field> PrimePlaneWeights<E> {
         mut profile: impl FnMut(&SegmentLanes, usize, usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         for (plane_index, plane) in self.planes.iter().enumerate() {
-            let rows = &self.rows;
+            let rows = self.rows.get(plane.point).ok_or(AkitaError::InvalidProof)?;
             for (row, &row_weight) in rows.iter().enumerate() {
                 if row_weight == E::zero() {
                     continue;

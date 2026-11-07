@@ -384,7 +384,8 @@ pub(crate) fn prime_plane_weights<F: Field, E: ExtField<F>>(
             && E::DEGREE != 2)
         || batches.len()
             != checked::product([
-                manifest.claim().map_or(0, |claim| claim.evaluations.len()),
+                checked::sum(manifest.claims().iter().map(|claim| claim.evaluations.len()))
+                    .ok_or(AkitaError::InvalidProof)?,
                 2,
             ])
             .ok_or(AkitaError::InvalidProof)?
@@ -434,11 +435,19 @@ pub(crate) fn prime_plane_weights<F: Field, E: ExtField<F>>(
         .try_reserve_exact(term_count)
         .map_err(|_| AkitaError::InvalidProof)?;
     manifest.validate(descriptor)?;
-    let claim = manifest.claim().ok_or(AkitaError::InvalidProof)?;
-    let (rows, column_weights, omega) = claim.field_weights::<F, E>(descriptor)?;
+    let weights = manifest
+        .claims()
+        .iter()
+        .map(|claim| claim.field_weights::<F, E>(descriptor))
+        .collect::<Result<Vec<_>, _>>()?;
     let degree = manifest.field_profile().extension_degree();
     let mut target = E::zero();
-    for (index, value) in claim.evaluations.iter().enumerate() {
+    for (index, value) in manifest
+        .claims()
+        .iter()
+        .flat_map(|claim| &claim.evaluations)
+        .enumerate()
+    {
         let batch = *batches.get(2 * index + 1).ok_or(AkitaError::InvalidProof)?;
         target += batch
             * E::from_base_fn(|i| {
@@ -446,6 +455,8 @@ pub(crate) fn prime_plane_weights<F: Field, E: ExtField<F>>(
             });
     }
     for (plane_index, plane) in manifest.planes().iter().enumerate() {
+        let (rows, column_weights, omega) =
+            weights.get(plane.point).ok_or(AkitaError::InvalidProof)?;
         let batch_index =
             checked::product([plane_index / degree, 2]).ok_or(AkitaError::InvalidProof)?;
         let relation_batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
@@ -688,10 +699,9 @@ pub(crate) fn root_relation<F: Field, E: ExtField<F>>(
         negative_bits.end,
         checked::product([
             2,
-            public
-                .prime
-                .claim()
-                .map_or(0, |claim| claim.evaluations.len()),
+            checked::sum(public
+                .prime.claims().iter().map(|claim| claim.evaluations.len()))
+                    .ok_or(AkitaError::InvalidProof)?,
         ])
         .ok_or(AkitaError::InvalidProof)?,
     )

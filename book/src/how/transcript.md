@@ -602,3 +602,19 @@ The caller retains responsibility for its continuation and final EOF check.
 The column challenge retains its indexed sampler and grinding work entry with
 set-size denominator `2^136`. The field change does not change that denominator.
 The residual lift uses the base characteristic p even though random tests use E64.
+
+For two prime points, the public manifest tag is `AkitaPrimePlanes/p64\x05`,
+where `\x05` is one byte. Exactly two records follow; there is no leading point
+count. Each record contains a little-endian u64 arity, that many pairs of
+canonical u64 residues, a u64 value count, then `(u64 owner, u64 c0, u64 c1)`
+records sorted by owner. Point order is significant. One-point P64 retains v4;
+P128 retains its v2 layout. Counts, distinct points and canonical ordering are
+validated before accepting the complete encoding, with no trailing bytes.
+
+An ordinary second point adds one public byte message immediately after the
+first statement and before the field switch or root challenges. Its protocol
+site is `SITE_FAMILY_ROOT_STATEMENT`, stage 8; this site number is not order 8
+of the root protocol. The payload is `AkitaOrdinaryPoints/e64\x01`, followed by
+little-endian u64 words: point count 2, second-point arity, the coordinate pairs,
+value count, then the value coordinate pairs. Both prover and verifier emit it.
+A single-point ordinary group emits no optional marker or extra message.

@@ -88,7 +88,9 @@ impl Timings {
                     "many".into()
                 };
                 println!(
-                    "span phase={phase} name={name} calls={} inclusive_wall_ns={} process_cpu_ns={} heap_entry_bytes={} heap_peak_bytes={} call_wall_ns={walls} parent={}",
+                    "span phase={phase} name={name} calls={} inclusive_wall_ns={} \
+                     process_cpu_ns={} heap_entry_bytes={} heap_peak_bytes={} \
+                     call_wall_ns={walls} parent={}",
                     totals.calls,
                     totals.wall.as_nanos(),
                     totals.cpu.as_nanos(),
@@ -225,7 +227,7 @@ pub(super) fn proof(
 
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
     if profile == BinaryFieldProfile::P128 {
-        // Keep the legacy label and digest calculation consumed by the P128 pin script.
+        // Retain the P128 measurement label and descriptor digest calculation.
         println!(
             "proof bytes={} digest_algorithm=blake2b256 digest={}",
             proof.len(),
@@ -311,7 +313,8 @@ pub(super) fn proof(
             checked::sum([range.start, range.len]).ok_or("range overflow")?,
         ));
         println!(
-            "proof_range level={} site_stage={} family={} invocation={} kind={} start={} bytes={} atoms={}",
+            "proof_range level={} site_stage={} family={} invocation={} kind={} start={} \
+             bytes={} atoms={}",
             site.level,
             site.stage,
             site.family,
@@ -352,7 +355,8 @@ pub(super) fn proof(
                 }
             };
         println!(
-            "proof_stage level={level} protocol={protocol:?} site_stage={stage} family={family} invocation={invocation} bytes={bytes} atoms={atoms}"
+            "proof_stage level={level} protocol={protocol:?} site_stage={stage} family={family} \
+             invocation={invocation} bytes={bytes} atoms={atoms}"
         );
     }
     coverage.sort_unstable();

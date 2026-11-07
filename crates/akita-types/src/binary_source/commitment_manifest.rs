@@ -94,6 +94,7 @@ impl BinaryCommittedGroupManifest {
             > checked::product([
                 self.descriptor.polynomials().len(),
                 self.field_profile.extension_degree(),
+                self.field_profile.maximum_prime_points(),
             ])
             .ok_or(AkitaError::InvalidProof)?
             || !planes.is_multiple_of(self.field_profile.extension_degree())

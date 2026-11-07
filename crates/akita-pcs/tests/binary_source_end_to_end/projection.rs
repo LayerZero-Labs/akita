@@ -306,7 +306,7 @@ fn p64_fault_table_changes_k_independently_of_response_and_image() {
             .unwrap();
     let segment = plan.quotient_segment().unwrap();
     assert_eq!(
-        super::Fault::Quotient.address(&plan),
+        super::Fault::Quotient.address(&plan, None),
         plan.repacking()
             .coefficient_address(segment, 0, 0, 0)
             .unwrap()

@@ -575,3 +575,10 @@ open allocation and extraction obligations are maintained in the
 Successful replay, freshness and tamper tests are regression evidence, not that
 certificate. In particular, independently programmable indexed column streams
 remain an extraction premise requiring justification.
+
+Two-point readings share the fixed source but retain independent batches per
+value. Their error terms must count every ring identity and reading, including
+the additional ordinary evaluation. Physical coordinate planes do not create
+four identities per value: the two E64 coordinates are recombined within each
+of its two identities. Resource capacity alone does not prove this association;
+the signed-source crossed-owner test checks each isolated batch and digit depth.

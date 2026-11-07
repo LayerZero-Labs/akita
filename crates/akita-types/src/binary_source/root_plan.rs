@@ -58,6 +58,7 @@ impl BinaryRootWitnessPlan {
             > checked::product([
                 descriptor.polynomials().len(),
                 field_profile.extension_degree(),
+                field_profile.maximum_prime_points(),
             ])
             .ok_or(AkitaError::InvalidProof)?
             || !prime_planes.is_multiple_of(field_profile.extension_degree())

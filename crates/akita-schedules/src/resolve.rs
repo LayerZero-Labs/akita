@@ -249,7 +249,8 @@ pub(crate) fn validate_canonical_transition_lengths(
         }
         if step.input_witness_len != expected_input {
             return Err(AkitaError::InvalidSetup(format!(
-                "recursive fold {index} input witness length {} is not canonical; expected {expected_input}",
+                "recursive fold {index} input witness length {} is not canonical; expected \
+                 {expected_input}",
                 step.input_witness_len
             )));
         }
@@ -267,7 +268,8 @@ pub(crate) fn validate_canonical_transition_lengths(
         })?;
         if step.output_witness_len != expected_output {
             return Err(AkitaError::InvalidSetup(format!(
-                "recursive fold {index} output witness length {} is not canonical; expected {expected_output}",
+                "recursive fold {index} output witness length {} is not canonical; expected \
+                 {expected_output}",
                 step.output_witness_len
             )));
         }

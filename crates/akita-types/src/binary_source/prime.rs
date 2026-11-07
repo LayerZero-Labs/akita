@@ -36,9 +36,10 @@ impl PrimeClaimValue {
     }
 }
 
-/// One base-coordinate evaluation plane, in polynomial/coordinate order.
+/// One base-coordinate evaluation plane, in point/polynomial/coordinate order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimeCoordinatePlane {
+    pub point: usize,
     pub polynomial: usize,
     pub coordinate: usize,
     pub value: u128,
@@ -171,59 +172,75 @@ impl PrimeGroupClaim {
     }
 }
 
-/// Checked single-point statement, with evaluation planes in polynomial order.
+/// Checked points, with planes ordered by point, polynomial and coordinate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimePlaneManifest {
-    claim: Option<PrimeGroupClaim>,
+    claims: Vec<PrimeGroupClaim>,
     field: BinaryFieldProfile,
     planes: Vec<PrimeCoordinatePlane>,
 }
 impl PrimePlaneManifest {
+    /// P128 accepts at most one point; P64 accepts at most two distinct E64 points.
     pub fn with_field_profile(
         source: &BinarySourceDescriptor,
-        mut claim: Option<PrimeGroupClaim>,
+        claims: impl IntoIterator<Item = PrimeGroupClaim>,
         field: BinaryFieldProfile,
     ) -> Result<Self, AkitaError> {
-        if let Some(claim) = &mut claim {
+        let mut claims = claims
+            .into_iter()
+            .take(field.maximum_prime_points() + 1)
+            .collect::<Vec<_>>();
+        if claims.len() > field.maximum_prime_points() {
+            return Err(AkitaError::InvalidInput("too many prime points".into()));
+        }
+        for claim in &mut claims {
             claim.validate(source, field)?;
             claim
                 .evaluations
                 .sort_unstable_by_key(|value| value.polynomial);
         }
-        let planes = claim
-            .as_ref()
-            .into_iter()
-            .flat_map(|claim| &claim.evaluations)
-            .flat_map(|claim| {
-                claim
-                    .value
-                    .coordinates()
-                    .iter()
-                    .enumerate()
-                    .map(|(coordinate, &value)| PrimeCoordinatePlane {
+        if claims.len() == 2 && claims[0].point == claims[1].point {
+            return Err(AkitaError::InvalidInput("duplicate prime point".into()));
+        }
+        let mut planes = Vec::new();
+        let capacity = checked::product([
+            checked::sum(claims.iter().map(|claim| claim.evaluations.len()))
+                .ok_or(AkitaError::InvalidInput("prime plane allocation too large".into()))?,
+            field.extension_degree(),
+        ])
+        .ok_or(AkitaError::InvalidInput("prime plane allocation too large".into()))?;
+        planes
+            .try_reserve_exact(capacity)
+            .map_err(|_| AkitaError::InvalidInput("prime plane allocation too large".into()))?;
+        for (point, claim) in claims.iter().enumerate() {
+            for claim in &claim.evaluations {
+                for (coordinate, &value) in claim.value.coordinates().iter().enumerate() {
+                    planes.push(PrimeCoordinatePlane {
+                        point,
                         polynomial: claim.polynomial,
                         coordinate,
                         value,
-                    })
-            })
-            .collect();
+                    });
+                }
+            }
+        }
         Ok(Self {
-            claim,
+            claims,
             field,
             planes,
         })
     }
 
-    /// Revalidate against the commitment's descriptor without copying the claim.
+    /// Revalidate against the commitment's descriptor without copying the claims.
     pub fn validate(&self, source: &BinarySourceDescriptor) -> Result<(), AkitaError> {
-        if let Some(claim) = &self.claim {
+        for claim in &self.claims {
             claim.validate(source, self.field)?;
         }
         Ok(())
     }
 
-    pub fn claim(&self) -> Option<&PrimeGroupClaim> {
-        self.claim.as_ref()
+    pub fn claims(&self) -> &[PrimeGroupClaim] {
+        &self.claims
     }
 
     pub fn field_profile(&self) -> BinaryFieldProfile {
@@ -234,8 +251,7 @@ impl PrimePlaneManifest {
         &self.planes
     }
 
-    /// Decode only the selected profile's canonical statement encoding.
-    /// Counts are bounded by the source before allocating, and trailing bytes reject.
+    /// Decode bounded point records and require their exact canonical encoding.
     pub fn from_bytes(
         source: &BinarySourceDescriptor,
         field: BinaryFieldProfile,
@@ -244,9 +260,12 @@ impl PrimePlaneManifest {
         use akita_serialization::SerializationError;
         use std::io::{Cursor, Read};
         let bad = || SerializationError::InvalidData("noncanonical prime manifest".into());
-        let tag: &[u8] = match field {
-            BinaryFieldProfile::P128 => b"AkitaPrimePlanes\x02",
-            BinaryFieldProfile::P64 => b"AkitaPrimePlanes/p64\x04",
+        let two = field == BinaryFieldProfile::P64
+            && bytes.starts_with(b"AkitaPrimePlanes/p64\x05");
+        let tag: &[u8] = match (field, two) {
+            (BinaryFieldProfile::P128, _) => b"AkitaPrimePlanes\x02",
+            (BinaryFieldProfile::P64, false) => b"AkitaPrimePlanes/p64\x04",
+            (BinaryFieldProfile::P64, true) => b"AkitaPrimePlanes/p64\x05",
         };
         let mut reader = Cursor::new(bytes.strip_prefix(tag).ok_or_else(bad)?);
         let read_u64 = |reader: &mut Cursor<&[u8]>| -> Result<u64, SerializationError> {
@@ -257,72 +276,79 @@ impl PrimePlaneManifest {
         let arity = checked::ceil_log2(source.index_map().padded_carriers())
             .and_then(|n| checked::sum([n, 8]))
             .ok_or_else(bad)?;
-        let count = usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?;
-        if count != 0 && count != arity {
-            return Err(bad());
+        let read_element = |reader: &mut Cursor<&[u8]>| {
+            if field == BinaryFieldProfile::P128 {
+                let mut bytes = [0; 16];
+                reader.read_exact(&mut bytes)?;
+                Ok::<PrimeClaimValue, SerializationError>(u128::from_le_bytes(bytes).into())
+            } else {
+                Ok([u128::from(read_u64(reader)?), u128::from(read_u64(reader)?)].into())
+            }
+        };
+        let mut points = Vec::new();
+        for _ in 0..if two { 2 } else { 1 } {
+            let count = usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?;
+            if (count != 0 && count != arity) || (two && count == 0) {
+                return Err(bad());
+            }
+            let mut point = Vec::with_capacity(count);
+            for _ in 0..count {
+                point.push(read_element(&mut reader)?);
+            }
+            let count_values = usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?;
+            if count_values > source.polynomials().len()
+                || ((count_values == 0) != (count == 0))
+            {
+                return Err(bad());
+            }
+            let mut evaluations = Vec::new();
+            evaluations
+                .try_reserve_exact(count_values)
+                .map_err(|_| bad())?;
+            for _ in 0..count_values {
+                evaluations.push(PrimePlaneClaim {
+                    polynomial: usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?,
+                    value: read_element(&mut reader)?,
+                });
+            }
+            if count_values != 0 {
+                points.push(PrimeGroupClaim { point, evaluations });
+            }
         }
-        let read_element =
-            |reader: &mut Cursor<&[u8]>| -> Result<PrimeClaimValue, SerializationError> {
-                if field == BinaryFieldProfile::P128 {
-                    let mut bytes = [0; 16];
-                    reader.read_exact(&mut bytes)?;
-                    Ok(u128::from_le_bytes(bytes).into())
-                } else {
-                    Ok([u128::from(read_u64(reader)?), u128::from(read_u64(reader)?)].into())
-                }
-            };
-        let mut point = Vec::with_capacity(count);
-        for _ in 0..count {
-            point.push(read_element(&mut reader)?);
-        }
-        let claims = usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?;
-        if claims > source.polynomials().len() || ((claims == 0) != (count == 0)) {
-            return Err(bad());
-        }
-        let mut evaluations = Vec::with_capacity(claims);
-        for _ in 0..claims {
-            evaluations.push(PrimePlaneClaim {
-                polynomial: usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?,
-                value: read_element(&mut reader)?,
-            });
-        }
-        let claim = (claims != 0).then_some(PrimeGroupClaim { point, evaluations });
-        let manifest = Self::with_field_profile(source, claim, field).map_err(|_| bad())?;
+        let manifest = Self::with_field_profile(source, points, field).map_err(|_| bad())?;
         if manifest.canonical_bytes() != bytes {
             return Err(bad());
         }
         Ok(manifest)
     }
 
-    /// Order zero binds the shared point once, then polynomial/value pairs.
+    /// Keep the single-point encoding; the two-point tag binds two ordered records.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = match self.field {
-            BinaryFieldProfile::P128 => b"AkitaPrimePlanes\x02".to_vec(),
-            BinaryFieldProfile::P64 => b"AkitaPrimePlanes/p64\x04".to_vec(),
+        let mut bytes = match (self.field, self.claims.len()) {
+            (BinaryFieldProfile::P128, _) => b"AkitaPrimePlanes\x02".to_vec(),
+            (BinaryFieldProfile::P64, 2) => b"AkitaPrimePlanes/p64\x05".to_vec(),
+            (BinaryFieldProfile::P64, _) => b"AkitaPrimePlanes/p64\x04".to_vec(),
         };
         let coordinate_bytes = match self.field {
             BinaryFieldProfile::P128 => 16,
             BinaryFieldProfile::P64 => 8,
         };
-        let point = self
-            .claim
-            .as_ref()
-            .map_or(&[][..], |claim| claim.point.as_slice());
-        bytes.extend_from_slice(&(point.len() as u64).to_le_bytes());
-        for coordinate in point {
-            for coordinate in coordinate.coordinates() {
-                bytes.extend_from_slice(&coordinate.to_le_bytes()[..coordinate_bytes]);
-            }
+        if self.claims.is_empty() {
+            bytes.extend_from_slice(&[0; 16]);
         }
-        let claims = self
-            .claim
-            .as_ref()
-            .map_or(&[][..], |claim| claim.evaluations.as_slice());
-        bytes.extend_from_slice(&(claims.len() as u64).to_le_bytes());
-        for claim in claims {
-            bytes.extend_from_slice(&(claim.polynomial as u64).to_le_bytes());
-            for value in claim.value.coordinates() {
-                bytes.extend_from_slice(&value.to_le_bytes()[..coordinate_bytes]);
+        for claim in &self.claims {
+            bytes.extend_from_slice(&(claim.point.len() as u64).to_le_bytes());
+            for coordinate in &claim.point {
+                for coordinate in coordinate.coordinates() {
+                    bytes.extend_from_slice(&coordinate.to_le_bytes()[..coordinate_bytes]);
+                }
+            }
+            bytes.extend_from_slice(&(claim.evaluations.len() as u64).to_le_bytes());
+            for claim in &claim.evaluations {
+                bytes.extend_from_slice(&(claim.polynomial as u64).to_le_bytes());
+                for value in claim.value.coordinates() {
+                    bytes.extend_from_slice(&value.to_le_bytes()[..coordinate_bytes]);
+                }
             }
         }
         bytes

@@ -21,6 +21,14 @@ std::thread_local! {
 mod tests;
 
 #[cfg(test)]
+#[path = "extension_tests.rs"]
+mod extension_tests;
+
+/// Smallest size measured; logs 4 through 21 have not been tried.
+#[cfg(test)]
+const LOG: usize = 22;
+
+#[cfg(test)]
 pub(super) fn fixture_directory() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -29,6 +37,60 @@ pub(super) fn fixture_directory() -> std::path::PathBuf {
         } else {
             "binary-source-p64"
         })
+}
+
+#[cfg(test)]
+fn with_replay(shape: &'static str, check: impl FnOnce(&std::path::Path) + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let directory =
+                std::env::temp_dir().join(format!("akita-p64-{}-{shape}", std::process::id()));
+            std::fs::create_dir_all(&directory).unwrap();
+            let catalog = fixture_directory().join(format!("{LOG}-{shape}.json"));
+            std::fs::copy(&catalog, directory.join("native-catalog.json")).unwrap_or_else(
+                |error| panic!("missing research catalog at {}: {error}", catalog.display()),
+            );
+            crate::run::prove::<BinaryTestSuffix>(LOG, shape, &directory).unwrap();
+            check(&directory);
+            std::fs::remove_dir_all(directory).unwrap();
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// Commit the selected digit, finish the forged proof with a false oracle and
+/// require rejection at the final root relation equation, not an earlier check.
+#[cfg(test)]
+fn rejects_fault(shape: &str, directory: &std::path::Path, fault: fault_backend::Fault) {
+    FAULT.with(|selected| selected.set(Some(fault)));
+    let result = crate::run::prove::<BinaryTestSuffix>(LOG, shape, directory);
+    FAULT.with(|selected| selected.set(None));
+    result.unwrap();
+    let (result, rejections) = root_relation_rejections(|| {
+        crate::run::verify::<BinaryTestSuffix>(
+            LOG,
+            shape,
+            directory,
+            &crate::metrics::Timings::default(),
+        )
+    });
+    let error = match result {
+        Ok(()) => panic!("{shape}: committed digit fault {fault:?} must fail verification"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(
+            error.downcast_ref::<akita_error::AkitaError>(),
+            Some(akita_error::AkitaError::InvalidProof)
+        ),
+        "committed digit fault {fault:?} must fail verification: {error}"
+    );
+    assert_eq!(
+        rejections, 1,
+        "fault {fault:?} must reach the final root relation equation"
+    );
 }
 
 /// Count failures of the binary root's final relation equation on this thread.

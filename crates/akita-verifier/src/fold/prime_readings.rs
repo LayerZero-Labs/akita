@@ -41,7 +41,7 @@ where
     ) -> Result<
         (
             PendingEof,
-            BinaryOpening<Option<BinaryWordClaim>, Option<PrimeGroupClaim>>,
+            BinaryOpening<Option<BinaryWordClaim>, Vec<PrimeGroupClaim>>,
         ),
         AkitaError,
     > {
@@ -79,7 +79,7 @@ where
             };
             Ok(BinaryOpening::from_authenticated_readings(
                 claim.clone(),
-                prime.claim().cloned(),
+                prime.claims().to_vec(),
                 binding,
             ))
         });

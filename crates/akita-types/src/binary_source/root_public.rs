@@ -13,6 +13,7 @@ use super::{
     BinaryScalarChallengeSource, BinaryTerminalClaim, OrdinaryNativeRootPlan,
 };
 use crate::native_root_relation::NativeRootWeights;
+use crate::opening_claims::OrdinaryPointEvaluation;
 use crate::AkitaSetupDescriptor;
 use std::ops::Range;
 
@@ -73,6 +74,7 @@ pub struct BinaryRootPublic {
     setup: AkitaSetupDescriptor,
     plan: BinaryRootWitnessPlan,
     ordinary: Option<OrdinaryNativeRootPlan>,
+    ordinary_points: usize,
     negative_binary_addresses: Vec<usize>,
     batch_count: usize,
 }
@@ -128,7 +130,11 @@ impl BinaryRootPublic {
         let batch_count = checked::sum([
             plan.coefficient_batch_count()?,
             if claim.is_some() { 2 } else { 0 },
-            checked::product([2, prime.claim().map_or(0, |claim| claim.evaluations.len())])
+            checked::product([
+                2,
+                checked::sum(prime.claims().iter().map(|claim| claim.evaluations.len()))
+                    .ok_or(AkitaError::InvalidProof)?,
+            ])
                 .ok_or(AkitaError::InvalidProof)?,
             manifest.b_rows(),
             manifest
@@ -147,9 +153,33 @@ impl BinaryRootPublic {
             setup: setup.clone(),
             plan,
             ordinary,
+            ordinary_points: 1,
             negative_binary_addresses,
             batch_count,
         })
+    }
+
+    /// Select one or two ordinary readings without changing the witness geometry.
+    pub fn with_ordinary_point_count(mut self, points: usize) -> Result<Self, AkitaError> {
+        if !(1..=2).contains(&points)
+            || (points == 2 && self.manifest.field_profile() != BinaryFieldProfile::P64)
+        {
+            return Err(AkitaError::InvalidInput(
+                "ordinary root supports one point or two p64 extension points".into(),
+            ));
+        }
+        let ordinary = self.ordinary.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let owners = ordinary.profile().group.num_polynomials();
+        let previous =
+            checked::product([self.ordinary_points - 1, owners]).ok_or(AkitaError::InvalidProof)?;
+        let additional = checked::product([points - 1, owners]).ok_or(AkitaError::InvalidProof)?;
+        self.batch_count = self
+            .batch_count
+            .checked_sub(previous)
+            .and_then(|count| checked::sum([count, additional]))
+            .ok_or(AkitaError::InvalidProof)?;
+        self.ordinary_points = points;
+        Ok(self)
     }
 
     pub fn plan(&self) -> &BinaryRootWitnessPlan {
@@ -184,7 +214,17 @@ impl BinaryRootPublic {
             d.end,
             self.ordinary
                 .as_ref()
-                .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
+                .map(|ordinary| {
+                    checked::sum([
+                        ordinary.linear_batch_count(),
+                        checked::product([
+                            self.ordinary_points - 1,
+                            ordinary.profile().group.num_polynomials(),
+                        ])?,
+                    ])
+                })
+                .unwrap_or(Some(0))
+                .ok_or(AkitaError::InvalidProof)?,
         )
         .ok_or(AkitaError::InvalidProof)?;
         let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
@@ -193,9 +233,8 @@ impl BinaryRootPublic {
             negative_bits.end,
             checked::product([
                 2,
-                self.prime
-                    .claim()
-                    .map_or(0, |claim| claim.evaluations.len()),
+                checked::sum(self.prime.claims().iter().map(|claim| claim.evaluations.len()))
+                    .ok_or(AkitaError::InvalidProof)?,
             ])
             .ok_or(AkitaError::InvalidProof)?,
         )
@@ -276,7 +315,7 @@ impl BinaryRootPublic {
         projected_values: &[i128],
         commitment: &[E],
         d_payload: &[E],
-        ordinary_claim: Option<(&[E], E, &[E])>,
+        ordinary_claim: Option<(&[OrdinaryPointEvaluation<'_, E>], &[E])>,
         matrix: Option<super::BinaryAOperand<'_, E>>,
     ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
         if batches.len() != self.batch_count {
@@ -323,17 +362,45 @@ impl BinaryRootPublic {
         let ordinary_weights = || {
             let _span = tracing::info_span!("binary_root_weights_ordinary").entered();
             match (&self.ordinary, ordinary_claim) {
-                (Some(ordinary), Some((point, evaluation, payload))) => ordinary
-                    .linear_weights(
+                (Some(ordinary), Some((points, payload))) => {
+                    if points.len() != self.ordinary_points {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let first = points.first().ok_or(AkitaError::InvalidProof)?;
+                    let rows = batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?;
+                    let (first_rows, extra_rows) = rows
+                        .split_at_checked(ordinary.linear_batch_count())
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let first_weights = ordinary.linear_weights(
                         self.plan.repacking(),
                         &self.setup,
-                        point,
-                        core::slice::from_ref(&evaluation),
+                        first.point,
+                        first.evaluations,
                         payload,
                         alpha,
-                        batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
+                        first_rows,
+                    )?;
+                    let Some(second) = points.get(1) else {
+                        return Ok(Some(first_weights));
+                    };
+                    if second.point == first.point {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    NativeRootWeights::merge(
+                        self.plan.repacking().domain_len(),
+                        [
+                            first_weights,
+                            ordinary.evaluation_weights(
+                                self.plan.repacking(),
+                                second.point,
+                                second.evaluations,
+                                extra_rows,
+                            )?,
+                        ],
+                        E::zero(),
                     )
-                    .map(Some),
+                    .map(Some)
+                }
                 (None, None) => Ok(None),
                 _ => Err(AkitaError::InvalidProof),
             }
