@@ -18,10 +18,12 @@ pub enum TranscriptEvent {
 
 // Padding checks can draw millions of challenges in one opening, and the
 // caller's diagnostic log can span many openings. Keep consecutive challenge
-// groups as lossless runs; expand only when a caller requests the event list.
+// groups and repeated same-site blocks as lossless runs; expand only when a
+// caller requests the event list.
 struct ContextRun {
     first: ProtocolContextRecord,
     last_group: u32,
+    repetitions: usize,
 }
 
 impl ContextRun {
@@ -29,11 +31,25 @@ impl ContextRun {
         Self {
             last_group: ProtocolSiteId::from_bytes(first.site_id).group,
             first,
+            repetitions: 1,
         }
     }
 
     fn extend(&mut self, record: ProtocolContextRecord) -> bool {
         if self.first.kind != ProtocolMessageKind::Challenge as u32 {
+            return false;
+        }
+        let first_group = ProtocolSiteId::from_bytes(self.first.site_id).group;
+        if self.last_group == first_group && record == self.first {
+            let Some(repetitions) = self.repetitions.checked_add(1) else {
+                return false;
+            };
+            self.repetitions = repetitions;
+            return true;
+        }
+        // A run is either consecutive groups or repetitions of one context.
+        // Switching shape starts a new run without losing either boundary.
+        if self.repetitions != 1 {
             return false;
         }
         let Some(group) = self.last_group.checked_add(1) else {
@@ -54,12 +70,15 @@ impl ContextRun {
 
     fn events(&self) -> impl Iterator<Item = TranscriptEvent> + '_ {
         let mut site = ProtocolSiteId::from_bytes(self.first.site_id);
-        (site.group..=self.last_group).map(move |group| {
+        (site.group..=self.last_group).flat_map(move |group| {
             site.group = group;
-            TranscriptEvent::Context(ProtocolContextRecord {
-                site_id: site.to_bytes(),
-                ..self.first
-            })
+            std::iter::repeat_n(
+                TranscriptEvent::Context(ProtocolContextRecord {
+                    site_id: site.to_bytes(),
+                    ..self.first
+                }),
+                self.repetitions,
+            )
         })
     }
 }
@@ -165,17 +184,23 @@ mod tests {
 
     #[test]
     fn million_consecutive_challenges_retain_one_run() {
-        clear_thread_events();
-        for group in 0..1_000_000 {
-            record_context(challenge(group));
+        for repeated in [false, true] {
+            clear_thread_events();
+            for group in 0..1_000_000 {
+                record_context(challenge(if repeated { 0 } else { group }));
+            }
+            THREAD_EVENTS.with(|events| {
+                let events = events.borrow();
+                assert_eq!(events.len(), 1);
+                assert_eq!(events[0].first, challenge(0));
+                assert_eq!(events[0].last_group, if repeated { 0 } else { 999_999 });
+                assert_eq!(events[0].repetitions, if repeated { 1_000_000 } else { 1 });
+                // Another test may have retained the mixed-run fixture's
+                // small allocation on this worker before clear_thread_events.
+                assert!(events.capacity() <= 16);
+                assert_eq!(events[0].events().count(), 1_000_000);
+            });
         }
-        THREAD_EVENTS.with(|events| {
-            let events = events.borrow();
-            assert_eq!(events.len(), 1);
-            assert_eq!(events[0].first, challenge(0));
-            assert_eq!(events[0].last_group, 999_999);
-            assert!(events.capacity() < 16);
-        });
         clear_thread_events();
     }
 
@@ -197,6 +222,10 @@ mod tests {
             challenge(u32::MAX),
             challenge(0),
             challenge(1),
+            challenge(1),
+            challenge(1),
+            challenge(u32::MAX),
+            challenge(u32::MAX),
         ];
         for record in records {
             record_context(record);
@@ -205,7 +234,7 @@ mod tests {
             thread_events(),
             records.map(TranscriptEvent::Context).to_vec()
         );
-        THREAD_EVENTS.with(|events| assert_eq!(events.borrow().len(), 7));
+        THREAD_EVENTS.with(|events| assert_eq!(events.borrow().len(), 9));
         clear_thread_events();
     }
 
@@ -225,7 +254,7 @@ mod tests {
                 site_coordinate => {
                     // Include group itself: a skipped group must start a run.
                     let offset = (site_coordinate - 6) * 4;
-                    second.site_id[offset] ^= 1;
+                    second.site_id[offset] ^= 4;
                 }
             }
             record_context(first);
@@ -278,16 +307,30 @@ mod tests {
     #[test]
     fn prover_and_verifier_record_identical_proof_stream_contexts() {
         let record = ProtocolContextRecord::new([7; 32], 3, 2, 64, 32);
+        let records = [
+            record,
+            challenge(0),
+            challenge(0),
+            challenge(0),
+            challenge(1),
+        ];
 
         clear_thread_events();
         let mut prover = new_prover_channel(b"logging");
-        prover_context(&mut prover, record);
+        for record in records {
+            prover_context(&mut prover, record);
+        }
         let prover_events = thread_events();
 
         clear_thread_events();
         let mut verifier = new_verifier_channel(b"logging", &[]);
-        verifier_context(&mut verifier, record);
+        for record in records {
+            verifier_context(&mut verifier, record);
+        }
         assert_eq!(thread_events(), prover_events);
-        assert_eq!(prover_events, vec![TranscriptEvent::Context(record)]);
+        assert_eq!(
+            prover_events,
+            records.map(TranscriptEvent::Context).to_vec()
+        );
     }
 }
