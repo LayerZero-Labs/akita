@@ -433,6 +433,7 @@ where
         })?;
     let mut linear = CompressionRelationWeights {
         events: Vec::new(),
+        recompositions: Vec::new(),
         alpha_powers: scalar_powers(alpha, maximum_dimension),
         coefficient_block_len,
         physical_field_len,
@@ -617,10 +618,17 @@ mod tests {
                     field_bits * (span.map().ring_dimension() / successor.map().ring_dimension());
             }
         }
-        assert_eq!(program.linear.events.len(), expected_linear_events);
-        assert!(program
-            .linear
-            .events
+        let mut expanded_events = program.linear.events.clone();
+        for recomposition in &program.linear.recompositions {
+            recomposition
+                .for_each_event(|event| {
+                    expanded_events.push(event);
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(expanded_events.len(), expected_linear_events);
+        assert!(expanded_events
             .iter()
             .all(|event| { event.physical_start + event.coefficient_count <= physical_field_len }));
 
@@ -693,6 +701,7 @@ mod tests {
         let program_for = |span: &CompressionWitnessSpan| ReducedCompressionRelationWeights {
             linear: CompressionRelationWeights {
                 events: Vec::new(),
+                recompositions: Vec::new(),
                 alpha_powers: Vec::new(),
                 coefficient_block_len: 1,
                 physical_field_len: 2048,

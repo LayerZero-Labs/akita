@@ -1,6 +1,9 @@
 //! Shared compact F/H relation weights for prover materialization and verifier evaluation.
 
+mod recomposition;
 mod reduced;
+
+use recomposition::Recomposition;
 
 pub use reduced::{build_reduced_compression_relation_weights, ReducedCompressionRelationWeights};
 
@@ -43,6 +46,7 @@ struct EvaluatedCompressionMatrix<E: Field> {
 #[derive(Clone, Debug)]
 pub struct CompressionRelationWeights<E: Field> {
     events: Vec<CompressionRelationEvent<E>>,
+    recompositions: Vec<Recomposition<E>>,
     alpha_powers: Vec<E>,
     coefficient_block_len: usize,
     physical_field_len: usize,
@@ -195,7 +199,7 @@ impl<E: Field> CompressionRelationWeights<E> {
                 actual: weights.len(),
             });
         }
-        for event in &self.events {
+        let mut accumulate = |event: &CompressionRelationEvent<E>| -> Result<(), AkitaError> {
             let alpha = self
                 .alpha_powers
                 .get(
@@ -217,6 +221,13 @@ impl<E: Field> CompressionRelationWeights<E> {
             for (weight, &power) in target.iter_mut().zip(alpha) {
                 *weight += event.scalar * power;
             }
+            Ok(())
+        };
+        for event in &self.events {
+            accumulate(event)?;
+        }
+        for recomposition in &self.recompositions {
+            recomposition.for_each_event(|event| accumulate(&event))?;
         }
         Ok(())
     }
@@ -234,6 +245,16 @@ impl<E: Field> CompressionRelationWeights<E> {
     pub fn into_sparse_entries(mut self) -> Result<Vec<(usize, E)>, AkitaError> {
         /// Coefficients per parallel task, rounded up to whole clusters.
         const TASK_COEFFICIENTS: usize = 1 << 14;
+        for recomposition in std::mem::take(&mut self.recompositions) {
+            recomposition.for_each_event(|event| {
+                self.push(
+                    event.physical_start,
+                    event.coefficient_count,
+                    event.alpha_exponent_start,
+                    event.scalar,
+                )
+            })?;
+        }
         self.events
             .sort_unstable_by_key(|event| event.physical_start);
         // `push` bounds every event inside the physical domain, so these
@@ -312,6 +333,13 @@ impl<E: Field> CompressionRelationWeights<E> {
                 actual: point.len(),
             });
         }
+        let _search = akita_error::experiment_scope("search/compression_weights");
+        let mut families = Vec::new();
+        for recomposition in &self.recompositions {
+            recomposition.append_families(&self.alpha_powers, &mut families)?;
+        }
+        let recomposed =
+            eval_boolean_pair_tensor_families::<_, false, false>(point, &[], &families)?;
         let mut fallback_equality = None;
         let mut low_factor_cache = Vec::new();
         let mut high_equality_cache = Vec::<(usize, OffsetEqWindow<E>)>::new();
@@ -417,7 +445,7 @@ impl<E: Field> CompressionRelationWeights<E> {
             }
             evaluation += E::sum_of_products(&terms[..batch.len()]);
         }
-        Ok(evaluation)
+        Ok(evaluation + recomposed)
     }
 }
 
@@ -437,42 +465,65 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + ExtField<F>,
 {
-    if !source_ring_dim.is_multiple_of(digit_ring_dim)
+    if digit_ring_dim == 0
+        || !source_ring_dim.is_multiple_of(digit_ring_dim)
         || source_row_count.checked_mul(source_ring_dim) != Some(source_coefficients)
     {
         return Err(AkitaError::InvalidSetup(
             "compression recomposition geometry is malformed".into(),
         ));
     }
-    for (bit, power) in gadget_row_scalars::<F>(field_bits, 1)
-        .into_iter()
-        .enumerate()
-    {
-        for source_row in 0..source_row_count {
-            let row_weight = *row_weights
-                .get(source_row_start + source_row)
-                .ok_or_else(|| {
-                    AkitaError::Internal(
-                        "compression source row exceeds the generated row weight table".into(),
-                    )
-                })?;
-            for coefficient_start in (0..source_ring_dim).step_by(digit_ring_dim) {
-                let physical_start = span_start
-                    .checked_add(bit * source_coefficients)
-                    .and_then(|start| start.checked_add(source_row * source_ring_dim))
-                    .and_then(|start| start.checked_add(coefficient_start))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("compression witness offset overflow".into())
-                    })?;
-                weights.push(
-                    physical_start,
-                    digit_ring_dim,
-                    coefficient_start,
-                    -(row_weight * E::lift_base(power)),
-                )?;
-            }
-        }
+    if source_row_count == 0 || field_bits == 0 {
+        return Ok(());
     }
+    let row_end = source_row_start
+        .checked_add(source_row_count)
+        .ok_or(AkitaError::InvalidProof)?;
+    let rows = row_weights
+        .get(source_row_start..row_end)
+        .ok_or(AkitaError::InvalidProof)?;
+    let end = field_bits
+        .checked_mul(source_coefficients)
+        .and_then(|length| span_start.checked_add(length))
+        .ok_or(AkitaError::InvalidProof)?;
+    if !source_ring_dim.is_power_of_two()
+        || !digit_ring_dim.is_power_of_two()
+        || !span_start.is_multiple_of(weights.coefficient_block_len)
+        || !digit_ring_dim.is_multiple_of(weights.coefficient_block_len)
+        || source_ring_dim > weights.alpha_powers.len()
+        || end > weights.physical_field_len
+    {
+        return Err(AkitaError::InvalidSetup(
+            "compression recomposition exceeds its checked domain".into(),
+        ));
+    }
+    let powers = gadget_row_scalars::<F>(field_bits, 1);
+    let bit_axis = if field_bits.is_power_of_two() {
+        let factors = (0..field_bits.trailing_zeros() as usize)
+            .map(|bit| {
+                let power = checked::pow2(bit)
+                    .and_then(|index| powers.get(index))
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)?;
+                Ok([E::one(), E::lift_base(power)])
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        EqPairTensorAxis::bit_product(source_coefficients, 0, factors)?
+    } else {
+        EqPairTensorAxis::dense(
+            source_coefficients,
+            0,
+            powers.into_iter().map(E::lift_base).collect::<Vec<_>>(),
+        )
+    };
+    weights.recompositions.push(Recomposition {
+        start: span_start,
+        source_coefficients,
+        ring_dimension: source_ring_dim,
+        digit_ring_dimension: digit_ring_dim,
+        row_weights: rows.to_vec(),
+        bit_axis,
+    });
     Ok(())
 }
 
@@ -682,6 +733,7 @@ where
         })?;
     let mut weights = CompressionRelationWeights {
         events: Vec::new(),
+        recompositions: Vec::new(),
         alpha_powers: scalar_powers(alpha, maximum_dimension),
         coefficient_block_len,
         physical_field_len,
@@ -816,6 +868,7 @@ mod tests {
         for event_count in [0, 1, 3, 31, 32, 33, 64, 65] {
             let mut weights = CompressionRelationWeights {
                 events: Vec::new(),
+                recompositions: Vec::new(),
                 alpha_powers: (1..=16).map(F::from_u64).collect(),
                 coefficient_block_len: 2,
                 physical_field_len: 16,
@@ -845,6 +898,7 @@ mod tests {
         let physical_field_len = 1 << 16;
         let mut weights = CompressionRelationWeights {
             events: Vec::new(),
+            recompositions: Vec::new(),
             alpha_powers: (1..=4096).map(F::from_u64).collect(),
             coefficient_block_len: 8,
             physical_field_len,
@@ -873,6 +927,63 @@ mod tests {
             .filter(|(_, weight)| !weight.is_zero())
             .collect::<Vec<_>>();
         assert_eq!(weights.into_sparse_entries().unwrap(), expected);
+    }
+
+    #[test]
+    fn factored_recomposition_matches_bit_definition_and_sparse_entries() {
+        for alpha in [F::zero(), F::one(), F::from_u64(17)] {
+            for (start, rows, ring) in [(2, 3, 16), (64, 2, 32)] {
+                let gamma = [F::from_u64(11), F::zero(), F::from_u64(19)];
+                let mut weights = CompressionRelationWeights {
+                    events: Vec::new(),
+                    recompositions: Vec::new(),
+                    alpha_powers: scalar_powers(alpha, 64),
+                    coefficient_block_len: 2,
+                    physical_field_len: 1 << 14,
+                };
+                push_recomposition::<F, F>(
+                    &mut weights,
+                    start,
+                    2,
+                    rows * ring,
+                    ring,
+                    0,
+                    rows,
+                    128,
+                    &gamma,
+                )
+                .unwrap();
+                assert!(weights.events.is_empty());
+                let mut expected = vec![F::zero(); 1 << 14];
+                let mut bit_weight = F::one();
+                for bit in 0..128 {
+                    for row in 0..rows {
+                        let mut coefficient_weight = F::one();
+                        for coefficient in 0..ring {
+                            expected[start + bit * rows * ring + row * ring + coefficient] -=
+                                gamma[row] * bit_weight * coefficient_weight;
+                            coefficient_weight *= alpha;
+                        }
+                    }
+                    bit_weight *= F::from_u64(2);
+                }
+                let point = (0..14)
+                    .map(|bit| F::from_u64((bit + 3) as u64))
+                    .collect::<Vec<_>>();
+                assert_eq!(weights.materialize_dense().unwrap(), expected);
+                assert_eq!(
+                    weights.evaluate_at_point(&point).unwrap(),
+                    multilinear_eval(&expected, &point).unwrap()
+                );
+                let sparse = expected
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(_, weight)| !weight.is_zero())
+                    .collect::<Vec<_>>();
+                assert_eq!(weights.into_sparse_entries().unwrap(), sparse);
+            }
+        }
     }
 
     #[test]
