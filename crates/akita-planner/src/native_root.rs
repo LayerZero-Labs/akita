@@ -21,7 +21,7 @@ pub fn find_native_root_schedule(
     seed: &ResolvedScheduleRow,
     transition: NativeRootTransition,
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
+    ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError> + Sync,
 ) -> Result<FoldSchedule, AkitaError> {
     akita_schedules::validate_policy(policy)?;
     if !policy.recursive_setup_planning || policy.chunks_at_level(1) != 1 {
@@ -76,8 +76,8 @@ pub fn find_native_root_schedule(
             natural_len: transition.setup_prefix_natural_cells(),
         },
     };
-    let mut memo = ScheduleMemo::new();
-    let suffix = derive_selected_suffix_schedule(&ctx, &mut memo, state, 0, QuerySearch::Root(0))?;
+    let memo = ScheduleMemo::new();
+    let suffix = derive_selected_suffix_schedule(&ctx, &memo, state, 0, QuerySearch::Root(0))?;
     let best =
         select_complete_candidate(policy, suffix.setup_candidates(), None)?.ok_or_else(|| {
             AkitaError::UnsupportedSchedule(

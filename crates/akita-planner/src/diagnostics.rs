@@ -1,6 +1,8 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use akita_params::{CommitmentRingDims, RingRelationMode};
@@ -228,131 +230,138 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
     }
 }
 
+/// One saturating event counter, shared by the search's worker threads.
+#[derive(Default)]
+struct Counter(AtomicUsize);
+
+impl Counter {
+    fn add(&self, amount: usize) {
+        // An `Err` means the counter is already saturated.
+        let _ = self
+            .0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                count.checked_add(amount).or(Some(usize::MAX))
+            });
+    }
+
+    fn max(&self, value: usize) {
+        self.0.fetch_max(value, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// Planner counters. The search's worker threads share one instance, so
+/// every field is atomic or locked.
 #[derive(Default)]
 pub(crate) struct PlannerDiagnostics {
-    suffix_dp_time: Cell<Duration>,
-    final_materialization_time: Cell<Duration>,
-    descriptor_time: Cell<Duration>,
-    descriptor_builds: Cell<usize>,
-    suffix_calls: Cell<usize>,
-    memo_hits: Cell<usize>,
-    memo_misses: Cell<usize>,
-    relation_transitions: [Cell<usize>; RELATION_MODE_COUNT],
-    reduced_transition_rejections: [Cell<usize>; REDUCED_REJECTION_COUNT],
-    suffix_calls_by_relation_phase: [Cell<usize>; RELATION_PHASE_COUNT],
-    memo_hits_by_relation_phase: [Cell<usize>; RELATION_PHASE_COUNT],
-    memo_misses_by_relation_phase: [Cell<usize>; RELATION_PHASE_COUNT],
-    peak_memo_entries: Cell<usize>,
-    peak_direct_memo_entries: Cell<usize>,
-    peak_prefixed_memo_entries: Cell<usize>,
-    completed_states: Cell<usize>,
-    generated_candidates: Cell<usize>,
-    retained_candidates: Cell<usize>,
-    retained_frontier_candidates: Cell<usize>,
-    peak_state_frontier_candidates: Cell<usize>,
-    setup_prefix_cache_hits: Cell<usize>,
-    setup_prefix_cache_misses: Cell<usize>,
-    guided_direct_edge_prunes: Cell<usize>,
-    setup_budget_passes: RefCell<Vec<SetupBudgetPass>>,
-    selected: RefCell<Option<SelectedScheduleDiagnostics>>,
+    suffix_dp_time: Mutex<Duration>,
+    final_materialization_time: Mutex<Duration>,
+    descriptor_time: Mutex<Duration>,
+    descriptor_builds: Counter,
+    suffix_calls: Counter,
+    memo_hits: Counter,
+    memo_misses: Counter,
+    relation_transitions: [Counter; RELATION_MODE_COUNT],
+    reduced_transition_rejections: [Counter; REDUCED_REJECTION_COUNT],
+    suffix_calls_by_relation_phase: [Counter; RELATION_PHASE_COUNT],
+    memo_hits_by_relation_phase: [Counter; RELATION_PHASE_COUNT],
+    memo_misses_by_relation_phase: [Counter; RELATION_PHASE_COUNT],
+    peak_memo_entries: Counter,
+    peak_direct_memo_entries: Counter,
+    peak_prefixed_memo_entries: Counter,
+    completed_states: Counter,
+    generated_candidates: Counter,
+    retained_candidates: Counter,
+    retained_frontier_candidates: Counter,
+    peak_state_frontier_candidates: Counter,
+    setup_prefix_cache_hits: Counter,
+    setup_prefix_cache_misses: Counter,
+    guided_direct_edge_prunes: Counter,
+    setup_budget_passes: Mutex<Vec<SetupBudgetPass>>,
+    selected: Mutex<Option<SelectedScheduleDiagnostics>>,
+}
+
+fn add_duration(total: &Mutex<Duration>, elapsed: Duration) {
+    let mut total = total.lock().unwrap_or_else(PoisonError::into_inner);
+    *total = total.saturating_add(elapsed);
+}
+
+fn duration(total: &Mutex<Duration>) -> Duration {
+    *total.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl PlannerDiagnostics {
     pub(crate) fn add_suffix_dp_time(&self, elapsed: Duration) {
-        self.suffix_dp_time
-            .set(self.suffix_dp_time.get().saturating_add(elapsed));
+        add_duration(&self.suffix_dp_time, elapsed);
     }
 
     pub(crate) fn add_final_materialization_time(&self, elapsed: Duration) {
-        self.final_materialization_time.set(
-            self.final_materialization_time
-                .get()
-                .saturating_add(elapsed),
-        );
+        add_duration(&self.final_materialization_time, elapsed);
     }
 
     pub(crate) fn record_descriptor(&self, elapsed: Duration) {
-        self.descriptor_builds
-            .set(self.descriptor_builds.get().saturating_add(1));
-        self.descriptor_time
-            .set(self.descriptor_time.get().saturating_add(elapsed));
+        self.descriptor_builds.add(1);
+        add_duration(&self.descriptor_time, elapsed);
     }
 
     pub(crate) fn record_suffix_call(&self, phase: RingRelationPhase) {
-        self.suffix_calls
-            .set(self.suffix_calls.get().saturating_add(1));
-        let counter = &self.suffix_calls_by_relation_phase[relation_phase_index(phase)];
-        counter.set(counter.get().saturating_add(1));
+        self.suffix_calls.add(1);
+        self.suffix_calls_by_relation_phase[relation_phase_index(phase)].add(1);
     }
 
     pub(crate) fn record_memo_result(&self, phase: RingRelationPhase, hit: bool) {
-        let counter = if hit {
-            &self.memo_hits
+        let (counter, phase_counter) = if hit {
+            (
+                &self.memo_hits,
+                &self.memo_hits_by_relation_phase[relation_phase_index(phase)],
+            )
         } else {
-            &self.memo_misses
+            (
+                &self.memo_misses,
+                &self.memo_misses_by_relation_phase[relation_phase_index(phase)],
+            )
         };
-        counter.set(counter.get().saturating_add(1));
-        let phase_counter = if hit {
-            &self.memo_hits_by_relation_phase[relation_phase_index(phase)]
-        } else {
-            &self.memo_misses_by_relation_phase[relation_phase_index(phase)]
-        };
-        phase_counter.set(phase_counter.get().saturating_add(1));
+        counter.add(1);
+        phase_counter.add(1);
     }
 
     pub(crate) fn record_relation_domain(&self, domain: RelationSearchDomain) {
         for transition in domain.transitions() {
-            let counter = &self.relation_transitions[relation_mode_index(*transition)];
-            counter.set(counter.get().saturating_add(1));
+            self.relation_transitions[relation_mode_index(*transition)].add(1);
         }
     }
 
     pub(crate) fn record_reduced_rejection(&self, reason: ReducedTransitionRejection) {
-        let counter = &self.reduced_transition_rejections[reduced_rejection_index(reason)];
-        counter.set(counter.get().saturating_add(1));
+        self.reduced_transition_rejections[reduced_rejection_index(reason)].add(1);
     }
 
     pub(crate) fn record_memo_occupancy(&self, total: usize, direct: usize, prefixed: usize) {
-        self.peak_memo_entries
-            .set(self.peak_memo_entries.get().max(total));
-        self.peak_direct_memo_entries
-            .set(self.peak_direct_memo_entries.get().max(direct));
-        self.peak_prefixed_memo_entries
-            .set(self.peak_prefixed_memo_entries.get().max(prefixed));
+        self.peak_memo_entries.max(total);
+        self.peak_direct_memo_entries.max(direct);
+        self.peak_prefixed_memo_entries.max(prefixed);
     }
 
     pub(crate) fn record_candidates(&self, generated: usize, retained: usize) {
-        self.generated_candidates
-            .set(self.generated_candidates.get().saturating_add(generated));
-        self.retained_candidates
-            .set(self.retained_candidates.get().saturating_add(retained));
+        self.generated_candidates.add(generated);
+        self.retained_candidates.add(retained);
     }
 
     pub(crate) fn record_completed_state(&self, frontier_candidates: usize) {
-        self.completed_states
-            .set(self.completed_states.get().saturating_add(1));
-        self.retained_frontier_candidates.set(
-            self.retained_frontier_candidates
-                .get()
-                .saturating_add(frontier_candidates),
-        );
-        self.peak_state_frontier_candidates.set(
-            self.peak_state_frontier_candidates
-                .get()
-                .max(frontier_candidates),
-        );
+        self.completed_states.add(1);
+        self.retained_frontier_candidates.add(frontier_candidates);
+        self.peak_state_frontier_candidates.max(frontier_candidates);
     }
 
     pub(crate) fn record_setup_prefix_cache(&self, hits: usize, misses: usize) {
-        self.setup_prefix_cache_hits
-            .set(self.setup_prefix_cache_hits.get().saturating_add(hits));
-        self.setup_prefix_cache_misses
-            .set(self.setup_prefix_cache_misses.get().saturating_add(misses));
+        self.setup_prefix_cache_hits.add(hits);
+        self.setup_prefix_cache_misses.add(misses);
     }
 
     pub(crate) fn record_guided_direct_edge_prune(&self) {
-        self.guided_direct_edge_prunes
-            .set(self.guided_direct_edge_prunes.get().saturating_add(1));
+        self.guided_direct_edge_prunes.add(1);
     }
 
     /// Candidates generated and descriptors built so far.
@@ -366,11 +375,14 @@ impl PlannerDiagnostics {
     /// Record one root search pass that started at `search_work` `start`.
     pub(crate) fn record_setup_budget_pass(&self, budget: Option<usize>, start: [usize; 2]) {
         let [candidates, descriptors] = self.search_work();
-        self.setup_budget_passes.borrow_mut().push(SetupBudgetPass {
-            budget,
-            generated_candidates: candidates.saturating_sub(start[0]),
-            descriptor_builds: descriptors.saturating_sub(start[1]),
-        });
+        self.setup_budget_passes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(SetupBudgetPass {
+                budget,
+                generated_candidates: candidates.saturating_sub(start[0]),
+                descriptor_builds: descriptors.saturating_sub(start[1]),
+            });
     }
 
     pub(crate) fn record_selected(
@@ -380,40 +392,44 @@ impl PlannerDiagnostics {
         root_output_witness_len: usize,
         folds: Vec<SelectedFoldDiagnostics>,
     ) {
-        self.selected.replace(Some(SelectedScheduleDiagnostics {
-            objective,
-            proof_bytes: metrics.proof_bytes(),
-            setup_field_elements: metrics.setup_field_elements,
-            first_direct_setup_capacity: metrics.first_direct_setup_capacity.field_elements(),
-            first_direct_output_witness_len: metrics.first_direct_output_witness_len,
-            root_output_witness_len,
-            folds,
-        }));
+        *self.selected.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(SelectedScheduleDiagnostics {
+                objective,
+                proof_bytes: metrics.proof_bytes(),
+                setup_field_elements: metrics.setup_field_elements,
+                first_direct_setup_capacity: metrics.first_direct_setup_capacity.field_elements(),
+                first_direct_output_witness_len: metrics.first_direct_output_witness_len,
+                root_output_witness_len,
+                folds,
+            });
     }
 
     fn snapshot(&self) -> PlannerDiagnosticsSnapshot {
         PlannerDiagnosticsSnapshot {
-            suffix_dp_time: self.suffix_dp_time.get(),
-            final_materialization_time: self.final_materialization_time.get(),
-            descriptor_time: self.descriptor_time.get(),
+            suffix_dp_time: duration(&self.suffix_dp_time),
+            final_materialization_time: duration(&self.final_materialization_time),
+            descriptor_time: duration(&self.descriptor_time),
             descriptor_builds: self.descriptor_builds.get(),
             suffix_calls: self.suffix_calls.get(),
             memo_hits: self.memo_hits.get(),
             memo_misses: self.memo_misses.get(),
-            relation_transitions: self.relation_transitions.each_ref().map(Cell::get),
+            relation_transitions: self.relation_transitions.each_ref().map(Counter::get),
             reduced_transition_rejections: self
                 .reduced_transition_rejections
                 .each_ref()
-                .map(Cell::get),
+                .map(Counter::get),
             suffix_calls_by_relation_phase: self
                 .suffix_calls_by_relation_phase
                 .each_ref()
-                .map(Cell::get),
-            memo_hits_by_relation_phase: self.memo_hits_by_relation_phase.each_ref().map(Cell::get),
+                .map(Counter::get),
+            memo_hits_by_relation_phase: self
+                .memo_hits_by_relation_phase
+                .each_ref()
+                .map(Counter::get),
             memo_misses_by_relation_phase: self
                 .memo_misses_by_relation_phase
                 .each_ref()
-                .map(Cell::get),
+                .map(Counter::get),
             peak_memo_entries: self.peak_memo_entries.get(),
             peak_direct_memo_entries: self.peak_direct_memo_entries.get(),
             peak_prefixed_memo_entries: self.peak_prefixed_memo_entries.get(),
@@ -425,8 +441,16 @@ impl PlannerDiagnostics {
             setup_prefix_cache_hits: self.setup_prefix_cache_hits.get(),
             setup_prefix_cache_misses: self.setup_prefix_cache_misses.get(),
             guided_direct_edge_prunes: self.guided_direct_edge_prunes.get(),
-            setup_budget_passes: self.setup_budget_passes.borrow().clone(),
-            selected: self.selected.borrow().clone(),
+            setup_budget_passes: self
+                .setup_budget_passes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            selected: self
+                .selected
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
         }
     }
 }
