@@ -133,7 +133,7 @@ fn translated_a_matches_independent_e64_dense_weights_and_setup_dot_product() {
         // A dense independently sampled setup table exercises every local cell,
         // including padding that must have zero weight.
         let setup = (0..prefix_len)
-            .map(|_| E::from_base(Base::from_u64(rng.gen_range(0..100))))
+            .map(|_| E::lift_base(Base::from_u64(rng.gen_range(0..100))))
             .collect::<Vec<_>>();
         let dot = |weights: &[E]| {
             weights
