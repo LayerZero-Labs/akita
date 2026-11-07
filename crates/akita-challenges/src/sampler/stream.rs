@@ -365,24 +365,38 @@ impl SparseChallengeStream {
         {
             return Err(AkitaError::InvalidProof);
         }
+
+        if self.shell.candidate_bits != 128 {
+            return Err(AkitaError::InvalidProof);
+        }
+        let scratch;
+        let message_words: &[u64] = if message.as_ptr().align_offset(8) == 0 {
+            // The message is whole aligned words; every u64 bit pattern is valid.
+            unsafe { std::slice::from_raw_parts(message.as_ptr().cast::<u64>(), message.len() / 8) }
+        } else {
+            scratch = message
+                .chunks_exact(8)
+                .map(|c| u64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+                .collect::<Vec<_>>();
+            &scratch
+        };
         let (hints, begin) = crate::checked_hint::take(self.count)?;
         let mut output = Vec::with_capacity(self.count);
         for index in 0..self.count {
-            let start = index * self.shell.candidate_bits;
-            let rank = read_bits(message, start + 41, self.shell.rank_bits)?;
+            let low = u64::from_le(message_words[index * 2]);
+            let high = u64::from_le(message_words[index * 2 + 1]);
+            let rank = ((high as u128) << 23) | ((low >> 41) as u128);
             if rank >= self.shell.rank_space {
                 return Err(AkitaError::InvalidProof);
             }
-            let two = rank / self.shell.pm1_rank_space;
-            let one = rank - two * self.shell.pm1_rank_space;
-            let signs = read_bits(message, start, 41)? as u64;
+            let signs = low & ((1u64 << 41) - 1);
             let pos = begin + index * 4;
             let words = [hints[pos], hints[pos + 1], hints[pos + 2], hints[pos + 3]];
             // Upper padding is a canonical zero, so unused bits cannot carry unchecked state.
-            if words.iter().any(|w| w >> 40 != 0) {
+            if (words[0] | words[1] | words[2] | words[3]) >> 40 != 0 {
                 return Err(AkitaError::InvalidProof);
             }
-            crate::checked_hint::validate(&words, one as u64, two as u64, signs)?;
+            crate::checked_hint::validate(&words, rank, signs)?;
             output.push(words);
         }
         Ok(output)
