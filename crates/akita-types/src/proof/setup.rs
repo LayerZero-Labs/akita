@@ -337,21 +337,21 @@ pub fn validate_public_matrix_matches_seed<F: Field + CanonicalEncoding + Valid>
     descriptor: &AkitaSetupDescriptor,
 ) -> Result<(), SerializationError> {
     validate_public_matrix_shape_matches_seed(shared_matrix, descriptor)?;
-    let mut expected = vec![F::zero(); descriptor.setup_seed.derivation.page_field_elements()];
-    for (page_index, coeffs) in shared_matrix
-        .as_field_slice()
-        .chunks(descriptor.setup_seed.derivation.page_field_elements())
-        .enumerate()
-    {
+    let mismatch = cfg_chunks!(
+        shared_matrix.as_field_slice(),
+        descriptor.setup_seed.derivation.page_field_elements()
+    )
+    .enumerate()
+    .any(|(page_index, coeffs)| {
         let mut page_rng = SetupSeedPageXof::new::<F>(&descriptor.setup_seed, page_index);
-        for value in &mut expected[..coeffs.len()] {
-            *value = F::random(&mut page_rng);
-        }
-        if coeffs != &expected[..coeffs.len()] {
-            return Err(SerializationError::InvalidData(
-                "setup shared_matrix does not match public matrix seed".to_string(),
-            ));
-        }
+        coeffs
+            .iter()
+            .any(|value| *value != F::random(&mut page_rng))
+    });
+    if mismatch {
+        return Err(SerializationError::InvalidData(
+            "setup shared_matrix does not match public matrix seed".to_string(),
+        ));
     }
     Ok(())
 }
@@ -1231,9 +1231,33 @@ mod tests {
     #[test]
     fn paged_derivation_golden_vector() {
         let seed = AkitaSetupSeed::shake256_paged_v1([31u8; 32]);
-        fn samples<F: Field + CanonicalEncoding>(seed: &AkitaSetupSeed) -> [u128; 3] {
+        fn samples<F: Field + CanonicalEncoding + Valid>(seed: &AkitaSetupSeed) -> [u128; 3] {
             let page_field_elements = seed.derivation.page_field_elements();
             let derived = derive_public_matrix_prefix::<F>(page_field_elements + 64, seed);
+            let descriptor = AkitaSetupDescriptor {
+                max_num_vars: 8,
+                max_num_batched_polys: 1,
+                num_field_elements: derived.num_field_elements(),
+                setup_seed: seed.clone(),
+            };
+            validate_public_matrix_matches_seed(&derived, &descriptor).unwrap();
+            for index in [
+                0,
+                page_field_elements - 1,
+                page_field_elements,
+                page_field_elements + 63,
+            ] {
+                let mut changed = derived.as_field_slice().to_vec();
+                changed[index] += F::one();
+                let error = validate_public_matrix_matches_seed(
+                    &FlatMatrix::from_flat_data(changed),
+                    &descriptor,
+                )
+                .unwrap_err();
+                assert!(error
+                    .to_string()
+                    .contains("does not match public matrix seed"));
+            }
             let canonical = derived
                 .as_field_slice()
                 .iter()
