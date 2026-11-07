@@ -17,6 +17,13 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
         commitment: Commitment<F>,
         manifest: BinaryCommittedGroupManifest,
     ) -> Result<Self, AkitaError> {
+        profile.validate_frozen_precommit(F::MODULUS_BITS)?;
+        manifest.validate_carrier(&profile)?;
+        if commitment.rows().coeff_len() != manifest.payload_coefficients()? {
+            return Err(AkitaError::InvalidInput(
+                "binary commitment payload shape mismatch".into(),
+            ));
+        }
         Self::with_kind(profile, commitment, CommittedGroupKind::Binary(manifest))
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))
     }
