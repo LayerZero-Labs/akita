@@ -552,3 +552,75 @@ fn empty_groups_make_no_absorb_call() {
         verifier.check_eof().unwrap();
     }
 }
+
+#[test]
+fn indexed_work_matches_public_constructor_namespace() {
+    let mut live = new_verifier_channel(b"indexed constructor fixture", &[]);
+    let prefix = IndexedTranscriptPrefix::capture(&mut live).unwrap();
+    let domain = b"akita/binary-source/multigroup/column/v1";
+    let level = 0u64;
+    let group = 3u64;
+    let response = 129;
+    // The namespace contains only the canonical domain blob, level and group.
+    // Pi is the constructor's instance, and the response is its next message.
+    let mut namespace = (domain.len() as u64).to_le_bytes().to_vec();
+    namespace.extend_from_slice(domain);
+    namespace.extend_from_slice(&level.to_le_bytes());
+    namespace.extend_from_slice(&group.to_le_bytes());
+    let session = spongefish::derive_session_id::<Shake128>(&namespace);
+    let mut reference = VerifierChannel::new(&session, prefix.binding(), &[]);
+    reference.public(&NonceAtom::new(response).word());
+    let expected = reference.verifier_message::<[u8; 32]>();
+    assert_eq!(
+        prefix
+            .work_binding(domain, level, group, response, 0, None)
+            .unwrap(),
+        expected
+    );
+    for (domain, level, group, response) in [
+        (
+            &b"akita/binary-source/multigroup/column/v2"[..],
+            level,
+            group,
+            response,
+        ),
+        (&domain[..], level + 1, group, response),
+        (&domain[..], level, group + 1, response),
+        (&domain[..], level, group, response + 1),
+    ] {
+        assert_ne!(
+            prefix
+                .work_binding(domain, level, group, response, 0, None)
+                .unwrap(),
+            expected
+        );
+    }
+    let mut other = new_verifier_channel(b"different prefix fixture", &[]);
+    let other = IndexedTranscriptPrefix::capture(&mut other).unwrap();
+    assert_ne!(
+        other
+            .work_binding(domain, level, group, response, 0, None)
+            .unwrap(),
+        expected
+    );
+
+    #[cfg(feature = "prover")]
+    {
+        use crate::ProverTranscript;
+        let searched = prefix
+            .search_work(domain, level, group, response, 1)
+            .unwrap();
+        for seed in [[0; 32], [79; 32]] {
+            let mut prover = ProverChannel::new_with_seed(&session, prefix.binding(), seed);
+            prover.public(&NonceAtom::new(response).word());
+            prover.grind(1).unwrap();
+            let mut reader = NargReader::new(prover.narg_string());
+            let work = NonceAtom::from_narg(&mut reader).unwrap().into_inner();
+            assert!(reader.is_empty());
+            assert_eq!(
+                (Some(work), prover.verifier_message::<[u8; 32]>()),
+                searched
+            );
+        }
+    }
+}
