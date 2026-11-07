@@ -507,9 +507,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{One, Prime128OffsetA7F7, Zero};
+    use jolt_field::{One, Prime128Offset801F, Zero};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset801F;
 
     #[derive(Clone, Copy)]
     enum TerminalRowRole {

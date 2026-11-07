@@ -231,7 +231,7 @@ it evaluates a polynomial at many points in the protocol field itself.
 The production `fp128` modulus
 
 \[
-q=2^{128}-2^{32}+22537
+q=2^{128}-1780711455
 \]
 
 was chosen in part because \(q-1\) contains the smooth factor

@@ -221,7 +221,7 @@ mod tests {
     use crate::ring::eval::eval_ring_at_pows;
     use crate::ring::{scalar_powers, CyclotomicRing};
     use jolt_field::{
-        Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring,
+        Ext2, ExtField, FpExt4, One, Prime128Offset801F, Prime32Offset99, Prime64Offset59, Ring,
         Zero,
     };
     use rand::rngs::StdRng;
@@ -301,15 +301,15 @@ mod tests {
             check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 8>(seed + 30);
             check_product_identity::<Prime64Offset59, Ext2<Prime64Offset59>, 16>(seed + 40);
             check_product_identity::<Prime64Offset59, Ext2<Prime64Offset59>, 32>(seed + 50);
-            check_product_identity::<Prime128OffsetA7F7, Prime128OffsetA7F7, 64>(seed + 60);
-            check_product_identity::<Prime128OffsetA7F7, Prime128OffsetA7F7, 128>(seed + 70);
+            check_product_identity::<Prime128Offset801F, Prime128Offset801F, 64>(seed + 60);
+            check_product_identity::<Prime128Offset801F, Prime128Offset801F, 128>(seed + 70);
         }
 
         // This is the complete commitment-dimension admission surface. Keep
         // it synchronized with `akita_params::SUPPORTED_COMMITMENT_RING_DIMS`.
         check_admitted_dimensions!(Prime32Offset99, FpExt4<Prime32Offset99>, 101);
         check_admitted_dimensions!(Prime64Offset59, Ext2<Prime64Offset59>, 201);
-        check_admitted_dimensions!(Prime128OffsetA7F7, Prime128OffsetA7F7, 301);
+        check_admitted_dimensions!(Prime128Offset801F, Prime128Offset801F, 301);
     }
 
     #[test]
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn modulus_roots_do_not_require_division() {
-        type F = Prime128OffsetA7F7;
+        type F = Prime128Offset801F;
         let alpha = crate::fft::primitive_nth_root::<F>(4);
         let coefficients = [F::from_u64(37), F::from_u64(13)];
         let weights = [F::from_u64(41), F::from_u64(19)];
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn sparse_recurrence_matches_dense_recurrence() {
-        type F = Prime128OffsetA7F7;
+        type F = Prime128Offset801F;
         let alpha = F::from_u64(7);
         let mut dense = vec![F::zero(); 64];
         let terms = [(0, F::from_u64(3)), (17, -F::one()), (63, F::from_u64(2))];
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn sparse_recurrence_rejects_malformed_terms() {
-        type F = Prime128OffsetA7F7;
+        type F = Prime128Offset801F;
         let alpha = F::from_u64(7);
         assert!(ResidueKernelPoint::new(alpha, 3).is_err());
         let point = ResidueKernelPoint::new(alpha, 4).unwrap();

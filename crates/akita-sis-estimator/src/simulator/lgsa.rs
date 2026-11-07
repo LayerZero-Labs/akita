@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn lgsa_summary_matches_dense_across_akita_shapes() {
-        let q128 = (BigUint::from(1_u8) << 128) - BigUint::from(4_294_944_759_u64);
+        let q128 = (BigUint::from(1_u8) << 128) - BigUint::from(1_780_711_455_u64);
         let cases = [
             (96_u32, 32_u32, BigUint::from(4_294_967_197_u64)),
             (384, 32, BigUint::from(4_294_967_197_u64)),
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn lgsa_first_vector_is_no_longer_than_gsa_across_akita_shapes() {
-        let q128 = (BigUint::from(1_u8) << 128) - BigUint::from(4_294_944_759_u64);
+        let q128 = (BigUint::from(1_u8) << 128) - BigUint::from(1_780_711_455_u64);
         let cases = [
             (64_u32, 32_i64, BigUint::from(4_294_967_197_u64)),
             (96_u32, 64_i64, BigUint::from(4_294_967_197_u64)),

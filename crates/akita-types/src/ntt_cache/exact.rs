@@ -431,7 +431,7 @@ mod tests {
     fn q128_ifma_rebuild_retains_a_joined_tail_prefix_at_the_planned_width() {
         const D: usize = 64;
         let flat =
-            FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime128OffsetA7F7, D>::zero(); 10]);
+            FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime128Offset801F, D>::zero(); 10]);
         let base = || Ifma52Params::new(IFMA52_PRIMES).expect("IFMA52 parameters");
         let i32_tail = base().with_tail(q128_primes()[0]).expect("i32 tail");
         for (params, needs_tail, tail_bytes) in [
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn q128_ifma_plan_prefers_the_i16_tail_within_its_capacity() {
         const D: usize = 1024;
-        type F = Prime128OffsetA7F7;
+        type F = Prime128Offset801F;
         if !ifma52_cache_enabled::<D>() {
             return;
         }

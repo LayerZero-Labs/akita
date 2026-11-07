@@ -39,7 +39,7 @@ Akita ships configurations over three prime sizes:
 | `fp128` | About 128 bits | The base field itself |
 
 The exact prime belongs to the configuration. For example, the current fp128
-family uses $q = 2^{128} - 2^{32} + 22537$. The [field-arithmetic
+family uses $q = 2^{128} - 1780711455$. The [field-arithmetic
 chapter](./field-arithmetic.md) explains how the production fields are stored,
 reduced, accumulated, and sampled.
 
