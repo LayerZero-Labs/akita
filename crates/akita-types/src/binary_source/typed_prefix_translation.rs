@@ -25,8 +25,7 @@ impl BinaryTypedPrefix {
         root: &RootCoefficientRepacking,
         segment_indices: &[usize],
     ) -> Result<BinaryPrefixTranslation<'a>, AkitaError> {
-        if *self != Self::from_plan(manifest, plan)?
-            || root.domain_len().trailing_zeros() > 32
+        if root.domain_len().trailing_zeros() > 32
             || segment_indices.len() != plan.repacking().segments().len()
             || segment_indices.windows(2).any(|pair| pair[0] >= pair[1])
         {
@@ -40,6 +39,11 @@ impl BinaryTypedPrefix {
                     "translated prefix segment shape mismatch".into(),
                 ));
             }
+        }
+        if *self != Self::from_plan(manifest, plan)? {
+            return Err(AkitaError::InvalidInput(
+                "translated prefix local layout mismatch".into(),
+            ));
         }
         let response_start = root
             .segment_range(*segment_indices.first().ok_or(AkitaError::InvalidProof)?)?
