@@ -86,6 +86,11 @@ impl BinaryPrefixTranslation<'_> {
         prefix_len: usize,
     ) -> Result<TypedPrefixWeights<E>, AkitaError> {
         self.validate_point(root_point)?;
+        if prefix_len as u128 > (1u128 << 32) {
+            return Err(AkitaError::InvalidInput(
+                "translated prefix exceeds domain cap".into(),
+            ));
+        }
         self.local.prover_weight_blocks_at(
             a,
             root_point,
@@ -107,6 +112,11 @@ impl BinaryPrefixTranslation<'_> {
         batches: [&[E]; 2],
     ) -> Result<E, AkitaError> {
         self.validate_point(root_point)?;
+        if point.len() > 32 {
+            return Err(AkitaError::InvalidInput(
+                "translated prefix exceeds domain cap".into(),
+            ));
+        }
         let prefix_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
         self.local.validate_prefix(prefix_len)?;
         self.local.validate_batches(batches)?;

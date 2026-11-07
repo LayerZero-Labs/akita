@@ -423,6 +423,14 @@ fn zero_translation_preserves_all_local_weights_and_rejects_bad_maps() {
         .map(|n| (0..n).map(|_| extension(&mut rng)).collect::<Vec<_>>());
     let refs = [&batches[0][..], &batches[1][..]];
     let alpha = extension(&mut rng);
+    assert!(translated
+        .digit_weight(&[E::one(); 33], &r, alpha, refs)
+        .is_err());
+    if let Some(oversized) = checked::pow2(33) {
+        assert!(translated
+            .prover_weight_blocks(&a, &r, alpha, refs, oversized)
+            .is_err());
+    }
     assert_eq!(
         expand(
             &translated
