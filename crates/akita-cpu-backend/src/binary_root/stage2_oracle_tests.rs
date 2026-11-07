@@ -1,7 +1,6 @@
 //! Stage 2 on block profiles against Stage 2 on the materialized root table.
 
 use super::*;
-use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::{root_weight_fixtures, RootFixtureField as E};
 use jolt_field::{One, Zero};
 
