@@ -106,7 +106,15 @@ impl BinaryCommittedGroupManifest {
     /// D setup for the selected word U and base-coordinate prime planes.
     /// Each role selects its own least rank from its actual compact width.
     pub fn d_label(&self, word: bool, planes: usize) -> Result<SetupStreamLabel, AkitaError> {
-        if planes > self.descriptor.polynomials().len() || (!word && planes == 0) {
+        if planes
+            > checked::product([
+                self.descriptor.polynomials().len(),
+                self.field_profile.extension_degree(),
+            ])
+            .ok_or(AkitaError::InvalidProof)?
+            || !planes.is_multiple_of(self.field_profile.extension_degree())
+            || (!word && planes == 0)
+        {
             return Err(AkitaError::InvalidInput(
                 "invalid binary D selection".into(),
             ));

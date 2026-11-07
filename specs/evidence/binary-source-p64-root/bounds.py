@@ -245,18 +245,32 @@ for n in (162,648):
     print('PERIOD',n,period,period*n)
 print('PRIME_DIGITS',reach(21),reach(22))
 assert 22*162*256 == 912_384 and 22*256*256 == 1_441_792
-assert 5*22*162*256 == 4_561_920 and 5*22*256*256 == 7_208_960
+assert 2*22*162*256 == 1_824_768 and 2*22*256*256 == 2_883_584
+assert 10*22*162*256 == 9_123_840 and 10*22*256*256 == 14_417_920
 
 # Existing q64 table, degree 64, coefficient-difference bound 7, ranks 1..5.
 widths = [296,76_306,4_030_488,106_021_444,1_826_815_994]
 def rank(width):
     return next(i+1 for i,w in enumerate(widths) if width <= w)
-for m,c,n in cases:
-    bw = n*c*3*8*648//64
-    dw = ceildiv(5*22*162*c+n*162*c,64)
-    print('B_D',m,c,n,'Bwidth/rank',bw,rank(bw),'D5wordwidth/rank',dw,rank(dw))
-assert rank(62_208) == 2 and rank(254_803_968) == 5
-assert rank(71_928) == 2 and rank(77_760) == 3
+# Every row of the spec's table: geometry, owners, claims, planes, B width/rank,
+# D width/rank. Single-owner rows have one claim, hence two coordinate planes.
+expected_rows = [
+    (1,2,1,1,2,486,2,228,1),
+    (1,2,4096,5,10,1_990_656,3,21_850,2),
+    (8192,256,1,1,2,62_208,2,29_160,2),
+    (8192,256,10,5,10,622_080,3,149_040,3),
+    (8192,256,4096,5,10,254_803_968,5,2_796_768,3),
+]
+assert [(m,c,owners) for m,c,owners,*_ in expected_rows] == cases
+for m,c,owners,expected_claims,expected_planes,bwidth,brank,dwidth,drank in expected_rows:
+    claims = min(owners, 5)
+    planes = 2*claims
+    bw = owners*c*3*8*648//64
+    dw = ceildiv(planes*22*162*c+owners*162*c,64)
+    assert (claims,planes,bw,rank(bw),dw,rank(dw)) == (
+        expected_claims,expected_planes,bwidth,brank,dwidth,drank)
+    print('B_D',m,c,owners,'claims/planes',claims,planes,
+          'Bwidth/rank',bw,rank(bw),'Dwordwidth/rank',dw,rank(dw))
 
 # Layout costs for word-only root, before optional ordinary preimages.
 for m,c,n in cases:

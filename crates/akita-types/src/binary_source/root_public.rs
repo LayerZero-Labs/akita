@@ -6,7 +6,7 @@ use akita_params::binary_setup::{derive_centered_q_matrix, BinaryFieldProfile};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, Field};
+use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, ExtField, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
@@ -134,7 +134,8 @@ impl BinaryRootPublic {
         let batch_count = checked::sum([
             plan.coefficient_batch_count()?,
             if claim.is_some() { 2 } else { 0 },
-            checked::product([2, prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+            checked::product([2, prime.claim().map_or(0, |claim| claim.evaluations.len())])
+                .ok_or(AkitaError::InvalidProof)?,
             manifest.b_rows(),
             manifest
                 .d_label(claim.is_some(), prime.planes().len())?
@@ -196,7 +197,13 @@ impl BinaryRootPublic {
             .ok_or(AkitaError::InvalidProof)?;
         let prime_rows = checked::range(
             negative_bits.end,
-            checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+            checked::product([
+                2,
+                self.prime
+                    .claim()
+                    .map_or(0, |claim| claim.evaluations.len()),
+            ])
+            .ok_or(AkitaError::InvalidProof)?,
         )
         .ok_or(AkitaError::InvalidProof)?;
         Ok([terminal, b, d, ordinary_rows, negative_bits, prime_rows])
@@ -266,7 +273,7 @@ impl BinaryRootPublic {
     /// `rho` batches the public J rows. For P64, supply empty `rho` and y slices;
     /// the independent coefficient weights come directly from `batches`.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-    pub fn relation<E: Field>(
+    pub fn relation<F: Field, E: ExtField<F>>(
         &self,
         challenges: &Challenges,
         alpha: E,
@@ -305,7 +312,7 @@ impl BinaryRootPublic {
             self.plan
                 .prime_segment()
                 .map(|segment| {
-                    super::prime_plane_relation_weights(
+                    super::prime_plane_relation_weights::<F, E>(
                         self.manifest.descriptor(),
                         &self.prime,
                         self.plan.repacking(),
