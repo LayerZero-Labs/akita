@@ -3,13 +3,12 @@ mod catalog;
 #[path = "claims.rs"]
 mod claims;
 #[path = "config.rs"]
-mod config;
-#[path = "metrics.rs"]
-mod metrics;
+pub(crate) mod config;
 #[path = "native_catalog.rs"]
 mod native_catalog;
 
-use akita_config::TrustedScheduleCatalog;
+use crate::metrics;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::checked;
 use akita_params::binary_setup::BinaryFieldProfile;
@@ -25,7 +24,7 @@ use akita_types::{
     AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 use akita_verifier::SetupPolicy;
-use config::{FullSize, F};
+use config::MeasurementConfig;
 use jolt_field::Ring;
 use jolt_transcript::BytesMsg;
 use serde::{Deserialize, Serialize};
@@ -35,6 +34,11 @@ use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type OwnedGroupClaims<C> = PolynomialGroupClaims<
+    'static,
+    <C as CommitmentConfig>::ExtField,
+    CommittedGroup<<C as CommitmentConfig>::Field>,
+>;
 const PROTOCOL: &[u8] = b"binary-source-full-size-v1";
 
 #[derive(Serialize, Deserialize)]
@@ -44,12 +48,12 @@ struct Fixture {
     contexts: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-pub(super) fn main() -> Result<()> {
+pub(crate) fn main<C: MeasurementConfig>(arguments: Vec<String>) -> Result<()> {
     let mut log = 22usize;
     let mut shape = "binary-and-prime-claims".to_owned();
     let mut phase = "prove".to_owned();
     let mut directory = None;
-    let mut args = std::env::args().skip(1);
+    let mut args = arguments.into_iter();
     while let Some(arg) = args.next() {
         let value = args.next().ok_or("missing argument value")?;
         match arg.as_str() {
@@ -63,6 +67,7 @@ pub(super) fn main() -> Result<()> {
     if ![10, 22, 23].contains(&log)
         || ![
             "binary-claim",
+            "prime-claim",
             "binary-and-prime-claims",
             "binary-and-prime-claims-plus-ordinary",
         ]
@@ -71,14 +76,20 @@ pub(super) fn main() -> Result<()> {
         return Err("invalid measurement geometry".into());
     }
     let directory = directory.ok_or("missing --fixture directory")?;
+    std::fs::create_dir_all(&directory)?;
+    println!("field_profile={:?}", C::PROFILE);
+    if C::PROFILE == BinaryFieldProfile::P64 {
+        println!("production_security_certified=false");
+    }
     let timings = metrics::Timings::default();
     tracing_subscriber::registry().with(timings.clone()).init();
-    let columns = claims::descriptor(log)?.index_map().columns();
+    let columns = claims::descriptor::<C>(log)?.index_map().columns();
     println!("fixture log_carriers={log} shape={shape} columns={columns} rank=3 dev_protocol={} security_claim=false", akita_params::DEV_PROTOCOL);
     let outcome = match phase.as_str() {
-        "prove" => prove(log, &shape, &directory),
-        "verify" => verify(log, &shape, &directory, &timings),
-        "plan" => catalog::plan_only(log, &shape),
+        "prove" => prove::<C>(log, &shape, &directory),
+        "verify" => verify::<C>(log, &shape, &directory, &timings),
+        "plan" if C::PROFILE == BinaryFieldProfile::P128 => catalog::plan_only::<C>(log, &shape),
+        "plan" => native_catalog::build::<C>(log, &shape, &directory).map(|_| ()),
         _ => Err("phase must be prove, verify or plan".into()),
     };
     timings.print(&phase);
@@ -89,16 +100,16 @@ pub(super) fn main() -> Result<()> {
     outcome
 }
 
-fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
+pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let (catalog, key) = {
         let _span = tracing::info_span!("catalog_planning").entered();
-        if log == 10 {
-            catalog::build(log, shape)?
+        if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
+            catalog::build::<C>(log, shape)?
         } else {
-            native_catalog::build(log, shape, directory)?
+            native_catalog::build::<C>(log, shape, directory)?
         }
     };
-    if log == 10 {
+    if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
         std::fs::write(
             directory.join("catalog.aks"),
             catalog.catalog().to_artifact_bytes()?,
@@ -108,7 +119,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         "catalog_digest={}",
         metrics::hex(&catalog.catalog().catalog_digest())
     );
-    let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
+    let scheme = AkitaCommitmentScheme::<C>::new(catalog);
     let selected = scheme.schedules().resolve_key(&key)?;
     let schedule = selected.schedule();
     let profiles = selected.profiles().clone();
@@ -138,7 +149,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         let _span = tracing::info_span!("cold_prover_setup").entered();
         let max_vars = carrier.group.num_vars().max(log);
         let max_polynomials = 1 + usize::from(shape == "binary-and-prime-claims-plus-ordinary");
-        if log == 10 {
+        if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
             scheme.setup_prover(max_vars, max_polynomials)?
         } else {
             // This trusted fixture prepares the typed root prefix explicitly.
@@ -159,19 +170,23 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
             )?
         }
     };
-    let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
-    let descriptor = claims::descriptor(log)?;
+    let backend = Arc::new(CpuBackend::<C::Field, C::ExtField>::new(
+        setup.expanded.clone(),
+    )?);
+    let descriptor = claims::descriptor::<C>(log)?;
     let manifest = BinaryCommittedGroupManifest::with_field_profile(
         descriptor.clone(),
         0,
         &carrier,
-        BinaryFieldProfile::P128,
+        C::PROFILE,
     )?;
     let count = checked::pow2(log).ok_or("carrier count overflow")?;
     let words = claims::words(count);
+    #[cfg(test)]
+    let fault_words = words.clone();
     let claims = {
         let _span = tracing::info_span!("fixture_claim_evaluation").entered();
-        claims::evaluate(log, shape, &words)?
+        claims::evaluate::<C>(log, shape, &words)?
     };
     let committed = {
         let _span = tracing::info_span!("binary_commit").entered();
@@ -190,7 +205,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         let ordinary_count = checked::pow2(ordinary_log).ok_or("ordinary count overflow")?;
         println!("ordinary_source coefficients={ordinary_count}");
         let coefficients = (0..ordinary_count)
-            .map(|i| F::from_u64((i & 1) as u64))
+            .map(|i| C::Field::from_u64((i & 1) as u64))
             .collect::<Vec<_>>();
         let source = backend.import_source(vec![DensePoly::from_field_evals(
             ordinary_log,
@@ -214,9 +229,9 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         &manifest,
         claims.word(&descriptor)?.is_some(),
         claims
-            .prime()
+            .prime::<C>()
             .as_ref()
-            .map_or(0, |prime| prime.evaluations.len()),
+            .map_or(0, |prime| prime.evaluations.len() * C::PROFILE.extension_degree()),
         schedule.recursive_folds[0].params.d_a(),
     )?;
     let later = schedule
@@ -232,7 +247,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     let prefixes = {
         let _span = tracing::info_span!("cold_prefix_preparation").entered();
         let prefixes = backend.prepare_binary_typed_prefixes(&manifest, &typed, &first, &later)?;
-        if log != 10 {
+        if log != 10 || C::PROFILE == BinaryFieldProfile::P64 {
             let ordinary_ids = later
                 .iter()
                 .cloned()
@@ -278,8 +293,8 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         commitments.serialize_compressed(&mut output)?;
         output.flush()?;
     }
-    let groups = groups(log, &claims, &descriptor, &commitments)?;
-    let data = SelectedProverOpeningData::from_committed_claims::<FullSize>(
+    let groups = groups::<C>(&claims, &descriptor, &commitments)?;
+    let data = SelectedProverOpeningData::from_committed_claims::<C>(
         OpeningClaims::from_groups(groups)?,
         handles,
         scheme.schedules(),
@@ -289,10 +304,22 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     akita_transcript::clear_thread_events();
     {
         let _span = tracing::info_span!("prove_complete_opening").entered();
-        let mut registry = akita_prover::BackendRegistry::<FullSize>::new()?;
+        #[cfg(test)]
+        let attacker = C::attacker(
+            backend.clone(),
+            setup.expanded.descriptor().setup_seed.seed,
+            fault_words,
+        );
+        let mut registry = akita_prover::BackendRegistry::<C>::new()?;
+        #[cfg(test)]
+        let root = match &attacker {
+            Some(attacker) => registry.register(attacker, &prefixes)?,
+            None => registry.register(backend.as_ref(), &prefixes)?,
+        };
+        #[cfg(not(test))]
         let root = registry.register(backend.as_ref(), &prefixes)?;
         let mut route = akita_prover::FixedFoldRoute::new(vec![root; schedule.num_fold_levels()]);
-        akita_prover::batched_prove_embedded::<FullSize, _>(
+        akita_prover::batched_prove_embedded::<C, _>(
             setup.expanded.descriptor(),
             scheme.schedules(),
             &registry,
@@ -303,7 +330,12 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         )?;
     }
     akita_transcript::finish_proof_ranges(&prover);
-    metrics::proof(prover.narg_string(), log, true)?;
+    metrics::proof(
+        prover.narg_string(),
+        log,
+        claims.word_point.is_some(),
+        C::PROFILE,
+    )?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
     prover.public_message(&BytesMsg(b"application-suffix"));
     let fixture = Fixture {
@@ -315,23 +347,24 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     Ok(())
 }
 
-fn groups(
-    log: usize,
+fn groups<C: MeasurementConfig>(
     claims: &claims::Claims,
     descriptor: &akita_types::binary_source::BinarySourceDescriptor,
-    commitments: &[CommittedGroup<F>],
-) -> Result<Vec<PolynomialGroupClaims<'static, F, CommittedGroup<F>>>> {
+    commitments: &[CommittedGroup<C::Field>],
+) -> Result<Vec<OwnedGroupClaims<C>>> {
     let binary = commitments.first().ok_or("missing binary commitment")?;
     let mut groups = vec![PolynomialGroupClaims::new_binary_planes(
         binary.clone(),
         claims.word(descriptor)?,
-        claims.prime(),
+        claims.prime::<C>(),
     )?];
     if let Some(ordinary) = commitments.get(1) {
-        let point = (0..log.max(18))
-            .map(|axis| F::from_u64(7 + axis as u64 * 11))
-            .collect::<Vec<_>>();
-        let value = *point.first().ok_or("empty ordinary point")?;
+        let (point, value) = claims.ordinary.as_ref().ok_or("missing ordinary claim")?;
+        let point: Vec<_> = point
+            .iter()
+            .map(|&value| C::ExtField::from_u128(value))
+            .collect();
+        let value = C::ExtField::from_u128(*value);
         groups.push(PolynomialGroupClaims::new(
             point,
             vec![value],
@@ -341,20 +374,25 @@ fn groups(
     Ok(groups)
 }
 
-fn verify(log: usize, shape: &str, directory: &Path, timings: &metrics::Timings) -> Result<()> {
+pub(super) fn verify<C: MeasurementConfig>(
+    log: usize,
+    shape: &str,
+    directory: &Path,
+    timings: &metrics::Timings,
+) -> Result<()> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(directory.join("claims.json"))?)?;
-    let catalog = if log == 10 {
-        TrustedScheduleCatalog::<FullSize>::from_artifact_bytes(
+    let catalog = if log == 10 && C::PROFILE == BinaryFieldProfile::P128 {
+        TrustedScheduleCatalog::<C>::from_artifact_bytes(
             &std::fs::read(directory.join("catalog.aks"))?,
             ChunkedWitnessCfg::default_non_chunked(),
         )?
     } else {
-        native_catalog::load(log, shape, directory)?
+        native_catalog::load::<C>(log, shape, directory)?
     };
-    let scheme = AkitaCommitmentScheme::<FullSize>::new(catalog);
+    let scheme = AkitaCommitmentScheme::<C>::new(catalog);
     let mut setup = {
         let _span = tracing::info_span!("fixture_setup_deserialization").entered();
-        AkitaVerifierSetup::<F>::deserialize_compressed(
+        AkitaVerifierSetup::<C::Field>::deserialize_compressed(
             BufReader::new(std::fs::File::open(directory.join("verifier.bin"))?),
             &(),
         )?
@@ -366,14 +404,14 @@ fn verify(log: usize, shape: &str, directory: &Path, timings: &metrics::Timings)
         )?;
     }
     let verifier = scheme.verifier(setup)?;
-    let commitments = Vec::<CommittedGroup<F>>::deserialize_compressed(
+    let commitments = Vec::<CommittedGroup<C::Field>>::deserialize_compressed(
         BufReader::new(std::fs::File::open(directory.join("commitments.bin"))?),
         &(),
     )?;
-    let descriptor = claims::descriptor(log)?;
+    let descriptor = claims::descriptor::<C>(log)?;
     let proof = std::fs::read(directory.join("proof.bin"))?;
     let once = || -> Result<()> {
-        let owned = groups(log, &fixture.claims, &descriptor, &commitments)?;
+        let owned = groups::<C>(&fixture.claims, &descriptor, &commitments)?;
         let borrowed = owned
             .into_iter()
             .zip(&commitments)
@@ -388,11 +426,22 @@ fn verify(log: usize, shape: &str, directory: &Path, timings: &metrics::Timings)
                 .map(|g| *g.commitment().profile())
                 .collect(),
         };
-        let selection = scheme
-            .schedules()
-            .resolve_profiles(&profiles, 0)?
-            .selection();
-        let statement = GroupBatchStatement::new(selection, claims)?;
+        let row = scheme.schedules().resolve_profiles(&profiles, 0)?;
+        #[cfg(test)]
+        if C::PROFILE == BinaryFieldProfile::P64 {
+            assert!(row.is_native_root());
+            let ordinary = akita_params::GrindingPlan::new(vec![], C::PROFILE.challenge_order()?)?;
+            claims
+                .root_grinding_plan(ordinary.clone(), row.schedule(), row.is_native_root())
+                .unwrap();
+            assert_eq!(
+                claims.root_grinding_plan(ordinary, row.schedule(), false),
+                Err(akita_error::AkitaError::UnsupportedSchedule(
+                    "p64 root requires an explicitly selected native catalog row".into()
+                ))
+            );
+        }
+        let statement = GroupBatchStatement::new(row.selection(), claims)?;
         let mut replay = new_verifier_channel(PROTOCOL, &proof);
         replay.public_message(&BytesMsg(b"application-prefix"));
         let guard = BinaryAReadGuard::forbid();

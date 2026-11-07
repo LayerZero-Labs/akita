@@ -12,7 +12,7 @@
 
 ## Scope and selection
 
-The 64-bit migration is specified in
+The selected 64-bit native-root path is implemented as described in
 [binary-source-p64-root.md](binary-source-p64-root.md).
 Several binary and ordinary groups in one opening are specified in
 [binary-source-multigroup.md](binary-source-multigroup.md).
@@ -32,7 +32,8 @@ extension at runtime. Enabling the feature alone does not select it. Ordinary
 groups retain their existing encoding and protocol path.
 
 This is an experimental arithmetic and protocol fixture, with no security
-claim. It uses `P = 2^128 - 275`, base-field challenges (`E = F`), and the
+claim. The P128 profile described below uses `P = 2^128 - 275`,
+base-field challenges (`E = F`), and the
 Lagrange basis. It admits one binary group first, with at most one ordinary
 group second. A binary group may contain several polynomials. It requires an ordinary successor fold that consumes the typed A setup-prefix
 claim as an ordinary committed group. It does not add a production binary
@@ -4897,3 +4898,13 @@ Baseline executable, N=2^23:
 | Complete proving CPU | 32,066 | 32,623 | 33,333 | 37,020 |
 | Proving heap peak MB, maximum | 5,718 | 5,721 | 5,833 | 5,733 |
 | Prover peak RSS bytes | 8,476,114,944 | 8,462,876,672 | 8,947,924,992 | 8,454,848,512 |
+
+## Implemented P64 selection
+
+The native-catalog P64 path implements the coefficient-quotient ordering in
+[binary-source-p64-root.md](binary-source-p64-root.md). The P128 projection
+construction below remains specific to P128. P64 commits K at order 5, omits
+J/y at order 6, and draws independent E64 coefficient weights at order 7.
+The no-wrap condition uses p, not the extension cardinality. The P64 unit proof
+and complete-schedule security ledger are maintained in that spec. Native-row
+admission validates geometry and the successor; it is not production certification.

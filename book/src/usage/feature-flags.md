@@ -175,3 +175,18 @@ Every policy checks Stage 3 completely; only direct setup evaluations are deferr
 Attach auxiliary archived-proof advice with `SetupClaimAccumulator::with_advice`.
 See [external setup accumulation](../how/recursion.md#external-setup-accumulation)
 for inheritance and final-discharge requirements.
+
+## P64 native research catalogs
+
+The public PCS accepts P64 roots only through an explicitly selected native catalog
+row. Field-pair validation remains separate from catalog admission. Ordinary catalog
+rows cannot admit a P64 root. Native ordinary producers require outer dimension 64.
+
+The `binary_source_full_size` measurement example selects P64 with `--field p64`.
+Its trusted research catalogs live under `crates/akita-pcs/tests/fixtures/`, outside
+production schedule artifacts. The `test-binary-p64` job replays the example in both
+protocol modes, including public-statement, setup, proof and committed-witness faults.
+Catalog freshness is enforced by
+`scripts/binary-source-full-size.sh --field p64 --check-catalogs`:
+every installed case must equal fresh planner output. The gate disables caches and
+never installs files; admission and replay alone are insufficient.

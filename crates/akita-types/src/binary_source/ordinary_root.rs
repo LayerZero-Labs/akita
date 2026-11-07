@@ -41,6 +41,8 @@ pub struct OrdinaryNativeRootPlan {
 }
 
 impl OrdinaryNativeRootPlan {
+    /// Admit the ordinary preimage geometry executed by the current root driver.
+    /// The outer ring must have dimension 64; signed arithmetic plans are separate.
     pub fn new(profile: GroupCommitPhaseParams, first_segment: usize) -> Result<Self, AkitaError> {
         let field = match profile.inner.matrix.sis_modulus_profile() {
             SisModulusProfileId::Q128Offset275 => BinaryFieldProfile::P128,
@@ -62,6 +64,12 @@ impl OrdinaryNativeRootPlan {
             return Err(AkitaError::InvalidSetup(
                 "mixed root requires one ordinary small coefficient source and base-eight image digits".into(),
             ));
+        }
+        let outer_degree = profile.outer.matrix.ring_dimension();
+        if outer_degree != 64 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "mixed root ordinary profile requires outer ring dimension 64; got {outer_degree}"
+            )));
         }
         Self::compile(profile, first_segment, None)
     }
@@ -871,6 +879,10 @@ impl<E: Field> SourceEvaluationWeights<E> {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "ordinary_root_admission_tests.rs"]
+mod admission_tests;
 
 #[cfg(test)]
 #[path = "ordinary_root_reference.rs"]

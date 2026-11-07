@@ -57,7 +57,7 @@ where
     };
     manifest
         .field_profile()
-        .admit_root(akita_params::field_modulus::<F>()?, E::DEGREE)?;
+        .check_field_pair(akita_params::field_modulus::<F>()?, E::DEGREE)?;
     let ordinary = claims.groups().get(1);
     let ordinary_profile = match ordinary {
         Some(group)
@@ -341,6 +341,8 @@ where
             * (witness_eval + E::one());
     drop(relation);
     if replay.output_claim != expected {
+        // Diagnostic only: forged-proof tests attribute rejections to this equation.
+        tracing::debug!(target: "akita_verifier::binary_root_relation", "relation rejected");
         return Err(AkitaError::InvalidProof);
     }
     Ok(FoldVerifyOutput {

@@ -107,13 +107,7 @@ impl BinaryRootPublic {
             prime.planes().len(),
         )?;
         let ordinary = ordinary_profile
-            .map(|profile| {
-                OrdinaryNativeRootPlan::new(
-                    profile,
-                    plan.quotient_segment()
-                        .unwrap_or(plan.repacking().segments().len()),
-                )
-            })
+            .map(|profile| OrdinaryNativeRootPlan::new(profile, plan.ordinary_first_segment()))
             .transpose()?;
         if let Some(ordinary) = &ordinary {
             plan = plan.with_ordinary(ordinary)?;

@@ -291,3 +291,21 @@ commitment, direct witness, or transcript input must be rejected with
 
 Maintainer mirror: [`docs/verifier-contract.md`](../../../docs/verifier-contract.md).
 Historical audit evidence: [`docs/verifier-panic-audit.md`](../../../docs/verifier-panic-audit.md).
+
+## Verifying a selected P64 binary root
+
+Resolve the statement's trusted catalog selection before admitting P64. The
+resolved row must be native, and the paired fields, manifest, ordinary profile
+and typed setup-prefix identity must agree. Derive the witness layout and ranks
+from these validated inputs. Do not infer admission from a feature flag or from
+an untrusted claim about the row type.
+
+The verifier checks the range proof over every physical witness cell, including
+quotient digits and padding. Its common root relation reads the natural
+coefficient addresses and checks the residual minus q times the quotient, word
+and prime readings, and any ordinary preimage/evaluation equations. Stage 3
+then authenticates the typed A/B/D product and passes the extension-valued claim
+to the ordinary successor. No online materialization of the full A matrix is
+required. A failed final root equality returns `AkitaError::InvalidProof`;
+its diagnostic event lets forged-proof tests distinguish this failure from an
+earlier rejection. Diagnostics do not affect acceptance.

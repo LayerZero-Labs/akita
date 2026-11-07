@@ -557,7 +557,7 @@ fn p64_block_draws_and_paired_draws_preserve_stream_positions() {
 }
 
 #[test]
-fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
+fn paired_profiles_bind_exact_challenge_orders() {
     let p64 = BinaryFieldProfile::P64;
     assert_eq!(p64.modulus(), 18_446_744_073_709_551_557);
     assert_eq!(p64.extension_degree(), 2);
@@ -569,9 +569,12 @@ fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
         p64.challenge_order().unwrap(),
         BinaryFieldProfile::P128.challenge_order().unwrap()
     );
-    assert!(
-        matches!(p64.admit_root(p64.modulus(), 2), Err(AkitaError::UnsupportedSchedule(message)) if message.contains("not yet supported"))
-    );
+    p64.check_field_pair(p64.modulus(), 2).unwrap();
+    p64.admit_root(true).unwrap();
+    assert!(matches!(
+        p64.admit_root(false),
+        Err(AkitaError::UnsupportedSchedule(_))
+    ));
     for (profile, modulus, degree) in [
         (p64, p64.modulus(), 1),
         (p64, BINARY_SETUP_P, 2),
@@ -579,13 +582,14 @@ fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
         (BinaryFieldProfile::P128, BINARY_SETUP_P, 2),
     ] {
         assert!(matches!(
-            profile.admit_root(modulus, degree),
+            profile.check_field_pair(modulus, degree),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
     BinaryFieldProfile::P128
-        .admit_root(BINARY_SETUP_P, 1)
+        .check_field_pair(BINARY_SETUP_P, 1)
         .unwrap();
+    BinaryFieldProfile::P128.admit_root(false).unwrap();
 }
 
 #[test]

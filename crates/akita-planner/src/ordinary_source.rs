@@ -7,7 +7,24 @@ use akita_params::{
     PlannedFoldSchedule, PolynomialGroupLayout, ScheduleLookupKey, SisModulusProfileId,
 };
 
-use crate::{find_schedule, PlannerPolicy};
+use crate::{find_schedule, PlannerPolicy, RingDimensionSchedule};
+
+/// Restrict a validated dimension domain to the mixed root's A<=512/B64 geometry.
+/// The A domain must be sorted. Callers accepting external policies must validate
+/// the full policy before narrowing it.
+/// No dimension absent from the caller's domain is introduced.
+pub fn mixed_root_producer_domain(mut domain: RingDimensionSchedule) -> RingDimensionSchedule {
+    let count = domain
+        .potential_a_dimensions
+        .partition_point(|&dimension| dimension <= 512);
+    domain.potential_a_dimensions = domain.potential_a_dimensions.split_at(count).0;
+    domain.potential_b_dimensions = if domain.potential_b_dimensions.contains(&64) {
+        &[64]
+    } else {
+        &[]
+    };
+    domain
+}
 
 /// Plan a standalone P-native producer with its own exact width and slot count.
 ///
@@ -44,14 +61,7 @@ pub fn plan_signed_ordinary_source(
     selected.decomposition = width.decomposition();
     selected.inner_basis_range = (3, 3);
     selected.opening_basis_range = (3, 3);
-    // Restrict the caller's dimension domain to the native compiler's current
-    // A<=512/B64 geometry; never introduce a dimension absent from its policy.
-    let a_dimensions = policy.ring_dimension_schedule.potential_a_dimensions;
-    let a_count = a_dimensions.partition_point(|&dimension| dimension <= 512);
-    selected.ring_dimension_schedule.potential_a_dimensions = a_dimensions
-        .get(..a_count)
-        .ok_or(AkitaError::InvalidProof)?;
-    selected.ring_dimension_schedule.potential_b_dimensions = &[64];
+    selected.ring_dimension_schedule = mixed_root_producer_domain(policy.ring_dimension_schedule);
     selected.ring_dimension_schedule.suffix_dimensions = &[64];
     let planned = find_schedule(
         &ScheduleLookupKey::single(group),

@@ -276,3 +276,24 @@ Implementation: `crates/akita-prover/src/protocol/prove/registry.rs`,
 `crates/akita-cpu-backend/src/opaque/transfer.rs`. Design record:
 `specs/dynamic-backend-bridges.md`. Regression coverage:
 `crates/akita-pcs/tests/dynamic_backends.rs`.
+
+## Selected P64 binary roots
+
+A binary root can use the base field `p = 2^64 - 59` and the quadratic testing
+field `E64 = F_p[u]/(u^2 - 2)`. Its outgoing commitment contains the accepted
+response, source images, optional word/prime reading planes and coefficient
+quotients. A quotient records the integer multiple of the source modulus q in
+one residual coefficient. The ordinary successor authenticates this entire
+repacked witness through the same grouped opening and caller transcript.
+
+P64 requires an explicitly selected native row in the trusted schedule catalog.
+The row prices the actual witness and typed A/B/D setup prefix, then validates
+its ordinary successor. Loading an ordinary artifact cannot create a native row.
+This is the runtime admission boundary; there is no separate production-security
+switch. Catalog admission checks geometry and policy, not a complete security
+certificate. Enabling the extension without selecting it preserves ordinary bytes.
+
+The optional ordinary group has one polynomial and a degree-64 outer commitment.
+Its field and source compression must satisfy the canonical ordinary-root plan.
+B and D have independently derived ranks: D commits the natural reading digits,
+while the successor stores all physical cells, including padding and quotients.

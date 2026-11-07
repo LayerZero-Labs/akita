@@ -53,6 +53,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 type F = Prime128Offset275;
+type E = F;
 
 /// A narrow test-only hook around the actual fold sampler. Capture the first
 /// squeezed seed rather than inferring binding from later relation rejection.
@@ -539,18 +540,20 @@ fn run_fixture(
             "completed adversarial {fault:?} proof: {} bytes",
             malformed.len()
         );
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &malformed);
-            replay.public_message(&BytesMsg(b"application-prefix"));
-            verifier
-                .batched_verify_embedded(
-                    &mut replay,
-                    statement(&claim, &ordinary_point, ordinary_value),
-                    BasisMode::Lagrange,
-                    SetupPolicy::Check(None),
-                )
-                .map(|pending| pending.check_eof(replay))
-        }));
+        let (outcome, rejections) = fault_backend::root_relation_rejections(|| {
+            catch_unwind(AssertUnwindSafe(|| {
+                let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &malformed);
+                replay.public_message(&BytesMsg(b"application-prefix"));
+                verifier
+                    .batched_verify_embedded(
+                        &mut replay,
+                        statement(&claim, &ordinary_point, ordinary_value),
+                        BasisMode::Lagrange,
+                        SetupPolicy::Check(None),
+                    )
+                    .map(|pending| pending.check_eof(replay))
+            }))
+        });
         assert!(outcome.is_ok(), "{fault:?} caused a verifier panic");
         let outcome = outcome.unwrap();
         if fault.is_accepted() {
@@ -558,7 +561,13 @@ fn run_fixture(
                 .and_then(|eof| eof)
                 .unwrap_or_else(|error| panic!("{fault:?} was rejected: {error}"));
         } else {
-            assert!(outcome.is_err(), "{fault:?} was accepted");
+            assert!(
+                matches!(outcome, Err(AkitaError::InvalidProof)),
+                "{fault:?} must fail proof verification with InvalidProof: {outcome:?}"
+            );
+        }
+        if matches!(fault, Fault::Quotient | Fault::PrimePlane) {
+            assert_eq!(rejections, 1, "{fault:?} must fail at the final root equation");
         }
     };
     if let Some(fault) = authentication_fault {

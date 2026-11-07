@@ -586,3 +586,19 @@ nonce encoding are documented in
 
 The detailed grinding contract is recorded in
 [the transcript grinding specification](https://github.com/LayerZero-Labs/akita/blob/main/specs/transcript-grinding.md).
+
+## P64 binary-root ordering
+
+The selected P64 root first binds its binary manifest, claim manifest, source
+commitments and optional ordinary statement in the caller's transcript. The
+word field switch, if present, and the column challenge/response follow. The
+outgoing witness commitment fixes the coefficient quotient digits at order 5.
+Independent E64 coefficient weights are drawn at order 7, after that commitment;
+there is no P64 order-6 projection seed or public projected-residual message.
+Range checking, the common root relation and the typed setup-product reduction
+then precede the ordinary successor in the same transcript and grinding cursor.
+The caller retains responsibility for its continuation and final EOF check.
+
+The column challenge retains its indexed sampler and grinding work entry with
+set-size denominator `2^136`. The field change does not change that denominator.
+The residual lift uses the base characteristic p even though random tests use E64.

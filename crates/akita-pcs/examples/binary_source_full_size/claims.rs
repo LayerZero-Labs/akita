@@ -1,11 +1,11 @@
 //! Deterministic benchmark inputs and independent claimed evaluations.
-use super::config::F;
+use super::config::MeasurementConfig;
 use akita_algebra::binary::BinaryField128;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
-    PrimeGroupClaim, PrimePlaneClaim,
+    PrimeClaimValue, PrimeGroupClaim, PrimePlaneClaim,
 };
 use jolt_field::{CanonicalEncoding, One, Ring, Zero};
 use serde::{Deserialize, Serialize};
@@ -15,16 +15,18 @@ pub(super) struct Claims {
     pub word_point: Option<Vec<[u8; 16]>>,
     pub word_value: [u8; 16],
     pub prime: Option<(Vec<u128>, u128)>,
+    pub ordinary: Option<(Vec<u128>, u128)>,
 }
 
-pub(super) fn descriptor(log_carriers: usize) -> Result<BinarySourceDescriptor, AkitaError> {
+pub(super) fn descriptor<C: MeasurementConfig>(
+    log_carriers: usize,
+) -> Result<BinarySourceDescriptor, AkitaError> {
     let count = checked::pow2(log_carriers).ok_or(AkitaError::InvalidProof)?;
     // Smoke exercises the same kernels with a narrow matrix; benchmark rows
     // retain the specified C=256 and rank three.
-    let columns = if log_carriers == 10 { 2 } else { 256 };
+    let columns = if log_carriers <= 10 { 2 } else { 256 };
     let index = BinaryIndexMap::new(128, count, count, columns)?;
-    let profiles =
-        BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, BinaryFieldProfile::P128)?;
+    let profiles = BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, C::PROFILE)?;
     BinarySourceDescriptor::new(index, vec![[29; 32]], profiles)
 }
 
@@ -39,13 +41,21 @@ pub(super) fn words(count: usize) -> Vec<u128> {
         .collect()
 }
 
-pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims, AkitaError> {
+pub(super) fn evaluate<C: MeasurementConfig>(
+    log: usize,
+    shape: &str,
+    words: &[u128],
+) -> Result<Claims, AkitaError> {
     let mut result = Claims {
         word_point: None,
         word_value: [0; 16],
         prime: None,
+        ordinary: (shape == "binary-and-prime-claims-plus-ordinary").then(|| {
+            let point = (0..log.max(18)).map(|axis| 7 + axis as u128 * 11).collect();
+            (point, 7)
+        }),
     };
-    {
+    if shape != "prime-claim" {
         let point = (0..log)
             .map(|axis| (31 + axis as u128 * 17).to_le_bytes())
             .collect::<Vec<_>>();
@@ -58,7 +68,10 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
             }
             values.truncate(half);
         }
-        let [low, high] = values.first().ok_or(AkitaError::InvalidProof)?.to_words();
+        let [low, high] = values
+            .first()
+            .ok_or_else(|| AkitaError::Internal("empty word evaluation".into()))?
+            .to_words();
         result.word_value = (u128::from(low) | (u128::from(high) << 64)).to_le_bytes();
         result.word_point = Some(point);
     }
@@ -67,38 +80,37 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         let point = (0..arity)
             .map(|axis| 19 + axis as u128 * 7)
             .collect::<Vec<_>>();
-        let mut bit_weights = vec![F::one()];
+        let mut bit_weights = vec![C::Field::one()];
         for &r in point.get(..8).ok_or(AkitaError::InvalidProof)? {
-            let r = F::from_u128(r);
+            let r = C::Field::from_u128(r);
             let size = bit_weights.len();
             bit_weights.resize(
                 checked::product([size, 2]).ok_or(AkitaError::InvalidProof)?,
-                F::zero(),
+                C::Field::zero(),
             );
             for i in 0..size {
                 let old = bit_weights[i];
-                bit_weights[i] = old * (F::one() - r);
+                bit_weights[i] = old * (C::Field::one() - r);
                 bit_weights[i + size] = old * r;
             }
         }
         let mut values = words
             .iter()
             .map(|&word| {
-                bit_weights
-                    .iter()
-                    .take(128)
-                    .enumerate()
-                    .fold(F::zero(), |sum, (bit, weight)| {
+                bit_weights.iter().take(128).enumerate().fold(
+                    C::Field::zero(),
+                    |sum, (bit, weight)| {
                         if (word >> bit) & 1 == 0 {
                             sum
                         } else {
                             sum + *weight
                         }
-                    })
+                    },
+                )
             })
             .collect::<Vec<_>>();
         for &r in point.get(8..).ok_or(AkitaError::InvalidProof)? {
-            let r = F::from_u128(r);
+            let r = C::Field::from_u128(r);
             let half = values.len() / 2;
             for i in 0..half {
                 values[i] = values[2 * i] + r * (values[2 * i + 1] - values[2 * i]);
@@ -107,9 +119,9 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         }
         let value = values
             .first()
-            .ok_or(AkitaError::InvalidProof)?
+            .ok_or_else(|| AkitaError::Internal("empty prime evaluation".into()))?
             .to_u128_checked()
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::Internal("prime evaluation exceeds u128".into()))?;
         result.prime = Some((point, value));
     }
     Ok(result)
@@ -129,12 +141,16 @@ impl Claims {
             .map(|point| BinaryWordClaim::new(descriptor, [29; 32], point.clone(), self.word_value))
             .transpose()
     }
-    pub(super) fn prime(&self) -> Option<PrimeGroupClaim> {
+    pub(super) fn prime<C: MeasurementConfig>(&self) -> Option<PrimeGroupClaim> {
+        let encode = |value| match C::PROFILE {
+            BinaryFieldProfile::P128 => PrimeClaimValue::Base(value),
+            BinaryFieldProfile::P64 => PrimeClaimValue::Extension([value, 0]),
+        };
         self.prime.as_ref().map(|(point, value)| PrimeGroupClaim {
-            point: point.iter().copied().map(Into::into).collect(),
+            point: point.iter().copied().map(encode).collect(),
             evaluations: vec![PrimePlaneClaim {
                 polynomial: 0,
-                value: (*value).into(),
+                value: encode(*value),
             }],
         })
     }

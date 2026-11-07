@@ -9,11 +9,13 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
         &self,
         ordinary: GrindingPlan,
         schedule: &FoldSchedule,
+        native_root: bool,
     ) -> Result<GrindingPlan, AkitaError> {
         #[cfg(feature = "labinius-trinomial")]
         if let Some(super::GroupClaimKind::Binary { manifest, .. }) =
             self.groups().first().map(|group| group.kind())
         {
+            manifest.field_profile().admit_root(native_root)?;
             let next = schedule.recursive_folds.first().ok_or_else(|| {
                 AkitaError::InvalidSetup("binary root requires an ordinary successor".into())
             })?;
@@ -23,6 +25,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
             )?;
             return crate::binary_source::binary_root_grinding_plan(
                 &ordinary,
+                manifest.field_profile(),
                 &[akita_error::checked::product([
                     manifest.descriptor().index_map().columns(),
                     manifest.descriptor().polynomials().len(),
@@ -32,7 +35,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                 648,
             );
         }
-        let _ = schedule;
+        let _ = (schedule, native_root);
         Ok(ordinary)
     }
 }

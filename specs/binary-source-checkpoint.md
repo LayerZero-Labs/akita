@@ -4,9 +4,12 @@
 | --- | --- |
 | Status | active |
 | Created | 2026-10-27 |
-| Scope | Mathematical checkpoint for the proposed binary root; not production admission |
+| Scope | P128 checkpoint and implemented P64 adaptation; not production admission |
 
 ## Blockers and corrections
+
+The P64 native path uses the [implemented P64 checkpoint](#implemented-p64-checkpoint).
+The projection argument below is specific to P128.
 
 There is no unresolved algebraic blocker in the checkpoint proved below. Two
 points need an explicit correction before implementation admission:
@@ -761,3 +764,14 @@ Production admission requires:
 - Completing malformed-input, no-panic, runtime selection, unselected-byte and
   caller-transcript tests, plus independent security review of the implemented
   compiler and the concrete application-segment interface.
+
+## Implemented P64 checkpoint
+
+The seven-row J/y checkpoint argument below describes the P128 projection path.
+For the selected P64 native root, the outgoing commitment fixes K and the full
+source witness at order 5. The successor-source checkpoint precedes the order-7
+independent E64 coefficient weights; P64 has no intervening order-6 J/y message.
+Use the coefficient lift and unit proof in
+[binary-source-p64-root.md](binary-source-p64-root.md), including `L + q B_K < p`.
+The same indexed column-extraction premise remains open in its complete-schedule
+security ledger. Catalog admission and arithmetic tests do not close that premise.

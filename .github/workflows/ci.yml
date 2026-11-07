@@ -69,6 +69,10 @@ jobs:
         run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
       - name: Clippy (dev protocol)
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak,dev-protocol -- -D warnings
+      - name: Clippy (binary source measurement tests)
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,binary-source-measurements,transcript-keccak -- -D warnings
+      - name: Clippy (binary source measurement tests, dev protocol)
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,binary-source-measurements,transcript-keccak,dev-protocol -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -113,6 +117,35 @@ jobs:
       - name: Test binary source end-to-end opening
         run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-keccak
 
+  test-binary-p64:
+    name: Binary P64 complete schedules
+    runs-on: GitHubRunner-Large-Public
+    strategy:
+      fail-fast: false
+      matrix:
+        protocol: [current, dev]
+    # Per-mode budget; hosted runtime still requires measurement.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # v2.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f
+        with:
+          cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-test-binary-p64-${{ matrix.protocol }}
+          add-job-id-key: false
+          cache-on-failure: true
+      - name: Test binary P64 complete schedules
+        env:
+          PROTOCOL_MODE: ${{ matrix.protocol }}
+        run: |
+          features=parallel,binary-source-measurements,transcript-keccak
+          if [[ "$PROTOCOL_MODE" = dev ]]; then features+=,dev-protocol; fi
+          cargo test --profile ci-test -p akita-pcs --example binary_source_full_size \
+            --no-default-features --features "$features" -- --test-threads=1
 
   labinius-binary:
     name: LaBinius binary arithmetic

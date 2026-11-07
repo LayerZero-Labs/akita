@@ -78,6 +78,15 @@ impl ResolvedScheduleRow {
         Ok(())
     }
 
+    /// Whether this row uses an explicitly validated native-root transition.
+    /// The PCS reads this only after resolving a trusted catalog selection.
+    /// Ordinary artifact decoding cannot create native rows. This checks geometry
+    /// and the suffix; production use also requires the open security-ledger items.
+    /// There is no separate runtime production-admission gate.
+    pub const fn is_native_root(&self) -> bool {
+        !self.canonical_root_transition
+    }
+
     /// Batch-level public schedule selection.
     pub const fn selection(&self) -> OpeningScheduleSelection {
         self.selection

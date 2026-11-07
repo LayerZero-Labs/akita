@@ -46,9 +46,11 @@ where
             basis,
             setup_batch_level,
             |plan| {
-                claims
-                    .opening_claims()
-                    .root_grinding_plan(plan, resolved.schedule())
+                claims.opening_claims().root_grinding_plan(
+                    plan,
+                    resolved.schedule(),
+                    resolved.is_native_root(),
+                )
             },
         )?;
     Ok((resolved, digests, claims, grinding_plan, descriptor_bytes))

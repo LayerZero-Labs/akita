@@ -1,6 +1,6 @@
 //! Adversarial test backend; production exposes no witness mutation operation.
 
-use super::F;
+use super::{E, F};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
@@ -18,13 +18,12 @@ use jolt_poly::UnivariatePoly;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-type E = F;
-type NativeBackend = CpuBackend<F, F>;
-type C = <NativeBackend as ProverHandleFamily<F, F>>::CommitmentHandle;
-type W = <NativeBackend as ProverHandleFamily<F, F>>::WitnessHandle;
-type M = <NativeBackend as ProverHandleFamily<F, F>>::CommitmentMaterialHandle;
+type NativeBackend = CpuBackend<F, E>;
+type C = <NativeBackend as ProverHandleFamily<F, E>>::CommitmentHandle;
+type W = <NativeBackend as ProverHandleFamily<F, E>>::WitnessHandle;
+type M = <NativeBackend as ProverHandleFamily<F, E>>::CommitmentMaterialHandle;
 type Session = <NativeBackend as ProofScopeConsumer>::ProofSessionHandle;
-type Stage2 = <NativeBackend as ProverHandleFamily<F, F>>::Stage2SessionHandle;
+type Stage2 = <NativeBackend as ProverHandleFamily<F, E>>::Stage2SessionHandle;
 
 #[path = "delegation.rs"]
 mod delegation;
@@ -32,7 +31,7 @@ mod delegation;
 mod fault_witness;
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum Fault {
+pub(crate) enum Fault {
     ForeignCommitment,
     ForeignPartials,
     Image,
@@ -42,6 +41,7 @@ pub(super) enum Fault {
     ValueCarry,
     Padding,
     PrimePlane,
+    Quotient,
 }
 
 impl Fault {
@@ -61,10 +61,11 @@ impl Fault {
         matches!(self, Self::Padding)
     }
 
-    fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
+    pub(super) fn address(self, plan: &BinaryRootWitnessPlan) -> usize {
         let segment = match self {
             Self::ForeignCommitment | Self::ForeignPartials => unreachable!(),
             Self::PrimePlane => plan.prime_segment().unwrap(),
+            Self::Quotient => plan.quotient_segment().unwrap(),
             Self::Response => 0,
             Self::Image => 1,
             Self::Partials => 2,
@@ -90,7 +91,7 @@ struct FaultPreparation {
     plan: BinaryRootWitnessPlan,
 }
 
-pub(super) struct FaultBackend {
+pub(crate) struct FaultBackend {
     inner: Arc<NativeBackend>,
     seed: [u8; 32],
     words: Vec<u128>,
@@ -105,7 +106,7 @@ impl FaultBackend {
         setup: &akita_cpu_backend::AkitaProverSetup<F>,
         schedules: &TrustedScheduleCatalog<super::BinaryTestSuffix>,
         prefixes: &akita_prover::SetupPrefixProverRegistry<F, C>,
-        data: akita_prover::SelectedProverOpeningData<'_, F, C, F>,
+        data: akita_prover::SelectedProverOpeningData<'_, E, C, F>,
         prover: &mut akita_transcript::ProverChannel,
     ) -> Result<(), AkitaError> {
         let resolved = schedules.resolve_selection(data.selection())?;
@@ -124,7 +125,7 @@ impl FaultBackend {
         )
     }
 
-    pub(super) fn new(
+    pub(crate) fn new(
         inner: Arc<NativeBackend>,
         seed: [u8; 32],
         words: Vec<u128>,
@@ -170,10 +171,12 @@ impl FaultBackend {
             );
             payload = foreign;
         }
-        assert!(
-            request.ordinary.is_none(),
-            "fault injection uses the binary-only fixture"
-        );
+        if request.manifest.field_profile() == BinaryFieldProfile::P128 {
+            assert!(
+                request.ordinary.is_none(),
+                "P128 fault fixtures are binary-only"
+            );
+        }
         Ok((
             payload,
             Box::new(FaultPreparation {
@@ -196,29 +199,29 @@ impl FaultBackend {
         destination_ring_dimension: usize,
     ) -> Result<Option<W>, AkitaError> {
         let preparation = preparation.downcast_ref::<FaultPreparation>().unwrap();
-        if self
-            .inner
-            .build_root_group(
-                session,
-                context,
-                preparation.native.as_ref(),
-                challenges,
-                logical_len,
-                destination_ring_dimension,
-            )?
-            .is_none()
-        {
-            return Ok(None);
-        }
-        let mut digits = fault_witness::reconstruct(
-            &preparation.manifest,
-            preparation.claim.as_ref(),
-            &preparation.prime,
-            &preparation.plan,
-            &self.seed,
-            &self.words,
+        let Some(honest) = self.inner.build_root_group(
+            session,
+            context,
+            preparation.native.as_ref(),
             challenges,
-        )?;
+            logical_len,
+            destination_ring_dimension,
+        )?
+        else {
+            return Ok(None);
+        };
+        let mut digits = match preparation.manifest.field_profile() {
+            BinaryFieldProfile::P128 => fault_witness::reconstruct(
+                &preparation.manifest,
+                preparation.claim.as_ref(),
+                &preparation.prime,
+                &preparation.plan,
+                &self.seed,
+                &self.words,
+                challenges,
+            )?,
+            BinaryFieldProfile::P64 => honest.coefficients_for_test(),
+        };
         digits.truncate(logical_len);
         if !matches!(
             self.fault,
@@ -240,25 +243,37 @@ impl FaultBackend {
     fn begin_fault_root_relation(
         &self,
         witness: &W,
-        weights: NativeRootWeights<F>,
-        negative_binary_weights: Vec<(usize, F)>,
-        claim: F,
-        stage1_point: &[F],
-        range_image_evaluation: F,
-        batching: F,
+        weights: NativeRootWeights<E>,
+        negative_binary_weights: Vec<(usize, E)>,
+        claim: E,
+        stage1_point: &[E],
+        range_image_evaluation: E,
+        batching: E,
     ) -> Result<Stage2, AkitaError> {
         // A malicious prover is allowed to use an incorrect public oracle. Make
         // its own sumcheck consistent so it emits a complete proof; the real
         // verifier must detect the wrong relation at its final oracle check.
-        assert!(negative_binary_weights.is_empty());
         let mut table = weights.materialize()?;
         let state = self.digits.lock().unwrap();
         let digits = state.as_ref().unwrap();
+        let negative_contribution =
+            negative_binary_weights
+                .iter()
+                .fold(E::zero(), |sum, &(address, weight)| {
+                    let digit = E::from_i64(i64::from(digits[address]));
+                    assert!(matches!(digits[address], -1 | 0));
+                    sum + weight * digit * (digit + E::from_u64(1))
+                });
+        assert_eq!(
+            negative_contribution,
+            E::zero(),
+            "the forged linear oracle must preserve every ordinary negative-bit predicate"
+        );
         let actual = table
             .iter()
             .zip(digits)
-            .fold(F::zero(), |sum, (&weight, &digit)| {
-                sum + weight * F::from_i64(i64::from(digit))
+            .fold(E::zero(), |sum, (&weight, &digit)| {
+                sum + weight * E::from_i64(i64::from(digit))
             });
         match self.fault {
             Fault::ForeignCommitment | Fault::ForeignPartials => {}
@@ -272,7 +287,7 @@ impl FaultBackend {
             ),
         }
         let anchor = digits.iter().position(|&digit| digit != 0).unwrap();
-        let value = F::from_i64(i64::from(digits[anchor]));
+        let value = E::from_i64(i64::from(digits[anchor]));
         table[anchor] += (claim - actual) * value.inverse().unwrap();
         let terms = table
             .into_iter()
@@ -372,4 +387,29 @@ pub(super) fn authenticate_terminal_relation(
         .map(|digit| F::from_i64(i64::from(digit)))
         .collect::<Vec<_>>();
     weights.check_table(&table)
+}
+
+/// Count failures of the binary root's final relation equation on this thread.
+#[derive(Clone, Default)]
+struct RootRelationRejections(Arc<std::sync::atomic::AtomicUsize>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for RootRelationRejections {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() == "akita_verifier::binary_root_relation" {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// Run `verify` on this thread and return how often the final root relation
+/// equation rejected. Earlier checks return before that diagnostic event.
+pub(crate) fn root_relation_rejections<T>(verify: impl FnOnce() -> T) -> (T, usize) {
+    use tracing_subscriber::layer::SubscriberExt;
+    let rejections = RootRelationRejections::default();
+    let subscriber = tracing_subscriber::registry().with(rejections.clone());
+    let result = tracing::subscriber::with_default(subscriber, verify);
+    (
+        result,
+        rejections.0.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }

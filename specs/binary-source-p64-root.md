@@ -4,21 +4,24 @@
 | --- | --- |
 | Author(s) | Akita contributors |
 | Created | 2026-11-05 |
-| Status | approved |
+| Status | implemented experimental path; complete security allocation pending |
 | PR | |
-| Supersedes | P128 root profile and exact-divisibility projection design in [binary-source-opening.md](binary-source-opening.md), upon implementation |
+| Supersedes | P128 projection rules for selected P64 roots; see Summary |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
 ## Summary
+
+This supersedes the P128 projection rules in
+[binary-source-opening.md](binary-source-opening.md) for selected P64 roots.
 
 Move the binary-source grouped opening from `P = 2^128 - 275`, with
 base-field challenges, to `p = 2^64 - 59`, with quadratic-extension challenges.
 The current seven integer projections do not fit the smaller characteristic.
 Replace them with committed coefficient quotients and independent extension-field
 batching. Keep the rank-three degree-648 commitment modulo q and the
-GF(2^128) word claim. This spec approves the protocol design.
-Production security admission remains a separate requirement.
+GF(2^128) word claim. The native-catalog path implements this protocol design.
+Production certification remains a separate obligation, without a separate runtime gate.
 
 ## Intent
 
@@ -77,6 +80,9 @@ It does not preserve binary-root proof or persisted-setup compatibility.
 
 ### Acceptance Criteria
 
+The source paths now implement the protocol below. Boxes remain unchecked until
+final-head Linux validation and the stated security obligations have receipts.
+
 - [ ] A p64/E64 word-only, prime-only and mixed opening uses the same grouped
   PCS entry points, caller transcript and grinding cursor as its successor.
 - [ ] Geometry determines K's digit depth and addresses before commitment.
@@ -127,8 +133,8 @@ Retain exact transcript replay and ordinary byte-compatibility tests.
 For implementation PRs, run the repository preflight before compilation.
 Use the feature graphs and test-pass commands in the applicable workflows.
 Run the three Clippy configurations from `AGENTS.md`.
-This documentation change requires the evidence script, `typos`, documentation
-guardrails, a no-Rust-change check and the privacy scan.
+Documentation changes require `typos` and documentation guardrails in addition
+to the implementation checks.
 
 ### Performance
 
@@ -165,8 +171,8 @@ For projection-induced scheduling changes, the proof delta is
 `-84 + bytes(new selected schedule) - bytes(old selected schedule)`.
 Base-field encoding changes and B/D rank changes contribute separately.
 Prime planes shrink from 43 to 22 digits per base coordinate.
-There is no exact complete-proof size until a p64 catalog selects the domains
-and successor schedule.
+Complete proof size depends on the selected native catalog and successor schedule;
+this arithmetic comparison does not supply a measured complete-proof size.
 
 The prover reuses the accepted integer residual.
 It replaces seven projections and their J-to-rho combination with `a` exact
@@ -566,8 +572,8 @@ boundaries.
 
 #### Field assumptions and source map
 
-The following files contain degree-one restrictions, fixed-P assumptions or
-integer-only paths that the migration must replace or validate.
+This table records the pre-migration degree-one restrictions, fixed-P assumptions
+and integer-only paths. Its old assumptions are historical, not current behavior.
 Paths without a crate prefix in this table are under
 `crates/akita-types/src/binary_source/`.
 
@@ -774,20 +780,34 @@ They are not selectable protocol fallbacks.
 
 ## Documentation
 
-This change adds this approved spec and its evidence script.
-The only change to an existing spec is the short migration pointer in
-[binary-source-opening.md](binary-source-opening.md).
-Its current-protocol description remains intact until implementation.
+The implementation narrative is folded into the Book architecture, transcript,
+security and verification chapters. The opening and checkpoint specs distinguish
+the retained P128 projection argument from the implemented P64 coefficient lift.
+This record remains live for the security ledger and its unresolved premises.
 
-Implementation PRs must update the opening and checkpoint descriptions with
-the new ordering, unit proof and security ledger.
-Fold durable content into `book/src/how/architecture.md`,
-`book/src/how/transcript.md`, `book/src/how/security.md` and
-`book/src/how/verification.md` as implementation lands.
-Update the affected profile and feature usage pages with actual admission
-limits. Keep this spec approved until implementation starts, then track its
-lifecycle under [the pruning policy](PRUNING.md).
-Archive it only after its durable content is folded into the Book.
+### Complete-schedule security ledger
+
+The runtime boundary is an explicitly selected, validated native catalog row.
+The planner prices physical witness cells and the typed A/B/D prefix using the
+same canonical plan as the verifier. B and D use independent width-derived ranks.
+The mixed ordinary group has one polynomial, a degree-64 outer commitment, and
+matching inner/outer field profiles. These checks do not close a complete security
+allocation. The measurement preset is an experimental fixture.
+
+| Term | Implemented accounting or remaining obligation |
+| --- | --- |
+| Integer lift | K is committed and range checked; require `L + q B_K < p`. |
+| Coefficient batch | Independent E64 weights after fixation; allocate its error. |
+| Reading relations | Count each ring/reading and optional ordinary evaluation. |
+| Range and product tests | Include Stage 1, Stage 2 and typed Stage 3 errors. |
+| Column sampling | Retain the `2^136` work denominator and actual coordinate count. |
+| Extraction | Justify independently programmable indexed streams and count queries. |
+| Binding and setup | Certify q-valued A, q64 B/D, successor and induced setup instances. |
+| Composition | Add retries, grinding, hashes and all successor losses in one allocation. |
+
+Passing catalog freshness, exact replay or forged-proof tests is not a certificate
+for the open extraction and composition obligations. No complete-proof timing or
+memory claim follows from the source changes alone.
 
 ## Execution
 
@@ -796,7 +816,8 @@ Archive it only after its durable content is folded into the Book.
 Target dev for the selected p64 binary extension.
 Land any shared extension seams on main first under the branch contract.
 Each PR keeps unselected ordinary behavior byte-identical.
-The stages below describe future changes; this spec commit changes no Rust.
+The stages below record the implementation decomposition. Their code paths exist;
+final-head execution receipts and production security certification remain separate.
 
 1. **Define the paired field profile and identities.** Touch
    `crates/akita-params/src/binary_setup.rs` and `binary_setup/tests.rs`;
@@ -873,10 +894,10 @@ The stages below describe future changes; this spec commit changes no Rust.
   oracle with its queries counted, or a sampler whose coordinates are encoded
   independently in the transcript. This question applies equally to the
   current root.
-- Will B and D keep a shared rank or expose separate ranks?
-  Either choice must meet the per-role minima above.
-- Which p64 ordinary profile supplies the mixed root's compression and norm
-  contract?
+- B and D now expose separate ranks derived from their actual widths; certify
+  each role under the complete security allocation.
+- The selected ordinary profile supplies the mixed root compression and norm
+  contract; certify that profile together with the complete successor schedule.
 - Does the generalized checkpoint comparison establish the required fixed
   witness for the extension compiler and shared setup/suffix claim?
   Validate that premise alongside negative carries, quotient mutations and

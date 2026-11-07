@@ -555,3 +555,23 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
   `crates/akita-cpu-backend/src/commitment/api.rs`
   (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.
+
+## P64 binary-root security boundary
+
+A coefficient quotient lets the verifier test divisibility of the integer
+residual by q in the smaller base field. The committed quotient K is range
+checked with the other base-eight digits. Admission derives the maximum residual
+magnitude L and quotient bound B_K and requires `L + q B_K < p`. Consequently a
+zero coefficient test modulo p lifts to the required integer equality; using
+`p^2` here would be unsound. Independent E64 weights batch these fixed coefficient
+equations only after the outgoing commitment.
+
+This removes the P128 seven-projection loss from the selected P64 path. It does
+not remove the extraction, setup, binding, retry, hash or successor obligations.
+Native catalog admission enforces the implemented geometry and rank checks, and
+has no separate runtime gate certifying a production security allocation. The
+open allocation and extraction obligations are maintained in the
+[P64 security ledger](../../../specs/binary-source-p64-root.md#complete-schedule-security-ledger).
+Successful replay, freshness and tamper tests are regression evidence, not that
+certificate. In particular, independently programmable indexed column streams
+remain an extraction premise requiring justification.
