@@ -186,7 +186,8 @@ The `binary_source_full_size` measurement example selects P64 with `--field p64`
 Its trusted research catalogs live under `crates/akita-pcs/tests/fixtures/`, outside
 production schedule artifacts. The `test-binary-p64` job replays the example in both
 protocol modes, including public-statement, setup, proof and committed-witness faults.
-Catalog freshness is enforced by
+Catalog freshness is checked by
 `scripts/binary-source-full-size.sh --field p64 --check-catalogs`:
 every installed case must equal fresh planner output. The gate disables caches and
-never installs files; admission and replay alone are insufficient.
+never installs files; admission and replay alone are insufficient. It is a release
+check run when catalogs change, not a CI job.
