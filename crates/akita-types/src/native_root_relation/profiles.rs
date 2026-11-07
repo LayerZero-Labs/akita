@@ -328,6 +328,9 @@ impl<E: Field> ProfileBuilder<E> {
     /// Blocks without their own row receive one first. `add(lanes, rows)`
     /// then adds the weights of a run of consecutive lanes: `rows` holds the
     /// own rows of their blocks, lane by lane, in address order.
+    #[tracing::instrument(skip_all, name = "root_profile_lanes", fields(
+        lanes = bases.len(), degree, block_bits = self.block_bits, new_rows = tracing::field::Empty
+    ))]
     pub(crate) fn add_lanes(
         &mut self,
         bases: &[usize],
@@ -366,6 +369,7 @@ impl<E: Field> ProfileBuilder<E> {
         if new_rows != 0 {
             self.allocate_rows(new_rows)?;
         }
+        tracing::Span::current().record("new_rows", new_rows);
         let mut rows = self
             .rows
             .chunks_exact_mut(width)
@@ -402,6 +406,9 @@ impl<E: Field> ProfileBuilder<E> {
     /// every interval inside that run: `add(interval, first, row)` adds the
     /// weights of `interval` from its `first` address onward to `row`, the
     /// addresses of one block that the interval covers.
+    #[tracing::instrument(skip_all, name = "root_profile_intervals", fields(
+        intervals = intervals.len(), block_bits = self.block_bits, new_rows = tracing::field::Empty
+    ))]
     pub(crate) fn add_intervals(
         &mut self,
         intervals: &[(usize, usize)],
@@ -439,6 +446,7 @@ impl<E: Field> ProfileBuilder<E> {
         if new_rows != 0 {
             self.allocate_rows(new_rows)?;
         }
+        tracing::Span::current().record("new_rows", new_rows);
         let mut rows = self
             .rows
             .chunks_exact_mut(width)

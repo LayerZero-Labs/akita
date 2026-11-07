@@ -183,7 +183,13 @@ where
         ));
     }
     let block_bits = (domain_len.trailing_zeros() as usize).min(ROOT_PROFILE_BLOCK_BITS);
-    let span = tracing::info_span!("binary_root_weight_profiles").entered();
+    let span = tracing::info_span!(
+        "binary_root_weight_profiles",
+        domain_len,
+        block_bits,
+        negative_count = negative_binary_weights.len()
+    )
+    .entered();
     let profiles = weights.profiles(block_bits)?;
     drop(weights);
     drop(span);
@@ -191,6 +197,13 @@ where
     // prefix covers whole profile blocks.
     let digits = witness.logical.packed_digits();
     let live_len = digits.len().next_multiple_of(1 << block_bits);
+    let witness_span = tracing::info_span!(
+        "root_prepare_witness",
+        digits = digits.len(),
+        live_len,
+        domain_len
+    )
+    .entered();
     let digits = if live_len == digits.len() {
         digits.clone()
     } else {
@@ -202,6 +215,7 @@ where
         padded.resize(live_len, 0);
         PackedSignedDigits::from_i8_digits_auto(padded)
     };
+    drop(witness_span);
     let mut session = CpuStage2SessionHandle::from_structured_relation(
         digits,
         Box::new(profiles),

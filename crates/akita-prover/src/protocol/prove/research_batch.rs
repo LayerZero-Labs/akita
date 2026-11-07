@@ -240,7 +240,13 @@ where
         plan.batch_count(),
     )?;
     drop(phase);
-    let compile = tracing::info_span!("mldsa.port.opening.root_compile").entered();
+    let compile = tracing::info_span!(
+        "mldsa.port.opening.root_compile",
+        batch_count = plan.batch_count(),
+        domain_len = domain.domain_len(),
+        negative_count = tracing::field::Empty
+    )
+    .entered();
     let (relation, negative) = research_batch_relation::<Cfg::Field, Cfg::ExtField, _>(
         &plan,
         expanded,
@@ -253,6 +259,7 @@ where
         &batches,
         |commitment| commitment.rows().coeffs(),
     )?;
+    compile.record("negative_count", negative.len());
     let relation_claim = relation.claim();
     drop(compile);
     drop(stage);
@@ -263,9 +270,17 @@ where
         backend, session, range, domain, tau0, None, grinding, 0,
     )?;
     drop(stage);
-    let stage = tracing::info_span!("mldsa.port.opening.root_prepare").entered();
+    let stage = tracing::info_span!(
+        "mldsa.port.opening.root_prepare",
+        domain_len = domain.domain_len(),
+        negative_count = negative.len(),
+        point_len = stage1.point.len()
+    )
+    .entered();
+    let gamma_span = tracing::info_span!("research_root_stage2_batch").entered();
     let gamma =
         grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
+    drop(gamma_span);
     let session = backend.begin_root_relation(
         &witness,
         relation,

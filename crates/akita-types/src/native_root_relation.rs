@@ -400,6 +400,9 @@ impl<E: Field> NativeRootWeights<E> {
     ///
     /// Folding the profiles `k <= block_bits` times gives the materialized
     /// table folded by the same challenges, entry for entry.
+    #[tracing::instrument(skip_all, name = "root_weights_profiles", fields(
+        table_len = self.table_len, block_bits, terms = self.terms.len(), families = self.families.len()
+    ))]
     pub fn profiles(&self, block_bits: usize) -> Result<RootWeightProfiles<E>, AkitaError> {
         let mut profiles = profiles::ProfileBuilder::new(self.table_len, block_bits)?;
         // Complete disjoint embeddings have independent local builders. Keep
