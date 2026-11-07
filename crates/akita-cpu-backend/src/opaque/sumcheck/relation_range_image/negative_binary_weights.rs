@@ -3,10 +3,13 @@
 use super::{AdditionalRelationTerms, SparseWeight};
 use crate::opaque::sumcheck::relation_range_image::RelationRangeImageProver;
 use akita_error::{checked, AkitaError};
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 
 impl<E: Field + Ring> RelationRangeImageProver<E> {
     /// Install independently batched negative-binary equations before any round.
+    #[tracing::instrument(skip_all, name = "root_prepare_negative_binary_weights")]
     pub(crate) fn attach_negative_binary_weights(
         &mut self,
         weights: Vec<(usize, E)>,
@@ -25,19 +28,26 @@ impl<E: Field + Ring> RelationRangeImageProver<E> {
         sparse
             .try_reserve_exact(weights.len())
             .map_err(|_| AkitaError::InvalidProof)?;
-        for (index, binary) in weights {
+        for &(index, _) in &weights {
             if index >= domain_len || previous.is_some_and(|previous| index <= previous) {
                 return Err(AkitaError::InvalidInput(
                     "negative-binary weights are outside the domain or not strictly sorted".into(),
                 ));
             }
             previous = Some(index);
-            sparse.push(SparseWeight {
-                index,
-                linear: E::zero(),
-                binary,
-            });
         }
+        // All addresses are validated before workers fill the ordered output.
+        // The input weights and their independently drawn coefficients retain
+        // their original pairing; no field reduction or transcript runs here.
+        let convert = |(index, binary)| SparseWeight {
+            index,
+            linear: E::zero(),
+            binary,
+        };
+        #[cfg(feature = "parallel")]
+        sparse.par_extend(weights.into_par_iter().map(convert));
+        #[cfg(not(feature = "parallel"))]
+        sparse.extend(weights.into_iter().map(convert));
         self.state.additional_relation_terms = Some(AdditionalRelationTerms {
             weights: sparse,
             binary_batching: E::one(),
