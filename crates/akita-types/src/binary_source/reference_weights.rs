@@ -25,6 +25,89 @@ use super::super::{
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
 
+/// Integer residual envelope from monomial long division, independent of the
+/// compiler's closed-form coefficient row-sum bound.
+pub(crate) fn residual_envelope(source_rows: usize, columns: usize) -> u128 {
+    use akita_challenges::FoldChallengeDistribution;
+    use std::sync::OnceLock;
+
+    static ROW_SUM: OnceLock<u128> = OnceLock::new();
+    let row_sum = *ROW_SUM.get_or_init(|| {
+        let degree = 648;
+        let mut row_sums = vec![0u128; degree];
+        for power in 0..2 * degree - 1 {
+            let mut remainder = vec![0i32; 2 * degree - 1];
+            remainder[power] = 1;
+            // Divide X^power by X^648 - X^324 + 1.
+            for high in (degree..=power).rev() {
+                let coefficient = remainder[high];
+                remainder[high] = 0;
+                remainder[high - degree] -= coefficient;
+                remainder[high - degree / 2] += coefficient;
+            }
+            let products = (power + 1).min(2 * degree - 1 - power) as u128;
+            for (sum, coefficient) in row_sums.iter_mut().zip(remainder) {
+                *sum += products * u128::from(coefficient.unsigned_abs());
+            }
+        }
+        row_sums.into_iter().max().unwrap()
+    });
+    let reach = |digits: u32, digit: u128| (0..digits).map(|i| digit * 8u128.pow(i)).sum::<u128>();
+    let matrix = u128::from(super::super::BINARY_SOURCE_Q - 1) / 2;
+    let response = reach(4, 4);
+    let image = reach(8, 4);
+    assert_eq!(
+        super::super::BINARY_RESPONSE_INTERVAL,
+        (-(response as i32), reach(4, 3) as i32)
+    );
+    assert_eq!(
+        super::super::ENFORCED_IMAGE_WINDOW,
+        (-(image as i32), reach(8, 3) as i32)
+    );
+    // A trinomial monomial contributes to at most two output coordinates.
+    let challenge = 2 * FoldChallengeDistribution::BinaryRoot.weight() as u128;
+    row_sum * source_rows as u128 * matrix * response + columns as u128 * challenge * image
+}
+
+/// Check a selected digit rank against explicit role-specific matrix admission,
+/// including failure of its predecessor, using the independently derived width.
+pub(crate) fn assert_digit_rank<R: akita_params::sis::LinfMatrixRole>(
+    label: SetupStreamLabel,
+    width: usize,
+) {
+    use akita_params::sis::{
+        LinfCommitMatrix, SisMatrixRole, SisModulusProfileId, SisTableDigest,
+        DEFAULT_SIS_SECURITY_POLICY,
+    };
+    assert_eq!(
+        label.role,
+        match R::ROLE {
+            SisMatrixRole::Outer => SetupStreamRole::ImageCommitment,
+            SisMatrixRole::Open => SetupStreamRole::WitnessCommitment,
+            SisMatrixRole::Inner => unreachable!(),
+        }
+    );
+    assert_eq!(
+        label.modulus,
+        akita_params::binary_setup::SetupStreamModulus::Prime64Offset59
+    );
+    assert_eq!(label.degree, 64);
+    let admit = |rank| {
+        LinfCommitMatrix::<R>::try_new(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q64Offset59,
+            rank,
+            width,
+            7,
+            64,
+        )
+    };
+    let rank = label.rank as usize;
+    assert!(admit(rank).is_ok());
+    assert!(admit(rank - 1).is_err());
+}
+
 pub(crate) fn direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
     matrix: Option<&[Vec<[i128; 648]>]>,
@@ -61,39 +144,7 @@ pub(crate) fn direct_a_weights<E: Field>(
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
-    let response_digits = plan
-        .repacking()
-        .segments()
-        .first()
-        .ok_or(AkitaError::InvalidProof)?
-        .digits;
-    let image_digits = plan
-        .repacking()
-        .segments()
-        .get(1)
-        .ok_or(AkitaError::InvalidProof)?
-        .digits;
-    let response_terms = if matrix.is_some() {
-        checked::product([owners, plan.rank(), rows, 648, response_digits])
-            .ok_or(AkitaError::InvalidProof)?
-    } else {
-        0
-    };
-    let image_terms = checked::product([owners, plan.rank(), columns, 648, image_digits])
-        .ok_or(AkitaError::InvalidProof)?;
-    let quotient_terms = plan
-        .projection_bounds()
-        .quotient()
-        .map_or(Some(0), |bounds| {
-            checked::product([rho.len(), 648, bounds.digits])
-        })
-        .ok_or(AkitaError::InvalidProof)?;
-    let term_count = checked::sum([response_terms, image_terms, quotient_terms])
-        .ok_or(AkitaError::InvalidProof)?;
     let mut terms = Vec::new();
-    terms
-        .try_reserve_exact(term_count)
-        .map_err(|_| AkitaError::InvalidProof)?;
     for owner in 0..owners {
         for i in 0..plan.rank() {
             let row_index =

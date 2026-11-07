@@ -1030,3 +1030,220 @@ impl FoldPreview {
 mod atom_encoding_tests;
 #[cfg(test)]
 mod tests;
+
+mod indexed {
+    // Detached, prefix-bound work and atomic replay of indexed nonce messages.
+
+    use crate::{NonceAtom, ProofChannel, ProverChannel, VerifierChannel};
+    use akita_error::{checked, AkitaError};
+    use jolt_transcript::Transcript as _;
+    #[cfg(feature = "prover")]
+    use spongefish::NargReader;
+    use spongefish::{FromNarg, VerificationError};
+
+    /// Immutable 256-bit binding of a caller-selected transcript prefix.
+    ///
+    /// This digest representation needs the separate prefix-hash charge of the
+    /// selected protocol. Capturing it squeezes the live transcript once. Local
+    /// work subsequently uses this binding, never the changing live cursor.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct IndexedTranscriptPrefix([u8; 32]);
+
+    impl IndexedTranscriptPrefix {
+        /// Capture the current prefix. The caller enforces its message barrier.
+        pub fn capture(state: &mut impl ProofChannel) -> Result<Self, AkitaError> {
+            state.challenge_message(32, |bytes| {
+                bytes
+                    .try_into()
+                    .map(Self)
+                    .map_err(|_| AkitaError::InvalidProof)
+            })
+        }
+
+        /// The immutable prefix binding used in every coordinate address.
+        pub const fn binding(&self) -> &[u8; 32] {
+            &self.0
+        }
+
+        fn local_session_id(
+            domain: &[u8],
+            level: u64,
+            group: u64,
+        ) -> Result<spongefish::SessionId, AkitaError> {
+            if domain.len() > 128 {
+                return Err(AkitaError::InvalidInput(
+                    "indexed domain exceeds its bound".into(),
+                ));
+            }
+            let mut address = Vec::new();
+            address.extend_from_slice(&(domain.len() as u64).to_le_bytes());
+            address.extend_from_slice(domain);
+            address.extend_from_slice(&level.to_le_bytes());
+            address.extend_from_slice(&group.to_le_bytes());
+            Ok(spongefish::derive_session_id::<jolt_transcript::Shake128>(
+                &address,
+            ))
+        }
+
+        /// Check one local work nonce and derive its binding from the checked state.
+        /// Nonces are bounded to u32 here; protocols needing wider work use their
+        /// own transport. A zero-bit site requires omission of the nonce.
+        pub fn work_binding(
+            &self,
+            domain: &[u8],
+            level: u64,
+            group: u64,
+            response_nonce: u32,
+            bits: u8,
+            work_nonce: Option<u32>,
+        ) -> Result<[u8; 32], AkitaError> {
+            if bits > 25 {
+                return Err(AkitaError::InvalidInput(
+                    "indexed work exceeds u32 nonce width".into(),
+                ));
+            }
+            let session = Self::local_session_id(domain, level, group)?;
+            let mut state = VerifierChannel::new(&session, &self.0, &[]);
+            state.public(&NonceAtom::new(response_nonce).word());
+            state
+                .check_public_grind(u32::from(bits), work_nonce.map(u64::from))
+                .map_err(|_| AkitaError::InvalidProof)?;
+            state.challenge_message(32, |bytes| {
+                bytes.try_into().map_err(|_| AkitaError::InvalidProof)
+            })
+        }
+
+        /// Search this prefix-local site's work, using the standard work engine.
+        #[cfg(feature = "prover")]
+        pub fn search_work(
+            &self,
+            domain: &[u8],
+            level: u64,
+            group: u64,
+            response_nonce: u32,
+            bits: u8,
+        ) -> Result<(Option<u32>, [u8; 32]), AkitaError> {
+            use crate::ProverTranscript;
+            if bits > 25 {
+                return Err(AkitaError::InvalidInput(
+                    "indexed work exceeds u32 nonce width".into(),
+                ));
+            }
+            // The namespace is deterministic and Pi is the instance, so this
+            // local channel remains an addressable part of one transcript.
+            // Private coins are unused by the public work and challenge draws.
+            let session = Self::local_session_id(domain, level, group)?;
+            let mut state = ProverChannel::new_with_seed(&session, &self.0, [0; 32]);
+            state.public(&NonceAtom::new(response_nonce).word());
+            state
+                .grind(u32::from(bits))
+                .map_err(|_| AkitaError::InvalidInput("indexed work search exhausted".into()))?;
+            let nonce = if bits == 0 {
+                None
+            } else {
+                let mut reader = NargReader::new(state.narg_string());
+                let nonce =
+                    NonceAtom::from_narg(&mut reader).map_err(|_| AkitaError::InvalidProof)?;
+                if !reader.is_empty() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                Some(nonce.into_inner())
+            };
+            let binding = self.work_binding(domain, level, group, response_nonce, bits, nonce)?;
+            Ok((nonce, binding))
+        }
+    }
+
+    fn nonce_widths(widths: &[u8]) -> Result<(), AkitaError> {
+        if widths.is_empty()
+            || widths.len() > 128
+            || widths.iter().any(|bits| !(1..=32).contains(bits))
+        {
+            return Err(AkitaError::InvalidInput(
+                "invalid indexed nonce widths".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn padded_binding(mut binding: Vec<u8>) -> Result<Vec<u8>, AkitaError> {
+        if binding.len() > (1 << 25) {
+            return Err(AkitaError::InvalidInput(
+                "indexed binding exceeds its bound".into(),
+            ));
+        }
+        let len = checked::align_up(binding.len(), 8).ok_or(AkitaError::InvalidProof)?;
+        binding
+            .try_reserve_exact(len - binding.len())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        binding.resize(len, 0);
+        Ok(binding)
+    }
+
+    /// Send canonical nonces as one message, absorbing their complete protocol
+    /// derivation only after every indexed result has been accepted. `binding`
+    /// includes the nonce words and derived supports in the protocol's order.
+    pub fn send_indexed_nonces(
+        state: &mut ProverChannel,
+        nonces: &[u32],
+        widths: &[u8],
+        binding: Vec<u8>,
+    ) -> Result<(), AkitaError> {
+        nonce_widths(widths)?;
+        if nonces.len() != widths.len()
+            || nonces
+                .iter()
+                .zip(widths)
+                .any(|(&value, &bits)| bits < 32 && value >= (1u32 << bits))
+        {
+            return Err(AkitaError::InvalidInput(
+                "indexed nonce exceeds its width".into(),
+            ));
+        }
+        let binding = padded_binding(binding)?;
+        state.prover_message_with(
+            &nonces,
+            |_| binding,
+            |values, out| {
+                for &value in *values {
+                    out.extend_from_slice(NonceAtom::new(value).wire().as_ref());
+                }
+            },
+        );
+        Ok(())
+    }
+
+    /// Read all canonical nonces, then validate every local result before absorbing
+    /// the returned derivation. Any decoding/admission failure poisons the channel.
+    pub fn receive_indexed_nonces<T>(
+        state: &mut VerifierChannel<'_>,
+        widths: &[u8],
+        validate: impl FnOnce(&[u32]) -> Result<(T, Vec<u8>), AkitaError>,
+    ) -> Result<T, AkitaError> {
+        let valid = nonce_widths(widths);
+        state.guard(valid)?;
+        let (result, _) = state
+            .prover_message_with(
+                |reader| {
+                    let mut nonces = Vec::new();
+                    nonces
+                        .try_reserve_exact(widths.len())
+                        .map_err(|_| VerificationError)?;
+                    for &bits in widths {
+                        let value = NonceAtom::from_narg(reader)?.into_inner();
+                        if bits < 32 && value >= (1u32 << bits) {
+                            return Err(VerificationError);
+                        }
+                        nonces.push(value);
+                    }
+                    let (result, binding) = validate(&nonces).map_err(|_| VerificationError)?;
+                    let binding = padded_binding(binding).map_err(|_| VerificationError)?;
+                    Ok((result, binding))
+                },
+                |(_, binding)| binding.clone(),
+            )
+            .map_err(|_| AkitaError::InvalidProof)?;
+        Ok(result)
+    }
+}
+pub use indexed::{receive_indexed_nonces, send_indexed_nonces, IndexedTranscriptPrefix};

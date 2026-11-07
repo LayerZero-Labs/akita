@@ -358,14 +358,21 @@ fn p64_prime_manifest_binds_both_canonical_coordinates_and_rejects_other_version
 #[test]
 fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
     use crate::binary_source::{binary_ordinary_profile_fixture, BinaryCommittedGroupManifest};
-    use akita_params::binary_setup::{BinaryFieldProfile, BINARY_SETUP_P64};
-    let reach = |digits: u32| 3 * (8u128.pow(digits) - 1) / 7;
-    assert_eq!(reach(21), 3_952_873_730_080_618_203);
-    assert_eq!(reach(22), 31_622_989_840_644_945_627);
-    assert_eq!(4 * (8u128.pow(22) - 1) / 7, 42_163_986_454_193_260_836);
-    assert_eq!(BINARY_SETUP_P64 / 2, 9_223_372_036_854_775_778);
-    assert!(reach(21) < u128::from(BINARY_SETUP_P64 / 2));
-    assert!(reach(22) > u128::from(BINARY_SETUP_P64));
+    use akita_params::binary_setup::BinaryFieldProfile;
+    let reach = |digits: usize, digit: u128| {
+        // The 43-digit negative reach exceeds u128; saturation preserves these
+        // comparisons with the centered base-coordinate interval.
+        (0..digits).fold(0u128, |sum, i| {
+            sum.saturating_add(digit.saturating_mul(8u128.pow(i as u32)))
+        })
+    };
+    for field in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
+        let digits = field.prime_plane_digits();
+        let centered = (field.modulus() - 1) / 2;
+        assert!(reach(digits, 3) >= centered);
+        assert!(reach(digits, 4) >= centered);
+        assert!(reach(digits - 1, 3) < centered || reach(digits - 1, 4) < centered);
+    }
     for planes in [2, 10] {
         let field = BinaryFieldProfile::P64;
         let index = BinaryIndexMap::new(128, 1024, 1024, 256).unwrap();
@@ -400,21 +407,22 @@ fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
         assert!(manifest.d_label(false, planes - 1).is_err());
         let segment = plan.prime_segment().unwrap();
         let shape = &plan.repacking().segments()[segment];
-        assert_eq!(shape.digits, 22);
-        assert_eq!(shape.elements * shape.digits * 162, planes * 912_384);
+        let depth = field.prime_plane_digits();
+        let columns = manifest.descriptor().index_map().columns();
+        assert_eq!(shape.digits, depth);
+        assert_eq!(shape.elements, planes * columns);
+        assert_eq!(
+            shape.elements * shape.digits * shape.geometry.polynomial_modulus_dimension(),
+            planes * columns * depth * 162
+        );
         assert_eq!(
             plan.repacking().segment_range(segment).unwrap().len(),
-            planes * 1_441_792
+            planes * columns * depth * shape.geometry.physical_coefficient_width()
         );
-        let columns = (planes * 22 * 162 * 256).div_ceil(64);
-        assert_eq!(
-            manifest.d_label(false, planes).unwrap().rank as usize,
-            field
-                .digit_commitment_rank(
-                    akita_params::binary_setup::SetupStreamRole::WitnessCommitment,
-                    columns
-                )
-                .unwrap()
+        let width = (planes * depth * 162 * columns).div_ceil(64);
+        crate::binary_source::root_public::reference::assert_digit_rank::<akita_params::sis::Open>(
+            manifest.d_label(false, planes).unwrap(),
+            width,
         );
     }
 }
@@ -438,8 +446,16 @@ fn p64_prime_units_and_agreement_lift_are_exact() {
     // 2 and 3 are the only prime divisors of 162.
     assert_ne!(pow(residue, 81), 1);
     assert_ne!(pow(residue, 54), 1);
-    assert_eq!(2 * 92 + 4095, 4279);
-    const { assert!(4279 < BINARY_SETUP_P64) };
+    use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing, FoldChallengeDistribution};
+    let challenge = BinaryChallengeProfile::bounded_weight(
+        BinaryScalarRing::Cyclotomic243,
+        FoldChallengeDistribution::BinaryRoot.weight(),
+    )
+    .unwrap();
+    let gamma = u128::from(challenge.multiplication_linf_operator_bound());
+    let (low, high) = crate::binary_source::BINARY_RESPONSE_INTERVAL;
+    let delta = (i128::from(high) - i128::from(low)) as u128;
+    assert!(2 * gamma + delta < u128::from(BINARY_SETUP_P64));
 }
 
 #[test]

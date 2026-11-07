@@ -1,28 +1,7 @@
 //! Observe order-zero binding before any witness-dependent message or challenge.
 use super::*;
-use akita_challenges::{FoldDraw, ProverFoldDraw, VerifierFoldDraw};
+use akita_challenges::{ProverFoldDraw, VerifierFoldDraw};
 use akita_types::binary_source::{binary_root_challenges, binary_root_statement};
-
-/// A narrow test-only hook around the actual fold sampler. Capture the first
-/// squeezed seed rather than inferring binding from later relation rejection.
-struct FirstSqueeze<D> {
-    inner: D,
-    first: Option<Vec<u8>>,
-}
-
-impl<D: FoldDraw> FoldDraw for FirstSqueeze<D> {
-    fn draw_message<T>(
-        &mut self,
-        len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
-    ) -> Result<Option<T>, AkitaError> {
-        let first = &mut self.first;
-        self.inner.draw_message(len, |message| {
-            first.get_or_insert_with(|| message.to_vec());
-            decode(message)
-        })
-    }
-}
 
 #[test]
 fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides() {
