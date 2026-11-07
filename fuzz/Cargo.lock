@@ -757,7 +757,7 @@ dependencies = [
 [[package]]
 name = "jolt-algebra"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#fa4adf6e7fd8a31c03afdaa903ff51b118bd0265"
+source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#48b5e52c81ffb61eb975a5187dd41f4ab7d9aea6"
 dependencies = [
  "cc",
  "num-traits",
@@ -771,7 +771,7 @@ dependencies = [
 [[package]]
 name = "jolt-crypto"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#fa4adf6e7fd8a31c03afdaa903ff51b118bd0265"
+source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#48b5e52c81ffb61eb975a5187dd41f4ab7d9aea6"
 dependencies = [
  "jolt-algebra",
  "jolt-poly",
@@ -789,7 +789,7 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#fa4adf6e7fd8a31c03afdaa903ff51b118bd0265"
+source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#48b5e52c81ffb61eb975a5187dd41f4ab7d9aea6"
 dependencies = [
  "jolt-algebra",
  "jolt-utils",
@@ -804,7 +804,7 @@ dependencies = [
 [[package]]
 name = "jolt-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#fa4adf6e7fd8a31c03afdaa903ff51b118bd0265"
+source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#48b5e52c81ffb61eb975a5187dd41f4ab7d9aea6"
 dependencies = [
  "jolt-algebra",
  "jolt-poly",
@@ -817,7 +817,7 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#fa4adf6e7fd8a31c03afdaa903ff51b118bd0265"
+source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#48b5e52c81ffb61eb975a5187dd41f4ab7d9aea6"
 dependencies = [
  "blake2",
  "getrandom",
@@ -830,7 +830,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#fa4adf6e7fd8a31c03afdaa903ff51b118bd0265"
+source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#48b5e52c81ffb61eb975a5187dd41f4ab7d9aea6"
 dependencies = [
  "num-traits",
 ]
