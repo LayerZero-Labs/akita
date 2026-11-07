@@ -13,6 +13,7 @@ p = 2**64 - 59
 q = 14_253_409
 S46 = sum(comb(162, j) for j in range(47))
 GUARANTEED_SET = 2**136
+EXTENSION_DEGREE = 2
 
 
 def pos(d):
@@ -113,10 +114,16 @@ print('Nlog m Bound Kdigits paritydigits lift Hpar paritylift binarycells frontb
 def shape(n):
     m, c = 2**n // 1024, 256
     bound, d, dpar, lift, hpar, plift = geometry(m, c)
-    # One owner, word claim and one prime plane; no intersegment padding.
-    cells = 4096*m + 24576*c + 256*c + 256*(dpar+6) + 5632*c + 3072*d
-    front = 2069 + 42*n
+    # One owner, word claim and one E64 prime claim; no intersegment padding.
+    cells = 4096*m + 24576*c + 256*c + 256*(dpar+6) + EXTENSION_DEGREE*5632*c + 3072*d
+    # Word proof plus prime point/value payload, excluding manifest framing.
+    front = 2069 + 42*n + prime_claim_bytes(n)
     return cells, front
+
+
+def prime_claim_bytes(n):
+    # The shared point has n+8 E64 coordinates; one E64 value follows.
+    return 8 * EXTENSION_DEGREE * (n+8+1)
 
 
 expected_geometry = [
@@ -127,12 +134,14 @@ expected_geometry = [
     (265_577_422_769_418_240, 12, 10, 825_284_170_295_098_020, 63_771_648, 1_354_676_808),
     (531_154_619_746_283_520, 13, 10, 5_008_808_600_008_735_396, 127_472_640, 1_482_078_792),
 ]
-expected_cells = [12_030_720, 16_225_024, 24_616_704, 41_393_920, 74_948_608, 142_060_544]
+expected_cells = [13_472_512, 17_666_816, 26_058_496, 42_835_712, 76_390_400, 143_502_336]
 for n in range(20, 26):
     m = 2**n // 1024
     assert geometry(m, 256) == expected_geometry[n-20]
     assert shape(n)[0] == expected_cells[n-20]
-    assert shape(n)[1] == 2048 + 42*n + 21
+    assert shape(n)[1] == 2048 + 42*n + 21 + 16*(n+9)
+    # The prior P64 encoding used one eight-byte residue per point/value.
+    assert prime_claim_bytes(n) - 8*(n+9) == 8*(n+9)
     assert column_work_bits(256) == 0
     print(n, m, *geometry(m, 256), *shape(n), 0,
           'inside-envelope' if n <= 23 else 'needs-later-change')
@@ -140,8 +149,9 @@ assert pos(9) == 57_521_883 and pos(10) == 460_175_067
 assert (3*162*256+1)//2 == 62_208
 assert 3*162*256*4 + 1 + 2*neg(6) == 797_257
 assert 24576*256 == 6_291_456 and 5632*256 == 1_441_792
+assert EXTENSION_DEGREE*5632*256 == 2_883_584
 assert [3072*d for d in (11, 12, 13)] == [33_792, 36_864, 39_936]
-assert 243*256 == 62_208 and ceildiv(23*162*256, 64) == 14_904
+assert 243*256 == 62_208 and ceildiv((1+22*EXTENSION_DEGREE)*162*256, 64) == 29_160
 
 print('scenario binaryN ordinaryN X Y binarycells minWincludingOrdSource frontbytes proofproxy proveA proveB verifyA verifyB work_bits')
 for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
@@ -150,8 +160,10 @@ for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
     x, y = F(nb, 2**22), F(no, 2**22)
     cells = sum(shape(n)[0] for n in bins)
     front = sum(shape(n)[1] for n in bins)
+    # This proof-only proxy excludes the public prime point/value payload.
     # Shared schedule, framing and nonce changes remain explicit deltas.
-    proof = 84392 - 2993 - 2048 - 84 + front + 4096
+    proof_front = front - sum(prime_claim_bytes(n) for n in bins)
+    proof = 84392 - 2993 - 2048 - 84 + proof_front + 4096
     pa = F(2893, 10000) + F(3788, 10000)*x + F(608, 10000)*y
     pb = F(2893, 10000) + 4*F(1351, 10000) + F(2437, 10000)*x + F(608, 10000)*y
     va = F(562, 100) + F(398, 100)*x + F(581, 100)*y
@@ -161,8 +173,8 @@ for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
         'small': tuple(map(F, ('1.2632', '1.499625', '26.195', '31.515'))),
     }
     assert (pa, pb, va, vb) == exact_times[name]
-    expected = {'large': (316_574_464, 536_870_912, 12266, 95629),
-                'small': (69_097_472, 134_217_728, 11804, 95167)}
+    expected = {'large': (322_341_632, 536_870_912, 14362, 95629),
+                'small': (74_864_640, 134_217_728, 13724, 95167)}
     assert (cells, pow2ceil(cells+no), front, proof) == expected[name]
     assert 4*1944 == 7776 and 4*(1944+2+2+2+2) == 7808
     assert 1+4*256 == 1025
@@ -170,14 +182,14 @@ for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
     assert sum(n > 23 for n in bins) == (3 if name == 'large' else 0)
     print(name, nb, no, x, y, cells, pow2ceil(cells+no), front, proof,
           *[decimal(z) for z in (pa, pb, va, vb)], [0, 0, 0, 0])
-assert 316_574_464*8 == 2_532_595_712
-assert 316_574_464*16 == 5_065_191_424
+assert 322_341_632*8 == 2_578_733_056
+assert 322_341_632*16 == 5_157_466_112
 assert 243*4096*256 == 254_803_968
-assert ceildiv(23*4096*162*256, 64) == 61_046_784
+assert ceildiv((1+22*EXTENSION_DEGREE)*4096*162*256, 64) == 119_439_360
 width_caps = [296, 76_306, 4_030_488, 106_021_444, 1_826_815_994]
 assert next(i+1 for i, cap in enumerate(width_caps) if 254_803_968 <= cap) == 5
-assert next(i+1 for i, cap in enumerate(width_caps) if 61_046_784 <= cap) == 4
-assert 62_208 <= width_caps[1] and 14_904 <= width_caps[1]
+assert next(i+1 for i, cap in enumerate(width_caps) if 119_439_360 <= cap) == 5
+assert 62_208 <= width_caps[1] and 29_160 <= width_caps[1]
 # Aligned composite blocks have disjoint domains and the stated strict bound.
 for sizes in ([8], [8, 64, 16, 32], [128, 8, 256, 16], [1]*64):
     end = 0

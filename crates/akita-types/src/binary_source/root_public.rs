@@ -167,14 +167,14 @@ impl BinaryRootPublic {
 
     /// Seven P128 projections or the P64 coefficient coordinates, then word
     /// parity/value, B/D, ordinary rows, negative bits and two batches per prime
-    /// plane. No row
+    /// claim. No row
     /// reads a padding address, and none constrains one.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
 
     /// Batch ranges: terminal, B, D, ordinary rows, negative bits, prime rows.
-    fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
+    pub(super) fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
         let counts = self.plan.row_counts(
             self.manifest.b_rows(),
             self.manifest

@@ -61,7 +61,7 @@ fn occurrence(
         )
         .unwrap(),
         word,
-        prime_planes: planes,
+        prime_coordinate_planes: planes,
         registered_commitment: None,
     }
 }
@@ -103,7 +103,7 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                         group + 1,
                         BinaryFieldProfile::P64,
                         true,
-                        group + 1,
+                        2 * (group + 1),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -155,10 +155,10 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                     .sum::<u128>()
             );
             assert_eq!(
-                plan.totals().prime_planes,
+                plan.totals().prime_claims,
                 binary
                     .iter()
-                    .map(|group| group.prime_planes as u128)
+                    .map(|group| (group.prime_coordinate_planes / 2) as u128)
                     .sum::<u128>()
             );
             let repacking = plan.repacking();
@@ -187,7 +187,7 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                 let length = 4096 * group.owners * group.ring_rows
                     + 24576 * group.owners * group.columns
                     + 256 * group.owners * (group.columns + 9 + 6)
-                    + 5632 * group.prime_planes * group.columns
+                    + 5632 * group.prime_coordinate_planes * group.columns
                     + 3072 * group.owners * depth;
                 assert_eq!(group.physical_len, length);
                 expected_live += length;
@@ -226,11 +226,11 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                         &group.rows.d,
                         binary[group.global_index]
                             .manifest
-                            .d_label(true, group.prime_planes)
+                            .d_label(true, group.prime_coordinate_planes)
                             .unwrap()
                             .rank as usize,
                     ),
-                    (&group.rows.prime, 2 * group.prime_planes),
+                    (&group.rows.prime, 2 * group.owners),
                 ] {
                     assert_eq!(range.start, next_row);
                     assert_eq!(range.len(), count);
@@ -276,8 +276,8 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
 #[test]
 fn translations_cross_boundaries_with_unaligned_group_and_quotient_starts() {
     let binary = [
-        occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, true, 1),
-        occurrence(1, 4, 1, 2, BinaryFieldProfile::P64, false, 1),
+        occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, true, 2),
+        occurrence(1, 4, 1, 2, BinaryFieldProfile::P64, false, 2),
         occurrence(2, 2, 4, 1, BinaryFieldProfile::P64, true, 0),
     ];
     let plan =
@@ -373,7 +373,8 @@ fn translations_cross_boundaries_with_unaligned_group_and_quotient_starts() {
 fn singleton_layout_and_batch_accounting_equal_the_predecessor_in_both_fields() {
     for field in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
         for (m, columns, owners) in [(1, 1, 1), (1, 2, 2), (4, 8, 3), (128, 32, 1)] {
-            for (word, planes) in [(true, 0), (false, 1), (true, 1)] {
+            for (word, claims) in [(true, 0), (false, 1), (true, 1)] {
+                let planes = claims * field.extension_degree();
                 let input = occurrence(0, m, columns, owners, field, word, planes);
                 for mixed in [false, true] {
                     let mut predecessor = BinaryRootWitnessPlan::for_profile(
@@ -422,7 +423,7 @@ fn singleton_layout_and_batch_accounting_equal_the_predecessor_in_both_fields() 
                         + 2 * usize::from(word)
                         + input.manifest.b_rows()
                         + d
-                        + 2 * planes;
+                        + 2 * claims;
                     if let Some(ordinary) = ordinary {
                         expected += ordinary.plan.linear_batch_count()
                             + ordinary
@@ -455,7 +456,7 @@ fn total_fields(totals: &mut BinaryRootGroupTotals) -> [&mut u128; 9] {
         &mut totals.owners,
         &mut totals.binary_input_carriers,
         &mut totals.ordinary_input_coefficients,
-        &mut totals.prime_planes,
+        &mut totals.prime_claims,
         &mut totals.fold_coordinates,
         &mut totals.residual_coefficients,
         &mut totals.segment_cap,
@@ -492,16 +493,18 @@ fn aggregate_caps_accept_each_boundary_and_reject_its_successor() {
     }
     let field = BinaryFieldProfile::P64;
     let binary = (0..65)
-        .map(|group| occurrence(group, 1, 1, 1, field, true, 1))
+        .map(|group| occurrence(group, 1, 1, 1, field, true, 2))
         .collect::<Vec<_>>();
     let maximum = BinaryRootGroupPlan::new(&binary[..64], &[], 256).unwrap();
     assert_eq!(maximum.repacking().segments().len(), 448);
     assert_eq!(maximum.totals().segment_cap, 448);
     assert!(BinaryRootGroupPlan::new(&binary, &[], 256).is_err());
-    let maximum = occurrence(0, 1, 1, 4096, field, true, 4096);
+    let maximum = occurrence(0, 1, 1, 4096, field, true, 8192);
     let maximum = BinaryRootGroupPlan::new(&[maximum], &[], 256).unwrap();
     assert_eq!(maximum.totals().owners, 4096);
-    assert_eq!(maximum.totals().prime_planes, 4096);
+    assert_eq!(maximum.totals().prime_claims, 4096);
+    assert_eq!(maximum.binary()[0].prime_coordinate_planes, 8192);
+    assert_eq!(maximum.binary()[0].rows.prime.len(), 8192);
     assert_eq!(maximum.totals().residual_coefficients, 7_962_624);
 }
 
@@ -511,10 +514,17 @@ fn malformed_presence_counts_dimensions_and_domains_reject() {
     let valid = occurrence(0, 1, 2, 1, field, true, 0);
     assert!(BinaryRootGroupPlan::new(&[], &[], 256).is_err());
     assert!(BinaryRootGroupPlan::new(&[], &[ordinary(1, field)], 256).is_err());
-    for (word, planes) in [(false, 0), (false, 2), (true, 2), (true, usize::MAX)] {
+    for (word, planes) in [
+        (false, 0),
+        (false, 1),
+        (true, 1),
+        (false, 4),
+        (true, 4),
+        (true, usize::MAX),
+    ] {
         let mut invalid = valid.clone();
         invalid.word = word;
-        invalid.prime_planes = planes;
+        invalid.prime_coordinate_planes = planes;
         assert!(BinaryRootGroupPlan::new(&[invalid], &[], 256).is_err());
     }
     for (m, columns) in [(8192, 256), (1, 256)] {
@@ -607,9 +617,25 @@ fn overflowing_physical_lengths_and_row_sums_return_typed_errors() {
 }
 
 #[test]
+fn row_counts_reject_inexact_coordinate_plane_division() {
+    let input = occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, true, 0);
+    let group = BinaryRootGroupPlan::new(&[input], &[], 256).unwrap();
+    let mut plan = group.binary()[0].local_plan.clone();
+    // Corrupt the internal count to exercise the shared row boundary directly.
+    plan.prime_planes = 1;
+    assert!(matches!(
+        plan.row_counts(2, 1),
+        Err(akita_error::AkitaError::InvalidProof)
+    ));
+    plan.prime_planes = usize::MAX;
+    assert!(plan.row_counts(2, 1).is_err());
+}
+
+#[test]
 fn singleton_batch_count_matches_the_existing_public_compiler() {
     use crate::binary_source::{
-        BinaryRootPublic, BinaryTerminalClaim, PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest,
+        BinaryRootPublic, BinaryTerminalClaim, PrimeClaimValue, PrimeGroupClaim, PrimePlaneClaim,
+        PrimePlaneManifest,
     };
     let setup = crate::AkitaSetupDescriptor {
         max_num_vars: 0,
@@ -618,7 +644,8 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
         setup_seed: [41; 32].into(),
     };
     for field in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
-        for (word, planes) in [(true, 0), (false, 1), (true, 1)] {
+        for (word, claims) in [(true, 0), (false, 1), (true, 1)] {
+            let planes = claims * field.extension_degree();
             let input = occurrence(0, 1, 2, 1, field, word, planes);
             let descriptor = input.manifest.descriptor();
             let terminal = word.then(|| {
@@ -631,13 +658,17 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
                 )
                 .unwrap()
             });
+            let element = match field {
+                BinaryFieldProfile::P128 => PrimeClaimValue::Base(0),
+                BinaryFieldProfile::P64 => PrimeClaimValue::Extension([0, 1]),
+            };
             let prime = PrimePlaneManifest::with_field_profile(
                 descriptor,
                 (planes > 0).then(|| PrimeGroupClaim {
-                    point: vec![0; 11],
+                    point: vec![element; 11],
                     evaluations: vec![PrimePlaneClaim {
                         polynomial: 0,
-                        value: 0,
+                        value: element,
                     }],
                 }),
                 field,
@@ -663,6 +694,34 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
                 .unwrap()
                 .with_domain_len(public.plan().repacking().domain_len())
                 .unwrap();
+                // The singleton retains dev's order: ordinary rows precede prime rows.
+                let coefficients = match field {
+                    BinaryFieldProfile::P128 => 7,
+                    BinaryFieldProfile::P64 => 1944,
+                };
+                let word_end = coefficients + 2 * usize::from(word);
+                let b_end = word_end + input.manifest.b_rows();
+                let d_end = b_end + input.manifest.d_label(word, planes).unwrap().rank as usize;
+                let ordinary_end =
+                    d_end + ordinary.as_ref().map_or(0, |g| g.plan.linear_batch_count());
+                let negative_end = ordinary_end
+                    + ordinary
+                        .as_ref()
+                        .map_or(0, |g| g.plan.negative_binary_count().unwrap());
+                let prime_end = negative_end + 2 * claims;
+                assert_eq!(
+                    public.batch_ranges().unwrap(),
+                    [
+                        coefficients..word_end,
+                        word_end..b_end,
+                        b_end..d_end,
+                        d_end..ordinary_end,
+                        ordinary_end..negative_end,
+                        negative_end..prime_end,
+                    ]
+                );
+                assert_eq!(public.batch_count(), prime_end);
+                assert_eq!(group.binary()[0].rows.prime.len(), 2 * claims);
                 assert_eq!(group.batch_count(), public.batch_count());
                 assert_eq!(group.repacking(), public.plan().repacking());
             }
@@ -765,7 +824,7 @@ fn input_word_capacity_and_width_are_validated_before_roster_construction() {
                 )
                 .unwrap(),
                 word: true,
-                prime_planes: 0,
+                prime_coordinate_planes: 0,
                 registered_commitment: None,
             };
             let plan = BinaryRootGroupPlan::new(&[input], &[], 256).unwrap();

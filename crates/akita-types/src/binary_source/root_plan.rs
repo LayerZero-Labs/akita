@@ -157,7 +157,9 @@ impl BinaryRootWitnessPlan {
         Ok(super::BinaryRootRowCounts {
             coefficients: self.coefficient_batch_count()?,
             word: if self.word { 2 } else { 0 },
-            prime: checked::product([2, self.prime_planes]).ok_or(AkitaError::InvalidProof)?,
+            prime: checked::exact_div(self.prime_planes, self.field_profile.extension_degree())
+                .and_then(|claims| checked::product([2, claims]))
+                .ok_or(AkitaError::InvalidProof)?,
             b: b_rows,
             d: d_rows,
         })

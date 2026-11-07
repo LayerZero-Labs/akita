@@ -66,8 +66,8 @@ these invariants. No Rust implementation is included in this spec change.
 
 This change does not add separate openings, a shared D, ordinary response
 partials, extra Stage 2 executions, repeated coefficient tests or extra
-terminals. It does not admit binary E64 prime points or several prime points per
-group. It does not admit `m_b = 16384` or `32768`. Those geometries need a later
+terminals. It does not admit several prime points per group. It does not admit
+`m_b = 16384` or `32768`. Those geometries need a later
 carry, response-acceptance and q24 SIS change. It does not supply the
 application's conditional agreement proof.
 
@@ -155,21 +155,22 @@ A binary group contains:
   4m_b C_b` padded carriers **per polynomial**. Its q image has rank three in
   `Z_q[Y]/(Y^648-Y^324+1)`, with `q = 14,253,409`.
 * Either or both of: one word claim on one owned polynomial, over
-  `H = GF(2^128)`; one common base-field point `x_b` with a nonempty ordered
+  `H = GF(2^128)`; one common prime point `x_b` with a nonempty ordered
   subset of owned polynomials and one value per selected polynomial. Let `w_b`
   be the word-presence bit and `t_b` the number of claimed prime polynomials.
-  Require `w_b + [t_b>0] >= 1`. Each selected polynomial has exactly one EP
-  plane, using the one-point change's canonical functional. No extra
+  Require `w_b + [t_b>0] >= 1`. Each claim owns `degree` base-coordinate EP
+  planes (two for P64, one for P128) and contributes two Stage 2 identities
+  (over E64 for P64), as in the [64-bit root](binary-source-p64-root.md#prime-planes). No extra
   tensor-component choice or alternate point survives into this API.
 * The opening profile: quotient/carry depths, D rank and typed D setup label,
   local typed prefix layout, response family and interval, nonce policy,
   source-reading and conditional-agreement contract, and setup-prefix slot. D is
   an opening commitment, not a replacement for its earlier B commitment.
 
-A binary prime point is a coordinate vector over `F_p`. Its dimension and
+A P64 binary prime point and its claimed values are over E64. Its dimension and
 reading map are those fixed by the one-point API, validated against its
-descriptor; this profile caps the dimension at 32. Extension-valued binary prime
-points would need two base-coordinate planes and are outside this profile. The
+descriptor; this profile caps the dimension at 32. Its two base-coordinate EP
+planes recombine with basis weights 1 and u in each identity. The
 GF(2^128) word point has `log2(N_b)+log2(128/ell_b)` coordinates, at most 32.
 The GF(2^162) terminal is produced internally, never supplied as an initial
 claim. The word contract remains a relaxed source reading; equality with the
@@ -227,9 +228,9 @@ Absorb this record, in order:
    binary B, the count is `64 r_B,b`. A rank/ring is never taken from an
    unvalidated payload length. Ordinary counts come from the frozen profile.
 4. For each binary occurrence: word presence, and if present its owner index,
-   full H point and value; prime presence, and if present one F_p point with its
+   full H point and value; prime presence, and if present one E64 point with its
    prescribed dimension, `t_b`, and strictly increasing owner indices with their
-   F_p values. Reject repeated owners, conflicting values, duplicate requests
+   E64 values. Reject repeated owners, conflicting values, duplicate requests
    and empty presence records. H elements are 16 little-endian polynomial-basis bytes; F_p
    elements are eight.
 5. For each ordinary occurrence: prescribed point dimension and E64 coordinates,
@@ -267,7 +268,7 @@ deployment may select smaller trusted limits.
 | Binary dimensions | `m_b,C_b` powers of two; `1 <= m_b <= 8192`, `1 <= C_b <= 256`; `N_b=4m_b C_b <= 2^23` |
 | Binary input words | `ell_b` power of two in `[1,128]`; `1 <= logical_len_b <= N_b*(128/ell_b)` |
 | Total input volume | `sum_b s_b N_b <= 2^28`; `sum_o s_o n_o <= 2^28`; `v_o <= 25` |
-| Prime planes | `0 <= t_b <= s_b`; `sum_b t_b <= 4096`; zero only if word present |
+| Prime claims `t_b` | `0 <= t_b <= s_b`; `sum_b t_b <= 4096`; zero only if word present; physical planes `= degree*t_b` |
 | Binary fold coordinates | `I=sum_b s_b C_b <= 4096*256 = 1,048,576` |
 | Residual coefficients | `a=sum_b 1944s_b <= 7,962,624` |
 | Setup/ring parameters | Binary q A rank 3/degree 648; B/D degree 64 and rank 1..5; ordinary native degrees at most 648, each profile otherwise independently admitted |
@@ -349,7 +350,7 @@ For B/D resource and estimator selection, use
 
 ```
 width_B,b = (s_b*C_b*3*8*648)/64 = 243*s_b*C_b
-width_D,b = ceil((w_b*s_b*162*C_b + 22*t_b*162*C_b)/64)
+width_D,b = ceil((w_b*s_b*162*C_b + 22*degree*t_b*162*C_b)/64)
 ```
 
 Select the least rank whose q64 `(degree=64, digit_difference=7)` width cap
@@ -357,9 +358,10 @@ covers that width; caps at ranks 1..5 are respectively `296, 76,306, 4,030,488,
 106,021,444, 1,826,815,994` from the 64-bit root spec. Do not label this
 estimator lookup a hardness proof. Outgoing and setup-prefix commitments need
 their own actual-width certification. In particular, t_b up to s_b removes the
-old five-plane cap, requiring new D admission. For `s_b=4096, C_b=256`, the
-maxima are B width 254,803,968 and D width 61,046,784 (all owners opened and
-word present); ranks 5 and 4 cover the copied width table. B ranks are already
+old five-claim cap, requiring new D admission. For `s_b=4096, C_b=256`, the
+maxima are B width 254,803,968 and D width 119,439,360 (all owners opened and
+word present, degree 2). Both require rank 5 in the copied width table; D
+exceeds rank 4's cap 106,021,444. B ranks are already
 fixed at commitment time; D ranks are selected before order 0.
 
 Ordinary full-field sources may use 22 base-eight digits and field
@@ -590,12 +592,13 @@ retain the legacy local order:
 | U_b, if word | `s_b C_b` | 1 | 162 | 256 |
 | Cpar_b, if word | `s_b` | dpar_b | 162 | 256 |
 | Cval_b, if word | `s_b` | 6 | 162 | 256 |
-| EP_b, if prime | `t_b C_b` | 22 | 162 | 256 |
+| EP_b, if prime | `degree*t_b C_b` | 22 | 162 | 256 |
 | K_b, in final quotient bank | `3s_b` | dK_b | 648 | 1024 |
 
 The all-owner U/carry shapes preserve current layout; only the selected word
 owner's reading rows are active. An optimization to omit unused owner views
-would need a new layout version. The prime subset is in increasing owner order.
+would need a new layout version. The prime subset is in increasing owner order,
+then base-coordinate order within each claim.
 There is no EP for an unclaimed polynomial and no per-point expansion.
 
 Global segment order is: binary legacy blocks b=0..G_b-1; ordinary blocks
@@ -641,7 +644,7 @@ optional signed-bit segment. The binary physical length is
 ```
 L_b = 4096*s_b*m_b + 24576*s_b*C_b
     + w_b*256*s_b*(C_b+dpar_b+6)
-    + 5632*t_b*C_b + 3072*s_b*dK_b.
+    + 5632*degree*t_b*C_b + 3072*s_b*dK_b.
 W_min = next_power_of_two(max(destination_ring_degree, sum_b L_b + sum_o L_o)).
 ```
 
@@ -732,7 +735,7 @@ is:
    order, with independent E64 weights rho_b,j,r,t.
 2. For each binary group: selected word parity/value rows (two ring rows),
    B authentication rows, D authentication rows, then the prime response and
-   reading rows (two ring rows per plane).
+   reading rows (two ring rows per claim).
 3. For each ordinary group: A image rows, B rows, first/second compression rows,
    per-owner point evaluations and any signed-width linkage rows, in its
    canonical plan order; then one negative-bit predicate per physical natural
@@ -885,7 +888,7 @@ payloads shrink to eight.
 Prover work has local and shared terms:
 
 ```
-T_prove = sum_b [frontend_b(N_b) + plane_b(N_b,t_b)
+T_prove = sum_b [frontend_b(N_b) + plane_b(N_b,degree*t_b)
                  + Dcommit_b + attempts_b*(work_b(g_b) + response_b(s_b,N_b,C_b))
                  + residual_b(s_b,m_b,C_b) + O(1944*s_b*dK_b)]
         + sum_o preimage_o(L_o)
@@ -924,7 +927,8 @@ not constant cost.
 #### Concrete binary counts
 
 For a concrete comparison take one polynomial per binary group, C=256, one word
-claim and one base prime plane, `r_B=r_D=2`. All ordinary table examples below
+claim and one E64 prime claim owning two planes, `r_B=r_D=2`. All ordinary
+table examples below
 take one small-coefficient polynomial per group, as in the measurement fixture;
 changing to full-field coefficients can multiply source digit work by 22 before
 compression overhead. The 2^24 and 2^25 rows use the evidence-only carry depth
@@ -932,17 +936,25 @@ compression overhead. The 2^24 and 2^25 rows use the evidence-only carry depth
 
 | N | m | K digits | Parity digits | Binary physical cells including K | Frontend bytes | D bytes | g_b | Admission |
 |---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 2^20 | 1024 | 11 | 9 | 12,030,720 | 2,909 | 1,024 | 0 | inside envelope |
-| 2^21 | 2048 | 11 | 9 | 16,225,024 | 2,951 | 1,024 | 0 | inside envelope |
-| 2^22 | 4096 | 12 | 9 | 24,616,704 | 2,993 | 1,024 | 0 | inside envelope |
-| 2^23 | 8192 | 12 | 9 | 41,393,920 | 3,035 | 1,024 | 0 | inside envelope |
-| 2^24 | 16384 | 12 | 10 | 74,948,608 | 3,077 | 1,024 | 0 | needs later geometry change |
-| 2^25 | 32768 | 13 | 10 | 142,060,544 | 3,119 | 1,024 | 0 | needs later geometry change |
+| 2^20 | 1024 | 11 | 9 | 13,472,512 | 3,373 | 1,024 | 0 | inside envelope |
+| 2^21 | 2048 | 11 | 9 | 17,666,816 | 3,431 | 1,024 | 0 | inside envelope |
+| 2^22 | 4096 | 12 | 9 | 26,058,496 | 3,489 | 1,024 | 0 | inside envelope |
+| 2^23 | 8192 | 12 | 9 | 42,835,712 | 3,547 | 1,024 | 0 | inside envelope |
+| 2^24 | 16384 | 12 | 10 | 76,390,400 | 3,605 | 1,024 | 0 | needs later geometry change |
+| 2^25 | 32768 | 13 | 10 | 143,502,336 | 3,663 | 1,024 | 0 | needs later geometry change |
+
+Frontend bytes here count the word proof `2048+42*n+21` plus the public prime
+point and value `16*(n+8+1)`, for `n=log2(N)`. Each P64 point coordinate and
+value now encodes two eight-byte residues. Manifest tags, counts and owner
+indices are excluded. The proof-only `B_open` formula above excludes this
+public claim payload.
 
 The constant C=256 image cost is 6,291,456 cells per owner even at small N. One
-prime plane costs 1,441,792 cells. K costs respectively 33,792, 36,864 or 39,936
-cells for depths 11,12,13. These fixed costs prevent proportional-to-N extrapolation at 2^20. B width is 62,208 and D width is 14,904 in
-every row; rank two suffices for the copied q64 estimator caps.
+prime claim costs `2*5632*C` = 2,883,584 cells. K costs respectively 33,792,
+36,864 or 39,936 cells for depths 11,12,13. These fixed costs prevent
+proportional-to-N extrapolation at 2^20. B width is 62,208 and D width is
+`ceil((162*C+44*162*C)/64)` = 29,160 in every row; rank two suffices for the
+copied q64 estimator caps.
 
 #### Combined examples
 
@@ -959,9 +971,9 @@ choices without changing the protocol.
 | Column work-nonce bytes | 0 | 0 |
 | Binary carriers total | 71,303,168 = 17*2^22 | 9,437,184 = (9/4)*2^22 |
 | Ordinary coefficients total | 39,059,456 = (149/16)*2^22 | 8,388,608 = 2*2^22 |
-| Binary physical cells | 316,574,464 | 69,097,472 |
+| Binary physical cells | 322,341,632 | 74,864,640 |
 | Source-only lower bound on W | 2^29 | 2^27 |
-| Four frontends, exact bytes | 12,266 | 11,804 |
+| Four frontends and public prime point/value payloads, exact bytes | 14,362 | 13,724 |
 | Four D payloads, exact bytes | 4,096 | 4,096 |
 | Four response nonces | 4..8 bytes | 4..8 bytes |
 | Quotient rows | 7,776 | 7,776 |
@@ -972,8 +984,8 @@ choices without changing the protocol.
 The W lower bound rounds `(binary cells + ordinary coefficients)` to a power of
 two. Ordinary T/compression/optional signed-bit segments and the catalog's
 padding can increase it; neither 2^29 nor 2^27 is asserted to be the selected W.
-The large binary table alone uses 2,532,595,712 bytes in eight-byte base storage
-or 5,065,191,424 bytes in 16-byte E64 storage, before padding and scratch. One
+The large binary table alone uses 2,578,733,056 bytes in eight-byte base storage
+or 5,157,466,112 bytes in 16-byte E64 storage, before padding and scratch. One
 additional ordinary group does not induce a whole duplicate suffix, but it can
 push W or Pfx across a power-of-two or schedule boundary.
 
@@ -1010,11 +1022,14 @@ and offload. Because the root anchor itself includes shared stages, these models
 also overcharge some duplicated root fixed work. Do not subtract that without
 span evidence.
 
-For a byte proxy, keep the anchor's shared portion and substitute only the
-explicit frontend, D and projection messages:
+For a proof-only byte proxy, keep the anchor's shared portion and substitute
+only the explicit frontend proof, D and projection messages. Subtract the
+public prime point/value payload `prime_claim_bytes_b=16*(log2(N_b)+9)` from
+the table's frontend bytes:
 
 ```
-Byte_proxy = 84392 - 2993 - 2048 - 84 + sum_b frontend_bytes_b + 4096.
+Byte_proxy = 84392 - 2993 - 2048 - 84
+           + sum_b (frontend_bytes_b - prime_claim_bytes_b) + 4096.
 B_actual = Byte_proxy + Delta_nonce + Delta_column_work + Delta_framing
            + Delta_shared_schedule_and_migration.
 ```
@@ -1369,8 +1384,9 @@ checks in Evaluation.
   memory budget for admitted aggregate tables?
 
 The one-point interface is a dependency with a fixed contract in this spec: one
-common base-field point, one canonical functional and one EP plane for each
-selected owner. Its landing API must preserve that contract. Larger binary
+common E64 point for P64, one canonical functional and two base-coordinate EP
+planes per selected owner, contributing two identities over E64. P128 retains
+one plane per claim. Its landing API must preserve that contract. Larger binary
 geometry is a later extension, not an undecided admission limit.
 
 ## References
