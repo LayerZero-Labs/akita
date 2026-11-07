@@ -20,6 +20,14 @@ fn profiles_fold_like_the_materialized_table() {
             )
             .unwrap();
             let mut embedded_profiles = embedded.profiles(block_bits).unwrap();
+            // A zero explicit term selects additive emission. It must still
+            // give the same table as the independent embedded builders.
+            let mut additive = embedded.clone();
+            additive.terms.push((0, F::zero()));
+            assert_eq!(
+                additive.profiles(block_bits).unwrap().take_dense(),
+                embedded_profiles.clone().take_dense()
+            );
             // Embedding keeps both sets of local rows and only one zero row;
             // a per-address visitor can be numerically right and fail this.
             assert_eq!(
@@ -70,6 +78,23 @@ fn profiles_reject_blocks_wider_than_the_table() {
     let fixture = root_weight_fixtures().swap_remove(0);
     let num_vars = fixture.weights.table_len().trailing_zeros() as usize;
     assert!(fixture.weights.profiles(num_vars + 1).is_err());
+    let mut builder = super::ProfileBuilder::<F>::new(16, 2).unwrap();
+    let local = super::NativeRootWeights::new(4, vec![(0, F::from_u64(3))], F::zero()).unwrap();
+    assert!(builder
+        .append_profiles(1, local.profiles(2).unwrap())
+        .is_err());
+    assert!(builder
+        .append_profiles(16, local.profiles(2).unwrap())
+        .is_err());
+    assert!(builder
+        .append_profiles(0, local.profiles(1).unwrap())
+        .is_err());
+    builder
+        .append_profiles(4, local.profiles(2).unwrap())
+        .unwrap();
+    assert!(builder
+        .append_profiles(4, local.profiles(2).unwrap())
+        .is_err());
 }
 
 /// Lane runs fill the same table as per-address terms, across several

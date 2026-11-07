@@ -131,6 +131,9 @@ impl<E: Field> ProfileBuilder<E> {
         blocks
             .try_reserve_exact(table_len / width)
             .map_err(|_| AkitaError::InvalidSetup("root weight profile allocation".into()))?;
+        #[cfg(feature = "parallel")]
+        blocks.par_extend((0..table_len / width).into_par_iter().map(|_| zero));
+        #[cfg(not(feature = "parallel"))]
         blocks.resize(table_len / width, zero);
         let mut builder = Self {
             block_bits,
@@ -182,10 +185,49 @@ impl<E: Field> ProfileBuilder<E> {
             return Ok(());
         }
 
-        let phase = tracing::info_span!("root_weights_embedded_profiles", offset).entered();
+        let phase = tracing::info_span!(
+            "root_weights_embedded_profiles",
+            offset,
+            table_len = weights.table_len(),
+            block_bits = self.block_bits,
+            terms = weights.terms.len(),
+            families = weights.families.len()
+        )
+        .entered();
         let local = weights.profiles(self.block_bits)?;
         drop(phase);
-        let _phase = tracing::info_span!("root_weights_relocate_profiles", offset).entered();
+        self.append_profiles(offset, local)
+    }
+
+    /// Relocate already constructed profiles into unused destination blocks.
+    pub(crate) fn append_profiles(
+        &mut self,
+        offset: usize,
+        local: RootWeightProfiles<E>,
+    ) -> Result<(), AkitaError> {
+        let width = self.width();
+        if local.width_bits != self.block_bits || !offset.is_multiple_of(width) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let blocks =
+            checked::range(offset / width, local.blocks.len()).ok_or(AkitaError::InvalidProof)?;
+        let targets = self
+            .blocks
+            .get_mut(blocks)
+            .ok_or(AkitaError::InvalidProof)?;
+        if targets
+            .iter()
+            .any(|block| block.own != 0 || block.shared != 0)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let _phase = tracing::info_span!(
+            "root_weights_relocate_profiles",
+            offset,
+            blocks = local.blocks.len(),
+            row_cells = local.rows.len()
+        )
+        .entered();
         // Row zero remains the one global zero row. All other row indices
         // shift by the number of nonzero-index rows already in the builder.
         let base = (self.rows.len() / width)
@@ -209,13 +251,6 @@ impl<E: Field> ProfileBuilder<E> {
                 row.checked_add(base).ok_or(AkitaError::InvalidProof)
             }
         };
-        let targets = self
-            .blocks
-            .get_mut(blocks)
-            .ok_or(AkitaError::InvalidProof)?;
-        if targets.len() != local.blocks.len() {
-            return Err(AkitaError::InvalidProof);
-        }
         let relocate = |(target, block): (&mut BlockWeight<E>, &BlockWeight<E>)| {
             *target = BlockWeight {
                 scale: block.scale,

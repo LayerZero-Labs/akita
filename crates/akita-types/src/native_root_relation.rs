@@ -402,7 +402,51 @@ impl<E: Field> NativeRootWeights<E> {
     /// table folded by the same challenges, entry for entry.
     pub fn profiles(&self, block_bits: usize) -> Result<RootWeightProfiles<E>, AkitaError> {
         let mut profiles = profiles::ProfileBuilder::new(self.table_len, block_bits)?;
-        let span = tracing::info_span!("root_weights_emit_terms").entered();
+        // Complete disjoint embeddings have independent local builders. Keep
+        // their results in family order so relocation assigns identical rows.
+        let width = profiles.width();
+        let mut end = 0;
+        let disjoint = self.terms.is_empty()
+            && self.families.iter().all(|family| {
+                let RootWeightFamily::Embedded(weights) = family else {
+                    return false;
+                };
+                let Some(range) = checked::range(weights.offset, weights.local.table_len) else {
+                    return false;
+                };
+                let valid = range.start >= end
+                    && range.end <= self.table_len
+                    && range.start.is_multiple_of(width)
+                    && weights.local.table_len.is_multiple_of(width);
+                end = range.end;
+                valid
+            });
+        if disjoint {
+            let locals = cfg_iter!(self.families)
+                .map(|family| {
+                    let RootWeightFamily::Embedded(weights) = family else {
+                        return Err(AkitaError::InvalidProof);
+                    };
+                    let _span = tracing::info_span!(
+                        "root_weights_embedded_profiles",
+                        offset = weights.offset,
+                        table_len = weights.local.table_len,
+                        block_bits,
+                        terms = weights.local.terms.len(),
+                        families = weights.local.families.len()
+                    )
+                    .entered();
+                    Ok((weights.offset, weights.local.profiles(block_bits)?))
+                })
+                .collect::<Vec<Result<_, AkitaError>>>();
+            for local in locals {
+                let (offset, local) = local?;
+                profiles.append_profiles(offset, local)?;
+            }
+            return Ok(profiles.finish());
+        }
+        let span =
+            tracing::info_span!("root_weights_emit_terms", count = self.terms.len()).entered();
         for &(address, weight) in &self.terms {
             profiles.add(address, weight)?;
         }
