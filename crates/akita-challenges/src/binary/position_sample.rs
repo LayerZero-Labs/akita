@@ -1,18 +1,11 @@
 //! Distinct-position sampling for binary challenge supports.
 //!
-//! Fisher-Yates partial shuffle helpers for the binary challenge sampler.
+//! Partial Fisher-Yates over the supported degree-162 and degree-486 rings.
+//! Dense supports use 256/512-entry stack permutations; small supports reuse
+//! a sparse swap map while consuming the same indexed XOF stream.
 
 use super::xof::XofCursor;
 use akita_error::AkitaError;
-
-/// Max ring dimension supported by the stack-buffer sampling paths.
-///
-/// Public API functions reject `D` above this with an error before reaching
-/// the sampling internals.
-const MAX_STACK_RING_DIM: usize = 2048;
-
-/// Largest stack array used by one concrete sampler tier.
-const MAX_STACK_TIER_RING_DIM: usize = 2048;
 
 /// Reused sparse representation of the swaps performed by partial
 /// Fisher-Yates. Missing entries retain their identity-permutation value.
@@ -125,34 +118,22 @@ pub(crate) fn sample_distinct_positions_into(
     out: &mut [u32],
     scratch: &mut DistinctPositionScratch,
 ) -> Result<(), AkitaError> {
-    debug_assert!(out.len() <= universe);
-    debug_assert!(universe <= MAX_STACK_RING_DIM);
+    if out.len() > universe {
+        return Err(AkitaError::InvalidInput(
+            "support weight exceeds the ring dimension".into(),
+        ));
+    }
     // A dense challenge already has output size Theta(universe), and the flat
     // permutation has the best concrete locality. Sparse production families
     // instead retain only the O(weight) swaps touched by partial Fisher-Yates.
-    if universe > out.len().saturating_mul(64) {
-        return sample_distinct_positions_into_sparse(cursor, universe, out, scratch);
+    match (universe, universe > out.len().saturating_mul(64)) {
+        (162 | 486, true) => sample_distinct_positions_into_sparse(cursor, universe, out, scratch),
+        (162, false) => sample_distinct_positions_into_stack::<u8, 256>(cursor, universe, out),
+        (486, false) => sample_distinct_positions_into_stack::<u16, 512>(cursor, universe, out),
+        _ => Err(AkitaError::InvalidInput(
+            "binary challenge ring dimension must be 162 or 486".into(),
+        )),
     }
-    match universe {
-        0..=8 => sample_distinct_positions_into_stack::<u8, 8>(cursor, universe, out),
-        9..=16 => sample_distinct_positions_into_stack::<u8, 16>(cursor, universe, out),
-        17..=32 => sample_distinct_positions_into_stack::<u8, 32>(cursor, universe, out),
-        33..=64 => sample_distinct_positions_into_stack::<u8, 64>(cursor, universe, out),
-        65..=128 => sample_distinct_positions_into_stack::<u8, 128>(cursor, universe, out),
-        129..=256 => sample_distinct_positions_into_stack::<u8, 256>(cursor, universe, out),
-        257..=512 => sample_distinct_positions_into_stack::<u16, 512>(cursor, universe, out),
-        513..=1024 => sample_distinct_positions_into_stack::<u16, 1024>(cursor, universe, out),
-        1025..=MAX_STACK_TIER_RING_DIM => sample_distinct_positions_into_stack::<
-            u16,
-            MAX_STACK_TIER_RING_DIM,
-        >(cursor, universe, out),
-        _ => {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring dimension must be <= {MAX_STACK_RING_DIM}"
-            )))
-        }
-    }?;
-    Ok(())
 }
 
 #[inline]
@@ -187,7 +168,7 @@ where
     T: Copy + Default + TryFrom<usize>,
     u32: From<T>,
 {
-    if out.len() > universe || universe > N || N > MAX_STACK_TIER_RING_DIM {
+    if out.len() > universe || universe > N {
         return Err(AkitaError::InvalidInput(
             "permutation tier has invalid dimensions".into(),
         ));
@@ -212,8 +193,8 @@ mod tests {
 
     #[test]
     fn sparse_virtual_permutation_matches_dense_partial_fisher_yates() {
-        for (universe, weight) in [(128usize, 7usize), (256, 23), (1024, 16), (2048, 14)] {
-            let seed = [universe.trailing_zeros() as u8; 32];
+        for (universe, weight) in [(162usize, 1usize), (162, 23), (486, 2), (486, 46)] {
+            let seed = [universe as u8; 32];
             let prefix = crate::binary::xof::IndexedXofPrefix::new(&seed).unwrap();
             let mut dense_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut sparse_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
@@ -222,22 +203,12 @@ mod tests {
             let mut scratch = DistinctPositionScratch::new();
             for round in 0..16 {
                 match universe {
-                    128 => sample_distinct_positions_into_stack::<u8, 128>(
+                    162 => sample_distinct_positions_into_stack::<u8, 256>(
                         &mut dense_cursor,
                         universe,
                         &mut dense,
                     ),
-                    256 => sample_distinct_positions_into_stack::<u8, 256>(
-                        &mut dense_cursor,
-                        universe,
-                        &mut dense,
-                    ),
-                    1024 => sample_distinct_positions_into_stack::<u16, 1024>(
-                        &mut dense_cursor,
-                        universe,
-                        &mut dense,
-                    ),
-                    2048 => sample_distinct_positions_into_stack::<u16, 2048>(
+                    486 => sample_distinct_positions_into_stack::<u16, 512>(
                         &mut dense_cursor,
                         universe,
                         &mut dense,
@@ -257,6 +228,11 @@ mod tests {
                     "universe={universe}, weight={weight}, round={round}"
                 );
             }
+            let mut dense_continuation = [0; 16];
+            let mut sparse_continuation = [0; 16];
+            dense_cursor.fill_bytes(&mut dense_continuation);
+            sparse_cursor.fill_bytes(&mut sparse_continuation);
+            assert_eq!(sparse_continuation, dense_continuation);
         }
     }
 }

@@ -17,15 +17,6 @@ fn random<F: Field>(rng: &mut StdRng) -> F {
     F::from_u128(u128::from(rng.next_u64()) << 64 | u128::from(rng.next_u64()))
 }
 
-fn signed<F: Field>(value: i128) -> F {
-    let magnitude = F::from_u128(value.unsigned_abs());
-    if value < 0 {
-        -magnitude
-    } else {
-        magnitude
-    }
-}
-
 fn dot<F: Field>(lhs: &[F], rhs: &[F]) -> F {
     assert_eq!(lhs.len(), rhs.len());
     lhs.iter()
@@ -56,7 +47,7 @@ fn dense_g<F: Field, const D: usize, M: TrinomialModulus>(rho: &[F]) -> Vec<F> {
             rho.iter()
                 .zip(remainder)
                 .fold(F::zero(), |sum, (&coefficient, basis)| {
-                    sum + coefficient * signed::<F>(basis)
+                    sum + coefficient * F::from_i128(basis)
                 })
         })
         .collect()
@@ -85,9 +76,9 @@ fn full_degree_identity<F: Field + Debug>(seed: u64) {
             .map(|_| i128::from(rng.next_u32() % 17) - 8)
             .collect();
         let product = signed_trinomial_product::<DEGREE, MinusTrinomial>(&a, &v).unwrap();
-        let a: Vec<F> = a.into_iter().map(signed).collect();
-        let v: Vec<F> = v.into_iter().map(signed).collect();
-        let product: Vec<F> = product.into_iter().map(signed).collect();
+        let a: Vec<F> = a.into_iter().map(F::from_i128).collect();
+        let v: Vec<F> = v.into_iter().map(F::from_i128).collect();
+        let product: Vec<F> = product.into_iter().map(F::from_i128).collect();
         let h = adjoint.apply(&rho, &v).unwrap();
         assert_eq!(dot(&rho, &product), dot(&a, &h));
     }
@@ -380,7 +371,7 @@ fn integer_rows_with<M: TrinomialModulus, const D: usize>(
     for (j, h) in fast.iter().enumerate() {
         let mut expected = vec![Prime128Offset275::zero(); D];
         for (functional, row) in rho.iter().zip(&rows) {
-            let v = row[j].map(signed::<Prime128Offset275>);
+            let v = row[j].map(Prime128Offset275::from_i128);
             for (slot, value) in expected
                 .iter_mut()
                 .zip(adjoint.apply(functional, &v).unwrap())
