@@ -83,6 +83,9 @@ mod tests {
             assert_eq!(blocks.draws(), count);
             drop(blocks);
             assert_eq!(thread_events(), events);
+            let log = crate::thread_event_log().unwrap();
+            assert_eq!(log.len(), events.len());
+            assert_eq!(log.events().collect::<Vec<_>>(), events);
             candidate.public(b"continue");
             original.public(b"continue");
             assert_eq!(
@@ -100,6 +103,10 @@ mod tests {
             thread_events(),
             vec![crate::TranscriptEvent::Context(context)]
         );
+        let log = crate::thread_event_log().unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log.runs().collect::<Vec<_>>(), vec![(context, 1)]);
+        assert_eq!(log.events().collect::<Vec<_>>(), thread_events());
         clear_thread_events();
     }
 }

@@ -306,6 +306,16 @@ fn run(with_word: bool, mode: ResearchTerminalMode) -> Capture {
     akita_transcript::finish_proof_ranges(&prover);
     let ranges = akita_transcript::thread_proof_ranges();
     let events = akita_transcript::thread_events();
+    let log = akita_transcript::thread_event_log().unwrap();
+    assert_eq!(log.len(), events.len());
+    assert_eq!(log.events().collect::<Vec<_>>(), events);
+    assert!(log
+        .runs()
+        .flat_map(|(record, count)| {
+            std::iter::repeat_n(akita_transcript::TranscriptEvent::Context(record), count)
+        })
+        .eq(events.iter().copied()));
+    assert_eq!(akita_transcript::thread_proof_ranges(), ranges);
     let root_sites = events
         .iter()
         .filter_map(|event| {
@@ -381,6 +391,10 @@ fn run(with_word: bool, mode: ResearchTerminalMode) -> Capture {
     akita_transcript::clear_thread_events();
     verify(&proof, &claims).expect("honest research replay and exact EOF");
     assert_eq!(akita_transcript::thread_events(), events);
+    let replay_log = akita_transcript::thread_event_log().unwrap();
+    assert_eq!(replay_log.len(), events.len());
+    assert_eq!(replay_log.events().collect::<Vec<_>>(), events);
+    assert_eq!(log.events().collect::<Vec<_>>(), events);
     if mode == ResearchTerminalMode::E64TwoPointS11a {
         for changed in e64::mutations(&claims) {
             assert!(verify(&proof, &changed).is_err(), "E64 reading mutation");

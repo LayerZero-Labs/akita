@@ -23,7 +23,8 @@ pub use grinding::{
 pub use jolt_transcript::{ChallengeCodec, ProverTranscript, VerifierTranscript};
 #[cfg(feature = "logging-transcript")]
 pub use logging::{
-    clear_thread_events, thread_events, thread_proof_ranges, ProofMessageRange, TranscriptEvent,
+    clear_thread_events, thread_event_log, thread_events, thread_proof_ranges, ProofMessageRange,
+    TranscriptEvent, TranscriptEventLog,
 };
 #[cfg(feature = "logging-transcript")]
 pub use proof_stream::finish_proof_ranges;

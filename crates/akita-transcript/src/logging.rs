@@ -3,6 +3,9 @@
 use crate::{ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId};
 use std::cell::RefCell;
 
+mod read;
+pub use read::{thread_event_log, TranscriptEventLog};
+
 thread_local! {
     static THREAD_EVENTS: RefCell<Vec<ContextRun>> = const { RefCell::new(Vec::new()) };
     static THREAD_PROOF_RANGES: RefCell<Vec<ProofMessageRange>> = const { RefCell::new(Vec::new()) };
@@ -20,6 +23,7 @@ pub enum TranscriptEvent {
 // caller's diagnostic log can span many openings. Keep consecutive challenge
 // groups and repeated same-site blocks as lossless runs; expand only when a
 // caller requests the event list.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ContextRun {
     first: ProtocolContextRecord,
     last_group: u32,
@@ -68,17 +72,23 @@ impl ContextRun {
         true
     }
 
-    fn events(&self) -> impl Iterator<Item = TranscriptEvent> + '_ {
+    fn contexts(&self) -> impl Iterator<Item = (ProtocolContextRecord, usize)> + '_ {
         let mut site = ProtocolSiteId::from_bytes(self.first.site_id);
-        (site.group..=self.last_group).flat_map(move |group| {
+        (site.group..=self.last_group).map(move |group| {
             site.group = group;
-            std::iter::repeat_n(
-                TranscriptEvent::Context(ProtocolContextRecord {
+            (
+                ProtocolContextRecord {
                     site_id: site.to_bytes(),
                     ..self.first
-                }),
+                },
                 self.repetitions,
             )
+        })
+    }
+
+    fn events(&self) -> impl Iterator<Item = TranscriptEvent> + '_ {
+        self.contexts().flat_map(|(record, repetitions)| {
+            std::iter::repeat_n(TranscriptEvent::Context(record), repetitions)
         })
     }
 }
@@ -197,7 +207,7 @@ mod tests {
     use super::*;
     use crate::{new_prover_channel, new_verifier_channel, prover_context, verifier_context};
 
-    fn challenge(group: u32) -> ProtocolContextRecord {
+    pub(super) fn challenge(group: u32) -> ProtocolContextRecord {
         ProtocolContextRecord::new(
             ProtocolSiteId {
                 family: 3,
