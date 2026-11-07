@@ -28,13 +28,11 @@ features = ["parallel", "transcript-keccak"]
 ignored = ["akita-setup"]
 
 [features]
-# Extension seam: opt-in measurement target and offline planner registration.
+# Extension seam: opt-in native binary-source kernels and offline planning.
 # <https://github.com/LayerZero-Labs/akita/issues/285>.
-binary-source-measurements = [
-  "labinius-trinomial",
-  "akita-planner/labinius-trinomial",
-]
+binary-source-measurements = ["labinius-trinomial"]
 labinius-trinomial = [
+  "akita-planner/labinius-trinomial",
   "akita-algebra/labinius-trinomial",
   "akita-algebra/labinius-binary",
   "akita-challenges/labinius-challenges",
@@ -188,7 +186,7 @@ path = "examples/profile/main.rs"
 
 [[example]]
 name = "binary_source_full_size"
-required-features = ["binary-source-measurements"]
+required-features = ["labinius-trinomial"]
 
 [[bench]]
 name = "ring_ntt"

@@ -1,10 +1,10 @@
 //! Experimental binary-source measurement inside one caller transcript.
 
-#[cfg(feature = "binary-source-measurements")]
+#[cfg(feature = "labinius-trinomial")]
 #[path = "binary_source_full_size/run.rs"]
 mod run;
 
-#[cfg(feature = "binary-source-measurements")]
+#[cfg(feature = "labinius-trinomial")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::thread::Builder::new()
         .name("binary-full-size".into())
@@ -15,8 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(Into::into)
 }
 
-#[cfg(not(feature = "binary-source-measurements"))]
+#[cfg(not(feature = "labinius-trinomial"))]
 fn main() {
-    eprintln!("binary_source_full_size requires --features binary-source-measurements");
+    eprintln!("binary_source_full_size requires --features labinius-trinomial");
     std::process::exit(2);
 }
