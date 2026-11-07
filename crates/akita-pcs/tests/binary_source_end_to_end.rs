@@ -122,43 +122,73 @@ fn honest_claim(descriptor: &BinarySourceDescriptor, words: &[u128]) -> BinaryWo
 #[test]
 fn projection_binary_group_opens_once_inside_the_callers_transcript() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, None, 128, None);
+    });
 }
 
 #[test]
 fn binary_and_ordinary_groups_share_one_opening() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(true, None, 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(true, None, 128, None);
+    });
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn mixed_grouped_opening_is_independent_of_prover_thread_count() {
+    let run = |threads, expected| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .stack_size(common::STACK_SIZE)
+            .build()
+            .unwrap()
+            .install(|| run_fixture(true, None, 128, expected).unwrap())
+    };
+    let serial = run(1, None);
+    let _ = run(4, Some(&serial));
 }
 
 #[test]
 fn field_switch_binary_root_rejects_a_foreign_source_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignCommitment), 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, Some(Fault::ForeignCommitment), 128, None);
+    });
 }
 
 #[test]
 fn binary_root_rejects_a_foreign_partial_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignPartials), 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, Some(Fault::ForeignPartials), 128, None);
+    });
 }
 
 #[test]
 fn field_switch_narrow_source_mutations_authenticate() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 8));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, None, 8, None);
+    });
 }
 
 #[test]
 fn packed_bit_and_halfword_imports_preserve_commitment_and_proof_bytes() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        run_fixture(false, None, 1);
-        run_fixture(false, None, 16);
+        let _ = run_fixture(false, None, 1, None);
+        let _ = run_fixture(false, None, 16, None);
     });
 }
 
-fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usize) {
+fn run_fixture(
+    mixed: bool,
+    authentication_fault: Option<Fault>,
+    word_width: usize,
+    expected: Option<&(Vec<u8>, [u8; 32])>,
+) -> Option<(Vec<u8>, [u8; 32])> {
     let catalog = test_catalog();
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
     let singleton_carrier = scheme
@@ -497,7 +527,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     };
     if let Some(fault) = authentication_fault {
         prove_fault(fault);
-        return;
+        return None;
     }
     akita_transcript::clear_thread_events();
     let mut prover = new_prover_channel(b"binary-source-end-to-end-v1");
@@ -566,6 +596,10 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     eprintln!("{golden}");
     packed_prover.public_message(&BytesMsg(b"application-suffix"));
     assert_eq!(packed_prover.verifier_message::<[u8; 32]>(), continuation);
+    if let Some((expected_proof, expected_continuation)) = expected {
+        assert_eq!(&proof, expected_proof);
+        assert_eq!(&continuation, expected_continuation);
+    }
     let verifier = scheme.verifier(verifier_setup.clone()).unwrap();
     let mismatch = catch_unwind(AssertUnwindSafe(|| {
         let mut groups = vec![PolynomialGroupClaims::new(
@@ -718,4 +752,5 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             prove_fault(fault);
         }
     }
+    Some((proof, continuation))
 }

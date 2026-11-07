@@ -365,8 +365,10 @@ impl TrinomialASetupView {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let setup_families = setup_tensor_families(self, alpha, row_weights, &column_weights)?;
+        let modulus_evaluation = self.polynomial.evaluate_modulus_at(alpha)?;
         Ok(PreparedTrinomialASetupWeights {
             view: self,
+            modulus_evaluation,
             setup_families,
         })
     }
@@ -376,6 +378,7 @@ impl TrinomialASetupView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedTrinomialASetupWeights<E: Field> {
     view: TrinomialASetupView,
+    modulus_evaluation: E,
     setup_families: Vec<EqPairTensorFamily<E>>,
 }
 
@@ -383,6 +386,12 @@ impl<E: Field> PreparedTrinomialASetupWeights<E> {
     #[must_use]
     pub const fn view(&self) -> TrinomialASetupView {
         self.view
+    }
+
+    /// `Phi(alpha)` for the exact polynomial named by this view.
+    #[must_use]
+    pub const fn modulus_evaluation(&self) -> E {
+        self.modulus_evaluation
     }
 
     /// Materialize one scalar weight per setup-domain address.
@@ -605,6 +614,10 @@ mod tests {
         assert_eq!(
             prepared.evaluate_setup_weight_at(&setup_point).unwrap(),
             direct_evaluation
+        );
+        assert_eq!(
+            prepared.modulus_evaluation(),
+            polynomial.evaluate_modulus_at(alpha).unwrap()
         );
     }
 
