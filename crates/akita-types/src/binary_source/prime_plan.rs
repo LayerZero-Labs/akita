@@ -63,8 +63,8 @@ pub(super) fn validate_prime_plane_count(
         BinaryFieldProfile::P128 => 1,
         BinaryFieldProfile::P64 => 4,
     };
-    let cap =
-        checked::product([source.polynomials().len(), per_owner]).ok_or(AkitaError::InvalidProof)?;
+    let cap = checked::product([source.polynomials().len(), per_owner])
+        .ok_or(AkitaError::InvalidProof)?;
     if planes > cap || (!word && planes == 0) {
         return Err(AkitaError::InvalidInput(
             "invalid binary plane selection".into(),

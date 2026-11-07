@@ -413,7 +413,10 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             [47; 32],
         )?;
         assert_eq!(opening.binary_reading(), &word_claim);
-        assert_eq!(opening.prime_reading(), &primes.clone().map(PrimeClaims::Base));
+        assert_eq!(
+            opening.prime_reading(),
+            &primes.clone().map(PrimeClaims::Base)
+        );
         assert_eq!(opening.binding().session, [43; 32]);
         assert_eq!(opening.binding().group, [47; 32]);
         assert_eq!(opening.binding().source, descriptor);

@@ -176,23 +176,22 @@ fn run(with_word: bool, mode: ResearchTerminalMode) {
         let readings = (0..passes)
             .map(|pass| {
                 let point = (0..11)
-                    .map(|axis| {
-                        point_coordinate(mode, 19 + 7 * u64::try_from(axis).unwrap(), pass)
-                    })
+                    .map(|axis| point_coordinate(mode, 19 + 7 * u64::try_from(axis).unwrap(), pass))
                     .collect::<Vec<_>>();
                 let equality = akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap();
-                let evaluation = words
-                    .iter()
-                    .enumerate()
-                    .fold(E::zero(), |sum, (carrier, word)| {
-                        (0..128).fold(sum, |sum, bit| {
-                            if (word >> bit) & 1 == 0 {
-                                sum
-                            } else {
-                                sum + equality[carrier * 256 + bit]
-                            }
-                        })
-                    });
+                let evaluation =
+                    words
+                        .iter()
+                        .enumerate()
+                        .fold(E::zero(), |sum, (carrier, word)| {
+                            (0..128).fold(sum, |sum, bit| {
+                                if (word >> bit) & 1 == 0 {
+                                    sum
+                                } else {
+                                    sum + equality[carrier * 256 + bit]
+                                }
+                            })
+                        });
                 ResearchTerminal {
                     point,
                     evaluations: vec![evaluation],

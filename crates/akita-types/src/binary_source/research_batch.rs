@@ -77,9 +77,7 @@ impl ResearchBatchPlan {
                             ResearchTerminalMode::E64TwoPointS11a
                         }
                         _ => {
-                            return Err(AkitaError::InvalidInput(
-                                "research prime readings".into(),
-                            ));
+                            return Err(AkitaError::InvalidInput("research prime readings".into()));
                         }
                     };
                     if mode.is_some_and(|mode| mode != selected) {

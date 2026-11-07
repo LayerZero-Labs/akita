@@ -8,8 +8,10 @@ fn fixture(shape: &'static str, points: usize) {
     std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let directory = std::env::temp_dir()
-                .join(format!("akita-p64-extension-{}-{shape}", std::process::id()));
+            let directory = std::env::temp_dir().join(format!(
+                "akita-p64-extension-{}-{shape}",
+                std::process::id()
+            ));
             std::fs::create_dir_all(&directory).unwrap();
             let catalog = super::fixture_directory().join(format!("3-{shape}.json"));
             std::fs::copy(&catalog, directory.join("native-catalog.json")).unwrap_or_else(
@@ -24,14 +26,22 @@ fn fixture(shape: &'static str, points: usize) {
             let readings = original["claims"]["extension"].as_array().unwrap();
             assert_eq!(readings.len(), points);
             for reading in readings {
-                assert!(reading["point"].as_array().unwrap().iter().any(|x| x[1] != 0));
+                assert!(reading["point"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|x| x[1] != 0));
                 assert_ne!(reading["value"][1], 0);
                 assert_ne!(reading["value"][0], reading["value"][1]);
             }
             let reject = |changed: &Value, expected: AkitaError| {
                 std::fs::write(&path, serde_json::to_vec(changed).unwrap()).unwrap();
                 let error = run::verify::<P64>(3, shape, &directory, &timings).unwrap_err();
-                assert_eq!(error.downcast_ref::<AkitaError>(), Some(&expected), "{error}");
+                assert_eq!(
+                    error.downcast_ref::<AkitaError>(),
+                    Some(&expected),
+                    "{error}"
+                );
             };
             // Keep the honest proof fixed. Each well-formed mutation reaches the
             // verifier with the same plane count and prepared setup identity.
@@ -42,8 +52,7 @@ fn fixture(shape: &'static str, points: usize) {
                     *value = json!(value.as_u64().unwrap() ^ 1);
                     reject(&changed, AkitaError::InvalidProof);
                     let mut changed = original.clone();
-                    let value =
-                        &mut changed["claims"]["extension"][point]["point"][0][coordinate];
+                    let value = &mut changed["claims"]["extension"][point]["point"][0][coordinate];
                     *value = json!(value.as_u64().unwrap() ^ 1);
                     reject(&changed, AkitaError::InvalidProof);
                 }

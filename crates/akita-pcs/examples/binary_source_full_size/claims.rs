@@ -89,9 +89,7 @@ pub(super) fn evaluate<C: MeasurementConfig>(
             let point = reading
                 .point
                 .iter()
-                .map(|x| {
-                    Ext2::<Prime64Offset59>::from_base_fn(|i| Prime64Offset59::from_u64(x[i]))
-                })
+                .map(|x| Ext2::<Prime64Offset59>::from_base_fn(|i| Prime64Offset59::from_u64(x[i])))
                 .collect::<Vec<_>>();
             let value = prime_value(words, &point)?;
             for (coordinate, output) in reading.value.iter_mut().enumerate() {
@@ -138,7 +136,9 @@ fn prime_value<T: Field>(words: &[u128], point: &[T]) -> Result<T, AkitaError> {
         .copied()
         .ok_or_else(|| AkitaError::Internal("empty prime evaluation".into()))?;
     if values.len() != 1 {
-        return Err(AkitaError::InvalidInput("prime fixture size mismatch".into()));
+        return Err(AkitaError::InvalidInput(
+            "prime fixture size mismatch".into(),
+        ));
     }
     Ok(value)
 }

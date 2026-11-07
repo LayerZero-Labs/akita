@@ -254,7 +254,10 @@ pub(super) fn batch(
             unreachable!("binary inventory");
         };
         let planes = prime.planes().len();
-        let rank = manifest.d_label(with_word && index == 0, planes).unwrap().rank;
+        let rank = manifest
+            .d_label(with_word && index == 0, planes)
+            .unwrap()
+            .rank;
         let expected = usize::try_from(rank).unwrap() * manifest.b_ring_dimension();
         assert_eq!(plan.d_ranges()[index].len(), expected);
         if !with_word || index != 0 {

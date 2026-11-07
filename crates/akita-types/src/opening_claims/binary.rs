@@ -76,7 +76,9 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         };
         if manifest.field_profile() != akita_params::binary_setup::BinaryFieldProfile::P64
             || manifest.descriptor().polynomials().len() != 1
-            || readings.iter().any(|terminal| terminal.evaluations.len() != 1)
+            || readings
+                .iter()
+                .any(|terminal| terminal.evaluations.len() != 1)
         {
             return Err(AkitaError::InvalidInput(
                 "research binary terminal owner count".into(),
@@ -100,7 +102,10 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
                     evaluations: vec![PrimePlaneClaim {
                         polynomial: 0,
                         value: residue(
-                            terminal.evaluations.first().ok_or(AkitaError::InvalidProof)?,
+                            terminal
+                                .evaluations
+                                .first()
+                                .ok_or(AkitaError::InvalidProof)?,
                             0,
                         )?,
                     }],
@@ -118,11 +123,11 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
                         .iter()
                         .map(|terminal| {
                             Ok(PrimeGroupClaim {
-                                point: terminal
-                                    .point
-                                    .iter()
-                                    .map(coordinates)
-                                    .collect::<Result<Vec<_>, AkitaError>>()?,
+                                point: terminal.point.iter().map(coordinates).collect::<Result<
+                                    Vec<_>,
+                                    AkitaError,
+                                >>(
+                                )?,
                                 evaluations: vec![PrimePlaneClaim {
                                     polynomial: 0,
                                     value: coordinates(

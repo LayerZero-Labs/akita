@@ -105,7 +105,11 @@ impl PrimePlaneManifest {
         source: &BinarySourceDescriptor,
         claim: Option<PrimeGroupClaim>,
     ) -> Result<Self, AkitaError> {
-        Self::with_field_profile(source, claim.map(PrimeClaims::Base), BinaryFieldProfile::P128)
+        Self::with_field_profile(
+            source,
+            claim.map(PrimeClaims::Base),
+            BinaryFieldProfile::P128,
+        )
     }
 
     pub fn with_field_profile(

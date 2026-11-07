@@ -872,7 +872,10 @@ mod p64_tests {
                 let changed = plan
                     .evaluation_weights(&repacking, &bad_point, &evaluations, &coefficients)
                     .unwrap();
-                assert_ne!(weights.materialize().unwrap(), changed.materialize().unwrap());
+                assert_ne!(
+                    weights.materialize().unwrap(),
+                    changed.materialize().unwrap()
+                );
                 let mut bad_values = evaluations.clone();
                 bad_values[slots - 1] += E::from_u64(1);
                 let changed = plan
