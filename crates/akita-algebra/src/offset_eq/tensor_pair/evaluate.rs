@@ -7,6 +7,7 @@ use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
 use akita_error::{checked, AkitaError};
 use std::collections::{btree_map::Entry, BTreeMap};
+mod dyadic_axes;
 #[cfg(test)]
 mod grouping_tests;
 mod unit_intervals;
@@ -48,12 +49,13 @@ pub(super) fn eval_unfactored_tensor_families<
         .iter()
         .flat_map(|family| &family.axes)
         .try_for_each(EqPairTensorAxis::validate_weights)?;
+    let families = dyadic_axes::split_residual_unit_axes(families, work)?;
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
     let mut multi_axis_batches =
         BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<Vec<&EqPairTensorFamily<F>>>>::new();
     let mut scalar_seeds = Vec::new();
     let mut acc = F::zero();
-    for family in families {
+    for family in families.iter() {
         if family.scalar.is_zero() {
             continue;
         }
