@@ -14,6 +14,9 @@ use super::{BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan}
 pub(super) const DEGREE: usize = 648;
 pub(super) const STRIDE: usize = 1024;
 
+/// A rectangular A weight, factored into source-row and coefficient weights.
+pub type BinaryAProductFactors<E> = (Vec<E>, Vec<E>);
+
 /// Size of the canonical typed A prefix: one row per source ring row, each
 /// holding the rank axis padded to a power of two times 1024 coefficients.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -367,7 +370,7 @@ impl<E: Field> BinaryAProduct<E> {
     }
 
     /// Prover rectangles, including every carry class of a translated response.
-    pub fn factor_terms(&self) -> Result<Vec<(Vec<E>, Vec<E>)>, AkitaError> {
+    pub fn factor_terms(&self) -> Result<Vec<BinaryAProductFactors<E>>, AkitaError> {
         let Some(terms) = &self.translated_terms else {
             return Ok(vec![self.factors()?]);
         };
@@ -394,7 +397,7 @@ impl<E: Field> BinaryAProduct<E> {
     }
 
     /// Prover factors for the existing rectangular Stage 3 kernel.
-    pub fn factors(&self) -> Result<(Vec<E>, Vec<E>), AkitaError> {
+    pub fn factors(&self) -> Result<BinaryAProductFactors<E>, AkitaError> {
         if let Some(terms) = &self.translated_terms {
             if terms.len() != 1 {
                 return Err(AkitaError::InvalidInput(
