@@ -6,8 +6,12 @@ use super::{
 use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
 use akita_error::{checked, AkitaError};
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
+#[cfg(test)]
+mod grouping_tests;
 mod unit_intervals;
+
+const MAX_WEIGHTED_BATCH_GROUPS: usize = 16;
 
 /// Evaluate tensor-native paired Boolean-basis families.
 ///
@@ -62,6 +66,8 @@ pub(super) fn eval_unfactored_tensor_families<
             acc += value;
             continue;
         }
+        charge_work(work, family.axes.len())?;
+        charge_work(work, 1)?;
         let recurrence_axes = family
             .axes
             .iter()
@@ -87,17 +93,65 @@ pub(super) fn eval_unfactored_tensor_families<
                     Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            let groups = multi_axis_batches.entry(recurrence_geometry).or_default();
-            if let Some(batch) = groups.iter_mut().find(|batch| {
-                batch.first().is_some_and(|first| {
-                    recurrence_axes
-                        .iter()
-                        .all(|&i| first.axes.get(i) == family.axes.get(i))
-                })
-            }) {
-                batch.push(family);
-            } else {
-                groups.push(vec![family]);
+            charge_work(work, recurrence_geometry.len())?;
+            charge_work(
+                work,
+                1 + (usize::BITS - multi_axis_batches.len().leading_zeros()) as usize,
+            )?;
+            match multi_axis_batches.entry(recurrence_geometry) {
+                Entry::Vacant(entry) => {
+                    charge_work(work, 1)?;
+                    entry.insert(vec![vec![family]]);
+                }
+                Entry::Occupied(mut entry) => {
+                    let mut matched = false;
+                    // Keep at most this many weight groups per geometry. Once
+                    // full, unmatched families use the singleton recurrence.
+                    for batch in entry.get_mut().iter_mut() {
+                        let first = batch.first().ok_or_else(|| {
+                            AkitaError::Internal("tensor recurrence batch is empty".into())
+                        })?;
+                        let mut equal = true;
+                        for &index in &recurrence_axes {
+                            let axis = family.axes.get(index).ok_or_else(|| {
+                                AkitaError::Internal(
+                                    "selected tensor recurrence axis is absent".into(),
+                                )
+                            })?;
+                            let terms = match &axis.weights {
+                                EqPairTensorWeights::Unit => 0,
+                                EqPairTensorWeights::Dense(weights) => weights.len(),
+                                EqPairTensorWeights::BitProduct(factors) => factors.len(),
+                            };
+                            charge_work(work, 1)?;
+                            charge_work(work, terms)?;
+                            if first.axes.get(index) != Some(axis) {
+                                equal = false;
+                                break;
+                            }
+                        }
+                        if equal {
+                            charge_work(work, 1)?;
+                            batch.push(family);
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if !matched {
+                        if entry.get().len() < MAX_WEIGHTED_BATCH_GROUPS {
+                            charge_work(work, 1)?;
+                            entry.get_mut().push(vec![family]);
+                        } else {
+                            acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                                left_challenges,
+                                right_challenges,
+                                &[family],
+                                entry.key(),
+                                work,
+                            )?;
+                        }
+                    }
+                }
             }
             continue;
         }
