@@ -325,6 +325,23 @@ impl SparseChallengeStream {
                 "sparse challenge message has the wrong length".into(),
             ));
         }
+        #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some() {
+            let mut text = format!(
+                "EXPERIMENT_MESSAGE {} {} {} {} {} ",
+                self.shell.ring_d,
+                self.shell.config.count_pm1,
+                self.shell.config.count_pm2,
+                self.count,
+                usize::from(self.shell.rejection.is_some())
+            );
+            use std::fmt::Write;
+            for byte in message {
+                write!(&mut text, "{byte:02x}").map_err(|_| AkitaError::InvalidProof)?;
+            }
+            eprintln!("{text}");
+        }
+
         let policy =
             ChallengePolicy::new(self.shell.ring_d, &self.shell.config, self.shell.rejection)?;
         let binomials = binomial_table(
@@ -367,7 +384,6 @@ impl SparseChallengeStream {
         {
             return Err(AkitaError::InvalidProof);
         }
-
         if self.shell.candidate_bits != 128 {
             return Err(AkitaError::InvalidProof);
         }
@@ -473,6 +489,10 @@ impl SparseChallengeStream {
     /// is, and every parallel region wakes the whole thread pool.
     #[cfg(feature = "parallel")]
     fn parallel(&self) -> bool {
+        #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some() {
+            return false;
+        }
         !crate::checked_hint::positions_active()
             && self.count.saturating_mul(self.shell.config.weight())
                 >= PARALLEL_DECODE_WORK_THRESHOLD
@@ -659,7 +679,9 @@ impl BinomialTable {
             .ok_or_else(|| AkitaError::Internal("sparse binomial table is too small".into()))
     }
 
-    /// Authenticate a strictly increasing subset by its exact colex rank.
+    /// Strictly increasing in-range positions have the unique colex rank
+    /// sum_i C(position_i, i+1). Checking that sum authenticates the hint
+    /// without searching Pascal columns to invert the rank.
     fn check_positions(
         &self,
         rank: u128,
@@ -808,6 +830,19 @@ impl CandidateDecoder<'_> {
             rank / stream.shell.pm1_rank_space
         };
         let pm1_rank = rank - pm2_rank * stream.shell.pm1_rank_space;
+        #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some()
+            && !(stream.shell.ring_d == 64
+                && a == 31
+                && b == 10
+                && stream.count >= 1024
+                && stream.shell.rejection.is_none())
+        {
+            eprintln!(
+                "EXPERIMENT_RANK {} {} {} {} {}",
+                stream.shell.ring_d, a, b, pm1_rank, pm2_rank
+            );
+        }
         let mut positions = crate::SparseChallengePositions::from_elem(0, weight);
         let (pm1, pm2) = positions.split_at_mut(a);
         if self.position_hints {
