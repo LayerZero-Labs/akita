@@ -690,8 +690,11 @@ mod tests {
 
 #[cfg(test)]
 mod p64_tests {
+    use super::super::{ContiguousLanes, SourceEvaluationWeights};
     use super::*;
     use crate::binary_source::binary_ordinary_profile_fixture;
+    use crate::native_root_relation::{ProfileBuilder, RootEq};
+    use akita_algebra::offset_eq::OffsetEqWindow;
     use akita_params::binary_setup::BinaryFieldProfile;
     use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
     type E = Ext2<F>;
@@ -739,6 +742,60 @@ mod p64_tests {
                 32
             );
             let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
+            let source_lanes = ContiguousLanes::new(&repacking, 0).unwrap();
+            for point in [vec![], vec![E::zero(); 3], vec![ext(9); 10]] {
+                let source = SourceEvaluationWeights::new(
+                    repacking.domain_len(),
+                    &source_lanes,
+                    0,
+                    &point,
+                    ext(11),
+                )
+                .unwrap();
+                let equality = OffsetEqWindow::new(&point).unwrap();
+                let mut dense = vec![E::zero(); repacking.domain_len()];
+                for coefficient in 0..1 << point.len() {
+                    for (address, value) in repacking
+                        .coefficient_weights(
+                            0,
+                            coefficient / source_lanes.degree,
+                            coefficient % source_lanes.degree,
+                            ext(11) * equality.eval(coefficient),
+                        )
+                        .unwrap()
+                    {
+                        dense[address] += value;
+                    }
+                }
+                for bits in [3, 8] {
+                    let mut profiles = ProfileBuilder::new(repacking.domain_len(), bits).unwrap();
+                    source.emit(&mut profiles).unwrap();
+                    assert_eq!(profiles.finish().take_dense(), dense);
+                }
+                let probe = (0..repacking.domain_len().trailing_zeros())
+                    .map(|bit| ext(71 + bit as usize))
+                    .collect::<Vec<_>>();
+                let probe_eq = OffsetEqWindow::new(&probe).unwrap();
+                let expected = dense
+                    .iter()
+                    .enumerate()
+                    .fold(E::zero(), |sum, (address, value)| {
+                        sum + *value * probe_eq.eval(address)
+                    });
+                assert_eq!(
+                    source.evaluate(&RootEq::new(&probe).unwrap()).unwrap(),
+                    expected
+                );
+                let bad_first = source_lanes.elements * source_lanes.degree;
+                assert!(SourceEvaluationWeights::new(
+                    repacking.domain_len(),
+                    &source_lanes,
+                    bad_first,
+                    &point,
+                    ext(11)
+                )
+                .is_err());
+            }
             let ranges = plan.negative_binary_ranges(&repacking).unwrap();
             let mut expected = Vec::new();
             for (segment, shape) in plan.segments().iter().enumerate().skip(2) {
@@ -824,11 +881,15 @@ mod p64_tests {
                 )
                 .unwrap();
             assert_eq!(structured.claim(), flat.claim());
+            assert!(structured.terms().is_empty());
             let mut dense = vec![E::zero(); repacking.domain_len()];
             for &(address, weight) in flat.terms() {
                 dense[address] += weight;
             }
             assert_eq!(structured.materialize().unwrap(), dense);
+            for bits in [3, 8] {
+                assert_eq!(structured.profiles(bits).unwrap().take_dense(), dense);
+            }
             let r = (0..repacking.domain_len().trailing_zeros())
                 .map(|i| ext(500 + i as usize))
                 .collect::<Vec<_>>();
@@ -998,6 +1059,13 @@ mod p64_tests {
                     )
                     .unwrap();
                 assert_eq!(weights.claim(), reference.claim());
+                assert!(weights.terms().is_empty());
+                for bits in [3, 8] {
+                    assert_eq!(
+                        weights.profiles(bits).unwrap().take_dense(),
+                        reference.materialize().unwrap()
+                    );
+                }
                 assert_eq!(
                     weights.materialize().unwrap(),
                     reference.materialize().unwrap()

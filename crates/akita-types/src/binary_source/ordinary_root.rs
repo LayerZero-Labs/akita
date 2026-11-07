@@ -606,12 +606,9 @@ impl OrdinaryNativeRootPlan {
         }
         let a = self.profile.inner.matrix;
         let positions = self.profile.blocks.positions_per_block;
-        let source_digits = self.profile.inner.digits.num_digits;
         let table_len = repacking.domain_len();
         let s_lanes = ContiguousLanes::new(repacking, self.first_segment)?;
         let mut families = Vec::new();
-        let mut terms = Vec::new();
-        let source_len = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
         let owner_coefficients = checked::product([
             self.profile.blocks.live_blocks,
             positions,
@@ -619,39 +616,17 @@ impl OrdinaryNativeRootPlan {
         ])
         .ok_or(AkitaError::InvalidProof)?;
         for (owner, &batch) in batches.iter().enumerate() {
-            let start =
+            let first =
                 checked::product([owner, owner_coefficients]).ok_or(AkitaError::InvalidProof)?;
-            if source_digits == 1 {
-                families.push(RootWeightFamily::SourceEvaluation(
-                    SourceEvaluationWeights::new(
-                        table_len,
-                        s_lanes.contiguous(start, source_len)?,
-                        point,
-                        batch,
-                    )?,
-                ));
-            } else {
-                // Multi-digit sources interleave digits, so the slot's
-                // evaluation is not one address interval; keep its terms.
-                let equality = OffsetEqWindow::new(point)?;
-                for coefficient in 0..source_len {
-                    let element = checked::sum([start, coefficient])
-                        .map(|flat| flat / a.ring_dimension())
-                        .ok_or(AkitaError::InvalidProof)?;
-                    terms.extend(repacking.coefficient_weights(
-                        self.first_segment,
-                        element,
-                        coefficient % a.ring_dimension(),
-                        batch * equality.eval(coefficient),
-                    )?);
-                }
-            }
+            families.push(RootWeightFamily::SourceEvaluation(
+                SourceEvaluationWeights::new(table_len, &s_lanes, first, point, batch)?,
+            ));
         }
         let claim = batches
             .iter()
             .zip(evaluations)
             .fold(E::zero(), |sum, (&batch, &value)| sum + batch * value);
-        NativeRootWeights::structured(table_len, terms, families, claim)
+        NativeRootWeights::structured(table_len, Vec::new(), families, claim)
     }
 
     /// Derive ordinary setup in its declared base field before lifting to the
@@ -843,30 +818,52 @@ impl ContiguousLanes {
     }
 }
 
-/// The scalar source evaluation: `scale * eq(point, x)` at `start + x` for
-/// every source coefficient `x`.
-///
-/// Its extension at `r` is `scale * sum_x eq(r, start + x) * eq(point, x)`,
-/// one carry-tracking pass over the address bits.
+/// A source evaluation over its interleaved base-eight digit lanes.
+/// Natural coefficient `x` contributes `scale * eq(point, x) * 8^digit`
+/// at the corresponding digit address. Single-digit sources form one interval.
 #[derive(Clone, Debug)]
 pub(crate) struct SourceEvaluationWeights<E: Field> {
     table_len: usize,
     start: usize,
+    degree: usize,
+    digits: usize,
     point: Vec<E>,
     scale: E,
 }
 
 impl<E: Field> SourceEvaluationWeights<E> {
-    fn new(table_len: usize, start: usize, point: &[E], scale: E) -> Result<Self, AkitaError> {
-        let end = checked::pow2(point.len())
-            .and_then(|len| checked::sum([start, len]))
-            .ok_or(AkitaError::InvalidProof)?;
-        if end > table_len {
+    fn new(
+        table_len: usize,
+        lanes: &ContiguousLanes,
+        first: usize,
+        point: &[E],
+        scale: E,
+    ) -> Result<Self, AkitaError> {
+        let count = checked::pow2(point.len()).ok_or(AkitaError::InvalidProof)?;
+        let natural_len =
+            checked::product([lanes.elements, lanes.degree]).ok_or(AkitaError::InvalidProof)?;
+        if checked::sum([first, count]).is_none_or(|end| end > natural_len)
+            || !first.is_multiple_of(lanes.degree)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let start = lanes.base(first / lanes.degree, 0)?;
+        let degree = if lanes.digits == 1 {
+            count
+        } else {
+            lanes.degree
+        };
+        let elements = count.div_ceil(degree);
+        let physical_len =
+            checked::product([elements, lanes.digits, degree]).ok_or(AkitaError::InvalidProof)?;
+        if checked::sum([start, physical_len]).is_none_or(|end| end > table_len) {
             return Err(AkitaError::InvalidProof);
         }
         Ok(Self {
             table_len,
             start,
+            degree,
+            digits: lanes.digits,
             point: point.to_vec(),
             scale,
         })
@@ -876,9 +873,43 @@ impl<E: Field> SourceEvaluationWeights<E> {
         self.table_len
     }
 
-    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+    /// Natural starts and physical intervals in element/digit order.
+    fn intervals(&self) -> Result<Vec<(usize, usize)>, AkitaError> {
         let count = checked::pow2(self.point.len()).ok_or(AkitaError::InvalidProof)?;
-        Ok(self.scale * paired_offset_eq_sum(eq.point(), self.start, &self.point, 0, count)?)
+        let elements = count.div_ceil(self.degree);
+        let lanes = checked::product([elements, self.digits]).ok_or(AkitaError::InvalidProof)?;
+        let mut intervals = Vec::new();
+        intervals
+            .try_reserve_exact(lanes)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for element in 0..elements {
+            let first = checked::product([element, self.degree]).ok_or(AkitaError::InvalidProof)?;
+            let len = self
+                .degree
+                .min(count.checked_sub(first).ok_or(AkitaError::InvalidProof)?);
+            for digit in 0..self.digits {
+                let start = checked::mul_add(element, self.digits, digit)
+                    .and_then(|lane| checked::mul_add(lane, self.degree, self.start))
+                    .ok_or(AkitaError::InvalidProof)?;
+                intervals.push((start, len));
+            }
+        }
+        Ok(intervals)
+    }
+
+    pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
+        let mut value = E::zero();
+        let mut scale = self.scale;
+        for (lane, (start, len)) in self.intervals()?.into_iter().enumerate() {
+            if lane.is_multiple_of(self.digits) {
+                scale = self.scale;
+            }
+            let first = checked::product([lane / self.digits, self.degree])
+                .ok_or(AkitaError::InvalidProof)?;
+            value += scale * paired_offset_eq_sum(eq.point(), start, &self.point, first, len)?;
+            scale *= E::from_u64(8);
+        }
+        Ok(value)
     }
 
     pub(crate) fn visit(
@@ -886,23 +917,43 @@ impl<E: Field> SourceEvaluationWeights<E> {
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
         let equality = OffsetEqWindow::new(&self.point)?;
-        let count = checked::pow2(self.point.len()).ok_or(AkitaError::InvalidProof)?;
-        for coefficient in 0..count {
-            visit(
-                self.start + coefficient,
-                self.scale * equality.eval(coefficient),
-            )?;
+        let mut scale = self.scale;
+        for (lane, (start, len)) in self.intervals()?.into_iter().enumerate() {
+            if lane.is_multiple_of(self.digits) {
+                scale = self.scale;
+            }
+            let first = checked::product([lane / self.digits, self.degree])
+                .ok_or(AkitaError::InvalidProof)?;
+            for coefficient in 0..len {
+                visit(
+                    start + coefficient,
+                    scale * equality.eval(first + coefficient),
+                )?;
+            }
+            scale *= E::from_u64(8);
         }
         Ok(())
     }
 
-    /// Add the weights to block profiles, in parallel by block.
+    /// Add the same digit weights in parallel by disjoint destination block.
     pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
         let equality = OffsetEqWindow::new(&self.point)?;
-        let count = checked::pow2(self.point.len()).ok_or(AkitaError::InvalidProof)?;
-        profiles.add_intervals(&[(self.start, count)], |_, first, row| {
+        let mut scale = self.scale;
+        let scales = (0..self.digits)
+            .map(|_| {
+                let value = scale;
+                scale *= E::from_u64(8);
+                value
+            })
+            .collect::<Vec<_>>();
+        profiles.add_intervals(&self.intervals()?, |lane, first, row| {
+            let first = checked::mul_add(lane / self.digits, self.degree, first)
+                .ok_or(AkitaError::InvalidProof)?;
+            let scale = *scales
+                .get(lane % self.digits)
+                .ok_or(AkitaError::InvalidProof)?;
             for (coefficient, slot) in (first..).zip(row.iter_mut()) {
-                *slot += self.scale * equality.eval(coefficient);
+                *slot += scale * equality.eval(coefficient);
             }
             Ok(())
         })
