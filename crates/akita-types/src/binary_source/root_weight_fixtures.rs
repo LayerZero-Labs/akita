@@ -189,11 +189,11 @@ fn public(
     });
     let arity = descriptor.index_map().padded_carriers().trailing_zeros() as usize + 8;
     let claims = (shape.prime_planes > 0).then(|| PrimeGroupClaim {
-        point: (0..arity).map(|_| stream.u127()).collect(),
+        point: (0..arity).map(|_| stream.u127().into()).collect(),
         evaluations: (0..shape.prime_planes)
             .map(|polynomial| PrimePlaneClaim {
                 polynomial,
-                value: stream.u127(),
+                value: stream.u127().into(),
             })
             .collect(),
     });

@@ -78,15 +78,15 @@ fn windows_are_exact_and_off_by_one_is_rejected() {
 fn prime_planes_are_bounded_by_the_committed_polynomial_count() {
     let s = source();
     let mut claim = PrimeGroupClaim {
-        point: vec![0; 11],
+        point: vec![0.into(); 11],
         evaluations: vec![
             PrimePlaneClaim {
                 polynomial: 0,
-                value: 0,
+                value: 0.into(),
             },
             PrimePlaneClaim {
                 polynomial: 1,
-                value: 0,
+                value: 0.into(),
             },
         ],
     };
@@ -99,7 +99,7 @@ fn prime_planes_are_bounded_by_the_committed_polynomial_count() {
     );
     claim.evaluations.push(PrimePlaneClaim {
         polynomial: 0,
-        value: 0,
+        value: 0.into(),
     });
     assert!(PrimePlaneManifest::new(&s, Some(claim)).is_err());
 }

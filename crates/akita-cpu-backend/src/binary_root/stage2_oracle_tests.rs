@@ -320,7 +320,7 @@ mod p64 {
             &b,
             &d,
             None,
-            None,
+            &[],
         );
         let lift = |values: &[F]| values.iter().copied().map(E::lift_base).collect::<Vec<_>>();
         let batches = (0..public.batch_count()).map(extension).collect::<Vec<_>>();

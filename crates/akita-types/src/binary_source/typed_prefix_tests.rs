@@ -35,7 +35,7 @@ fn p64_typed_prefix_matches_base_setup_and_extension_authentication() {
     use akita_params::binary_setup::BinaryFieldProfile;
     use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
-    for (word, planes) in [(true, 0), (false, 1), (true, 1)] {
+    for (word, planes) in [(true, 0), (false, 2), (true, 2)] {
         let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
         let plan = BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),

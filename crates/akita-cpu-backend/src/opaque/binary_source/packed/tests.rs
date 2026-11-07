@@ -188,10 +188,10 @@ fn packed_kernels_match_signed_reference_with_padding_and_owners() {
         let primes = PrimePlaneManifest::new(
             &descriptor,
             Some(PrimeGroupClaim {
-                point: (0..12).map(|i| (i + 3) as u128).collect(),
+                point: (0..12).map(|i| ((i + 3) as u128).into()).collect(),
                 evaluations: vec![PrimePlaneClaim {
                     polynomial: 1,
-                    value: 0,
+                    value: 0.into(),
                 }],
             }),
         )

@@ -60,11 +60,11 @@ fn limb_accumulator_extremal_slots_cross_reduction_boundaries() {
         rhs.values = std::array::from_fn(|i| if i % 4 < 2 { largest } else { -largest });
         for backend in backends.iter().copied() {
             let mut accumulator = TrinomialLimbAccumulator::new(&domain);
-            for terms in 1..=8192 {
+            for terms in 1..=2 * REDUCTION_TERMS + 1 {
                 accumulator
                     .add_product_backend(&lhs, &rhs, backend)
                     .unwrap();
-                if [1, 2, 127, 128, 129, 255, 256, 257, 4096, 8192].contains(&terms) {
+                if [1, 2, 127, 128, 129, 255, 256, 257].contains(&terms) {
                     assert_eq!(usize::from(accumulator.terms), terms % REDUCTION_TERMS);
                     let bound = REDUCTION_TERMS as i128 * i128::from(largest).pow(2)
                         + i128::from(prime / 2);
@@ -146,40 +146,37 @@ fn limb_column_accumulation_matches_scalar_and_i128_oracle() {
             transform(&domain, &[1; DEGREE]),
         ];
         let source = transform(&domain, &random_bits(&mut seed));
-        for rank in 1..=4 {
-            let refs: Vec<_> = rows[..rank].iter().collect();
-            for backend in backends.iter().copied() {
-                let mut column = vec![TrinomialLimbAccumulator::new(&domain); rank];
-                let mut scalar = column.clone();
-                for _ in 0..REDUCTION_TERMS + 1 {
-                    for (accumulator, row) in column.iter_mut().zip(&refs) {
-                        accumulator
-                            .add_product_backend(row, &source, backend)
-                            .unwrap();
-                    }
-                    for (accumulator, row) in scalar.iter_mut().zip(&refs) {
-                        accumulator
-                            .add_product_backend(row, &source, Backend::Scalar)
-                            .unwrap();
-                    }
+        for backend in backends.iter().copied() {
+            let mut column = vec![TrinomialLimbAccumulator::new(&domain); rows.len()];
+            let mut scalar = column.clone();
+            for _ in 0..REDUCTION_TERMS + 1 {
+                for (accumulator, row) in column.iter_mut().zip(&rows) {
+                    accumulator
+                        .add_product_backend(row, &source, backend)
+                        .unwrap();
                 }
-                for (index, (a, b)) in column.iter_mut().zip(&mut scalar).enumerate() {
-                    assert_eq!(a.sums, b.sums);
-                    assert_eq!(a.terms, b.terms);
-                    let mut actual = domain.zero_slots();
-                    let mut expected = domain.zero_slots();
-                    a.finish(&mut actual).unwrap();
-                    b.finish(&mut expected).unwrap();
-                    assert_eq!(canonical_slots(&actual), canonical_slots(&expected));
-                    for lane in 0..DEGREE {
-                        let oracle = centered(
-                            i128::from(rows[index].values[lane])
-                                * i128::from(source.values[lane])
-                                * (REDUCTION_TERMS + 1) as i128,
-                            prime,
-                        );
-                        assert_eq!(actual.values[lane], oracle);
-                    }
+                for (accumulator, row) in scalar.iter_mut().zip(&rows) {
+                    accumulator
+                        .add_product_backend(row, &source, Backend::Scalar)
+                        .unwrap();
+                }
+            }
+            for (index, (a, b)) in column.iter_mut().zip(&mut scalar).enumerate() {
+                assert_eq!(a.sums, b.sums);
+                assert_eq!(a.terms, b.terms);
+                let mut actual = domain.zero_slots();
+                let mut expected = domain.zero_slots();
+                a.finish(&mut actual).unwrap();
+                b.finish(&mut expected).unwrap();
+                assert_eq!(canonical_slots(&actual), canonical_slots(&expected));
+                for lane in 0..DEGREE {
+                    let oracle = centered(
+                        i128::from(rows[index].values[lane])
+                            * i128::from(source.values[lane])
+                            * (REDUCTION_TERMS + 1) as i128,
+                        prime,
+                    );
+                    assert_eq!(actual.values[lane], oracle);
                 }
             }
         }

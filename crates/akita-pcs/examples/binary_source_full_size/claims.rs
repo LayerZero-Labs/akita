@@ -130,10 +130,10 @@ impl Claims {
     }
     pub(super) fn prime(&self) -> Option<PrimeGroupClaim> {
         self.prime.as_ref().map(|(point, value)| PrimeGroupClaim {
-            point: point.clone(),
+            point: point.iter().copied().map(Into::into).collect(),
             evaluations: vec![PrimePlaneClaim {
                 polynomial: 0,
-                value: *value,
+                value: (*value).into(),
             }],
         })
     }

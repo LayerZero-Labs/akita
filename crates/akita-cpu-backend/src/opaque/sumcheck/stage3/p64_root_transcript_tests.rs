@@ -62,7 +62,7 @@ pub(crate) fn root_round_trip(
     b: &[F],
     d: &[F],
     ordinary: Option<(&[E], E, &[E])>,
-    false_public: Option<&BinaryRootPublic>,
+    false_publics: &[&BinaryRootPublic],
 ) {
     let variables = public.plan().repacking().domain_len().trailing_zeros() as usize;
     let typed = BinaryTypedPrefix::from_plan(manifest, public.plan()).unwrap();
@@ -391,31 +391,43 @@ pub(crate) fn root_round_trip(
     .into_iter()
     .flatten()
     {
-        let mut changed = witness.to_vec();
-        let address = public
-            .plan()
-            .repacking()
-            .coefficient_address(k, 0, 0, 0)
-            .unwrap();
-        changed[address] = if changed[address] == 3 {
-            2
+        let coordinates = if Some(k) == public.plan().prime_segment() {
+            manifest.field_profile().extension_degree()
         } else {
-            changed[address] + 1
+            1
         };
-        let error = prove(&changed).expect_err("changed K must not produce a root proof");
-        if cfg!(debug_assertions) {
-            assert!(matches!(error, AkitaError::Internal(message)
+        for coordinate in 0..coordinates {
+            let mut changed = witness.to_vec();
+            let address = public
+                .plan()
+                .repacking()
+                .coefficient_address(
+                    k,
+                    coordinate * manifest.descriptor().index_map().columns(),
+                    0,
+                    0,
+                )
+                .unwrap();
+            changed[address] = if changed[address] == 3 {
+                2
+            } else {
+                changed[address] + 1
+            };
+            let error = prove(&changed).expect_err("changed K must not produce a root proof");
+            if cfg!(debug_assertions) {
+                assert!(matches!(error, AkitaError::Internal(message)
             if message == "materialized relation weights do not match the combined relation claim"));
-        } else {
-            assert!(matches!(error, AkitaError::InvalidInput(message)
+            } else {
+                assert!(matches!(error, AkitaError::InvalidInput(message)
             if message == "relation session final claim disagrees with its folded oracle"));
+            }
+            assert!(matches!(
+                verify(&proof, &changed, public),
+                Err(AkitaError::InvalidProof)
+            ));
         }
-        assert!(matches!(
-            verify(&proof, &changed, public),
-            Err(AkitaError::InvalidProof)
-        ));
     }
-    if let Some(false_public) = false_public {
+    for false_public in false_publics {
         assert!(matches!(
             verify(&proof, witness, false_public),
             Err(AkitaError::InvalidProof)

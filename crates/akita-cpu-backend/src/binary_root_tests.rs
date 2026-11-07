@@ -1,5 +1,8 @@
 use super::*;
-use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
+use akita_challenges::{
+    BinaryChallengeProfile, BinaryScalarRing, FoldChallengeDrawDomain, FoldChallengeFamily,
+    FoldDraw,
+};
 use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use akita_types::native_root_relation::NativeRootRelation;
 use jolt_algebra::{Prime128Offset275, Ring};
@@ -228,7 +231,8 @@ fn q24_root_rejects_image_source_and_response_mutation() {
 
 #[test]
 fn q24_root_rejects_wrong_family_counts_bounds_and_matrix_representatives() {
-    let mut input = fixture();
+    let input = fixture();
+    assert!(build(&input).is_ok());
     assert!(BinaryRootRelation::build(
         &input.descriptor,
         &input.matrix,
@@ -238,6 +242,7 @@ fn q24_root_rejects_wrong_family_counts_bounds_and_matrix_representatives() {
         FoldChallengeDistribution::pm1_only(46)
     )
     .is_err());
+    let input = fixture();
     let mut response = build(&input).unwrap().response;
     response[0][0] = i128::from(BINARY_RESPONSE_INTERVAL.1) + 1;
     assert!(BinaryRootRelation::from_response(
@@ -249,11 +254,19 @@ fn q24_root_rejects_wrong_family_counts_bounds_and_matrix_representatives() {
         FoldChallengeDistribution::BinaryRoot
     )
     .is_err());
+    let mut input = fixture();
+    assert!(build(&input).is_ok());
+    let original = input.matrix[0][0][0];
     input.matrix[0][0][0] = i128::from(Q24_CENTERED_BOUND) + 1;
     assert!(build(&input).is_err());
-    input.matrix[0][0][0] -= 1;
+    input.matrix[0][0][0] = original;
+    assert!(build(&input).is_ok());
+    let mut input = fixture();
+    assert!(build(&input).is_ok());
     input.images.pop();
     assert!(build(&input).is_err());
+    let mut input = fixture();
+    assert!(build(&input).is_ok());
     input.sources.pop();
     assert!(build(&input).is_err());
 }
@@ -431,4 +444,87 @@ fn binary_root_p64_quotient_digits_are_exact_bounded_and_complete() {
         FoldChallengeDistribution::BinaryRoot,
     )
     .is_err());
+}
+
+// Independent descending polynomial long division, rather than the
+// production reducer's closed monomial folding.
+fn schoolbook_remainder(mut coefficients: Vec<i128>, degree: usize) -> Vec<i128> {
+    for exponent in (degree..coefficients.len()).rev() {
+        let leading = coefficients[exponent];
+        coefficients[exponent] = 0;
+        coefficients[exponent - degree] -= leading;
+        coefficients[exponent - degree / 2] -= leading;
+    }
+    coefficients.resize(degree, 0);
+    coefficients
+}
+
+fn check_multiplication_bound<const D: usize>(ring: BinaryScalarRing) {
+    use akita_algebra::trinomial::{
+        signed::{signed_trinomial_product, signed_trinomial_remainder},
+        PlusTrinomial,
+    };
+
+    assert_eq!(ring.degree(), D);
+    let kernels: Vec<_> = (0..2 * D - 1)
+        .map(|exponent| {
+            let mut monomial = vec![0; exponent + 1];
+            monomial[exponent] = 1;
+            let expected = schoolbook_remainder(monomial.clone(), D);
+            assert_eq!(
+                signed_trinomial_remainder::<D, PlusTrinomial>(&monomial)
+                    .unwrap()
+                    .as_slice(),
+                expected
+            );
+            expected
+        })
+        .collect();
+    // The infinity operator norm is the maximum absolute row sum.
+    // Derive it for every monomial multiplier from the independent oracle.
+    let factor = (0..D)
+        .map(|shift| {
+            let mut row_norms = [0u64; D];
+            for kernel in &kernels[shift..shift + D] {
+                for (norm, coefficient) in row_norms.iter_mut().zip(kernel) {
+                    *norm += u64::try_from(coefficient.abs()).unwrap();
+                }
+            }
+            row_norms.into_iter().max().unwrap()
+        })
+        .max()
+        .unwrap();
+    // Triangle inequality extends the monomial norm to any signed support.
+    for cap in 0..=D {
+        let profile = BinaryChallengeProfile::bounded_weight(ring, cap).unwrap();
+        assert_eq!(
+            profile.multiplication_linf_operator_bound(),
+            factor * cap as u64
+        );
+    }
+
+    // A real signed product witnesses that the derived factor is needed.
+    let mut challenge = [0i8; D];
+    challenge[D / 2] = 1;
+    let mut source = [1i8; D];
+    source[D / 2] = -1;
+    let mut convolution = vec![0i128; 2 * D - 1];
+    for (left, &a) in challenge.iter().enumerate() {
+        for (right, &b) in source.iter().enumerate() {
+            convolution[left + right] += i128::from(a) * i128::from(b);
+        }
+    }
+    let expected = schoolbook_remainder(convolution, D);
+    let actual = signed_trinomial_product::<D, PlusTrinomial>(&challenge, &source).unwrap();
+    assert_eq!(actual.as_slice(), expected);
+    assert_eq!(
+        actual.into_iter().map(i128::unsigned_abs).max().unwrap(),
+        u128::from(factor)
+    );
+}
+
+#[test]
+fn trinomial_multiplication_matches_schoolbook_and_certified_bound() {
+    check_multiplication_bound::<162>(BinaryScalarRing::Cyclotomic243);
+    check_multiplication_bound::<486>(BinaryScalarRing::Cyclotomic729);
 }

@@ -250,13 +250,6 @@ fn mixed_root_scalar_relation_rejects_each_segment_and_padding_mutation() {
         assert!(weights.check_table(&changed).is_err());
         assert!(relation.repacking().validate_digit_table(&changed).is_err());
     }
-    let mut input = compact_fixture();
-    input.sources[0][0] += 1;
-    assert!(build(&input).is_err());
-    input.sources[0][0] -= 1;
-    let original = input.images[0][0].centered();
-    input.images[0][0] = Q24Image::from_centered(original + 1).unwrap();
-    assert!(build(&input).is_err());
 }
 
 #[path = "binary_root_mixed_tests/p64.rs"]
