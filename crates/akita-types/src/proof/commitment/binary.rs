@@ -34,9 +34,7 @@ mod binary_source_tests {
     use super::*;
     use crate::binary_source::{BinaryIndexMap, BinarySourceDescriptor};
     use crate::{Commitment, CommittedGroup, RingVec};
-    use akita_params::binary_setup::{
-        BinaryFieldProfile, SetupStreamModulus, SetupStreamRole, BINARY_SETUP_P64,
-    };
+    use akita_params::binary_setup::{BinaryFieldProfile, BINARY_SETUP_P64};
     use akita_params::sis::{
         sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams,
         SisMatrixRole, SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,

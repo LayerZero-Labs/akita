@@ -1,8 +1,9 @@
 //! Differential tests: structured root weights against the flat reference.
 
-use super::root_weight_fixtures::{RootWeightScenario, Shape};
 use super::*;
-use jolt_field::{Prime128Offset275 as F, Ring, Zero};
+use crate::binary_source::root_weight_fixtures::{RootWeightScenario, Shape};
+use crate::binary_source::BinaryAOperand;
+use jolt_field::{Prime128Offset275 as F, Zero};
 
 /// One structured and one flat compilation of a root relation.
 struct Compiled {

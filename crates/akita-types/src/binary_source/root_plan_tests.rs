@@ -337,7 +337,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
         setup_seed: [41; 32].into(),
     };
     for field_profile in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
-        let carrier = super::binary_ordinary_profile_fixture(field_profile);
+        let carrier = crate::binary_source::binary_ordinary_profile_fixture(field_profile);
         let ordinary_carrier = carrier;
         let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
         let profiles =

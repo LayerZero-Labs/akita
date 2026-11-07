@@ -42,8 +42,12 @@ fn profiles_fold_like_the_materialized_table() {
 
 #[test]
 fn profiles_reject_blocks_wider_than_the_table() {
-    let weights =
-        super::NativeRootWeights::<F>::new(8, vec![(0, F::from_u64(1))], F::from_u64(0)).unwrap();
+    let weights = crate::native_root_relation::NativeRootWeights::<F>::new(
+        8,
+        vec![(0, F::from_u64(1))],
+        F::from_u64(0),
+    )
+    .unwrap();
     assert!(weights.profiles(4).is_err());
 }
 
