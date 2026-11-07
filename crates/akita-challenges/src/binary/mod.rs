@@ -5,6 +5,7 @@
 //! profile identity, so they do not add challenge entropy.
 
 mod combinatorics;
+mod multigroup;
 mod position_sample;
 mod profile;
 pub(crate) mod root_family;
@@ -15,6 +16,10 @@ mod xof;
 use akita_error::AkitaError;
 use smallvec::SmallVec;
 
+pub use multigroup::{
+    ColumnChallengeAddress, MultigroupColumnSampler, MULTIGROUP_COLUMN_DOMAIN,
+    MULTIGROUP_COLUMN_FAMILY_ID,
+};
 pub use profile::{
     BinaryChallengeFamily, BinaryChallengeProfile, BinaryScalarRing, BinarySignRule,
 };
