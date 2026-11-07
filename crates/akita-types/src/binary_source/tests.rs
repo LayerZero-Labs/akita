@@ -1,4 +1,5 @@
 use super::*;
+use akita_params::binary_setup::BinaryFieldProfile;
 
 fn source() -> BinarySourceDescriptor {
     BinarySourceDescriptor::new(
@@ -91,7 +92,7 @@ fn prime_planes_are_bounded_by_the_committed_polynomial_count() {
         ],
     };
     assert_eq!(
-        PrimePlaneManifest::new(&s, Some(claim.clone()))
+        PrimePlaneManifest::with_field_profile(&s, Some(claim.clone()), BinaryFieldProfile::P128)
             .unwrap()
             .planes()
             .len(),
@@ -101,7 +102,9 @@ fn prime_planes_are_bounded_by_the_committed_polynomial_count() {
         polynomial: 0,
         value: 0.into(),
     });
-    assert!(PrimePlaneManifest::new(&s, Some(claim)).is_err());
+    assert!(
+        PrimePlaneManifest::with_field_profile(&s, Some(claim), BinaryFieldProfile::P128).is_err()
+    );
 }
 struct Token(SourceAgreementBinding);
 impl SourceAgreementProof for Token {

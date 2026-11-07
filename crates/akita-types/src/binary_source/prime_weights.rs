@@ -1,12 +1,14 @@
 //! Public coefficient weights authenticating committed prime evaluation planes.
 
 use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
-use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use akita_params::RelationPolynomial;
 use jolt_field::{ExtField, Field};
 
-use super::{binary_scalar_challenges, BinarySourceDescriptor, PrimePlaneManifest};
+use super::{
+    BinaryScalarChallengeSource, BinarySourceDescriptor, PreparedBinaryScalarChallenges,
+    PrimePlaneManifest,
+};
 use crate::native_root_relation::{
     weigh_units, NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, SegmentLanes,
 };
@@ -25,7 +27,7 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
     repacking: &RootCoefficientRepacking,
     response_segment: usize,
     plane_segment: usize,
-    challenges: &Challenges,
+    challenges: &impl BinaryScalarChallengeSource,
     alpha: E,
     batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
@@ -74,21 +76,7 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
     }
     let response = SegmentLanes::new(repacking, response_segment)?;
     let plane_lanes = SegmentLanes::new(repacking, plane_segment)?;
-    let mut supports = Vec::new();
-    let scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
-    supports
-        .try_reserve_exact(scalar_challenges.len())
-        .map_err(|_| AkitaError::InvalidProof)?;
-    for scalar in &scalar_challenges {
-        supports.push(
-            scalar
-                .iter()
-                .enumerate()
-                .filter(|(_, &value)| value != 0)
-                .map(|(s, &value)| (s, value < 0))
-                .collect(),
-        );
-    }
+    let scalar_challenges = challenges.prepare(descriptor)?;
     let mut planes = Vec::new();
     planes
         .try_reserve_exact(manifest.planes().len())
@@ -134,7 +122,7 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
         alpha,
         ring_rows,
         columns,
-        supports,
+        challenges: scalar_challenges.into_owned(),
         planes,
         rows,
         reading: PrimeReading {
@@ -187,7 +175,7 @@ pub(crate) struct PrimePlaneWeights<E: Field> {
     columns: usize,
     /// Nonzero scalar challenge coefficients for `owner * columns + column`,
     /// as `(position, negative)`: every coefficient is `-1` or `1`.
-    supports: Vec<Vec<(usize, bool)>>,
+    challenges: PreparedBinaryScalarChallenges,
     planes: Vec<PlaneInputs<E>>,
     rows: Vec<E>,
     reading: PrimeReading<E>,
@@ -199,10 +187,9 @@ impl<E: Field> PrimePlaneWeights<E> {
     }
 
     fn support(&self, polynomial: usize, column: usize) -> Result<&[(usize, bool)], AkitaError> {
-        checked::mul_add(polynomial, self.columns, column)
-            .and_then(|index| self.supports.get(index))
-            .map(Vec::as_slice)
-            .ok_or(AkitaError::InvalidProof)
+        let index =
+            checked::mul_add(polynomial, self.columns, column).ok_or(AkitaError::InvalidProof)?;
+        self.challenges.support(index)
     }
 
     fn row_element(&self, plane: &PlaneInputs<E>, row: usize) -> Result<usize, AkitaError> {

@@ -1,6 +1,7 @@
 //! Admission inputs for explicitly selected binary prime evaluation planes.
 
 use akita_error::{checked, AkitaError};
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::sis::ajtai_key::{
     min_secure_rank, sis_table_key_for_linf_bound, SisMatrixRole, SisModulusProfileId,
     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
@@ -97,10 +98,8 @@ pub fn price_binary_root_planes(
         DEFAULT_SIS_SECURITY_POLICY,
         SisTableDigest::CURRENT,
         match manifest.field_profile() {
-            akita_params::binary_setup::BinaryFieldProfile::P128 => {
-                SisModulusProfileId::Q128Offset275
-            }
-            akita_params::binary_setup::BinaryFieldProfile::P64 => SisModulusProfileId::Q64Offset59,
+            BinaryFieldProfile::P128 => SisModulusProfileId::Q128Offset275,
+            BinaryFieldProfile::P64 => SisModulusProfileId::Q64Offset59,
         },
         SisMatrixRole::Open,
         u32::try_from(manifest.b_ring_dimension()).map_err(|_| AkitaError::InvalidProof)?,
@@ -140,7 +139,8 @@ mod tests {
     use akita_challenges::FoldChallengeDistribution;
     use akita_params::{CommittedGroupParams, PolynomialGroupLayout};
     use akita_types::binary_source::{
-        BinaryIndexMap, BinarySourceDescriptor, PrimeGroupClaim, PrimePlaneClaim,
+        BinaryIndexMap, BinaryRootPublic, BinarySourceDescriptor, BinaryTerminalClaim,
+        PrimeGroupClaim, PrimePlaneClaim,
     };
 
     fn manifest(
@@ -165,15 +165,26 @@ mod tests {
         );
         let count = 1usize << carrier_bits;
         let index = BinaryIndexMap::new(128, count, count, columns).unwrap();
-        let profiles =
-            BinaryCommittedGroupManifest::commitment_profiles(&index, owners, 7).unwrap();
+        let profiles = BinaryCommittedGroupManifest::profiles_for_field(
+            &index,
+            owners,
+            7,
+            BinaryFieldProfile::P128,
+        )
+        .unwrap();
         let descriptor = BinarySourceDescriptor::new(
             index,
             (0..owners).map(|x| [x as u8; 32]).collect(),
             profiles,
         )
         .unwrap();
-        BinaryCommittedGroupManifest::new(descriptor, 7, &profile).unwrap()
+        BinaryCommittedGroupManifest::with_field_profile(
+            descriptor,
+            7,
+            &profile,
+            BinaryFieldProfile::P128,
+        )
+        .unwrap()
     }
 
     fn prime(manifest: &BinaryCommittedGroupManifest, planes: usize) -> PrimePlaneManifest {
@@ -183,7 +194,7 @@ mod tests {
             .padded_carriers()
             .trailing_zeros() as usize
             + 8;
-        PrimePlaneManifest::new(
+        PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
             (planes > 0).then(|| PrimeGroupClaim {
                 point: vec![2.into(); arity],
@@ -194,13 +205,82 @@ mod tests {
                     })
                     .collect(),
             }),
+            manifest.field_profile(),
         )
         .unwrap()
     }
 
+    fn assert_price_matches_verifier_plan(
+        manifest: &BinaryCommittedGroupManifest,
+        word: bool,
+        prime: &PrimePlaneManifest,
+        ordinary: Option<GroupCommitPhaseParams>,
+    ) {
+        let price = price_binary_root_planes(manifest, word, prime, 64, ordinary).unwrap();
+        let descriptor = manifest.descriptor();
+        let index = descriptor.index_map();
+        let claim = word.then(|| {
+            BinaryTerminalClaim::new(
+                descriptor,
+                descriptor.polynomials()[0],
+                vec![
+                    [0; 21];
+                    (index.padded_carriers() / index.columns()).trailing_zeros() as usize
+                ],
+                vec![[0; 21]; index.columns().trailing_zeros() as usize],
+                [0; 21],
+            )
+            .unwrap()
+        });
+        let setup = akita_types::AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+            setup_seed: [41; 32].into(),
+        };
+        let public = BinaryRootPublic::new(
+            manifest,
+            claim.as_ref(),
+            prime,
+            &setup,
+            price.outgoing_physical_cells,
+            64,
+            ordinary,
+        )
+        .unwrap();
+        let plan = public.plan();
+        let segment_cells = (0..plan.repacking().segments().len())
+            .map(|segment| plan.repacking().segment_range(segment).unwrap().len())
+            .collect::<Vec<_>>();
+        assert_eq!(price.segment_physical_cells, segment_cells);
+        assert_eq!(price.outgoing_domain_len, plan.repacking().domain_len());
+        assert_eq!(
+            price.outgoing_physical_cells,
+            plan.repacking().natural_end().unwrap()
+        );
+        assert_eq!(
+            price.typed_prefix,
+            BinaryTypedPrefix::from_plan(manifest, plan).unwrap()
+        );
+        assert_eq!(
+            price.d_rank,
+            manifest.d_label(word, prime.planes().len()).unwrap().rank as usize
+        );
+        // D commits the natural scalar digits, excluding carries, ordinary rows and K.
+        let digits = index.columns()
+            * 162
+            * (usize::from(word) * descriptor.polynomials().len()
+                + prime.planes().len() * manifest.field_profile().prime_plane_digits());
+        assert_eq!(price.d_live_digits, digits);
+        assert_eq!(price.d_columns, digits.div_ceil(64));
+        if let Some(quotient) = plan.quotient_segment() {
+            assert_eq!(quotient, plan.repacking().segments().len() - 1);
+            assert!(!plan.opening_segments().contains(&quotient));
+        }
+    }
+
     #[test]
     fn p64_prime_plane_price_uses_two_planes_and_independent_d_rank() {
-        use akita_params::binary_setup::BinaryFieldProfile;
         use akita_types::binary_source::PrimeClaimValue;
         let field = BinaryFieldProfile::P64;
         let params = CommittedGroupParams::params_only(
@@ -241,7 +321,10 @@ mod tests {
         for word in [false, true] {
             let price = price_binary_root_planes(&manifest, word, &prime, 64, None).unwrap();
             assert_eq!(price.planes, 2);
-            assert_eq!(price.d_live_digits, (44 + usize::from(word)) * 162 * 2);
+            assert_eq!(
+                price.d_live_digits,
+                (prime.planes().len() * field.prime_plane_digits() + usize::from(word)) * 162 * 2
+            );
             assert_eq!(price.d_columns, price.d_live_digits.div_ceil(64));
             assert_eq!(
                 price.d_rank,
@@ -249,11 +332,22 @@ mod tests {
             );
             assert_eq!(price.d_table_min_rank, Some(price.d_rank));
             assert_ne!(price.d_rank, manifest.b_rows());
-            assert_eq!(
-                price.typed_prefix,
-                BinaryTypedPrefix::new(&manifest, word, 2, 64).unwrap()
-            );
+            assert_price_matches_verifier_plan(&manifest, word, &prime, None);
+            assert_price_matches_verifier_plan(&manifest, word, &prime, Some(carrier));
         }
+        let foreign_prime = PrimePlaneManifest::with_field_profile(
+            descriptor,
+            Some(PrimeGroupClaim {
+                point: vec![2.into(); 11],
+                evaluations: vec![PrimePlaneClaim {
+                    polynomial: 0,
+                    value: 5.into(),
+                }],
+            }),
+            BinaryFieldProfile::P128,
+        )
+        .unwrap();
+        assert!(price_binary_root_planes(&manifest, true, &foreign_prime, 64, None).is_err());
     }
 
     #[test]
@@ -268,6 +362,8 @@ mod tests {
             assert_eq!(price.outgoing_physical_cells, expected_cells);
             assert_eq!(price.d_columns, expected_d);
             assert_eq!(price.segment_physical_cells.last(), Some(&(planes * 22016)));
+            assert_price_matches_verifier_plan(&manifest, true, &prime(&manifest, planes), None);
+            assert_price_matches_verifier_plan(&manifest, false, &prime(&manifest, planes), None);
             println!("prime_plane small planes={planes}: {price:?}");
         }
     }

@@ -1,5 +1,7 @@
 //! Direct public coefficient weights for the two binary terminal identities.
 
+use std::{borrow::Cow, sync::Arc};
+
 use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
@@ -15,6 +17,81 @@ use crate::native_root_relation::{
     WEIGH_BATCH,
 };
 use crate::root_repacking::RootCoefficientRepacking;
+
+/// Checked replayed fold challenges shared by the root relation compilers.
+#[derive(Clone, Debug)]
+pub struct PreparedBinaryScalarChallenges {
+    rows: Arc<[Vec<(usize, bool)>]>,
+    owners: usize,
+    columns: usize,
+}
+
+impl PreparedBinaryScalarChallenges {
+    pub(crate) fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub(crate) fn support(&self, index: usize) -> Result<&[(usize, bool)], AkitaError> {
+        self.rows
+            .get(index)
+            .map(Vec::as_slice)
+            .ok_or(AkitaError::InvalidProof)
+    }
+}
+
+mod scalar_challenge_source {
+    pub trait Sealed {}
+
+    impl Sealed for akita_challenges::Challenges {}
+    impl Sealed for super::PreparedBinaryScalarChallenges {}
+}
+
+/// Raw challenges validate at standalone compiler boundaries; a root relation
+/// prepares them once and lends the immutable result to all its compilers.
+pub trait BinaryScalarChallengeSource: scalar_challenge_source::Sealed {
+    fn prepare(
+        &self,
+        descriptor: &BinarySourceDescriptor,
+    ) -> Result<Cow<'_, PreparedBinaryScalarChallenges>, AkitaError>;
+}
+
+impl BinaryScalarChallengeSource for Challenges {
+    fn prepare(
+        &self,
+        descriptor: &BinarySourceDescriptor,
+    ) -> Result<Cow<'_, PreparedBinaryScalarChallenges>, AkitaError> {
+        let rows = binary_scalar_challenges(descriptor, self)?
+            .into_iter()
+            .map(|dense| {
+                dense
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &value)| value != 0)
+                    .map(|(position, &value)| (position, value < 0))
+                    .collect()
+            })
+            .collect();
+        Ok(Cow::Owned(PreparedBinaryScalarChallenges {
+            rows,
+            owners: descriptor.polynomials().len(),
+            columns: descriptor.index_map().columns(),
+        }))
+    }
+}
+
+impl BinaryScalarChallengeSource for PreparedBinaryScalarChallenges {
+    fn prepare(
+        &self,
+        descriptor: &BinarySourceDescriptor,
+    ) -> Result<Cow<'_, PreparedBinaryScalarChallenges>, AkitaError> {
+        if self.owners != descriptor.polynomials().len()
+            || self.columns != descriptor.index_map().columns()
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(Cow::Borrowed(self))
+    }
+}
 
 /// Addresses of the response low digit, authenticated U view and both carries.
 #[derive(Clone, Copy, Debug)]
@@ -38,7 +115,7 @@ impl BinaryTerminalClaim {
         descriptor: &BinarySourceDescriptor,
         repacking: &RootCoefficientRepacking,
         segments: BinaryEvaluationSegments,
-        challenges: &Challenges,
+        challenges: &impl BinaryScalarChallengeSource,
         alpha: E,
         batches: [E; 2],
         proof_modulus: u128,
@@ -90,7 +167,7 @@ impl BinaryTerminalClaim {
                 return Err(AkitaError::InvalidProof);
             }
         }
-        let mut scalar_challenges = binary_scalar_challenges(descriptor, challenges)?;
+        let scalar_challenges = challenges.prepare(descriptor)?;
         let mut rows = Vec::new();
         rows.try_reserve_exact(scalar_rows)
             .map_err(|_| AkitaError::InvalidProof)?;
@@ -104,9 +181,6 @@ impl BinaryTerminalClaim {
             rows,
         };
         let first_column = checked::product([owner, columns]).ok_or(AkitaError::InvalidProof)?;
-        let owner_challenges = checked::range(first_column, columns)
-            .and_then(|range| scalar_challenges.get_mut(range))
-            .ok_or(AkitaError::InvalidProof)?;
         if column_weights.len() != columns {
             return Err(AkitaError::InvalidProof);
         }
@@ -118,11 +192,9 @@ impl BinaryTerminalClaim {
             first_element: first_column,
             columns: column_weights
                 .into_iter()
-                .zip(owner_challenges.iter_mut())
-                .map(|(weight, challenge)| {
-                    (weight.to_words(), std::mem::replace(challenge, [0; 162]))
-                })
+                .map(|weight| weight.to_words())
                 .collect(),
+            challenges: scalar_challenges.into_owned(),
         };
         let mut terms = Vec::new();
         let mut power = E::one();
@@ -343,9 +415,9 @@ pub(crate) struct PartialColumnWeights<E: Field> {
     /// Parity then value batching weights.
     batches: [E; 2],
     first_element: usize,
-    /// Canonical column weight as little-endian words, and the lifted parity
-    /// challenge, per column.
-    columns: Vec<([u64; 3], [i128; 162])>,
+    /// Canonical column weights as little-endian words.
+    columns: Vec<[u64; 3]>,
+    challenges: PreparedBinaryScalarChallenges,
 }
 
 impl<E: Field> PartialColumnWeights<E> {
@@ -362,7 +434,10 @@ impl<E: Field> PartialColumnWeights<E> {
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         let mut patterns: Vec<(usize, [E; 162])> = Vec::new();
         let (mut values, mut parities) = (E::zero(), E::zero());
-        for (column, (words, challenge)) in self.columns.iter().enumerate() {
+        for (column, words) in self.columns.iter().enumerate() {
+            let challenge = self.challenges.support(
+                checked::sum([self.first_element, column]).ok_or(AkitaError::InvalidProof)?,
+            )?;
             let base = self.base(column)?;
             let offset = eq.low_offset(base);
             let pattern = match patterns.iter().position(|(start, _)| *start == offset) {
@@ -380,16 +455,14 @@ impl<E: Field> PartialColumnWeights<E> {
             };
             let sums = &patterns.get(pattern).ok_or(AkitaError::InvalidProof)?.1;
             let (mut value, mut parity) = (E::zero(), E::zero());
-            for (s, (&sum, &coefficient)) in sums.iter().zip(challenge).enumerate() {
+            for (s, &sum) in sums.iter().enumerate() {
                 if (words.get(s / 64).copied().unwrap_or(0) >> (s % 64)) & 1 == 1 {
                     value += sum;
                 }
-                match coefficient {
-                    0 => {}
-                    1 => parity += sum,
-                    -1 => parity -= sum,
-                    _ => return Err(AkitaError::InvalidProof),
-                }
+            }
+            for &(s, negative) in challenge {
+                let sum = *sums.get(s).ok_or(AkitaError::InvalidProof)?;
+                parity += if negative { -sum } else { sum };
             }
             let high = eq.high(base)?;
             values += high * value;
@@ -402,12 +475,22 @@ impl<E: Field> PartialColumnWeights<E> {
         &self,
         mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
     ) -> Result<(), AkitaError> {
-        for (column, (words, challenge)) in self.columns.iter().enumerate() {
+        for (column, words) in self.columns.iter().enumerate() {
+            let challenge = self.challenges.support(
+                checked::sum([self.first_element, column]).ok_or(AkitaError::InvalidProof)?,
+            )?;
             let mut multiplier = [E::zero(); 162];
-            for (index, (slot, &coefficient)) in multiplier.iter_mut().zip(challenge).enumerate() {
+            for (index, slot) in multiplier.iter_mut().enumerate() {
                 let bit = (words.get(index / 64).copied().unwrap_or(0) >> (index % 64)) & 1;
-                *slot = self.batches[1] * E::from_u64(bit)
-                    - self.batches[0] * E::from_i128(coefficient);
+                *slot = self.batches[1] * E::from_u64(bit);
+            }
+            for &(s, negative) in challenge {
+                let slot = multiplier.get_mut(s).ok_or(AkitaError::InvalidProof)?;
+                *slot += if negative {
+                    self.batches[0]
+                } else {
+                    -self.batches[0]
+                };
             }
             let mut kernel = [E::zero(); 162];
             shifted_remainder_evaluations::<E, PlusTrinomial>(&multiplier, self.alpha, &mut kernel)

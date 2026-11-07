@@ -9,6 +9,7 @@ use crate::binary_source::{
     BinarySourceDescriptor, CANONICAL_IMAGE_WINDOW,
 };
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_params::binary_setup::BinaryFieldProfile;
 use jolt_field::{Prime128Offset275 as F, Ring};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::hint::black_box;
@@ -32,7 +33,15 @@ fn stage3_release_a_arithmetic_measurements() {
             },
         )
         .unwrap();
-        let plan = BinaryRootWitnessPlan::new(&descriptor, rank, 64).unwrap();
+        let plan = BinaryRootWitnessPlan::for_profile(
+            &descriptor,
+            rank,
+            64,
+            BinaryFieldProfile::P128,
+            true,
+            0,
+        )
+        .unwrap();
         let matrix = (0..rank)
             .map(|_| {
                 (0..rows)
@@ -69,7 +78,7 @@ fn stage3_release_a_arithmetic_measurements() {
         let start = Instant::now();
         let direct = binary_direct_a_weights(
             &plan,
-            Some(BinaryAOperand::from_canonical(&matrix)),
+            Some(BinaryAOperand::new::<F>(&matrix)),
             &challenges,
             &rho,
         )

@@ -158,17 +158,23 @@ fn public(
         shape.columns,
     )
     .expect("fixture index map");
-    let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, shape.owners, 0)
-        .expect("fixture commitment profiles");
+    let profiles = BinaryCommittedGroupManifest::profiles_for_field(
+        &index,
+        shape.owners,
+        0,
+        BinaryFieldProfile::P128,
+    )
+    .expect("fixture commitment profiles");
     let polynomials = (0..shape.owners)
         .map(|owner| [29 + owner as u8; 32])
         .collect::<Vec<_>>();
     let descriptor = BinarySourceDescriptor::new(index, polynomials.clone(), profiles)
         .expect("fixture descriptor");
-    let manifest = BinaryCommittedGroupManifest::new(
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
         descriptor.clone(),
         0,
         &binary_ordinary_profile_fixture(BinaryFieldProfile::P128),
+        BinaryFieldProfile::P128,
     )
     .expect("fixture manifest");
     let rows = descriptor.index_map().padded_carriers() / descriptor.index_map().columns();
@@ -196,7 +202,9 @@ fn public(
             })
             .collect(),
     });
-    let prime = PrimePlaneManifest::new(&descriptor, claims).expect("fixture prime planes");
+    let prime =
+        PrimePlaneManifest::with_field_profile(&descriptor, claims, BinaryFieldProfile::P128)
+            .expect("fixture prime planes");
     let setup = AkitaSetupDescriptor {
         max_num_vars: 0,
         max_num_batched_polys: 0,

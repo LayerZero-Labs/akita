@@ -23,7 +23,13 @@ fn descriptor(owners: usize) -> BinarySourceDescriptor {
     BinarySourceDescriptor::new(
         index.clone(),
         (0..owners).map(|i| [29 + i as u8; 32]).collect(),
-        BinaryCommittedGroupManifest::commitment_profiles(&index, owners, 0).unwrap(),
+        BinaryCommittedGroupManifest::profiles_for_field(
+            &index,
+            owners,
+            0,
+            BinaryFieldProfile::P128,
+        )
+        .unwrap(),
     )
     .unwrap()
 }
@@ -154,7 +160,13 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         .unwrap();
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone()).unwrap());
     let descriptor = descriptor(owners);
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     let words = (0..owners)
         .map(|owner| WORDS.iter().map(|x| x ^ owner as u128).collect::<Vec<_>>())
         .collect::<Vec<_>>();
@@ -195,7 +207,12 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             .map(|owner| claim(&words[owner], owner))
             .collect(),
     });
-    let checked = PrimePlaneManifest::new(&descriptor, primes.clone()).unwrap();
+    let checked = PrimePlaneManifest::with_field_profile(
+        &descriptor,
+        primes.clone(),
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     assert_eq!(checked.planes().len(), planes);
     if word && planes == 1 && owners == 1 && !mixed {
         assert!(
@@ -290,10 +307,10 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     )
     .unwrap();
     let prefixes = backend
-        .prepare_binary_a_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
+        .prepare_binary_typed_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
         .unwrap();
     let verifier_setup = backend
-        .prepare_binary_a_verifier_setup(
+        .prepare_binary_typed_verifier_setup(
             &scheme.setup_verifier(&setup).unwrap(),
             &manifest,
             &typed,
@@ -493,7 +510,13 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         claim(&foreign_words[0], 0).value,
         prime.evaluations[0].value
     );
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     let source = backend
         .import_binary_source(manifest, carrier, foreign_words)
         .unwrap();
@@ -570,7 +593,11 @@ fn prime_plane_rejects_a_second_value_for_the_same_polynomial() {
             ],
         };
         assert!(matches!(
-            PrimePlaneManifest::new(&descriptor, Some(primes)),
+            PrimePlaneManifest::with_field_profile(
+                &descriptor,
+                Some(primes),
+                BinaryFieldProfile::P128
+            ),
             Err(AkitaError::InvalidInput(_))
         ));
     }
@@ -579,7 +606,7 @@ fn prime_plane_rejects_a_second_value_for_the_same_polynomial() {
         evaluations: vec![one, claim(&WORDS, 1)],
     };
     assert_eq!(
-        PrimePlaneManifest::new(&descriptor, Some(primes))
+        PrimePlaneManifest::with_field_profile(&descriptor, Some(primes), BinaryFieldProfile::P128)
             .unwrap()
             .planes()
             .len(),
@@ -615,13 +642,24 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
         .unwrap()
         .profiles()
         .final_group;
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     let claim = PrimeGroupClaim {
         point: prime_point().into_iter().map(Into::into).collect(),
         evaluations: vec![claim(&WORDS, 0), claim(&WORDS, 1)],
     };
     let first = |claim: PrimeGroupClaim| {
-        let planes = PrimePlaneManifest::new(&descriptor, Some(claim)).unwrap();
+        let planes = PrimePlaneManifest::with_field_profile(
+            &descriptor,
+            Some(claim),
+            BinaryFieldProfile::P128,
+        )
+        .unwrap();
         let mut prover = new_prover_channel(b"prime-plane-binding");
         let mut verifier = new_verifier_channel(b"prime-plane-binding", &[]);
         binary_root_statement::<F, F, _>(
@@ -760,16 +798,22 @@ fn multiple_owner_catalog(
         let Some(prefix) = first.setup_prefix() else {
             continue;
         };
-        let manifest =
-            BinaryCommittedGroupManifest::new(descriptor(owners), 0, &producer_profile).unwrap();
+        let manifest = BinaryCommittedGroupManifest::with_field_profile(
+            descriptor(owners),
+            0,
+            &producer_profile,
+            BinaryFieldProfile::P128,
+        )
+        .unwrap();
         let typed = BinaryTypedPrefix::new(&manifest, true, owners, first.d_a()).unwrap();
-        let plan = akita_types::binary_source::BinaryRootWitnessPlan::new(
+        let plan = akita_types::binary_source::BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),
             manifest.a_rank(),
             first.d_a(),
+            manifest.field_profile(),
+            true,
+            owners,
         )
-        .unwrap()
-        .with_prime_planes(true, owners)
         .unwrap();
         let plan = if let Some((ordinary, _)) = &ordinary {
             let ordinary = akita_types::binary_source::OrdinaryNativeRootPlan::new(

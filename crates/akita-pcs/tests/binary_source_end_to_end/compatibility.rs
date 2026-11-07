@@ -18,10 +18,17 @@ fn typed_prefix_identity_bytes_are_pinned() {
     let next = &row.schedule().recursive_folds[0].params;
     let slot = next.setup_prefix().unwrap().slot_id().unwrap();
     let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
-    let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0).unwrap();
+    let profiles =
+        BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, BinaryFieldProfile::P128)
+            .unwrap();
     let descriptor = BinarySourceDescriptor::new(index, vec![[29; 32]], profiles).unwrap();
-    let manifest =
-        BinaryCommittedGroupManifest::new(descriptor, 0, &row.profiles().final_group).unwrap();
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor,
+        0,
+        &row.profiles().final_group,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     let typed = BinaryTypedPrefix::new(&manifest, true, 0, next.d_a()).unwrap();
     let identity = typed.identity(&manifest, &slot).unwrap();
     let tail = [64u64, 0, u64::MAX].map(u64::to_le_bytes).concat();

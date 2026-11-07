@@ -31,6 +31,7 @@ use akita_config::{
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{
     sis::CommittedSourceClass, BasisMode, ChunkedWitnessCfg, DecompositionParams,
     PolynomialGroupLayout, ScheduleLookupKey, SisModulusProfileId,
@@ -212,9 +213,17 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         .unwrap();
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone()).unwrap());
     let index = BinaryIndexMap::new(word_width, 8 * (128 / word_width), 8, 2).unwrap();
-    let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0).unwrap();
+    let profiles =
+        BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, BinaryFieldProfile::P128)
+            .unwrap();
     let descriptor = BinarySourceDescriptor::new(index, vec![[29; 32]], profiles).unwrap();
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     let words = vec![
         0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
         0x8000_0000_0000_0000_0000_0000_0000_0001,
@@ -246,7 +255,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         forged_profiles,
     )
     .unwrap();
-    assert!(BinaryCommittedGroupManifest::new(forged, 0, &carrier).is_err());
+    assert!(BinaryCommittedGroupManifest::with_field_profile(
+        forged,
+        0,
+        &carrier,
+        BinaryFieldProfile::P128
+    )
+    .is_err());
     let packed = backend
         .import_packed_binary_source(
             manifest.clone(),
@@ -418,11 +433,11 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     )
     .unwrap();
     let prefixes = backend
-        .prepare_binary_a_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
+        .prepare_binary_typed_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
         .unwrap();
     let ordinary_verifier_setup = scheme.setup_verifier(&setup).unwrap();
     let verifier_setup = backend
-        .prepare_binary_a_verifier_setup(
+        .prepare_binary_typed_verifier_setup(
             &ordinary_verifier_setup,
             &manifest,
             &typed,
