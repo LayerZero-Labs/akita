@@ -10,7 +10,7 @@
 //! Every per-preset input is carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! ring-challenge closure, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
-//! `akita-challenges` / `akita-error`.
+//! `jolt-crypto` / `akita-error`.
 //! Scalar and mixed-D planning are selected internally by the grouped gate from
 //! the policy-bound ring-dimension domain.
 //!

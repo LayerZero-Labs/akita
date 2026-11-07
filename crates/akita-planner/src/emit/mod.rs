@@ -13,6 +13,7 @@ use akita_params::ScheduleLookupKey;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
 
 use crate::PlannerPolicy;
+use akita_schedules::ScheduleAdmission;
 
 mod materialize;
 mod publish;
@@ -154,6 +155,9 @@ pub struct EmitSpec {
     pub preplanned: Vec<PreplannedSchedule>,
     pub output_path: PathBuf,
     pub ring_challenge_config: fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
+    /// Which rows the family admits; a zero-knowledge family plans every row
+    /// with `find_zk_schedule` (feature `zk`).
+    pub admission: ScheduleAdmission,
 }
 
 // Schedule search is memory bound. Keep the default below host-wide

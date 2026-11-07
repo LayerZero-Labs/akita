@@ -20,6 +20,7 @@ pub use artifact::{
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
 pub use audit::ScheduleAdmission;
+pub use candidate::digit_commitment_min_rank;
 pub use policy_digest::policy_digest;
 pub use resolve::ResolvedScheduleRow;
 pub use runtime::{
