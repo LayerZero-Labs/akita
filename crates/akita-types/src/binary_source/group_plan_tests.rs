@@ -102,8 +102,8 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                         1 << (group % 3),
                         group + 1,
                         BinaryFieldProfile::P64,
-                        true,
-                        2 * (group + 1),
+                        group % 3 != 1,
+                        if group % 3 == 2 { 0 } else { 2 * (group + 1) },
                     )
                 })
                 .collect::<Vec<_>>();
@@ -171,8 +171,20 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                     group.local_plan.descriptor(),
                     binary[index].manifest.descriptor()
                 );
-                assert_eq!(group.legacy_segments, next_segment..next_segment + 6);
-                next_segment += 6;
+                let local = group.local_plan.repacking();
+                let legacy_len = group
+                    .local_plan
+                    .quotient_segment()
+                    .unwrap_or(local.segments().len());
+                assert_eq!(
+                    group.legacy_segments,
+                    next_segment..next_segment + legacy_len
+                );
+                assert_eq!(
+                    &repacking.segments()[group.legacy_segments.clone()],
+                    &local.segments()[..legacy_len]
+                );
+                next_segment = group.legacy_segments.end;
                 assert_eq!(group.rows.coefficients.start, next_row);
                 assert_eq!(group.rows.coefficients.len(), 1944 * group.owners);
                 next_row = group.rows.coefficients.end;
@@ -186,7 +198,7 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                 // checked against the physical segment sum below.
                 let length = 4096 * group.owners * group.ring_rows
                     + 24576 * group.owners * group.columns
-                    + 256 * group.owners * (group.columns + 9 + 6)
+                    + usize::from(group.word) * 256 * group.owners * (group.columns + 9 + 6)
                     + 5632 * group.prime_coordinate_planes * group.columns
                     + 3072 * group.owners * depth;
                 assert_eq!(group.physical_len, length);
@@ -220,17 +232,21 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                 assert_eq!(group.quotient_segment, Some(next_segment));
                 next_segment += 1;
                 for (range, count) in [
-                    (&group.rows.word, 2),
+                    (&group.rows.word, 2 * usize::from(group.word)),
                     (&group.rows.b, binary[group.global_index].manifest.b_rows()),
                     (
                         &group.rows.d,
                         binary[group.global_index]
                             .manifest
-                            .d_label(true, group.prime_coordinate_planes)
+                            .d_label(group.word, group.prime_coordinate_planes)
                             .unwrap()
                             .rank as usize,
                     ),
-                    (&group.rows.prime, 2 * group.owners),
+                    (
+                        &group.rows.prime,
+                        2 * group.prime_coordinate_planes
+                            / group.local_plan.field_profile().extension_degree(),
+                    ),
                 ] {
                     assert_eq!(range.start, next_row);
                     assert_eq!(range.len(), count);
