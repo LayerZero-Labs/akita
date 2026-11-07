@@ -228,10 +228,9 @@ pub(super) fn prove<C: MeasurementConfig>(log: usize, shape: &str, directory: &P
     let typed = BinaryTypedPrefix::new(
         &manifest,
         claims.word(&descriptor)?.is_some(),
-        claims
-            .prime::<C>()
-            .as_ref()
-            .map_or(0, |prime| prime.evaluations.len() * C::PROFILE.extension_degree()),
+        claims.prime::<C>().as_ref().map_or(0, |prime| {
+            prime.evaluations.len() * C::PROFILE.extension_degree()
+        }),
         schedule.recursive_folds[0].params.d_a(),
     )?;
     let later = schedule

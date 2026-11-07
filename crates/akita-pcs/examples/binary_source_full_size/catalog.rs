@@ -10,8 +10,8 @@ use akita_schedules::{
     PlannerPolicy, RecursiveSetupSearchPolicy, SelectionPolicyId, ValidatedScheduleCatalog,
 };
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimeGroupClaim,
-    PrimeClaimValue, PrimePlaneClaim, PrimePlaneManifest,
+    BinaryCommittedGroupManifest, BinaryRootWitnessPlan, OrdinaryNativeRootPlan, PrimeClaimValue,
+    PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest,
 };
 
 /// Restrict ordinary producers to the mixed root's current preimage geometry.

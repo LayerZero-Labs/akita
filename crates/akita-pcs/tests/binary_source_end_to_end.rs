@@ -567,7 +567,10 @@ fn run_fixture(
             );
         }
         if matches!(fault, Fault::Quotient | Fault::PrimePlane) {
-            assert_eq!(rejections, 1, "{fault:?} must fail at the final root equation");
+            assert_eq!(
+                rejections, 1,
+                "{fault:?} must fail at the final root equation"
+            );
         }
     };
     if let Some(fault) = authentication_fault {
