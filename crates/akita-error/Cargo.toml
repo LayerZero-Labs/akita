@@ -15,5 +15,9 @@ jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = 
 ] }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false }
 
+[features]
+# Classify the masked channel's errors (`jolt_zk::masking::ZkError`).
+zk = []
+
 [lints]
 workspace = true

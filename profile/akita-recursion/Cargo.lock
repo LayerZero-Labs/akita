@@ -183,6 +183,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "jolt-algebra",
+ "jolt-crypto",
  "jolt-transcript",
  "keccak 0.2.2",
  "serde",
@@ -386,6 +387,7 @@ dependencies = [
  "jolt-transcript",
  "rand_core",
  "shake",
+ "spongefish",
  "tracing",
 ]
 

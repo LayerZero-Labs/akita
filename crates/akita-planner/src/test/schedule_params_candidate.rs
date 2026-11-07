@@ -243,6 +243,7 @@ fn response_model_keeps_one_split_per_fold_work_size() {
             log_basis_inner: 4,
             log_basis_open: 4,
             fold_level: 3,
+            masking: crate::schedule_params::LevelMasking::Clear,
             source_moment: Some(
                 crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
             ),
@@ -309,6 +310,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         log_basis_inner: 3,
         log_basis_open: 3,
         fold_level: 1,
+        masking: crate::schedule_params::LevelMasking::Clear,
         source_moment: Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
         relation_traversal_order: RelationTraversalOrder::Canonical,
         guide: None,
@@ -471,6 +473,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
                 log_basis_inner: log_basis,
                 log_basis_open: log_basis,
                 fold_level: 1,
+                masking: crate::schedule_params::LevelMasking::Clear,
                 source_moment: Some(
                     crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
                 ),
@@ -632,6 +635,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         opening,
         &[precommit_opening],
         Dense::opening_basis_range().0,
+        crate::schedule_params::LevelMasking::Clear,
     )
     .expect("root preparation")
     .expect("supported root preparation");
@@ -646,6 +650,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             inner_basis,
             Dense::opening_basis_range().0,
             None,
+            crate::schedule_params::LevelMasking::Clear,
         )
     };
     let grouped = candidates_from_prepared(Dense::inner_basis_range().0)
@@ -877,6 +882,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         final_group: grouped_key.final_group,
         precommitteds: (0..count)
             .map(|index| GroupCommitPhaseParams {
+                randomness_columns: 0,
                 group: PolynomialGroupLayout::singleton(10 + index),
                 ..frozen_group
             })
@@ -1097,6 +1103,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         inner_ring_dimension: dimensions.d_a(),
         outer_ring_dimension: dimensions.d_b(),
         guide: None,
+        masking: crate::schedule_params::LevelMasking::Clear,
     };
     let trace_groups = derive_setup_prefix_groups(&mut cache, request(trace)).unwrap();
     let exact_groups = derive_setup_prefix_groups(&mut cache, request(exact_packing)).unwrap();
@@ -1181,6 +1188,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             inner_ring_dimension: params.d_a(),
             outer_ring_dimension: params.outer().matrix.ring_dimension(),
             guide: None,
+            masking: crate::schedule_params::LevelMasking::Clear,
         },
     )
     .expect("setup-prefix candidates")
@@ -1260,6 +1268,7 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
                 inner_ring_dimension: 64,
                 outer_ring_dimension: 64,
                 guide: None,
+                masking: crate::schedule_params::LevelMasking::Clear,
             },
         )
         .expect("setup-prefix frontier");

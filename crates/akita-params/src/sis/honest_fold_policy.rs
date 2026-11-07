@@ -22,9 +22,6 @@ pub enum FoldFailureTarget {
     PerAttempt,
     /// One shot: failure probability at most `2^-security_bits / masked_folds`
     /// for this fold, which the prover probes once.
-    ///
-    /// Extension seam: zero knowledge (akita#120). Every schedule on `main` is sized
-    /// [`PerAttempt`](Self::PerAttempt).
     OneShot {
         security_bits: u32,
         masked_folds: u32,
@@ -53,6 +50,47 @@ pub struct HonestFoldSizingQuery<'a> {
     pub log_basis_response: u32,
     pub challenge_config: &'a FoldChallengeDistribution,
     pub failure_target: FoldFailureTarget,
+}
+
+impl<'a> HonestFoldSizingQuery<'a> {
+    /// The query of a fold over `blocks` whose response has `width_s` rings
+    /// per block in each of `num_chunks` windows of a `ring_dimension` ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the response size overflows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        ring_dimension: usize,
+        challenge_dimension: usize,
+        num_claims: usize,
+        blocks: crate::BlockGeometry,
+        num_chunks: usize,
+        width_s: usize,
+        witness_norms: FoldWitnessNorms,
+        log_basis_response: u32,
+        challenge_config: &'a FoldChallengeDistribution,
+        failure_target: FoldFailureTarget,
+    ) -> Result<Self, AkitaError> {
+        let num_fold_coeffs = width_s
+            .checked_mul(ring_dimension)
+            .and_then(|count| count.checked_mul(num_chunks))
+            .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
+        Ok(Self {
+            ring_dimension,
+            challenge_dimension,
+            num_claims,
+            num_live_ring_elements_per_claim: blocks.live_ring_elements_per_claim,
+            num_live_blocks: blocks.live_blocks,
+            num_positions_per_block: blocks.positions_per_block,
+            num_chunks,
+            num_fold_coeffs,
+            witness_norms,
+            log_basis_response,
+            challenge_config,
+            failure_target,
+        })
+    }
 }
 
 /// One group-owned offline rule for selecting its folded-witness digit depth.
@@ -611,12 +649,9 @@ mod tests {
         assert!(policy.num_digits_fold(query).is_ok());
     }
 
-    /// The one-shot target of a single-group fold at cut level 1: 136 bits
-    /// over two masked folds.
-    const ONE_SHOT: FoldFailureTarget = FoldFailureTarget::OneShot {
-        security_bits: 136,
-        masked_folds: 2,
-    };
+    fn zk_target() -> FoldFailureTarget {
+        crate::zk::one_shot_fold_target(crate::zk::ZK_CUT_LEVEL, 1).unwrap()
+    }
 
     /// Level 0 of `fp128_onehot_recursive final=36:1`: the one-hot root,
     /// folded with packing challenges in the 64-dimensional subring.
@@ -633,7 +668,7 @@ mod tests {
             witness_norms: FoldWitnessNorms::new(1, 2),
             log_basis_response: 3,
             challenge_config: challenge,
-            failure_target: ONE_SHOT,
+            failure_target: zk_target(),
         }
     }
 
@@ -652,7 +687,7 @@ mod tests {
             witness_norms: FoldWitnessNorms::bounded(3, 512),
             log_basis_response: 3,
             challenge_config: challenge,
-            failure_target: ONE_SHOT,
+            failure_target: zk_target(),
         }
     }
 
@@ -680,9 +715,9 @@ mod tests {
         let FoldFailureTarget::OneShot {
             security_bits,
             masked_folds,
-        } = ONE_SHOT
+        } = zk_target()
         else {
-            panic!("ONE_SHOT is a one-shot target");
+            panic!("zero-knowledge folds are one-shot");
         };
         let policy = BalancedSignedDigitFoldPolicy::universal(128);
         let level1 = headline_level1(&challenge);
@@ -713,14 +748,19 @@ mod tests {
         }
     }
 
-    /// At the level 1 shape of the headline row, the one-shot digit range
-    /// fails with probability at most `2^-136 / 2`, checked in exact rational
-    /// arithmetic with `ln 2 < 6932/10000`.
+    /// At the level 1 shape of the headline row, the one-shot digit
+    /// range fails with probability at most `2^-136 / 2`, checked in exact
+    /// rational arithmetic with `ln 2 < 6932/10000`.
     #[test]
     fn one_shot_headline_balanced_fold_meets_the_per_fold_target() {
         let challenge = FoldChallengeDistribution::production_for_ring_dim(512).unwrap();
-        let signed = challenge.signed_sparse().unwrap();
-        assert_eq!((signed.count_pm1, signed.count_pm2), (19, 0));
+        assert_eq!(
+            (
+                challenge.signed_sparse().unwrap().count_pm1,
+                challenge.signed_sparse().unwrap().count_pm2
+            ),
+            (19, 0)
+        );
         let query = headline_level1(&challenge);
         let digits = BalancedSignedDigitFoldPolicy::universal(128)
             .num_digits_fold(query)
@@ -735,12 +775,17 @@ mod tests {
     }
 
     /// The headline root's Chernoff thresholds, frozen: per attempt and one
-    /// shot.
+    /// shot, under main's one-hot source chunk (K = 16, #258).
     #[test]
     fn one_shot_headline_onehot_threshold_is_frozen() {
         let challenge = FoldChallengeDistribution::production_for_ring_dim(64).unwrap();
-        let signed = challenge.signed_sparse().unwrap();
-        assert_eq!((signed.count_pm1, signed.count_pm2), (31, 10));
+        assert_eq!(
+            (
+                challenge.signed_sparse().unwrap().count_pm1,
+                challenge.signed_sparse().unwrap().count_pm2
+            ),
+            (31, 10)
+        );
         let policy = UnitOneHotFoldPolicy::canonical(128, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE);
         let one_shot = headline_root(&challenge);
         let per_attempt = HonestFoldSizingQuery {

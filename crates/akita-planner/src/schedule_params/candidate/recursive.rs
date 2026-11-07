@@ -42,6 +42,8 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     /// Optional structural replay constraint. Current lengths and security
     /// ranks are still derived; only the approved split and slicing remain.
     pub(crate) guide: Option<CandidateLayoutGuide>,
+    /// Whether this level is masked by a zero-knowledge cut.
+    pub(crate) masking: super::LevelMasking,
 }
 
 #[derive(Clone, Copy)]
@@ -159,6 +161,7 @@ struct RecursiveCandidateCore {
     num_digits_fold: usize,
     inner_commit_matrix: InnerCommitMatrixParams,
     open_commit_matrix: OpenCommitMatrixParams,
+    open_randomness_columns: usize,
 }
 
 impl RecursiveCandidateContext<'_, '_> {
@@ -252,9 +255,29 @@ impl RecursiveCandidateContext<'_, '_> {
                 log_basis_open,
                 width_s,
                 modeled_linf_cap,
+                masking: request.masking,
             })?
         else {
             return Ok(None);
+        };
+        // The residual commitment after a zero-knowledge cut: the Σ-protocol
+        // opens A on w_k itself, so one inner digit plane, at A's Σ-binding
+        // rank (`specs/whiteout-akita.md` §5.1).
+        let inner_candidate = if request.masking.opens_residual() {
+            if delta_commit != 1 {
+                return Ok(None);
+            }
+            let Some(inner_commit_matrix) =
+                sigma_bound_inner_matrix(inner_candidate.inner_commit_matrix)?
+            else {
+                return Ok(None);
+            };
+            InnerCommitmentCandidate {
+                inner_commit_matrix,
+                ..inner_candidate
+            }
+        } else {
+            inner_candidate
         };
         let Ok(width_w) = akita_params::opening_d_segment_width(
             request.opening.method(),
@@ -277,8 +300,15 @@ impl RecursiveCandidateContext<'_, '_> {
         ) else {
             return Ok(None);
         };
-        let Ok(open_commit_matrix) =
-            OpenCommitMatrixParams::try_new_with_min_rank(open_key, width_w)
+        let Some((open_commit_matrix, open_randomness_columns)) = price_with_hiding_randomness(
+            request.masking.hiding(),
+            width_w,
+            dimensions.d_d(),
+            policy.sis_modulus_profile,
+            log_basis_open,
+            |width| OpenCommitMatrixParams::try_new_with_min_rank(open_key, width).ok(),
+            OpenCommitMatrixParams::output_rank,
+        )?
         else {
             return Ok(None);
         };
@@ -292,6 +322,7 @@ impl RecursiveCandidateContext<'_, '_> {
             num_digits_fold: inner_candidate.num_digits_fold,
             inner_commit_matrix: inner_candidate.inner_commit_matrix,
             open_commit_matrix,
+            open_randomness_columns,
         }))
     }
 
@@ -320,6 +351,11 @@ impl RecursiveCandidateContext<'_, '_> {
             {
                 continue;
             }
+            if request.masking.opens_residual()
+                && outer_slice_count != akita_params::CommitmentSliceCount::ONE
+            {
+                continue;
+            }
             if outer_slice_count
                 .validate_for_commitment(
                     request.fold_level,
@@ -330,7 +366,7 @@ impl RecursiveCandidateContext<'_, '_> {
             {
                 continue;
             }
-            let Some(outer_commit_matrix) =
+            let Some((outer_commit_matrix, outer_randomness_columns)) =
                 derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
                     policy: request.policy,
                     dimensions: request.dimensions,
@@ -342,6 +378,8 @@ impl RecursiveCandidateContext<'_, '_> {
                     log_basis_open: request.log_basis_open,
                     num_digits_outer: core.num_digits_open,
                     inner_output_rank: core.inner_commit_matrix.output_rank(),
+                    hiding: request.masking.hides_outer(),
+                    sigma_binding: request.masking.opens_residual(),
                 })?
             else {
                 continue;
@@ -353,7 +391,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     // new group is the whole list.
                     vec![akita_params::GroupOpenPhaseParams {
                         profile: akita_params::GroupCommitPhaseParams {
-                            randomness_columns: 0,
+                            randomness_columns: outer_randomness_columns,
                             version: akita_params::GroupCommitPhaseParams::VERSION,
                             // It commits one polynomial over the witness arriving at
                             // its level.
@@ -405,6 +443,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     request.policy.witness_chunk_at_level(request.fold_level),
                 )?;
                 params.witness_chunk_ends = core.witness_chunk_ends.clone();
+                params.open_randomness_columns = core.open_randomness_columns;
                 candidates.push(params);
             }
         }
@@ -500,6 +539,7 @@ impl RecursiveCandidateContext<'_, '_> {
                         let params = attach_recursive_setup_prefix(
                             setup_prefix.as_ref(),
                             policy.claim_ext_degree,
+                            request.masking.hiding(),
                             base_candidate.clone(),
                         )?;
                         if !params.compression_sources_supported()? {
@@ -615,7 +655,11 @@ fn append_selective_l2_candidates(
         source_moment,
         ..
     } = *request;
-    if !policy.selective_l2_response_model_enabled() {
+    // A masked level is ℓ∞ only: an ℓ2 route reveals the response energy and
+    // its cap is sized for a retrying prover.
+    if !policy.selective_l2_response_model_enabled()
+        || matches!(request.masking, super::LevelMasking::Masked(_))
+    {
         return Ok(());
     }
     if request
@@ -711,6 +755,7 @@ fn append_selective_l2_candidates(
                 let params = attach_recursive_setup_prefix(
                     setup_prefix.as_ref(),
                     policy.claim_ext_degree,
+                    request.masking.hiding(),
                     base_candidate.clone(),
                 )?;
                 if !params.compression_sources_supported()? {
@@ -843,6 +888,34 @@ pub(crate) fn derive_fold_candidates(
     policy: FoldCandidatePolicy,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let (setup_prefix, relation_domain) = work.into_search_parts();
+    // A zero-knowledge schedule admits no setup prefix through the level after
+    // the cut, ℓ∞-only quotient folds at base 8 at masked levels, and a
+    // residual commitment with d_A = d_B at base 16; skip what admission
+    // would refuse.
+    let masking = request.masking;
+    if !masking.allows_setup_prefix() && matches!(setup_prefix, RecursiveSetupPrefix::Search { .. })
+    {
+        return Ok(Vec::new());
+    }
+    if masking.opens_residual()
+        && (request.dimensions.d_a() != request.dimensions.d_b()
+            || request.log_basis_open != akita_params::zk::RESIDUAL_RANDOMNESS_LOG_BASIS)
+    {
+        return Ok(Vec::new());
+    }
+    let relation_domain = if masking.hiding() {
+        if request.log_basis_open != akita_params::zk::MASKED_LOG_BASIS {
+            return Ok(Vec::new());
+        }
+        match relation_domain {
+            RelationSearchDomain::QuotientOnly | RelationSearchDomain::QuotientAndReduced => {
+                RelationSearchDomain::QuotientOnly
+            }
+            RelationSearchDomain::ReducedOnly => return Ok(Vec::new()),
+        }
+    } else {
+        relation_domain
+    };
     match policy {
         FoldCandidatePolicy::Best => {
             derive_best_fold_candidates(request, setup_prefix, relation_domain)

@@ -2,6 +2,7 @@
 
 mod verifier_view;
 
+use crate::audit::ScheduleAdmission;
 use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{
@@ -162,6 +163,7 @@ pub struct ValidatedScheduleCatalog {
     coverage: CatalogCoverage,
     rows_by_digest: Vec<ResolvedScheduleRow>,
     rows_by_key: Vec<(ScheduleLookupOrderKey, usize)>,
+    admission: ScheduleAdmission,
 }
 
 impl ValidatedScheduleCatalog {
@@ -171,6 +173,29 @@ impl ValidatedScheduleCatalog {
         rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
+    ) -> Result<Self, AkitaError> {
+        Self::try_new_admitting(
+            family_name,
+            rows,
+            policy,
+            ring_challenge_config,
+            ScheduleAdmission::Clear,
+        )
+    }
+
+    /// Build a catalog whose rows `admission` accepts: clear rows for
+    /// [`ScheduleAdmission::Clear`], zero-knowledge rows otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid family name, an empty or oversized row set, and
+    /// every row the audit or `admission` refuses.
+    pub fn try_new_admitting(
+        family_name: impl Into<String>,
+        rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
+        policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
+        admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
         let family_name = family_name.into();
         validate_family_name(&family_name)?;
@@ -187,11 +212,12 @@ impl ValidatedScheduleCatalog {
 
         let mut resolved = Vec::with_capacity(rows.len());
         for (profiles, schedule) in rows {
-            let row = ResolvedScheduleRow::try_new(profiles, schedule, policy)?;
+            let row =
+                ResolvedScheduleRow::try_new_admitting(profiles, schedule, policy, admission)?;
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
             resolved.push(row);
         }
-        Self::from_resolved_rows(family_name, resolved, policy)
+        Self::from_resolved_rows(family_name, resolved, policy, admission)
     }
 
     /// Extension seam: assemble explicitly audited rows without changing the
@@ -200,6 +226,7 @@ impl ValidatedScheduleCatalog {
         family_name: String,
         mut resolved: Vec<ResolvedScheduleRow>,
         policy: &PlannerPolicy,
+        admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
         validate_family_name(&family_name)?;
         if resolved.is_empty() || resolved.len() > MAX_TRUSTED_CATALOG_ROWS {
@@ -259,15 +286,40 @@ impl ValidatedScheduleCatalog {
             coverage: CatalogCoverage::Complete,
             rows_by_digest: resolved,
             rows_by_key,
+            admission,
         })
     }
 
-    /// Decode and validate one complete trusted catalog artifact.
+    /// Decode and validate one complete trusted catalog artifact of clear
+    /// rows.
     pub fn from_artifact_bytes(
         bytes: &[u8],
         expected_family_name: &str,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
+    ) -> Result<Self, AkitaError> {
+        Self::from_artifact_bytes_admitting(
+            bytes,
+            expected_family_name,
+            policy,
+            ring_challenge_config,
+            ScheduleAdmission::Clear,
+        )
+    }
+
+    /// Decode and validate one complete trusted catalog artifact whose rows
+    /// `admission` accepts.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a malformed or non-canonical artifact, a family or policy
+    /// mismatch, and every row the audit or `admission` refuses.
+    pub fn from_artifact_bytes_admitting(
+        bytes: &[u8],
+        expected_family_name: &str,
+        policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
+        admission: ScheduleAdmission,
     ) -> Result<Self, AkitaError> {
         if bytes.is_empty() || bytes.len() > MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES {
             return Err(AkitaError::InvalidSetup(format!(
@@ -329,7 +381,13 @@ impl ValidatedScheduleCatalog {
                 row.into_profile_and_schedule()
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
-        let catalog = Self::try_new(expected_family_name, rows, policy, ring_challenge_config)?;
+        let catalog = Self::try_new_admitting(
+            expected_family_name,
+            rows,
+            policy,
+            ring_challenge_config,
+            admission,
+        )?;
         if catalog.to_artifact_bytes()? != bytes {
             return Err(AkitaError::InvalidSetup(
                 "schedule artifact is not in canonical JSON form or rows are not in canonical digest order"
@@ -372,6 +430,11 @@ impl ValidatedScheduleCatalog {
     /// The complete policy against which every row was audited.
     pub fn policy(&self) -> &PlannerPolicy {
         &self.policy
+    }
+
+    /// Which rows this catalog admitted.
+    pub const fn admission(&self) -> ScheduleAdmission {
+        self.admission
     }
 
     /// Stable family label carried by the trusted artifact.
