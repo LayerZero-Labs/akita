@@ -103,6 +103,36 @@ pub(crate) fn record_context(record: ProtocolContextRecord) {
     });
 }
 
+pub(crate) fn record_context_repeated(record: ProtocolContextRecord, count: usize) {
+    if record.kind != ProtocolMessageKind::Challenge as u32 {
+        for _ in 0..count {
+            record_context(record);
+        }
+        return;
+    }
+    if count == 0 {
+        return;
+    }
+    THREAD_EVENTS.with(|events| {
+        let mut events = events.borrow_mut();
+        if let Some(last) = events.last_mut() {
+            if last.first == record
+                && last.last_group == ProtocolSiteId::from_bytes(record.site_id).group
+            {
+                if let Some(repetitions) = last.repetitions.checked_add(count) {
+                    last.repetitions = repetitions;
+                    return;
+                }
+            }
+        }
+        // A separate run also preserves order when the preceding run used
+        // increasing groups, or its repetition counter cannot hold the sum.
+        let mut run = ContextRun::new(record);
+        run.repetitions = count;
+        events.push(run);
+    });
+}
+
 fn finish_pending(end: usize) {
     let pending = PENDING_PROOF_RANGE.with(|pending| pending.borrow_mut().take());
     let Some((context, start)) = pending else {
@@ -235,6 +265,18 @@ mod tests {
             records.map(TranscriptEvent::Context).to_vec()
         );
         THREAD_EVENTS.with(|events| assert_eq!(events.borrow().len(), 9));
+        clear_thread_events();
+        for record in records {
+            record_context_repeated(record, 0);
+            record_context_repeated(record, 3);
+        }
+        assert_eq!(
+            thread_events(),
+            records
+                .into_iter()
+                .flat_map(|record| std::iter::repeat_n(TranscriptEvent::Context(record), 3))
+                .collect::<Vec<_>>()
+        );
         clear_thread_events();
     }
 

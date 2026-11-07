@@ -175,7 +175,12 @@ where
     let phase = tracing::info_span!("binary_p64_tau1_grind").entered();
     grinding.grind_query(GrindingSite::Tau1Point { level: 0 })?;
     drop(phase);
-    let _phase = tracing::info_span!("binary_p64_batch_fill", count).entered();
+    let phase = tracing::info_span!(
+        "binary_p64_batch_fill",
+        count,
+        blocks = tracing::field::Empty
+    );
+    let _entered = phase.enter();
     let result = (|| {
         let channel = grinding.state_mut();
         let site = ProtocolSiteId {
@@ -184,16 +189,10 @@ where
             ..ProtocolSiteId::default()
         };
         akita_transcript::public_bytes(channel, site, b"binary p64 independent coefficient batch")?;
-        p64_batch_from_blocks::<F, E>(count, || {
-            channel.context(akita_transcript::ProtocolContextRecord::new(
-                site.to_bytes(),
-                akita_transcript::ProtocolMessageKind::Challenge as u32,
-                0,
-                0,
-                32,
-            ));
-            super::challenge_block(channel)
-        })
+        let mut blocks = akita_transcript::ChallengeBlocks::new(channel, site);
+        let result = p64_batch_from_blocks::<F, E>(count, || blocks.next_block());
+        phase.record("blocks", blocks.draws());
+        result
     })();
     if result.is_err() {
         grinding.poison();

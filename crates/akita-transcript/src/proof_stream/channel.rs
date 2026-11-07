@@ -19,6 +19,13 @@ pub trait ProofChannel {
     /// Record diagnostic metadata for the next message or challenge group.
     fn context(&mut self, record: ProtocolContextRecord);
 
+    /// Record consecutive identical diagnostic contexts, losslessly.
+    fn context_repeated(&mut self, record: ProtocolContextRecord, count: usize) {
+        for _ in 0..count {
+            self.context(record);
+        }
+    }
+
     /// Absorb public bytes that both sides already hold, zero-padded to a
     /// word. Their length must come from bound data. Empty input makes no
     /// absorb call.
@@ -82,6 +89,22 @@ pub trait ProofChannel {
 }
 
 impl ProofChannel for ProverChannel {
+    fn context_repeated(&mut self, record: ProtocolContextRecord, count: usize) {
+        #[cfg(feature = "logging-transcript")]
+        if count != 0 {
+            if record.kind != crate::ProtocolMessageKind::Challenge as u32 {
+                for _ in 0..count {
+                    prover_context(self, record);
+                }
+                return;
+            }
+            crate::logging::record_context_repeated(record, count);
+            crate::logging::record_proof_boundary(record, self.narg_string().len());
+        }
+        #[cfg(not(feature = "logging-transcript"))]
+        let _ = (record, count);
+    }
+
     fn challenge_array<const N: usize>(&mut self) -> Result<[u8; N], AkitaError> {
         Ok(self.verifier_message())
     }
@@ -127,6 +150,13 @@ impl ProofChannel for ProverChannel {
 }
 
 impl ProofChannel for VerifierChannel<'_> {
+    fn context_repeated(&mut self, record: ProtocolContextRecord, count: usize) {
+        #[cfg(feature = "logging-transcript")]
+        crate::logging::record_context_repeated(record, count);
+        #[cfg(not(feature = "logging-transcript"))]
+        let _ = (record, count);
+    }
+
     fn challenge_array<const N: usize>(&mut self) -> Result<[u8; N], AkitaError> {
         Transcript::check(self, || true).map_err(invalid_proof)?;
         Ok(self.verifier_message())

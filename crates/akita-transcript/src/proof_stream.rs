@@ -17,10 +17,12 @@ use std::sync::LazyLock;
 
 use crate::{ProverChannel, VerifierChannel};
 
+mod challenge_blocks;
 mod channel;
 mod digest;
 mod nonce;
 mod site;
+pub use challenge_blocks::ChallengeBlocks;
 pub use channel::ProofChannel;
 pub use digest::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, NonceAtom};

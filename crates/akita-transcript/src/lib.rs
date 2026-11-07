@@ -32,13 +32,14 @@ pub use proof_stream::{
     new_prover_channel, new_verifier_channel, nonce_encoded_len, nonce_max_bytes, prover_context,
     public_bytes, public_extensions, public_fields, receive_bounded_bytes, receive_byte_group,
     receive_field_group, receive_nonce, reject, send_bounded_bytes, send_byte_group,
-    send_field_group, send_nonce, verifier_context, CommitmentDigest, ExtensionAtom, FieldAtom,
-    NonceAtom, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
-    COMMITMENT_DIGEST_LEN, COMMITMENT_DIGEST_TAG, CONTEXT_DOMAIN, PROTOCOL_TAG, PROTOCOL_VERSION,
-    SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE,
-    SITE_FAMILY_INSTANCE, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
-    SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
-    SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK, SITE_FAMILY_TERMINAL, STANDALONE_SESSION_TAG,
+    send_field_group, send_nonce, verifier_context, ChallengeBlocks, CommitmentDigest,
+    ExtensionAtom, FieldAtom, NonceAtom, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
+    ProtocolSiteId, COMMITMENT_DIGEST_LEN, COMMITMENT_DIGEST_TAG, CONTEXT_DOMAIN, PROTOCOL_TAG,
+    PROTOCOL_VERSION, SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING,
+    SITE_FAMILY_FOLD_CHALLENGE, SITE_FAMILY_INSTANCE, SITE_FAMILY_NEXT_WITNESS,
+    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2, SITE_FAMILY_ROOT_STATEMENT,
+    SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3, SITE_FAMILY_SUMCHECK,
+    SITE_FAMILY_TERMINAL, STANDALONE_SESSION_TAG,
 };
 pub use proof_stream::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 #[cfg(feature = "prover")]
