@@ -274,19 +274,6 @@ fn mixed_groups_ring_switch_matches_independent_integer_relation() {
     let (relation, table, targets) = fixture();
     assert_eq!(relation.groups().len(), 2);
     assert_eq!(relation.row_count(), 5);
-    assert_eq!(
-        relation.groups()[0].kind.challenge_family(),
-        FoldChallengeDistribution::BinaryRoot
-    );
-    assert_eq!(
-        relation.groups()[1].kind.challenge_family(),
-        FoldChallengeDistribution::pm1_only(4)
-    );
-    assert_eq!(
-        relation.groups()[0].kind.commitment_modulus(),
-        Some(BINARY_SOURCE_Q)
-    );
-    assert_eq!(relation.groups()[1].kind.commitment_modulus(), None);
     let weights = compile(&relation);
     let expected = targets
         .iter()

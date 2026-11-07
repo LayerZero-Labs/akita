@@ -1,6 +1,6 @@
 use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, CANONICAL_IMAGE_WINDOW};
-use akita_challenges::SparseChallenge;
+use akita_challenges::{Challenges, SparseChallenge};
 use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
@@ -20,7 +20,9 @@ fn descriptor() -> BinarySourceDescriptor {
 #[test]
 fn five_segments_share_addresses_when_scheduled_domain_grows() {
     let descriptor = descriptor();
-    let plan = BinaryRootWitnessPlan::new(&descriptor, 2, 256).unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&descriptor, 2, 256, BinaryFieldProfile::P128, true, 0)
+            .unwrap();
     assert_eq!(plan.repacking().domain_len(), 65536);
     assert_eq!(
         plan.repacking()
@@ -40,16 +42,25 @@ fn five_segments_share_addresses_when_scheduled_domain_grows() {
     assert!(larger.repacking().is_padding_address(131071).unwrap());
     assert!(plan.clone().with_domain_len(32768).is_err());
     assert!(plan.with_domain_len(65537).is_err());
-    assert!(BinaryRootWitnessPlan::new(&descriptor, 0, 256).is_err());
+    assert!(BinaryRootWitnessPlan::for_profile(
+        &descriptor,
+        0,
+        256,
+        BinaryFieldProfile::P128,
+        true,
+        0
+    )
+    .is_err());
 }
 
 #[test]
 fn direct_weights_join_a_and_terminal_carries_but_not_extended_padding() {
     let descriptor = descriptor();
-    let plan = BinaryRootWitnessPlan::new(&descriptor, 2, 256)
-        .unwrap()
-        .with_domain_len(131072)
-        .unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&descriptor, 2, 256, BinaryFieldProfile::P128, true, 0)
+            .unwrap()
+            .with_domain_len(131072)
+            .unwrap();
     let claim = BinaryTerminalClaim::new(
         &descriptor,
         [1; 32],
@@ -74,7 +85,7 @@ fn direct_weights_join_a_and_terminal_carries_but_not_extended_padding() {
     let weights = plan
         .relation_weights(
             Some(&claim),
-            Some(BinaryAOperand::from_canonical(&matrix)),
+            Some(BinaryAOperand::new::<F>(&matrix)),
             &challenges,
             F::from_u64(17),
             &[[F::one(); 648]; 2],
@@ -101,7 +112,7 @@ fn direct_weights_join_a_and_terminal_carries_but_not_extended_padding() {
     invalid_matrix[0][0][0] = i128::from(CANONICAL_IMAGE_WINDOW.1) + 1;
     assert!(binary_direct_a_weights(
         &plan,
-        Some(BinaryAOperand::from_canonical(&invalid_matrix)),
+        Some(BinaryAOperand::new::<F>(&invalid_matrix)),
         &challenges,
         &[[F::one(); 648]; 2],
     )
@@ -147,7 +158,7 @@ fn p64_quotient_bounds_pin_minimal_depth_and_full_accepted_lift() {
         // Owner count does not enter the coefficientwise lift or the y cap.
         for owners in [1, 2, 4096] {
             let selected =
-                BinaryProjectionBounds::for_profile(m, c, 3, owners, BinaryFieldProfile::P64)
+                BinaryResidualBounds::for_profile(m, c, 3, owners, BinaryFieldProfile::P64)
                     .unwrap();
             assert_eq!(selected.quotient(), Some(&bounds));
             assert_eq!(selected.projection_count(), 0);
@@ -254,7 +265,15 @@ fn p64_quotients_are_last_and_preserve_existing_natural_addresses() {
             }
         }
     }
-    let legacy = BinaryRootWitnessPlan::new(&descriptor(), 3, 256).unwrap();
+    let legacy = BinaryRootWitnessPlan::for_profile(
+        &descriptor(),
+        3,
+        256,
+        BinaryFieldProfile::P128,
+        true,
+        0,
+    )
+    .unwrap();
     assert_eq!(legacy.field_profile(), BinaryFieldProfile::P128);
     assert_eq!(legacy.quotient_segment(), None);
     assert_eq!(legacy.projection_bounds().projection_count(), 7);
@@ -294,9 +313,7 @@ fn carrier_profile(
         GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
     };
     let (modulus, digits) = match field {
-        akita_params::binary_setup::BinaryFieldProfile::P128 => {
-            (SisModulusProfileId::Q128Offset275, 43)
-        }
+        BinaryFieldProfile::P128 => (SisModulusProfileId::Q128Offset275, 43),
         akita_params::binary_setup::BinaryFieldProfile::P64 => {
             (SisModulusProfileId::Q64Offset59, 22)
         }

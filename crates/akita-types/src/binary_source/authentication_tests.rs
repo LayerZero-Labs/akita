@@ -14,7 +14,8 @@ fn plan() -> BinaryRootWitnessPlan {
         },
     )
     .unwrap();
-    BinaryRootWitnessPlan::new(&descriptor, 3, 256).unwrap()
+    BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P128, true, 0)
+        .unwrap()
 }
 
 fn label(role: SetupStreamRole) -> SetupStreamLabel {

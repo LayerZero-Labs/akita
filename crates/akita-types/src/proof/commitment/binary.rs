@@ -32,9 +32,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
 #[cfg(test)]
 mod binary_source_tests {
     use super::*;
-    use crate::binary_source::{
-        BinaryIndexMap, BinarySourceDescriptor, BINARY_COMMITTED_PAYLOAD_COEFFICIENTS,
-    };
+    use crate::binary_source::{BinaryIndexMap, BinarySourceDescriptor};
     use crate::{Commitment, CommittedGroup, RingVec};
     use akita_params::binary_setup::{
         BinaryFieldProfile, SetupStreamModulus, SetupStreamRole, BINARY_SETUP_P64,
@@ -126,7 +124,7 @@ mod binary_source_tests {
         );
         assert_eq!(
             legacy.payload_coefficients().unwrap(),
-            BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
+            legacy.b_rows() * legacy.b_ring_dimension()
         );
         for manifest in [legacy, p64] {
             let bytes = manifest.canonical_bytes();
@@ -272,8 +270,12 @@ mod binary_source_tests {
         type F = Prime64Offset59;
         type E = jolt_algebra::Ext2<F>;
         let manifest = manifest(BinaryFieldProfile::P64, 2, 1);
-        let prime =
-            crate::binary_source::PrimePlaneManifest::new(manifest.descriptor(), None).unwrap();
+        let prime = crate::binary_source::PrimePlaneManifest::with_field_profile(
+            manifest.descriptor(),
+            None,
+            BinaryFieldProfile::P128,
+        )
+        .unwrap();
         let payload = vec![F::zero(); manifest.payload_coefficients().unwrap()];
         let mut prover = new_prover_channel(b"p64-admission");
         let mut verifier = new_verifier_channel(b"p64-admission", &[]);

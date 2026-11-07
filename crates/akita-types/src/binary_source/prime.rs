@@ -7,10 +7,6 @@ use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ri
 
 pub(super) type E64 = Ext2<Prime64Offset59>;
 
-/// Number of balanced base-eight digits for a centered prime coefficient.
-/// The interval contains `[-(P-1)/2, (P-1)/2]` for `P = 2^128-275`.
-pub const PRIME_PLANE_DIGITS: usize = BinaryFieldProfile::P128.prime_plane_digits();
-
 /// Canonical coordinates of a prime claim element in its paired testing field.
 /// P128 uses one base residue; P64 uses `c0 + c1*u`, with `u^2 = 2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,18 +155,14 @@ impl PrimeGroupClaim {
         if self.point.iter().any(|x| !x.validate(field)) {
             return Err(AkitaError::InvalidInput("noncanonical prime point".into()));
         }
-        for (index, claim) in self.evaluations.iter().enumerate() {
+        let mut owners = std::collections::BTreeSet::new();
+        for claim in &self.evaluations {
             if claim.polynomial >= descriptor.polynomials().len() || !claim.value.validate(field) {
                 return Err(AkitaError::InvalidInput(
                     "invalid prime owner or value".into(),
                 ));
             }
-            if self
-                .evaluations
-                .iter()
-                .take(index)
-                .any(|earlier| earlier.polynomial == claim.polynomial)
-            {
+            if !owners.insert(claim.polynomial) {
                 return Err(AkitaError::InvalidInput(
                     "duplicate prime polynomial value".into(),
                 ));
@@ -188,13 +180,6 @@ pub struct PrimePlaneManifest {
     planes: Vec<PrimeCoordinatePlane>,
 }
 impl PrimePlaneManifest {
-    pub fn new(
-        source: &BinarySourceDescriptor,
-        claim: Option<PrimeGroupClaim>,
-    ) -> Result<Self, AkitaError> {
-        Self::with_field_profile(source, claim, BinaryFieldProfile::P128)
-    }
-
     pub fn with_field_profile(
         source: &BinarySourceDescriptor,
         mut claim: Option<PrimeGroupClaim>,

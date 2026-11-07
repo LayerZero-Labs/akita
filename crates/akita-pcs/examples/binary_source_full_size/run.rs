@@ -11,6 +11,7 @@ mod native_catalog;
 
 use akita_config::TrustedScheduleCatalog;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, SetupPrefixSlotId};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
@@ -160,7 +161,12 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
     };
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
     let descriptor = claims::descriptor(log)?;
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier)?;
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )?;
     let count = checked::pow2(log).ok_or("carrier count overflow")?;
     let words = claims::words(count);
     let claims = {
@@ -225,7 +231,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         .collect::<Vec<_>>();
     let prefixes = {
         let _span = tracing::info_span!("cold_prefix_preparation").entered();
-        let prefixes = backend.prepare_binary_a_prefixes(&manifest, &typed, &first, &later)?;
+        let prefixes = backend.prepare_binary_typed_prefixes(&manifest, &typed, &first, &later)?;
         if log != 10 {
             let ordinary_ids = later
                 .iter()
@@ -241,7 +247,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         let _span = tracing::info_span!("cold_verifier_setup").entered();
         let ordinary =
             scheme.setup_verifier_for_schedule(&setup, schedule, &profiles.opening_layout()?)?;
-        backend.prepare_binary_a_verifier_setup(
+        backend.prepare_binary_typed_verifier_setup(
             &ordinary,
             &manifest,
             &typed,

@@ -15,7 +15,7 @@ use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{cfg_chunks, cfg_iter, Field};
 
-use crate::binary_source::{BinarySourceDescriptor, BINARY_SOURCE_Q};
+use crate::binary_source::BinarySourceDescriptor;
 use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
 mod profiles;
@@ -32,23 +32,6 @@ pub(crate) use structured::{
 pub enum NativeRootGroupKind {
     Ordinary(FoldChallengeDistribution),
     Binary(BinarySourceDescriptor),
-}
-
-impl NativeRootGroupKind {
-    pub fn challenge_family(&self) -> FoldChallengeDistribution {
-        match self {
-            Self::Ordinary(family) => *family,
-            Self::Binary(_) => FoldChallengeDistribution::BinaryRoot,
-        }
-    }
-
-    /// The binary A role uses q; ordinary roles use the proof field.
-    pub fn commitment_modulus(&self) -> Option<u32> {
-        match self {
-            Self::Ordinary(_) => None,
-            Self::Binary(_) => Some(BINARY_SOURCE_Q),
-        }
-    }
 }
 
 /// A public ring multiplier applied to one recomposed digit-table element.

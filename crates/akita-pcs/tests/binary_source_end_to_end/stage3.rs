@@ -24,11 +24,22 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
         let backend = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
         let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
         let make_manifest = |setup_group| {
-            let profiles =
-                BinaryCommittedGroupManifest::commitment_profiles(&index, 1, setup_group).unwrap();
+            let profiles = BinaryCommittedGroupManifest::profiles_for_field(
+                &index,
+                1,
+                setup_group,
+                BinaryFieldProfile::P128,
+            )
+            .unwrap();
             let descriptor =
                 BinarySourceDescriptor::new(index.clone(), vec![[29; 32]], profiles).unwrap();
-            BinaryCommittedGroupManifest::new(descriptor, setup_group, &carrier).unwrap()
+            BinaryCommittedGroupManifest::with_field_profile(
+                descriptor,
+                setup_group,
+                &carrier,
+                BinaryFieldProfile::P128,
+            )
+            .unwrap()
         };
         let installed_manifest = make_manifest(0);
         let typed = BinaryTypedPrefix::new(
@@ -44,11 +55,11 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
             swapped_manifest.descriptor().index_map()
         );
         let prefixes = backend
-            .prepare_binary_a_prefixes(&installed_manifest, &typed, &first, &[])
+            .prepare_binary_typed_prefixes(&installed_manifest, &typed, &first, &[])
             .unwrap();
         let ordinary = scheme.setup_verifier(&setup).unwrap();
         let prepared = backend
-            .prepare_binary_a_verifier_setup(
+            .prepare_binary_typed_verifier_setup(
                 &ordinary,
                 &installed_manifest,
                 &typed,
@@ -66,7 +77,9 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
                 carrier,
                 akita_types::Commitment::new(akita_types::RingVec::from_coeffs(vec![
                     F::zero();
-                    akita_types::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
+                    manifest
+                        .payload_coefficients()
+                        .unwrap()
                 ])),
                 manifest.clone(),
             )
@@ -164,7 +177,7 @@ pub(super) fn reject_foreign_prefixes(
 ) {
     let ordinary = backend.prepare_setup_prefix(first_prefix).unwrap();
     assert!(backend
-        .prepare_binary_a_verifier_setup(
+        .prepare_binary_typed_verifier_setup(
             ordinary_verifier_setup,
             manifest,
             typed,
@@ -188,7 +201,7 @@ pub(super) fn reject_foreign_prefixes(
         .prepare_setup_prefix_from_coefficients(first_prefix, foreign)
         .unwrap();
     assert!(backend
-        .prepare_binary_a_verifier_setup(
+        .prepare_binary_typed_verifier_setup(
             ordinary_verifier_setup,
             manifest,
             typed,

@@ -60,7 +60,13 @@ fn field_switch_zero_multiplier_authenticates_terminal() {
         let descriptor = BinarySourceDescriptor::new(
             index.clone(),
             vec![[29; 32]],
-            BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0).unwrap(),
+            BinaryCommittedGroupManifest::profiles_for_field(
+                &index,
+                1,
+                0,
+                BinaryFieldProfile::P128,
+            )
+            .unwrap(),
         )
         .unwrap();
         let source = vec![1u128; 8];
@@ -113,7 +119,13 @@ fn field_switch_zero_multiplier_authenticates_terminal() {
             .unwrap()
             .profiles()
             .final_group;
-        let manifest = BinaryCommittedGroupManifest::new(descriptor, 0, &carrier).unwrap();
+        let manifest = BinaryCommittedGroupManifest::with_field_profile(
+            descriptor,
+            0,
+            &carrier,
+            BinaryFieldProfile::P128,
+        )
+        .unwrap();
         let mut challenge_channel = new_prover_channel(DOMAIN);
         let challenges = akita_types::binary_source::binary_root_challenges(
             &mut ProverFoldDraw::new(&mut challenge_channel, 0, 0),
