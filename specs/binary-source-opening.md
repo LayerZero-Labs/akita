@@ -753,8 +753,8 @@ target. They are, in order:
    index, `row`, `q0`, `b`, `first`, `e`, region index and `base`;
 5. `natural_len`.
 
-The test `typed_prefix_identity_bytes_are_pinned` pins these bytes for one
-geometry.
+The test `typed_prefix_identity_encodes_tail_as_little_endian_u64s` checks
+the tail's portable encoding for one geometry.
 
 ## Checked fixture bounds
 
