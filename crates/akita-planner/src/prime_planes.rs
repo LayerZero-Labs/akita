@@ -249,14 +249,19 @@ mod tests {
         )
         .unwrap();
         let plan = public.plan();
-        let segment_cells = (0..plan.repacking().segments().len())
-            .map(|segment| plan.repacking().segment_range(segment).unwrap().len())
+        let segment_cells = plan
+            .repacking()
+            .segments()
+            .iter()
+            .map(|shape| {
+                shape.elements * shape.digits * shape.geometry.physical_coefficient_width()
+            })
             .collect::<Vec<_>>();
         assert_eq!(price.segment_physical_cells, segment_cells);
         assert_eq!(price.outgoing_domain_len, plan.repacking().domain_len());
         assert_eq!(
             price.outgoing_physical_cells,
-            plan.repacking().natural_end().unwrap()
+            segment_cells.iter().sum::<usize>()
         );
         assert_eq!(
             price.typed_prefix,
