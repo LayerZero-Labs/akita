@@ -5,7 +5,7 @@ use akita_algebra::binary::{
     BinaryField162,
 };
 use akita_algebra::ring::TrinomialModulus;
-use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
+use akita_challenges::BinaryChallenge;
 use akita_error::{checked, AkitaError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
