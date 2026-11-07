@@ -1031,7 +1031,6 @@ mod atom_encoding_tests;
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(feature = "prover", feature = "indexed-prefix"))]
 mod indexed {
     // Detached, prefix-bound work and atomic replay of indexed nonce messages.
 
@@ -1066,14 +1065,11 @@ mod indexed {
             &self.0
         }
 
-        fn local_sponge(
-            &self,
+        fn local_session_id(
             domain: &[u8],
             level: u64,
             group: u64,
-            response_nonce: u32,
-        ) -> Result<crate::TranscriptSponge, AkitaError> {
-            use spongefish::DuplexSpongeInterface;
+        ) -> Result<spongefish::SessionId, AkitaError> {
             if domain.len() > 128 {
                 return Err(AkitaError::InvalidInput(
                     "indexed domain exceeds its bound".into(),
@@ -1082,15 +1078,11 @@ mod indexed {
             let mut address = Vec::new();
             address.extend_from_slice(&(domain.len() as u64).to_le_bytes());
             address.extend_from_slice(domain);
-            address.extend_from_slice(&self.0);
             address.extend_from_slice(&level.to_le_bytes());
             address.extend_from_slice(&group.to_le_bytes());
-            let padded = checked::align_up(address.len(), 8).ok_or(AkitaError::InvalidProof)?;
-            address.resize(padded, 0);
-            let mut sponge = crate::TranscriptSponge::default();
-            sponge.absorb(&address);
-            sponge.absorb(&NonceAtom::new(response_nonce).word());
-            Ok(sponge)
+            Ok(spongefish::derive_session_id::<jolt_transcript::Shake128>(
+                &address,
+            ))
         }
 
         /// Check one local work nonce and derive its binding from the checked state.
@@ -1110,10 +1102,9 @@ mod indexed {
                     "indexed work exceeds u32 nonce width".into(),
                 ));
             }
-            let mut state = VerifierChannel::from_parts(
-                self.local_sponge(domain, level, group, response_nonce)?,
-                &[],
-            );
+            let session = Self::local_session_id(domain, level, group)?;
+            let mut state = VerifierChannel::new(&session, &self.0, &[]);
+            state.public(&NonceAtom::new(response_nonce).word());
             state
                 .check_public_grind(u32::from(bits), work_nonce.map(u64::from))
                 .map_err(|_| AkitaError::InvalidProof)?;
@@ -1138,18 +1129,12 @@ mod indexed {
                     "indexed work exceeds u32 nonce width".into(),
                 ));
             }
-            // The constructor supplies only scratch storage/private coins. Replace
-            // its entire public state with the Pi-derived address: no independently
-            // seeded session contributes to this addressable part of one transcript.
-            let session = spongefish::derive_session_id::<jolt_transcript::Shake128>(
-                b"akita/indexed/scratch",
-            );
-            let mut state = ProverChannel::new_with_seed(
-                &session,
-                &jolt_transcript::BytesMsg(Vec::new()),
-                [0; 32],
-            );
-            state.duplex_sponge_state = self.local_sponge(domain, level, group, response_nonce)?;
+            // The namespace is deterministic and Pi is the instance, so this
+            // local channel remains an addressable part of one transcript.
+            // Private coins are unused by the public work and challenge draws.
+            let session = Self::local_session_id(domain, level, group)?;
+            let mut state = ProverChannel::new_with_seed(&session, &self.0, [0; 32]);
+            state.public(&NonceAtom::new(response_nonce).word());
             state
                 .grind(u32::from(bits))
                 .map_err(|_| AkitaError::InvalidInput("indexed work search exhausted".into()))?;
@@ -1261,5 +1246,4 @@ mod indexed {
         Ok(result)
     }
 }
-#[cfg(any(feature = "prover", feature = "indexed-prefix"))]
 pub use indexed::{receive_indexed_nonces, send_indexed_nonces, IndexedTranscriptPrefix};

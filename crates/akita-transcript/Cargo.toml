@@ -33,9 +33,6 @@ keccak256-digests = ["jolt-transcript/keccak256-digests"]
 # state, which spongefish 0.8.0 exposes only under `yolocrypto`. Verifier
 # builds leave this feature off.
 prover = ["jolt-transcript/prover-grinding", "spongefish/yolocrypto"]
-# Opt-in detached indexed states, including verifier replay from a prefix binding.
-# This changes state visibility only; it does not select a transcript flow.
-indexed-prefix = ["spongefish/yolocrypto"]
 
 [lints]
 workspace = true

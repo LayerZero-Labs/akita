@@ -63,5 +63,4 @@ pub type ProverChannel = jolt_transcript::ProverState<TranscriptSponge>;
 /// the caller drops the error.
 pub type VerifierChannel<'proof> = spongefish::VerifierState<'proof, TranscriptSponge>;
 
-#[cfg(any(feature = "prover", feature = "indexed-prefix"))]
 pub use proof_stream::{receive_indexed_nonces, send_indexed_nonces, IndexedTranscriptPrefix};
