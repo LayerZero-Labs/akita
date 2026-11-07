@@ -117,14 +117,14 @@ fn translated_two_and_four_setup_weights_match_dense_e64() {
         let plans = manifests
             .iter()
             .zip(&shapes)
-            .map(|(m, &(_, _, _, w, p))| {
+            .map(|(m, &(_, _, _, w, claims))| {
                 BinaryRootWitnessPlan::for_profile(
                     m.descriptor(),
                     3,
                     64,
                     BinaryFieldProfile::P64,
                     w,
-                    p,
+                    claims * BinaryFieldProfile::P64.extension_degree(),
                 )
                 .unwrap()
             })
@@ -403,7 +403,7 @@ fn offset_equality_carries_match_dense_nonbase_points() {
 fn zero_translation_preserves_all_local_weights_and_rejects_bad_maps() {
     let m = manifest(2, 2, 2, 0);
     let plan =
-        BinaryRootWitnessPlan::for_profile(m.descriptor(), 3, 64, BinaryFieldProfile::P64, true, 1)
+        BinaryRootWitnessPlan::for_profile(m.descriptor(), 3, 64, BinaryFieldProfile::P64, true, 2)
             .unwrap();
     let typed = BinaryTypedPrefix::from_plan(&m, &plan).unwrap();
     let indices = (0..plan.repacking().segments().len()).collect::<Vec<_>>();

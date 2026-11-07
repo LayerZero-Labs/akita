@@ -175,7 +175,7 @@ fn identities_bind_seed_order_role_subset_rank_and_destination() {
                 .identity()
         );
     }
-    for (word, planes, ring) in [(true, 1, 64), (false, 2, 64)] {
+    for (word, planes, ring) in [(true, 2, 64), (false, 4, 64)] {
         let changed = BinaryTypedPrefix::new(&manifest, word, planes, ring).unwrap();
         let block = CompositePrefixBlock::binary(
             0,
