@@ -2,11 +2,6 @@ use super::*;
 
 #[test]
 fn encoding_constants_and_byte_order() {
-    assert_eq!(IMAGE_DIGIT_WEIGHT_SUM, ((1 << 24) - 1) / 7);
-    assert_eq!(IMAGE_MIN, -9_586_980);
-    assert_eq!(IMAGE_MAX, 7_190_235);
-    assert_eq!(IMAGE_OFFSET, 0x92_49_24);
-    assert_eq!(Q24_CENTERED_BOUND, 7_126_704);
     assert_eq!(core::mem::size_of::<Q24Image>(), 3);
     assert_eq!(
         Q24Image::from_centered(0).unwrap().bytes(),

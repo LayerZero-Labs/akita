@@ -555,19 +555,10 @@ for later variable-length encodings after the challenges change.
 that mix padding and live addresses. Every Stage 2 message therefore changes,
 and with it every later challenge and digest. The padding-point rule also
 changes the root grinding plan, whose digest is bound into the instance
-descriptor. The pins that move are:
-
-- [`scripts/binary-source-full-size-digests.tsv`](../scripts/binary-source-full-size-digests.tsv):
-  every row (at the time of writing, 16 full-size and two smoke pins; after
-  the v8 merge, one row per size and shape, 8 full-size and one smoke pin);
-- `assert_base_bytes` in
-  [`binary_source_end_to_end/compatibility.rs`](../crates/akita-pcs/tests/binary_source_end_to_end/compatibility.rs):
-  the length and digest pins for word width 128, word width 8 and mixed (six
-  at the time of writing, one per protocol; three after the v8 merge, which
-  made the two protocols equal);
-- the measured proof-size tables in [binary-source-opening.md](binary-source-opening.md)
-  ("Measured proof sizes" and "Full-size measurements"), which must be
-  re-measured.
+descriptor. The full-size driver reports the resulting proof sizes and
+digests as measurements and verifies each proof in a separate process. The
+proof-size tables in [binary-source-opening.md](binary-source-opening.md)
+("Measured proof sizes" and "Full-size measurements") must be re-measured.
 
 **Ordinary bytes do not move.** Every file either rule changes is absent from
 `origin/main` (checked with `git cat-file` for the root public, plan, weight

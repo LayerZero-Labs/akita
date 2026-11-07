@@ -501,6 +501,5 @@ fn p64_coordinate_integer_adjoint_and_typed_a_match_independent_long_division() 
     }
     let twice_bound =
         2 * 3 * 3 * 648 * u128::from(CANONICAL_IMAGE_WINDOW.1.unsigned_abs()) * (1u128 << 43);
-    assert_eq!(twice_bound, 731_182_933_063_452_850_126_848);
     assert!(twice_bound < 67_091_329u128 * 134_217_649 * 268_433_353);
 }

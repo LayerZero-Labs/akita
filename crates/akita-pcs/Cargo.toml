@@ -28,7 +28,7 @@ features = ["parallel", "transcript-keccak"]
 ignored = ["akita-setup"]
 
 [features]
-# Extension seam: opt-in measurement target and offline planner registration.
+# Extension seam: opt-in native binary-source protocol and measurement tooling.
 # <https://github.com/LayerZero-Labs/akita/issues/285>.
 binary-source-measurements = ["labinius-trinomial"]
 labinius-trinomial = [
