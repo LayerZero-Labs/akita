@@ -936,18 +936,12 @@ compression overhead. The 2^24 and 2^25 rows use the evidence-only carry depth
 
 | N | m | K digits | Parity digits | Binary physical cells including K | Frontend bytes | D bytes | g_b | Admission |
 |---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 2^20 | 1024 | 11 | 9 | 13,472,512 | 3,373 | 1,024 | 0 | inside envelope |
-| 2^21 | 2048 | 11 | 9 | 17,666,816 | 3,431 | 1,024 | 0 | inside envelope |
-| 2^22 | 4096 | 12 | 9 | 26,058,496 | 3,489 | 1,024 | 0 | inside envelope |
-| 2^23 | 8192 | 12 | 9 | 42,835,712 | 3,547 | 1,024 | 0 | inside envelope |
-| 2^24 | 16384 | 12 | 10 | 76,390,400 | 3,605 | 1,024 | 0 | needs later geometry change |
-| 2^25 | 32768 | 13 | 10 | 143,502,336 | 3,663 | 1,024 | 0 | needs later geometry change |
-
-Frontend bytes here count the word proof `2048+42*n+21` plus the public prime
-point and value `16*(n+8+1)`, for `n=log2(N)`. Each P64 point coordinate and
-value now encodes two eight-byte residues. Manifest tags, counts and owner
-indices are excluded. The proof-only `B_open` formula above excludes this
-public claim payload.
+| 2^20 | 1024 | 11 | 9 | 13,472,512 | 2,909 | 1,024 | 0 | inside envelope |
+| 2^21 | 2048 | 11 | 9 | 17,666,816 | 2,951 | 1,024 | 0 | inside envelope |
+| 2^22 | 4096 | 12 | 9 | 26,058,496 | 2,993 | 1,024 | 0 | inside envelope |
+| 2^23 | 8192 | 12 | 9 | 42,835,712 | 3,035 | 1,024 | 0 | inside envelope |
+| 2^24 | 16384 | 12 | 10 | 76,390,400 | 3,077 | 1,024 | 0 | needs later geometry change |
+| 2^25 | 32768 | 13 | 10 | 143,502,336 | 3,119 | 1,024 | 0 | needs later geometry change |
 
 The constant C=256 image cost is 6,291,456 cells per owner even at small N. One
 prime claim costs `2*5632*C` = 2,883,584 cells. K costs respectively 33,792,
@@ -973,7 +967,7 @@ choices without changing the protocol.
 | Ordinary coefficients total | 39,059,456 = (149/16)*2^22 | 8,388,608 = 2*2^22 |
 | Binary physical cells | 322,341,632 | 74,864,640 |
 | Source-only lower bound on W | 2^29 | 2^27 |
-| Four frontends and public prime point/value payloads, exact bytes | 14,362 | 13,724 |
+| Four frontends, exact bytes | 12,266 | 11,804 |
 | Four D payloads, exact bytes | 4,096 | 4,096 |
 | Four response nonces | 4..8 bytes | 4..8 bytes |
 | Quotient rows | 7,776 | 7,776 |
@@ -1022,14 +1016,11 @@ and offload. Because the root anchor itself includes shared stages, these models
 also overcharge some duplicated root fixed work. Do not subtract that without
 span evidence.
 
-For a proof-only byte proxy, keep the anchor's shared portion and substitute
-only the explicit frontend proof, D and projection messages. Subtract the
-public prime point/value payload `prime_claim_bytes_b=16*(log2(N_b)+9)` from
-the table's frontend bytes:
+For a byte proxy, keep the anchor's shared portion and substitute only the
+explicit frontend, D and projection messages:
 
 ```
-Byte_proxy = 84392 - 2993 - 2048 - 84
-           + sum_b (frontend_bytes_b - prime_claim_bytes_b) + 4096.
+Byte_proxy = 84392 - 2993 - 2048 - 84 + sum_b frontend_bytes_b + 4096.
 B_actual = Byte_proxy + Delta_nonce + Delta_column_work + Delta_framing
            + Delta_shared_schedule_and_migration.
 ```

@@ -116,14 +116,8 @@ def shape(n):
     bound, d, dpar, lift, hpar, plift = geometry(m, c)
     # One owner, word claim and one E64 prime claim; no intersegment padding.
     cells = 4096*m + 24576*c + 256*c + 256*(dpar+6) + EXTENSION_DEGREE*5632*c + 3072*d
-    # Word proof plus prime point/value payload, excluding manifest framing.
-    front = 2069 + 42*n + prime_claim_bytes(n)
+    front = 2069 + 42*n
     return cells, front
-
-
-def prime_claim_bytes(n):
-    # The shared point has n+8 E64 coordinates; one E64 value follows.
-    return 8 * EXTENSION_DEGREE * (n+8+1)
 
 
 expected_geometry = [
@@ -139,9 +133,7 @@ for n in range(20, 26):
     m = 2**n // 1024
     assert geometry(m, 256) == expected_geometry[n-20]
     assert shape(n)[0] == expected_cells[n-20]
-    assert shape(n)[1] == 2048 + 42*n + 21 + 16*(n+9)
-    # The prior P64 encoding used one eight-byte residue per point/value.
-    assert prime_claim_bytes(n) - 8*(n+9) == 8*(n+9)
+    assert shape(n)[1] == 2048 + 42*n + 21
     assert column_work_bits(256) == 0
     print(n, m, *geometry(m, 256), *shape(n), 0,
           'inside-envelope' if n <= 23 else 'needs-later-change')
@@ -160,10 +152,8 @@ for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
     x, y = F(nb, 2**22), F(no, 2**22)
     cells = sum(shape(n)[0] for n in bins)
     front = sum(shape(n)[1] for n in bins)
-    # This proof-only proxy excludes the public prime point/value payload.
     # Shared schedule, framing and nonce changes remain explicit deltas.
-    proof_front = front - sum(prime_claim_bytes(n) for n in bins)
-    proof = 84392 - 2993 - 2048 - 84 + proof_front + 4096
+    proof = 84392 - 2993 - 2048 - 84 + front + 4096
     pa = F(2893, 10000) + F(3788, 10000)*x + F(608, 10000)*y
     pb = F(2893, 10000) + 4*F(1351, 10000) + F(2437, 10000)*x + F(608, 10000)*y
     va = F(562, 100) + F(398, 100)*x + F(581, 100)*y
@@ -173,8 +163,8 @@ for name, bins, ords in [('large', [22, 24, 24, 25], [18, 20, 22, 25]),
         'small': tuple(map(F, ('1.2632', '1.499625', '26.195', '31.515'))),
     }
     assert (pa, pb, va, vb) == exact_times[name]
-    expected = {'large': (322_341_632, 536_870_912, 14362, 95629),
-                'small': (74_864_640, 134_217_728, 13724, 95167)}
+    expected = {'large': (322_341_632, 536_870_912, 12266, 95629),
+                'small': (74_864_640, 134_217_728, 11804, 95167)}
     assert (cells, pow2ceil(cells+no), front, proof) == expected[name]
     assert 4*1944 == 7776 and 4*(1944+2+2+2+2) == 7808
     assert 1+4*256 == 1025
