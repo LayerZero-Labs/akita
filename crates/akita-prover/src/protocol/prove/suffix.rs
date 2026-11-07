@@ -20,6 +20,7 @@ pub struct SuffixProverState<F: Field, E: Field, MaterialHandle, WitnessHandle> 
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "mldsa.port.opening.suffix")]
 pub(super) fn prove_recursive_step<Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
@@ -126,6 +127,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "mldsa.port.opening.suffix")]
 pub(super) fn prove_terminal_suffix<F, E, B>(
     backend: &B,
     grinding: &mut akita_types::ProverGrinding<'_>,
