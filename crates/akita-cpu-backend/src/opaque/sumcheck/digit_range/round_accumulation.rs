@@ -1,3 +1,4 @@
+use super::super::par_fold_by_grain;
 use super::exact_prefix::SplitEqualitySuffixMass;
 use jolt_field::solinas::parallel::*;
 use jolt_field::Unreduced;
@@ -24,8 +25,9 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
     debug_assert!(explicit_pair_count <= first.len() * second.len());
     let explicit_block_count = explicit_pair_count.div_ceil(first.len());
     if E::SUM_IS_EXACT {
-        cfg_fold_reduce!(
-            0..explicit_block_count,
+        par_fold_by_grain(
+            cfg_into_iter!(0..explicit_block_count),
+            first.len(),
             || [E::Product::zero(); N],
             |mut outer, second_index| {
                 let block_start = second_index * first.len();
@@ -51,12 +53,13 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
                     *left += right;
                 }
                 left
-            }
+            },
         )
         .map(E::reduce_product)
     } else {
-        cfg_fold_reduce!(
-            0..explicit_block_count,
+        par_fold_by_grain(
+            cfg_into_iter!(0..explicit_block_count),
+            first.len(),
             || [E::zero(); N],
             |mut outer, second_index| {
                 let block_start = second_index * first.len();
@@ -82,7 +85,7 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
                     *left += right;
                 }
                 left
-            }
+            },
         )
     }
 }
@@ -142,12 +145,20 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
     default_values: [E; N],
 ) -> [E; N] {
     debug_assert!(explicit_count <= first.len() * second.len());
+    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+        .and_then(|suffix| suffix.weight_from(explicit_count))
+        .expect("split equality and exact prefix were validated at construction");
+    let mut values = default_values.map(|default| suffix_weight * default);
+    if explicit_count == 0 {
+        return values;
+    }
     let block_count = explicit_count.div_ceil(first.len());
     let task_count = super::super::parallel_tasks(2).min(block_count).max(1);
     let blocks_per_task = block_count.div_ceil(task_count).max(1);
     let bin_blocks = first.len() >= class_count * MIN_BLOCK_ENTRIES_PER_CLASS;
-    let class_weights = cfg_fold_reduce!(
-        0..task_count,
+    let class_weights = par_fold_by_grain(
+        cfg_into_iter!(0..task_count),
+        blocks_per_task.saturating_mul(first.len()),
         || vec![E::zero(); class_count],
         |mut weights: Vec<E>, task_index| {
             let blocks =
@@ -178,12 +189,8 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
                 *left += right;
             }
             left
-        }
+        },
     );
-    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
-        .and_then(|suffix| suffix.weight_from(explicit_count))
-        .expect("split equality and exact prefix were validated at construction");
-    let mut values = default_values.map(|default| suffix_weight * default);
     for (class, weight) in class_weights.into_iter().enumerate() {
         if weight.is_zero() {
             continue;
@@ -199,7 +206,7 @@ pub(super) fn accumulate_equality_weighted_class_values<E: Field, const N: usize
 mod tests {
     use super::super::MAX_TREE_STAGE_Q_DEGREE;
     use super::*;
-    use jolt_field::{FpExt4, Prime128Offset275, Prime32Offset99, Ring};
+    use jolt_field::{FpExt4, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Ring};
 
     fn check_blocked_accumulation<E: Field + Ring + Unreduced>() {
         // Inner tables below, at and above the block-binning threshold for
@@ -283,5 +290,45 @@ mod tests {
     fn blocked_accumulation_matches_dense_with_delayed_reduction() {
         type E = FpExt4<Prime32Offset99>;
         check_blocked_accumulation::<E>();
+    }
+
+    #[test]
+    fn native_class_accumulation_matches_flat_weights_across_task_grains() {
+        type F = Prime128OffsetA7F7;
+        let first = (0..256).map(|i| F::from_u64(i + 2)).collect::<Vec<_>>();
+        let second = (0..64).map(|i| F::from_u64(i + 11)).collect::<Vec<_>>();
+        let default = [23, 29, 31, 37, 41].map(F::from_u64);
+        for class_count in [64, 4096] {
+            let class_at = |index: usize| (index * 5 + 2) % class_count;
+            let class_values = |class: usize| {
+                std::array::from_fn(|coefficient| {
+                    F::from_u64((class * 7 + coefficient * 3 + 1) as u64)
+                })
+            };
+            for explicit_count in [0, 1, 512, 4095, 4096, 16381, 16384] {
+                let actual = accumulate_equality_weighted_class_values(
+                    &first,
+                    &second,
+                    explicit_count,
+                    class_count,
+                    class_at,
+                    class_values,
+                    default,
+                );
+                let mut expected = [F::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                for index in 0..first.len() * second.len() {
+                    let values = if index < explicit_count {
+                        class_values(class_at(index))
+                    } else {
+                        default
+                    };
+                    let weight = first[index % first.len()] * second[index / first.len()];
+                    for (sum, value) in expected.iter_mut().zip(values) {
+                        *sum += weight * value;
+                    }
+                }
+                assert_eq!(actual, expected);
+            }
+        }
     }
 }
