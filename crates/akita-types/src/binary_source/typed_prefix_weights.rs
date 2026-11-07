@@ -135,12 +135,20 @@ impl BinaryTypedPrefix {
         batches: [&[E]; 2],
         prefix_len: usize,
     ) -> Result<TypedPrefixWeights<E>, AkitaError> {
+        self.prover_weight_blocks_at(a, root_point, alpha, batches, prefix_len, None)
+    }
+
+    pub(super) fn prover_weight_blocks_at<E: Field>(
+        &self,
+        a: &BinaryAProduct<E>,
+        root_point: &[E],
+        alpha: E,
+        batches: [&[E]; 2],
+        prefix_len: usize,
+        starts: Option<&[usize]>,
+    ) -> Result<TypedPrefixWeights<E>, AkitaError> {
         self.validate_prefix(prefix_len)?;
         self.validate_batches(batches)?;
-        let (index, coefficient) = a.factors()?;
-        if coefficient.len() != self.a.row_stride || index.len() < self.a.rows {
-            return Err(AkitaError::InvalidProof);
-        }
         let mut builder = Builder {
             pool: vec![E::zero(); SLOTS],
             blocks: Vec::new(),
@@ -149,24 +157,58 @@ impl BinaryTypedPrefix {
         };
         // A: one pool row per live rank and coefficient chunk, shared by
         // every source row.
-        let chunks = A_DEGREE.div_ceil(SLOTS);
-        let mut a_rows = Vec::new();
-        for rank in 0..self.a_rank {
-            for chunk in 0..chunks {
-                let start = checked::mul_add(rank, A_STRIDE, chunk * SLOTS)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let row = coefficient
-                    .get(start..)
-                    .and_then(|row| row.get(..SLOTS))
-                    .ok_or(AkitaError::InvalidProof)?;
-                a_rows.push((start, builder.push_row(row)?));
+        let terms = a.factor_terms()?;
+        if terms.len() == 1 {
+            let (index, coefficient) = terms.first().ok_or(AkitaError::InvalidProof)?;
+            if coefficient.len() != self.a.row_stride || index.len() < self.a.rows {
+                return Err(AkitaError::InvalidProof);
             }
-        }
-        for (source_row, &row_weight) in index.iter().take(self.a.rows).enumerate() {
-            let base = checked::product([source_row, self.a.row_stride])
-                .ok_or(AkitaError::InvalidProof)?;
-            for &(start, row) in &a_rows {
-                builder.push_block(base + start, [row_weight, E::zero()], [row, ZERO_ROW]);
+            let chunks = A_DEGREE.div_ceil(SLOTS);
+            let mut a_rows = Vec::new();
+            for rank in 0..self.a_rank {
+                for chunk in 0..chunks {
+                    let start = checked::mul_add(rank, A_STRIDE, chunk * SLOTS)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let row = coefficient
+                        .get(start..)
+                        .and_then(|row| row.get(..SLOTS))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    a_rows.push((start, builder.push_row(row)?));
+                }
+            }
+            for (source_row, &row_weight) in index.iter().take(self.a.rows).enumerate() {
+                let base = checked::product([source_row, self.a.row_stride])
+                    .ok_or(AkitaError::InvalidProof)?;
+                for &(start, row) in &a_rows {
+                    builder.push_block(base + start, [row_weight, E::zero()], [row, ZERO_ROW]);
+                }
+            }
+        } else {
+            for source_row in 0..self.a.rows {
+                let base = checked::product([source_row, self.a.row_stride])
+                    .ok_or(AkitaError::InvalidProof)?;
+                for rank in 0..self.a_rank {
+                    for chunk in 0..A_DEGREE.div_ceil(SLOTS) {
+                        let start = checked::mul_add(rank, A_STRIDE, chunk * SLOTS)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let mut row = [E::zero(); SLOTS];
+                        for (index, coefficient) in &terms {
+                            if coefficient.len() != self.a.row_stride || index.len() < self.a.rows {
+                                return Err(AkitaError::InvalidProof);
+                            }
+                            let scale = *index.get(source_row).ok_or(AkitaError::InvalidProof)?;
+                            let coefficients = coefficient
+                                .get(start..)
+                                .and_then(|c| c.get(..SLOTS))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            for (target, &value) in row.iter_mut().zip(coefficients) {
+                                *target += scale * value;
+                            }
+                        }
+                        let row = builder.push_row(&row)?;
+                        builder.push_block(base + start, [E::one(), E::zero()], [row, ZERO_ROW]);
+                    }
+                }
             }
         }
         let kernel = ResidueKernelPoint::new(alpha, SLOTS)?;
@@ -186,6 +228,12 @@ impl BinaryTypedPrefix {
                     .ok_or(AkitaError::InvalidProof)?,
             )?;
             let lane_point = root_point.get(lane_end..).ok_or(AkitaError::InvalidProof)?;
+            let start = match starts {
+                Some(starts) => *starts.get(segment_index).ok_or(AkitaError::InvalidProof)?,
+                None => segment.lanes.start(),
+            };
+            let window = checked::pow2(lane_end).ok_or(AkitaError::InvalidProof)?;
+            let low_start = start % window;
             let first_lane = segment.lanes.start() / segment.lanes.stride();
             let low_lane = first_lane & (segment.period - 1);
             let count = segment.lane_count();
@@ -214,14 +262,27 @@ impl BinaryTypedPrefix {
                         }
                         // The lane-high value of `first_lane + q * period + lane` is
                         // `(first_lane >> period_bits) + high + q`.
-                        let high = (low_lane + lane) >> period_bits;
-                        let side = equality.get_mut(high).ok_or(AkitaError::InvalidProof)?;
-                        *side.get_mut(slot).ok_or(AkitaError::InvalidProof)? = *coefficient_eq
-                            .get(coefficient)
-                            .ok_or(AkitaError::InvalidProof)?
-                            * *lane_eq
-                                .get((first_lane + lane) & (segment.period - 1))
+                        let (high, weight) = if starts.is_some() {
+                            let address = checked::mul_add(lane, segment.lanes.stride(), low_start)
+                                .and_then(|base| checked::sum([base, coefficient]))
                                 .ok_or(AkitaError::InvalidProof)?;
+                            (
+                                address / window,
+                                eq_eval_at_index(&root_point[..lane_end], address % window),
+                            )
+                        } else {
+                            (
+                                (low_lane + lane) >> period_bits,
+                                *coefficient_eq
+                                    .get(coefficient)
+                                    .ok_or(AkitaError::InvalidProof)?
+                                    * *lane_eq
+                                        .get((first_lane + lane) & (segment.period - 1))
+                                        .ok_or(AkitaError::InvalidProof)?,
+                            )
+                        };
+                        let side = equality.get_mut(high).ok_or(AkitaError::InvalidProof)?;
+                        *side.get_mut(slot).ok_or(AkitaError::InvalidProof)? = weight;
                         present[high] = true;
                     }
                     let mut rows = [ZERO_ROW; 2];
@@ -233,7 +294,7 @@ impl BinaryTypedPrefix {
                     profiles.push(rows);
                 }
             }
-            let lane_high = first_lane >> period_bits;
+            let lane_high = start / window;
             let period_factors = (0..segment.periods)
                 .map(|q| [0, 1].map(|side| eq_eval_at_index(lane_point, lane_high + side + q)))
                 .collect::<Vec<_>>();
