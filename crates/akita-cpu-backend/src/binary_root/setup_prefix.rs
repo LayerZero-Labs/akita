@@ -93,6 +93,15 @@ where
                 "composite prefix definitions or trusted budget mismatch".into(),
             ));
         }
+        let modulus = akita_params::field_modulus::<F>()?;
+        let profile = &layout.slot().commitment_profile;
+        if profile.inner.matrix.sis_modulus_profile().modulus() != modulus
+            || profile.outer.matrix.sis_modulus_profile().modulus() != modulus
+        {
+            return Err(AkitaError::InvalidInput(
+                "composite prefix successor field mismatch".into(),
+            ));
+        }
         checked::product([layout.domain_len(), std::mem::size_of::<F>()])
             .filter(|&bytes| bytes <= isize::MAX as usize)
             .ok_or_else(|| {
@@ -109,7 +118,7 @@ where
                     typed,
                     local_slot,
                 } => {
-                    if akita_params::field_modulus::<F>()? != manifest.field_profile().modulus()
+                    if modulus != manifest.field_profile().modulus()
                         || E::DEGREE != manifest.field_profile().extension_degree()
                     {
                         return Err(AkitaError::InvalidInput(

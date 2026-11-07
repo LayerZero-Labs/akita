@@ -27,6 +27,37 @@ fn slot(domain: usize) -> SetupPrefixSlotId {
     }
 }
 
+fn p128_slot(domain: usize) -> SetupPrefixSlotId {
+    use akita_params::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
+    use akita_params::{BlockGeometry, CommitmentSliceGeometry, PolynomialGroupLayout};
+    let mut profile =
+        akita_types::binary_source::binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
+    profile.group = PolynomialGroupLayout::singleton(domain.trailing_zeros() as usize);
+    profile.inner.digits.num_digits = 43;
+    profile.inner.matrix =
+        InnerCommitMatrixParams::try_new_with_min_rank(profile.inner.matrix.sis_table_key(), 86)
+            .unwrap();
+    profile.blocks = BlockGeometry::new(domain / 128, 2, domain / 256);
+    let width = CommitmentSliceGeometry::try_new(
+        profile.outer_slice_count,
+        profile.blocks.live_blocks,
+        1,
+        profile.inner.matrix.output_rank(),
+        43,
+        128,
+        64,
+    )
+    .unwrap()
+    .physical_input_width();
+    profile.outer.matrix =
+        OuterCommitMatrixParams::try_new_with_min_rank(profile.outer.matrix.sis_table_key(), width)
+            .unwrap();
+    SetupPrefixSlotId {
+        natural_len: domain,
+        commitment_profile: profile,
+    }
+}
+
 fn encoded(slot: &SetupPrefixVerifierSlot<F>) -> Vec<u8> {
     let mut bytes = Vec::new();
     slot.serialize_compressed(&mut bytes).unwrap();
@@ -45,10 +76,11 @@ fn trusted_composite_preparation_preserves_singleton_and_authenticates_distinct_
         + typed[1].domain_len)
         .next_power_of_two();
     let combined_slot = slot(combined_domain);
+    let wrong_field_slot = p128_slot(combined_domain);
     let capacity = akita_params::SetupMatrixCapacity {
         num_field_elements: slots
             .iter()
-            .chain(std::iter::once(&combined_slot))
+            .chain([&combined_slot, &wrong_field_slot])
             .map(|id| akita_params::setup_prefix_slot_field_elements(id).unwrap())
             .max()
             .unwrap(),
@@ -114,6 +146,15 @@ fn trusted_composite_preparation_preserves_singleton_and_authenticates_distinct_
     assert!(backend
         .prepare_composite_prefix(&singleton, &wrong, typed[0].domain_len)
         .is_err());
+    let wrong_field_layout =
+        CompositePrefixLayout::new(&blocks, b"wrong successor field", &wrong_field_slot).unwrap();
+    {
+        let _guard = akita_types::binary_source::BinaryAReadGuard::forbid();
+        assert!(matches!(
+            backend.prepare_composite_prefix(&wrong_field_layout, &definitions, combined_domain),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
     let prepared = backend
         .prepare_composite_prefix(&layout, &definitions, combined_domain)
         .unwrap();
