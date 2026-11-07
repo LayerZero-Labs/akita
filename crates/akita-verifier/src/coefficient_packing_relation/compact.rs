@@ -151,6 +151,7 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
     /// Evaluate packed E and Q relation weights without expanding their
     /// claim/block/digit/plane support.
     pub(crate) fn evaluate_relation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let _search = akita_error::experiment_scope("search/packing_relation");
         self.validate_point(point)?;
         let evaluate_affine = || -> Result<E, AkitaError> {
             let mut coefficient_evaluations = [None; usize::BITS as usize];
@@ -268,7 +269,10 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
             DirectOpening::Families(families) => evaluate(&self.direct_opening_point, families)?,
         };
 
-        let z = evaluate(&self.packing_z_point, &self.packing_z_families)?;
+        let z = {
+            let _search = akita_error::experiment_scope("search/packing_z");
+            evaluate(&self.packing_z_point, &self.packing_z_families)?
+        };
         Ok(direct + z)
     }
 }

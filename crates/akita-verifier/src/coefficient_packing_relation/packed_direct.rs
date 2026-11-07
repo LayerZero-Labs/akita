@@ -3,7 +3,10 @@
 //! The left address factors as `coefficient | role | block`, and the right
 //! address as `coefficient | row`, with the coefficient bits least significant.
 
-use akita_algebra::offset_eq::{PreparedDigits, MAX_PREPARED_STRIDE};
+use akita_algebra::offset_eq::{
+    eval_boolean_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, PreparedDigits,
+    MAX_COMPACT_STRIDE_TERMS, MAX_PREPARED_STRIDE,
+};
 use akita_error::AkitaError;
 use akita_params::{basis_weights, BasisMode};
 use akita_types::ValidatedCoefficientPackingGroup;
@@ -59,11 +62,6 @@ impl<E: Field> PackedDirect<E> {
     where
         E: ExtField<F>,
     {
-        // Sharing the digit preparation across claims is the intended payoff;
-        // single-claim groups retain the general tensor evaluator.
-        if group.num_claims() == 1 {
-            return Ok(None);
-        }
         let challenge_subring_dim = group.geometry().challenge_subring_dimension();
         let role_ring_dim = group.d_d();
         let coefficient_count = challenge_subring_dim.min(role_ring_dim);
@@ -135,6 +133,12 @@ impl<E: Field> PackedDirect<E> {
                 bases,
             });
         }
+        let odd_stride = width >> width.trailing_zeros();
+        if group.num_claims() == 1
+            && (!matches!(odd_stride, 1 | 3 | 5 | 7) || !units.iter().any(|unit| unit.rows >= 128))
+        {
+            return Ok(None);
+        }
         Ok(Some(Self {
             coefficient_bits,
             role_bits,
@@ -155,6 +159,7 @@ impl<E: Field> PackedDirect<E> {
         left: &[E],
         right: &[E],
     ) -> Result<E, AkitaError> {
+        let _search = akita_error::experiment_scope("search/packed_direct");
         let (left_coefficient, left_tail) = left
             .split_at_checked(self.coefficient_bits)
             .ok_or_else(invalid)?;
@@ -165,7 +170,6 @@ impl<E: Field> PackedDirect<E> {
             .split_at_checked(self.coefficient_bits)
             .ok_or_else(invalid)?;
         let roles = basis_weights(role_point, basis)?;
-        let blocks = basis_weights(block_point, basis)?;
         let mut digits = vec![E::zero(); self.width];
         for (plane, &plane_weight) in self.plane_basis.iter().enumerate() {
             for (role, &role_weight) in roles.iter().enumerate() {
@@ -186,7 +190,6 @@ impl<E: Field> PackedDirect<E> {
                 }
             }
         }
-        let prepared = PreparedDigits::<E, E>::new(row_point, &digits, &[])?.ok_or_else(invalid)?;
         let mut coefficient = E::one();
         for (&left_value, &right_value) in left_coefficient.iter().zip(right_coefficient) {
             coefficient *= if basis == BasisMode::Monomial {
@@ -195,14 +198,88 @@ impl<E: Field> PackedDirect<E> {
                 (E::one() - left_value) * (E::one() - right_value) + left_value * right_value
             };
         }
-        let mut value = E::zero();
-        for unit in &self.units {
-            for &(base, weight) in &unit.bases {
-                let mut rows = E::zero();
-                prepared.accumulate(&mut rows, base, unit.first, unit.rows, &blocks)?;
-                value += weight * rows;
+        let odd_stride = self
+            .width
+            .checked_shr(self.width.trailing_zeros())
+            .ok_or_else(invalid)?;
+        let seed_count = self.units.iter().try_fold(0usize, |count, unit| {
+            count.checked_add(unit.bases.len()).ok_or_else(invalid)
+        })?;
+        let family_count = seed_count.checked_mul(self.width).ok_or_else(invalid)?;
+        let contract = matches!(odd_stride, 1 | 3 | 5 | 7)
+            && family_count <= MAX_COMPACT_STRIDE_TERMS
+            && self.units.iter().any(|unit| unit.rows >= 128);
+        let value = if contract {
+            // Contract eq(block, first + i) * eq(row, base + width*i + digit)
+            // over each live interval instead of materializing and walking blocks.
+            let mut families = Vec::new();
+            families
+                .try_reserve_exact(family_count)
+                .map_err(|_| invalid())?;
+            let block_domain = akita_error::checked::pow2(block_point.len()).ok_or_else(invalid)?;
+            let row_domain = akita_error::checked::pow2(row_point.len()).ok_or_else(invalid)?;
+            for unit in &self.units {
+                if unit
+                    .first
+                    .checked_add(unit.rows)
+                    .is_none_or(|end| end > block_domain)
+                {
+                    return Err(invalid());
+                }
+                if unit.rows == 0 {
+                    continue;
+                }
+                let span = unit
+                    .rows
+                    .checked_mul(self.width)
+                    .and_then(|n| n.checked_sub(1))
+                    .ok_or_else(invalid)?;
+                for &(base, weight) in &unit.bases {
+                    if base.checked_add(span).is_none_or(|last| last >= row_domain) {
+                        return Err(invalid());
+                    }
+                    for (digit, &digit_weight) in digits.iter().enumerate() {
+                        if digit_weight.is_zero() {
+                            continue;
+                        }
+                        families.push(EqPairTensorFamily::new(
+                            unit.first,
+                            base.checked_add(digit).ok_or_else(invalid)?,
+                            weight * digit_weight,
+                            vec![EqPairTensorAxis::unit(unit.rows, 1, self.width)],
+                        )?);
+                    }
+                }
             }
-        }
+            match basis {
+                BasisMode::Lagrange => eval_boolean_pair_tensor_families::<_, false, false>(
+                    block_point,
+                    row_point,
+                    &families,
+                )?,
+                BasisMode::Monomial => eval_boolean_pair_tensor_families::<_, true, false>(
+                    block_point,
+                    row_point,
+                    &families,
+                )?,
+            }
+        } else {
+            let blocks = basis_weights(block_point, basis)?;
+            let prepared =
+                PreparedDigits::<E, E>::new(row_point, &digits, &[])?.ok_or_else(invalid)?;
+            let mut value = E::zero();
+            for unit in &self.units {
+                for &(base, weight) in &unit.bases {
+                    let mut rows = E::zero();
+                    prepared.accumulate(&mut rows, base, unit.first, unit.rows, &blocks)?;
+                    value += weight * rows;
+                }
+            }
+            value
+        };
         Ok(self.scalar * coefficient * value)
     }
 }
+
+#[cfg(test)]
+mod tests;

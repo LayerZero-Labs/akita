@@ -661,3 +661,31 @@ fn affine_coefficient_length_is_checked_before_the_contraction_cache() {
         .evaluate_relation_at_point(&point)
         .is_err());
 }
+
+#[test]
+fn single_claim_large_block_contraction_matches_dense_oracle() {
+    let fixture = coefficient_packing_fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        128,
+        128,
+        64,
+        1027,
+        4,
+        18,
+        1,
+        1,
+    );
+    let alpha = genuine_extension::<F, E>(41);
+    let (compact, oracle) = prepare_compact_and_oracles(&fixture, alpha, 29);
+    assert!(matches!(
+        compact.compact_factors().direct_opening,
+        DirectOpening::Packed(_)
+    ));
+    assert_eq!(
+        compact
+            .compact_factors()
+            .evaluate_stage2_at_point(&oracle.point)
+            .unwrap(),
+        multilinear_eval(&oracle.stage2, &oracle.point).unwrap()
+    );
+}
