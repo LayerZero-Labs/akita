@@ -5,6 +5,9 @@ use akita_types::binary_source::{
     BinaryRootWitnessRequest, ResearchBatchPlan, ResearchBatchResponse, ResearchBatchWitnessRequest,
 };
 use akita_types::opening_claims::GroupClaimKind;
+use jolt_field::cfg_into_iter;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 
 struct Preparation {
     binding: OperationBinding,
@@ -49,6 +52,7 @@ where
     let stage = tracing::info_span!("mldsa.port.opening.prepare_binary").entered();
     let mut binary = Vec::with_capacity(4);
     let mut payload = Vec::new();
+    let mut jobs = Vec::with_capacity(4);
     for (index, ((kind, handle), local)) in request
         .kinds
         .iter()
@@ -76,15 +80,19 @@ where
             plan: local.plan().clone(),
             ordinary: None,
         };
-        let (d, prepared) = prepare_binary(
-            backend,
-            session,
-            group_binding,
-            &group_context,
-            handle,
-            &local_request,
-            true,
-        )?;
+        jobs.push((group_context, group_binding, handle, local_request));
+    }
+    // Issue operation bindings in roster order. Workers only prepare private
+    // material; D payloads and errors are consumed in that same roster order.
+    let parent = tracing::Span::current();
+    let prepared = cfg_into_iter!(jobs)
+        .map(|(context, binding, handle, request)| {
+            let _span = parent.enter();
+            prepare_binary(backend, session, binding, &context, handle, &request, true)
+        })
+        .collect::<Vec<_>>();
+    for result in prepared {
+        let (d, prepared) = result?;
         payload
             .try_reserve_exact(d.len())
             .map_err(|_| AkitaError::InvalidProof)?;
