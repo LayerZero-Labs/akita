@@ -40,6 +40,7 @@ where
         + 'static,
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
+    let stage = tracing::info_span!("mldsa.port.opening.root_relation").entered();
     if basis != BasisMode::Lagrange || handles.len() != 8 {
         return Err(AkitaError::InvalidInput(
             "research batch proof geometry".into(),
@@ -109,6 +110,7 @@ where
         None
     };
     plan.bind_word_terminal(terminal.as_ref())?;
+    let phase = tracing::info_span!("research_root_prepare_groups").entered();
     let (d_payload, preparation) = backend.prepare_root_group(
         proof_session,
         &context,
@@ -119,10 +121,12 @@ where
             handles: handles.to_vec(),
         },
     )?;
+    drop(phase);
     if plan.d_ranges().last().map(|range| range.end) != Some(d_payload.len()) {
         return Err(AkitaError::InvalidProof);
     }
     // All four D commitments precede the only response nonce.
+    let phase = tracing::info_span!("research_root_send_d").entered();
     akita_transcript::send_field_group(
         grinding.state_mut(),
         akita_types::FoldSite::OpeningPayload {
@@ -132,9 +136,12 @@ where
         .id()?,
         &d_payload,
     )?;
+    drop(phase);
+    let phase = tracing::info_span!("research_root_response_search").entered();
     let site = GrindingSite::FoldResponse { level: 0 };
     let mut accepted = None;
     for nonce in 0..akita_params::FOLD_RESPONSE_ATTEMPTS {
+        let _attempt = tracing::info_span!("research_root_response_attempt", nonce).entered();
         let mut preview = grinding.preview_fold_response(site, nonce)?;
         let work = preview.take_work()?;
         let mut challenges = Vec::with_capacity(4);
@@ -162,6 +169,8 @@ where
     let (work, preview_challenges, witness) = accepted.ok_or_else(|| {
         AkitaError::InvalidInput("research joint response rejection exhausted".into())
     })?;
+    drop(phase);
+    let phase = tracing::info_span!("research_root_response_replay").entered();
     grinding.commit_fold_response(site, work)?;
     let mut challenges = Vec::with_capacity(4);
     for (index, &columns) in plan.fold_coordinates().iter().enumerate() {
@@ -179,6 +188,8 @@ where
         grinding.record_fold_challenges(0, group, columns)?;
         challenges.push(draw);
     }
+    drop(phase);
+    let phase = tracing::info_span!("research_root_commit_witness").entered();
     let committed = fold::commit_next_witness::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         grinding,
@@ -188,9 +199,12 @@ where
         NextWitnessBindingPolicy::OuterPayload,
         witness,
     )?;
+    drop(phase);
     let mut witness = committed.witness_handle;
+    let phase = tracing::info_span!("research_root_projection_replay").entered();
     let mut matrices = Vec::with_capacity(4);
     for (index, challenge) in challenges.iter().enumerate() {
+        let _group = tracing::info_span!("research_root_projection_group", index).entered();
         let (_, residual) = backend.prepare_root_group(
             proof_session,
             &context.for_group(index),
@@ -204,20 +218,29 @@ where
             .map_err(|_| AkitaError::InvalidProof)?;
         matrices.push(residual.matrix);
     }
+    drop(phase);
+    let phase = tracing::info_span!("research_root_alpha").entered();
     let alpha = grinding
         .grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::RingSwitchAlpha { level: 0 })?;
+    drop(phase);
     let num_vars = usize::try_from(plan.domain_len().trailing_zeros())
         .map_err(|_| AkitaError::InvalidProof)?;
     let domain = FlatBooleanDomain::new(plan.physical_cells(), num_vars)?;
     if domain.domain_len() != plan.domain_len() {
         return Err(AkitaError::InvalidProof);
     }
+    let phase = tracing::info_span!("research_root_tau0").entered();
     let tau0 = grinding
         .grinded_ext_challenges::<Cfg::ExtField>(GrindingSite::Tau0Point { level: 0 }, num_vars)?;
+    drop(phase);
+    let phase =
+        tracing::info_span!("research_root_batch_challenges", count = plan.batch_count()).entered();
     let batches = binary_root_p64_batch_challenges::<Cfg::Field, Cfg::ExtField, _>(
         grinding,
         plan.batch_count(),
     )?;
+    drop(phase);
+    let compile = tracing::info_span!("mldsa.port.opening.root_compile").entered();
     let (relation, negative) = research_batch_relation::<Cfg::Field, Cfg::ExtField, _>(
         &plan,
         expanded,
@@ -231,11 +254,16 @@ where
         |commitment| commitment.rows().coeffs(),
     )?;
     let relation_claim = relation.claim();
+    drop(compile);
+    drop(stage);
+    let stage = tracing::info_span!("mldsa.port.opening.stage1").entered();
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
     let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B>(
         backend, session, range, domain, tau0, None, grinding, 0,
     )?;
+    drop(stage);
+    let stage = tracing::info_span!("mldsa.port.opening.root_prepare").entered();
     let gamma =
         grinding.grinded_ext_challenge::<Cfg::ExtField>(GrindingSite::Stage2Batch { level: 0 })?;
     let session = backend.begin_root_relation(
@@ -247,6 +275,8 @@ where
         stage1.range_image_evaluation,
         gamma,
     )?;
+    drop(stage);
+    let stage = tracing::info_span!("mldsa.port.opening.stage2").entered();
     let stage2 = fold::sumcheck::prove_stage2_session::<Cfg::Field, Cfg::ExtField, B>(
         backend,
         session,
@@ -260,6 +290,7 @@ where
         0,
         stage2.witness_evaluation,
     )?;
+    drop(stage);
     backend.advance_witness_level(&mut witness)?;
     Ok(ProveLevelOutput {
         next_state: SuffixProverState {

@@ -46,6 +46,7 @@ where
             "research witness admission mismatch".into(),
         ));
     }
+    let stage = tracing::info_span!("mldsa.port.opening.prepare_binary").entered();
     let mut binary = Vec::with_capacity(4);
     let mut payload = Vec::new();
     for (index, ((kind, handle), local)) in request
@@ -97,6 +98,8 @@ where
     if binary.len() != 4 {
         return Err(AkitaError::InvalidProof);
     }
+    drop(stage);
+    let stage = tracing::info_span!("mldsa.port.opening.prepare_ordinary").entered();
     let mut segments = Vec::new();
     for (index, (plan, handle)) in request
         .plan
@@ -129,6 +132,7 @@ where
         .plan
         .ordinary_repacking()
         .repack(&segments.iter().map(Vec::as_slice).collect::<Vec<_>>())?;
+    drop(stage);
     Ok((
         payload,
         Box::new(Preparation {
@@ -167,6 +171,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
+    let stage = tracing::info_span!("mldsa.port.opening.build_binary").entered();
     let mut local = Vec::with_capacity(4);
     for (prepared, challenges) in preparation.binary.iter().zip(&response.challenges) {
         let len = prepared.plan.repacking().domain_len();
@@ -175,6 +180,8 @@ where
         };
         local.push(digits);
     }
+    drop(stage);
+    let stage = tracing::info_span!("mldsa.port.opening.witness_concat").entered();
     let mut digits = Vec::new();
     digits
         .try_reserve_exact(logical_len)
@@ -191,6 +198,8 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .copy_from_slice(block);
     }
+    drop(stage);
+    let _stage = tracing::info_span!("mldsa.port.opening.witness_import").entered();
     super::super::binary_root_sessions::import_root_witness(
         backend,
         session,

@@ -10,6 +10,8 @@ use akita_params::{binary_setup::BINARY_SETUP_P64, GrindingSite};
 use akita_transcript::{
     ext_challenges, ChallengeCodec, ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT,
 };
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Extension seam: bind the complete order-zero binary and mixed statement.
@@ -170,7 +172,10 @@ where
             "binary p64 batching requires the paired quadratic field".into(),
         ));
     }
+    let phase = tracing::info_span!("binary_p64_tau1_grind").entered();
     grinding.grind_query(GrindingSite::Tau1Point { level: 0 })?;
+    drop(phase);
+    let _phase = tracing::info_span!("binary_p64_batch_fill", count).entered();
     let result = (|| {
         let channel = grinding.state_mut();
         let site = ProtocolSiteId {
@@ -207,8 +212,17 @@ fn p64_batch_from_blocks<F: Field, E: ExtField<F>>(
         .map_err(|_| AkitaError::InvalidProof)?;
     let mut bytes = [0; 32];
     let mut offset = 32;
-    for _ in 0..count {
-        let mut coordinates = [F::zero(); 2];
+    // Buffer accepted coordinates, not transcript state. Indexed extension
+    // writes each output exactly once, in draw order, on disjoint worker ranges.
+    // This boundary is unrelated to the fixed 32-byte transcript messages;
+    // unused bytes and coordinate rejection continue across every buffer fill.
+    const COORDINATE_BUFFER: usize = 1 << 14;
+    let mut pending = Vec::new();
+    pending
+        .try_reserve_exact(count.min(COORDINATE_BUFFER))
+        .map_err(|_| AkitaError::InvalidProof)?;
+    for index in 0..count {
+        let mut coordinates = [0u64; 2];
         for coordinate in &mut coordinates {
             let mut accepted = None;
             for _ in 0..256 {
@@ -225,7 +239,7 @@ fn p64_batch_from_blocks<F: Field, E: ExtField<F>>(
                 );
                 offset += 8;
                 if candidate < BINARY_SETUP_P64 {
-                    accepted = Some(F::from_u64(candidate));
+                    accepted = Some(candidate);
                     break;
                 }
             }
@@ -233,13 +247,18 @@ fn p64_batch_from_blocks<F: Field, E: ExtField<F>>(
                 AkitaError::InvalidInput("binary p64 coordinate rejection exhausted".into())
             })?;
         }
-        result.push(E::from_base_fn(|index| {
-            if index == 0 {
-                coordinates[0]
-            } else {
-                coordinates[1]
-            }
-        }));
+        pending.push(coordinates);
+        if pending.len() == COORDINATE_BUFFER || index + 1 == count {
+            let convert = |coordinates: &[u64; 2]| {
+                let [first, second] = *coordinates;
+                E::from_base_fn(|index| F::from_u64(if index == 0 { first } else { second }))
+            };
+            #[cfg(feature = "parallel")]
+            result.par_extend(pending.par_iter().map(convert));
+            #[cfg(not(feature = "parallel"))]
+            result.extend(pending.iter().map(convert));
+            pending.clear();
+        }
     }
     Ok(result)
 }
@@ -295,6 +314,31 @@ mod p64_tests {
                 E::from_base_fn(|i| F::from_u64([4, 5][i]))
             ]
         );
+        // Three accepted words per block make a conversion-buffer boundary
+        // land inside a transcript block, with a rejection immediately after it.
+        for count in [0, 1, 16_383, 16_384, 16_385, 32_769] {
+            let mut calls = 0u64;
+            let values = p64_batch_from_blocks::<F, E>(count, || {
+                let start = 4 * calls;
+                calls += 1;
+                Ok([u64::MAX, start, start + 1, start + 2]
+                    .map(u64::to_le_bytes)
+                    .concat()
+                    .try_into()
+                    .unwrap())
+            })
+            .unwrap();
+            let expected = (0..count)
+                .map(|element| {
+                    E::from_base_fn(|coordinate| {
+                        let index = u64::try_from(2 * element + coordinate).unwrap();
+                        F::from_u64(4 * (index / 3) + index % 3)
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(values, expected);
+            assert_eq!(calls, u64::try_from(2 * count).unwrap().div_ceil(3));
+        }
     }
 
     #[test]
