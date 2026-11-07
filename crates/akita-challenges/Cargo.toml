@@ -19,6 +19,8 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 
 [features]
+# Host-only recursion-hint capture; also requires AKITA_CAPTURE_CHALLENGES.
+experiment-capture = []
 default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
