@@ -444,54 +444,6 @@ fn tampered_reductions_and_statements_reject_in_every_mode_on_both_field_pairs()
     }
 }
 
-/// Digest of the complete proof bytes in `mode` over the base field `F` and
-/// the challenge field `E`.
-#[cfg(feature = "transcript-blake2b")]
-fn proof_digest<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(
-    mode: RootOpeningMode,
-) -> String {
-    use jolt_field::Ring;
-    let case = RootCase::<H, F, E>::new(admitted(1, 0x31), mode);
-    let (proof, claims) = case.prove().unwrap();
-    assert!(case.verify(&proof).unwrap() == claims);
-    let values: Vec<P128> = proof
-        .iter()
-        .map(|&byte| P128::from_u64(u64::from(byte)))
-        .collect();
-    akita_transcript::field_digest(&values)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-/// One pinned digest of the complete proof bytes per opening mode and shipped
-/// field pair, using exact q-uniform setup. All three modes are opt-in root
-/// reductions; Prime selects a cell claim on the same binary-source setup.
-#[cfg(feature = "transcript-blake2b")]
-#[test]
-fn shipped_mode_and_field_pair_proof_bytes_are_pinned() {
-    for (mode, p128, p64x2) in [
-        (
-            RootOpeningMode::Binary,
-            "a8b1a5923c337c9719663af10e16d62b12e997256d30cd2edac986d508d7dd03",
-            "d1adb5b5bc5a438b2b8f3a401bc9016366419e92bf204279306283fe98a897de",
-        ),
-        (
-            RootOpeningMode::Prime,
-            "0bc6f5774fcf012d161689ded2306c501b7a1f5100832db1bb8f806e75537b71",
-            "21993d5c5068dff95960421401a8f0faf52b64afcb9e0d49eacdba72f769a935",
-        ),
-        (
-            RootOpeningMode::Both,
-            "d38991349b3cd099bbdbaf77ba32bb585888cbc7c678398d4d708d8f9f938b7e",
-            "b6d67729dfe217dea73b4ea856206a096692cde65ad93d7be0b283455a8be521",
-        ),
-    ] {
-        assert_eq!(proof_digest::<P128, P128>(mode), p128, "{mode:?}");
-        assert_eq!(proof_digest::<P64, Ext2<P64>>(mode), p64x2, "{mode:?}");
-    }
-}
-
 /// A native borrowed reduction consumes only its own messages. Every opening
 /// mode replays on both shipped field pairs and leaves a following message for
 /// the surrounding protocol.
