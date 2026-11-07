@@ -140,7 +140,7 @@ impl<E: Field> ProfileBuilder<E> {
             blocks,
             rows: Vec::new(),
         };
-        builder.row()?;
+        builder.allocate_rows(1)?;
         Ok(builder)
     }
 
@@ -281,14 +281,26 @@ impl<E: Field> ProfileBuilder<E> {
         Ok(())
     }
 
-    /// Append one zero row and return its index.
-    fn row(&mut self) -> Result<u32, AkitaError> {
+    /// Append zero rows in one allocation, returning the first row index.
+    fn allocate_rows(&mut self, count: usize) -> Result<u32, AkitaError> {
         let width = self.width();
-        let index = u32::try_from(self.rows.len() / width).map_err(|_| AkitaError::InvalidProof)?;
+        let first = self.rows.len() / width;
+        let end = checked::sum([first, count]).ok_or(AkitaError::InvalidProof)?;
+        let last = end.checked_sub(1).ok_or(AkitaError::InvalidProof)?;
+        u32::try_from(last).map_err(|_| AkitaError::InvalidProof)?;
+        let index = u32::try_from(first).map_err(|_| AkitaError::InvalidProof)?;
+        let cells = checked::product([count, width]).ok_or(AkitaError::InvalidProof)?;
+        let len = checked::sum([self.rows.len(), cells]).ok_or(AkitaError::InvalidProof)?;
         self.rows
-            .try_reserve(width)
+            .try_reserve(cells)
             .map_err(|_| AkitaError::InvalidSetup("root weight profile allocation".into()))?;
-        self.rows.resize(self.rows.len() + width, E::zero());
+        #[cfg(feature = "parallel")]
+        if cells >= 1 << 14 {
+            self.rows
+                .par_extend((0..cells).into_par_iter().map(|_| E::zero()));
+            return Ok(index);
+        }
+        self.rows.resize(len, E::zero());
         Ok(index)
     }
 
@@ -298,7 +310,7 @@ impl<E: Field> ProfileBuilder<E> {
         let own = match self.blocks.get(block) {
             Some(weight) if weight.own != 0 => weight.own,
             Some(_) => {
-                let own = self.row()?;
+                let own = self.allocate_rows(1)?;
                 self.blocks[block].own = own;
                 own
             }
@@ -333,6 +345,8 @@ impl<E: Field> ProfileBuilder<E> {
             (base.is_multiple_of(width) && first + lane_rows <= block_count)
                 .then_some(first..first + lane_rows)
         };
+        let first_row = self.rows.len() / width;
+        let mut new_rows = 0;
         for &base in bases {
             let range = blocks(base).ok_or_else(|| {
                 AkitaError::InvalidSetup(
@@ -341,9 +355,16 @@ impl<E: Field> ProfileBuilder<E> {
             })?;
             for block in range {
                 if self.blocks[block].own == 0 {
-                    self.blocks[block].own = self.row()?;
+                    let row =
+                        checked::sum([first_row, new_rows]).ok_or(AkitaError::InvalidProof)?;
+                    self.blocks[block].own =
+                        u32::try_from(row).map_err(|_| AkitaError::InvalidProof)?;
+                    new_rows = checked::sum([new_rows, 1]).ok_or(AkitaError::InvalidProof)?;
                 }
             }
+        }
+        if new_rows != 0 {
+            self.allocate_rows(new_rows)?;
         }
         let mut rows = self
             .rows
@@ -388,6 +409,8 @@ impl<E: Field> ProfileBuilder<E> {
     ) -> Result<(), AkitaError> {
         let (width, block_bits) = (self.width(), self.block_bits);
         let table_len = self.blocks.len() << block_bits;
+        let first_row = self.rows.len() / width;
+        let mut new_rows = 0;
         let mut order = Vec::with_capacity(intervals.len());
         let mut longest = 0;
         for (index, &(start, len)) in intervals.iter().enumerate() {
@@ -399,7 +422,11 @@ impl<E: Field> ProfileBuilder<E> {
                 .ok_or(AkitaError::InvalidProof)?;
             for block in start >> block_bits..=(end - 1) >> block_bits {
                 if self.blocks[block].own == 0 {
-                    self.blocks[block].own = self.row()?;
+                    let row =
+                        checked::sum([first_row, new_rows]).ok_or(AkitaError::InvalidProof)?;
+                    self.blocks[block].own =
+                        u32::try_from(row).map_err(|_| AkitaError::InvalidProof)?;
+                    new_rows = checked::sum([new_rows, 1]).ok_or(AkitaError::InvalidProof)?;
                 }
             }
             order.push(index);
@@ -409,6 +436,9 @@ impl<E: Field> ProfileBuilder<E> {
             return Ok(());
         }
         order.sort_unstable_by_key(|&index| intervals[index].0);
+        if new_rows != 0 {
+            self.allocate_rows(new_rows)?;
+        }
         let mut rows = self
             .rows
             .chunks_exact_mut(width)
@@ -540,10 +570,7 @@ impl<E: Field> ProfileBuilder<E> {
     fn share(&mut self, lanes: &SegmentLanes, element: usize) -> Result<u32, AkitaError> {
         let width = self.width();
         let rows = lanes.degree().div_ceil(width);
-        let first = self.row()?;
-        for _ in 1..rows {
-            self.row()?;
-        }
+        let first = self.allocate_rows(rows)?;
         let mut scale = E::one();
         for digit in 0..lanes.digits() {
             let block = lanes.base(element, digit)? >> self.block_bits;

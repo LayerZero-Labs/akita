@@ -104,10 +104,10 @@ fn profiles_reject_blocks_wider_than_the_table() {
 fn lanes_add_like_per_address_terms() {
     use super::ProfileBuilder;
     let (degree, stride) = (13, 16);
-    let bases = (0..70).map(|lane| lane * stride).collect::<Vec<_>>();
+    let bases = (0..1_100).map(|lane| lane * stride).collect::<Vec<_>>();
     let value = |lane: usize, offset: usize| F::from_u64((lane * 1_000 + offset + 1) as u64);
-    let mut lanes = ProfileBuilder::<F>::new(1 << 12, 3).unwrap();
-    let mut terms = ProfileBuilder::<F>::new(1 << 12, 3).unwrap();
+    let mut lanes = ProfileBuilder::<F>::new(1 << 15, 3).unwrap();
+    let mut terms = ProfileBuilder::<F>::new(1 << 15, 3).unwrap();
     for builder in [&mut lanes, &mut terms] {
         builder.add(5 * stride + 2, F::from_u64(9)).unwrap();
     }
@@ -149,11 +149,12 @@ fn intervals_add_like_per_address_terms() {
         (1_000, 600),
         (4_000, 96),
         (4_090, 6),
+        (5_003, 20_003),
     ];
     let value =
         |interval: usize, offset: usize| F::from_u64((interval * 10_000 + offset + 1) as u64);
-    let mut runs = ProfileBuilder::<F>::new(1 << 12, 3).unwrap();
-    let mut terms = ProfileBuilder::<F>::new(1 << 12, 3).unwrap();
+    let mut runs = ProfileBuilder::<F>::new(1 << 15, 3).unwrap();
+    let mut terms = ProfileBuilder::<F>::new(1 << 15, 3).unwrap();
     for builder in [&mut runs, &mut terms] {
         builder.add(1_001, F::from_u64(9)).unwrap();
     }
@@ -170,8 +171,8 @@ fn intervals_add_like_per_address_terms() {
         }
     }
     assert_eq!(runs.finish().take_dense(), terms.finish().take_dense());
-    let mut outside = ProfileBuilder::<F>::new(1 << 12, 3).unwrap();
+    let mut outside = ProfileBuilder::<F>::new(1 << 15, 3).unwrap();
     assert!(outside
-        .add_intervals(&[(4_090, 7)], |_, _, _| Ok(()))
+        .add_intervals(&[(32_760, 9)], |_, _, _| Ok(()))
         .is_err());
 }
