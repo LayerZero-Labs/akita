@@ -795,49 +795,34 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
         return Ok(F::zero());
     }
 
-    if left_stride == 1
-        && len >= 128
-        && ((right_stride == 1 && seeds.len() >= 8) || seeds.len() >= 128)
-    {
-        match right_stride {
-            1 => {
-                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 2>(
-                    left_challenges,
-                    right_challenges,
-                    len,
-                    seeds,
-                    work,
-                )
+    if left_stride == 1 && len >= 128 && seeds.len() >= 8 {
+        let low_bits = right_stride.trailing_zeros();
+        if low_bits as usize <= right_challenges.len() {
+            let odd_stride = right_stride >> low_bits;
+            macro_rules! cached_interval {
+                ($states:literal) => {
+                    return unit_intervals::eval_scaled_right::<
+                        F,
+                        LEFT_MONOMIAL,
+                        RIGHT_MONOMIAL,
+                        $states,
+                    >(
+                        left_challenges,
+                        right_challenges,
+                        right_stride,
+                        len,
+                        seeds,
+                        work,
+                    )
+                };
             }
-            3 => {
-                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 4>(
-                    left_challenges,
-                    right_challenges,
-                    len,
-                    seeds,
-                    work,
-                )
+            match odd_stride {
+                1 => cached_interval!(2),
+                3 => cached_interval!(4),
+                5 => cached_interval!(6),
+                7 => cached_interval!(8),
+                _ => {}
             }
-            5 => {
-                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 6>(
-                    left_challenges,
-                    right_challenges,
-                    len,
-                    seeds,
-                    work,
-                )
-            }
-            n if n.is_power_of_two() && n.trailing_zeros() as usize <= right_challenges.len() => {
-                return unit_intervals::eval_power_two_right::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                    left_challenges,
-                    right_challenges,
-                    n,
-                    len,
-                    seeds,
-                    work,
-                );
-            }
-            _ => {}
         }
     }
 

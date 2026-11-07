@@ -57,6 +57,10 @@ fn cached_unit_intervals_match_dense_in_all_bases() {
     differential::<false, true, 6>();
     differential::<true, false, 6>();
     differential::<true, true, 6>();
+    differential::<false, false, 8>();
+    differential::<false, true, 8>();
+    differential::<true, false, 8>();
+    differential::<true, true, 8>();
 }
 #[test]
 fn cached_unit_intervals_enforce_address_and_work_bounds() {
@@ -109,11 +113,77 @@ fn power_two_right_intervals_match_dense() {
                 })
         });
         assert_eq!(
-            unit_intervals::eval_power_two_right::<F, false, false>(
+            unit_intervals::eval_scaled_right::<F, false, false, 2>(
                 &left, &right, stride, 123, &seeds, &mut 0
             )
             .unwrap(),
             expected
         );
     }
+}
+
+fn scaled_differential<const LM: bool, const RM: bool>() {
+    let left = (0..9).map(|i| F::from_u64(i + 2)).collect::<Vec<_>>();
+    let right = (0..10).map(|i| F::from_u64(i + 11)).collect::<Vec<_>>();
+    for stride in [7, 14, 28, 56] {
+        let seeds = (0..37)
+            .map(|i| EqPairSeed {
+                left_offset: i * 7,
+                right_offset: i * stride + 3,
+                weight: F::from_u64(i as u64 + 7),
+            })
+            .collect::<Vec<_>>();
+        let expected = seeds.iter().fold(F::zero(), |sum, seed| {
+            sum + seed.weight
+                * (0..123).fold(F::zero(), |v, i| {
+                    v + basis_eval_at_index::<F, LM>(&left, seed.left_offset + i)
+                        * basis_eval_at_index::<F, RM>(&right, seed.right_offset + stride * i)
+                })
+        });
+        assert_eq!(
+            unit_intervals::eval_scaled_right::<F, LM, RM, 8>(
+                &left, &right, stride, 123, &seeds, &mut 0,
+            )
+            .unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn scaled_odd_stride_intervals_preserve_fixed_low_bits_and_clipping() {
+    scaled_differential::<false, false>();
+    scaled_differential::<false, true>();
+    scaled_differential::<true, false>();
+    scaled_differential::<true, true>();
+}
+
+#[test]
+fn scaled_intervals_validate_carry_bounds_and_work() {
+    let seed = EqPairSeed {
+        left_offset: 0,
+        right_offset: 0,
+        weight: F::one(),
+    };
+    for stride in [0, 12, 60] {
+        assert!(unit_intervals::eval_scaled_right::<F, false, false, 8>(
+            &[F::one(); 6],
+            &[F::one(); 6],
+            stride,
+            3,
+            &[seed],
+            &mut 0,
+        )
+        .is_err());
+    }
+    let mut work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
+    assert!(unit_intervals::eval_scaled_right::<F, false, false, 8>(
+        &[F::one(); 6],
+        &[F::one(); 6],
+        28,
+        3,
+        &[seed],
+        &mut work,
+    )
+    .is_err());
 }
