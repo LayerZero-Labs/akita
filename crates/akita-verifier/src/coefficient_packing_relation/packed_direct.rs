@@ -155,6 +155,7 @@ impl<E: Field> PackedDirect<E> {
         left: &[E],
         right: &[E],
     ) -> Result<E, AkitaError> {
+        let _search = akita_error::experiment_scope("search/packed_direct");
         let (left_coefficient, left_tail) = left
             .split_at_checked(self.coefficient_bits)
             .ok_or_else(invalid)?;
