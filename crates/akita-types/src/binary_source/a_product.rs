@@ -509,9 +509,5 @@ fn truncated_equality_product<E: Field>(a: &[E], b: &[E], rows: usize) -> Result
 mod tests;
 
 #[cfg(test)]
-#[path = "a_product_measurements.rs"]
-mod measurements;
-
-#[cfg(test)]
 #[path = "a_product_offset_tests.rs"]
 mod offset_tests;
