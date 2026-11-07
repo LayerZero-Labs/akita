@@ -831,7 +831,7 @@ fn explicit_commitment_transfer_between_backends() {
         let session = b"completeness/heterogeneous_compute_backends";
         let resolved = scheme.schedules().resolve_selection(selection).unwrap();
         let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
-            resolved.schedule(),
+            resolved,
             prover_data.opening_layout(),
         )
         .unwrap();

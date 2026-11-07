@@ -180,12 +180,11 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let opening_layout = multi_group_key
         .opening_layout()
         .expect("multi-group layout");
-    let schedule = proof_scheme
+    let row = proof_scheme
         .schedules()
         .resolve_key(&multi_group_key)
-        .expect("multi-group runtime schedule")
-        .schedule()
-        .clone();
+        .expect("multi-group runtime schedule");
+    let schedule = row.schedule().clone();
     let pre_points = (0..PRE_GROUPS)
         .map(|_| random_claim_point::<FF, Cfg::ExtField>(pre_num_vars, &mut point_rng))
         .collect::<Vec<_>>();
@@ -211,7 +210,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         materialize_schedule_setup_prefix_slots(&mut setup, &backend, &schedule)
             .expect("materialize schedule setup-prefix slots");
         let required_prefix_ids =
-            akita_config::required_setup_prefix_slot_ids_for_schedule(&schedule, &opening_layout)
+            akita_config::required_setup_prefix_slot_ids_for_schedule(row, &opening_layout)
                 .expect("resolve schedule setup-prefix slots");
         backend
             .import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)

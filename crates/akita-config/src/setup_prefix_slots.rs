@@ -3,10 +3,8 @@
 use std::collections::BTreeSet;
 
 use akita_error::AkitaError;
-use akita_params::{
-    active_setup_field_len, padded_setup_prefix_len, FoldSchedule, SetupPrefixSlotId,
-};
-use akita_schedules::suffix_opening_layout;
+use akita_params::{active_setup_field_len, padded_setup_prefix_len, SetupPrefixSlotId};
+use akita_schedules::{suffix_opening_layout, ResolvedScheduleRow};
 
 fn setup_prefix_slot_matches(
     slot: &SetupPrefixSlotId,
@@ -32,10 +30,14 @@ fn setup_prefix_slot_matches(
 ///
 /// The supplied root layout is also used to revalidate every frozen prefix
 /// length against the producer whose setup contribution it replaces.
+/// An explicitly admitted native root uses its retained typed-prefix geometry;
+/// every ordinary producer still uses its recomputed active setup footprint.
 pub fn required_setup_prefix_slot_ids_for_schedule(
-    schedule: &FoldSchedule,
+    row: &ResolvedScheduleRow,
     root_layout: &akita_params::OpeningClaimsLayout,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
+    row.validate_opening_layout(root_layout)?;
+    let schedule = row.schedule();
     schedule.validate_structure()?;
 
     let mut ids = BTreeSet::new();
@@ -61,12 +63,14 @@ pub fn required_setup_prefix_slot_ids_for_schedule(
                 suffix_opening_layout(producer.input_witness_len, incoming_len)?,
             )
         };
-        let natural_len =
-            active_setup_field_len(params, &opening_layout)?.max(if producer_index == 0 {
+        let natural_len = match (producer_index, row.native_root_setup_prefix_natural_len()) {
+            (0, Some(natural_len)) => natural_len,
+            _ => active_setup_field_len(params, &opening_layout)?.max(if producer_index == 0 {
                 schedule.root_accumulated_setup_prefix_len
             } else {
                 0
-            });
+            }),
+        };
         let n_prefix = padded_setup_prefix_len(natural_len);
         let commitment_id = slot_id.slot_id().expect("setup prefix group");
         setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;

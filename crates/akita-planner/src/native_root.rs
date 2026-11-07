@@ -204,6 +204,15 @@ mod tests {
         .unwrap();
         let native_row = admitted.rows().next().unwrap();
         assert_eq!(native_row.schedule(), &native);
+        assert_eq!(
+            native_row.native_root_setup_prefix_natural_len(),
+            Some(transition.setup_prefix_natural_cells())
+        );
+        let layout = row.profiles().opening_layout().unwrap();
+        assert_eq!(
+            akita_config::required_setup_prefix_slot_ids_for_schedule(native_row, &layout).unwrap(),
+            akita_config::required_setup_prefix_slot_ids_for_schedule(row, &layout).unwrap()
+        );
         assert!(admitted.to_artifact_bytes().is_err());
         assert!(admitted
             .to_verifier_view(&[native_row.selection()])
@@ -270,6 +279,59 @@ mod tests {
     }
 
     #[test]
+    fn native_setup_requirements_preserve_distinct_natural_prefix() {
+        let ordinary = base_eight_prefix_catalog();
+        let row = base_eight_prefix_row(&ordinary);
+        let policy = ordinary.catalog().policy();
+        let mut schedule = row.schedule().clone();
+        let mut prefix = *schedule.recursive_folds[0].params.setup_prefix().unwrap();
+        let ordinary_slot = prefix.slot_id().unwrap();
+        let domain = prefix.n_prefix().unwrap();
+        let native_len = if ordinary_slot.natural_len == domain {
+            domain - 1
+        } else {
+            domain
+        };
+        prefix.setup_natural_len = Some(native_len);
+        let native_slot = prefix.slot_id().unwrap();
+        schedule.recursive_folds[0]
+            .params
+            .set_setup_prefix(Some(prefix))
+            .unwrap();
+        let transition =
+            NativeRootTransition::new(schedule.root.output_witness_len, 3, native_len).unwrap();
+        assert!(
+            ResolvedScheduleRow::try_new(row.profiles().clone(), schedule.clone(), policy).is_err()
+        );
+        let catalog = ValidatedScheduleCatalog::try_new_native_root(
+            Config::schedule_family_name(),
+            [],
+            [(row.profiles().clone(), schedule, transition)],
+            policy,
+            Config::ring_challenge_config,
+        )
+        .unwrap();
+        let catalog = akita_config::TrustedScheduleCatalog::<Config>::new(
+            catalog,
+            ChunkedWitnessCfg::default_non_chunked(),
+        )
+        .unwrap();
+        let group = row.profiles().final_group.group;
+        let requirements = akita_config::SetupRequirements::from_catalog(
+            &catalog,
+            group.num_vars(),
+            group.num_polynomials(),
+        )
+        .unwrap();
+        assert_eq!(
+            native_slot.n_prefix().unwrap(),
+            ordinary_slot.n_prefix().unwrap()
+        );
+        assert_ne!(native_slot.natural_len, ordinary_slot.natural_len);
+        assert!(requirements.prefix_slot_ids().contains(&native_slot));
+    }
+
+    #[test]
     fn native_admission_rejects_changed_transition_and_cannot_export_ordinary_artifacts() {
         let ordinary = base_eight_prefix_catalog();
         let row = base_eight_prefix_row(&ordinary);
@@ -300,7 +362,24 @@ mod tests {
         changed_input.recursive_folds[0].input_witness_len += 64;
         let mut changed_prefix = schedule.clone();
         let mut prefix = *prefix;
+        let mut changed_domain = schedule.clone();
         prefix.setup_natural_len = Some(transition.setup_prefix_natural_cells() / 2);
+        changed_domain.recursive_folds[0]
+            .params
+            .set_setup_prefix(Some(prefix))
+            .unwrap();
+        // A different natural length must reject even inside the same padded domain.
+        let natural_len = transition.setup_prefix_natural_cells();
+        let changed_len = if natural_len.is_power_of_two() {
+            natural_len - 1
+        } else {
+            natural_len + 1
+        };
+        assert_eq!(
+            akita_params::padded_setup_prefix_len(changed_len),
+            prefix.n_prefix().unwrap()
+        );
+        prefix.setup_natural_len = Some(changed_len);
         changed_prefix.recursive_folds[0]
             .params
             .set_setup_prefix(Some(prefix))
@@ -322,6 +401,7 @@ mod tests {
             changed_output,
             changed_input,
             changed_prefix,
+            changed_domain,
             changed_digits,
         ] {
             assert!(transition

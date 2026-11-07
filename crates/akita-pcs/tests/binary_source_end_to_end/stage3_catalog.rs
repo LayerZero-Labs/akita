@@ -160,7 +160,7 @@ fn stage3_catalog_consumes_each_selected_root_prefix() {
             offloaded_roots += 1;
         }
         akita_config::required_setup_prefix_slot_ids_for_schedule(
-            row.schedule(),
+            row,
             &row.profiles().opening_layout().unwrap(),
         )
         .expect("all scheduled prefixes have matching producer footprints");
