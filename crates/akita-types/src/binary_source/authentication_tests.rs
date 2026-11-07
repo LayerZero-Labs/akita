@@ -75,6 +75,14 @@ fn image_and_u_commitments_authenticate_the_same_outgoing_digits() {
         )
         .unwrap();
         weights.check_table(&table).unwrap();
+        let dense = weights.materialize().unwrap();
+        for bits in [0, 6, 8, 10] {
+            assert_eq!(
+                weights.profiles(bits).unwrap().take_dense(),
+                dense,
+                "authentication segment {segment}, block bits {bits}"
+            );
+        }
         let shape = plan.repacking().segments()[segment];
         for (element, digit, coefficient) in [
             (0, 0, 0),

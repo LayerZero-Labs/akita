@@ -460,18 +460,36 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         Ok(weights)
     }
 
-    /// Add every column's weights to block profiles. When every lane is a
-    /// whole number of blocks, runs of lanes weigh their columns and fill
-    /// their rows in parallel; otherwise the addresses stream one by one.
+    /// Add compact-column weights to consecutive natural digits.
+    fn add_column_weights<'a>(
+        &self,
+        kernel: &ResidueKernelPoint<E>,
+        first: usize,
+        slots: impl Iterator<Item = &'a mut E>,
+    ) -> Result<(), AkitaError>
+    where
+        E: 'a,
+    {
+        let mut column = None;
+        let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+        for (digit, slot) in (first..).zip(slots) {
+            let current = digit / BINARY_DIGIT_COMMITMENT_DEGREE;
+            if column != Some(current) {
+                weights = self.column_weights(kernel, current)?;
+                column = Some(current);
+            }
+            *slot += weights[digit % BINARY_DIGIT_COMMITMENT_DEGREE];
+        }
+        Ok(())
+    }
+
+    /// Add columns by disjoint profile rows, including lanes narrower than
+    /// a profile block. Compact digit positions exclude every padding tail.
+    #[tracing::instrument(skip_all, name = "root_authentication_profiles", fields(
+        columns = self.columns, rank = self.label.rank, segments = self.lanes.len(), block_width = profiles.width()
+    ))]
     pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
         let width = profiles.width();
-        if self
-            .lanes
-            .iter()
-            .any(|lanes| !lanes.stride().is_multiple_of(width))
-        {
-            return self.visit(|address, value| profiles.add(address, value));
-        }
         let kernel = ResidueKernelPoint::new(self.alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
         // The compact digit index of the current segment's first coefficient.
         let mut first = 0usize;
@@ -489,25 +507,28 @@ impl<E: Field> DigitAuthenticationWeights<E> {
                     bases.push(lanes.base(element, digit)?);
                 }
             }
-            profiles.add_lanes(&bases, degree, |run, rows| {
-                let mut digit =
-                    checked::mul_add(run.start, degree, first).ok_or(AkitaError::InvalidProof)?;
-                let mut column = None;
-                let mut weights = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-                let lane_rows = rows.len() / run.len().max(1);
-                for lane in rows.chunks_exact_mut(lane_rows) {
-                    for slot in lane.iter_mut().flat_map(|row| row.iter_mut()).take(degree) {
-                        let current = digit / BINARY_DIGIT_COMMITMENT_DEGREE;
-                        if column != Some(current) {
-                            weights = self.column_weights(&kernel, current)?;
-                            column = Some(current);
-                        }
-                        *slot += weights[digit % BINARY_DIGIT_COMMITMENT_DEGREE];
-                        digit += 1;
-                    }
-                }
-                Ok(())
-            })?;
+            if lanes.stride().is_multiple_of(width) {
+                profiles.add_lanes(&bases, degree, |run, rows| {
+                    let digit = checked::mul_add(run.start, degree, first)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let lane_rows = rows.len() / run.len().max(1);
+                    self.add_column_weights(
+                        &kernel,
+                        digit,
+                        rows.chunks_exact_mut(lane_rows).flat_map(|lane| {
+                            lane.iter_mut().flat_map(|row| row.iter_mut()).take(degree)
+                        }),
+                    )
+                })?;
+            } else {
+                let intervals = bases.iter().map(|&base| (base, degree)).collect::<Vec<_>>();
+                profiles.add_intervals(&intervals, |lane, offset, row| {
+                    let digit = checked::mul_add(lane, degree, first)
+                        .and_then(|start| checked::sum([start, offset]))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    self.add_column_weights(&kernel, digit, row.iter_mut())
+                })?;
+            }
             first = checked::mul_add(bases.len(), degree, first).ok_or(AkitaError::InvalidProof)?;
         }
         if first.div_ceil(BINARY_DIGIT_COMMITMENT_DEGREE) != self.columns {
