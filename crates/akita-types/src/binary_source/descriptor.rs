@@ -44,7 +44,7 @@ impl BinarySourceDescriptor {
                 actual: polynomials.len(),
             });
         }
-        akita_error::checked::product([polynomials.len(), index.padded_carriers(), 256])
+        jolt_algebra::checked::product([polynomials.len(), index.padded_carriers(), 256])
             .ok_or_else(|| AkitaError::InvalidInput("binary group MLE size overflow".into()))?;
         for (i, id) in polynomials.iter().enumerate() {
             if polynomials.iter().take(i).any(|previous| previous == id) {
@@ -160,7 +160,7 @@ impl BinarySourceDescriptor {
             .len()
             .checked_sub(reader.position() as usize)
             .ok_or_else(bad)?;
-        if akita_error::checked::product([count, 32]) != Some(remaining) {
+        if jolt_algebra::checked::product([count, 32]) != Some(remaining) {
             return Err(bad());
         }
         let index = BinaryIndexMap::new(ell, logical, padded, columns).map_err(|_| bad())?;

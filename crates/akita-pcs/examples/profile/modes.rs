@@ -18,8 +18,8 @@ use akita_params::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
-use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{Fold, Unreduced, WithCommitAccumulator};
 
 type F = fp128::Field;
 

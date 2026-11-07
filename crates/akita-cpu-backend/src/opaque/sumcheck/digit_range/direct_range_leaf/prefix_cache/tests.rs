@@ -6,7 +6,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::DigitRangeEqualityPoint;
-use jolt_field::{Field, One, Prime128Offset275, Ring, Unreduced, Zero};
+use jolt_algebra::{Field, One, Prime128Offset275, Ring, Unreduced, Zero};
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
 type F = Prime128Offset275;
@@ -612,7 +612,7 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
 
 #[test]
 fn quartic_prefix_rejects_characteristic_three_at_construction() {
-    type F3 = jolt_field::Fp32<3>;
+    type F3 = jolt_algebra::Fp32<3>;
     assert!(matches!(
         RangePrefixBasis::<F3>::new(RangePoly::Quartic),
         Err(AkitaError::InvalidInput(message))

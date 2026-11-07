@@ -5,15 +5,15 @@
 //! commitment. The caller fixes this plan and that commitment before choosing
 //! any row functional (in particular before the projection seed).
 
-use akita_algebra::ring::{
-    shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial, ResidueKernelPoint,
-};
+use akita_algebra::ring::ResidueKernelPoint;
+use akita_algebra::trinomial::{shifted_remainder_evaluations, MinusTrinomial, PlusTrinomial};
 use akita_challenges::FoldChallengeDistribution;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{RelationPolynomial, RelationPolynomialKind, TrinomialSign};
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_iter, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_chunks, cfg_iter, Field};
 
 use crate::binary_source::BinarySourceDescriptor;
 use crate::root_repacking::RootCoefficientRepacking;

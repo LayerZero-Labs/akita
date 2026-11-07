@@ -12,7 +12,7 @@ use akita_params::{
     RingRelationMode,
 };
 use akita_types::RingVec;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Semantic source of one compression chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

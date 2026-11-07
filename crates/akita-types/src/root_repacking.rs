@@ -10,11 +10,12 @@
 
 use core::ops::Range;
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::RelationRowGeometry;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_iter, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_iter, Field};
 
 /// One bounded coefficient family in the root witness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -377,7 +378,7 @@ impl RootCoefficientRepacking {
 mod tests {
     use super::*;
     use akita_params::RelationPolynomial;
-    use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
     use std::collections::BTreeSet;
 
     type F = Prime128OffsetA7F7;

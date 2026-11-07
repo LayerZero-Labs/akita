@@ -2,7 +2,7 @@
 use crate::{factor_aligned_role_tensors, role_tensors_are_aligned, SetupContributionPlan};
 use akita_error::AkitaError;
 use akita_params::RelationAddressGeometry;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::sync::Arc;
 /// Coefficient functional shared by direct setup scans and external accumulation.
 ///

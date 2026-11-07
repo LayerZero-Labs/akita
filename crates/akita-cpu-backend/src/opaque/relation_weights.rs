@@ -5,7 +5,7 @@ mod compiler;
 mod lifted_sinks;
 mod schedule;
 mod sinks;
-use lifted_sinks::{scatter_et, scatter_z, split_disjoint_mut};
+use lifted_sinks::{scatter_et, scatter_randomness, scatter_z, split_disjoint_mut};
 #[path = "relation_weights/reduced_dense.rs"]
 mod reduced_dense;
 #[path = "relation_weights/setup_columns.rs"]
@@ -35,8 +35,8 @@ use akita_types::{
     RelationRangeImagePlan, RingRelationInstance,
 };
 use compiler::RelationWeightCompilation;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use setup_columns::{
     contract_setup_columns, contract_setup_residue_columns, SetupColumnValues, SetupRows,
 };
@@ -335,10 +335,11 @@ where
         let challenges = group_source.challenges;
         let total_blocks = challenges.len();
         let challenge_lanes = {
-            let lane_count = akita_error::checked::product([total_blocks, lane_alpha_powers.len()])
-                .ok_or_else(|| {
-                    AkitaError::Internal("relation challenge lane count overflow".into())
-                })?;
+            let lane_count =
+                jolt_algebra::checked::product([total_blocks, lane_alpha_powers.len()])
+                    .ok_or_else(|| {
+                        AkitaError::Internal("relation challenge lane count overflow".into())
+                    })?;
             let mut lanes = Vec::with_capacity(lane_count);
             for index in 0..total_blocks {
                 let evaluation = challenges.eval_at_pows::<F, E>(index, &group_alpha_pows_a)?;
@@ -393,6 +394,29 @@ where
             d_setup_accs.as_ref(),
             b_setup_accs.as_ref(),
         )?;
+        let slice_geometry = &group_plan.witness.slice_geometry;
+        let randomness_columns = slice_geometry.randomness_columns();
+        if randomness_columns != 0 {
+            let b_setup = b_setup_accs.as_ref().ok_or_else(|| {
+                AkitaError::UnsupportedSchedule(
+                    "hiding randomness needs direct setup contributions".into(),
+                )
+            })?;
+            let message_width = slice_geometry.message_input_width();
+            scatter_randomness(
+                weights.lanes_mut(),
+                compilation.witness_layout.randomness().outer(group_index),
+                group_d_b,
+                relation_coefficient_block_len,
+                &lane_alpha_powers,
+                (0..slice_geometry.total_randomness_columns()?).map(|column| {
+                    b_setup.get_scalar(
+                        column / randomness_columns,
+                        message_width + column % randomness_columns,
+                    )
+                }),
+            )?;
+        }
         // These setup-column accumulators can be large and are not used by
         // the z-hat phase below. Release them at the named phase boundary.
         drop(challenge_lanes);
@@ -441,6 +465,35 @@ where
             &opening_evaluations,
             &lane_alpha_powers,
             a_setup.as_ref(),
+        )?;
+    }
+    let d_randomness = &compilation.plan.d_randomness_columns;
+    if !d_randomness.is_empty() {
+        let setup = compilation.setup_sources.as_ref().ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(
+                "hiding randomness needs direct setup contributions".into(),
+            )
+        })?;
+        let d_setup = contract_setup_columns(
+            &setup.d,
+            d_randomness.clone(),
+            &compilation.plan.d_row_weights,
+            1,
+            1,
+            |coefficients| {
+                Ok(vec![MulBaseUnreduced::dot_base(
+                    &alpha_pows_d,
+                    coefficients,
+                )])
+            },
+        )?;
+        scatter_randomness(
+            weights.lanes_mut(),
+            compilation.witness_layout.randomness().opening(),
+            d_d,
+            relation_coefficient_block_len,
+            &lane_alpha_powers,
+            (0..d_randomness.len()).map(|column| d_setup.get_scalar(0, column)),
         )?;
     }
     let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.open().digits.log_basis)

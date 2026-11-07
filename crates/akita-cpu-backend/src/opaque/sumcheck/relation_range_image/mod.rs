@@ -82,7 +82,7 @@
 //! `  + w(r_stage2) * p(r_stage2)`
 //! `  + eq(tau1, EvaluationTrace_row_index) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
-//! exactly the oracle returned by `expected_output_claim()`. The prover fuses
+//! exactly the oracle whose weights `oracle_weights()` returns. The prover fuses
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 
@@ -92,9 +92,9 @@ use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver,
 };
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Ring, Zero};
-use jolt_field::{Fold, Unreduced};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{Field, Ring, Zero};
+use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::UnivariatePoly;
 use std::mem;
 

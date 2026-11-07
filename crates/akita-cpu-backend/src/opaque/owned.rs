@@ -15,7 +15,7 @@ use akita_error::AkitaError;
 use akita_params::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
 use std::sync::Arc;
 
 /// An immutable imported source owned by one backend.
@@ -154,7 +154,7 @@ pub(super) struct OwnedPolynomials<P> {
 impl<F, E, P> PrivateSource<F, E> for OwnedPolynomials<P>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>
@@ -400,7 +400,7 @@ trait SourceImport<F: Field + CanonicalEncoding, E: Field>:
 impl<F, E, P> SourceImport<F, E> for P
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>
@@ -434,7 +434,7 @@ where
 impl<F, E> CpuBackend<F, E>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>
@@ -510,23 +510,23 @@ impl<F: Field, E> CpuBackend<F, E> {
 impl<F: Field + CanonicalEncoding> SourceCoefficients<F> for crate::DensePoly<F> {
     fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
         let len =
-            akita_error::checked::pow2(RootPolyMeta::<F>::num_vars(self)).ok_or_else(|| {
+            jolt_algebra::checked::pow2(RootPolyMeta::<F>::num_vars(self)).ok_or_else(|| {
                 AkitaError::Internal("dense source coefficient extent overflow".into())
             })?;
-        Ok(std::borrow::Cow::Borrowed(
-            self.field_coeffs().get(..len).ok_or_else(|| {
-                AkitaError::Internal(
-                    "dense source coefficients do not cover the declared arity".into(),
-                )
-            })?,
-        ))
+        if let Some(full) = self.field_coeffs().get(..len) {
+            return Ok(std::borrow::Cow::Borrowed(full));
+        }
+        let mut full = Vec::with_capacity(len);
+        full.extend_from_slice(self.field_coeffs());
+        full.resize(len, F::zero());
+        Ok(std::borrow::Cow::Owned(full))
     }
 }
 impl<F: Field + CanonicalEncoding, I: crate::OneHotIndex> SourceCoefficients<F>
     for crate::OneHotPoly<F, I>
 {
     fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
-        let len = akita_error::checked::product([self.onehot_k(), self.indices().len()])
+        let len = jolt_algebra::checked::product([self.onehot_k(), self.indices().len()])
             .ok_or_else(|| {
                 AkitaError::Internal("one-hot source coefficient extent overflow".into())
             })?;

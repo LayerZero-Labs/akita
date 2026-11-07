@@ -15,7 +15,7 @@ use akita_params::{
     BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits,
     GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
 };
-use jolt_field::{Prime128Offset275 as F, Ring, Zero};
+use jolt_algebra::{Prime128Offset275 as F, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 /// One small ordinary group with real audited table cells, as the mixed root
@@ -54,6 +54,7 @@ fn ordinary_profile() -> GroupCommitPhaseParams {
         group: PolynomialGroupLayout::singleton(10),
         blocks: BlockGeometry::new(8, 2, 4),
         outer_slice_count: CommitmentSliceCount::ONE,
+        randomness_columns: 0,
         inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
         outer: RoleParams::new(GadgetDigits::new(3, 43), outer),
     };

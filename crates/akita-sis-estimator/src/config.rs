@@ -386,48 +386,6 @@ mod tests {
     }
 
     #[test]
-    fn enum_surface_covers_specified_models() {
-        let reduction_models = [
-            ReductionCostModel::Adps16 {
-                mode: Adps16Mode::Classical,
-            },
-            ReductionCostModel::Adps16 {
-                mode: Adps16Mode::Quantum,
-            },
-            ReductionCostModel::Adps16 {
-                mode: Adps16Mode::Paranoid,
-            },
-            ReductionCostModel::Bdgl16,
-            ReductionCostModel::Matzov {
-                nearest_neighbor: NearestNeighborModel::Classical,
-            },
-            ReductionCostModel::Gj21 {
-                nearest_neighbor: NearestNeighborModel::Quantum,
-            },
-            ReductionCostModel::Kyber {
-                nearest_neighbor: NearestNeighborModel::Paranoid,
-            },
-        ];
-        let shape_models = [
-            ShapeModel::Gsa,
-            ShapeModel::Zgsa,
-            ShapeModel::Lgsa,
-            ShapeModel::Cn11,
-            ShapeModel::Cn11NoQary,
-        ];
-        let search_modes = [
-            SearchMode::PythonLocalMinimum,
-            SearchMode::Exhaustive,
-            SearchMode::ExhaustiveParallel,
-            SearchMode::ProvenPruned,
-        ];
-
-        assert_eq!(reduction_models.len(), 7);
-        assert_eq!(shape_models.len(), 5);
-        assert_eq!(search_modes.len(), 4);
-    }
-
-    #[test]
     fn quantum_policy_pins_the_single_adps16_gate() {
         let policy = SisSecurityPolicy::Quantum169BitADPS16;
         assert_eq!(

@@ -1,4 +1,5 @@
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::LabiniusRootShape;
 use crate::sis::labinius::{check_labinius_proof_prime_units, labinius_image_digit_bound};

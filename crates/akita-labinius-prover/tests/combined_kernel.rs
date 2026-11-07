@@ -12,7 +12,7 @@ use akita_labinius_verifier::{
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_transcript::ChallengeCodec;
 use common::combined::CombinedRootSumcheck;
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, Ext2, ExtField, Field, One, Prime128Offset275, Prime64Offset59, Ring, Zero,
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};

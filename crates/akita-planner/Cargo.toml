@@ -10,6 +10,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }

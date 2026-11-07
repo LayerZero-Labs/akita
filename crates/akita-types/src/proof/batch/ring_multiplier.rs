@@ -4,7 +4,7 @@ use super::subfield::{subfield_basis_pairs, SubfieldMultiplierOpeningPoint};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_params::RingOpeningPoint;
-use jolt_field::{ExtField, Field};
+use jolt_algebra::{ExtField, Field};
 
 /// Ring-level opening point whose outer weights act by ring multiplication.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,7 +289,7 @@ impl<F: Field> RingMultiplierOpeningPoint<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fp32, FpExt4, One, Ring, Zero};
+    use jolt_algebra::{Fp32, FpExt4, One, Ring, Zero};
 
     type F = Fp32<251>;
     type E = FpExt4<F>;

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use jolt_field::{Field, Fp64, One, Ring, Zero};
+use jolt_algebra::{Field, Fp64, One, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use rand::rngs::StdRng;
 use rand::SeedableRng;

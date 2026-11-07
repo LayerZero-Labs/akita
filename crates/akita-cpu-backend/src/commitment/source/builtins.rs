@@ -1,9 +1,14 @@
 use super::compiler::{checked_logical_len, validate_plan_extents};
 use super::*;
+use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
 
 impl<F: Field> DenseCoefficientSource<F> for crate::DensePoly<F> {
     fn coefficients(&self) -> &[F] {
         self.field_coeffs()
+    }
+
+    fn nonzero_coefficient_len(&self) -> usize {
+        self.nonzero_coeff_len()
     }
 }
 
@@ -12,7 +17,8 @@ impl<F: Field> CommitmentSource<F> for crate::DensePoly<F> {
         let num_vars = crate::opaque::RootPolyMeta::<F>::num_vars(self);
         CommitSourceDescriptor::new(
             num_vars,
-            self.field_coeffs().len(),
+            checked_logical_len(num_vars)?
+                .max(SUPPORTED_COMMITMENT_RING_DIMS[SUPPORTED_COMMITMENT_RING_DIMS.len() - 1]),
             checked_logical_len(num_vars)?,
             CommitSourceClass::Dense,
             "akita_dense",
@@ -28,7 +34,7 @@ impl<F: Field> CommitmentSource<F> for crate::DensePoly<F> {
         F: CanonicalEncoding,
     {
         Ok(crate::opaque::centered_reach_of_field_coeffs(
-            self.field_coeffs(),
+            &self.field_coeffs()[..self.nonzero_coeff_len()],
             modulus,
             centering_threshold,
         ))

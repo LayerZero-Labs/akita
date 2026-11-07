@@ -1,4 +1,5 @@
 use super::FoldVerifyOutput;
+use crate::claims::ClaimReplay;
 use akita_error::AkitaError;
 use akita_params::{
     BasisMode, CommittedGroupParams, FoldParams, OpeningClaimsLayout, TerminalFoldParams,
@@ -7,22 +8,23 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
 use akita_types::CommittedGroup;
 use akita_types::{AkitaVerifierSetup, FpExtEncoding, OpeningClaims};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Extension seam: dispatch a root by its declared group relation kind.
 /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_root<F, E>(
+pub(super) fn verify_root<F, E, G: ClaimReplay<F, E>>(
     setup: &AkitaVerifierSetup<F>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     claims: &OpeningClaims<'_, E, &CommittedGroup<F>>,
+    openings: Vec<G::Claim>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&FoldParams>,
     terminal: &TerminalFoldParams,
     setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
-) -> Result<FoldVerifyOutput<F, E>, AkitaError>
+) -> Result<FoldVerifyOutput<F, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F>
@@ -38,20 +40,29 @@ where
             if basis != BasisMode::Lagrange {
                 return Err(AkitaError::InvalidProof);
             }
-            super::binary_root::verify_root(
-                setup,
-                grinding,
-                claims,
-                opening_batch,
-                root_lp,
-                next_fold_params,
-            )
+            let root = grinding.clear_replay(|grinding| {
+                super::binary_root::verify_root(
+                    setup,
+                    grinding,
+                    claims,
+                    opening_batch,
+                    root_lp,
+                    next_fold_params,
+                )
+            })?;
+            Ok(FoldVerifyOutput {
+                challenges: root.challenges,
+                setup_prefix_opening: root.setup_prefix_opening,
+                next_witness: root.next_witness,
+                opening: G::clear_path(root.opening)?,
+            })
         }
         Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
             super::ordinary_root::verify_root(
                 setup,
                 grinding,
                 claims,
+                openings,
                 opening_batch,
                 basis,
                 root_lp,

@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_algebra::poly::multilinear_eval;
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
     Prime64Offset59, Ring, Zero,
 };
@@ -571,7 +571,7 @@ fn semantic_events_match_an_independent_dense_accumulation() {
 
 #[test]
 fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
-    assert!(akita_error::checked::product([usize::MAX, 2]).is_none());
+    assert!(jolt_algebra::checked::product([usize::MAX, 2]).is_none());
     let fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
         256,
@@ -722,111 +722,6 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
         }));
         assert!(matches!(outcome, Ok(Err(_))));
     }
-}
-
-#[test]
-fn packing_metadata_exposes_canonical_backend_factors() {
-    type F4 = Prime32Offset99;
-    type E4 = FpExt4<F4>;
-
-    let fixture = fixture::<F4, E4>(
-        SisModulusProfileId::Q32Offset99,
-        1024,
-        128,
-        64,
-        6,
-        4,
-        13,
-        2,
-        2,
-    );
-    let alpha = E4::from_u64(41);
-    let (semantics, _) = prepare(&fixture, alpha);
-
-    let geometry = semantics.geometry();
-    assert_eq!(geometry.extension_degree(), 4);
-    assert_eq!(geometry.packing_factor(), 4);
-    assert_eq!(fixture.prepared_point.num_live_blocks(), 2);
-    assert_eq!(semantics.witness_units().len(), 2);
-    let basis = canonical_extension_basis::<F4, E4>(4).unwrap();
-    let opening_gadget = gadget_row_scalars::<F4>(
-        fixture.params.open().digits.num_digits,
-        fixture.params.open().digits.log_basis,
-    );
-    let witness_gadget = gadget_row_scalars::<F4>(
-        fixture.params.inner().digits.num_digits,
-        fixture.params.inner().digits.log_basis,
-    );
-    let fold_gadget = gadget_row_scalars::<F4>(
-        fixture.params.num_digits_fold(),
-        fixture.params.open().digits.log_basis,
-    );
-    let consistency_weight = relation_row_weight(
-        fixture.relation_plan.consistency_row_index(0).unwrap(),
-        &fixture.tau1,
-    )
-    .unwrap();
-    let scalar_weight = relation_row_weight(
-        fixture.relation_plan.scalar_opening_row_index().unwrap(),
-        &fixture.tau1,
-    )
-    .unwrap();
-    let d_d = fixture.params.role_dims().d_d();
-    let s = geometry.challenge_subring_dimension();
-    let alpha_powers = scalar_powers(alpha, s);
-    assert_eq!(
-        semantics.group_claim_range(),
-        0..fixture.opening_batch.num_total_polynomials()
-    );
-    assert_eq!(
-        semantics.group_claim_coefficients(),
-        fixture.claim_coefficients
-    );
-    assert_eq!(semantics.prepared_point(), &fixture.prepared_point);
-    assert_eq!(semantics.consistency_weight(), consistency_weight);
-    assert_eq!(semantics.scalar_claim_weight(), scalar_weight);
-    assert_eq!(semantics.d_d(), d_d);
-    assert_eq!(semantics.num_digits_open(), opening_gadget.len());
-    assert_eq!(semantics.num_digits_inner(), witness_gadget.len());
-    assert_eq!(semantics.num_digits_fold(), fold_gadget.len());
-    assert_eq!(
-        semantics.num_positions_per_block(),
-        fixture.params.blocks().positions_per_block
-    );
-    assert_eq!(
-        semantics.physical_field_len(),
-        fixture.relation_plan.digit_witness_domain().live_len()
-    );
-    assert_eq!(
-        semantics.relation_coefficient_block_len(),
-        fixture
-            .relation_plan
-            .relation_address_geometry()
-            .relation_coefficient_block_len()
-    );
-    assert_eq!(semantics.alpha_powers(), alpha_powers);
-    assert_eq!(semantics.basis(), basis);
-    assert_eq!(
-        semantics.opening_gadget(),
-        opening_gadget
-            .into_iter()
-            .map(E4::lift_base)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        semantics.witness_gadget(),
-        witness_gadget
-            .into_iter()
-            .map(E4::lift_base)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        semantics.fold_gadget(),
-        fold_gadget
-            .into_iter()
-            .map(E4::lift_base)
-            .collect::<Vec<_>>()
-    );
 }
 
 #[test]

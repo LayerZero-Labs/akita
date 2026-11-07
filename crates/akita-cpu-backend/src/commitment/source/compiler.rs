@@ -82,7 +82,9 @@ fn validate_materialized_representation<F: Field>(
     }
     match representation {
         PolynomialRepresentation::Dense(DenseRepresentation::Coefficients(source)) => {
-            if source.coefficients().len() != descriptor.total_coefficient_len() {
+            if source.coefficients().len() > descriptor.total_coefficient_len()
+                || source.nonzero_coefficient_len() > source.coefficients().len()
+            {
                 return Err(AkitaError::InvalidSize {
                     expected: descriptor.total_coefficient_len(),
                     actual: source.coefficients().len(),

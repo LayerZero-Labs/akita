@@ -23,7 +23,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
             )?;
             return crate::binary_source::binary_root_grinding_plan(
                 &ordinary,
-                &[akita_error::checked::product([
+                &[jolt_algebra::checked::product([
                     manifest.descriptor().index_map().columns(),
                     manifest.descriptor().polynomials().len(),
                 ])

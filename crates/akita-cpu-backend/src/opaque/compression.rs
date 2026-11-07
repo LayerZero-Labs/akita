@@ -7,7 +7,7 @@ use akita_params::{
     CompressionTerminalPayload, PackedNegativeBinary, RingRelationMode,
 };
 use akita_types::RingVec;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -499,7 +499,7 @@ mod tests {
     use crate::opaque::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
     use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
-    use jolt_field::{Prime128OffsetA7F7, Ring};
+    use jolt_algebra::{Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
 

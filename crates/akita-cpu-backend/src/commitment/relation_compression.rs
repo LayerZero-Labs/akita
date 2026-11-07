@@ -8,7 +8,7 @@ use crate::opaque::{CpuBackend, OperationCtx};
 use akita_error::AkitaError;
 use akita_params::{CompressionChainPlan, RingRelationMode};
 use akita_types::RingVec;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Final compression-map payload (`p_F` or `p_H`) and private witness material.
 /// The payload is unrelated to the protocol's terminal fold.
@@ -98,7 +98,7 @@ mod tests {
     use super::*;
     use crate::AkitaProverSetup;
     use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
-    use jolt_field::{Prime128OffsetA7F7, Ring};
+    use jolt_algebra::{Prime128OffsetA7F7, Ring};
 
     #[test]
     fn portable_relation_compression_matches_executor() {

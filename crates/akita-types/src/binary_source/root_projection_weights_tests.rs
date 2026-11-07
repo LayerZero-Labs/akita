@@ -2,11 +2,11 @@ use super::*;
 use crate::binary_source::{
     binary_scalar_challenges, BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor,
 };
-use akita_algebra::ring::trinomial::module_map::pack_signed_components;
-use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
+use akita_algebra::trinomial::module_map::pack_signed_components;
+use akita_algebra::trinomial::signed::signed_trinomial_product;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::binary_setup::BinaryFieldProfile;
-use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275 as F, Ring, Zero};
 
 #[test]
 fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_rows() {
@@ -127,7 +127,7 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
     .is_err());
 }
 
-use jolt_field::{Ext2, Prime64Offset59};
+use jolt_algebra::{Ext2, Prime64Offset59};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 type E64 = Ext2<Prime64Offset59>;
 

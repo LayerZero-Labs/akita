@@ -28,13 +28,14 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::ResidueKernelPoint;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::{BinaryFieldProfile, SetupStreamLabel};
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::AkitaSerialize;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks_mut, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_chunks_mut, Field};
 
 use super::a_product::{DEGREE as A_DEGREE, STRIDE as A_STRIDE};
 use super::authentication::{setup_entry, BINARY_DIGIT_COMMITMENT_DEGREE};

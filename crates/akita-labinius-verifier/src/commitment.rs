@@ -4,10 +4,11 @@
 //! 648, minus trinomial, an admitted limb prime) and exact integers otherwise.
 //! Nothing here touches the proof field.
 
-use akita_algebra::ring::TrinomialModulus;
+use akita_algebra::TrinomialModulus;
 use akita_algebra::{MinusTrinomial, TrinomialLimbAccumulator, TrinomialLimbDomain};
 use akita_challenges::BinaryChallenge;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

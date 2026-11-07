@@ -8,7 +8,7 @@ use crate::opaque::plans::RingSwitchRelationRows;
 
 use akita_error::AkitaError;
 
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.
 pub(crate) trait RingSwitchRelationKernel<S, F, const D: usize>:

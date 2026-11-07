@@ -344,9 +344,9 @@ chapter shows the full coefficient grid and the current packed proof relation.
 
 | Question | Primary source |
 | --- | --- |
-| How is a ring element stored and multiplied? | `crates/akita-algebra/src/ring/cyclotomic.rs` |
-| Which extension types exist? | `jolt-field::solinas` (`FpExt2`, `FpExt4`, and `FpExt8`) |
-| How are base values lifted into an extension? | `jolt_field::ExtField` and the Solinas extension implementations |
+| How is a ring element stored and multiplied? | `jolt-algebra/src/ring/cyclotomic.rs` |
+| Which extension types exist? | `jolt-algebra::solinas` (`FpExt2`, `FpExt4`, and `FpExt8`) |
+| How are base values lifted into an extension? | `jolt_algebra::ExtField` and the Solinas extension implementations |
 | Which field and extension does a preset use? | `crates/akita-config/src/proof_optimized/` |
 | Which ring dimensions may a preset schedule use? | The `A_RING_DIMENSIONS`, `B_RING_DIMENSIONS`, and `D_RING_DIMENSIONS` declarations in each preset |
 | How is subring coefficient packing validated? | `crates/akita-params/src/layout/subring_packing_geometry.rs` and `crates/akita-types/src/subring_coefficient_packing.rs` |

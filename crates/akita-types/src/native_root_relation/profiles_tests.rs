@@ -1,6 +1,6 @@
 use crate::binary_source::{root_weight_fixtures, RootFixtureField as F};
 use akita_algebra::poly::fold_evals_in_place;
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 /// Every block width, including widths that send the 256-stride lanes
 /// through the per-address fallback, folds like the materialized table.

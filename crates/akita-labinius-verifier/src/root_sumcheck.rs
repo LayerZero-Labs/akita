@@ -10,12 +10,13 @@
 //! base coordinates, as in `akita_sumcheck`.
 
 use crate::channel::ClearChannel;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
 use akita_sumcheck::{
     verify_sumcheck_rounds, SumcheckRoundResult, SumcheckShape, SumcheckVerifierChannel,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Stored digits of either committed table lie in `[0, DIGIT_ALPHABET)`.
 const DIGIT_ALPHABET: u64 = 1 << LABINIUS_BALANCED_LOG_BASIS;

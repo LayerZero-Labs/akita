@@ -5,7 +5,8 @@ use crate::{
     CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
     PolynomialGroupLayout,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 /// Physical coefficient representation authenticated by a commitment.
 ///
@@ -93,6 +94,14 @@ pub struct GroupCommitPhaseParams {
     pub inner: crate::InnerRoleParams,
     /// B/`t_hat` role: gadget decomposition and audited matrix identity.
     pub outer: crate::OuterRoleParams,
+    /// Hiding-randomness ring columns appended to every B slice.
+    ///
+    /// Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
+    /// schedule or descriptor format carries it, so every decoded or planned
+    /// profile has width 0 and the B matrix width is exactly the message
+    /// columns.
+    #[serde(skip)]
+    pub randomness_columns: usize,
 }
 
 impl GroupCommitPhaseParams {
@@ -140,6 +149,7 @@ impl GroupCommitPhaseParams {
                 ),
                 params.outer().matrix,
             ),
+            randomness_columns: params.own_group().profile.randomness_columns,
         }
     }
 
@@ -180,7 +190,8 @@ impl GroupCommitPhaseParams {
             self.outer.digits.num_digits,
             self.inner.matrix.ring_dimension(),
             self.outer.matrix.ring_dimension(),
-        )
+        )?
+        .with_randomness_columns(self.randomness_columns)
     }
 
     /// Compression chain of this group's complete stacked B image.

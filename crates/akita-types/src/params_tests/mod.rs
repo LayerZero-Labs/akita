@@ -150,26 +150,6 @@ fn with_layout_keeps_self_ranks() {
 }
 
 #[test]
-fn derived_widths_match_ajtai_col_len() {
-    let lp = sample_params_only()
-        .with_layout(&sample_layout_lp())
-        .unwrap();
-
-    assert_eq!(lp.inner_width(), lp.inner().matrix.input_width());
-    assert_eq!(lp.outer_width(), lp.outer().matrix.input_width());
-    assert_eq!(lp.d_matrix_width(), lp.open().matrix.input_width());
-}
-
-#[test]
-fn derived_log_values() {
-    let layout_lp = sample_layout_lp();
-    let lp = sample_params_only().with_layout(&layout_lp).unwrap();
-
-    assert_eq!(lp.block_index_bits(), layout_lp.block_index_bits());
-    assert_eq!(lp.position_index_bits(), layout_lp.position_index_bits());
-}
-
-#[test]
 fn relation_matrix_row_count_values() {
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp())

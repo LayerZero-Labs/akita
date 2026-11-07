@@ -17,7 +17,7 @@ pub(crate) fn direct_setup_scan_work_elements(
     natural_field_len: usize,
     base_ring_dim: usize,
 ) -> Result<usize, AkitaError> {
-    let rings = akita_error::checked::div_ceil(natural_field_len, base_ring_dim)
+    let rings = jolt_algebra::checked::div_ceil(natural_field_len, base_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan ring count overflow".into()))?;
     natural_field_len
         .checked_mul(2)
@@ -34,8 +34,9 @@ use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    BalancedSignedDigitFoldPolicy, FoldFailureTarget, FoldWitnessNorms, HonestFoldPolicy,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams,
 };
 use akita_params::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,

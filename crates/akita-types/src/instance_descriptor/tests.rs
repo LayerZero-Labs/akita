@@ -5,7 +5,7 @@ use akita_params::{
     GrindingSite, InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection,
     ScheduleRowDigest, TerminalFoldParams, TerminalResponseShape,
 };
-use jolt_field::Prime32Offset99;
+use jolt_algebra::Prime32Offset99;
 
 // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
 const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
@@ -80,7 +80,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             sis_modulus_profile: SisModulusProfileId::Q32Offset99,
             compression_policy: COMPRESSION_POLICY,
             setup_seed_digest: [1; 32],
-            protocol_features: ProtocolFeatureSet::current(),
+            protocol_features: ProtocolFeatureSet::default(),
         },
         PlanSection::from_schedule(sample_selection(), &sample_schedule()),
         TranscriptGrindingBinding::for_plan(&grinding_plan).expect("grinding binding"),
@@ -110,14 +110,26 @@ fn rejects_removed_q16_sis_modulus_profile_tag() {
     assert!(matches!(err, SerializationError::InvalidData(_)));
 }
 
+/// The descriptor decodes only against the feature set it was bound with: a
+/// clear configuration rejects a zero-knowledge descriptor and the reverse.
 #[test]
-fn setup_section_rejects_mismatched_zk_protocol_feature() {
-    let mut descriptor = sample_descriptor();
-    descriptor.setup.protocol_features.zk = true;
-    assert!(matches!(
-        descriptor.check(),
-        Err(SerializationError::InvalidData(_))
-    ));
+fn setup_section_rejects_a_mismatched_zk_protocol_feature() {
+    let clear = ProtocolFeatureSet { zk: false };
+    let zk = ProtocolFeatureSet { zk: true };
+    for (bound, expected) in [(clear, zk), (zk, clear)] {
+        let mut descriptor = sample_descriptor();
+        descriptor.setup.protocol_features = bound;
+        let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
+        assert_eq!(
+            AkitaInstanceDescriptor::deserialize_uncompressed_exact(&bytes, &bound)
+                .expect("decodes against its own features"),
+            descriptor
+        );
+        assert!(matches!(
+            AkitaInstanceDescriptor::deserialize_uncompressed_exact(&bytes, &expected),
+            Err(SerializationError::InvalidData(_))
+        ));
+    }
 }
 
 /// A deserialized descriptor cannot carry a committed-source bound the digit
@@ -182,7 +194,7 @@ fn setup_section_rejects_a_committed_source_bound_the_digits_cannot_represent() 
             .expect("serialize setup section");
         assert!(
             matches!(
-                SetupSection::deserialize_uncompressed(&bytes[..], &()),
+                SetupSection::deserialize_uncompressed(&bytes[..], &ProtocolFeatureSet::default()),
                 Err(SerializationError::InvalidData(_))
             ),
             "deserialization must reject {decomposition:?}"
@@ -215,7 +227,7 @@ fn setup_section_rejects_unknown_compression_policy_tag() {
         let mut changed = bytes.clone();
         changed[byte] = u8::MAX;
         assert!(matches!(
-            SetupSection::deserialize_uncompressed(&changed[..], &()),
+            SetupSection::deserialize_uncompressed(&changed[..], &ProtocolFeatureSet::default()),
             Err(SerializationError::InvalidData(_))
         ));
     }
@@ -225,14 +237,21 @@ fn setup_section_rejects_unknown_compression_policy_tag() {
 fn descriptor_roundtrip_preserves_typed_schedule_binding() {
     let descriptor = sample_descriptor();
     let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
-    let decoded = AkitaInstanceDescriptor::deserialize_uncompressed_exact(&bytes, &())
-        .expect("deserialize descriptor");
+    let decoded = AkitaInstanceDescriptor::deserialize_uncompressed_exact(
+        &bytes,
+        &ProtocolFeatureSet::default(),
+    )
+    .expect("deserialize descriptor");
     assert_eq!(decoded, descriptor);
 
     for suffix in [0, 0xa5] {
         let mut suffixed = bytes.clone();
         suffixed.push(suffix);
-        assert!(AkitaInstanceDescriptor::deserialize_uncompressed_exact(&suffixed, &()).is_err());
+        assert!(AkitaInstanceDescriptor::deserialize_uncompressed_exact(
+            &suffixed,
+            &ProtocolFeatureSet::default()
+        )
+        .is_err());
     }
 }
 
@@ -334,7 +353,10 @@ fn descriptor_is_word_aligned_and_rejects_noncanonical_words() {
     bad_flag[presence] = 2;
     for changed in [wide_degree, bad_flag] {
         assert!(matches!(
-            AkitaInstanceDescriptor::deserialize_uncompressed_exact(&changed, &()),
+            AkitaInstanceDescriptor::deserialize_uncompressed_exact(
+                &changed,
+                &ProtocolFeatureSet::default()
+            ),
             Err(SerializationError::InvalidData(_))
         ));
     }
@@ -353,7 +375,10 @@ fn rejects_noncurrent_descriptor_version() {
         .canonical_bytes()
         .expect("serialize unsupported version");
     assert!(matches!(
-        AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &()),
+        AkitaInstanceDescriptor::deserialize_uncompressed(
+            &bytes[..],
+            &ProtocolFeatureSet::default()
+        ),
         Err(SerializationError::InvalidData(_))
     ));
 }

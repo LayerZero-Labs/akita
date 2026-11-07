@@ -1,6 +1,7 @@
 //! Independent dense combined sumcheck for tests and benchmark baselines.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+
 use akita_labinius_verifier::channel::ClearChannel;
 use akita_labinius_verifier::root_sumcheck::{
     alphabet_polynomial, bind_root_sumcheck_instance, combined_input_claim, combined_shape,
@@ -10,7 +11,8 @@ use akita_sumcheck::{
     prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
 };
 use akita_transcript::ChallengeCodec;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 
 /// Combined alphabet-and-linear-relation instance over the coefficient field.
@@ -186,7 +188,7 @@ impl<F: Field> SumcheckInstanceProver<F> for CombinedRootSumcheck<F> {
         let Some(&tau) = self.tau.get(self.next_round) else {
             return;
         };
-        // `Field` does not require jolt_field::Fold: use field arithmetic
+        // `Field` does not require jolt_algebra::Fold: use field arithmetic
         // directly, without the optimized Fold-only algebra helper.
         for table in [&mut self.w, &mut self.kw] {
             let half = table.len() / 2;

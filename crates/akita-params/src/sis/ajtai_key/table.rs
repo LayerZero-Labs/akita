@@ -156,7 +156,7 @@ pub enum SisModulusProfileId {
     /// Representative q = 2^128 - (2^32 - 22537).
     #[default]
     Q128OffsetA7F7,
-    /// q = 2^128 - 275, the modulus of `jolt_field::Prime128Offset275`.
+    /// q = 2^128 - 275, the modulus of `jolt_algebra::Prime128Offset275`.
     ///
     /// No preset in this repository selects it. It owns no generated rows:
     /// [`Self::row_owner`] resolves its lookups to the

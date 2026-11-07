@@ -1,8 +1,8 @@
 use super::*;
 
 use akita_prover::CommitmentHandleMetadata;
-use jolt_field::Zero;
-use jolt_field::{One, Ring};
+use jolt_algebra::Zero;
+use jolt_algebra::{One, Ring};
 
 // ============================================================================
 // GROUP E — Heterogeneous configurations (fp128)

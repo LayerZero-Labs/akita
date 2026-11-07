@@ -6,7 +6,7 @@
 //! entries still has a compact encoding.
 
 use crate::input::{Reader, SplitMix64};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 pub fn modulus<F: Field + CanonicalEncoding>() -> u128 {
     (-F::one())

@@ -1,9 +1,9 @@
 use akita_error::AkitaError;
 use akita_params::{DigitRangePlan, FlatBooleanDomain};
-use jolt_field::cfg_chunks_mut;
+use jolt_algebra::cfg_chunks_mut;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Ring};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{Field, Ring};
 use std::sync::Arc;
 
 use crate::sources::packed_digits::PackedSignedDigits;

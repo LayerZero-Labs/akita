@@ -11,12 +11,12 @@
 mod bench {
     use std::time::{Duration, Instant};
 
-    use akita_algebra::ntt::butterfly::forward_ntt;
-    use akita_algebra::tables::q128_primes;
-    use akita_algebra::{CrtNttParamSet, MontCoeff};
     use akita_metal::ntt::DeviceCrtNtt;
     use akita_metal::AkitaMetal;
     use criterion::{BenchmarkId, Criterion, Throughput};
+    use jolt_algebra::ntt::butterfly::forward_ntt;
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::{CrtNttParamSet, MontCoeff};
     use jolt_metal::runtime::DeviceBuffer;
     use rayon::prelude::*;
 

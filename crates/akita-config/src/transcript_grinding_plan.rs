@@ -3,7 +3,7 @@
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::{ChallengeFieldOrder, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
-use jolt_field::{CanonicalEncoding, ExtField};
+use jolt_algebra::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
 pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(

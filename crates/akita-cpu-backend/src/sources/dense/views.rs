@@ -2,13 +2,13 @@
 //!
 //! [`DensePoly`] storage is D-free; the views here are the const-D
 //! kernel-entry types. View construction validates the requested ring
-//! dimension against the flat storage (via [`DensePoly::ring_coeffs`]) so
+//! dimension against the flat storage (via [`DensePoly::nonzero_ring_coeffs`]) so
 //! kernels can trust the D-view afterwards.
 
 use super::poly::DensePoly;
 use crate::opaque::{RootOpeningSource, RootPolyMeta, RootPolyShape};
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///
@@ -61,13 +61,13 @@ where
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        self.ring_coeffs::<D>()?;
+        self.nonzero_ring_coeffs::<D>()?;
         Ok(DenseView { poly: self })
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
         for poly in polys {
-            poly.ring_coeffs::<D>()?;
+            poly.nonzero_ring_coeffs::<D>()?;
         }
         Ok(DenseBatchView { polys })
     }

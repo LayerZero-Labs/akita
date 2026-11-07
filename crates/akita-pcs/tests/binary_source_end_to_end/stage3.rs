@@ -218,7 +218,7 @@ fn stage3_p64_extension_endpoint_matches_the_committed_base_prefix_oracle() {
     use akita_types::binary_source::{
         binary_word_manifest_fixture, BinaryAProduct, BinaryAReadGuard, BinaryRootWitnessPlan,
     };
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
     let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();

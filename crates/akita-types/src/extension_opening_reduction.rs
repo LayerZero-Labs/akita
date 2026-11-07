@@ -6,7 +6,7 @@
 
 use akita_algebra::EqPolynomial;
 use akita_error::AkitaError;
-use jolt_field::{ExtField, Field};
+use jolt_algebra::{ExtField, Field};
 
 /// Full-split tensor opening shape for an extension `E/F`.
 ///

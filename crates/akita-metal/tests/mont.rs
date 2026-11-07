@@ -5,10 +5,10 @@
 
 mod support;
 
-use akita_algebra::tables::{q128_primes, Q64_PRIMES};
-use akita_algebra::{MontCoeff, NttPrime};
 use akita_metal::HEADERS;
 use bytemuck::{Pod, Zeroable};
+use jolt_algebra::tables::{q128_primes, Q64_PRIMES};
+use jolt_algebra::{MontCoeff, NttPrime};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid, LibrarySpec, ShaderLibrary};
 use support::{gpu, SplitMix64};
 

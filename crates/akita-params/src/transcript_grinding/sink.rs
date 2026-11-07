@@ -2,7 +2,8 @@ use super::{
     polynomial_identity_loss_factor, ChallengeFieldOrder, FoldChallengeCost,
     GrindingPlanAccumulator, GrindingRun, GrindingSite, SumcheckProtocol,
 };
-use akita_error::{narrowing::usize_to_u32, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::narrowing::usize_to_u32;
 
 /// Consecutive queries whose protocol shape differs only by the round index.
 /// This is not a wire run: replay still has one distinct site for every round.

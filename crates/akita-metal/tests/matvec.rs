@@ -5,8 +5,6 @@
 
 mod support;
 
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field, Zero};
 use akita_cpu_backend::benchmark_support::mat_vec_mul_ntt_digits_i8;
 use akita_metal::decompose::decompose;
 use akita_metal::matvec::DeviceNttMatrix;
@@ -15,7 +13,9 @@ use akita_params::FlatMatrix;
 use akita_types::{
     prepare_joined_exact_ntt_cache, prepare_ntt_cache, NttCacheMode, PreparedNttCache,
 };
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Field, Zero};
+use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};
@@ -407,8 +407,8 @@ fn digit_upload_rejects_values_outside_the_claimed_basis() {
 /// while its truthful base-2^16 label segments the columns and is exact.
 #[test]
 fn fp64_i16_wrong_basis_rejects_and_full_basis_segments_exactly() {
-    use akita_algebra::tables::Q64_PRIMES;
-    use akita_algebra::One;
+    use jolt_algebra::tables::Q64_PRIMES;
+    use jolt_algebra::One;
 
     const DEGREE: usize = 64;
     const COLS: usize = 64;
@@ -459,8 +459,8 @@ fn fp64_i16_wrong_basis_rejects_and_full_basis_segments_exactly() {
 
 #[test]
 fn unsupported_field_and_crt_profile_reject_at_matrix_construction() {
-    use akita_algebra::tables::q128_primes;
-    use akita_algebra::CrtNttParamSet;
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::CrtNttParamSet;
 
     const DEGREE: usize = 64;
     let test = gpu();
@@ -480,8 +480,8 @@ fn unsupported_field_and_crt_profile_reject_at_matrix_construction() {
 /// digits exactly, computed independently of the crate: a limb of
 /// ceil(129 / limbs) bits, or the centered entry itself for one limb.
 fn one_column_fits<const K: usize>(limbs: usize, degree: usize, log_basis: u32) -> bool {
-    use akita_algebra::tables::q128_primes;
-    use akita_algebra::{CrtCapacity, One};
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::{CrtCapacity, One};
     let q = (-Prime128OffsetA7F7::one())
         .to_u128_checked()
         .expect("u128")
@@ -500,9 +500,9 @@ fn limb_matrix<const K: usize, const D: usize>(
     limbs: usize,
     rng: &mut SplitMix64,
 ) {
-    use akita_algebra::tables::q128_primes;
-    use akita_algebra::CrtNttParamSet;
-    let primes: [akita_algebra::NttPrime<i32>; K] =
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::CrtNttParamSet;
+    let primes: [jolt_algebra::NttPrime<i32>; K] =
         std::array::from_fn(|index| q128_primes()[index]);
     let params = CrtNttParamSet::<i32, K, D>::new(primes);
     for (blocks, cols, log_basis) in [(3, 5, 8), (2, 9, 3)] {
@@ -569,8 +569,8 @@ fn limb_matrices_match_cpu() {
 
 #[test]
 fn fp64_two_limb_i16_matrix_segments_match_schoolbook() {
-    use akita_algebra::tables::Q64_PRIMES;
-    use akita_algebra::{CrtCapacity, CrtNttParamSet};
+    use jolt_algebra::tables::Q64_PRIMES;
+    use jolt_algebra::{CrtCapacity, CrtNttParamSet};
 
     const DEGREE: usize = 64;
     const COLS: usize = 96;
@@ -603,8 +603,8 @@ fn fp64_two_limb_i16_matrix_segments_match_schoolbook() {
 /// before producing the mathematically representable quotient.
 #[test]
 fn fp128_centering_boundary_limb_matrices_match_constant_multiplication() {
-    use akita_algebra::tables::q128_primes;
-    use akita_algebra::{CrtNttParamSet, One};
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::{CrtNttParamSet, One};
 
     const DEGREE: usize = 64;
     let test = gpu();
@@ -638,9 +638,9 @@ fn fp128_centering_boundary_limb_matrices_match_constant_multiplication() {
 /// The planner halves the primes on the production shapes.
 #[test]
 fn plans_fewer_primes_with_limbs() {
-    use akita_algebra::tables::q128_primes;
-    use akita_algebra::One;
     use akita_metal::matvec::{plan_matvec, MatvecPlan};
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::One;
     let q = (-Prime128OffsetA7F7::one())
         .to_u128_checked()
         .expect("u128")

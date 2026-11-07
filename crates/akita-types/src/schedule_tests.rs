@@ -43,7 +43,7 @@ use akita_params::{
 use akita_serialization::{AkitaSerialize, Compress};
 
 use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
+use jolt_algebra::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
 
 #[path = "schedule_tests/descriptor.rs"]
 mod descriptor;
@@ -976,6 +976,7 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
     .expect("audited precommitted A matrix");
     let outer_width = inner_commit_matrix.output_rank() * num_live_blocks;
     GroupCommitPhaseParams {
+        randomness_columns: 0,
         version: GroupCommitPhaseParams::VERSION,
         group: PolynomialGroupLayout::new(num_vars, 1),
         blocks: akita_params::BlockGeometry::new(1usize << (num_vars - 6), 16, num_live_blocks),

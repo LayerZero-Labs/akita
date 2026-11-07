@@ -7,7 +7,7 @@ use akita_types::GrindingReplay;
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };
-use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, Field, MulBaseUnreduced, Ring};
 
 pub(crate) enum NextWitnessState<F: Field> {
     OuterPayload(akita_types::RingVec<F>),
@@ -49,10 +49,10 @@ pub(crate) struct RingSwitchFinalization<'a, E: Field, RelationHandle> {
 /// Sample the relation challenges and prepare its opaque witness state.
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn ring_switch_finalize<'a, F, E, B>(
+pub(crate) fn ring_switch_finalize<'a, F, E, B, C>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     instance: &RingRelationInstance<F>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     witness_handle: &B::WitnessHandle,
     lp: &CommittedGroupParams,
@@ -63,6 +63,7 @@ pub(crate) fn ring_switch_finalize<'a, F, E, B>(
     prepared_relation_groups: &'a [crate::backend::PreparedRelationGroupPublic<F, E>],
 ) -> Result<RingSwitchFinalization<'a, E, B::RelationHandle>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
     B: crate::backend::OpaqueRelationWitnessKernel<F, E>,
@@ -76,8 +77,9 @@ where
         opening_batch,
         instance,
     )?;
-    let opening_capacity = akita_error::checked::product([opening_source_len, opening_ring_dim])
-        .ok_or_else(|| AkitaError::Internal("opening capacity overflow".into()))?;
+    let opening_capacity =
+        jolt_algebra::checked::product([opening_source_len, opening_ring_dim])
+            .ok_or_else(|| AkitaError::Internal("opening capacity overflow".into()))?;
     if opening_ring_dim == 0
         || !opening_ring_dim.is_power_of_two()
         || witness_handle.manifest().logical_len() > opening_capacity

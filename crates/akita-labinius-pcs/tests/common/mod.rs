@@ -21,7 +21,7 @@ use akita_labinius_verifier::{
     PrimeClaim, RootOpeningMode, RootStatement,
 };
 use akita_serialization::AkitaSerialize;
-use jolt_field::{ExtField, Field, One, Ring, Zero};
+use jolt_algebra::{ExtField, Field, One, Ring, Zero};
 use std::{ops::Range, path::PathBuf, time::Instant};
 
 /// The host field of every message in this file.

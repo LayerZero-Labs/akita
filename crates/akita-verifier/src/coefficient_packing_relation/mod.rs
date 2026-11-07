@@ -10,7 +10,7 @@ use akita_types::{
     validate_coefficient_packing_batch_groups, CoefficientPackingBatchSemanticInputs,
     FpExtEncoding, ValidatedCoefficientPackingGroup,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 mod compact;
 

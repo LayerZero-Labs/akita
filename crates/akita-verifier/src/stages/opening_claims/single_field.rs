@@ -6,7 +6,7 @@ use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, BasisMode, CommittedGroupParams, OpeningClaimsLayout};
 use akita_serialization::AkitaSerialize;
 use akita_types::{prepare_opening_point, FpExtEncoding, OpeningClaims, PreparedOpeningPoint};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// Recursive-suffix single-field preparation: per-group `prepare_opening_point`
 /// over the suffix opening groups, no EOR.

@@ -7,8 +7,8 @@ use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 use jolt_metal::MetalField;
 
 use crate::error::AkitaMetalError;
-use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
+use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::MslType;
 
 use crate::library::{AkitaMetal, Instance};

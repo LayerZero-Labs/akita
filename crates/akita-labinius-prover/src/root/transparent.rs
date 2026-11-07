@@ -8,7 +8,7 @@ use akita_labinius_verifier::{
     },
 };
 use core::marker::PhantomData;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Differential table oracle: sends the whole table; not succinct; no hiding.
 ///

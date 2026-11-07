@@ -1,8 +1,9 @@
-use akita_algebra::ring::TrinomialModulus;
-use akita_error::{checked, AkitaError};
+use akita_algebra::TrinomialModulus;
+use akita_error::AkitaError;
 use akita_params::sis::labinius::{LabiniusRootEncoding, LabiniusRootProfile, LabiniusRootShape};
 use akita_types::{RelationPolynomial, TrinomialASetupView, TrinomialResponseLayout};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 use crate::{grinding::field_runs, statement::RootOpeningMode, BinaryClearSetup};
 

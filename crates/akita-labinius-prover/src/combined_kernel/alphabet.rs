@@ -1,7 +1,7 @@
 //! The base-16 alphabet polynomial `A(x) = prod_{a=0}^{15} (x - a)`: on a line
 //! through its range image, and on class buckets through weighted moments.
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 use super::{DIGIT_BITS, INNER_NODES};
 

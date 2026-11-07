@@ -1,7 +1,7 @@
 //! The Stage-1 polynomial `Q(x) = prod_{k < b/2} (x - k(k+1))`.
 
 use akita_error::AkitaError;
-use jolt_field::{Field, Ring, Unreduced};
+use jolt_algebra::{Field, Ring, Unreduced};
 use jolt_poly::OmittedConstantPoly;
 
 /// Nonconstant round coefficients `q_1..q_d` of the range polynomial. The

@@ -3,10 +3,11 @@
 use super::owned::CommitmentHandle;
 use super::owned_kind::SourceGroupKind;
 use super::CpuBackend;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_types::binary_source::OrdinaryNativeRootPlan;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<F, E> CpuBackend<F, E>
 where
@@ -189,7 +190,7 @@ fn source_digits<F: Field + CanonicalEncoding>(
     plan: &OrdinaryNativeRootPlan,
     coefficients: &[F],
 ) -> Result<(Vec<i8>, Vec<i8>), AkitaError> {
-    use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+    use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
     let profile = plan.profile();
     let degree = profile.inner.matrix.ring_dimension();
     let digits = profile.inner.digits.num_digits;
@@ -241,7 +242,7 @@ fn source_digits<F: Field + CanonicalEncoding>(
         let start = source.len();
         let end = checked::sum([start, ring_digits]).ok_or(AkitaError::InvalidProof)?;
         source.resize(end, 0);
-        akita_algebra::balanced_decompose_coefficients_pow2_i8_into(
+        jolt_algebra::balanced_decompose_coefficients_pow2_i8_into(
             ring,
             source.get_mut(start..end).ok_or(AkitaError::InvalidProof)?,
             &params,

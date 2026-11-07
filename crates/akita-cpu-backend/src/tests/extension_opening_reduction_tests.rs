@@ -8,7 +8,7 @@ use akita_types::{
     derive_tensor_extension_opening_claim_from_partials, tensor_equality_factor_eval_at_point,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
-use jolt_field::{Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
+use jolt_algebra::{Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
 
 fn lifted_multilinear_eval<B, E>(evals: &[B], point: &[E]) -> E
 where

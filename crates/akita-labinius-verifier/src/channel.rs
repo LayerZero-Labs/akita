@@ -1,7 +1,9 @@
 //! The sole dependency boundary to Akita's current transcript transport.
 #[cfg(feature = "prover")]
 use akita_challenges::PreviewFoldDraw;
-use akita_challenges::{BinaryChallenge, BinaryChallengeSampler, ProverFoldDraw, VerifierFoldDraw};
+use akita_challenges::ProverFoldDraw;
+use akita_challenges::VerifierFoldDraw;
+use akita_challenges::{BinaryChallenge, BinaryChallengeSampler};
 use akita_error::AkitaError;
 use akita_params::FOLD_RESPONSE_ATTEMPTS;
 use akita_sumcheck::SumcheckRole;
@@ -13,7 +15,7 @@ use akita_transcript::{
 #[cfg(feature = "prover")]
 use akita_transcript::{prover_context, FoldPreview, ProverTranscript};
 use core::marker::PhantomData;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 use crate::grinding::{RootGrindingCursor, RootGrindingPlan, RootGrindingSite};
 

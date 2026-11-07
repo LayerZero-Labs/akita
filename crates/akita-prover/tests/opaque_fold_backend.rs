@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_prover::backend::{AcceptedFoldMetadata, Stage1FinalClaims};
-use jolt_field::{Prime128Offset275 as F, Ring};
+use jolt_algebra::{Prime128Offset275 as F, Ring};
 
 #[test]
 fn public_metadata_and_stage1_claims_are_externally_constructible() {

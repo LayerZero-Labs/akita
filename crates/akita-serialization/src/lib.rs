@@ -37,7 +37,9 @@ impl TrustedBytes {
         self.0.get(count..).map(Self)
     }
 }
+mod lattice_impls;
 mod poly_impls;
+mod ring_impls;
 
 /// Elements a run decoder reserves ahead of the bytes it has read, so a forged
 /// element count cannot force a large allocation before the data arrives.

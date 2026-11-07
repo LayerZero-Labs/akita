@@ -3,7 +3,7 @@ use super::super::test_oracle_weights::{
 };
 use super::*;
 use akita_algebra::offset_eq::OffsetEqWindow;
-use jolt_field::{ExtField, MulBaseUnreduced, Ring};
+use jolt_algebra::{ExtField, MulBaseUnreduced, Ring};
 
 fn literal_terminal_functional<E: Field>(point: &[E], dimension: usize, alpha: E) -> Vec<E> {
     assert_eq!(point.len(), dimension.trailing_zeros() as usize);
@@ -533,7 +533,7 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
 
 #[test]
 fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
-    type X = jolt_field::Ext2<F>;
+    type X = jolt_algebra::Ext2<F>;
     let role_dims = CommitmentRingDims {
         inner: 128,
         outer: 64,

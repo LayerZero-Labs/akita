@@ -9,7 +9,7 @@ use akita_types::{
     derive_public_matrix_range, AkitaExpandedSetup, AkitaSetupDescriptor, RingVec,
     SetupPrefixPublicCommitment,
 };
-use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::{
     cmp::Reverse,
     ops::Range,
@@ -177,9 +177,8 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
         let p = id.commitment_profile;
         let a = p.inner.matrix;
         let shape = Shape::inner(p);
-        let count =
-            akita_error::checked::product([p.blocks.live_blocks, shape.rows, shape.ring])
-                .ok_or_else(|| AkitaError::InvalidSetup("prefix inner extent overflow".into()))?;
+        let count = jolt_algebra::checked::product([p.blocks.live_blocks, shape.rows, shape.ring])
+            .ok_or_else(|| AkitaError::InvalidSetup("prefix inner extent overflow".into()))?;
         let mut inner = vec![F::zero(); count];
         let mut reused = vec![0; count / shape.ring];
         for (index, output) in inner.chunks_exact_mut(shape.ring).enumerate() {
@@ -211,7 +210,7 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
             rows: b.output_rank(),
             ring: b.ring_dimension(),
         };
-        let count = akita_error::checked::product([ranges.len(), outer.rows, outer.ring])
+        let count = jolt_algebra::checked::product([ranges.len(), outer.rows, outer.ring])
             .ok_or_else(|| AkitaError::InvalidSetup("prefix outer extent overflow".into()))?;
         let mut image = vec![F::zero(); count];
         akita_params::dispatch_for_field!(
@@ -300,12 +299,12 @@ impl Shape {
         // including nonzero output rows, and take every width-ratio-th block.
         let ratio = self.positions / old.positions;
         let old_row = row.checked_mul(ratio)?;
-        let start = akita_error::checked::product([block, self.positions, self.ring])?;
+        let start = jolt_algebra::checked::product([block, self.positions, self.ring])?;
         let width = old.positions.checked_mul(old.ring)?;
         if old_row >= old.rows || start.checked_add(width)? > old_prefix {
             return None;
         }
-        akita_error::checked::mul_add(start / width, old.rows, old_row)
+        jolt_algebra::checked::mul_add(start / width, old.rows, old_row)
     }
 }
 

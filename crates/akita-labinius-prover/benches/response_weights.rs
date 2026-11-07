@@ -3,16 +3,17 @@
 #![cfg(feature = "labinius")]
 
 use akita_algebra::MinusTrinomial;
-use akita_challenges::{BinaryChallengeSampler, FoldDraw};
+use akita_challenges::BinaryChallengeSampler;
+use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
     lowered::{coefficient_weights, LoweredChallenges, LoweredPublic, LoweredRootLayout},
     AdmittedRootSetup,
 };
 use akita_params::sis::labinius::LabiniusRootProfile;
-use akita_types::proof::AkitaSetupSeed;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime64Offset59};
+use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime64Offset59};
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use std::{hint::black_box, time::Duration};
 
 struct Draw;

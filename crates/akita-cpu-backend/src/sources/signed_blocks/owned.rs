@@ -7,7 +7,7 @@ use crate::opaque::CommitInnerPlan;
 use crate::sources::poly::{RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients};
 use akita_error::AkitaError;
 use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 

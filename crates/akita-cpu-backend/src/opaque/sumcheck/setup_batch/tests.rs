@@ -3,7 +3,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_types::{
     derive_public_matrix_prefix, setup_claims::SetupClaim, AkitaExpandedSetup, AkitaSetupDescriptor,
 };
-use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_algebra::Prime128OffsetA7F7 as F;
 
 fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>> {
     let seed = [23; 32].into();
@@ -22,7 +22,7 @@ fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>>
 
 #[test]
 fn single_term_rounds_match_dense_reference() {
-    use jolt_field::{Ext2, FpExt4, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Ext2, FpExt4, Prime32Offset99, Prime64Offset59};
     single_term_rounds::<F, F>();
     single_term_rounds::<Prime32Offset99, FpExt4<Prime32Offset99>>();
     single_term_rounds::<Prime64Offset59, Ext2<Prime64Offset59>>();
@@ -86,7 +86,7 @@ where
 
 #[test]
 fn fused_preparation_scans_once_and_preserves_answers_and_proof_bytes() {
-    use jolt_field::{Ext2, FpExt4, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Ext2, FpExt4, Prime32Offset99, Prime64Offset59};
     fused_preparation::<F, F>();
     fused_preparation::<Prime32Offset99, FpExt4<Prime32Offset99>>();
     fused_preparation::<Prime64Offset59, Ext2<Prime64Offset59>>();

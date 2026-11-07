@@ -1,15 +1,19 @@
 //! Proof-stream sites that bind fold statements, payloads, and terminal atoms.
 //!
-//! The prover and verifier each exchange these atoms through their own
-//! role-specific transcript call, so this module owns only the site identity.
-//! Both roles name a site through [`FoldSite`] and convert it with
-//! [`FoldSite::id`].
+//! Most of these atoms are exchanged through each role's own transcript call,
+//! so this module owns their site identity: both roles name a site through
+//! [`FoldSite`] and convert it with [`FoldSite::id`]. A level's scalar
+//! openings are bound once for both roles by [`bind_fold_openings`].
 
-use akita_error::{narrowing::usize_to_u32, AkitaError};
+use crate::GrindingReplay;
+use akita_error::AkitaError;
 use akita_transcript::{
-    ProtocolSiteId, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS,
-    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_TERMINAL,
+    public_extensions, PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_FOLD_BINDING,
+    SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_ROOT_STATEMENT,
+    SITE_FAMILY_TERMINAL,
 };
+use jolt_algebra::narrowing::usize_to_u32;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// One fold-owned proof-stream site.
 ///
@@ -98,6 +102,41 @@ impl FoldSite {
             },
         })
     }
+}
+
+/// Binds a fold level's scalar openings, in group order, at its
+/// [`FoldSite::Openings`] site.
+///
+/// `prefix` is the setup-prefix evaluation (group 0), present when the level
+/// consumes a setup prefix: the evaluation of a public setup slot at a public
+/// point, so it stays public. `derived` holds every other opening, the
+/// statement claims (level 0) or the predecessor's witness evaluation, which
+/// the verifier derives from earlier messages. A clear channel absorbs all of
+/// them as one public message, in group order.
+///
+/// Extension seam: zero knowledge (akita#120). A masking channel absorbs only the prefix,
+/// since the masked messages the derived claims come from already bind them.
+///
+/// # Errors
+///
+/// The channel's error.
+pub fn bind_fold_openings<F, E, G>(
+    grinding: &mut G,
+    level: u32,
+    prefix: Option<&E>,
+    derived: &[E],
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
+{
+    let state = grinding.state_mut();
+    let mut openings: Vec<E> = prefix.into_iter().copied().collect();
+    if !state.is_masked() {
+        openings.extend_from_slice(derived);
+    }
+    public_extensions::<F, E, _>(state, FoldSite::Openings { level }.id()?, &openings)
 }
 
 #[cfg(test)]

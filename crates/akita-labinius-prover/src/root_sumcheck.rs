@@ -11,7 +11,7 @@ use akita_labinius_verifier::root_sumcheck::{
 use akita_sumcheck::{
     prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 
 /// Product instance for `sum_x Y(x) * K_Y(x)` of two field tables over the

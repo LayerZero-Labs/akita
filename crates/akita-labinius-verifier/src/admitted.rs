@@ -1,14 +1,17 @@
 //! Seed-derived, SIS-admitted binary-root setup and its public identity.
 
-use akita_algebra::{binary::field_switch::SwitchField, ring::TrinomialModulus};
-use akita_error::{checked, AkitaError};
+use akita_algebra::binary::field_switch::SwitchField;
+
+use akita_algebra::TrinomialModulus;
+use akita_error::AkitaError;
 use akita_params::binary_setup::{
     derive_centered_q_matrix, SetupStreamLabel, SetupStreamModulus, SetupStreamRing,
     SetupStreamRole,
 };
 use akita_params::sis::labinius::{LabiniusRootProfile, LabiniusRootShape};
-use akita_types::proof::{AkitaSetupSeed, PublicMatrixDerivation};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field};
+use jolt_crypto::lattice::{PublicMatrixDerivation, PublicMatrixSeed as AkitaSetupSeed};
 
 use crate::BinaryClearSetup;
 
@@ -29,7 +32,7 @@ pub fn derive_trinomial_matrix<P: Field + CanonicalEncoding, M: TrinomialModulus
     degree: usize,
     q: u32,
 ) -> Result<Vec<u32>, AkitaError> {
-    akita_params::field_modulus_be_bytes::<P>()?;
+    jolt_algebra::field_modulus_be_bytes::<P>()?;
     let rank = u32::try_from(rows)
         .map_err(|_| AkitaError::InvalidSetup("root rank exceeds u32".into()))?;
     let degree = u32::try_from(degree)
@@ -68,7 +71,7 @@ pub fn derive_trinomial_matrix<P: Field + CanonicalEncoding, M: TrinomialModulus
 /// This is the prime used by proof-field admission.
 pub fn field_characteristic<F: Field + CanonicalEncoding>() -> Result<u128, AkitaError> {
     let too_wide = || AkitaError::InvalidSetup("field characteristic exceeds 128 bits".into());
-    let modulus_bytes = akita_params::field_modulus_be_bytes::<F>()?;
+    let modulus_bytes = jolt_algebra::field_modulus_be_bytes::<F>()?;
     let (high, low) = modulus_bytes.split_at_checked(16).ok_or_else(too_wide)?;
     <[u8; 16]>::try_from(low)
         .ok()
@@ -214,7 +217,7 @@ impl<const D: usize, M: TrinomialModulus> AdmittedRootSetup<D, M> {
 mod tests {
     use super::*;
     use akita_algebra::MinusTrinomial;
-    use jolt_field::Prime128Offset275;
+    use jolt_algebra::Prime128Offset275;
 
     #[test]
     fn derived_matrix_is_the_exact_typed_q_stream() {

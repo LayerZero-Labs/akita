@@ -1,6 +1,7 @@
 use super::*;
 use crate::stages::ring_switch::RingSwitchVerifyOutput;
 use akita_params::CommittedGroupParams;
+use akita_transcript::PrivateProofChannel;
 use akita_types::{
     setup_claims::{transcript, SetupWeightTerm},
     AkitaVerifierSetup, GrindingReplay,
@@ -16,18 +17,19 @@ pub(crate) struct PreparedOuterSetup<E: Field> {
 }
 
 /// Bind the inherited batch together with this fold's query.
-pub(crate) fn prepare_outer_setup<F, E>(
+pub(crate) fn prepare_outer_setup<F, E, G>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
     point: &[E],
     successor: &CommittedGroupParams,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
     inherited: &SetupBatchStatement<E>,
 ) -> Result<PreparedOuterSetup<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     let id = successor
         .setup_prefix()
@@ -194,7 +196,7 @@ mod tests {
         setup_claims::{SetupClaim, SetupQuery},
         AkitaSetupDescriptor,
     };
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+    use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
 
     #[test]
     fn direct_batch_rejects_false_answers_that_cancel_without_weights() {

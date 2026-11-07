@@ -1,6 +1,7 @@
 //! Relation row identities and shared layout data.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use crate::{
     CommitmentRingDims, CommitmentSliceCount, CompressionChainPlan, OpeningMethod,
@@ -145,6 +146,8 @@ pub struct RelationGroupRows {
     pub physical_b_rows: usize,
     /// Number of logical B images stacked in canonical slice order.
     pub outer_slice_count: CommitmentSliceCount,
+    /// Hiding-randomness ring columns appended to every B slice input.
+    pub randomness_columns: usize,
 }
 
 impl RelationGroupRows {
@@ -165,6 +168,8 @@ pub struct RelationRhsLayout {
     pub d_ring_dimension: usize,
     pub n_d: usize,
     pub groups: Vec<RelationGroupRows>,
+    /// Hiding-randomness ring columns appended to the shared D input.
+    pub d_randomness_columns: usize,
     pub(crate) compression: Option<RelationCompressionLayout>,
 }
 
@@ -179,6 +184,7 @@ impl RelationRhsLayout {
             d_ring_dimension,
             n_d,
             groups,
+            d_randomness_columns: 0,
             compression: None,
         }
     }

@@ -1,6 +1,7 @@
 //! Admission inputs for explicitly selected binary prime evaluation planes.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::sis::ajtai_key::{
     min_secure_rank, sis_table_key_for_linf_bound, SisMatrixRole, SisModulusProfileId,
@@ -11,6 +12,7 @@ use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryTypedPrefix, OrdinaryNativeRootPlan,
     PrimePlaneManifest,
 };
+use jolt_algebra::checked;
 
 /// Exact witness and D widths, without a production-admission assertion.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,6 +256,7 @@ mod tests {
             group: PolynomialGroupLayout::singleton(10),
             blocks: BlockGeometry::new(8, 2, 4),
             outer_slice_count: CommitmentSliceCount::ONE,
+            randomness_columns: 0,
             inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
             outer: RoleParams::new(GadgetDigits::new(3, digits), outer),
         }

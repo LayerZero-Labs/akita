@@ -6,7 +6,7 @@ use akita_algebra::offset_eq::{
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Prime128OffsetA7F7;
 

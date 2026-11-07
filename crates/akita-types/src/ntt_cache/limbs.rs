@@ -9,7 +9,7 @@
 
 use super::exact::{ifma52_cache_enabled, I32_TRANSFORM_DOTS, IFMA52_TRANSFORM_DOTS};
 use super::*;
-use jolt_field::{cfg_chunks, cfg_into_iter};
+use jolt_algebra::{cfg_chunks, cfg_into_iter};
 
 /// CRT primes per limb accumulation.
 const LIMB_PRIMES: usize = 2;
@@ -355,7 +355,7 @@ mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
     use akita_params::FlatMatrix;
-    use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     fn extreme_matrix<F: Field + CanonicalEncoding, const D: usize>(
         len: usize,

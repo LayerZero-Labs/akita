@@ -10,10 +10,11 @@ use std::borrow::Cow;
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::ResidueKernelPoint;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_iter, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_chunks, cfg_iter, Field};
 
 use super::profiles::ProfileBuilder;
 use crate::binary_source::{

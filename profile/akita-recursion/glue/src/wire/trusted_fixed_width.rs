@@ -1,7 +1,7 @@
 //! Trusted canonical fixed-width setup decoding for Jolt benchmarks.
 
 use super::*;
-use jolt_field::{Fp128, Fp32, Fp64};
+use jolt_algebra::{Fp128, Fp32, Fp64};
 
 trait TrustedFixedWidthField: Field + CanonicalEncoding {
     const NAME: &'static str;
@@ -219,7 +219,7 @@ where
 mod tests {
     use super::*;
     use akita_config::proof_optimized::{fp128, fp32, fp64};
-    use jolt_field::{One, PseudoMersenne, Ring, Zero};
+    use jolt_algebra::{One, PseudoMersenne, Ring, Zero};
 
     const TEST_D: usize = 256;
 

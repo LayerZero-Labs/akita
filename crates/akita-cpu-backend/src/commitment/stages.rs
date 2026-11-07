@@ -6,7 +6,7 @@ use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
 use akita_params::{CompressionChainPlan, RingRelationMode};
 use akita_types::RingVec;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// State output of one inner commitment stage.
 pub(crate) struct InnerCommitOutput {
@@ -217,8 +217,8 @@ mod tests {
     use super::*;
     use crate::commitment::{CommitmentStateBinding, StateOwnerCapability};
     use akita_params::SisModulusProfileId;
-    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
-    use jolt_field::Prime128OffsetA7F7;
+    use akita_types::{AkitaSetupDescriptor, PublicMatrixSeed};
+    use jolt_algebra::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 
@@ -229,7 +229,7 @@ mod tests {
                 max_num_vars: 8,
                 max_num_batched_polys: 1,
                 num_field_elements: 64,
-                setup_seed: AkitaSetupSeed::shake256_paged_v1([9; 32]),
+                setup_seed: PublicMatrixSeed::shake256_paged_v1([9; 32]),
             },
             CommitInnerPlan {
                 ring_dimension: 64,

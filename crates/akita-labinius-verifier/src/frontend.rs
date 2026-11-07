@@ -6,7 +6,8 @@ use akita_algebra::binary::{
     },
     BinaryField162 as B, PackedBinary162,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 /// Source evaluation obligation produced by the host-field frontend.
 /// The owner must open this value even when the transparent weight is zero.

@@ -6,10 +6,11 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{eval_ring_at, scalar_powers};
 use akita_algebra::row_batch::WeightedRowBatch;
 use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_params::layout::relation_layout::{RelationRhsLayout, RelationRowFamily};
-use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field, MulBaseUnreduced};
 use std::iter::repeat_n;
 
 /// Logical relation-matrix row count encoded in assembled relation rhs.

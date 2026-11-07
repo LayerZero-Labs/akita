@@ -5,8 +5,8 @@ use akita_error::AkitaError;
 use akita_params::balanced_signed_digit_abs_bound;
 use akita_types::{NttCacheKey, NttTransformDomain};
 #[allow(unused_imports)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::ops::Range;
 
 #[tracing::instrument(skip_all, name = "dense_commit_rows_exact_i16")]
@@ -35,18 +35,22 @@ where
             },
         )?,
         |ntt| {
-            let fill = |scratch: &mut S::I16Scratch, rings: &Range<usize>| {
+            let fill = |scratch: &mut Option<S::I16Scratch>, rings: &Range<usize>| {
+                if rings.is_empty() {
+                    return Ok(vec![CyclotomicRing::zero(); n_a]);
+                }
+                let scratch = scratch
+                    .get_or_insert_with(|| source.i16_scratch(shape, row_width / shape.num_digits));
                 let rhs = source.i16_rows(rings.clone(), shape, scratch)?;
                 ntt.mat_vec_i16::<F>(shape.log_basis, n_a, rhs)
             };
-            let scratch = || source.i16_scratch(shape, row_width / shape.num_digits);
             #[cfg(feature = "parallel")]
             {
-                cfg_iter!(block_ranges).map_init(scratch, fill).collect()
+                cfg_iter!(block_ranges).map_init(|| None, fill).collect()
             }
             #[cfg(not(feature = "parallel"))]
             {
-                let mut rhs = scratch();
+                let mut rhs = None;
                 block_ranges
                     .iter()
                     .map(|rings| fill(&mut rhs, rings))

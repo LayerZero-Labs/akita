@@ -18,15 +18,20 @@ pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 const LN2_CEIL_NUM: u128 = 71;
 const LN2_CEIL_DEN: u128 = 100;
 
+/// `ceil(log2 x)` for `x >= 1`.
+#[inline]
+fn ceil_log2(x: u128) -> u128 {
+    if x <= 1 {
+        return 0;
+    }
+    u128::from(128u32 - (x - 1).leading_zeros())
+}
+
 /// Conservative integer ceiling for `ln(x)` with `x >= 1`, via
 /// `ln(x) <= ceil(log2 x) · ln(2)`.
 #[inline]
 fn ceil_natural_log(x: u128) -> u128 {
-    if x <= 1 {
-        return 0;
-    }
-    let ceil_log2 = 128u32.saturating_sub((x - 1).leading_zeros()) as u128;
-    ceil_log2
+    ceil_log2(x)
         .saturating_mul(LN2_CEIL_NUM)
         .div_ceil(LN2_CEIL_DEN)
 }
@@ -53,6 +58,32 @@ pub(crate) fn fold_witness_linf_grind_union_ln(
         .and_then(|value| value.checked_mul(grind_target_accept_den))
         .ok_or_else(|| AkitaError::InvalidSetup("fold grind union bound overflows u128".into()))?;
     Ok(ceil_natural_log(numerator.div_ceil(miss)))
+}
+
+/// One-shot union-bound ln for `ln(2·num_fold_coeffs · masked_folds · 2^security_bits)`.
+///
+/// This is the failure target `2^-security_bits / masked_folds` of a fold whose
+/// response is probed once. Every term is bounded above in checked integer
+/// arithmetic: `ln(x) <= ceil(log2 x) · ln(2)` and `ln(2) <= 71/100`.
+fn fold_witness_linf_one_shot_union_ln(
+    num_fold_coeffs: u128,
+    security_bits: u32,
+    masked_folds: u32,
+) -> Result<u128, AkitaError> {
+    if num_fold_coeffs == 0 || masked_folds == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "one-shot fold sizing requires positive coefficient and fold counts".to_string(),
+        ));
+    }
+    let two_n = 2u128
+        .checked_mul(num_fold_coeffs)
+        .ok_or_else(|| AkitaError::InvalidSetup("fold one-shot union bound overflows".into()))?;
+    ceil_log2(two_n)
+        .checked_add(u128::from(security_bits))
+        .and_then(|bits| bits.checked_add(ceil_log2(u128::from(masked_folds))))
+        .and_then(|bits| bits.checked_mul(LN2_CEIL_NUM))
+        .map(|scaled| scaled.div_ceil(LN2_CEIL_DEN))
+        .ok_or_else(|| AkitaError::InvalidSetup("fold one-shot union bound overflows".into()))
 }
 
 /// Squared `‖z‖_inf` tail bound `t*²` from the sub-Gaussian argument in
@@ -144,6 +175,25 @@ impl FoldWitnessLinfCapConfig {
         Ok(Self {
             challenge_l2_sq_max: fold_challenge_config.challenge_l2_sq_max(),
             grind_union_ln,
+        })
+    }
+
+    /// Sizing inputs for a fold whose response is probed once, with failure
+    /// probability at most `2^-security_bits / masked_folds` over all
+    /// `num_fold_coeffs` physical response coefficients.
+    pub(crate) fn one_shot_for_fold_coeffs(
+        fold_challenge_config: &FoldChallengeDistribution,
+        num_fold_coeffs: usize,
+        security_bits: u32,
+        masked_folds: u32,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            challenge_l2_sq_max: fold_challenge_config.challenge_l2_sq_max(),
+            grind_union_ln: fold_witness_linf_one_shot_union_ln(
+                num_fold_coeffs as u128,
+                security_bits,
+                masked_folds,
+            )?,
         })
     }
 }

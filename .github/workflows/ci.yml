@@ -152,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-      - name: Require one jolt-field identity and no akita-field
+      - name: Require one jolt-algebra identity and no akita-field
         run: scripts/check-shared-field-identity.sh
 
   jolt-pins:
@@ -459,11 +459,12 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           target: riscv64gc-unknown-linux-gnu
-      # The guest backends select themselves only on riscv64. The NTT inline's
-      # portable fallback runs on any host, so its table layout is pinned here;
-      # the `inline-parity` job in jolt-verifier-profile-smoke.yml executes the
-      # inlines in a traced Jolt guest.
-      - name: Inline NTT against the portable transform
+      # The guest backends select themselves only on riscv64. jolt-algebra's
+      # `ntt64_backend_*` tests pin the seam against the inline's portable
+      # fallback; this builds Akita's provider. The `inline-parity` job in
+      # jolt-verifier-profile-smoke.yml executes the inlines in a traced Jolt
+      # guest.
+      - name: Inline NTT provider
         run: cargo test --release -p akita-algebra --features ntt-inline --lib
       - name: Host builds with every inline feature
         run: cargo check --release -p akita-pcs --features ntt-inline

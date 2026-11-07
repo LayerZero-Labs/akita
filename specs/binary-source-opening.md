@@ -4147,7 +4147,7 @@ required allocations are calculated below, excluding all other buffers:
 The source bytes are `(N/4)*648*16`. The A-commitment and source-fold counts are
 respectively `(N/4)*3*648^2` and `(N/4)*648^2`, from the unconditional
 schoolbook loops in
-[`signed_trinomial_product`](../crates/akita-algebra/src/ring/trinomial/signed.rs)
+[`signed_trinomial_product`](../crates/akita-algebra/src/trinomial/signed.rs)
 and their callers in the
 [source importer](../crates/akita-cpu-backend/src/opaque/binary_source.rs) and
 [response builder](../crates/akita-cpu-backend/src/binary_root.rs).

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::ntt_cache_requires_exactness_tail;
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn reachable_negative_binary_widths_need_no_exactness_tail() {

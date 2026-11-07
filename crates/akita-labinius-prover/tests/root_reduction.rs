@@ -23,7 +23,7 @@ use akita_labinius_verifier::{
 };
 use akita_transcript::ChallengeCodec;
 use common::{admitted, Admitted, FixedDraw, RootCase, TestHost};
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime32Offset99, Prime64Offset59,
 };
 

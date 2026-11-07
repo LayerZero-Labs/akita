@@ -14,9 +14,9 @@ use akita_params::{
 };
 use akita_types::{
     AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, CallSection, FpExtEncoding,
-    PlanSection, SetupSection, TranscriptGrindingBinding,
+    PlanSection, ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Extension seam: bind the selected root and suffix plan in the canonical descriptor.
 /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
@@ -63,6 +63,7 @@ where
             Cfg::decomposition(),
             Cfg::sis_modulus_profile(),
             &setup.setup_seed,
+            ProtocolFeatureSet { zk: Cfg::IS_ZK },
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(selection, schedule),

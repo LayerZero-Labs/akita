@@ -4,7 +4,7 @@ use super::{
     BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor, BINARY_SOURCE_Q,
     MAX_BINARY_POLYNOMIALS,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::binary_setup::{
     BinaryFieldProfile, SetupStreamLabel, SetupStreamModulus, SetupStreamRing, SetupStreamRole,
@@ -12,6 +12,7 @@ use akita_params::binary_setup::{
 };
 use akita_params::GroupCommitPhaseParams;
 use akita_serialization::SerializationError;
+use jolt_algebra::checked;
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 use std::io::{Cursor, Read};

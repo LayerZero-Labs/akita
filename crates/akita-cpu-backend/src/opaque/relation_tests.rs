@@ -30,7 +30,7 @@ use akita_types::{
     RingRelationInstance, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
 };
 use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
+use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 
 type ReducedF = Prime64Offset59;

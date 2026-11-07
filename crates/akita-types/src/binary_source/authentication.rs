@@ -1,14 +1,15 @@
 //! Public digit commitments and their direct root authentication weights.
 
 use akita_algebra::ring::{CyclotomicRing, ResidueKernelPoint};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::{
     BinaryFieldProfile, SetupStreamLabel, SetupStreamModulus, SetupStreamRing, SetupStreamRole,
     TypedSetupStream,
 };
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_into_iter, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_into_iter, Field};
 
 use super::BinaryRootWitnessPlan;
 use crate::native_root_relation::{
@@ -551,7 +552,7 @@ mod tests;
 #[cfg(test)]
 mod p64_tests {
     use super::*;
-    use jolt_field::{Prime64Offset59 as F, Ring, Zero};
+    use jolt_algebra::{Prime64Offset59 as F, Ring, Zero};
 
     #[test]
     fn p64_digit_commitments_match_ring_products_for_each_rank_and_role() {
@@ -595,7 +596,7 @@ mod p64_tests {
                 }
                 assert_eq!(payload, expected);
                 assert!(
-                    validate_digit_commitment_label::<jolt_field::Prime128Offset275>(label)
+                    validate_digit_commitment_label::<jolt_algebra::Prime128Offset275>(label)
                         .is_err()
                 );
                 for rank in [0, akita_params::sis::SIS_MAX_MODULE_RANK + 1] {

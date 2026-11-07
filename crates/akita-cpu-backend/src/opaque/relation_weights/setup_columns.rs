@@ -2,8 +2,8 @@ use std::ops::Range;
 
 use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::AkitaError;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{ExtField, Field, MulBaseUnreduced, Unreduced, Zero};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{ExtField, Field, MulBaseUnreduced, Unreduced, Zero};
 
 /// One family of setup-matrix rows read as per-column ring slices borrowed
 /// from the materialized store.
@@ -302,7 +302,7 @@ impl<E> SetupColumnValues<E> {
 mod tests {
     use super::*;
     use akita_algebra::ring::residue_kernel;
-    use jolt_field::{FpExt4, Prime32Offset99, Ring};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Ring};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
@@ -332,7 +332,7 @@ mod tests {
         ];
         let alpha = extension(19);
         let oracle = contract_setup_columns(&family, 0..2, &row_weights, 2, D, |coefficients| {
-            residue_kernel::<F, E>(coefficients, alpha)
+            residue_kernel::<F, E>(coefficients, alpha).map_err(AkitaError::from)
         })
         .unwrap();
         let point = ResidueKernelPoint::new(alpha, D).unwrap();

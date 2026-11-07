@@ -1,4 +1,4 @@
-//! Dense polynomial: all ring coefficients materialized in memory.
+//! Dense polynomial storage, optionally omitting a zero suffix.
 //!
 //! [`DensePoly`] stores dense coefficients and exposes opening/tensor views.
 //! Commitment representations are selected through `CommitmentSource`.

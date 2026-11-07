@@ -2,8 +2,9 @@
 
 use super::{AdditionalRelationTerms, SparseWeight};
 use crate::opaque::sumcheck::relation_range_image::RelationRangeImageProver;
-use akita_error::{checked, AkitaError};
-use jolt_field::{Field, Ring};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::{Field, Ring};
 
 impl<E: Field + Ring> RelationRangeImageProver<E> {
     /// Install independently batched negative-binary equations before any round.

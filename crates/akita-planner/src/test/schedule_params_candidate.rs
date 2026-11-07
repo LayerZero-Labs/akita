@@ -11,6 +11,7 @@ fn synthetic_profile(
     params: &CommittedGroupParams,
 ) -> GroupCommitPhaseParams {
     GroupCommitPhaseParams {
+        randomness_columns: 0,
         version: GroupCommitPhaseParams::VERSION,
         group,
         blocks: params.blocks(),

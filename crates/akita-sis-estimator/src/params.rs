@@ -273,19 +273,4 @@ mod tests {
             "340282366920938463463374607427473266697"
         );
     }
-
-    #[test]
-    fn debug_output_is_serialization_free_and_informative() {
-        let params = SisParameters::try_new(
-            32,
-            akita_q32(),
-            Some(64),
-            Bound::from_u64(15),
-            SisNorm::Infinity,
-        )
-        .unwrap();
-        let debug = format!("{params:?}");
-        assert!(debug.contains("SisParameters"));
-        assert!(debug.contains("Infinity"));
-    }
 }

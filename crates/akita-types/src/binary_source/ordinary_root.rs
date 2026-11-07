@@ -1,16 +1,17 @@
 //! Ordinary commitment preimages authenticated in a mixed native root.
 
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
     SisModulusProfileId,
 };
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{
     cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275, Prime64Offset59,
 };
 

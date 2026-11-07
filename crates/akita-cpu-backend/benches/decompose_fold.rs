@@ -11,7 +11,9 @@ use akita_params::sis::compute_num_digits_field_width;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{
+    CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+};
 
 const FIELD_COEFFICIENTS: usize = 1 << 22;
 const POSITIONS_PER_BLOCK: usize = 512;

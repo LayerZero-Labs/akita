@@ -5,7 +5,7 @@
 
 use akita_cpu_backend::standalone::digit_range_session;
 use criterion::{criterion_group, criterion_main, Criterion};
-use jolt_field::Prime128Offset275 as F;
+use jolt_algebra::Prime128Offset275 as F;
 use std::hash::{Hash, Hasher};
 use std::hint::black_box;
 

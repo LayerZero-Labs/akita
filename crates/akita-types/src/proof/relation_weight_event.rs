@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use akita_error::AkitaError;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

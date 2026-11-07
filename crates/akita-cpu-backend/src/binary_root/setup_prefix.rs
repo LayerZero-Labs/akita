@@ -9,7 +9,7 @@ use akita_types::binary_source::{BinaryCommittedGroupManifest, BinaryTypedPrefix
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
 };
-use jolt_field::{
+use jolt_algebra::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced,
     WithCommitAccumulator,
 };

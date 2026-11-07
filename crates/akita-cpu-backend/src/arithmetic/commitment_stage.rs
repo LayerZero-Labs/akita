@@ -7,11 +7,12 @@ use crate::commitment::{
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::opaque::{CommitInnerPlan, DigitRowsComputeBackend};
 use akita_algebra::ring::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_types::{DigitBlocks, RingVec};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -70,6 +71,10 @@ where
         prepared,
         outer_plan.n_b(),
         prepared_polynomials.iter(),
+        // Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
+        // commitment route samples B randomness, so every frozen profile it
+        // commits has a zero randomness width.
+        &[],
         outer_plan.geometry(),
         outer_plan.log_basis_outer(),
     )?;
@@ -84,11 +89,15 @@ where
     Ok(u)
 }
 
+/// Commit every B slice of one group, appending `randomness` (slice-major,
+/// `geometry.randomness_columns()` rings per slice) after each slice's
+/// message columns.
 fn commit_outer_slices<'a, F, B, const D_B: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
     n_b: usize,
     polynomial_digits: impl IntoIterator<Item = &'a DigitBlocks>,
+    randomness: &[[i8; D_B]],
     geometry: &akita_params::CommitmentSliceGeometry,
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D_B>>, AkitaError>
@@ -116,7 +125,7 @@ where
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let mut inputs = Vec::with_capacity(geometry.slice_count().get());
-    for_each_outer_slice_input::<D_B>(polynomial_planes, geometry, |input| {
+    for_each_outer_slice_input::<D_B>(polynomial_planes, randomness, geometry, |input| {
         inputs.push(input.to_vec());
         Ok(())
     })?;
@@ -484,7 +493,7 @@ mod tests {
     use crate::opaque::ComputeBackendSetup;
     use crate::{AkitaProverSetup, DensePoly};
     use akita_params::SetupMatrixCapacity;
-    use jolt_field::{Prime128Offset275, Ring};
+    use jolt_algebra::{Prime128Offset275, Ring};
 
     type F = Prime128Offset275;
 

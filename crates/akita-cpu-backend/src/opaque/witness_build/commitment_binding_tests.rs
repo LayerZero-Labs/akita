@@ -1,6 +1,6 @@
 use super::CpuCommitmentMaterialHandle;
 use akita_types::RingVec;
-use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
 
 #[test]
 fn retained_material_rejects_substituted_public_rows() {

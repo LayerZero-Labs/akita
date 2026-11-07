@@ -43,7 +43,7 @@ regression.
 | --- | --- | --- |
 | Test `unwrap`, `expect`, `assert!`, `assert_eq!`, and fixed-size shifts under `#[cfg(test)]` in verifier/dependency crates. | Test-only | Fixture data is not verifier-facing runtime input. |
 | Prover-only compact witness paths, including `CompactPairFoldLut` in `crates/akita-sumcheck/src/compact_fold.rs` and its users under `crates/akita-prover/src/protocol/sumcheck`. | Prover-only | `akita-verifier` does not construct or call these helpers. The spec explicitly excludes prover-only panic freedom in this PR. |
-| NTT/CRT/SIMD assertions and shifts in `crates/akita-algebra/src/ntt` and prover kernels. | Setup/prover-only | Verifier replay does not execute these kernels on public proof data. |
+| NTT/CRT/SIMD assertions and shifts in `jolt-algebra/src/ntt` and prover kernels. | Setup/prover-only | Verifier replay does not execute these kernels on public proof data. |
 | `RingMatrixView::rows` and `RingMatrixView::as_slice` unchecked internal slicing. | Guarded | Only constructed by `FlatMatrix::ring_view`, which validates row count, column count, ring dimension divisibility, and backing length first. |
 | `EqPolynomial` table indexing inside table construction. | Guarded | Public table constructors now validate the implied table length before allocation and mutation. |
 | Opening-point weight indexing in `lagrange_weights` and `monomial_weights`. | Guarded | Public weight constructors now validate the implied table length before allocation and mutation. |

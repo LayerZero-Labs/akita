@@ -27,7 +27,7 @@ mod bench {
     use akita_metal::AkitaMetal;
     use akita_params::FlatMatrix;
     use criterion::{BenchmarkId, Criterion, Throughput};
-    use jolt_field::{
+    use jolt_algebra::{
         AdditiveGroup, CanonicalEncoding, Prime128OffsetA7F7, Prime64Offset59,
         WithCommitAccumulator,
     };

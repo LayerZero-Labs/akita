@@ -1,7 +1,7 @@
 use super::*;
 use crate::PortableCompressionState;
 use akita_params::RelationRowFamily;
-use jolt_field::CanonicalEncoding;
+use jolt_algebra::CanonicalEncoding;
 
 #[test]
 fn portable_fragments_match_complete_cpu_witness_in_both_modes() {

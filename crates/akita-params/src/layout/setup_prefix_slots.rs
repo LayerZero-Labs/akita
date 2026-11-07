@@ -12,10 +12,11 @@ use crate::{
     GroupOpenPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PolynomialGroupLayout,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_algebra::checked;
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
@@ -317,6 +318,7 @@ fn deserialize_committed_group_profile<R: Read>(
     let outer_commit_matrix: OuterCommitMatrixParams =
         deserialize_commit_matrix(&mut reader, compress, validate)?;
     Ok(GroupCommitPhaseParams {
+        randomness_columns: 0,
         version,
         group,
 
@@ -547,6 +549,7 @@ pub fn setup_prefix_precommitted_params(
             return Ok(GroupOpenPhaseParams {
                 setup_natural_len: None,
                 profile: GroupCommitPhaseParams {
+                    randomness_columns: 0,
                     version: GroupCommitPhaseParams::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
 

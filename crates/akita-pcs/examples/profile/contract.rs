@@ -61,7 +61,7 @@ impl Declaration {
             ([first, second], Nullable::Value(final_np))
                 if first == second
                     && first[1].get() == 1
-                    && akita_error::checked::sum([2, final_np.get()]) == Some(np) =>
+                    && jolt_algebra::checked::sum([2, final_np.get()]) == Some(np) =>
             {
                 Ok(Workload::MultiGroup {
                     pre_num_vars: first[0].get(),
@@ -86,7 +86,7 @@ pub(crate) fn attest<Cfg: CommitmentConfig>(mode: &str, nv: usize, np: usize) ->
         .expect("profile workload contract");
     let source_k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
         .ok()
-        .map(|k| k.min(akita_error::checked::pow2(nv).expect("profile arity")));
+        .map(|k| k.min(jolt_algebra::checked::pow2(nv).expect("profile arity")));
     let final_polys = match workload {
         Workload::SingleGroup => None,
         Workload::MultiGroup {

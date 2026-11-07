@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 type RecursiveWitnessBuildParts<F, E, BuildHandle> = (
     Vec<crate::backend::PreparedRelationGroupPublic<F, E>>,

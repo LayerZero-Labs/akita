@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_challenges::SparseChallenge;
-use jolt_field::{CanonicalEncoding, Field, Fp64, One};
+use jolt_algebra::{CanonicalEncoding, Field, Fp64, One};
 
 type F = Fp64<4294967197>;
 

@@ -14,7 +14,7 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::sync::OnceLock;
 
 pub fn run(data: &[u8]) {

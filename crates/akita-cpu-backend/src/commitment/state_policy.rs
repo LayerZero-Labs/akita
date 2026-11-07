@@ -7,7 +7,7 @@ use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
 use akita_params::{CompressionChainPlan, CompressionChainWitness, RingRelationMode};
 use akita_types::RingVec;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::sync::{Arc, Mutex};
 
 /// Canonical shared host material exported from one retained compression state.
@@ -122,7 +122,7 @@ impl<F: Field> PortableCompressionState<F> {
     #[cfg(test)]
     fn retained_bytes(&self) -> Result<usize, AkitaError> {
         let quotient_coefficients = match self.quotients() {
-            Some(quotients) => akita_error::checked::sum(quotients.iter().map(RingVec::coeff_len))
+            Some(quotients) => jolt_algebra::checked::sum(quotients.iter().map(RingVec::coeff_len))
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("compression material retained bytes overflow".into())
                 })?,
@@ -439,7 +439,7 @@ impl<F: Field> ResidentCommitmentState<F> {
             }
             None => 0,
         };
-        akita_error::checked::sum([inner_bytes, compression_bytes]).ok_or_else(|| {
+        jolt_algebra::checked::sum([inner_bytes, compression_bytes]).ok_or_else(|| {
             AkitaError::InvalidInput("resident commitment retained-byte total overflow".into())
         })
     }
@@ -539,6 +539,11 @@ pub(crate) struct InnerRelationStateMaterial<F: Field> {
     plan: CommitInnerPlan,
     source_count: usize,
     rows: Arc<Vec<RingVec<F>>>,
+    /// Slice-major B hiding-randomness coefficients the commitment used.
+    ///
+    /// Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
+    /// commitment route samples B randomness, so it is always empty.
+    outer_randomness: Arc<Vec<i8>>,
 }
 
 impl<F: Field> InnerRelationStateMaterial<F> {
@@ -549,7 +554,7 @@ impl<F: Field> InnerRelationStateMaterial<F> {
         rows: Vec<RingVec<F>>,
     ) -> Result<Self, AkitaError> {
         let expected_coefficients =
-            akita_error::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
+            jolt_algebra::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
                 .ok_or_else(|| AkitaError::Internal("inner-relation row length overflow".into()))?;
         if rows.len() != source_count
             || rows.iter().any(|row| {
@@ -564,6 +569,7 @@ impl<F: Field> InnerRelationStateMaterial<F> {
             plan: *plan,
             source_count,
             rows: Arc::new(rows),
+            outer_randomness: Arc::new(Vec::new()),
         })
     }
 
@@ -583,6 +589,11 @@ impl<F: Field> InnerRelationStateMaterial<F> {
     /// Borrow the canonical rows in source order.
     pub(crate) fn rows(&self) -> &[RingVec<F>] {
         self.rows.as_slice()
+    }
+
+    /// Slice-major B hiding-randomness coefficients; empty when clear.
+    pub(crate) fn outer_randomness(&self) -> &[i8] {
+        self.outer_randomness.as_slice()
     }
 
     /// Consume the carrier and return the canonical rows.
@@ -606,11 +617,11 @@ impl<F: Field> InnerRelationStateMaterial<F> {
 
     #[cfg(test)]
     fn retained_bytes(&self) -> Result<usize, AkitaError> {
-        let coefficients = akita_error::checked::sum(self.rows.iter().map(RingVec::coeff_len))
+        let coefficients = jolt_algebra::checked::sum(self.rows.iter().map(RingVec::coeff_len))
             .ok_or_else(|| {
                 AkitaError::InvalidInput("inner-relation coefficient total overflow".into())
             })?;
-        akita_error::checked::product([coefficients, size_of::<F>()]).ok_or_else(|| {
+        jolt_algebra::checked::product([coefficients, size_of::<F>()]).ok_or_else(|| {
             AkitaError::InvalidInput("inner-relation retained bytes overflow".into())
         })
     }
@@ -648,7 +659,7 @@ pub(crate) trait InnerRelationMaterial<F: Field>: Send + 'static {
 
     fn terminal_message(&self) -> Result<TerminalTFieldsMessage<F>, AkitaError>
     where
-        F: jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize;
+        F: jolt_algebra::CanonicalEncoding + akita_serialization::AkitaSerialize;
 
     fn into_terminal_row(self) -> Result<RingVec<F>, AkitaError>
     where
@@ -666,7 +677,7 @@ impl<F: Field + 'static> InnerRelationMaterial<F> for InnerRelationStateMaterial
 
     fn terminal_message(&self) -> Result<TerminalTFieldsMessage<F>, AkitaError>
     where
-        F: jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
+        F: jolt_algebra::CanonicalEncoding + akita_serialization::AkitaSerialize,
     {
         let [row] = self.rows() else {
             return Err(AkitaError::Internal(
@@ -737,11 +748,12 @@ impl<F: Field + 'static> InnerRelationState<F> for PortableCommitmentHandle<F> {
         plan: &CommitInnerPlan,
         source_count: usize,
     ) -> Result<(), AkitaError> {
-        let expected_coefficients =
-            akita_error::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("inner-relation row length overflow".into())
-                })?;
+        let expected_coefficients = jolt_algebra::checked::product([
+            plan.num_live_blocks,
+            plan.n_a,
+            plan.ring_dimension,
+        ])
+        .ok_or_else(|| AkitaError::InvalidInput("inner-relation row length overflow".into()))?;
         let rows = self.inner_rows()?;
         if self.ring_dim() != plan.ring_dimension
             || rows.len() != source_count
@@ -797,7 +809,7 @@ impl<F: Field + 'static> InnerRelationState<F> for ResidentCommitmentState<F> {
 
 impl<F> OuterCompressionState<F> for PortableCommitmentHandle<F>
 where
-    F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
+    F: Field + jolt_algebra::CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
 {
     type Material = PortableCompressionState<F>;
     #[cfg(test)]
@@ -1028,8 +1040,8 @@ impl<F: Field, S> CommitmentExecutionOutput<F, S> {
 mod tests {
     use super::*;
     use crate::commitment::StateOwnerCapability;
-    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
-    use jolt_field::Prime64Offset59;
+    use akita_types::{AkitaSetupDescriptor, PublicMatrixSeed};
+    use jolt_algebra::Prime64Offset59;
 
     type F = Prime64Offset59;
 
@@ -1062,7 +1074,7 @@ mod tests {
                 max_num_vars: 8,
                 max_num_batched_polys: 1,
                 num_field_elements: 64,
-                setup_seed: AkitaSetupSeed::shake256_paged_v1([7; 32]),
+                setup_seed: PublicMatrixSeed::shake256_paged_v1([7; 32]),
             },
             plan,
             1,

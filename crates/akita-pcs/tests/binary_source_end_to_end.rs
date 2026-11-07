@@ -47,7 +47,7 @@ use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::SetupPolicy;
 use common::{init_rayon_pool, run_on_large_stack, selected_prover_data, selected_statement};
 use fault_backend::{Fault, FaultBackend};
-use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 use jolt_transcript::BytesMsg;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;

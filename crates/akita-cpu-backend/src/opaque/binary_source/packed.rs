@@ -1,7 +1,7 @@
 //! Compact private carriers and the existing packed arithmetic kernels.
 
 use super::*;
-use akita_algebra::{binary::BinaryField128, ring::trinomial::module_map::pack_signed_components};
+use akita_algebra::{binary::BinaryField128, trinomial::module_map::pack_signed_components};
 use akita_challenges::{
     BinaryChallenge, BinaryChallengeProfile, BinaryScalarRing, Challenges,
     FoldChallengeDistribution,

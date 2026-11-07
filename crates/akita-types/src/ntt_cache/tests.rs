@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::CyclotomicRing;
 use core::mem::size_of;
-use jolt_field::{
+use jolt_algebra::{
     Fp32, Fp64, Prime128Offset275, Prime24Offset3, Prime32Offset99, Prime40Offset195,
     Prime56Offset27, Prime64Offset59, Ring,
 };

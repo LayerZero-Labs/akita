@@ -1,7 +1,7 @@
 // akita::NttPrime: signed 32-bit Montgomery arithmetic modulo an NTT prime
-// p < 2^30, bit-exact with akita_algebra::ntt::prime::NttPrime<i32>.
+// p < 2^30, bit-exact with jolt_algebra::ntt::prime::NttPrime<i32>.
 //
-// The operations and their names follow crates/akita-algebra/src/ntt/prime.rs.
+// The operations and their names follow jolt-algebra/src/ntt/prime.rs.
 // Values are raw i32 Montgomery residues (a R mod p, R = 2^32) in the lazy
 // ranges the CPU transforms use; normalize() yields the canonical [0, p).
 //
@@ -15,7 +15,7 @@
 
 namespace akita {
 
-// Layout of akita_algebra::ntt::prime::NttPrime<i32> (repr(C)).
+// Layout of jolt_algebra::ntt::prime::NttPrime<i32> (repr(C)).
 struct NttPrime {
     int p;
     // p^-1 mod 2^32, centered.

@@ -12,7 +12,7 @@ Status: Akita is not yet a formally audited production release ([SECURITY.md](SE
 The workspace is a family of focused `akita-*` crates under `crates/`. [`docs/crate-graph.md`](docs/crate-graph.md) has the full map and dependency graph. The main ownership boundaries are:
 
 - `akita-error` owns the shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges.
-- Jolt's `jolt-field` package owns shared field arithmetic; `akita-serialization` and `akita-algebra` own Akita encoding, NTT, ring, and polynomial utilities.
+- Jolt's `jolt-algebra` package owns shared field arithmetic; `akita-serialization` and `akita-algebra` own Akita encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-params` owns parameter geometry, sizing, SIS tables, schedules, witness layout, dispatch, and grinding plans.
 - `akita-types` owns proof, setup, and claim wire values, shared protocol math, and native transcript replay used by both roles.

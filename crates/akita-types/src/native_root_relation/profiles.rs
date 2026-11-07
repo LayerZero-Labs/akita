@@ -10,10 +10,11 @@
 //! same field element as in the materialized table, at a fraction of its size.
 
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
+use jolt_algebra::solinas::parallel::*;
 
-use akita_error::{checked, AkitaError};
-use jolt_field::{Field, Fold};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::{Field, Fold};
 
 use super::SegmentLanes;
 
@@ -313,7 +314,7 @@ impl<E: Field> ProfileBuilder<E> {
                     address += run;
                 }
             }
-            Ok(())
+            Ok::<(), AkitaError>(())
         };
         #[cfg(feature = "parallel")]
         owned

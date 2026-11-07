@@ -16,7 +16,7 @@ use akita_pcs::{
 };
 use akita_prover::backend::FoldExecutionRequirements;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::CanonicalEncoding;
+use jolt_algebra::CanonicalEncoding;
 
 type Cfg = fp128::OneHot;
 type F = fp128::Field;

@@ -3,7 +3,7 @@
 use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
 use akita_error::AkitaError;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Polynomial basis mode for the evaluation relation.
 ///
@@ -242,8 +242,8 @@ pub fn reduce_inner_opening_to_ring_element<F: Field, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
-    use jolt_field::{One, Ring};
+    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::{One, Ring};
 
     type F = Prime128OffsetA7F7;
 

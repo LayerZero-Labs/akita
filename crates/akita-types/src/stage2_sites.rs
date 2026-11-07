@@ -2,9 +2,9 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE2};
+use akita_transcript::{PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_STAGE2};
 use core::slice;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
     ProtocolSiteId {
@@ -27,10 +27,9 @@ pub fn stage2_w_eval<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
+    grinding.state_mut().exchange_private_extension_group(
         witness_evaluation_site(level),
         slice::from_mut(&mut evaluation),
     )?;
@@ -43,7 +42,7 @@ mod tests {
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99, Ring, Zero};
+    use jolt_algebra::{CanonicalBytes, FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

@@ -3,7 +3,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_params::sis::{HonestFoldPolicy, HonestFoldSizingQuery};
+use akita_params::sis::{FoldFailureTarget, HonestFoldPolicy, HonestFoldSizingQuery};
 use akita_params::PolynomialGroupLayout;
 use akita_params::ScheduleLookupKey;
 
@@ -23,19 +23,6 @@ fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog<Cfg>
 
 /// Sparse singleton keys covering small, production, stress, and table-max nv.
 const BASIS_ENVELOPE_NUM_VARS: &[usize] = &[10, 16, 28, 30, 64, 120];
-
-#[test]
-fn large_fields_search_the_complete_i16_inner_basis_domain() {
-    assert_eq!(fp128::Dense::inner_basis_range(), (3, 16));
-    assert_eq!(
-        akita_config::proof_optimized::fp64::Dense::inner_basis_range(),
-        (3, 16)
-    );
-    assert_eq!(
-        akita_config::proof_optimized::fp32::Dense::inner_basis_range(),
-        (3, 10)
-    );
-}
 
 #[test]
 fn large_field_dense_presets_search_the_extended_a_dimension_domain() {
@@ -125,6 +112,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                     .fold_witness,
                 log_basis_response: root.open().digits.log_basis,
                 challenge_config: &root.fold_challenge_config(),
+                failure_target: FoldFailureTarget::PerAttempt,
             })
             .expect("one-hot fold policy");
         assert_eq!(

@@ -12,7 +12,7 @@ use akita_params::{DigitRangePlan, FlatBooleanDomain};
 use akita_types::binary_source::TypedPrefixWeights;
 use akita_types::native_root_relation::{NativeRootWeights, RootWeightProfiles};
 use akita_types::DigitRangeEqualityPoint;
-use jolt_field::{Field, Fold, Ring, Unreduced};
+use jolt_algebra::{Field, Fold, Ring, Unreduced};
 
 pub(super) fn import_root_witness<F: Field, E>(
     backend: &CpuBackend<F, E>,

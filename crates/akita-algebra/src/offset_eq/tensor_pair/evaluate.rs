@@ -5,7 +5,8 @@ use super::{
 };
 use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 use std::collections::BTreeMap;
 
 /// Evaluate tensor-native paired Boolean-basis families.

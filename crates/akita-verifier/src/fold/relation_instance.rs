@@ -11,14 +11,14 @@ use akita_types::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, FpExtEncoding, GroupFoldChallenges,
     OpeningFamily, RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Check the opening and commitment payload shapes against the level geometry.
 ///
 /// Runs before the fold response is read, so every rejection here precedes
 /// any fold transcript operation.
-pub(super) fn validate_fold_payloads<F, E>(
-    prepared: &PreparedFoldReplay<'_, F, E>,
+pub(super) fn validate_fold_payloads<F, E, V>(
+    prepared: &PreparedFoldReplay<'_, F, E, V>,
 ) -> Result<RelationWitnessGeometry, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -62,8 +62,8 @@ where
 
 /// Assemble the fold's ring-relation instance from the evaluation-batch row
 /// coefficients, the transmitted payloads, and the drawn fold challenges.
-pub(super) fn assemble_relation_instance<F, E>(
-    prepared: &PreparedFoldReplay<'_, F, E>,
+pub(super) fn assemble_relation_instance<F, E, V>(
+    prepared: &PreparedFoldReplay<'_, F, E, V>,
     relation_geometry: &RelationWitnessGeometry,
     group_challenges: Vec<GroupFoldChallenges>,
 ) -> Result<RingRelationInstance<F>, AkitaError>

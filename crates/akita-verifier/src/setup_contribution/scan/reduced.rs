@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{Unreduced, Zero};
+use jolt_algebra::{Unreduced, Zero};
 
 /// One distinct coefficient functional over the shared setup base rings.
 ///
@@ -348,7 +348,7 @@ fn projected_role_index(base_idx: usize, ratio: usize) -> Result<usize, AkitaErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{FpExt4, Prime32Offset99, Ring};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Ring};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

@@ -2,7 +2,7 @@
 
 use std::io::{Read, Write};
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_poly::{CompressedPoly, OmittedConstantPoly, UnivariatePoly};
 
 use crate::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate};
@@ -183,7 +183,7 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{Prime32Offset99, Ring};
+    use jolt_algebra::{Prime32Offset99, Ring};
 
     use super::*;
 

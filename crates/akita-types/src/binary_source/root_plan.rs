@@ -1,9 +1,11 @@
 //! Public outgoing layout and direct relation assembly for a binary root.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use super::{
     binary_scalar_geometry, BinaryEvaluationBounds, BinaryEvaluationSegments, BinaryResidualBounds,

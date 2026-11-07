@@ -1,8 +1,10 @@
 //! Exactly uniform q24 projection rows drawn inside the caller's transcript.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use super::{challenge_block, BinaryResidualBounds, BINARY_PROJECTION_COUNT, BINARY_SOURCE_Q};
 

@@ -7,7 +7,7 @@ license = "Apache-2.0 OR MIT"
 publish = false
 
 [package.metadata.cargo-machete]
-ignored = ["jolt-field"]
+ignored = ["jolt-algebra"]
 
 [features]
 # `--features guest` is the flag the `jolt` build CLI passes when building
@@ -34,11 +34,11 @@ trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 akita-error = { path = "../../../crates/akita-error" }
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
 # resolve the same way as in the upstream Jolt examples.
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false }
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false, features = [
   "asm",
   "solinas",
 ] }

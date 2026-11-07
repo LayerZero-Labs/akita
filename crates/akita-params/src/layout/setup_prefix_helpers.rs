@@ -1,7 +1,8 @@
 //! Focused geometry helpers for setup-prefix commitments.
 
 use crate::{OpeningClaimsLayout, PolynomialGroupLayout};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::padded_setup_prefix_len;
 

@@ -21,7 +21,8 @@
 //! `Gamma = 2w` this gives `|K| <= 3 * (m * D * B_z + C * w)`.
 
 use akita_challenges::BinaryChallengeProfile;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::{LabiniusRingDegree, LABINIUS_BALANCED_LOG_BASIS};
 use crate::sis::{balanced_digit_abs_max, num_digits_for_linf_cap};

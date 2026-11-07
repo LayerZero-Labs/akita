@@ -5,8 +5,8 @@ use super::eq_poly::EqPolynomial;
 use crate::Field;
 use akita_error::AkitaError;
 #[allow(unused_imports)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::Fold;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::Fold;
 
 /// Evaluate a multilinear polynomial (given by boolean-hypercube evaluations in
 /// little-endian bit order) at an arbitrary point via iterated folding.
@@ -134,7 +134,7 @@ pub fn trim_trailing_zeros<E: Field>(coeffs: &mut Vec<E>) {
 #[cfg(test)]
 mod fold_tests {
     use super::fold_evals_in_place;
-    use jolt_field::{Prime64Offset59, Ring, Zero};
+    use jolt_algebra::{Prime64Offset59, Ring, Zero};
 
     #[test]
     fn fold_matches_independent_pair_evaluation() {

@@ -5,9 +5,10 @@
 //! mathematical contract can be tested independently of the prover API.
 
 use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_serialization::Valid;
-use jolt_field::{Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
+use jolt_algebra::checked;
+use jolt_algebra::{Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].

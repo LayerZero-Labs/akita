@@ -6,7 +6,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_error::AkitaError;
 use akita_params::CommittedGroupParams;
 use akita_types::{DigitBlocks, RingVec};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 enum ConsumerOpeningKind<F: Field> {
     EvaluationTrace {
@@ -164,13 +164,14 @@ pub(super) fn prepare_group_opening_witness<F, E, const D: usize>(
 ) -> Result<PreparedGroupWitnessOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: jolt_field::ExtField<F>,
+    E: jolt_algebra::ExtField<F>,
 {
     let (opening, public) =
         handle.relation_opening::<D>(level, opening_batch, geometry, group_index, group_dims)?;
     Ok((opening, public, handle.scalar_openings().to_vec()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_opening_relation_rows<F, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB>,
     opening_batch: &akita_params::OpeningClaimsLayout,
@@ -179,6 +180,7 @@ pub(super) fn prepare_opening_relation_rows<F, RB, const D: usize>(
     d_row_len: usize,
     log_basis: u32,
     relation_mode: akita_params::RingRelationMode,
+    randomness: &[i8],
 ) -> Result<(RingVec<F>, RelationDQuotientWitness<F>), AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -203,6 +205,18 @@ where
                 "prepared opening relation has no first or concatenated E digit input".into(),
             )
         })?;
+    // The D hiding randomness is one trailing block after every group's
+    // opening columns, matching the widened D view.
+    let hidden = (!randomness.is_empty())
+        .then(|| {
+            let mut digits = e_hat.digits().to_vec();
+            digits.extend_from_slice(randomness);
+            let mut block_sizes = e_hat.block_sizes().to_vec();
+            block_sizes.push(randomness.len() / D);
+            DigitBlocks::new(digits, block_sizes, D)
+        })
+        .transpose()?;
+    let e_hat = hidden.as_ref().unwrap_or(e_hat);
     if d_row_len == 0 {
         let quotients = match relation_mode {
             akita_params::RingRelationMode::QuotientLift => {

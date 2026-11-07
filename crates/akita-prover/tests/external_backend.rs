@@ -5,7 +5,7 @@ use akita_error::AkitaError;
 use akita_params::*;
 use akita_prover::backend::*;
 use akita_types::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_poly::UnivariatePoly;
 use std::marker::PhantomData;
 
@@ -551,17 +551,17 @@ where
     Cfg: akita_config::CommitmentConfig,
     Cfg::Field: CanonicalEncoding
         + akita_serialization::AkitaSerialize
-        + jolt_field::Unreduced
-        + jolt_field::PseudoMersenne
-        + jolt_field::Ring
+        + jolt_algebra::Unreduced
+        + jolt_algebra::PseudoMersenne
+        + jolt_algebra::Ring
         + 'static,
-    <Cfg::Field as jolt_field::Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
+    <Cfg::Field as jolt_algebra::Unreduced>::Wide: From<Cfg::Field> + jolt_algebra::AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + jolt_field::ExtField<Cfg::Field>
-        + jolt_field::Unreduced
-        + jolt_field::Fold
-        + jolt_field::Ring
-        + jolt_field::MulBaseUnreduced<Cfg::Field>
+        + jolt_algebra::ExtField<Cfg::Field>
+        + jolt_algebra::Unreduced
+        + jolt_algebra::Fold
+        + jolt_algebra::Ring
+        + jolt_algebra::MulBaseUnreduced<Cfg::Field>
         + akita_serialization::AkitaSerialize
         + 'static,
 {
@@ -586,7 +586,7 @@ where
 
 #[test]
 fn opaque_messages_retain_external_handles_without_storage_requirements() {
-    type F = jolt_field::Prime128OffsetA7F7;
+    type F = jolt_algebra::Prime128OffsetA7F7;
     let opening = PreparedGroupOpening::new(vec![F::default()], Box::new(73u32));
     let (messages, handle) = opening.into_parts();
     assert_eq!(messages.len(), 1);

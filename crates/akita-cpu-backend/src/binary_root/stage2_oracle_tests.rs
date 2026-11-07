@@ -2,7 +2,7 @@
 
 use super::*;
 use akita_types::binary_source::{root_weight_fixtures, RootFixtureField as E};
-use jolt_field::{One, Zero};
+use jolt_algebra::{One, Zero};
 
 /// `eq(point, x)` for every address `x`, with bit `i` of `x` against `point[i]`.
 fn equality_table<E: Field>(point: &[E]) -> Vec<E> {
@@ -106,7 +106,7 @@ mod p64 {
     use crate::binary_root::{binary_row_partials, BinaryEvaluationWitness, BinaryRootRelation};
     use crate::opaque::sumcheck::digit_range::{DigitRangeProver, DigitRangeSession};
     use crate::opaque::{Stage1PublicTransition, Stage1Step};
-    use akita_algebra::ring::trinomial::{image::Q24Image, signed::signed_trinomial_product};
+    use akita_algebra::trinomial::{image::Q24Image, signed::signed_trinomial_product};
     use akita_algebra::MinusTrinomial;
     use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
     use akita_params::binary_setup::BinaryFieldProfile;
@@ -116,7 +116,7 @@ mod p64 {
         BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic, BinarySourceDescriptor,
         BinaryTerminalClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
     };
-    use jolt_field::{Ext2, ExtField, One, Prime64Offset59, Ring, Zero};
+    use jolt_algebra::{Ext2, ExtField, One, Prime64Offset59, Ring, Zero};
     type F = Prime64Offset59;
     type E = Ext2<F>;
 
@@ -167,6 +167,7 @@ mod p64 {
             group: PolynomialGroupLayout::singleton(10),
             blocks: BlockGeometry::new(8, 2, 4),
             outer_slice_count: CommitmentSliceCount::ONE,
+            randomness_columns: 0,
             inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
             outer: RoleParams::new(GadgetDigits::new(3, 22), outer),
         }

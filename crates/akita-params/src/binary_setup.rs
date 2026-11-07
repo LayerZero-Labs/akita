@@ -3,10 +3,12 @@
 //! These streams do not change the ordinary public-field stream. Coefficients
 //! of the q matrix and coefficients of prime setup matrices have independent domains.
 
-use akita_error::{checked, AkitaError};
-use jolt_field::cfg_chunks_mut;
+use akita_error::AkitaError;
+
+use jolt_algebra::cfg_chunks_mut;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
+use jolt_algebra::solinas::parallel::*;
 use keccak::{Backend, BackendClosure, Keccak, ParState1600, State1600, PLEN};
 
 /// Characteristic of the scalar field used by binary source groups.

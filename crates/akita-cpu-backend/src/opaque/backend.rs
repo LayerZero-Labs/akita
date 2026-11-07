@@ -11,7 +11,7 @@ use akita_prover::backend::ProofContext;
 use akita_serialization::Valid;
 use akita_types::AkitaExpandedSetup;
 use core::marker::PhantomData;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -75,7 +75,7 @@ impl<T> SetupPrefixCache<T> {
 /// ```compile_fail
 /// use akita_cpu_backend::CpuBackend;
 /// use akita_prover::ProverHandleFamily;
-/// use jolt_field::Prime128OffsetA7F7;
+/// use jolt_algebra::Prime128OffsetA7F7;
 ///
 /// type Opening = <CpuBackend<Prime128OffsetA7F7, Prime128OffsetA7F7> as ProverHandleFamily<
 ///     Prime128OffsetA7F7,

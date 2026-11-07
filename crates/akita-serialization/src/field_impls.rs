@@ -1,6 +1,8 @@
 use std::io::{Read, Write};
 
-use jolt_field::{CanonicalEncoding, Ext2Config, Field, Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8};
+use jolt_algebra::{
+    CanonicalEncoding, Ext2Config, Field, Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8,
+};
 
 use crate::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate};
 
@@ -268,8 +270,8 @@ impl_extension_serialization!(FpExt8, 8);
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{CanonicalEncoding, Ext2, Ring};
-    use jolt_field::{
+    use jolt_algebra::{CanonicalEncoding, Ext2, Ring};
+    use jolt_algebra::{
         Fp64, FpExt4, FpExt8, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99,
         Prime64Offset59,
     };

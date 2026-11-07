@@ -7,7 +7,7 @@
 #![allow(missing_docs)]
 
 use akita_challenges::{SparseChallengeConfig, PRODUCTION_FOLD_CHALLENGE_RING_DIMS};
-use jolt_field::{pseudo_mersenne_modulus, Prime128Offset275, PseudoMersenne};
+use jolt_algebra::{pseudo_mersenne_modulus, Prime128Offset275, PseudoMersenne};
 
 /// Number of irreducible factors of `X^d + 1` modulo the prime.
 const SPLIT_COUNT: u128 = 2;

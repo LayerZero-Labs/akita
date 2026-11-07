@@ -2,7 +2,7 @@
 
 use super::CpuStage2SessionHandle;
 use akita_error::AkitaError;
-use jolt_field::{Field, Ring};
+use jolt_algebra::{Field, Ring};
 
 impl<E: Field + Ring> CpuStage2SessionHandle<E> {
     pub(crate) fn with_negative_binary_weights(

@@ -92,14 +92,14 @@ impl<E: Field> SetupContributionPlan<E> {
                     )?,
                     self.materialize_role_tensor_weights(
                         group.b_relation_ratio,
-                        &group.physical_b.relation_tensors,
-                        group.physical_b.logical_input_width(),
+                        &group.physical_b.column_tensors(),
+                        group.physical_b.column_len()?,
                         alpha,
                     )?,
                     self.materialize_role_tensor_weights(
                         group.d_relation_ratio,
-                        &group.d_tensors,
-                        group.d_col_range.len(),
+                        &group.d_column_tensors(),
+                        group.d_column_len(),
                         alpha,
                     )?,
                 ];
@@ -136,7 +136,9 @@ impl<E: Field> SetupContributionPlan<E> {
             if ratio == 1 {
                 Ok(None)
             } else {
-                scalar_powers_with_stride(alpha, base_ring_dim, ratio).map(Some)
+                scalar_powers_with_stride(alpha, base_ring_dim, ratio)
+                    .map(Some)
+                    .map_err(AkitaError::from)
             }
         };
         Ok([
@@ -170,7 +172,9 @@ impl<E: Field> SetupContributionPlan<E> {
             if d_idx < d_footprint {
                 let d_col = d_idx % self.d_physical_cols;
                 let d_row = d_idx / self.d_physical_cols;
-                if group.d_col_range.contains(&d_col) {
+                if (group.d_col_range.start..group.d_col_range.start + group.d_column_len())
+                    .contains(&d_col)
+                {
                     let term = self.d_weights[d_row]
                         * *e_eq.get(d_col - group.d_col_range.start).ok_or_else(|| {
                             AkitaError::Internal(
@@ -516,7 +520,7 @@ mod projection_tests {
     use akita_algebra::offset_eq::{
         eq_eval_at_index, eval_boolean_pair_tensor_families, OffsetEqWindow,
     };
-    use jolt_field::{One, Prime128OffsetA7F7, Ring};
+    use jolt_algebra::{One, Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
 

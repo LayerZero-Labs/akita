@@ -321,7 +321,7 @@ mod tests {
     use super::*;
     use crate::poly::fold_evals_in_place;
     use crate::Field;
-    use jolt_field::{One, Prime128Offset275, Zero};
+    use jolt_algebra::{One, Prime128Offset275, Zero};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

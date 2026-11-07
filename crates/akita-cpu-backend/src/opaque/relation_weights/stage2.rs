@@ -200,7 +200,7 @@ where
         let instance = request.relation;
         if parameters.payload_mode.is_compressed()
             && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
-            && akita_error::checked::product([
+            && jolt_algebra::checked::product([
                 request.opening_source_len,
                 request.opening_ring_dimension,
             ])
@@ -335,7 +335,7 @@ where
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::EqPairTensorAxis;
-    use jolt_field::{FpExt4, One, Prime32Offset99, Ring, Zero};
+    use jolt_algebra::{FpExt4, One, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

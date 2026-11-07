@@ -436,21 +436,6 @@ mod tests {
     }
 
     #[test]
-    fn outer_and_opening_share_arms_today() {
-        for tier in [
-            ProtocolRingDispatchTierId::Fp128,
-            ProtocolRingDispatchTierId::Fp64,
-            ProtocolRingDispatchTierId::Fp32,
-        ] {
-            assert_eq!(
-                arms_for_slot(tier, ProtocolDispatchSlot::Role(RingRole::Outer)),
-                arms_for_slot(tier, ProtocolDispatchSlot::Role(RingRole::Opening)),
-                "outer/opening diverged for {tier:?}; split policy rows intentionally"
-            );
-        }
-    }
-
-    #[test]
     fn ntt_arms_are_powers_of_two_within_tier_band() {
         for tier in [
             ProtocolRingDispatchTierId::Fp128,

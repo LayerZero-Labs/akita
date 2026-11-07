@@ -27,11 +27,12 @@ pub use types::{
 };
 
 use super::checked_slice;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::layout::setup_projection::{
     SetupProjectionGeometry, SetupProjectionGroupGeometry,
 };
 use akita_params::layout::CommittedGroupParams;
 use akita_params::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};

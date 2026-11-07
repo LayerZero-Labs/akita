@@ -10,7 +10,7 @@ use akita_types::setup_claims::{
     SetupBatchProof, SetupBatchStatement,
 };
 use akita_types::{GrindingReplay, GrindingSumcheckProver, ProverGrinding};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Reduce all obligations to one setup evaluation, reusing native advice preparation.
 pub fn prove_setup_batch<F, E, B>(

@@ -2,7 +2,7 @@
 
 use super::*;
 use akita_config::proof_optimized::fp128;
-use jolt_field::{One, Zero};
+use jolt_algebra::{One, Zero};
 
 #[test]
 fn scoped_prefix_retains_source_without_replacing_ordinary_cache() {

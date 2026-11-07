@@ -1,6 +1,6 @@
 use crate::opaque::ProofScopeId;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Linear CPU state retained across transcript-owned fold grinding.
 pub struct CpuWitnessBuildHandle<F: Field + CanonicalEncoding> {
