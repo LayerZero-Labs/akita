@@ -1,6 +1,6 @@
 # Standalone clear binary opening
 
-Status: withdrawn
+Status: implemented
 Book-chapter: book/src/how/architecture.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
