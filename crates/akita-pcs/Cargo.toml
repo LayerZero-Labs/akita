@@ -125,7 +125,10 @@ dev-protocol = ["akita-params/dev-protocol"]
 # configuration does. It compiles no hiding sampler (jolt-zk's `whiteout`
 # only), so a hiding commitment fails without `zk-prover`.
 zk = [
+  "dep:jolt-zk",
+  "dep:akita-sumcheck",
   "dep:jolt-poly",
+  "dep:zeroize",
   "akita-config/zk",
   "akita-prover/zk",
   "akita-verifier/zk",
@@ -135,15 +138,18 @@ zk = [
 ]
 # The zero-knowledge prover's samplers: the OS-drawn hiding randomness and
 # jolt-zk's `whiteout-prover`.
-zk-prover = ["zk", "akita-cpu-backend/zk-prover"]
+zk-prover = ["zk", "jolt-zk/whiteout-prover", "akita-cpu-backend/zk-prover"]
 # Test hooks of the zero-knowledge mode (the response prover's unchecked
 # path, for the consistent-cheat tests).
 test-support = ["zk-prover"]
 # Timing harness for examples/compression_dudect.rs: jolt-zk's DIT pool and
 # synthetic Σ instance. Diagnostics only; implies `zk-prover` through
 # `test-support`.
-zk-diagnostics = ["test-support"]
+zk-diagnostics = ["test-support", "jolt-zk/whiteout-diagnostics"]
 [dependencies]
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false, features = [
+  "lattice",
+] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
@@ -162,7 +168,14 @@ akita-prover = { version = "0.1.0", path = "../akita-prover", default-features =
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false, optional = true }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", features = [
+  "whiteout",
+], optional = true }
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false, optional = true }
+zeroize = { version = "1.8", default-features = false, features = [
+  "alloc",
+], optional = true }
 
 [dev-dependencies]
 # Extension seam: expose existing test diagnostics to grouped integration tests.
@@ -178,6 +191,12 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false, features = [
   "transcript-blake2b",
   "transcript-keccak",
+] }
+zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+jolt-zk = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", features = [
+  "test-support",
+  "whiteout-test-support",
 ] }
 spongefish = { version = "=0.8.0", default-features = false }
 # Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
@@ -233,6 +252,14 @@ libc = "0.2"
 [[example]]
 name = "profile"
 path = "examples/profile/main.rs"
+
+[[example]]
+name = "zk_response"
+required-features = ["zk-prover"]
+
+[[example]]
+name = "compression_dudect"
+required-features = ["zk-diagnostics"]
 
 [[example]]
 name = "binary_source_full_size"

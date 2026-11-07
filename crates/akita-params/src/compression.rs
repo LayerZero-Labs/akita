@@ -203,6 +203,11 @@ pub enum CompressionPolicyId {
     /// and a 256-byte terminal image.
     #[default]
     NegativeBinaryTwoMapExactMonotoneCutover8KiBV4,
+    /// The same two rank-one maps, with the source bounded by the first
+    /// map's SIS cell instead of 8 KiB: Whiteout's split images
+    /// ([`CompressionChainPlan::for_certified_source`]). Never a clear
+    /// schedule's policy; descriptors admit only [`COMPRESSION_POLICY`].
+    NegativeBinaryTwoMapSisBoundV1,
 }
 
 impl CompressionPolicyId {
@@ -210,6 +215,7 @@ impl CompressionPolicyId {
     pub const fn tag(self) -> u8 {
         match self {
             Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4 => 4,
+            Self::NegativeBinaryTwoMapSisBoundV1 => 5,
         }
     }
 
@@ -217,6 +223,7 @@ impl CompressionPolicyId {
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             4 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4),
+            5 => Some(Self::NegativeBinaryTwoMapSisBoundV1),
             _ => None,
         }
     }
@@ -227,6 +234,7 @@ impl CompressionPolicyId {
             Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV4 => {
                 "NegativeBinaryTwoMapExactMonotoneCutover8KiBV4"
             }
+            Self::NegativeBinaryTwoMapSisBoundV1 => "NegativeBinaryTwoMapSisBoundV1",
         }
     }
 }
@@ -438,28 +446,33 @@ impl PackedNegativeBinary {
         let field_bits = usize::try_from(F::MODULUS_BITS)
             .map_err(|_| AkitaError::InvalidSetup("field bit length overflow".into()))?;
         let mut bytes = vec![0u8; map.packed_digit_bytes()];
+        // WARNING: the coefficients are secret (a Σ attempt's `t_D` is packed
+        // before its accept bit, `specs/whiteout-akita.md` §6.6), so every
+        // value-dependent step is a mask: no branch, early exit or address
+        // depends on a coefficient. Indices depend on positions only.
+        let mut noncanonical = false;
         for (coefficient_index, coefficient) in coefficients.iter().enumerate() {
             let canonical = coefficient.to_u128_checked().ok_or_else(|| {
                 AkitaError::InvalidInput("compression coefficient does not fit in u128".into())
             })?;
-            let magnitude = if canonical == 0 {
-                0
-            } else {
-                modulus.checked_sub(canonical).ok_or_else(|| {
-                    AkitaError::InvalidInput("noncanonical compression coefficient".into())
-                })?
-            };
+            let (difference, borrow) = modulus.overflowing_sub(canonical);
+            noncanonical |= borrow;
+            let nonzero = (canonical | canonical.wrapping_neg()) >> 127;
+            let magnitude = difference & 0u128.wrapping_sub(nonzero);
             for bit in 0..field_bits {
-                if (magnitude >> bit) & 1 == 1 {
-                    let linear = bit
-                        .checked_mul(coefficients.len())
-                        .and_then(|base| base.checked_add(coefficient_index))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("compression digit index overflow".into())
-                        })?;
-                    bytes[linear / 8] |= 1 << (linear % 8);
-                }
+                let linear = bit
+                    .checked_mul(coefficients.len())
+                    .and_then(|base| base.checked_add(coefficient_index))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression digit index overflow".into())
+                    })?;
+                bytes[linear / 8] |= (((magnitude >> bit) & 1) as u8) << (linear % 8);
             }
+        }
+        if noncanonical {
+            return Err(AkitaError::InvalidInput(
+                "noncanonical compression coefficient".into(),
+            ));
         }
         Self::from_bytes(map, bytes)
     }
@@ -511,10 +524,9 @@ impl PackedNegativeBinary {
             )));
         }
         let mut rows = vec![[0i8; D]; self.map.input_width()];
+        // Branch-free on the (secret) bits, as in `from_coefficients`.
         for linear in 0..self.map.real_digit_count() {
-            if self.bytes[linear / 8] >> (linear % 8) & 1 == 1 {
-                rows[linear / D][linear % D] = -1;
-            }
+            rows[linear / D][linear % D] = -((self.bytes[linear / 8] >> (linear % 8) & 1) as i8);
         }
         Ok(rows)
     }
@@ -705,6 +717,29 @@ mod tests {
         assert!(PackedNegativeBinary::from_bytes(map, vec![0; 5]).is_err());
         let packed = PackedNegativeBinary::from_bytes(map, vec![0; 4]).unwrap();
         assert!(packed.expand_rows::<128>().is_err());
+    }
+
+    /// The q128 first map is certified up to 60,460 `R_32` columns at 128
+    /// bits per source coefficient: 15,115 coefficients (60,460 columns), not
+    /// 15,116 (60,464), under its own policy. The clear cap stays at 512.
+    #[test]
+    fn certified_source_bound_is_the_first_maps_sis_width() {
+        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        assert_eq!(
+            CompressionChainPlan::max_certified_source_coefficients(profile).unwrap(),
+            15_115
+        );
+        let plan = CompressionChainPlan::for_certified_source(profile, 15_115).unwrap();
+        assert_eq!(plan.maps()[0].input_width(), 60_460);
+        assert_eq!(
+            plan.policy(),
+            CompressionPolicyId::NegativeBinaryTwoMapSisBoundV1
+        );
+        assert_eq!(plan.terminal_coefficients() * 16, COMPRESSION_TARGET_BYTES);
+        assert!(CompressionChainPlan::for_certified_source(profile, 15_116).is_err());
+        assert!(CompressionChainPlan::try_for_complete_source(profile, 513)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

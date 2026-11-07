@@ -2,10 +2,10 @@ use super::{RingValueSource, RingValues};
 use crate::sources::poly_helpers::{
     fused_evaluate_and_fold_base, fused_evaluate_and_fold_materialized,
 };
-use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
 use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(crate) fn evaluate_and_fold_base<F, S, const D: usize>(
@@ -36,7 +36,7 @@ where
                 let ring = source.values(index)?;
                 for (k, coefficient) in acc.iter_mut().enumerate() {
                     let value = ring.coeff(k);
-                    if value != F::zero() {
+                    if !<S::Values<'_> as RingValues<F, D>>::SKIPS_ZEROS || value != F::zero() {
                         *coefficient += scalar * value;
                     }
                 }

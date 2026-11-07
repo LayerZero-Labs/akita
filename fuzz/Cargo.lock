@@ -200,6 +200,7 @@ dependencies = [
  "akita-types",
  "akita-verifier",
  "jolt-algebra",
+ "jolt-crypto",
  "rayon",
  "tracing",
 ]

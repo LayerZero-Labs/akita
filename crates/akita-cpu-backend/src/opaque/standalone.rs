@@ -2,7 +2,7 @@
 pub use super::recursive::opening::{
     ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
-pub use super::recursive::{DigitRangeProver, LowBasisRangeCheckProver};
+pub use super::recursive::{DigitRangeProver, DigitRangeSession, LowBasisRangeCheckProver};
 use crate::opaque::RootOpeningSource;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
@@ -21,7 +21,7 @@ pub fn recursive_witness_from_i8_digits(digits: Vec<i8>) -> RecursiveWitnessBenc
 /// Run the canonical CPU decompose-fold path over an opaque recursive witness.
 pub fn decompose_recursive_witness<F, const D: usize>(
     witness: &RecursiveWitnessBenchmark,
-    challenges: &[akita_challenges::SparseChallenge],
+    challenges: &[jolt_crypto::challenge::SparseChallenge],
     num_positions_per_block: usize,
     num_digits: usize,
     log_basis: u32,
