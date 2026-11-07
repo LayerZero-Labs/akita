@@ -7,6 +7,7 @@
 pub(crate) mod arithmetic;
 mod cache;
 pub(crate) mod commitment;
+mod hiding;
 pub(crate) mod kernels;
 pub(crate) mod opaque;
 mod portable_witness;
@@ -15,10 +16,10 @@ pub(crate) mod sources;
 mod validation;
 pub use portable_witness::{CompressionWitnessFragment, PortableWitnessPatch};
 
-use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::RingVec;
 use jolt_algebra::checked;
+use jolt_algebra::CyclotomicRing;
 use jolt_algebra::Field;
 
 pub(crate) use akita_prover::protocol;
@@ -26,6 +27,7 @@ pub use commitment::{
     GroupContext, PortableCompressionOutput, PortableCompressionState, SetupPrefixProverRegistry,
     SetupPrefixSlot,
 };
+pub use hiding::HidingRandomness;
 pub use opaque::standalone;
 pub use opaque::{
     evaluate_root_polynomial, CpuBackend, CpuExportPacket, CpuImportPacket, CpuPacketDescriptor,

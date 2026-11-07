@@ -6,15 +6,16 @@ use crate::commitment::{
 };
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::opaque::{CommitInnerPlan, DigitRowsComputeBackend};
-use akita_algebra::ring::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_types::{DigitBlocks, RingVec};
 use jolt_algebra::checked;
+use jolt_algebra::ring::CyclotomicRing;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::mem::size_of;
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 fn compute_outer_commitment_from_rows<F, B, const D_A: usize, const D_B: usize>(
     backend: &B,
@@ -22,6 +23,7 @@ fn compute_outer_commitment_from_rows<F, B, const D_A: usize, const D_B: usize>(
     inner_rows: &[&RingVec<F>],
     inner_plan: &CommitInnerPlan,
     outer_plan: &OuterCommitPlan,
+    randomness: &[i8],
 ) -> Result<RingVec<F>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -71,10 +73,7 @@ where
         prepared,
         outer_plan.n_b(),
         prepared_polynomials.iter(),
-        // Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
-        // commitment route samples B randomness, so every frozen profile it
-        // commits has a zero randomness width.
-        &[],
+        &randomness_planes::<D_B>(randomness)?,
         outer_plan.geometry(),
         outer_plan.log_basis_outer(),
     )?;
@@ -89,9 +88,21 @@ where
     Ok(u)
 }
 
-/// Commit every B slice of one group, appending `randomness` (slice-major,
-/// `geometry.randomness_columns()` rings per slice) after each slice's
-/// message columns.
+/// View flat slice-major randomness coefficients as `D`-coefficient rings.
+pub(crate) fn randomness_planes<const D: usize>(
+    randomness: &[i8],
+) -> Result<Zeroizing<Vec<[i8; D]>>, AkitaError> {
+    randomness
+        .chunks(D)
+        .map(|ring| {
+            <[i8; D]>::try_from(ring).map_err(|_| {
+                AkitaError::Internal("hiding randomness is not a whole number of rings".into())
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Zeroizing::new)
+}
+
 fn commit_outer_slices<'a, F, B, const D_B: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
@@ -126,11 +137,21 @@ where
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let mut inputs = Vec::with_capacity(geometry.slice_count().get());
     for_each_outer_slice_input::<D_B>(polynomial_planes, randomness, geometry, |input| {
-        inputs.push(input.to_vec());
+        inputs.push(Zeroizing::new(input.to_vec()));
         Ok(())
     })?;
-    let input_refs = inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    let row_batches = backend.digit_rows::<D_B>(prepared, n_b, &input_refs, log_basis)?;
+    let input_refs = inputs
+        .iter()
+        .map(|input| input.as_slice())
+        .collect::<Vec<_>>();
+    // A hiding commitment's inputs are secret (the witness digits and the
+    // randomness), so they take the constant-time kernel. A clear commitment
+    // keeps the zero-plane skip.
+    let row_batches = if randomness.is_empty() {
+        backend.digit_rows::<D_B>(prepared, n_b, &input_refs, log_basis)?
+    } else {
+        backend.digit_rows_secret::<D_B>(prepared, n_b, &input_refs, log_basis)?
+    };
     if row_batches.len() != input_refs.len() || row_batches.iter().any(|rows| rows.len() != n_b) {
         return Err(AkitaError::Internal(format!(
             "backend returned B commitment row shape {:?}, expected {} batches of {n_b} rows",
@@ -426,6 +447,7 @@ impl<'a, F: Field, E> CpuOuterCommitOperation<'a, F, E> {
         inner_plan: &CommitInnerPlan,
         outer_plan: &OuterCommitPlan,
         rows: &[&RingVec<F>],
+        randomness: &[i8],
     ) -> Result<RingVec<F>, AkitaError>
     where
         F: CanonicalEncoding,
@@ -444,6 +466,7 @@ impl<'a, F: Field, E> CpuOuterCommitOperation<'a, F, E> {
                     rows,
                     inner_plan,
                     outer_plan,
+                    randomness,
                 )
             )
         )
@@ -458,6 +481,7 @@ where
         &self,
         plan: &crate::commitment::UncompressedCommitPlan,
         inner: InnerImageInput<'_, F>,
+        randomness: &[i8],
     ) -> Result<RingVec<F>, AkitaError> {
         let inner_plan = *plan.inner();
         let outer_plan = plan.outer();
@@ -472,12 +496,12 @@ where
                 }
                 self.inner_storage.with_witnesses(image, |witnesses| {
                     let rows = witnesses.iter().collect::<Vec<_>>();
-                    self.commit_rows(&inner_plan, outer_plan, &rows)
+                    self.commit_rows(&inner_plan, outer_plan, &rows, randomness)
                 })
             }
             InnerImageInput::HostRows(rows) => {
                 let rows = rows.iter().collect::<Vec<_>>();
-                self.commit_rows(&inner_plan, outer_plan, &rows)
+                self.commit_rows(&inner_plan, outer_plan, &rows, randomness)
             }
         }
     }

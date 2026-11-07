@@ -80,7 +80,7 @@ impl CommittedSourceEncoding {
 }
 
 /// Root layout metadata frozen when a standalone commitment group is created.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct GroupCommitPhaseParams {
     /// Version of the canonical committed-profile encoding.
     pub version: u8,
@@ -96,12 +96,39 @@ pub struct GroupCommitPhaseParams {
     pub outer: crate::OuterRoleParams,
     /// Hiding-randomness ring columns appended to every B slice.
     ///
-    /// Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
-    /// schedule or descriptor format carries it, so every decoded or planned
-    /// profile has width 0 and the B matrix width is exactly the message
-    /// columns.
-    #[serde(skip)]
+    /// Extension seam: Whiteout outer hiding randomness (akita#120). Zero in
+    /// every clear schedule, where text formats omit it. The B matrix width
+    /// in the descriptor bytes binds it.
+    #[serde(default)]
     pub randomness_columns: usize,
+}
+
+/// Text formats omit a zero hiding-randomness width, so clear JSON catalog
+/// rows keep their bytes. Binary formats such as postcard carry no field names
+/// and cannot skip a field the decoder still reads, so they always carry it.
+impl serde::Serialize for GroupCommitPhaseParams {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let omit_unset = serializer.is_human_readable();
+        let mut state = serializer.serialize_struct("GroupCommitPhaseParams", 7)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("group", &self.group)?;
+        state.serialize_field("blocks", &self.blocks)?;
+        state.serialize_field("outer_slice_count", &self.outer_slice_count)?;
+        state.serialize_field("inner", &self.inner)?;
+        state.serialize_field("outer", &self.outer)?;
+        if omit_unset && is_zero_width(&self.randomness_columns) {
+            state.skip_field("randomness_columns")?;
+        } else {
+            state.serialize_field("randomness_columns", &self.randomness_columns)?;
+        }
+        state.end()
+    }
+}
+
+pub(crate) fn is_zero_width(value: &usize) -> bool {
+    *value == 0
 }
 
 impl GroupCommitPhaseParams {

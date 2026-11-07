@@ -20,6 +20,9 @@ pub(crate) struct OuterCommitPlan {
     log_basis_outer: u32,
     /// Canonical slicing and padding geometry.
     geometry: CommitmentSliceGeometry,
+    /// Open alphabet of the opening that consumes this commitment, which
+    /// the hiding randomness is drawn from; absent when it is unknown.
+    randomness_log_basis: Option<u32>,
 }
 
 impl OuterCommitPlan {
@@ -51,6 +54,7 @@ impl OuterCommitPlan {
             num_digits_outer,
             log_basis_outer,
             geometry,
+            randomness_log_basis: None,
         })
     }
 
@@ -87,6 +91,19 @@ impl OuterCommitPlan {
     /// Canonical source slicing and padding geometry.
     pub(crate) const fn geometry(&self) -> &CommitmentSliceGeometry {
         &self.geometry
+    }
+
+    /// Open alphabet the hiding randomness is drawn from, when known.
+    pub(crate) const fn randomness_log_basis(&self) -> Option<u32> {
+        self.randomness_log_basis
+    }
+
+    /// Hiding-randomness coefficients across every slice.
+    pub(crate) fn randomness_coefficient_len(&self) -> Result<usize, AkitaError> {
+        self.geometry
+            .total_randomness_columns()?
+            .checked_mul(self.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("B randomness length overflow".into()))
     }
 }
 
@@ -199,12 +216,22 @@ impl CommitmentExecutionPlan {
             .checked_add(1)
             .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?;
         params.validate_commitment_request(logical_fold_level, num_polynomials)?;
-        Self::from_profile(
+        Ok(Self::from_profile(
             owner_fold_level,
             &params.own_group().profile,
             params.payload_mode,
             params.ring_relation_mode,
-        )
+        )?
+        .with_randomness_log_basis(params.own_group().opening.log_basis_open))
+    }
+
+    /// Draw this commitment's hiding randomness from the open alphabet of the
+    /// opening that consumes it.
+    pub(crate) fn with_randomness_log_basis(mut self, log_basis: u32) -> Self {
+        if let Some(uncompressed) = self.uncompressed.as_mut() {
+            uncompressed.outer.randomness_log_basis = Some(log_basis);
+        }
+        self
     }
 
     /// Build a terminal A-only plan for the predecessor fold whose stack

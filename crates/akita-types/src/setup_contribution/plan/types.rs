@@ -5,7 +5,7 @@ use akita_params::{
     SetupProjectionGeometry, WitnessLayout,
 };
 use jolt_algebra::Field;
-use std::{borrow::Cow, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 #[derive(Clone)]
 pub struct SetupContributionGroupInputs {
@@ -414,12 +414,12 @@ impl<E: Field> PhysicalBSetupPlan<E> {
     }
 
     /// Relation tensors of every column in the column weight table.
-    pub fn column_tensors(&self) -> Cow<'_, [EqPairTensorFamily<E>]> {
-        if self.randomness_tensors.is_empty() {
-            Cow::Borrowed(&self.relation_tensors)
-        } else {
-            Cow::Owned([self.relation_tensors.as_slice(), &self.randomness_tensors].concat())
-        }
+    pub fn column_tensors(&self) -> Vec<EqPairTensorFamily<E>> {
+        self.relation_tensors
+            .iter()
+            .chain(&self.randomness_tensors)
+            .cloned()
+            .collect()
     }
 
     pub fn physical_input_width(&self) -> usize {
@@ -707,12 +707,12 @@ impl<E: Field> SetupContributionGroupPlan<E> {
 
     /// Relation tensors of every column in this group's D column table.
     #[must_use]
-    pub fn d_column_tensors(&self) -> Cow<'_, [EqPairTensorFamily<E>]> {
-        if self.d_randomness_tensors.is_empty() {
-            Cow::Borrowed(&self.d_tensors)
-        } else {
-            Cow::Owned([self.d_tensors.as_slice(), &self.d_randomness_tensors].concat())
-        }
+    pub fn d_column_tensors(&self) -> Vec<EqPairTensorFamily<E>> {
+        self.d_tensors
+            .iter()
+            .chain(&self.d_randomness_tensors)
+            .cloned()
+            .collect()
     }
 
     /// Physical B setup plan for this group.
