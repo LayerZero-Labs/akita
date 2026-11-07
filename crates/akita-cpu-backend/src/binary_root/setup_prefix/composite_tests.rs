@@ -34,9 +34,15 @@ fn p128_slot(domain: usize) -> SetupPrefixSlotId {
         akita_types::binary_source::binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
     profile.group = PolynomialGroupLayout::singleton(domain.trailing_zeros() as usize);
     profile.inner.digits.num_digits = 43;
-    profile.inner.matrix =
-        InnerCommitMatrixParams::try_new_with_min_rank(profile.inner.matrix.sis_table_key(), 86)
-            .unwrap();
+    profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+        profile
+            .inner
+            .matrix
+            .sis_table_key()
+            .expect("fixture inner SIS key"),
+        86,
+    )
+    .unwrap();
     profile.blocks = BlockGeometry::new(domain / 128, 2, domain / 256);
     let width = CommitmentSliceGeometry::try_new(
         profile.outer_slice_count,

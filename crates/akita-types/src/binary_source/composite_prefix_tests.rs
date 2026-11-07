@@ -12,9 +12,15 @@ pub(crate) fn slot(domain: usize) -> SetupPrefixSlotId {
     let mut profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
     profile.group = PolynomialGroupLayout::singleton(domain.trailing_zeros() as usize);
     profile.inner.digits.num_digits = 22;
-    profile.inner.matrix =
-        InnerCommitMatrixParams::try_new_with_min_rank(profile.inner.matrix.sis_table_key(), 44)
-            .unwrap();
+    profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+        profile
+            .inner
+            .matrix
+            .sis_table_key()
+            .expect("fixture inner SIS key"),
+        44,
+    )
+    .unwrap();
     profile.blocks = BlockGeometry::new(domain / 128, 2, domain / 256);
     let width = CommitmentSliceGeometry::try_new(
         profile.outer_slice_count,
