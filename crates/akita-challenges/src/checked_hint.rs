@@ -7,7 +7,7 @@ thread_local! {
 
 /// Install untrusted quartet hints. Each consumed code is authenticated against transcript ranks and signs.
 pub fn install_checked_hints(bytes: &[u8]) -> Result<(), AkitaError> {
-    if bytes.is_empty() || bytes.len() % 8 != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(8) {
         return Err(AkitaError::InvalidProof);
     }
     let words: Arc<[u64]> = if bytes.as_ptr().align_offset(8) == 0 {
