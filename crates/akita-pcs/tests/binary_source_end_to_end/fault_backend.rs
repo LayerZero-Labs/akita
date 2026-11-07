@@ -90,10 +90,15 @@ impl Fault {
                 coordinate,
             } => {
                 let (prime, columns) = prime.unwrap();
-                let plane = prime.planes().iter().position(|plane| {
-                    plane.polynomial == owner && plane.point == point
-                        && plane.coordinate == coordinate
-                }).unwrap();
+                let plane = prime
+                    .planes()
+                    .iter()
+                    .position(|plane| {
+                        plane.polynomial == owner
+                            && plane.point == point
+                            && plane.coordinate == coordinate
+                    })
+                    .unwrap();
                 assert!(plane < prime.planes().len());
                 element = plane * columns;
                 plan.prime_segment().unwrap()

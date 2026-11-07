@@ -16,8 +16,8 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::binary_source::{
-    BinaryCommittedGroupManifest, BinaryTypedPrefix,
-    PrimeClaimValue, PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest,
+    BinaryCommittedGroupManifest, BinaryTypedPrefix, PrimeClaimValue, PrimeGroupClaim,
+    PrimePlaneClaim, PrimePlaneManifest,
 };
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::SetupPolicy;
@@ -50,7 +50,10 @@ fn binary_claims(words: &[u128]) -> Vec<PrimeGroupClaim> {
                 .collect::<Vec<_>>();
             let value = claims::prime_value(words, &extension).unwrap();
             PrimeGroupClaim {
-                point: point.into_iter().map(|p| p.map(u128::from).into()).collect(),
+                point: point
+                    .into_iter()
+                    .map(|p| p.map(u128::from).into())
+                    .collect(),
                 evaluations: vec![PrimePlaneClaim {
                     polynomial: 0,
                     value: PrimeClaimValue::Extension(std::array::from_fn(|i| {
@@ -71,12 +74,15 @@ fn binary_and_ordinary_two_point_readings_share_one_public_opening() {
 fn run() {
     let words = claims::words(1 << LOG_CARRIERS);
     let prime_claims = binary_claims(&words);
-    let directory = std::env::temp_dir()
-        .join(format!("akita-ordinary-two-points-{}", std::process::id()));
+    let directory =
+        std::env::temp_dir().join(format!("akita-ordinary-two-points-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let (catalog, key) = native_catalog::plan::<OrdinaryPoints>(
-        LOG_CARRIERS, "prime-extension-two-plus-ordinary", &directory,
-    ).unwrap();
+        LOG_CARRIERS,
+        "prime-extension-two-plus-ordinary",
+        &directory,
+    )
+    .unwrap();
     std::fs::remove_dir_all(directory).unwrap();
     let scheme = AkitaCommitmentScheme::<OrdinaryPoints>::new(catalog);
     let resolved = scheme.schedules().resolve_key(&key).unwrap();
@@ -333,14 +339,13 @@ fn run() {
             coordinate,
         })
     });
-    let values_faults = (0..2).flat_map(|point| {
-        (0..2).map(move |coordinate| Fault::PrimeValue { point, coordinate })
-    });
+    let values_faults = (0..2)
+        .flat_map(|point| (0..2).map(move |coordinate| Fault::PrimeValue { point, coordinate }));
     for fault in planes.chain(values_faults).chain([Fault::OrdinaryValue]) {
         let mut altered_prime = prime_claims.clone();
         if let Fault::PrimeValue { point, coordinate } = fault {
-            let PrimeClaimValue::Extension(value) =
-                &mut altered_prime[point].evaluations[0].value else {
+            let PrimeClaimValue::Extension(value) = &mut altered_prime[point].evaluations[0].value
+            else {
                 unreachable!();
             };
             let value = &mut value[coordinate];

@@ -366,7 +366,9 @@ impl RootWeightScenario {
                 &self.projected,
                 &self.commitment,
                 &self.d_payload,
-                ordinary_points.as_ref().zip(self.ordinary_claim.as_ref())
+                ordinary_points
+                    .as_ref()
+                    .zip(self.ordinary_claim.as_ref())
                     .map(|(points, (_, _, payload))| (points.as_slice(), payload.as_slice())),
                 Some(BinaryAOperand::new::<RootFixtureField>(&self.matrix)),
             )

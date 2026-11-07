@@ -384,8 +384,13 @@ pub(crate) fn prime_plane_weights<F: Field, E: ExtField<F>>(
             && E::DEGREE != 2)
         || batches.len()
             != checked::product([
-                checked::sum(manifest.claims().iter().map(|claim| claim.evaluations.len()))
-                    .ok_or(AkitaError::InvalidProof)?,
+                checked::sum(
+                    manifest
+                        .claims()
+                        .iter()
+                        .map(|claim| claim.evaluations.len()),
+                )
+                .ok_or(AkitaError::InvalidProof)?,
                 2,
             ])
             .ok_or(AkitaError::InvalidProof)?
@@ -699,9 +704,14 @@ pub(crate) fn root_relation<F: Field, E: ExtField<F>>(
         negative_bits.end,
         checked::product([
             2,
-            checked::sum(public
-                .prime.claims().iter().map(|claim| claim.evaluations.len()))
-                    .ok_or(AkitaError::InvalidProof)?,
+            checked::sum(
+                public
+                    .prime
+                    .claims()
+                    .iter()
+                    .map(|claim| claim.evaluations.len()),
+            )
+            .ok_or(AkitaError::InvalidProof)?,
         ])
         .ok_or(AkitaError::InvalidProof)?,
     )

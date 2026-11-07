@@ -527,7 +527,14 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         .unwrap();
     if planes == 1 && !word && !mixed && owners == 1 {
         for (fault, public) in [
-            (Fault::PrimePlane { owner: 0, point: 0, coordinate: 0 }, &commitment),
+            (
+                Fault::PrimePlane {
+                    owner: 0,
+                    point: 0,
+                    coordinate: 0,
+                },
+                &commitment,
+            ),
             (Fault::ForeignCommitment, &foreign.committed_group),
         ] {
             let attacker = FaultBackend::new(
@@ -1055,15 +1062,22 @@ fn p64_two_points_two_owners_dense_oracle_and_isolated_batches() {
     let manifest = binary_word_manifest_fixture(field, 2);
     let descriptor = manifest.descriptor();
     let ext = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + 31 * i + 43 * c) as u64));
-    let points: [Vec<E>; 2] = std::array::from_fn(|point| {
-        (0..11).map(|axis| ext(2 + axis + 19 * point)).collect()
-    });
+    let points: [Vec<E>; 2] =
+        std::array::from_fn(|point| (0..11).map(|axis| ext(2 + axis + 19 * point)).collect());
     // Direct equality products and arbitrary signed coefficients: independent of
     // the tensor constructor, bit fixture evaluator and EP digit producer.
     let equality = |point: &[E], index: usize| {
-        point.iter().enumerate().fold(E::one(), |product, (axis, &x)| {
-            product * if index >> axis & 1 == 0 { E::one() - x } else { x }
-        })
+        point
+            .iter()
+            .enumerate()
+            .fold(E::one(), |product, (axis, &x)| {
+                product
+                    * if index >> axis & 1 == 0 {
+                        E::one() - x
+                    } else {
+                        x
+                    }
+            })
     };
     let coefficient = |owner: usize, row: usize, column: usize, k: usize| {
         ((owner * 13 + row * 17 + column * 11 + k * (3 + owner)) % 19) as i128 - 9
@@ -1071,70 +1085,116 @@ fn p64_two_points_two_owners_dense_oracle_and_isolated_batches() {
     let coordinates = |value: E| {
         std::array::from_fn::<_, 2, _>(|c| value.base_coefficient(c).to_u128_checked().unwrap())
     };
-    let claims = points.iter().map(|point| {
-        let evaluations = (0..2).map(|owner| {
-            let mut value = E::zero();
-            for row in 0..4 {
-                for column in 0..2 {
-                    for k in 0..162 {
-                        value += equality(point, k + 256 * (column + 2 * row))
-                            * E::from_i128(coefficient(owner, row, column, k));
+    let claims = points
+        .iter()
+        .map(|point| {
+            let evaluations = (0..2)
+                .map(|owner| {
+                    let mut value = E::zero();
+                    for row in 0..4 {
+                        for column in 0..2 {
+                            for k in 0..162 {
+                                value += equality(point, k + 256 * (column + 2 * row))
+                                    * E::from_i128(coefficient(owner, row, column, k));
+                            }
+                        }
                     }
-                }
+                    assert_ne!(value.base_coefficient(1), Base::zero());
+                    PrimePlaneClaim {
+                        polynomial: owner,
+                        value: coordinates(value).into(),
+                    }
+                })
+                .collect();
+            PrimeGroupClaim {
+                point: point.iter().map(|&x| coordinates(x).into()).collect(),
+                evaluations,
             }
-            assert_ne!(value.base_coefficient(1), Base::zero());
-            PrimePlaneClaim { polynomial: owner, value: coordinates(value).into() }
-        }).collect();
-        PrimeGroupClaim {
-            point: point.iter().map(|&x| coordinates(x).into()).collect(),
-            evaluations,
-        }
-    }).collect::<Vec<_>>();
-    let prime = PrimePlaneManifest::with_field_profile(descriptor, claims.clone(), field).unwrap();
-    assert_eq!(prime.planes().iter().map(|p| (p.point, p.polynomial, p.coordinate))
-        .collect::<Vec<_>>(), vec![
-            (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
-            (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1),
-        ]);
-    let sources = (0..4).map(|element| {
-        std::array::from_fn(|i| {
-            coefficient(element / 2, i % 4, element % 2, i / 4)
-                * if (i / 4) % 2 == 0 { 1 } else { -1 }
         })
-    }).collect::<Vec<[i128; 648]>>();
-    let response = (0..2).map(|owner| {
-        std::array::from_fn(|i| sources[2 * owner][i] + sources[2 * owner + 1][i])
-    }).collect::<Vec<_>>();
+        .collect::<Vec<_>>();
+    let prime = PrimePlaneManifest::with_field_profile(descriptor, claims.clone(), field).unwrap();
+    assert_eq!(
+        prime
+            .planes()
+            .iter()
+            .map(|p| (p.point, p.polynomial, p.coordinate))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 0, 0),
+            (0, 0, 1),
+            (0, 1, 0),
+            (0, 1, 1),
+            (1, 0, 0),
+            (1, 0, 1),
+            (1, 1, 0),
+            (1, 1, 1),
+        ]
+    );
+    let sources = (0..4)
+        .map(|element| {
+            std::array::from_fn(|i| {
+                coefficient(element / 2, i % 4, element % 2, i / 4)
+                    * if (i / 4) % 2 == 0 { 1 } else { -1 }
+            })
+        })
+        .collect::<Vec<[i128; 648]>>();
+    let response = (0..2)
+        .map(|owner| std::array::from_fn(|i| sources[2 * owner][i] + sources[2 * owner + 1][i]))
+        .collect::<Vec<_>>();
     let challenges = Challenges::from_sparse(
-        (0..4).map(|_| SparseChallenge {
-            positions: vec![0].into(), coeffs: vec![1].into(),
-        }).collect(), 2, 2,
-    ).unwrap();
+        (0..4)
+            .map(|_| SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        2,
+        2,
+    )
+    .unwrap();
     for word in [false, true] {
         let plan = BinaryRootWitnessPlan::for_profile(descriptor, 3, 64, field, word, 8).unwrap();
         let repacking = plan.repacking();
         let segment = plan.prime_segment().unwrap();
-        let mut natural = repacking.segments().iter().map(|s| {
-            vec![0; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()]
-        }).collect::<Vec<_>>();
+        let mut natural = repacking
+            .segments()
+            .iter()
+            .map(|s| vec![0; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()])
+            .collect::<Vec<_>>();
         natural[0] = BinaryRootRelation::response_digits(&response).unwrap();
         natural[segment] = prime_plane_digits::<Base>(descriptor, &prime, &sources).unwrap();
-        let table = repacking.repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
-            .unwrap().into_iter().map(|v| E::from_i128(i128::from(v))).collect::<Vec<_>>();
+        let table = repacking
+            .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+            .unwrap()
+            .into_iter()
+            .map(|v| E::from_i128(i128::from(v)))
+            .collect::<Vec<_>>();
         let weights = |prime: &PrimePlaneManifest, batches: &[E]| {
             prime_plane_relation_weights(
-                descriptor, prime, repacking, 0, segment, &challenges, ext(0), batches,
-            ).unwrap()
+                descriptor,
+                prime,
+                repacking,
+                0,
+                segment,
+                &challenges,
+                ext(0),
+                batches,
+            )
+            .unwrap()
         };
         let batches = (1..=8).map(ext).collect::<Vec<_>>();
         weights(&prime, &batches).check_table(&table).unwrap();
         // The verifier's structured oracle must agree with the dense weights.
         let r = (0..repacking.domain_len().trailing_zeros())
-            .map(|i| ext(40 + i as usize)).collect::<Vec<_>>();
+            .map(|i| ext(40 + i as usize))
+            .collect::<Vec<_>>();
         let eq = akita_algebra::eq_poly::EqPolynomial::evals(&r).unwrap();
         let assert_oracle = |relation: &NativeRootWeights<E>| {
             let dense = relation.materialize().unwrap();
-            let expected = dense.iter().zip(&eq).fold(E::zero(), |acc, (&w, &e)| acc + w * e);
+            let expected = dense
+                .iter()
+                .zip(&eq)
+                .fold(E::zero(), |acc, (&w, &e)| acc + w * e);
             assert_eq!(relation.evaluate(&r).unwrap(), expected);
         };
         assert_oracle(&weights(&prime, &batches));
@@ -1149,15 +1209,18 @@ fn p64_two_points_two_owners_dense_oracle_and_isolated_batches() {
             let dense = relation.materialize().unwrap();
             for plane in 0..8 {
                 for digit in 0..22 {
-                    let address = repacking.coefficient_address(segment, 2 * plane, digit, 0)
+                    let address = repacking
+                        .coefficient_address(segment, 2 * plane, digit, 0)
                         .unwrap();
                     let affected = plane / 2 == active / 2;
                     assert_eq!(dense[address] != E::zero(), affected);
                     let mut changed = table.clone();
                     changed[address] += E::one();
                     if affected {
-                        assert!(matches!(relation.check_table(&changed),
-                            Err(AkitaError::InvalidProof)));
+                        assert!(matches!(
+                            relation.check_table(&changed),
+                            Err(AkitaError::InvalidProof)
+                        ));
                     } else {
                         relation.check_table(&changed).unwrap();
                     }
@@ -1173,10 +1236,12 @@ fn p64_two_points_two_owners_dense_oracle_and_isolated_batches() {
                 assert_ne!(a, b);
                 changed[left / 2].evaluations[left % 2].value = b;
                 changed[right / 2].evaluations[right % 2].value = a;
-                let changed = PrimePlaneManifest::with_field_profile(descriptor, changed, field)
-                    .unwrap();
-                assert!(matches!(weights(&changed, &batches).check_table(&table),
-                    Err(AkitaError::InvalidProof)));
+                let changed =
+                    PrimePlaneManifest::with_field_profile(descriptor, changed, field).unwrap();
+                assert!(matches!(
+                    weights(&changed, &batches).check_table(&table),
+                    Err(AkitaError::InvalidProof)
+                ));
             }
         }
         // Swapping owner labels is distinct from swapping the input record order:
@@ -1185,10 +1250,12 @@ fn p64_two_points_two_owners_dense_oracle_and_isolated_batches() {
             let mut changed = claims.clone();
             changed[point].evaluations[0].polynomial = 1;
             changed[point].evaluations[1].polynomial = 0;
-            let changed = PrimePlaneManifest::with_field_profile(descriptor, changed, field)
-                .unwrap();
-            assert!(matches!(weights(&changed, &batches).check_table(&table),
-                Err(AkitaError::InvalidProof)));
+            let changed =
+                PrimePlaneManifest::with_field_profile(descriptor, changed, field).unwrap();
+            assert!(matches!(
+                weights(&changed, &batches).check_table(&table),
+                Err(AkitaError::InvalidProof)
+            ));
         }
         for left in 0..8 {
             for right in left + 1..8 {
@@ -1196,19 +1263,21 @@ fn p64_two_points_two_owners_dense_oracle_and_isolated_batches() {
                 for column in 0..2 {
                     for digit in 0..22 {
                         for k in 0..162 {
-                            let a = repacking.coefficient_address(
-                                segment, 2 * left + column, digit, k,
-                            ).unwrap();
-                            let b = repacking.coefficient_address(
-                                segment, 2 * right + column, digit, k,
-                            ).unwrap();
+                            let a = repacking
+                                .coefficient_address(segment, 2 * left + column, digit, k)
+                                .unwrap();
+                            let b = repacking
+                                .coefficient_address(segment, 2 * right + column, digit, k)
+                                .unwrap();
                             changed.swap(a, b);
                         }
                     }
                 }
                 assert_ne!(changed, table);
-                assert!(matches!(weights(&prime, &batches).check_table(&changed),
-                    Err(AkitaError::InvalidProof)));
+                assert!(matches!(
+                    weights(&prime, &batches).check_table(&changed),
+                    Err(AkitaError::InvalidProof)
+                ));
             }
         }
     }

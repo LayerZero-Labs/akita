@@ -70,7 +70,9 @@ pub(crate) fn root_round_trip(
             evaluations: core::slice::from_ref(value),
         }]
     });
-    let ordinary = ordinary_points.as_ref().zip(ordinary.as_ref())
+    let ordinary = ordinary_points
+        .as_ref()
+        .zip(ordinary.as_ref())
         .map(|(points, (_, _, payload))| (points.as_slice(), *payload));
     let variables = public.plan().repacking().domain_len().trailing_zeros() as usize;
     let typed = BinaryTypedPrefix::from_plan(manifest, public.plan()).unwrap();

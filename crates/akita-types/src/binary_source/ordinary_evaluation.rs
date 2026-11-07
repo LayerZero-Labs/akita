@@ -138,15 +138,13 @@ mod tests {
             crate::binary_source::binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
         let prime = crate::binary_source::PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
-            Some(
-                crate::binary_source::PrimeGroupClaim {
-                    point: vec![[2, 0].into(); 11],
-                    evaluations: vec![crate::binary_source::PrimePlaneClaim {
-                        polynomial: 0,
-                        value: [0, 0].into(),
-                    }],
-                },
-            ),
+            Some(crate::binary_source::PrimeGroupClaim {
+                point: vec![[2, 0].into(); 11],
+                evaluations: vec![crate::binary_source::PrimePlaneClaim {
+                    polynomial: 0,
+                    value: [0, 0].into(),
+                }],
+            }),
             BinaryFieldProfile::P64,
         )
         .unwrap();

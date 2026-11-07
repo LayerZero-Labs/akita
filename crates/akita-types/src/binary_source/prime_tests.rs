@@ -907,20 +907,31 @@ fn p64_two_points_bind_order_and_match_reference_weights() {
     type E = Ext2<Base>;
     let source = descriptor();
     let field = BinaryFieldProfile::P64;
-    let claims = (0..2).map(|point| PrimeGroupClaim {
-        point: (0..11).map(|axis| [2 + axis, 3 + point].into()).collect(),
-        evaluations: vec![PrimePlaneClaim {
-            polynomial: 0,
-            value: [7 + point, 11 + point].into(),
-        }],
-    }).collect::<Vec<_>>();
+    let claims = (0..2)
+        .map(|point| PrimeGroupClaim {
+            point: (0..11).map(|axis| [2 + axis, 3 + point].into()).collect(),
+            evaluations: vec![PrimePlaneClaim {
+                polynomial: 0,
+                value: [7 + point, 11 + point].into(),
+            }],
+        })
+        .collect::<Vec<_>>();
     let manifest = PrimePlaneManifest::with_field_profile(&source, claims.clone(), field).unwrap();
     assert_eq!(manifest.planes().len(), 4);
-    assert_eq!(manifest.planes().iter().map(|p| (p.point, p.polynomial, p.coordinate))
-        .collect::<Vec<_>>(), vec![(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]);
+    assert_eq!(
+        manifest
+            .planes()
+            .iter()
+            .map(|p| (p.point, p.polynomial, p.coordinate))
+            .collect::<Vec<_>>(),
+        vec![(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]
+    );
     let bytes = manifest.canonical_bytes();
     assert!(bytes.starts_with(b"AkitaPrimePlanes/p64\x05"));
-    assert_eq!(PrimePlaneManifest::from_bytes(&source, field, &bytes).unwrap(), manifest);
+    assert_eq!(
+        PrimePlaneManifest::from_bytes(&source, field, &bytes).unwrap(),
+        manifest
+    );
     for end in 0..bytes.len() {
         assert!(PrimePlaneManifest::from_bytes(&source, field, &bytes[..end]).is_err());
     }
@@ -929,18 +940,31 @@ fn p64_two_points_bind_order_and_match_reference_weights() {
     assert!(PrimePlaneManifest::from_bytes(&source, field, &trailing).is_err());
     let mut reversed = claims.clone();
     reversed.reverse();
-    assert_ne!(bytes, PrimePlaneManifest::with_field_profile(&source, reversed, field)
-        .unwrap().canonical_bytes());
+    assert_ne!(
+        bytes,
+        PrimePlaneManifest::with_field_profile(&source, reversed, field)
+            .unwrap()
+            .canonical_bytes()
+    );
     assert!(PrimePlaneManifest::with_field_profile(
-        &source, [claims[0].clone(), claims[0].clone()], field,
-    ).is_err());
+        &source,
+        [claims[0].clone(), claims[0].clone()],
+        field,
+    )
+    .is_err());
     assert!(PrimePlaneManifest::with_field_profile(
-        &source, claims.iter().cloned().chain([claims[0].clone()]), field,
-    ).is_err());
+        &source,
+        claims.iter().cloned().chain([claims[0].clone()]),
+        field,
+    )
+    .is_err());
     let base = claim();
     assert!(PrimePlaneManifest::with_field_profile(
-        &source, [base.clone(), base], BinaryFieldProfile::P128,
-    ).is_err());
+        &source,
+        [base.clone(), base],
+        BinaryFieldProfile::P128,
+    )
+    .is_err());
     let mut short = claims.clone();
     short[1].point.pop();
     assert!(PrimePlaneManifest::with_field_profile(&source, short, field).is_err());
@@ -951,8 +975,9 @@ fn p64_two_points_bind_order_and_match_reference_weights() {
     for point in 0..2 {
         for coordinate in 0..2 {
             let mut changed = claims.clone();
-            let PrimeClaimValue::Extension(value) = &mut changed[point].evaluations[0].value
-                else { unreachable!() };
+            let PrimeClaimValue::Extension(value) = &mut changed[point].evaluations[0].value else {
+                unreachable!()
+            };
             value[coordinate] = field.modulus();
             assert!(PrimePlaneManifest::with_field_profile(&source, changed, field).is_err());
         }
@@ -961,28 +986,64 @@ fn p64_two_points_bind_order_and_match_reference_weights() {
     let repacking = plan.repacking();
     let segment = plan.prime_segment().unwrap();
     let challenges = Challenges::from_sparse(
-        (0..4).map(|_| SparseChallenge {
-            positions: vec![0, 161].into(), coeffs: vec![1, -1].into(),
-        }).collect(), 2, 2,
-    ).unwrap();
+        (0..4)
+            .map(|_| SparseChallenge {
+                positions: vec![0, 161].into(),
+                coeffs: vec![1, -1].into(),
+            })
+            .collect(),
+        2,
+        2,
+    )
+    .unwrap();
     let ext = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + i * 31 + c * 43) as u64));
     let batches = [ext(1), ext(2), ext(3), ext(4)];
     let compiled = prime_plane_relation_weights(
-        &source, &manifest, repacking, 0, segment, &challenges, ext(0), &batches,
-    ).unwrap();
+        &source,
+        &manifest,
+        repacking,
+        0,
+        segment,
+        &challenges,
+        ext(0),
+        &batches,
+    )
+    .unwrap();
     let reference = crate::binary_source::root_public::reference::prime_plane_weights(
-        &source, &manifest, repacking, 0, segment, &challenges, ext(0), &batches,
-    ).unwrap();
+        &source,
+        &manifest,
+        repacking,
+        0,
+        segment,
+        &challenges,
+        ext(0),
+        &batches,
+    )
+    .unwrap();
     assert_eq!(compiled.claim(), reference.claim());
-    assert_eq!(compiled.materialize().unwrap(), reference.materialize().unwrap());
+    assert_eq!(
+        compiled.materialize().unwrap(),
+        reference.materialize().unwrap()
+    );
     let evaluation_point = (0..repacking.domain_len().trailing_zeros())
-        .map(|i| ext(20 + i as usize)).collect::<Vec<_>>();
-    assert_eq!(compiled.evaluate(&evaluation_point).unwrap(),
-        reference.evaluate(&evaluation_point).unwrap());
+        .map(|i| ext(20 + i as usize))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        compiled.evaluate(&evaluation_point).unwrap(),
+        reference.evaluate(&evaluation_point).unwrap()
+    );
     // Each point keeps two E64 identities, independent of physical plane count.
     assert!(prime_plane_relation_weights(
-        &source, &manifest, repacking, 0, segment, &challenges, ext(0), &[E::zero(); 8],
-    ).is_err());
+        &source,
+        &manifest,
+        repacking,
+        0,
+        segment,
+        &challenges,
+        ext(0),
+        &[E::zero(); 8],
+    )
+    .is_err());
 }
 
 #[test]
@@ -990,13 +1051,21 @@ fn p64_v5_literal_and_malformed_records() {
     use akita_serialization::SerializationError;
     let source = descriptor();
     let field = BinaryFieldProfile::P64;
-    let claims = (0..2).map(|point| PrimeGroupClaim {
-        point: vec![[2, 3 + point].into(); 11],
-        evaluations: vec![
-            PrimePlaneClaim { polynomial: 0, value: [5, 7].into() },
-            PrimePlaneClaim { polynomial: 1, value: [11, 13].into() },
-        ],
-    }).collect::<Vec<_>>();
+    let claims = (0..2)
+        .map(|point| PrimeGroupClaim {
+            point: vec![[2, 3 + point].into(); 11],
+            evaluations: vec![
+                PrimePlaneClaim {
+                    polynomial: 0,
+                    value: [5, 7].into(),
+                },
+                PrimePlaneClaim {
+                    polynomial: 1,
+                    value: [11, 13].into(),
+                },
+            ],
+        })
+        .collect::<Vec<_>>();
     let manifest = PrimePlaneManifest::with_field_profile(&source, claims, field).unwrap();
     // Literal layout, independent of canonical_bytes: no leading record count.
     let mut literal = b"AkitaPrimePlanes/p64\x05".to_vec();
@@ -1011,11 +1080,14 @@ fn p64_v5_literal_and_malformed_records() {
         }
     }
     assert_eq!(manifest.canonical_bytes(), literal);
-    assert_eq!(PrimePlaneManifest::from_bytes(&source, field, &literal).unwrap(), manifest);
+    assert_eq!(
+        PrimePlaneManifest::from_bytes(&source, field, &literal).unwrap(),
+        manifest
+    );
     let reject = |bytes: &[u8], profile, truncated: bool| {
-        let result = std::panic::catch_unwind(|| {
-            PrimePlaneManifest::from_bytes(&source, profile, bytes)
-        }).expect("malformed v5 bytes must not panic");
+        let result =
+            std::panic::catch_unwind(|| PrimePlaneManifest::from_bytes(&source, profile, bytes))
+                .expect("malformed v5 bytes must not panic");
         match result {
             Err(SerializationError::InvalidData(_)) => (),
             Err(SerializationError::IoError(error)) if truncated => {
@@ -1047,9 +1119,14 @@ fn p64_v5_literal_and_malformed_records() {
             bytes[offset..offset + 8].copy_from_slice(&owner.to_le_bytes());
             reject(&bytes, field, false);
         }
-        for offset in [start + 8, start + 16, values + 16, values + 24,
-            values + 40, values + 48]
-        {
+        for offset in [
+            start + 8,
+            start + 16,
+            values + 16,
+            values + 24,
+            values + 40,
+            values + 48,
+        ] {
             let mut bytes = literal.clone();
             bytes[offset..offset + 8].copy_from_slice(&(field.modulus() as u64).to_le_bytes());
             reject(&bytes, field, false);

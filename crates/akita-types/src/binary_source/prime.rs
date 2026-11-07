@@ -204,11 +204,14 @@ impl PrimePlaneManifest {
         }
         let mut planes = Vec::new();
         let capacity = checked::product([
-            checked::sum(claims.iter().map(|claim| claim.evaluations.len()))
-                .ok_or(AkitaError::InvalidInput("prime plane allocation too large".into()))?,
+            checked::sum(claims.iter().map(|claim| claim.evaluations.len())).ok_or(
+                AkitaError::InvalidInput("prime plane allocation too large".into()),
+            )?,
             field.extension_degree(),
         ])
-        .ok_or(AkitaError::InvalidInput("prime plane allocation too large".into()))?;
+        .ok_or(AkitaError::InvalidInput(
+            "prime plane allocation too large".into(),
+        ))?;
         planes
             .try_reserve_exact(capacity)
             .map_err(|_| AkitaError::InvalidInput("prime plane allocation too large".into()))?;
@@ -260,8 +263,8 @@ impl PrimePlaneManifest {
         use akita_serialization::SerializationError;
         use std::io::{Cursor, Read};
         let bad = || SerializationError::InvalidData("noncanonical prime manifest".into());
-        let two = field == BinaryFieldProfile::P64
-            && bytes.starts_with(b"AkitaPrimePlanes/p64\x05");
+        let two =
+            field == BinaryFieldProfile::P64 && bytes.starts_with(b"AkitaPrimePlanes/p64\x05");
         let tag: &[u8] = match (field, two) {
             (BinaryFieldProfile::P128, _) => b"AkitaPrimePlanes\x02",
             (BinaryFieldProfile::P64, false) => b"AkitaPrimePlanes/p64\x04",
@@ -296,9 +299,7 @@ impl PrimePlaneManifest {
                 point.push(read_element(&mut reader)?);
             }
             let count_values = usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?;
-            if count_values > source.polynomials().len()
-                || ((count_values == 0) != (count == 0))
-            {
+            if count_values > source.polynomials().len() || ((count_values == 0) != (count == 0)) {
                 return Err(bad());
             }
             let mut evaluations = Vec::new();

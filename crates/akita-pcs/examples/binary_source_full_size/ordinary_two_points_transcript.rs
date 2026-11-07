@@ -13,15 +13,13 @@ fn single_point_ordinary_and_binary_keep_the_legacy_transcript_bytes() {
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
     let prime = PrimePlaneManifest::with_field_profile(
         manifest.descriptor(),
-        Some(
-            PrimeGroupClaim {
-                point: vec![[2, 0].into(); 11],
-                evaluations: vec![PrimePlaneClaim {
-                    polynomial: 0,
-                    value: [3, 0].into(),
-                }],
-            },
-        ),
+        Some(PrimeGroupClaim {
+            point: vec![[2, 0].into(); 11],
+            evaluations: vec![PrimePlaneClaim {
+                polynomial: 0,
+                value: [3, 0].into(),
+            }],
+        }),
         BinaryFieldProfile::P64,
     )
     .unwrap();

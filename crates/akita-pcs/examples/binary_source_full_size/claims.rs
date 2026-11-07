@@ -199,25 +199,39 @@ impl Claims {
     pub(super) fn prime<C: MeasurementConfig>(&self) -> Result<Vec<PrimeGroupClaim>, AkitaError> {
         if let Some(readings) = &self.extension {
             if self.prime.is_some() || C::PROFILE != BinaryFieldProfile::P64 {
-                return Err(AkitaError::InvalidInput("invalid extension fixture profile".into()));
+                return Err(AkitaError::InvalidInput(
+                    "invalid extension fixture profile".into(),
+                ));
             }
-            return Ok(readings.iter().map(|reading| PrimeGroupClaim {
-                point: reading.point.iter().map(|value| {
-                    PrimeClaimValue::Extension(value.map(u128::from))
-                }).collect(),
-                evaluations: vec![PrimePlaneClaim {
-                    polynomial: 0,
-                    value: PrimeClaimValue::Extension(reading.value.map(u128::from)),
-                }],
-            }).collect());
+            return Ok(readings
+                .iter()
+                .map(|reading| PrimeGroupClaim {
+                    point: reading
+                        .point
+                        .iter()
+                        .map(|value| PrimeClaimValue::Extension(value.map(u128::from)))
+                        .collect(),
+                    evaluations: vec![PrimePlaneClaim {
+                        polynomial: 0,
+                        value: PrimeClaimValue::Extension(reading.value.map(u128::from)),
+                    }],
+                })
+                .collect());
         }
         let encode = |value| match C::PROFILE {
             BinaryFieldProfile::P128 => PrimeClaimValue::Base(value),
             BinaryFieldProfile::P64 => PrimeClaimValue::Extension([value, 0]),
         };
-        Ok(self.prime.iter().map(|(point, value)| PrimeGroupClaim {
-            point: point.iter().copied().map(encode).collect(),
-            evaluations: vec![PrimePlaneClaim { polynomial: 0, value: encode(*value) }],
-        }).collect())
+        Ok(self
+            .prime
+            .iter()
+            .map(|(point, value)| PrimeGroupClaim {
+                point: point.iter().copied().map(encode).collect(),
+                evaluations: vec![PrimePlaneClaim {
+                    polynomial: 0,
+                    value: encode(*value),
+                }],
+            })
+            .collect())
     }
 }

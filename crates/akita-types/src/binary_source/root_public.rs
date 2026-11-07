@@ -135,7 +135,7 @@ impl BinaryRootPublic {
                 checked::sum(prime.claims().iter().map(|claim| claim.evaluations.len()))
                     .ok_or(AkitaError::InvalidProof)?,
             ])
-                .ok_or(AkitaError::InvalidProof)?,
+            .ok_or(AkitaError::InvalidProof)?,
             manifest.b_rows(),
             manifest
                 .d_label(claim.is_some(), prime.planes().len())?
@@ -233,8 +233,13 @@ impl BinaryRootPublic {
             negative_bits.end,
             checked::product([
                 2,
-                checked::sum(self.prime.claims().iter().map(|claim| claim.evaluations.len()))
-                    .ok_or(AkitaError::InvalidProof)?,
+                checked::sum(
+                    self.prime
+                        .claims()
+                        .iter()
+                        .map(|claim| claim.evaluations.len()),
+                )
+                .ok_or(AkitaError::InvalidProof)?,
             ])
             .ok_or(AkitaError::InvalidProof)?,
         )

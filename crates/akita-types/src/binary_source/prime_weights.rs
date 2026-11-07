@@ -37,8 +37,13 @@ pub fn prime_plane_relation_weights<F: Field, E: ExtField<F>>(
             && E::DEGREE != 2)
         || batches.len()
             != checked::product([
-                checked::sum(manifest.claims().iter().map(|claim| claim.evaluations.len()))
-                    .ok_or(AkitaError::InvalidProof)?,
+                checked::sum(
+                    manifest
+                        .claims()
+                        .iter()
+                        .map(|claim| claim.evaluations.len()),
+                )
+                .ok_or(AkitaError::InvalidProof)?,
                 2,
             ])
             .ok_or(AkitaError::InvalidProof)?
@@ -252,17 +257,29 @@ impl<E: Field> PrimePlaneWeights<E> {
         }
         let mut highs = vec![E::zero(); slots];
         let mut sum = E::zero();
-        let base_dots = self.readings.iter().map(|reading| {
-            (0..slots).map(|slot| {
-                let window = low
-                    .get(slot * stride..slot * stride + 162)
-                    .ok_or(AkitaError::InvalidProof)?;
-                Ok(reading.omega.iter().zip(window)
-                    .fold(E::zero(), |sum, (&omega, &low)| sum + omega * low))
-            }).collect::<Result<Vec<_>, AkitaError>>()
-        }).collect::<Result<Vec<_>, AkitaError>>()?;
+        let base_dots = self
+            .readings
+            .iter()
+            .map(|reading| {
+                (0..slots)
+                    .map(|slot| {
+                        let window = low
+                            .get(slot * stride..slot * stride + 162)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        Ok(reading
+                            .omega
+                            .iter()
+                            .zip(window)
+                            .fold(E::zero(), |sum, (&omega, &low)| sum + omega * low))
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         for (plane_index, plane) in self.planes.iter().enumerate() {
-            let reading_factors = self.readings.get(plane.point).ok_or(AkitaError::InvalidProof)?;
+            let reading_factors = self
+                .readings
+                .get(plane.point)
+                .ok_or(AkitaError::InvalidProof)?;
             let base_dots = base_dots.get(plane.point).ok_or(AkitaError::InvalidProof)?;
             let polynomial = plane.polynomial;
             let mut response = E::zero();
@@ -324,7 +341,10 @@ impl<E: Field> PrimePlaneWeights<E> {
         plane: &PlaneInputs<E>,
         column: usize,
     ) -> Result<[E; 162], AkitaError> {
-        let reading_factors = self.readings.get(plane.point).ok_or(AkitaError::InvalidProof)?;
+        let reading_factors = self
+            .readings
+            .get(plane.point)
+            .ok_or(AkitaError::InvalidProof)?;
         let column = *reading_factors
             .columns
             .get(column)

@@ -50,7 +50,9 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
         .try_reserve_exact(width)
         .map_err(|_| AkitaError::InvalidProof)?;
     digits.resize(width, 0);
-    let weights = manifest.claims().iter()
+    let weights = manifest
+        .claims()
+        .iter()
         .map(|prime| prime.weights::<F>(descriptor))
         .collect::<Result<Vec<_>, _>>()?;
     for (plane, claim) in manifest.planes().iter().enumerate() {
@@ -128,7 +130,9 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
     digits.resize(width, 0);
     let plane_width =
         checked::product([columns, column_digits_len]).ok_or(AkitaError::InvalidProof)?;
-    let weights = manifest.claims().iter()
+    let weights = manifest
+        .claims()
+        .iter()
         .map(|prime| prime.weights::<F>(descriptor))
         .collect::<Result<Vec<_>, _>>()?;
     for (claim, plane_digits) in manifest
