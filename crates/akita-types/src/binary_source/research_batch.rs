@@ -42,6 +42,13 @@ pub struct ResearchBinaryRelation<'a, E: Field> {
 
 impl ResearchBatchPlan {
     /// Fix the exact roster before allocating witnesses or drawing randomness.
+    #[tracing::instrument(skip_all, name = "research_batch_plan", fields(
+        groups = kinds.len(),
+        destination_ring,
+        negative_count = tracing::field::Empty,
+        physical_cells = tracing::field::Empty,
+        batch_count = tracing::field::Empty
+    ))]
     pub fn new(
         kinds: &[GroupClaimKind],
         profiles: &[GroupCommitPhaseParams],
@@ -229,6 +236,10 @@ impl ResearchBatchPlan {
             negative_count,
         ]))
         .ok_or(AkitaError::InvalidProof)?;
+        let span = tracing::Span::current();
+        span.record("negative_count", negative_count);
+        span.record("physical_cells", physical_cells);
+        span.record("batch_count", batch_count);
         Ok(Self {
             binary,
             ordinary,

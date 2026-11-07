@@ -12,6 +12,7 @@ use akita_types::GrindingReplay;
 use jolt_field::AdditiveGroup;
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "research_root_total", fields(groups = handles.len()))]
 pub(super) fn prove_root<Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
     backend: &B,
@@ -55,6 +56,13 @@ where
             "research root requires direct setup".into(),
         ));
     }
+    let phase = tracing::info_span!(
+        "research_root_plan",
+        groups = handles.len(),
+        physical_cells = tracing::field::Empty,
+        batch_count = tracing::field::Empty
+    )
+    .entered();
     let profiles = (0..8)
         .map(|index| {
             schedule
@@ -73,12 +81,23 @@ where
     if plan.physical_cells() != schedule.root.output_witness_len {
         return Err(AkitaError::InvalidProof);
     }
+    phase.record("physical_cells", plan.physical_cells());
+    phase.record("batch_count", plan.batch_count());
+    drop(phase);
+    let phase =
+        tracing::info_span!("research_root_statement", groups = claims.num_groups()).entered();
     research_batch_statement::<Cfg::Field, Cfg::ExtField, _>(
         grinding.state_mut(),
         claims,
         &profiles,
         |commitment| commitment.rows().coeffs(),
     )?;
+    drop(phase);
+    let phase = tracing::info_span!(
+        "research_root_word_terminal",
+        carriers = tracing::field::Empty
+    )
+    .entered();
     let context = backend.proof_context(proof_session, 0)?;
     let group = claims.groups().first().ok_or(AkitaError::InvalidProof)?;
     let akita_types::opening_claims::GroupClaimKind::Binary {
@@ -100,6 +119,7 @@ where
         let carriers = source
             .downcast_ref::<Vec<u128>>()
             .ok_or(AkitaError::InvalidProof)?;
+        phase.record("carriers", carriers.len());
         Some(crate::binary_field_switch::prove_field_switch(
             manifest.descriptor(),
             claim,
@@ -110,6 +130,7 @@ where
         None
     };
     plan.bind_word_terminal(terminal.as_ref())?;
+    drop(phase);
     let phase = tracing::info_span!("research_root_prepare_groups").entered();
     let (d_payload, preparation) = backend.prepare_root_group(
         proof_session,

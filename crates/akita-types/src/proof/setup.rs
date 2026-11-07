@@ -288,7 +288,12 @@ pub fn sample_akita_setup_seed() -> AkitaSetupSeed {
 /// calls consume that stream sequentially. Pages may be derived in parallel,
 /// while concatenation in page-index order preserves deterministic prefix
 /// semantics.
-#[tracing::instrument(skip_all, name = "derive_public_matrix_prefix")]
+#[tracing::instrument(skip_all, name = "derive_public_matrix_prefix", fields(
+    matrix_fields = num_field_elements,
+    page_fields = id.derivation.page_field_elements(),
+    field = std::any::type_name::<F>(),
+    seed = ?id
+))]
 #[must_use]
 pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
     num_field_elements: usize,
@@ -311,6 +316,10 @@ pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
 ///
 /// Returns an error if either side is structurally malformed or if the matrix
 /// field-element count differs from the descriptor.
+#[tracing::instrument(skip_all, name = "public_matrix_shape_validation", fields(
+    matrix_fields = shared_matrix.num_field_elements(),
+    declared_fields = descriptor.num_field_elements
+))]
 pub fn validate_public_matrix_shape_matches_seed<F: Field + Valid>(
     shared_matrix: &FlatMatrix<F>,
     descriptor: &AkitaSetupDescriptor,
@@ -332,6 +341,12 @@ pub fn validate_public_matrix_shape_matches_seed<F: Field + Valid>(
 ///
 /// Returns an error if the matrix shape is malformed or if any coefficient
 /// differs from the seed-derived public matrix.
+#[tracing::instrument(skip_all, name = "public_matrix_seed_validation", fields(
+    matrix_fields = shared_matrix.num_field_elements(),
+    page_fields = descriptor.setup_seed.derivation.page_field_elements(),
+    field = std::any::type_name::<F>(),
+    seed = ?descriptor.setup_seed
+))]
 pub fn validate_public_matrix_matches_seed<F: Field + CanonicalEncoding + Valid>(
     shared_matrix: &FlatMatrix<F>,
     descriptor: &AkitaSetupDescriptor,

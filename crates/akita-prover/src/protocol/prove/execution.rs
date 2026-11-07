@@ -298,6 +298,7 @@ where
         + 'static,
     H: CommitmentHandleMetadata + 'static,
 {
+    let preflight = tracing::info_span!("opening_preflight").entered();
     let setup_batch = opening.setup_batch;
     let (resolved, digests, claims, grinding_plan, descriptor_bytes) = root::resolve_root::<Cfg, H>(
         expanded,
@@ -374,6 +375,7 @@ where
             statement,
         )?;
     }
+    drop(preflight);
     let (mut public, mut resident) = root_executor.root(
         &mut handoff,
         &mut grinding,
@@ -406,6 +408,7 @@ where
             "proved fold count differs from schedule".into(),
         ));
     }
+    let _finish = tracing::info_span!("opening_finish", levels).entered();
     grinding.finish()?;
     for (slot, selected) in registry.slots.iter().zip(selected) {
         if selected {
