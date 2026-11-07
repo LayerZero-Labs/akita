@@ -22,6 +22,7 @@ struct GrindingPlanEntry {
     site: GrindingSite,
     grind_bits: u8,
     nonce_bits: u8,
+    binary_group: Option<u32>,
 }
 
 struct GrindingPlanCursor<'a> {
@@ -45,6 +46,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            binary_group: run.binary_group(),
         };
         self.run_offset += 1;
         if self.run_offset == run.multiplicity() {
@@ -61,6 +63,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            binary_group: run.binary_group(),
         })
     }
 
@@ -77,6 +80,7 @@ impl<'a> GrindingPlanCursor<'a> {
             site: run.site(),
             grind_bits: run.grind_bits(),
             nonce_bits: run.nonce_bits(),
+            binary_group: run.binary_group(),
         })
     }
 
@@ -121,7 +125,7 @@ fn next_entry(
     let entry = cursor.next().ok_or_else(|| {
         AkitaError::InvalidInput("grinding query replay has no remaining plan entry".into())
     })?;
-    if entry.site != site || site.kind() != kind {
+    if entry.site != site || site.kind() != kind || entry.binary_group.is_some() {
         return Err(AkitaError::InvalidInput(
             "grinding query replay site or kind differs from the next plan entry".into(),
         ));
@@ -415,7 +419,7 @@ impl<'plan> ProverGrinding<'plan> {
                 "fold-response preview has no remaining grinding plan entry".into(),
             )
         })?;
-        if entry.site != site {
+        if entry.site != site || entry.binary_group.is_some() {
             return Err(AkitaError::InvalidInput(
                 "fold-response preview site differs from grinding plan".into(),
             ));
@@ -436,7 +440,7 @@ impl<'plan> ProverGrinding<'plan> {
         let work = self
             .cursor
             .peek_following()
-            .filter(|work| work.site == work_site)
+            .filter(|work| work.site == work_site && work.binary_group.is_none())
             .ok_or_else(|| {
                 AkitaError::InvalidInput(
                     "fold-response preview is not followed by the fold proof of work".into(),
@@ -795,3 +799,7 @@ where
 #[cfg(all(test, feature = "prover"))]
 #[path = "replay/tests.rs"]
 mod tests;
+
+#[cfg(feature = "labinius-trinomial")]
+#[path = "replay/binary_columns.rs"]
+mod binary_columns;

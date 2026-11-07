@@ -1,5 +1,8 @@
 //! Shared transcript atoms of an explicitly selected binary root.
 
+mod multigroup;
+pub use multigroup::*;
+
 use super::{BinaryCommittedGroupManifest, BinaryWordClaim};
 use crate::GrindingReplay;
 use akita_challenges::{
