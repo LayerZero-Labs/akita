@@ -92,7 +92,14 @@ fn admitted_envelope_uses_the_exact_coefficientwise_integer_bounds() {
 
 #[test]
 fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
-    for binary_count in [2, 3, 4] {
+    for (binary_count, mixed_views) in [
+        (2, false),
+        (3, false),
+        (4, false),
+        (2, true),
+        (3, true),
+        (4, true),
+    ] {
         for ordinary_count in [0, 1, 3] {
             let binary = (0..binary_count)
                 .map(|group| {
@@ -102,8 +109,12 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                         1 << (group % 3),
                         group + 1,
                         BinaryFieldProfile::P64,
-                        group % 3 != 1,
-                        if group % 3 == 2 { 0 } else { 2 * (group + 1) },
+                        !mixed_views || group % 3 != 1,
+                        if mixed_views && group % 3 == 2 {
+                            0
+                        } else {
+                            2 * (group + 1)
+                        },
                     )
                 })
                 .collect::<Vec<_>>();
