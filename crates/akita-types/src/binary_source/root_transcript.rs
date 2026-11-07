@@ -238,12 +238,20 @@ fn p64_batch_from_blocks<F: Field, E: ExtField<F>>(
     let convert = |[first, second]: [u64; 2]| {
         E::from_base_fn(|index| F::from_u64(if index == 0 { first } else { second }))
     };
+    #[cfg(feature = "parallel")]
+    if count > (1 << 14) {
+        return p64_pipeline::convert(count, next_pair, convert, result);
+    }
     // Small batches and serial builds need no intermediate coordinate copy.
     for _ in 0..count {
         result.push(convert(next_pair()?));
     }
     Ok(result)
 }
+
+#[cfg(feature = "parallel")]
+#[path = "p64_pipeline.rs"]
+mod p64_pipeline;
 
 /// The fold challenge family of the binary root's single fold.
 pub(crate) fn binary_root_family() -> Result<FoldChallengeFamily, AkitaError> {
