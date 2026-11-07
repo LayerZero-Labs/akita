@@ -2,7 +2,7 @@ use super::unit_intervals;
 use super::{basis_eval_at_index, EqPairSeed};
 use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
-fn differential<const LM: bool, const RM: bool>() {
+fn differential<const LM: bool, const RM: bool, const STATES: usize>() {
     let mut state = 0xb12b_abc7_45d6_9e01u64;
     let mut next = || {
         state ^= state << 13;
@@ -32,10 +32,11 @@ fn differential<const LM: bool, const RM: bool>() {
             for i in 0..len {
                 expected += seed.weight
                     * basis_eval_at_index::<F, LM>(&left, seed.left_offset + i)
-                    * basis_eval_at_index::<F, RM>(&right, seed.right_offset + i);
+                    * basis_eval_at_index::<F, RM>(&right, seed.right_offset + i * (STATES - 1));
             }
         }
-        let actual = unit_intervals::eval::<F, LM, RM>(&left, &right, len, &seeds, &mut 0).unwrap();
+        let actual =
+            unit_intervals::eval::<F, LM, RM, STATES>(&left, &right, len, &seeds, &mut 0).unwrap();
         assert_eq!(
             actual, expected,
             "case {case}, left bits {lb}, right bits {rb}, len {len}"
@@ -44,10 +45,18 @@ fn differential<const LM: bool, const RM: bool>() {
 }
 #[test]
 fn cached_unit_intervals_match_dense_in_all_bases() {
-    differential::<false, false>();
-    differential::<false, true>();
-    differential::<true, false>();
-    differential::<true, true>();
+    differential::<false, false, 2>();
+    differential::<false, true, 2>();
+    differential::<true, false, 2>();
+    differential::<true, true, 2>();
+    differential::<false, false, 4>();
+    differential::<false, true, 4>();
+    differential::<true, false, 4>();
+    differential::<true, true, 4>();
+    differential::<false, false, 6>();
+    differential::<false, true, 6>();
+    differential::<true, false, 6>();
+    differential::<true, true, 6>();
 }
 #[test]
 fn cached_unit_intervals_enforce_address_and_work_bounds() {
@@ -56,17 +65,21 @@ fn cached_unit_intervals_enforce_address_and_work_bounds() {
         right_offset: 0,
         weight: F::one(),
     };
-    assert!(
-        unit_intervals::eval::<F, false, false>(&[F::one()], &[F::one()], 2, &[seed], &mut 0)
-            .is_err()
-    );
+    assert!(unit_intervals::eval::<F, false, false, 2>(
+        &[F::one()],
+        &[F::one()],
+        2,
+        &[seed],
+        &mut 0
+    )
+    .is_err());
     let seed = EqPairSeed {
         left_offset: 0,
         right_offset: 0,
         weight: F::one(),
     };
     let mut work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
-    assert!(unit_intervals::eval::<F, false, false>(
+    assert!(unit_intervals::eval::<F, false, false, 2>(
         &[F::one()],
         &[F::one()],
         2,
@@ -74,4 +87,48 @@ fn cached_unit_intervals_enforce_address_and_work_bounds() {
         &mut work
     )
     .is_err());
+}
+
+#[test]
+fn power_two_right_intervals_match_dense_and_memo_charges_collisions() {
+    let left = (0..9).map(|i| F::from_u64(i + 2)).collect::<Vec<_>>();
+    let right = (0..10).map(|i| F::from_u64(i + 11)).collect::<Vec<_>>();
+    for stride in [2, 4, 8, 16] {
+        let seeds = (0..37)
+            .map(|i| EqPairSeed {
+                left_offset: i * 7,
+                right_offset: i * stride + 3,
+                weight: F::from_u64(i as u64 + 7),
+            })
+            .collect::<Vec<_>>();
+        let expected = seeds.iter().fold(F::zero(), |sum, seed| {
+            sum + seed.weight
+                * (0..123).fold(F::zero(), |v, i| {
+                    v + basis_eval_at_index::<F, false>(&left, seed.left_offset + i)
+                        * basis_eval_at_index::<F, false>(&right, seed.right_offset + stride * i)
+                })
+        });
+        assert_eq!(
+            unit_intervals::eval_power_two_right::<F, false, false>(
+                &left, &right, stride, 123, &seeds, &mut 0
+            )
+            .unwrap(),
+            expected
+        );
+    }
+    let mut memo = super::unit_intervals_cache::Memo::new();
+    let mut work = 0;
+    for key in (0..2048).map(|i| i * 127) {
+        memo.insert(key, F::from_u64(key as u64), &mut work)
+            .unwrap();
+    }
+    for key in (0..2048).map(|i| i * 127) {
+        assert_eq!(
+            memo.get(key, &mut work).unwrap(),
+            Some(F::from_u64(key as u64))
+        );
+    }
+    assert_eq!(memo.get(usize::MAX, &mut work).unwrap(), None);
+    work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
+    assert!(memo.get(0, &mut work).is_err());
 }
