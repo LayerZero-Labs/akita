@@ -63,11 +63,7 @@ pub use word_claim::*;
 /// The number of blocks a sampler draws depends on earlier squeezed values.
 /// Such variable-length draws are confined to the experimental binary source.
 pub fn challenge_block(channel: &mut impl ProofChannel) -> Result<[u8; 32], AkitaError> {
-    channel.challenge_message(32, |bytes| {
-        bytes
-            .try_into()
-            .map_err(|_| AkitaError::Internal("challenge block width".into()))
-    })
+    channel.challenge_array()
 }
 #[cfg(test)]
 mod tests;

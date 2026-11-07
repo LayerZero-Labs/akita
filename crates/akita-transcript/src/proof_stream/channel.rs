@@ -62,6 +62,16 @@ pub trait ProofChannel {
         decode: impl FnOnce(&[u8]) -> Result<T, AkitaError>,
     ) -> Result<T, AkitaError>;
 
+    /// Squeeze one fixed-width byte challenge without a heap buffer.
+    ///
+    /// This has the same message boundary and bytes as `challenge_message`.
+    /// A rejected verifier must still fail before squeezing.
+    fn challenge_array<const N: usize>(&mut self) -> Result<[u8; N], AkitaError> {
+        self.challenge_message(N, |bytes| {
+            bytes.try_into().map_err(|_| AkitaError::InvalidProof)
+        })
+    }
+
     /// Return `result` unchanged. On the verifier, an error first rejects the
     /// transcript, so a caller that drops the error still cannot accept.
     ///
@@ -72,6 +82,10 @@ pub trait ProofChannel {
 }
 
 impl ProofChannel for ProverChannel {
+    fn challenge_array<const N: usize>(&mut self) -> Result<[u8; N], AkitaError> {
+        Ok(self.verifier_message())
+    }
+
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         prover_context(self, record);
@@ -113,6 +127,11 @@ impl ProofChannel for ProverChannel {
 }
 
 impl ProofChannel for VerifierChannel<'_> {
+    fn challenge_array<const N: usize>(&mut self) -> Result<[u8; N], AkitaError> {
+        Transcript::check(self, || true).map_err(invalid_proof)?;
+        Ok(self.verifier_message())
+    }
+
     #[inline(always)]
     fn context(&mut self, record: ProtocolContextRecord) {
         verifier_context(self, record);
@@ -155,5 +174,41 @@ impl ProofChannel for VerifierChannel<'_> {
             let _ = reject(self);
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{new_prover_channel, new_verifier_channel};
+
+    #[test]
+    fn fixed_arrays_preserve_squeezes_continuation_and_rejection() {
+        let mut fixed = new_prover_channel(b"fixed-array");
+        let mut boxed = new_prover_channel(b"fixed-array");
+        let mut verifier = new_verifier_channel(b"fixed-array", &[]);
+        for index in 0..257 {
+            if index % 17 == 0 {
+                let public = [index as u8; 8];
+                fixed.public(&public);
+                boxed.public(&public);
+                verifier.public(&public);
+            }
+            let expected = boxed
+                .challenge_message(32, |bytes| Ok(bytes.to_vec()))
+                .unwrap();
+            assert_eq!(fixed.challenge_array::<32>().unwrap().as_slice(), expected);
+            assert_eq!(
+                verifier.challenge_array::<32>().unwrap().as_slice(),
+                expected
+            );
+        }
+        assert_eq!(
+            fixed.challenge_array::<8>().unwrap(),
+            boxed.challenge_array::<8>().unwrap()
+        );
+        assert!(verifier.guard::<()>(Err(AkitaError::InvalidProof)).is_err());
+        assert!(verifier.challenge_array::<32>().is_err());
+        assert!(verifier.check_eof().is_err());
     }
 }
