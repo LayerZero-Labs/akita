@@ -2,7 +2,7 @@ use super::*;
 use crate::binary_source::{binary_ordinary_profile_fixture, binary_word_manifest_fixture};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_params::binary_setup::BinaryFieldProfile;
-use akita_params::sis::OuterCommitMatrixParams;
+use akita_params::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
 use akita_params::{BlockGeometry, CommitmentSliceGeometry, PolynomialGroupLayout};
 use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
 
@@ -12,7 +12,9 @@ pub(crate) fn slot(domain: usize) -> SetupPrefixSlotId {
     let mut profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
     profile.group = PolynomialGroupLayout::singleton(domain.trailing_zeros() as usize);
     profile.inner.digits.num_digits = 22;
-    profile.inner.matrix = profile.inner.matrix.try_with_input_width(44).unwrap();
+    profile.inner.matrix =
+        InnerCommitMatrixParams::try_new_with_min_rank(profile.inner.matrix.sis_table_key(), 44)
+            .unwrap();
     profile.blocks = BlockGeometry::new(domain / 128, 2, domain / 256);
     let width = CommitmentSliceGeometry::try_new(
         profile.outer_slice_count,

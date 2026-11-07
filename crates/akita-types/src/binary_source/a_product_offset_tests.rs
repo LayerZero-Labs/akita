@@ -93,10 +93,10 @@ fn translated_a_matches_independent_e64_dense_weights_and_setup_dot_product() {
     let mut rng = StdRng::seed_from_u64(0x00a4_9931);
     // Long carry chains across the coefficient, digit, row, and owner axes.
     for (rows, rank, owners, offset) in [
-        (1, 1, 1, 1023),
+        (1, 3, 1, 1023),
         (2, 3, 2, 4095),
-        (4, 1, 3, 32767),
-        (4, 1, 2, 21503),
+        (4, 3, 3, 32767),
+        (4, 3, 2, 21503),
     ] {
         let plan = fixture(rows, rank, owners);
         let prefix_len = rows * rank.next_power_of_two() * STRIDE * 2;
