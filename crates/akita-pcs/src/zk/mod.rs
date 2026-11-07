@@ -202,7 +202,12 @@ where
         scheme: AkitaCommitmentScheme<Cfg>,
         setup: AkitaVerifierSetup<F>,
     ) -> Result<Self, AkitaError> {
-        let verifier = scheme.verifier(setup)?;
+        Self::from_verifier(scheme.verifier(setup)?)
+    }
+
+    /// Uses an admitted verifier, including a trusted terminal cache installed by provisioning.
+    pub fn from_verifier(verifier: AkitaVerifier<Cfg>) -> Result<Self, AkitaError> {
+        let scheme = AkitaCommitmentScheme::new(verifier.schedules().clone());
         covers_chains::<Cfg>(verifier.setup().expanded())?;
         Ok(Self {
             scheme,

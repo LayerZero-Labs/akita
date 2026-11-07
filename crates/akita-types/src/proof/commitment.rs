@@ -65,6 +65,22 @@ pub struct CommittedGroup<F: Field> {
 }
 
 impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
+    /// The shape-correct ordinary commitment with zero public coefficients.
+    /// Used to replay a verifier's shape before a witness is available.
+    pub fn zero(profile: GroupCommitPhaseParams) -> Result<Self, SerializationError> {
+        profile
+            .validate_frozen_precommit(F::MODULUS_BITS)
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let len = profile
+            .outer_compression_plan()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?
+            .terminal_coefficients();
+        Self::new(
+            profile,
+            Commitment::new(RingVec::from_coeffs(vec![F::zero(); len])),
+        )
+    }
+
     /// Build a self-describing ordinary group commitment and compute its digest.
     ///
     /// # Errors
@@ -147,7 +163,7 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Com
 #[cfg(test)]
 mod committed_group_tests {
     use super::*;
-    use jolt_algebra::{Fp32, Ring};
+    use jolt_algebra::{Fp32, Ring, Zero};
 
     type F = Fp32<4294967197>;
 
@@ -229,6 +245,20 @@ mod committed_group_tests {
 
     fn decode(bytes: &[u8]) -> Result<CommittedGroup<F>, SerializationError> {
         CommittedGroup::<F>::deserialize_with_mode(bytes, Compress::No, Validate::Yes, &())
+    }
+
+    #[test]
+    fn zero_commitment_has_the_profiles_shape() {
+        let (profile, _) = group_parts(128);
+        let group = CommittedGroup::<F>::zero(profile).unwrap();
+        group.check().unwrap();
+        assert_eq!(group.profile(), &profile);
+        assert!(group
+            .rows()
+            .coeffs()
+            .iter()
+            .all(|coefficient| coefficient.is_zero()));
+        assert_eq!(decode(&canonical_bytes(&group)).unwrap(), group);
     }
 
     #[test]
