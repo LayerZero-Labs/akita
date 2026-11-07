@@ -151,7 +151,10 @@ fn run_with_workers(mode: ResearchTerminalMode) {
                 .unwrap()
                 .install(|| run(false, mode));
             if let Some(reference) = &reference {
-                assert_eq!(&proof, reference, "worker count changed the proof");
+                assert_eq!(
+                    &proof, reference,
+                    "worker count changed proof bytes or diagnostics"
+                );
             } else {
                 reference = Some(proof);
             }
@@ -173,7 +176,13 @@ fn point_coordinate(mode: ResearchTerminalMode, base: u64, pass: u64) -> E {
     })
 }
 
-fn run(with_word: bool, mode: ResearchTerminalMode) -> Vec<u8> {
+type Capture = (
+    Vec<u8>,
+    Vec<akita_transcript::TranscriptEvent>,
+    Vec<akita_transcript::ProofMessageRange>,
+);
+
+fn run(with_word: bool, mode: ResearchTerminalMode) -> Capture {
     let producers = catalog::Producers::new();
     let (catalog, manifests, profiles, plan) = catalog::batch(&producers, with_word, mode);
     let scheme = AkitaCommitmentScheme::<Config<33>>::new(catalog);
@@ -471,5 +480,5 @@ fn run(with_word: bool, mode: ResearchTerminalMode) -> Vec<u8> {
         "research=true binary_groups=4 ordinary_groups=4 witnesses=1 suffixes=1 bytes={}",
         proof.len()
     );
-    proof
+    (proof, events, ranges)
 }

@@ -10,8 +10,6 @@ use akita_params::{binary_setup::BINARY_SETUP_P64, GrindingSite};
 use akita_transcript::{
     ext_challenges, ChallengeCodec, ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT,
 };
-#[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Extension seam: bind the complete order-zero binary and mixed statement.
@@ -209,34 +207,23 @@ fn p64_batch_from_blocks<F: Field, E: ExtField<F>>(
     result
         .try_reserve_exact(count)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let mut bytes = [0; 32];
-    let mut offset = 32;
-    // Buffer accepted coordinates, not transcript state. Indexed extension
-    // writes each output exactly once, in draw order, on disjoint worker ranges.
-    // This boundary is unrelated to the fixed 32-byte transcript messages;
-    // unused bytes and coordinate rejection continue across every buffer fill.
-    const COORDINATE_BUFFER: usize = 1 << 14;
-    let mut pending = Vec::new();
-    pending
-        .try_reserve_exact(count.min(COORDINATE_BUFFER))
-        .map_err(|_| AkitaError::InvalidProof)?;
-    for index in 0..count {
+    let mut words = [0u64; 4].into_iter();
+    words.by_ref().for_each(drop);
+    let mut next_pair = || -> Result<[u64; 2], AkitaError> {
         let mut coordinates = [0u64; 2];
         for coordinate in &mut coordinates {
             let mut accepted = None;
             for _ in 0..256 {
-                if offset == 32 {
-                    bytes = block()?;
-                    offset = 0;
+                if words.len() == 0 {
+                    let mut decoded = [0u64; 4];
+                    for (word, bytes) in decoded.iter_mut().zip(block()?.chunks_exact(8)) {
+                        *word = u64::from_le_bytes(
+                            bytes.try_into().map_err(|_| AkitaError::InvalidProof)?,
+                        );
+                    }
+                    words = decoded.into_iter();
                 }
-                let candidate = u64::from_le_bytes(
-                    bytes
-                        .get(offset..offset + 8)
-                        .ok_or(AkitaError::InvalidProof)?
-                        .try_into()
-                        .map_err(|_| AkitaError::InvalidProof)?,
-                );
-                offset += 8;
+                let candidate = words.next().ok_or(AkitaError::InvalidProof)?;
                 if candidate < BINARY_SETUP_P64 {
                     accepted = Some(candidate);
                     break;
@@ -246,18 +233,14 @@ fn p64_batch_from_blocks<F: Field, E: ExtField<F>>(
                 AkitaError::InvalidInput("binary p64 coordinate rejection exhausted".into())
             })?;
         }
-        pending.push(coordinates);
-        if pending.len() == COORDINATE_BUFFER || index + 1 == count {
-            let convert = |coordinates: &[u64; 2]| {
-                let [first, second] = *coordinates;
-                E::from_base_fn(|index| F::from_u64(if index == 0 { first } else { second }))
-            };
-            #[cfg(feature = "parallel")]
-            result.par_extend(pending.par_iter().map(convert));
-            #[cfg(not(feature = "parallel"))]
-            result.extend(pending.iter().map(convert));
-            pending.clear();
-        }
+        Ok(coordinates)
+    };
+    let convert = |[first, second]: [u64; 2]| {
+        E::from_base_fn(|index| F::from_u64(if index == 0 { first } else { second }))
+    };
+    // Small batches and serial builds need no intermediate coordinate copy.
+    for _ in 0..count {
+        result.push(convert(next_pair()?));
     }
     Ok(result)
 }
@@ -342,6 +325,20 @@ mod p64_tests {
 
     #[test]
     fn binary_source_p64_batch_caps_each_coordinate_at_256_attempts() {
+        // Failure after completed pipeline chunks must keep the exact draw
+        // prefix, close both bounded queues and join the conversion worker.
+        for channel_error in [false, true] {
+            let mut calls = 0;
+            let result = p64_batch_from_blocks::<F, E>(32_769, || {
+                calls += 1;
+                if channel_error && calls == 8194 {
+                    return Err(AkitaError::InvalidProof);
+                }
+                Ok(if calls <= 8192 { [0; 32] } else { [255; 32] })
+            });
+            assert!(result.is_err());
+            assert_eq!(calls, if channel_error { 8194 } else { 8192 + 64 });
+        }
         for coordinate in 0..2 {
             let mut calls = 0;
             let result = p64_batch_from_blocks::<F, E>(1, || {
