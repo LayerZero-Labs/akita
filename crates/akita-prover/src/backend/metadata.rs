@@ -1,5 +1,5 @@
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
 /// Public, coefficient-free description of an accepted fold.

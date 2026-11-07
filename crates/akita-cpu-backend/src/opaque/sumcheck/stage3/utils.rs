@@ -1,5 +1,5 @@
-use jolt_field::solinas::parallel::*;
-use jolt_field::Field;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::Field;
 
 #[cfg(test)]
 pub(super) fn product_claim<E: Field>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {

@@ -349,7 +349,7 @@ materialized relation table.
 - Relation address geometry:
   `crates/akita-params/src/layout/relation_address.rs`.
 - Residue and terminal coefficient functionals:
-  `crates/akita-algebra/src/ring/residue.rs`.
+  `jolt-algebra/src/ring/residue.rs`.
 - Verifier preparation:
   `crates/akita-verifier/src/relation/mod.rs`.
 - Final point evaluation:

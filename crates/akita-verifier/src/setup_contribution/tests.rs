@@ -13,11 +13,12 @@ use akita_types::{
     AkitaExpandedSetup, AkitaSetupDescriptor, PhysicalBSetupPlan, PreparedRelationAddress,
     SetupContributionGroupInputs,
 };
-use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
+use jolt_algebra::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
 mod address_spans;
 mod direct_evaluation_regressions;
 mod fused_scan;
+mod hiding_randomness;
 mod packed_direct;
 mod prepare;
 mod reduced_shared;

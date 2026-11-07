@@ -10,7 +10,7 @@ use akita_error::AkitaError;
 use akita_params::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
 
 pub(crate) trait ExtensionOpeningSession<E: Field>: Send {
     fn num_rounds(&self) -> usize;
@@ -72,11 +72,11 @@ where
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
-        + jolt_field::PseudoMersenne
+        + jolt_algebra::PseudoMersenne
         + Ring
         + Unreduced
         + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>
@@ -100,7 +100,7 @@ where
                     root_layout
                 } else if context.fold_level() as usize == schedule.recursive_folds.len() + 1 {
                     let num_vars =
-                        akita_error::checked::ceil_log2(schedule.terminal.input_witness_len)
+                        jolt_algebra::checked::ceil_log2(schedule.terminal.input_witness_len)
                             .ok_or_else(|| {
                                 AkitaError::Internal("terminal EOR witness arity overflow".into())
                             })?;

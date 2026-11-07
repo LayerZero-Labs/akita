@@ -1,10 +1,11 @@
 //! Projected A relation on canonical digit addresses, with an explicit rho.
 
-use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
-use akita_algebra::ring::trinomial::MinusTrinomial;
+use akita_algebra::trinomial::adjoint::TrinomialAdjoint;
+use akita_algebra::trinomial::MinusTrinomial;
 use akita_challenges::Challenges;
-use akita_error::{checked, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 use crate::binary_source::{
     binary_scalar_challenges, BinaryRootWitnessPlan, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW,

@@ -55,7 +55,7 @@ or prover implementation.
 
 | Crate | Review role |
 | --- | --- |
-| external `jolt-field` and `akita-algebra` | Field, ring, transform, and polynomial arithmetic |
+| external `jolt-algebra` and `akita-algebra` | Field, ring, transform, and polynomial arithmetic |
 | `akita-serialization` | Canonical encoding and checked decoding |
 | `akita-transcript` and `akita-challenges` | Instance binding and challenge derivation |
 | `akita-sumcheck` | Shared sumcheck proof types and drivers |

@@ -191,7 +191,7 @@ impl<S: ProofChannel> akita_types::GrindingReplay for BatchReplay<S> {
 fn p64_dense_batches_replay_both_coordinates_after_the_outgoing_commitment() {
     use akita_params::binary_setup::BinaryFieldProfile;
     use akita_types::binary_source::{binary_root_p64_batch_challenges, BinaryRootWitnessPlan};
-    use jolt_field::{Ext2, ExtField, Prime64Offset59};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59};
     type Base = Prime64Offset59;
     type Extension = Ext2<Base>;
     let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();

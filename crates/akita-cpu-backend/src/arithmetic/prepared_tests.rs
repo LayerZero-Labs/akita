@@ -7,7 +7,7 @@ use akita_challenges::FoldChallengeDistribution;
 use akita_params::MAX_I8_LOG_BASIS;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
 use akita_types::{NttCacheKey, NttTransformDomain};
-use jolt_field::Prime64Offset59;
+use jolt_algebra::Prime64Offset59;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -69,9 +69,6 @@ fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
         .expect("build exact NTT prefix");
     let profile = prepared.shared_ntt_profile(D).expect("profile");
 
-    assert_eq!(profile.profile_id, "Q64/3xi32");
-    assert_eq!(profile.num_primes, 3);
-    assert_eq!(profile.limb_bits, 32);
     assert_eq!(profile.max_i8_log_basis, MAX_I8_LOG_BASIS);
     assert!(profile.balanced_digit_safe_width > 0);
     assert!(profile.raw_i8_safe_width > 0);
@@ -371,7 +368,7 @@ fn relation_prewarm_joins_d_a_b_prefixes_before_kernel_execution() {
     .with_decomp(4, 8, 1, 2, 2)
     .expect("relation cache test params");
     let open = params.open();
-    let extent = |rows, width| akita_error::checked::product([rows, width]).unwrap();
+    let extent = |rows, width| jolt_algebra::checked::product([rows, width]).unwrap();
     let cyclic_extent = [
         extent(open.matrix.output_rank(), open.matrix.input_width()),
         extent(

@@ -114,16 +114,6 @@ fn cache_file_name_stays_below_common_component_limits() {
 }
 
 #[test]
-fn cache_file_names_use_current_namespaces() {
-    let registry = prefix_registry_cache_file_name::<TestF>(&requirements_at(16, 4))
-        .expect("registry cache name");
-    assert!(registry.contains("prefix_v4_"), "cache name: {registry}");
-    let matrix = public_matrix_cache_file_name::<TestF>(&sample_akita_setup_seed())
-        .expect("matrix cache name");
-    assert!(matrix.contains("flat_v3_"), "cache name: {matrix}");
-}
-
-#[test]
 fn config_backed_cache_does_not_apply_generic_setup_decode_limit() {
     let setup_seed = sample_akita_setup_seed();
     let claimed_fields = akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS + 1;

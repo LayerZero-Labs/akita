@@ -1,5 +1,5 @@
 use criterion::Criterion;
-use jolt_field::{
+use jolt_algebra::{
     Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59, Prime56Offset27,
     Prime64Offset59,
 };

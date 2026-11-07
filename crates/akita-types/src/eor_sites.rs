@@ -1,13 +1,14 @@
 //! Canonical proof-stream grammar for extension-opening reduction.
 
 use crate::{tensor_opening_split, GrindingReplay};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{GrindingSite, OpeningClaimsLayout};
 use akita_transcript::{
-    exchange_extension_group, public_extensions, ChallengeCodec, ProtocolSiteId,
+    public_extensions, ChallengeCodec, PrivateProofChannel, ProtocolSiteId,
     SITE_FAMILY_EXTENSION_OPENING_REDUCTION,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const STAGE_OPENINGS: u32 = 1;
 const STAGE_PARTIALS: u32 = 2;
@@ -100,7 +101,7 @@ pub fn eor_prefix<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     let (split_bits, _) = validate_shape::<F, E>(opening_batch, openings, partials.len())?;
     public_extensions::<F, E, _>(
@@ -108,11 +109,9 @@ where
         eor_site(level, STAGE_OPENINGS),
         openings,
     )?;
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        eor_site(level, STAGE_PARTIALS),
-        &mut partials,
-    )?;
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(eor_site(level, STAGE_PARTIALS), &mut partials)?;
     let (eta, claim_coefficients) =
         batch_challenges::<E>(opening_batch, level, split_bits, |site, count| {
             grinding.grinded_ext_challenges::<E>(site, count)
@@ -134,7 +133,7 @@ pub fn eor_final_claims<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     if final_claims.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
@@ -142,11 +141,10 @@ where
             actual: final_claims.len(),
         });
     }
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        eor_site(level, STAGE_FINAL_CLAIMS),
-        final_claims,
-    )
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(eor_site(level, STAGE_FINAL_CLAIMS), final_claims)?;
+    Ok(())
 }
 
 #[cfg(all(test, feature = "prover"))]
@@ -155,7 +153,7 @@ mod tests {
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, PolynomialGroupLayout};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

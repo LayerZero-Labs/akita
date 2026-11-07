@@ -13,12 +13,13 @@
 //! [`BinaryRootRelation::from_response`] exactly.
 
 use super::{dimensions, embed_challenges, invalid, relation_bound, BinaryRootRelation, D};
-use akita_algebra::ring::trinomial::image::{Q24Image, Q24};
+use akita_algebra::trinomial::image::{Q24Image, Q24};
 use akita_algebra::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::binary_source::{BinaryQuotientBounds, BinarySourceDescriptor};
-use jolt_field::solinas::parallel::*;
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
 
 /// q24 and the largest admitted primes below `2^28` and `2^27`.
 const PRIMES: [u32; 3] = [Q24, 268_433_353, 134_217_649];

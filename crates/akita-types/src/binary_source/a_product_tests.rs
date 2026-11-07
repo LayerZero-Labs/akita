@@ -1,6 +1,6 @@
 use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor};
-use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275 as F, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn plan(rows: usize, rank: usize) -> BinaryRootWitnessPlan {
@@ -383,7 +383,7 @@ fn p64_coordinate_integer_adjoint_and_typed_a_match_independent_long_division() 
     use crate::binary_source::{binary_direct_a_weights, BinaryAOperand, CANONICAL_IMAGE_WINDOW};
     use akita_challenges::{Challenges, SparseChallenge};
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{CanonicalEncoding, Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let descriptor = group_plan(2, 3, 2).descriptor().clone();
     let plan =

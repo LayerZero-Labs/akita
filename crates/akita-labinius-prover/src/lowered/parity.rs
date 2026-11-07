@@ -1,9 +1,10 @@
 use akita_algebra::{binary::BinaryField162, TrinomialModulus};
 use akita_challenges::BinaryChallenge;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_labinius_verifier::{
     frontend::BinaryEvaluationClaim, profile::BinaryClearSetup, source::equality_weights,
 };
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

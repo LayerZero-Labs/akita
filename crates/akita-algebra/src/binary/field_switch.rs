@@ -4,7 +4,8 @@
 //! zero controls the least-significant table-index bit. Callers must bind the
 //! source, layout, host claim and partials before sampling batching challenges.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

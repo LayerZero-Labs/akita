@@ -1,6 +1,6 @@
 //! Direct single-instance sumcheck protocol functions.
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_poly::OmittedConstantPoly;
 
 /// Advance the normalized claim for one equality-factored round.

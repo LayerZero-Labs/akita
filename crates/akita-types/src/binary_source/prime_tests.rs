@@ -5,7 +5,7 @@ use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
-use jolt_field::{One, Prime128Offset275, Ring};
+use jolt_algebra::{One, Prime128Offset275, Ring};
 
 type F = Prime128Offset275;
 
@@ -240,7 +240,7 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
 #[test]
 fn p64_prime_manifest_uses_base_residues_and_eight_byte_coordinates() {
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
     let field = BinaryFieldProfile::P64;
     let source = descriptor();
     let mut c = claim();
@@ -357,7 +357,7 @@ fn p64_prime_units_and_agreement_lift_are_exact() {
 #[test]
 fn p64_prime_structured_and_reference_weights_match_over_e64() {
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
     type E = Ext2<Base>;
     let field = BinaryFieldProfile::P64;
     let source = descriptor();

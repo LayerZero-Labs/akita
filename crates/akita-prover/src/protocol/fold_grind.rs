@@ -8,6 +8,7 @@ use crate::backend::{
 };
 use akita_challenges::{FoldDraw, PreviewFoldDraw, ProverFoldDraw};
 use akita_error::AkitaError;
+use akita_params::FoldResponseSearch;
 #[cfg(test)]
 use akita_params::OpeningMethod;
 use akita_params::{
@@ -19,8 +20,8 @@ use akita_types::GrindingReplay;
 use akita_types::GroupFoldChallenges;
 #[cfg(test)]
 use akita_types::OpeningFamily;
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_algebra::Unreduced;
+use jolt_algebra::{CanonicalEncoding, Field, Ring};
 
 #[cfg(feature = "response-model-diagnostics")]
 #[inline]
@@ -203,22 +204,42 @@ fn first_jointly_accepted_nonce<T>(
     )))
 }
 
+/// The accepted counter and probe output of one scheduled fold response.
+///
+/// A grinding search returns the first accepted counter. A one-shot response
+/// probes counter 0 once, and a rejection there is
+/// [`AkitaError::FoldOverflow`], never a retry at another counter.
+fn accepted_fold_response<T>(
+    search: FoldResponseSearch,
+    level: u32,
+    max_grind_attempts: u32,
+    mut probe: impl FnMut(u32) -> Result<Option<T>, AkitaError>,
+) -> Result<(u32, T), AkitaError> {
+    match search {
+        FoldResponseSearch::Grind => first_jointly_accepted_nonce(max_grind_attempts, probe),
+        FoldResponseSearch::OneShot => probe(0)?
+            .map(|value| (0, value))
+            .ok_or(AkitaError::FoldOverflow { level }),
+    }
+}
+
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn replay_multi_group_fold_decompose_witnesses<F, E, B>(
+fn replay_multi_group_fold_decompose_witnesses<F, E, B, C>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, B::PreparedOpeningHandle>],
     max_grind_attempts: u32,
 ) -> Result<Vec<FoldProbeOutput<B::AcceptedFoldHandle>>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: akita_types::FpExtEncoding<F>
-        + jolt_field::ExtField<F>
+        + jolt_algebra::ExtField<F>
         + akita_serialization::AkitaSerialize,
     B: crate::backend::OpaqueOpeningKernel<F, E>,
 {
@@ -228,8 +249,9 @@ where
         ));
     }
     let site = akita_params::GrindingSite::FoldResponse { level };
+    let search = grinding.fold_response_search(site)?;
     let (nonce, (work, mut candidate_outputs)) =
-        first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
+        accepted_fold_response(search, level, max_grind_attempts, |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
             let work = {
                 let mut preview_state = grinding.preview_fold_response(site, nonce)?;
@@ -308,7 +330,8 @@ where
             let challenges = {
                 let group_index = u32::try_from(group.group_index)
                     .map_err(|_| AkitaError::Internal("fold group index exceeds u32".into()))?;
-                let mut live = ProverFoldDraw::new(grinding.state_mut(), level, group_index);
+                let mut live =
+                    ProverFoldDraw::new(grinding.state_mut().clear_state(), level, group_index);
                 draw_group_fold_challenges::<F, E, _>(
                     &mut live,
                     &group.params,
@@ -389,9 +412,9 @@ where
 /// When `tail_t_vectors` is set, the terminal response must fit the exact cap
 /// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B, C>(
     opening_ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -399,10 +422,11 @@ pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, B>(
     _tail_t_vectors: Option<usize>,
 ) -> Result<Vec<FoldProbeOutput<B::AcceptedFoldHandle>>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: akita_types::FpExtEncoding<F>
-        + jolt_field::ExtField<F>
+        + jolt_algebra::ExtField<F>
         + akita_serialization::AkitaSerialize,
     B: crate::backend::OpaqueOpeningKernel<F, E>,
 {
@@ -452,7 +476,7 @@ where
             ),
         });
     }
-    replay_multi_group_fold_decompose_witnesses::<F, E, B>(
+    replay_multi_group_fold_decompose_witnesses::<F, E, B, C>(
         opening_ctx,
         grinding,
         level,
@@ -468,7 +492,7 @@ mod tests {
     use akita_challenges::FoldChallengeDistribution;
     use akita_params::SisModulusProfileId;
 
-    type F = jolt_field::Prime128Offset275;
+    type F = jolt_algebra::Prime128Offset275;
 
     #[derive(Default)]
     struct FixedDraw {
@@ -560,6 +584,31 @@ mod tests {
             );
             assert_eq!(draw.draws, 0);
         }
+    }
+
+    #[test]
+    fn one_shot_response_probes_counter_zero_once_and_overflows() {
+        let mut probed = Vec::new();
+        let rejected = accepted_fold_response(FoldResponseSearch::OneShot, 1, 4, |nonce| {
+            probed.push(nonce);
+            Ok((nonce == 1).then_some(()))
+        });
+        assert_eq!(rejected, Err(AkitaError::FoldOverflow { level: 1 }));
+        assert_eq!(probed, vec![0]);
+
+        let mut probed = Vec::new();
+        let accepted = accepted_fold_response(FoldResponseSearch::OneShot, 1, 4, |nonce| {
+            probed.push(nonce);
+            Ok(Some(nonce))
+        });
+        assert_eq!(accepted, Ok((0, 0)));
+        assert_eq!(probed, vec![0]);
+
+        // The same probe under a grinding search retries and accepts counter 1.
+        let grind = accepted_fold_response(FoldResponseSearch::Grind, 1, 4, |nonce| {
+            Ok((nonce == 1).then_some(()))
+        });
+        assert_eq!(grind, Ok((1, ())));
     }
 
     #[test]

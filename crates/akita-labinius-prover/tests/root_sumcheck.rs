@@ -15,7 +15,7 @@ use akita_labinius_verifier::{
 };
 use akita_sumcheck::{prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver};
 use common::combined::CombinedRootSumcheck;
-use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 

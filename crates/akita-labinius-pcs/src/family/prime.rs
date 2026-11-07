@@ -1,9 +1,10 @@
 //! One base-field polynomial for the prime left opening and its exact claim.
 
 use super::FieldFamily;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_labinius_verifier::lowered::LoweredRootLayout;
-use jolt_field::{ExtField, Field, One, Zero};
+use jolt_algebra::checked;
+use jolt_algebra::{ExtField, Field, One, Zero};
 
 /// Flatten the prime left opening into one base-field table, coordinate
 /// innermost: entry `degree * i + k` is canonical base coefficient `k` of

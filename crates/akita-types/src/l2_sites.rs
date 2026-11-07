@@ -3,10 +3,10 @@
 use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_transcript::{
-    exchange_extension_group, ProofChannel, ProtocolContextRecord, ProtocolMessageKind,
-    ProtocolSiteId, SITE_FAMILY_PHYSICAL_L2,
+    PrivateProofChannel, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
+    SITE_FAMILY_PHYSICAL_L2,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const ROLE_INTEGER: u32 = 1;
 const ROLE_SUBCLAIMS: u32 = 2;
@@ -34,9 +34,12 @@ pub fn l2_prefix<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
     let state = grinding.state_mut();
+    // The integer goes out through a plain exchange, which a masking channel
+    // would publish: a zero-knowledge opening must not take the L2 route at a
+    // masked level. The subclaims below go through the private exchange.
     state.context(ProtocolContextRecord::new(
         site(level, ROLE_INTEGER).to_bytes(),
         ProtocolMessageKind::ProofAtoms as u32,
@@ -46,7 +49,7 @@ where
     ));
     let mut integer = response_l2_sq;
     state.exchange(std::slice::from_mut(&mut integer))?;
-    exchange_extension_group::<F, E, _>(state, site(level, ROLE_SUBCLAIMS), subclaims)?;
+    state.exchange_private_extension_group(site(level, ROLE_SUBCLAIMS), subclaims)?;
     Ok(integer)
 }
 
@@ -59,13 +62,12 @@ pub fn l2_virtual_evaluations<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        site(level, ROLE_VIRTUAL_EVALUATIONS),
-        evaluations,
-    )
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(site(level, ROLE_VIRTUAL_EVALUATIONS), evaluations)?;
+    Ok(())
 }
 
 #[cfg(all(test, feature = "prover"))]
@@ -74,7 +76,7 @@ mod tests {
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

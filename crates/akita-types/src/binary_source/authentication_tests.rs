@@ -1,6 +1,6 @@
 use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, BinarySourceDescriptor};
-use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
 
@@ -241,7 +241,7 @@ fn digit_commitment_equals_setup_ring_products() {
 
 #[test]
 fn p64_authentication_keeps_both_extension_coordinates_at_every_rank() {
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let descriptor = plan().descriptor().clone();
     let plan =

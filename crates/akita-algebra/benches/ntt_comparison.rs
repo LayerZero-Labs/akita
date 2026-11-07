@@ -2,14 +2,17 @@ use std::fmt::Debug;
 use std::hint::black_box;
 use std::time::Duration;
 
-use akita_algebra::tables::{q128_primes, Q128_NUM_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES};
 use akita_algebra::{
-    CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, Field,
-    MinusTrinomial, MontCoeff, PlusTrinomial, Prime64Offset23703, SmoothFftField, TrinomialI8Lut,
+    MinusTrinomial, PlusTrinomial, Prime64Offset23703, TrinomialField, TrinomialI8Lut,
     TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace, TrinomialRing,
 };
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use jolt_field::{Prime128OffsetA7F7, WithPacking};
+use jolt_algebra::tables::{q128_primes, Q128_NUM_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES};
+use jolt_algebra::{
+    CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, Field,
+    MontCoeff,
+};
+use jolt_algebra::{Prime128OffsetA7F7, WithPacking};
 
 #[path = "ntt_comparison/ifma.rs"]
 mod ifma;
@@ -98,7 +101,7 @@ fn run_trinomial_matvec_into<F, const D: usize, M, const PACKED: bool>(
     transformed_rhs: &mut TrinomialNtt<F, D, M>,
     workspace: &mut TrinomialNttWorkspace<F, D, M>,
 ) where
-    F: SmoothFftField + WithPacking + Debug,
+    F: TrinomialField + WithPacking + Debug,
     M: TrinomialModulus,
 {
     for accumulator in accumulators.iter_mut() {
@@ -124,7 +127,7 @@ fn prepare_trinomial_matrix<F, const D: usize, M>(
     matrix: &[TrinomialRing<F, D, M>],
 ) -> Vec<TrinomialNtt<F, D, M>>
 where
-    F: SmoothFftField + Debug,
+    F: TrinomialField + Debug,
     M: TrinomialModulus,
 {
     let mut workspace = domain.workspace();
@@ -141,7 +144,7 @@ where
 fn bench_crt<F, const K: usize, const D: usize>(
     criterion: &mut Criterion,
     field: &str,
-    primes: [akita_algebra::NttPrime<i32>; K],
+    primes: [jolt_algebra::NttPrime<i32>; K],
 ) where
     F: CrtNttConvertibleField + Debug,
 {
@@ -253,7 +256,7 @@ fn bench_crt<F, const K: usize, const D: usize>(
 
 fn bench_trinomial<F, const D: usize, M>(criterion: &mut Criterion, field: &str, modulus: &str)
 where
-    F: SmoothFftField + WithPacking + Debug,
+    F: TrinomialField + WithPacking + Debug,
     M: TrinomialModulus,
 {
     let domain = TrinomialNttDomain::<F, D, M>::new().expect("comparison shape must split");
@@ -409,7 +412,7 @@ where
 fn bench_crt_matvec<F, const K: usize, const D: usize>(
     criterion: &mut Criterion,
     field: &str,
-    primes: [akita_algebra::NttPrime<i32>; K],
+    primes: [jolt_algebra::NttPrime<i32>; K],
 ) where
     F: CrtNttConvertibleField + Debug,
 {
@@ -530,7 +533,7 @@ fn bench_trinomial_matvec<F, const D: usize, M>(
     field: &str,
     modulus: &str,
 ) where
-    F: SmoothFftField + WithPacking + Debug,
+    F: TrinomialField + WithPacking + Debug,
     M: TrinomialModulus,
 {
     let domain = TrinomialNttDomain::<F, D, M>::new().expect("comparison shape must split");

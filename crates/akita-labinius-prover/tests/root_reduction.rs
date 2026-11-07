@@ -23,7 +23,7 @@ use akita_labinius_verifier::{
 };
 use akita_transcript::ChallengeCodec;
 use common::{admitted, Admitted, FixedDraw, RootCase, TestHost};
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, Ext2, ExtField, Field, Prime128Offset275, Prime32Offset99, Prime64Offset59,
 };
 
@@ -450,7 +450,7 @@ fn tampered_reductions_and_statements_reject_in_every_mode_on_both_field_pairs()
 fn proof_digest<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(
     mode: RootOpeningMode,
 ) -> String {
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
     let case = RootCase::<H, F, E>::new(admitted(1, 0x31), mode);
     let (proof, claims) = case.prove().unwrap();
     assert!(case.verify(&proof).unwrap() == claims);

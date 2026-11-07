@@ -5,7 +5,7 @@ use super::{
     charge_work, checked_axis_offset, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
 };
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::collections::BTreeMap;
 /// Evaluate paired tensor families, contracting independent aligned axes first.
 ///
@@ -170,7 +170,7 @@ pub fn eval_boolean_pair_tensor_families<
 mod tests {
     use super::super::EqPairTensorAxis;
     use super::*;
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_algebra::{One, Prime128OffsetA7F7 as F, Ring, Zero};
     #[test]
     fn clipped_addresses_keep_boolean_selection_semantics() {
         let family = EqPairTensorFamily::new(

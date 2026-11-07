@@ -8,8 +8,9 @@ use crate::artifact::validate_schedule_challenge_hooks;
 use crate::resolve::RootTransitionValidation;
 use crate::{PlannerPolicy, ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_challenges::FoldChallengeDistribution;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{CommittedGroupBatchProfile, FoldParams, FoldSchedule, OpeningClaimsLayout};
+use jolt_algebra::checked;
 
 /// Trusted geometry of the native root's balanced-digit output and typed A prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

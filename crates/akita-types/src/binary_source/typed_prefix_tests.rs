@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use jolt_field::{Prime128Offset275 as F, Ring, Zero};
+use jolt_algebra::{Prime128Offset275 as F, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[test]
@@ -33,7 +33,7 @@ fn paired_offset_equality_sums_match_direct_summation() {
 fn p64_typed_prefix_matches_base_setup_and_extension_authentication() {
     use crate::binary_source::{binary_digit_authentication_weights, binary_word_manifest_fixture};
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     for (word, planes) in [(true, 0), (false, 1), (true, 1)] {
         let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);

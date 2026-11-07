@@ -3,7 +3,7 @@ use akita_algebra::{
     eq_poly::EqPolynomial, offset_eq::OffsetEqWindow, ring::ResidueKernelPoint,
     row_batch::dot_base_rows_batched,
 };
-use jolt_field::{ExtField, Unreduced, Zero};
+use jolt_algebra::{ExtField, Unreduced, Zero};
 
 #[derive(Clone, Debug)]
 struct ReducedCompressionMapEvent<E: Field> {
@@ -509,7 +509,7 @@ mod tests {
     use super::*;
     use akita_challenges::FoldChallengeDistribution;
     use akita_params::{CommitmentPayloadMode, CompressionMapPlan, RingRelationMode};
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_algebra::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
     #[test]
     fn reduced_compression_program_covers_every_map_without_quotient_events() {

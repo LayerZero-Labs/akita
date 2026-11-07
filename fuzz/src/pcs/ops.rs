@@ -18,7 +18,7 @@ use akita_types::{
     AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
 };
 use akita_verifier::AkitaVerifier;
-use jolt_field::{
+use jolt_algebra::{
     AdditiveGroup, CanonicalBytes, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
     Unreduced, WithCommitAccumulator,
 };

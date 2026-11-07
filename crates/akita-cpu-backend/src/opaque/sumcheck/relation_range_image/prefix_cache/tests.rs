@@ -1,6 +1,6 @@
 use super::*;
 use crate::opaque::sumcheck::prefix_lookup::test_support::*;
-use jolt_field::{Field, One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{Field, One, Prime128Offset275, Ring, Zero};
 use std::collections::HashMap;
 
 type F = Prime128Offset275;

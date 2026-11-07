@@ -523,7 +523,7 @@ outer commitment payload.
   samples $\alpha$ after the caller binds the outgoing witness. The CPU
   backend's [`relation_weights/stage2.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/relation_weights/stage2.rs)
   then selects factored or dense relation weights for Stage 2.
-- [`ring/residue.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-algebra/src/ring/residue.rs)
+- [`ring/residue.rs`](https://github.com/a16z/jolt/blob/8f0f5b9edf4ef1b1b837a282357f1061c833dc62/crates/jolt-algebra/src/ring/residue.rs)
   implements the recurrence. Its tests compare the result with explicit signed
   multiplication and ring products, including points where $\alpha^D+1=0$.
 - [`relation/evaluation.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/relation/evaluation.rs)

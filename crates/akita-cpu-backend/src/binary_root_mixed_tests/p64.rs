@@ -1,7 +1,7 @@
 //! Fixture-sized P64 prime and mixed roots, below public schedule admission.
 use crate::binary_root::{prime_plane_digits, BinaryRootRelation};
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::trinomial::{
+use akita_algebra::trinomial::{
     image::Q24Image, module_map::unpack_signed_components, signed::signed_trinomial_product,
 };
 use akita_algebra::MinusTrinomial;
@@ -12,7 +12,7 @@ use akita_types::binary_source::{
     binary_word_manifest_fixture, BinaryRootPublic, OrdinaryNativeRootPlan, PrimeGroupClaim,
     PrimePlaneClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
 };
-use jolt_field::{CanonicalEncoding, Prime64Offset59 as F, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Prime64Offset59 as F, Ring, Zero};
 
 #[test]
 fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {

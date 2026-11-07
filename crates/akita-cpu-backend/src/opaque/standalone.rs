@@ -4,7 +4,7 @@ pub use super::recursive::opening::{
 };
 pub use super::recursive::{DigitRangeProver, LowBasisRangeCheckProver};
 use crate::opaque::RootOpeningSource;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Opaque recursive-witness input for standalone benchmarks.
 pub struct RecursiveWitnessBenchmark {
@@ -102,7 +102,7 @@ pub fn digit_range_session<E>(
     seed: u64,
 ) -> Result<Vec<E>, akita_error::AkitaError>
 where
-    E: Field + jolt_field::Ring + jolt_field::Fold + jolt_field::Unreduced,
+    E: Field + jolt_algebra::Ring + jolt_algebra::Fold + jolt_algebra::Unreduced,
 {
     use super::{Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition};
     let mut state = seed;

@@ -2,12 +2,13 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
-use akita_algebra::ring::trinomial::MinusTrinomial;
-use akita_error::{checked, AkitaError};
+use akita_algebra::trinomial::adjoint::TrinomialAdjoint;
+use akita_algebra::trinomial::MinusTrinomial;
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::Field;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::Field;
 
 use super::{BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootWitnessPlan};
 

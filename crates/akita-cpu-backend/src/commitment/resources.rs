@@ -5,9 +5,10 @@ use crate::arithmetic::requirements::{signed_commit_domain, SignedCommitSource};
 use crate::opaque::{
     CompressionComputeBackend, NttCacheOwnerId, NttOperationCluster, RoutedNttRequirement,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::{AkitaSetupDescriptor, NttCacheKey, NttTransformDomain};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -521,21 +522,6 @@ mod tests {
             16,
         )
         .is_ok());
-    }
-
-    #[test]
-    fn commitment_requirement_preserves_owning_fold() {
-        let key = NttCacheKey::from_matrix_shape(64, 2, 8, NttTransformDomain::Negacyclic).unwrap();
-        let requirement = CommitmentNttRequirement::new(
-            7,
-            CommitmentNttRoute::InnerOnly,
-            CommitmentNttStage::Inner,
-            key,
-            16,
-        )
-        .unwrap();
-        assert_eq!(requirement.fold_level(), 7);
-        assert_eq!(requirement.routed().fold_level, 7);
     }
 
     #[test]

@@ -301,8 +301,11 @@ fn audit_committed_params(
         dims.d_a(),
         dims.d_b(),
     )?
+    .with_randomness_columns(params.own_group().profile.randomness_columns)?
     .physical_input_width();
-    let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
+    let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?
+        .checked_add(params.open_randomness_columns)
+        .ok_or_else(|| invalid(label, "D width overflow"))?;
     if params.inner().matrix.input_width() != expected_a_width
         || params.outer().matrix.input_width() != expected_b_width
         || params.open().matrix.input_width() != expected_d_width

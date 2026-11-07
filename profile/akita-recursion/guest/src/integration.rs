@@ -8,7 +8,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError, 
 use akita_types::FpExtEncoding;
 use akita_verifier::{AkitaVerifier, TrustedTerminalCache};
 use jolt::{end_cycle_tracking, start_cycle_tracking};
-use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne};
 
 include!(concat!(env!("OUT_DIR"), "/prepared_verifier_cache.rs"));
 

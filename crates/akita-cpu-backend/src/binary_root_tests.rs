@@ -2,7 +2,7 @@ use super::*;
 use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use akita_types::native_root_relation::NativeRootRelation;
-use jolt_field::{Prime128Offset275, Ring};
+use jolt_algebra::{Prime128Offset275, Ring};
 
 struct SeedDraw;
 impl FoldDraw for SeedDraw {
@@ -354,7 +354,7 @@ mod evaluation_tests;
 #[test]
 fn binary_root_p64_quotient_digits_are_exact_bounded_and_complete() {
     use akita_types::binary_source::BinaryQuotientBounds;
-    use jolt_field::{Ext2, Prime64Offset59};
+    use jolt_algebra::{Ext2, Prime64Offset59};
     type E = Ext2<Prime64Offset59>;
     let bounds = BinaryQuotientBounds::new(1, 2).unwrap();
     let mut input = fixture();

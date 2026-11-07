@@ -11,7 +11,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_params::sis::compute_num_digits_field_width;
-use jolt_field::{CanonicalEncoding, Fp64, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Fp64, Prime128Offset275, Ring, Zero};
 
 fn cached_fold<const D: usize>(
     planes: &[[i8; D]],
@@ -36,7 +36,7 @@ fn cached_fold<const D: usize>(
 
 #[test]
 fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
-    use jolt_field::Prime32Offset99;
+    use jolt_algebra::Prime32Offset99;
 
     type F = Prime32Offset99;
     const D: usize = 512;
@@ -100,7 +100,7 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
 #[test]
 fn partitioned_fold_matches_scalar_for_window_grid_challenges() {
     use crate::sources::packed_digits::PackedSignedDigits;
-    use jolt_field::Prime32Offset99;
+    use jolt_algebra::Prime32Offset99;
 
     type F = Prime32Offset99;
     const D: usize = 1024;
@@ -218,7 +218,7 @@ fn partitioned_fold_matches_scalar_for_window_grid_challenges() {
 #[test]
 fn all_fold_sources_share_rotated_narrow_and_chunked_results() {
     use crate::sources::packed_digits::PackedSignedDigits;
-    use jolt_field::Prime32Offset99;
+    use jolt_algebra::Prime32Offset99;
 
     type F = Prime32Offset99;
     const D: usize = 64;
@@ -287,7 +287,7 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     use crate::opaque::{DensePoly, OneHotPoly, RecursiveWitnessFlat};
     use akita_params::BasisMode;
     use akita_types::prepare_opening_point;
-    use jolt_field::{ExtField, FpExt4, Prime32Offset99};
+    use jolt_algebra::{ExtField, FpExt4, Prime32Offset99};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

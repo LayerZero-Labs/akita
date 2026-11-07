@@ -1,6 +1,7 @@
 //! Exact source addressing, including committed padding and virtual MLE slots.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 /// Location of a bit in the signed degree-648 source ring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

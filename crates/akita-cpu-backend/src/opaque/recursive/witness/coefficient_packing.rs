@@ -7,7 +7,7 @@ use crate::opaque::{
 use crate::sources::block_digits::PackedDigits;
 use crate::sources::dense::seam_packing_partials;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 pub(crate) fn suffix_witness_coefficient_packing_partials<F, E, const D: usize>(
     witness: &RecursiveWitnessFlat,

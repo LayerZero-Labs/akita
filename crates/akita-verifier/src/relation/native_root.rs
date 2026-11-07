@@ -3,7 +3,7 @@
 use super::Stage2RelationWeights;
 use akita_error::AkitaError;
 use akita_types::{native_root_relation::NativeRootWeights, AkitaExpandedSetup};
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 impl<F: Field, E: Field> Stage2RelationWeights<F, E> for NativeRootWeights<E> {
     fn evaluate(

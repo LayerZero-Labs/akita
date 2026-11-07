@@ -12,17 +12,17 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_params::OpeningScheduleSelection;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{
-    AkitaExpandedSetup, AkitaInstanceDescriptor, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedGroup,
+    AkitaExpandedSetup, AkitaInstanceDescriptor, AkitaSetupDescriptor, AkitaVerifierSetup,
+    CommittedGroup, ProtocolFeatureSet, PublicMatrixSeed,
 };
 
 /// An accepted encoding must equal its re-encoding byte for byte, and the
 /// decoded value must be a fixed point of encode and decode.
-fn canonical<T>(bytes: &[u8], name: &'static str)
+fn canonical<T>(bytes: &[u8], name: &'static str, context: &T::Context)
 where
-    T: AkitaDeserialize<Context = ()> + AkitaSerialize + PartialEq + std::fmt::Debug,
+    T: AkitaDeserialize + AkitaSerialize + PartialEq + std::fmt::Debug,
 {
-    let Ok(value) = T::deserialize_compressed_exact(bytes, &()) else {
+    let Ok(value) = T::deserialize_compressed_exact(bytes, context) else {
         return;
     };
     let mut encoded = Vec::new();
@@ -30,7 +30,7 @@ where
         .serialize_compressed(&mut encoded)
         .unwrap_or_else(|error| panic!("{name}: accepted value fails to re-encode: {error:?}"));
     assert_eq!(encoded, bytes, "{name}: accepted encoding is not canonical");
-    let again = T::deserialize_compressed_exact(&encoded[..], &())
+    let again = T::deserialize_compressed_exact(&encoded[..], context)
         .unwrap_or_else(|error| panic!("{name}: re-encoding does not decode: {error:?}"));
     assert_eq!(again, value, "{name}: decode(encode(x)) != x");
     let mut twice = Vec::new();
@@ -44,17 +44,21 @@ pub fn run(data: &[u8]) {
     let selector = reader.u8();
     let bytes = reader.rest();
     match selector % 12 {
-        0 => canonical::<CommittedGroup<fp128::Field>>(bytes, "committed_group_fp128"),
-        1 => canonical::<CommittedGroup<fp64::Field>>(bytes, "committed_group_fp64"),
-        2 => canonical::<CommittedGroup<fp32::Field>>(bytes, "committed_group_fp32"),
-        3 => canonical::<AkitaVerifierSetup<fp128::Field>>(bytes, "verifier_setup_fp128"),
-        4 => canonical::<AkitaVerifierSetup<fp32::Field>>(bytes, "verifier_setup_fp32"),
-        5 => canonical::<AkitaExpandedSetup<fp64::Field>>(bytes, "expanded_setup_fp64"),
-        6 => canonical::<AkitaSetupDescriptor>(bytes, "setup_descriptor"),
-        7 => canonical::<AkitaSetupSeed>(bytes, "setup_seed"),
-        8 => canonical::<AkitaInstanceDescriptor>(bytes, "instance_descriptor"),
-        9 => canonical::<OpeningScheduleSelection>(bytes, "schedule_selection"),
-        10 => canonical::<Vec<fp128::Field>>(bytes, "field_vec_fp128"),
-        _ => canonical::<Vec<fp32::ExtensionField>>(bytes, "ext_vec_fp32"),
+        0 => canonical::<CommittedGroup<fp128::Field>>(bytes, "committed_group_fp128", &()),
+        1 => canonical::<CommittedGroup<fp64::Field>>(bytes, "committed_group_fp64", &()),
+        2 => canonical::<CommittedGroup<fp32::Field>>(bytes, "committed_group_fp32", &()),
+        3 => canonical::<AkitaVerifierSetup<fp128::Field>>(bytes, "verifier_setup_fp128", &()),
+        4 => canonical::<AkitaVerifierSetup<fp32::Field>>(bytes, "verifier_setup_fp32", &()),
+        5 => canonical::<AkitaExpandedSetup<fp64::Field>>(bytes, "expanded_setup_fp64", &()),
+        6 => canonical::<AkitaSetupDescriptor>(bytes, "setup_descriptor", &()),
+        7 => canonical::<PublicMatrixSeed>(bytes, "setup_seed", &()),
+        8 => canonical::<AkitaInstanceDescriptor>(
+            bytes,
+            "instance_descriptor",
+            &ProtocolFeatureSet::default(),
+        ),
+        9 => canonical::<OpeningScheduleSelection>(bytes, "schedule_selection", &()),
+        10 => canonical::<Vec<fp128::Field>>(bytes, "field_vec_fp128", &()),
+        _ => canonical::<Vec<fp32::ExtensionField>>(bytes, "ext_vec_fp32", &()),
     }
 }

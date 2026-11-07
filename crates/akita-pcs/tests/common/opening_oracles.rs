@@ -6,7 +6,7 @@
 //! These functions instead evaluate raw coefficients directly.
 
 use akita_cpu_backend::OneHotPoly;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Lagrange weight at one Boolean index, in little-endian variable order.
 fn lagrange_weight_at<E: Field>(point: &[E], index: usize) -> E {

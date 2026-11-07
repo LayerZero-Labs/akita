@@ -26,7 +26,7 @@ use akita_challenges::BinaryChallengeSampler;
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckVerifierChannel;
 use akita_transcript::ChallengeCodec;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Replay one root reduction and discharge the committed-table evaluations.
 /// Oracle errors reject; the channel is left open for a surrounding protocol.

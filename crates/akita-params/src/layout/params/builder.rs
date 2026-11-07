@@ -31,10 +31,12 @@ impl CommittedGroupParams {
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             successor_block_len: None,
             witness_chunk_ends: Vec::new(),
+            open_randomness_columns: 0,
             // A zeroed shell whose only group is its own; callers fill the
             // geometry through `with_decomp`, as they always did.
             groups: FoldGroups::singleton(GroupOpenPhaseParams {
                 profile: crate::GroupCommitPhaseParams {
+                    randomness_columns: 0,
                     version: crate::GroupCommitPhaseParams::VERSION,
                     group: crate::PolynomialGroupLayout::singleton(0),
                     blocks: crate::BlockGeometry::new(0, 0, 0),
@@ -118,9 +120,11 @@ impl CommittedGroupParams {
             self.inner().matrix.ring_dimension(),
             self.outer().matrix.ring_dimension(),
         )?
+        .with_randomness_columns(self.own_group().profile.randomness_columns)?
         .physical_input_width();
         let d_matrix_width = num_digits_open
             .checked_mul(num_live_blocks)
+            .and_then(|width| width.checked_add(self.open_randomness_columns))
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
             payload_mode: self.payload_mode,
@@ -129,6 +133,7 @@ impl CommittedGroupParams {
             witness_chunk: self.witness_chunk,
             successor_block_len: self.successor_block_len,
             witness_chunk_ends: self.witness_chunk_ends.clone(),
+            open_randomness_columns: self.open_randomness_columns,
             open_matrix: OpenCommitMatrixParams::new_unchecked(
                 self.open_matrix.security_policy(),
                 self.open_matrix.sis_table_key().table_digest,
@@ -194,6 +199,7 @@ impl CommittedGroupParams {
             witness_chunk: self.witness_chunk,
             successor_block_len: self.successor_block_len,
             witness_chunk_ends: self.witness_chunk_ends.clone(),
+            open_randomness_columns: other.open_randomness_columns,
             open_matrix: OpenCommitMatrixParams::new_unchecked(
                 self.open_matrix.security_policy(),
                 self.open_matrix.sis_table_key().table_digest,
@@ -212,6 +218,7 @@ impl CommittedGroupParams {
                 own.profile.group = other.group();
                 own.profile.blocks = other.blocks();
                 own.profile.outer_slice_count = other.outer_slice_count();
+                own.profile.randomness_columns = other.own_group().profile.randomness_columns;
                 own.profile.inner = crate::RoleParams::new(
                     crate::GadgetDigits::new(
                         other.inner().digits.log_basis,

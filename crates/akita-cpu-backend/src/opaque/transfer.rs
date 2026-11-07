@@ -4,11 +4,11 @@ use crate::commitment::{
     CommitmentExecutionPlan, InnerRelationStateMaterial, PortableCompressionState,
 };
 use crate::sources::packed_digits::PackedSignedDigits;
-use akita_error::checked;
 use akita_params::{CompressionChainWitness, PackedNegativeBinary, RingRelationMode};
 use akita_serialization::AkitaSerialize;
 use akita_types::RingVec;
-use jolt_field::ExtField;
+use jolt_algebra::checked;
+use jolt_algebra::ExtField;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SuccessorSection {

@@ -12,7 +12,7 @@ use akita_types::binary_source::{
 use akita_types::{
     GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding, VerifierGrinding,
 };
-use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
+use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
 use std::sync::Arc;
 
 type E = Ext2<F>;
@@ -152,7 +152,7 @@ fn binary_root_stage3_p64_extension_claim_and_endpoint_replay_and_reject_coordin
         akita_types::stage3_public_slot(&mut grinding, 0, &identity)?;
         let received = akita_types::stage3_claim::<F, E, _>(&mut grinding, 0, E::zero())?;
         let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-            &mut GrindingSumcheckVerifier::<F, E>::new(
+            &mut GrindingSumcheckVerifier::<F, E, _>::new(
                 &mut grinding,
                 SumcheckProtocol::Stage3,
                 0,

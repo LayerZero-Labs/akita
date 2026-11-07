@@ -5,12 +5,14 @@ use super::suffix::{verify_suffix, SuffixVerifierState};
 use akita_config::{transcript_instance_descriptor, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
-use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 use akita_params::{validate_schedule_ring_dims, BasisMode, CommittedGroupBatchProfile};
 use akita_transcript::VerifierChannel;
 use akita_types::setup_claims::transcript::bind_outer_statement;
-use akita_types::{FpExtEncoding, GrindingReplay, GroupBatchStatement, OpeningClaims, PendingEof};
+use akita_types::{
+    CommittedGroup, FpExtEncoding, GrindingReplay, GroupBatchStatement, OpeningClaims, PendingEof,
+};
 
 use crate::{AkitaVerifier, SetupPolicy};
 
@@ -71,6 +73,9 @@ where
     ///
     /// Returns an error when the statement does not match the setup or the
     /// selected schedule, or when the proof is invalid.
+    ///
+    /// A zero-knowledge configuration is refused before any transcript
+    /// operation ([`akita_config::require_clear_opening`]).
     #[inline(never)]
     #[tracing::instrument(skip_all, name = "AkitaVerifier::batched_verify_embedded")]
     pub fn batched_verify_embedded(
@@ -116,86 +121,16 @@ where
                     .validate::<Cfg::Field, Cfg::ExtField>(self.setup.expanded())?;
             }
             let setup = &self.setup;
-            let schedules = &self.schedules;
             let selection = statement.selection();
             let claims = statement.into_claims();
-            claims.validate(setup.expanded().descriptor())?;
-            let opening_batch = claims.committed_layout()?;
-            let (final_group, precommitteds) = claims
-                .groups()
-                .split_last()
-                .ok_or(AkitaError::InvalidProof)?;
-            let final_descriptor = *final_group.commitment().profile();
-            for group in claims.groups() {
-                super::admission::validate_group_payload(
-                    group.commitment(),
-                    group.kind(),
-                    Cfg::decomposition().field_bits(),
-                )?;
-            }
-            let batch_profile = CommittedGroupBatchProfile {
-                final_group: final_descriptor,
-                precommitteds: precommitteds
-                    .iter()
-                    .map(|group| *group.commitment().profile())
-                    .collect(),
-            };
-            batch_profile.validate(Cfg::decomposition().field_bits())?;
-            let resolved = schedules.resolve_selection(selection)?;
-            resolved.validate_opening_layout(&opening_batch)?;
-            if resolved.profiles() != &batch_profile {
-                return Err(AkitaError::InvalidInput(
-                    "commitment profiles do not match the selected schedule row".to_string(),
-                ));
-            }
-            let schedule = resolved.schedule();
             let batch_level = setup_policy
                 .accumulator()
                 .and_then(|a| a.batch.as_ref())
                 .map(|(level, _)| *level);
-            if batch_level.is_some_and(|level| level as usize >= schedule.num_fold_levels() - 1) {
-                return Err(AkitaError::InvalidInput(
-                    "setup batch target must be a nonterminal fold".into(),
-                ));
-            }
-            let root_params = &schedule.root_fold().params;
-            let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
-                final_descriptor.group,
-                root_params,
-            )?;
-            if final_descriptor != expected_final_descriptor
-                || root_params.precommitted_groups().len() != precommitteds.len()
-                || root_params
-                    .precommitted_groups()
-                    .iter()
-                    .zip(precommitteds)
-                    .any(|(params, claims_group)| {
-                        params.profile != *claims_group.commitment().profile()
-                    })
-            {
-                return Err(AkitaError::InvalidInput(
-                    "commitment profiles do not match the selected schedule's root fold"
-                        .to_string(),
-                ));
-            }
-            validate_schedule_ring_dims(schedule)?;
-            if !self.admits(selection.row_digest) {
-                return Err(AkitaError::InvalidSetup(
-                    "selected schedule row does not fit this verifier's setup".to_string(),
-                ));
-            }
-            let (grinding_plan, descriptor_bytes) =
-                transcript_instance_descriptor::<Cfg::Field, Cfg>(
-                    &setup.expanded().descriptor,
-                    &opening_batch,
-                    selection,
-                    schedule,
-                    basis,
-                    batch_level,
-                    |plan| claims.root_grinding_plan(plan, schedule),
-                )?;
-            akita_transcript::bind_instance(state, &descriptor_bytes)?;
-            let mut grinding = akita_types::VerifierGrinding::new(state, &grinding_plan);
+            let opening = self.plan_opening(selection, &claims, basis, batch_level)?;
+            let schedule = opening.schedule;
+            akita_transcript::bind_instance(state, &opening.descriptor_bytes)?;
+            let mut grinding = akita_types::VerifierGrinding::new(state, &opening.grinding_plan);
             if let Some((level, batch)) = setup_policy.accumulator().and_then(|a| a.batch.as_ref())
             {
                 bind_outer_statement::<Cfg::Field, Cfg::ExtField, _>(
@@ -204,19 +139,16 @@ where
                     batch,
                 )?;
             }
-            let raw_groups = claims
-                .groups()
-                .iter()
-                .map(|group| group.map_commitment(|&commitment| commitment))
-                .collect();
-            let raw_claims = OpeningClaims::from_groups(raw_groups)?;
-            let root = verify_root::<Cfg::Field, Cfg::ExtField>(
+            let raw_claims = opening.raw_claims(&claims)?;
+            let openings = raw_claims.flat_evaluations();
+            let root = verify_root::<Cfg::Field, Cfg::ExtField, _>(
                 setup,
                 &mut grinding,
                 &raw_claims,
-                &opening_batch,
+                openings,
+                &opening.opening_batch,
                 basis,
-                root_params,
+                &schedule.root_fold().params,
                 schedule.recursive_folds.first(),
                 &schedule.terminal,
                 setup_policy,
@@ -226,14 +158,7 @@ where
                 &self.terminal_ntt,
                 &mut grinding,
                 schedule,
-                SuffixVerifierState {
-                    opening_point: root.challenges,
-                    opening: root.opening,
-                    witness: root.next_witness,
-                    basis: BasisMode::Lagrange,
-                    witness_len: schedule.root_fold().output_witness_len,
-                    setup_prefix_opening: root.setup_prefix_opening,
-                },
+                SuffixVerifierState::from_root(root, schedule.root_fold().output_witness_len),
                 setup_policy,
             )?;
             let pending = grinding.finish()?;
@@ -244,13 +169,127 @@ where
         }
         result
     }
+
+    /// The checks and the transcript instance of one opening, before its
+    /// first transcript operation: the statement against the catalog row it
+    /// selects and this verifier's setup, and the descriptor and grinding
+    /// plan of that row.
+    ///
+    /// Extension seam: zero knowledge (akita#120). A masked verifier plans its opening
+    /// here and replays its levels up to the cut.
+    pub(crate) fn plan_opening(
+        &self,
+        selection: akita_params::OpeningScheduleSelection,
+        claims: &OpeningClaims<'_, Cfg::ExtField, &CommittedGroup<Cfg::Field>>,
+        basis: BasisMode,
+        batch_level: Option<u32>,
+    ) -> Result<OpeningPlan<'_>, AkitaError> {
+        claims.validate(self.setup.expanded().descriptor())?;
+        let opening_batch = claims.committed_layout()?;
+        let (final_group, precommitteds) = claims
+            .groups()
+            .split_last()
+            .ok_or(AkitaError::InvalidProof)?;
+        let final_descriptor = *final_group.commitment().profile();
+        for group in claims.groups() {
+            super::admission::validate_group_payload(
+                group.commitment(),
+                group.kind(),
+                Cfg::decomposition().field_bits(),
+            )?;
+        }
+        let batch_profile = CommittedGroupBatchProfile {
+            final_group: final_descriptor,
+            precommitteds: precommitteds
+                .iter()
+                .map(|group| *group.commitment().profile())
+                .collect(),
+        };
+        batch_profile.validate(Cfg::decomposition().field_bits())?;
+        let resolved = self.schedules.resolve_selection(selection)?;
+        resolved.validate_opening_layout(&opening_batch)?;
+        if resolved.profiles() != &batch_profile {
+            return Err(AkitaError::InvalidInput(
+                "commitment profiles do not match the selected schedule row".to_string(),
+            ));
+        }
+        let schedule = resolved.schedule();
+        if batch_level.is_some_and(|level| level as usize >= schedule.num_fold_levels() - 1) {
+            return Err(AkitaError::InvalidInput(
+                "setup batch target must be a nonterminal fold".into(),
+            ));
+        }
+        let root_params = &schedule.root_fold().params;
+        let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
+            final_descriptor.group,
+            root_params,
+        )?;
+        if final_descriptor != expected_final_descriptor
+            || root_params.precommitted_groups().len() != precommitteds.len()
+            || root_params
+                .precommitted_groups()
+                .iter()
+                .zip(precommitteds)
+                .any(|(params, claims_group)| {
+                    params.profile != *claims_group.commitment().profile()
+                })
+        {
+            return Err(AkitaError::InvalidInput(
+                "commitment profiles do not match the selected schedule's root fold".to_string(),
+            ));
+        }
+        validate_schedule_ring_dims(schedule)?;
+        if !self.admits(selection.row_digest) {
+            return Err(AkitaError::InvalidSetup(
+                "selected schedule row does not fit this verifier's setup".to_string(),
+            ));
+        }
+        let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
+            &self.setup.expanded().descriptor,
+            &opening_batch,
+            selection,
+            schedule,
+            basis,
+            batch_level,
+            |plan| claims.root_grinding_plan(plan, schedule),
+        )?;
+        Ok(OpeningPlan {
+            schedule,
+            grinding_plan,
+            descriptor_bytes,
+            opening_batch,
+        })
+    }
+}
+
+/// One opening's checked instance, from [`AkitaVerifier::plan_opening`].
+pub(crate) struct OpeningPlan<'s> {
+    pub(crate) schedule: &'s akita_params::FoldSchedule,
+    pub(crate) grinding_plan: akita_params::GrindingPlan,
+    pub(crate) descriptor_bytes: Vec<u8>,
+    pub(crate) opening_batch: akita_params::OpeningClaimsLayout,
+}
+
+impl OpeningPlan<'_> {
+    /// The statement's claims as the root fold reads them.
+    pub(crate) fn raw_claims<'c, E: Clone, F: Field>(
+        &self,
+        claims: &'c OpeningClaims<'_, E, &CommittedGroup<F>>,
+    ) -> Result<OpeningClaims<'c, E, &'c CommittedGroup<F>>, AkitaError> {
+        let raw_groups = claims
+            .groups()
+            .iter()
+            .map(|group| group.map_commitment(|&commitment| commitment))
+            .collect();
+        OpeningClaims::from_groups(raw_groups)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use akita_types::{RingVec, RingView};
-    use jolt_field::{Fp32, Zero};
+    use jolt_algebra::{Fp32, Zero};
 
     type F = Fp32<251>;
     const D: usize = 32;

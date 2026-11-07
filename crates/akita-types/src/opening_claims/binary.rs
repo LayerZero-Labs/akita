@@ -5,7 +5,7 @@ use crate::binary_source::BinaryWordClaim;
 use crate::proof::commitment::CommittedGroupKind;
 use crate::CommittedGroup;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, CommittedGroup<F>> {
     /// Select one logical word claim over GF(2^128).

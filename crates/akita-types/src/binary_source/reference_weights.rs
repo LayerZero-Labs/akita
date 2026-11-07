@@ -5,15 +5,17 @@
 //! per public coefficient weight. The differential tests compare the
 //! structured evaluation and the prover's dense table with them.
 
-use akita_algebra::ring::trinomial::adjoint::TrinomialAdjoint;
-use akita_algebra::ring::trinomial::module_map::pack_signed_components;
-use akita_algebra::ring::trinomial::MinusTrinomial;
-use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial, ResidueKernelPoint};
+use akita_algebra::ring::ResidueKernelPoint;
+use akita_algebra::trinomial::adjoint::TrinomialAdjoint;
+use akita_algebra::trinomial::module_map::pack_signed_components;
+use akita_algebra::trinomial::MinusTrinomial;
+use akita_algebra::trinomial::{shifted_remainder_evaluations, PlusTrinomial};
 use akita_challenges::Challenges;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
 use akita_params::RelationPolynomial;
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use super::super::authentication::{setup_entry, validate_digit_commitment_label};
 use super::super::{

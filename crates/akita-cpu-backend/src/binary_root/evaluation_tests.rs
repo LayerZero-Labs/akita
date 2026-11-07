@@ -3,7 +3,7 @@ use akita_algebra::binary::BinaryField162;
 use akita_types::binary_source::{
     binary_scalar_geometry, binary_scalar_lift, BinaryEvaluationSegments, BinaryTerminalClaim,
 };
-use jolt_field::Zero;
+use jolt_algebra::Zero;
 
 #[test]
 fn terminal_carries_authenticate_response_partials_and_value() {
@@ -65,8 +65,8 @@ fn terminal_carries_authenticate_response_partials_and_value() {
     for (row, weight) in row_weights.into_iter().enumerate() {
         let low = response.response[row / 4].map(|coefficient| (coefficient + 2340) % 8 - 4);
         let components =
-            akita_algebra::ring::trinomial::module_map::unpack_signed_components(&low).unwrap();
-        let product = akita_algebra::ring::trinomial::signed::signed_trinomial_product::<
+            akita_algebra::trinomial::module_map::unpack_signed_components(&low).unwrap();
+        let product = akita_algebra::trinomial::signed::signed_trinomial_product::<
             162,
             akita_algebra::PlusTrinomial,
         >(&binary_scalar_lift(weight), &components[row % 4])
@@ -76,7 +76,7 @@ fn terminal_carries_authenticate_response_partials_and_value() {
         }
     }
     for (column, challenge) in scalar_challenges.iter().take(2).enumerate() {
-        let product = akita_algebra::ring::trinomial::signed::signed_trinomial_product::<
+        let product = akita_algebra::trinomial::signed::signed_trinomial_product::<
             162,
             akita_algebra::PlusTrinomial,
         >(&partials[column * 162..(column + 1) * 162], challenge)

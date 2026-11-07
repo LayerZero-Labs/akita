@@ -2,10 +2,11 @@
 //! Ordinary commitment preimages authenticated in a mixed native root.
 
 use akita_algebra::ring::ResidueKernelPoint;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{CompressionChainPlan, GroupCommitPhaseParams, RelationRowGeometry};
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset275};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275};
 
 use akita_types::native_root_relation::NativeRootWeights;
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};

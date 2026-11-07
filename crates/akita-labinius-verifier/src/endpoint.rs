@@ -4,9 +4,10 @@ use akita_algebra::binary::{
     field_switch::{embed_source, SwitchField},
     BinaryField162,
 };
-use akita_algebra::ring::TrinomialModulus;
+use akita_algebra::TrinomialModulus;
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

@@ -8,10 +8,11 @@ use crate::commitment::{
 use crate::opaque::DensePoly;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -180,7 +181,7 @@ mod tests {
         OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId, SisTableKey,
     };
     use akita_serialization::AkitaSerialize;
-    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128OffsetA7F7 as F;
     use std::sync::Arc;
 
     type MissingExportExecutor<'a> = (

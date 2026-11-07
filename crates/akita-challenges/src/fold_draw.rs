@@ -5,10 +5,10 @@
 //! the family, and the group's position in the transcript fixes its index and
 //! counts, so the message continues the squeeze run before it.
 
-use crate::sampler::SparseChallengeShell;
 use crate::{Challenges, FoldChallengeDistribution, OperatorNormRejection, SparseChallengeStream};
 use akita_error::AkitaError;
 use akita_transcript::ProofChannel;
+use jolt_crypto::challenge::SparseChallengeShell;
 
 /// Algebraic domain of one fold-challenge draw.
 ///
@@ -100,7 +100,7 @@ impl FoldChallengeFamily {
     /// message exceeds the message limit, or the family is not signed-sparse.
     pub fn stream(&self, count: usize) -> Result<SparseChallengeStream, AkitaError> {
         match self.shell {
-            FamilyShell::SignedSparse(shell) => shell.stream(count),
+            FamilyShell::SignedSparse(shell) => shell.stream(count).map_err(AkitaError::from),
             #[cfg(feature = "labinius-challenges")]
             FamilyShell::BinaryRoot { .. } => Err(AkitaError::InvalidSetup(
                 "binary root challenges have no sparse message stream".into(),
@@ -116,7 +116,9 @@ impl FoldChallengeFamily {
     /// message exceeds the message limit.
     pub fn message_len(&self, count: usize) -> Result<usize, AkitaError> {
         match self.shell {
-            FamilyShell::SignedSparse(shell) => Ok(shell.stream(count)?.message_len()),
+            FamilyShell::SignedSparse(shell) => {
+                Ok(shell.stream(count).map_err(AkitaError::from)?.message_len())
+            }
             #[cfg(feature = "labinius-challenges")]
             FamilyShell::BinaryRoot { .. } => {
                 if count == 0 {
@@ -211,20 +213,12 @@ pub trait FoldDraw {
         })?;
         match family.shell {
             FamilyShell::SignedSparse(shell) => {
-                let stream = shell.stream(total)?;
-                let challenges =
-                    self.draw_message(stream.message_len(), |message| stream.decode(message))?;
-                challenges
-                    .map(|challenges| {
-                        Challenges::from_sampled(
-                            challenges,
-                            num_live_blocks,
-                            num_claims,
-                            shell.ring_d(),
-                            shell.config(),
-                        )
-                    })
-                    .transpose()
+                let stream = shell.stream(total).map_err(AkitaError::from)?;
+                self.draw_message(stream.message_len(), |message| {
+                    stream
+                        .decode_challenges(message, num_live_blocks, num_claims)
+                        .map_err(AkitaError::from)
+                })
             }
             #[cfg(feature = "labinius-challenges")]
             FamilyShell::BinaryRoot { .. } => {
@@ -238,6 +232,7 @@ pub trait FoldDraw {
                 challenges
                     .map(|challenges| {
                         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
+                            .map_err(AkitaError::from)
                     })
                     .transpose()
             }
@@ -325,21 +320,18 @@ impl FoldDraw for ProverFoldDraw<'_> {
     }
 }
 
-/// One group-local fold draw against the live verifier channel.
-pub struct VerifierFoldDraw<'a, 'proof> {
-    state: &'a mut akita_transcript::VerifierChannel<'proof>,
+/// One group-local fold draw against the live verifier channel, or a channel
+/// over it: fold challenges are public, so any channel draws them the same.
+pub struct VerifierFoldDraw<'a, S> {
+    state: &'a mut S,
     level: u32,
     group: u32,
 }
 
-impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
+impl<'a, S: akita_transcript::ProofChannel> VerifierFoldDraw<'a, S> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
-    pub const fn new(
-        state: &'a mut akita_transcript::VerifierChannel<'proof>,
-        level: u32,
-        group: u32,
-    ) -> Self {
+    pub const fn new(state: &'a mut S, level: u32, group: u32) -> Self {
         Self {
             state,
             level,
@@ -348,7 +340,7 @@ impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
     }
 }
 
-impl FoldDraw for VerifierFoldDraw<'_, '_> {
+impl<S: akita_transcript::ProofChannel> FoldDraw for VerifierFoldDraw<'_, S> {
     fn draw_message<T>(
         &mut self,
         len: usize,

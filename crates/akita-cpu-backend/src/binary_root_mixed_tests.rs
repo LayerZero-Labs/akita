@@ -2,7 +2,7 @@ use super::*;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_prover::backend::{NativeRootRelationRequest, RelationCompiler};
 use akita_types::native_root_relation::{NativeRootGroupKind, NativeRootRow, NativeRootTerm};
-use jolt_field::{One, Zero};
+use jolt_algebra::{One, Zero};
 use jolt_poly::UnivariatePolynomial;
 
 type E = Prime128Offset275;

@@ -1,10 +1,11 @@
 //! Public coefficient weights authenticating committed prime evaluation planes.
 
-use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
+use akita_algebra::trinomial::{shifted_remainder_evaluations, PlusTrinomial};
 use akita_challenges::Challenges;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::RelationPolynomial;
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use super::{binary_scalar_challenges, BinarySourceDescriptor, PrimePlaneManifest};
 use crate::native_root_relation::{

@@ -4,7 +4,7 @@ use std::time::Duration;
 use akita_algebra::poly::multilinear_eval;
 use akita_types::{RelationPolynomial, TrinomialASetupView, TrinomialResponseLayout};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::{Prime128OffsetA7F7, Ring};
+use jolt_algebra::{Prime128OffsetA7F7, Ring};
 
 type F = Prime128OffsetA7F7;
 

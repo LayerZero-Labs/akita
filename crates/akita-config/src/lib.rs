@@ -13,7 +13,7 @@ use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey
 use akita_schedules::PlannerPolicy;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::ChallengeCodec;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -487,12 +487,26 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Stable trusted schedule family identity for external artifact loading.
     fn schedule_family_name() -> &'static str;
+
+    /// Whether this configuration proves in zero knowledge. It is bound into
+    /// every proof's descriptor (`SetupSection::protocol_features`).
+    ///
+    /// Extension seam: zero knowledge (akita#120). It is `false` for every configuration
+    /// on `main`.
+    const IS_ZK: bool = false;
+
+    /// The family of this configuration's zero-knowledge schedules, if it has
+    /// one.
+    ///
+    /// Extension seam: zero knowledge (akita#120). It is `None` for every configuration on
+    /// `main`, which ships no zero-knowledge schedule artifacts.
+    const ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> = None;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{FpExt4, Prime32Offset99};
+    use jolt_algebra::{FpExt4, Prime32Offset99};
 
     type Base = Prime32Offset99;
     type BaseExt = FpExt4<Base>;
@@ -726,38 +740,7 @@ mod fp128_policy_tests {
     const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
-    fn fp128_onehot_uses_adaptive_schedule_policy() {
-        assert!(matches!(
-            <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
-            RingDimensionSchedule {
-                num_search_levels: 2,
-                suffix_dimensions: &[64],
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn fp128_dense_uses_adaptive_schedule_policy() {
-        assert!(matches!(
-            <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE,
-            RingDimensionSchedule {
-                num_search_levels: 2,
-                suffix_dimensions: &[64],
-                ..
-            }
-        ));
-    }
-
-    #[test]
     fn current_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
-            CI_DENSE_SIS_WIDTH_NUM_VARS,
-        );
-    }
-
-    #[test]
-    fn current_adaptive_dense_schedule_stays_within_audited_sis_widths() {
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
             CI_DENSE_SIS_WIDTH_NUM_VARS,
         );

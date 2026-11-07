@@ -4,11 +4,11 @@
 
 mod support;
 
-use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
-use akita_algebra::tables::{q128_primes, Q64_PRIMES};
-use akita_algebra::{CrtNttParamSet, MontCoeff, NttPrime};
 use akita_metal::ntt::DeviceCrtNtt;
 use akita_metal::AkitaMetal;
+use jolt_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
+use jolt_algebra::tables::{q128_primes, Q64_PRIMES};
+use jolt_algebra::{CrtNttParamSet, MontCoeff, NttPrime};
 use jolt_metal::runtime::DeviceBuffer;
 use support::{gpu, SplitMix64};
 
@@ -76,8 +76,8 @@ fn inputs<const K: usize, const D: usize>(
 type CpuTransform<const D: usize> = fn(
     &mut [MontCoeff<i32>; D],
     NttPrime<i32>,
-    &akita_algebra::ntt::NttTwiddles<i32, D>,
-    akita_algebra::NttKernelPlan,
+    &jolt_algebra::ntt::NttTwiddles<i32, D>,
+    jolt_algebra::NttKernelPlan,
 );
 
 /// Applies `cpu` to each `(element, prime)` row of `words`.

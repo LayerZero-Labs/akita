@@ -5,8 +5,9 @@
 //! the differential tests compare the structured families with it.
 
 use akita_algebra::ring::ResidueKernelPoint;
-use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;
@@ -482,7 +483,7 @@ mod tests {
         GroupCommitPhaseParams, PolynomialGroupLayout, RelationRowGeometry, RoleParams,
         SisModulusProfileId,
     };
-    use jolt_field::{Prime128Offset275 as F, Ring, Zero};
+    use jolt_algebra::{Prime128Offset275 as F, Ring, Zero};
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
     /// The mixed end-to-end ordinary group, with `slices` B slices.
@@ -514,6 +515,7 @@ mod tests {
             group: PolynomialGroupLayout::singleton(10),
             blocks: BlockGeometry::new(8, 2, 4),
             outer_slice_count: slices,
+            randomness_columns: 0,
             inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
             outer: RoleParams::new(GadgetDigits::new(3, 43), outer),
         };
@@ -564,6 +566,7 @@ mod tests {
             group: PolynomialGroupLayout::new(7, slots),
             blocks: BlockGeometry::new(2, 1, 2),
             outer_slice_count: slices,
+            randomness_columns: 0,
             inner: RoleParams::new(GadgetDigits::new(3, inner_digits), inner),
             outer: RoleParams::new(GadgetDigits::new(3, outer_digits), outer),
         };
@@ -690,7 +693,7 @@ mod p64_tests {
     use super::*;
     use crate::binary_source::binary_ordinary_profile_fixture;
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
     type E = Ext2<F>;
 
     #[test]

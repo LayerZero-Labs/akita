@@ -9,7 +9,7 @@ use akita_config::{
     required_setup_prefix_slot_ids_for_schedule, transcript_instance_descriptor, CommitmentConfig,
     ResolvedScheduleRow, TrustedScheduleCatalog,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_labinius_verifier::{
     channel::ClearChannel, lowered::LoweredRootLayout, root::RootEvaluationClaims,
 };
@@ -19,7 +19,8 @@ use akita_types::{
     instance_descriptor::SetupSection, AkitaSetupDescriptor, Commitment, CommittedGroup,
     GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, RingVec,
 };
-use jolt_field::{ExtField, Zero};
+use jolt_algebra::checked;
+use jolt_algebra::{ExtField, Zero};
 
 /// Domain label of the statement the image binding absorbs.
 const STATEMENT_DOMAIN: &[u8] = b"akita/labinius/pcs/v1";
@@ -200,6 +201,7 @@ pub(crate) fn bind_image<P: FieldFamily, S: ClearChannel>(
         P::Digits::decomposition(),
         P::Digits::sis_modulus_profile(),
         &setup.setup_seed,
+        akita_types::ProtocolFeatureSet { zk: false },
     )
     .map_err(|_| AkitaError::InvalidProof)?;
     public_length_prefixed(channel, &canonical_bytes(&setup_identity)?)?;

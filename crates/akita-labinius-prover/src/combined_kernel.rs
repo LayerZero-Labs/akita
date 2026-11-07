@@ -9,7 +9,8 @@
     clippy::unwrap_used
 )]
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+
 use akita_labinius_verifier::channel::ClearChannel;
 use akita_labinius_verifier::root_sumcheck::{
     bind_root_sumcheck_instance, combined_input_claim, combined_shape, RootSumcheckInstance,
@@ -18,7 +19,8 @@ use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
 use akita_sumcheck::{
     prove_sumcheck, InfallibleSumcheck, SumcheckInstanceProver, SumcheckProverChannel,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

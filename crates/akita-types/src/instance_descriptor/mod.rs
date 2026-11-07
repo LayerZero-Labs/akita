@@ -26,11 +26,8 @@ mod transcript_grinding_binding;
 
 pub use transcript_grinding_binding::TranscriptGrindingBinding;
 
-use crate::AkitaSetupSeed;
-use akita_error::{
-    narrowing::{usize_to_u32, usize_to_u8},
-    AkitaError,
-};
+use crate::PublicMatrixSeed;
+use akita_error::AkitaError;
 use akita_params::descriptor_bytes::{
     digest_descriptor_bytes, sis_modulus_profile_tag, DescriptorDigest,
     AKITA_INSTANCE_DESCRIPTOR_VERSION,
@@ -43,7 +40,8 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
     DEFAULT_MAX_SEQUENCE_LEN,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::narrowing::{usize_to_u32, usize_to_u8};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::io::{Read, Write};
 
 /// Compute the descriptor digest for a public matrix identity.
@@ -56,7 +54,7 @@ use std::io::{Read, Write};
 ///
 /// Returns a serialization error if the seed cannot be canonically serialized.
 pub fn setup_seed_digest(
-    setup_seed: &AkitaSetupSeed,
+    setup_seed: &PublicMatrixSeed,
 ) -> Result<DescriptorDigest, SerializationError> {
     digest_serializable(setup_seed)
 }
@@ -141,22 +139,18 @@ impl AlgebraSection {
     }
 }
 
-/// Compile-time features that change protocol transcript behavior.
+/// Configuration features that change protocol transcript behavior.
 ///
-/// After the zk-strip cutover the product is transparent-only; the wire field
-/// remains for transcript layout stability and must deserialize as `zk = false`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The set comes from the commitment configuration (`zk = Cfg::IS_ZK`),
+/// never from a Cargo feature, so a clear configuration binds `zk = false` in
+/// every build. Deserialization compares the decoded set against the set the
+/// caller expects, passed as the context.
+///
+/// Extension seam: zero knowledge (akita#120). Every configuration on `main` is clear.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProtocolFeatureSet {
-    /// Whether zk hiding was active (always `false` after zk-strip).
+    /// Whether the opening runs in zero knowledge.
     pub zk: bool,
-}
-
-impl ProtocolFeatureSet {
-    /// Return the protocol feature set of the current build.
-    #[inline]
-    pub const fn current() -> Self {
-        Self { zk: false }
-    }
 }
 
 /// Setup-bound descriptor fields.
@@ -168,9 +162,9 @@ pub struct SetupSection {
     pub sis_modulus_profile: SisModulusProfileId,
     /// Commitment-compression protocol bound into the transcript preamble.
     pub compression_policy: CompressionPolicyId,
-    /// Digest of the canonical [`AkitaSetupSeed`] bytes.
+    /// Digest of the canonical [`PublicMatrixSeed`] bytes.
     pub setup_seed_digest: DescriptorDigest,
-    /// Protocol-affecting feature mode (transparent-only after zk-strip).
+    /// Protocol-affecting configuration features.
     pub protocol_features: ProtocolFeatureSet,
 }
 
@@ -188,14 +182,15 @@ impl SetupSection {
     pub fn from_parts(
         decomposition: DecompositionParams,
         sis_modulus_profile: SisModulusProfileId,
-        setup_seed: &AkitaSetupSeed,
+        setup_seed: &PublicMatrixSeed,
+        protocol_features: ProtocolFeatureSet,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
             decomposition,
             sis_modulus_profile,
             compression_policy: COMPRESSION_POLICY,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
-            protocol_features: ProtocolFeatureSet::current(),
+            protocol_features,
         })
     }
 }
@@ -331,19 +326,25 @@ impl AkitaSerialize for AkitaInstanceDescriptor {
     }
 }
 
+/// Decodes against the expected [`ProtocolFeatureSet`].
 impl AkitaDeserialize for AkitaInstanceDescriptor {
-    type Context = ();
+    type Context = ProtocolFeatureSet;
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        _ctx: &Self::Context,
+        expected_features: &ProtocolFeatureSet,
     ) -> Result<Self, SerializationError> {
         let out = Self {
             version: read_word_as(&mut reader, "descriptor version")?,
             algebra: AlgebraSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            setup: SetupSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            setup: SetupSection::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                expected_features,
+            )?,
             plan: PlanSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
             grinding: TranscriptGrindingBinding::deserialize_with_mode(
                 &mut reader,
@@ -413,11 +414,6 @@ impl AkitaDeserialize for AlgebraSection {
 
 impl Valid for ProtocolFeatureSet {
     fn check(&self) -> Result<(), SerializationError> {
-        if *self != Self::current() {
-            return Err(SerializationError::InvalidData(
-                "descriptor protocol features do not match active build".to_string(),
-            ));
-        }
         Ok(())
     }
 }
@@ -436,20 +432,23 @@ impl AkitaSerialize for ProtocolFeatureSet {
     }
 }
 
+/// Decodes a set and rejects one other than the expected set, the context.
 impl AkitaDeserialize for ProtocolFeatureSet {
-    type Context = ();
+    type Context = ProtocolFeatureSet;
 
     fn deserialize_with_mode<R: Read>(
         reader: R,
         _compress: Compress,
-        validate: Validate,
-        _ctx: &Self::Context,
+        _validate: Validate,
+        expected: &ProtocolFeatureSet,
     ) -> Result<Self, SerializationError> {
         let out = Self {
             zk: read_bool_word(reader, "zk feature flag")?,
         };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
+        if out != *expected {
+            return Err(SerializationError::InvalidData(
+                "descriptor protocol features do not match the configuration".to_string(),
+            ));
         }
         Ok(out)
     }
@@ -468,7 +467,6 @@ impl Valid for SetupSection {
                 "descriptor compression policy does not match active protocol cutover".to_string(),
             ));
         }
-        self.protocol_features.check()?;
         Ok(())
     }
 }
@@ -499,14 +497,15 @@ impl AkitaSerialize for SetupSection {
     }
 }
 
+/// Decodes against the expected [`ProtocolFeatureSet`].
 impl AkitaDeserialize for SetupSection {
-    type Context = ();
+    type Context = ProtocolFeatureSet;
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        _ctx: &Self::Context,
+        expected_features: &ProtocolFeatureSet,
     ) -> Result<Self, SerializationError> {
         let decomposition = decode_decomposition(&mut reader)?;
         let sis_modulus_profile = decode_sis_modulus_profile(&mut reader)?;
@@ -518,8 +517,12 @@ impl AkitaDeserialize for SetupSection {
                 ))
             })?;
         let setup_seed_digest = read_digest(&mut reader)?;
-        let protocol_features =
-            ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let protocol_features = ProtocolFeatureSet::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            expected_features,
+        )?;
         let out = Self {
             decomposition,
             sis_modulus_profile,
@@ -670,7 +673,7 @@ impl AkitaDeserialize for CallSection {
 }
 
 fn modulus_be_32<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AkitaError> {
-    akita_params::field_modulus_be_bytes::<F>()
+    akita_params::field_modulus_be_bytes::<F>().map_err(AkitaError::from)
 }
 
 fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, SerializationError> {

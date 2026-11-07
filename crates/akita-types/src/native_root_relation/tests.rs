@@ -2,7 +2,7 @@ use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use crate::root_repacking::RootRepackingSegment;
 use akita_params::RelationRowGeometry;
-use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Prime128OffsetA7F7;
 
@@ -473,7 +473,7 @@ fn both_trinomial_signs_match_independent_long_division() {
 #[test]
 fn residue_lanes_match_their_explicit_kernels_across_low_blocks() {
     let (alpha, degree, table_len) = (F::from_u64(29), 64, 1 << 13);
-    let point = akita_algebra::ring::ResidueKernelPoint::new(alpha, degree).unwrap();
+    let point = jolt_algebra::ring::ResidueKernelPoint::new(alpha, degree).unwrap();
     // Lanes at 1000 cross a low block from base 0, and the lane at 0 does
     // from base 2000; the other lanes read whole windows.
     let rings = [0usize, 64, 1000, 3000]

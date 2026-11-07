@@ -93,6 +93,8 @@ pub(crate) fn error_class(error: &AkitaError) -> &'static str {
         AkitaError::InvalidInput(_) => "InvalidInput",
         AkitaError::UnsupportedSchedule(_) => "UnsupportedSchedule",
         AkitaError::InvalidSetup(_) => "InvalidSetup",
+        // Only a one-shot fold response (zero knowledge) returns it.
+        AkitaError::FoldOverflow { .. } => "FoldOverflow",
         // A failed internal invariant: never an expected rejection.
         AkitaError::Internal(_) => "Internal",
     }

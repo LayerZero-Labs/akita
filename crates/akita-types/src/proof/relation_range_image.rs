@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 use akita_error::AkitaError;
-use jolt_field::{Field, Ring};
+use jolt_algebra::{Field, Ring};
 
 use akita_params::{
     CommittedGroupParams, DigitRangePlan, FlatBooleanDomain, InnerCommitSecurityRoute,
@@ -683,7 +683,7 @@ mod tests {
         RelationGroupRows, RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout,
         WitnessUnitLayout,
     };
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128OffsetA7F7;
 
     #[test]
     fn l2_virtual_batch_reserves_the_constant_coefficient() {
@@ -729,6 +729,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|group_index| RelationGroupRows {
+                randomness_columns: 0,
                 group_index,
                 role_dims,
                 opening_geometry,

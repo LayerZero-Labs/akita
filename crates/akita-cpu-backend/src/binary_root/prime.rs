@@ -1,12 +1,13 @@
 //! Honest construction of order-three prime evaluation planes.
 
-use akita_algebra::ring::trinomial::module_map::unpack_signed_components;
-use akita_error::{checked, AkitaError};
+use akita_algebra::trinomial::module_map::unpack_signed_components;
+use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::{BinarySourceDescriptor, PrimePlaneManifest};
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field};
 
 /// Build the committed prime planes before drawing column fold challenges.
 ///
@@ -215,7 +216,7 @@ mod tests {
     use akita_types::binary_source::{
         BinaryCommitmentProfiles, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
     };
-    use jolt_field::{One, Prime128Offset275, Ring, Zero};
+    use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 
     type F = Prime128Offset275;
 
@@ -301,7 +302,7 @@ mod p64_tests {
     use akita_types::binary_source::{
         BinaryCommitmentProfiles, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
     };
-    use jolt_field::{One, Prime64Offset59 as F, Ring, Zero};
+    use jolt_algebra::{One, Prime64Offset59 as F, Ring, Zero};
 
     #[test]
     fn p64_prime_centered_endpoints_and_packed_planes_roundtrip() {

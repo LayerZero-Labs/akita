@@ -3,7 +3,7 @@ use akita_config::{proof_optimized::fp128::DenseBounded, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_params::{sis::CommittedSourceClass, DecompositionParams, SisModulusProfileId};
 
-pub(super) type F = jolt_field::Prime128Offset275;
+pub(super) type F = jolt_algebra::Prime128Offset275;
 
 /// Ordinary suffix for an explicitly selected experimental binary fixture.
 #[derive(Clone)]

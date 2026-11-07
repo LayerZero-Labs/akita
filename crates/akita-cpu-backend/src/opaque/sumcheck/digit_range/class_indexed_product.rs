@@ -16,8 +16,8 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_params::DigitRangePlan;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use jolt_field::{Field, Ring};
-use jolt_field::{Fold, Unreduced};
+use jolt_algebra::{Field, Ring};
+use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
 
 /// The second round sums over quartet classes once quartets outnumber them
@@ -809,13 +809,13 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
+    use jolt_algebra::{Ext2, Prime128Offset275, Prime64Offset59};
 
     #[test]
     fn final_child_claims_reject_every_unfinished_storage_phase() {
         use crate::sources::packed_digits::PackedSignedDigits;
         use akita_params::FlatBooleanDomain;
-        use jolt_field::Zero;
+        use jolt_algebra::Zero;
         type F = Prime128Offset275;
         let plan = DigitRangePlan::new(16).unwrap();
         let source = CompactDigitSource::new(
@@ -849,7 +849,7 @@ mod tests {
     fn prescaled_parent_lanes_preserve_rounds_and_child_claims() {
         use crate::sources::packed_digits::PackedSignedDigits;
         use akita_params::FlatBooleanDomain;
-        use jolt_field::{One, Zero};
+        use jolt_algebra::{One, Zero};
         type F = Prime128Offset275;
         let plan = DigitRangePlan::new(64).unwrap();
         let num_vars = 6;

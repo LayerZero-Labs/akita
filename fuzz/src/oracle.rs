@@ -4,7 +4,7 @@
 //! (`point[0]` binds index bit 0) and share no code with the prover's
 //! opening kernels, so a layout or fold-order bug cannot move both sides.
 
-use jolt_field::{ExtField, Field};
+use jolt_algebra::{ExtField, Field};
 
 /// `Σ_x eq(point, x) · table[x]` for a base-field table.
 pub fn dense_lagrange<F: Field, E: ExtField<F>>(table: &[F], point: &[E]) -> E {

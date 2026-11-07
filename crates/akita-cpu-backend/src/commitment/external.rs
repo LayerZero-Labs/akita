@@ -2,7 +2,7 @@ use crate::arithmetic::CpuPreparedSetup;
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
 use akita_types::RingVec;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::any::{Any, TypeId};
 use std::hash::{Hash, Hasher};
 
@@ -296,7 +296,7 @@ impl<'a, F: Field> PreparedExternalInnerCommitment<'a, F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime64Offset59;
+    use jolt_algebra::Prime64Offset59;
     use std::collections::HashSet;
 
     struct Family;

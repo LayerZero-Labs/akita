@@ -9,11 +9,12 @@ use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 use crate::sources::poly_helpers::element_partitioned_decompose_fold;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::WitnessLayout;
+use jolt_algebra::checked;
 #[cfg(test)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 
 impl<F, E> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
@@ -21,9 +22,9 @@ impl<F, E> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
 where
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: ExtField<F>
-        + jolt_field::Unreduced
-        + jolt_field::Fold
-        + jolt_field::MulBaseUnreduced<F>
+        + jolt_algebra::Unreduced
+        + jolt_algebra::Fold
+        + jolt_algebra::MulBaseUnreduced<F>
         + Send
         + Sync
         + 'static,
@@ -294,7 +295,7 @@ impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
                 AkitaError::Internal("recursive witness ring extent overflows usize".into())
             })?
             .max(1);
-        let total = akita_error::checked::product([padded_ring_elems, D]).ok_or_else(|| {
+        let total = jolt_algebra::checked::product([padded_ring_elems, D]).ok_or_else(|| {
             AkitaError::Internal("recursive witness ring elems times D overflow".into())
         })?;
         Ok(Self {
@@ -821,7 +822,7 @@ where
 #[cfg(test)]
 mod shape_tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128OffsetA7F7;
 
     #[test]
     fn view_constructor_rejects_rounded_ring_extent_overflow() {

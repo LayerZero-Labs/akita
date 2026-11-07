@@ -14,8 +14,9 @@ use crate::opaque::{
 };
 use crate::opaque::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 use crate::sources::block_digits::{RingValueSource, RingValues};
-use akita_error::{checked, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 impl<F, E, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend<F, E>
 where
@@ -35,8 +36,7 @@ where
         }
         let num_live_blocks = source
             .poly
-            .ring_coeffs::<D>()?
-            .len()
+            .num_ring_elems_at(D)
             .div_ceil(num_positions_per_block);
         plan.validate::<D>(num_live_blocks)?;
         let (eval, folded) = match plan {
@@ -72,8 +72,7 @@ where
         }
         let num_live_blocks = source
             .poly
-            .ring_coeffs::<D>()?
-            .len()
+            .num_ring_elems_at(D)
             .div_ceil(plan.num_positions_per_block);
         if plan.challenges.len() != num_live_blocks {
             return Err(AkitaError::InvalidSize {
@@ -189,19 +188,16 @@ where
         .polys
         .iter()
         .map(|poly| {
-            let rings = poly.ring_coeffs::<D>()?;
-            // Dense roots authenticate the complete Boolean hypercube, so
-            // every stored ring is live. Exact-prefix storage is reserved
-            // for recursive witness views.
-            if rings.len() != point.num_live_positions() {
+            let rings = poly.nonzero_ring_coeffs::<D>()?;
+            // Stored zeros may be omitted, but the authenticated domain is full.
+            let logical_rings = poly.num_ring_elems_at(D);
+            if logical_rings != point.num_live_positions() {
                 return Err(AkitaError::InvalidSize {
                     expected: point.num_live_positions(),
-                    actual: rings.len(),
+                    actual: logical_rings,
                 });
             }
-            let live_coeff_len = checked::product([rings.len(), D]).ok_or_else(|| {
-                AkitaError::InvalidInput("dense coefficient-packing extent overflow".into())
-            })?;
+            let live_coeff_len = poly.nonzero_coeff_len();
             let coordinates = seam_packing_partials(
                 &rings,
                 live_coeff_len,
@@ -235,6 +231,7 @@ where
         coefficient_packing_partials_from_position_source::<F, E, _, D>(
             fused_weights,
             source_num_vars,
+            live_coeff_len.div_ceil(D),
             |position| source.values(position),
             |_, coefficient, values| values.coeff(coefficient),
         )
@@ -242,6 +239,7 @@ where
         coefficient_packing_partials_from_position_source::<F, E, _, D>(
             fused_weights,
             source_num_vars,
+            live_coeff_len.div_ceil(D),
             |position| source.values(position),
             |position, coefficient, values| {
                 let flat_index = position * D + coefficient;

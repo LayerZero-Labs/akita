@@ -511,7 +511,10 @@ impl NttExecutionRequirements {
 /// routing extents. Retained requests are joined only when ring dimension and
 /// transform domain match, before any relation kernel can build a smaller
 /// prefix independently.
-pub(crate) fn warm_relation_ntt_cache<F: jolt_field::Field + jolt_field::CanonicalEncoding, E>(
+pub(crate) fn warm_relation_ntt_cache<
+    F: jolt_algebra::Field + jolt_algebra::CanonicalEncoding,
+    E,
+>(
     backend: &CpuBackend<F, E>,
     prepared: &CpuPreparedSetup<F>,
     level: &CommittedGroupParams,
@@ -531,7 +534,7 @@ pub(crate) fn warm_relation_ntt_cache<F: jolt_field::Field + jolt_field::Canonic
 /// two full transforms and keeps one. Joining first, then ordering by
 /// descending extent, makes every covering request a hit.
 pub(crate) fn warm_joined_ntt_requirements<
-    F: jolt_field::Field + jolt_field::CanonicalEncoding,
+    F: jolt_algebra::Field + jolt_algebra::CanonicalEncoding,
     E,
 >(
     backend: &CpuBackend<F, E>,

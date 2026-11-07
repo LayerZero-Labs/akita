@@ -98,7 +98,7 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
             use akita_params::{BasisMode, PolynomialGroupLayout, ScheduleLookupKey};
             use akita_prover::SelectedProverOpeningData;
             use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-            use jolt_field::Ring;
+            use jolt_algebra::Ring;
 
             type F = <Cfg as CommitmentConfig>::Field;
             const NUM_VARS: usize = 16;

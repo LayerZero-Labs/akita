@@ -1,7 +1,8 @@
 use crate::opaque::RecursiveWitnessFlat;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::pack_tensor_base_lift_i8_digits;
-use jolt_field::{ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{ExtField, Field};
 
 fn tensor_extension_split<F, E>(context: &'static str) -> Result<(usize, usize), AkitaError>
 where
@@ -37,7 +38,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{FpExt4, Prime32Offset99};
+    use jolt_algebra::{FpExt4, Prime32Offset99};
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {

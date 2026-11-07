@@ -9,20 +9,21 @@
 pub(crate) mod prime;
 pub use prime::prime_plane_digits;
 
-use akita_algebra::ring::trinomial::{
+use akita_algebra::trinomial::{
     image::{Q24Image, IMAGE_MIN, Q24, Q24_CENTERED_BOUND},
     module_map::pack_signed_components,
     signed::signed_trinomial_product,
 };
 use akita_algebra::{MinusTrinomial, TrinomialRing};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
 use akita_types::native_root_relation::{binary_commitment_group, NativeRootGroup};
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field, One, Prime128OffsetA7F7, Ring};
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field, One, Prime128OffsetA7F7, Ring};
 
 use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
 

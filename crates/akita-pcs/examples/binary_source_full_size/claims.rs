@@ -1,12 +1,13 @@
 //! Deterministic benchmark inputs and independent claimed evaluations.
 use super::config::F;
 use akita_algebra::binary::BinaryField128;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
     PrimeGroupClaim, PrimePlaneClaim,
 };
-use jolt_field::{CanonicalEncoding, One, Ring, Zero};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, One, Ring, Zero};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]

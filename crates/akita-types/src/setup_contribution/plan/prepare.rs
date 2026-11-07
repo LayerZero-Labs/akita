@@ -1,5 +1,6 @@
 use super::setup_index_weight::build_group_role_tensors;
 use super::*;
+use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 
 impl<E: Field> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
@@ -95,7 +96,18 @@ impl<E: Field> SetupContributionPlan<E> {
                     "setup D rows disagree with the relation layout".into(),
                 ));
             }
-            let d_physical_cols = d_cursor;
+            let d_physical_cols = d_cursor
+                .checked_add(level_params.open_randomness_columns)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
+            // Randomness columns sit right after the last opening column, so
+            // a level with D randomness fixes the D width exactly.
+            if level_params.open_randomness_columns != 0
+                && d_physical_cols != level_params.open().matrix.input_width()
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "setup D columns and randomness disagree with the D matrix width".into(),
+                ));
+            }
             let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
                 Vec::new().into()
             } else {
@@ -143,7 +155,8 @@ impl<E: Field> SetupContributionPlan<E> {
                         depth_commit,
                         role_dims.d_a(),
                         role_dims.d_b(),
-                    )?;
+                    )?
+                    .with_randomness_columns(group_params.profile.randomness_columns)?;
                     if slice_geometry.logical_input_width() != expected_logical_t_cols {
                         return Err(AkitaError::InvalidSetup(
                             "logical B columns disagree with slice geometry".into(),
@@ -234,6 +247,8 @@ impl<E: Field> SetupContributionPlan<E> {
                         active_units,
                         num_physical_units,
                         d_tensors: Vec::new(),
+                        d_randomness_cols: 0,
+                        d_randomness_tensors: Vec::new(),
                         a_tensors: Vec::new(),
                     })
                 },
@@ -266,6 +281,33 @@ impl<E: Field> SetupContributionPlan<E> {
             group.d_tensors = d_tensors;
             group.physical_b.relation_tensors = b_tensors;
             group.a_tensors = a_tensors;
+            group.physical_b.randomness_tensors = randomness_tensors(
+                relation_base,
+                witness_layout.randomness().outer(group.group_id),
+                group.physical_b.geometry().slice_count().get(),
+                group.physical_b.geometry().randomness_columns(),
+                group.b_relation_ratio,
+                group.physical_b.logical_input_width(),
+            )?;
+        }
+        if level_params.open_randomness_columns != 0 {
+            // The D randomness columns follow the last group's opening
+            // columns, so that group's D window extends over them.
+            let owner = dynamic_groups
+                .iter_mut()
+                .find(|group| group.d_col_range.end == d_cursor)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup D randomness has no owning group".into())
+                })?;
+            owner.d_randomness_tensors = randomness_tensors(
+                relation_base,
+                witness_layout.randomness().opening(),
+                1,
+                level_params.open_randomness_columns,
+                owner.d_relation_ratio,
+                owner.d_col_range.len(),
+            )?;
+            owner.d_randomness_cols = level_params.open_randomness_columns;
         }
         let plan = SetupContributionPlan {
             groups: dynamic_groups,
@@ -450,6 +492,7 @@ fn validate_static_inputs<E: Field>(
             role_dims.d_a(),
             role_dims.d_b(),
         )?
+        .with_randomness_columns(group_params.profile.randomness_columns)?
         .physical_input_width();
         if group_params.b_col_len() < expected_b_width {
             return Err(AkitaError::InvalidSetup(
@@ -465,4 +508,56 @@ fn validate_static_inputs<E: Field>(
         });
     }
     Ok(rows)
+}
+
+/// The relation tensors of one hiding-randomness span, one per slice: column
+/// `k` of slice `s`, at `column_offset + s * columns + k` in the column table,
+/// reads the witness ring at `span.start + (s * columns + k) * ring_dim`,
+/// which is `relation_ratio` relation lanes wide.
+fn randomness_tensors<E: Field>(
+    relation_base: usize,
+    span: std::ops::Range<usize>,
+    slices: usize,
+    columns: usize,
+    relation_ratio: usize,
+    column_offset: usize,
+) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
+    if columns == 0 {
+        return if span.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(AkitaError::InvalidSetup(
+                "witness randomness span has no setup columns".into(),
+            ))
+        };
+    }
+    let lane_start = checked::exact_div(span.start, relation_base).ok_or_else(|| {
+        AkitaError::InvalidSetup("witness randomness span is not relation-block aligned".into())
+    })?;
+    let slice_lanes = checked::product([columns, relation_ratio])
+        .ok_or_else(|| AkitaError::InvalidSetup("witness randomness span overflow".into()))?;
+    let lanes = checked::product([slices, slice_lanes, relation_base])
+        .ok_or_else(|| AkitaError::InvalidSetup("witness randomness span overflow".into()))?;
+    if span.len() != lanes {
+        return Err(AkitaError::InvalidSetup(
+            "witness randomness span disagrees with its setup columns".into(),
+        ));
+    }
+    (0..slices)
+        .map(|slice| {
+            let left = checked::mul_add(slice, columns, column_offset);
+            let right = checked::mul_add(slice, slice_lanes, lane_start);
+            let (Some(left), Some(right)) = (left, right) else {
+                return Err(AkitaError::InvalidSetup(
+                    "witness randomness tensor offset overflow".into(),
+                ));
+            };
+            EqPairTensorFamily::new(
+                left,
+                right,
+                E::one(),
+                vec![EqPairTensorAxis::unit(columns, 1, relation_ratio)],
+            )
+        })
+        .collect()
 }

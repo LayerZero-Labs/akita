@@ -9,7 +9,7 @@ use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_params::BasisMode;
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::CanonicalEncoding;
+use jolt_algebra::CanonicalEncoding;
 use std::sync::Arc;
 
 type Config = fp128::Dense;

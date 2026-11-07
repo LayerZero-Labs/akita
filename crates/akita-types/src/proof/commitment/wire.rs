@@ -14,7 +14,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_transcript::CommitmentDigest;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
 type MatrixFields = (
@@ -241,6 +241,7 @@ fn deserialize_profile<F: Field + CanonicalEncoding, R: Read>(
     }
 
     let descriptor = GroupCommitPhaseParams {
+        randomness_columns: 0,
         version,
         group,
 
@@ -385,7 +386,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for C
             CommittedGroupKind::Ordinary => ordinary_size,
             #[cfg(feature = "labinius-trinomial")]
             CommittedGroupKind::Binary(manifest) => {
-                akita_error::checked::sum([ordinary_size, 5, manifest.canonical_bytes().len()])
+                jolt_algebra::checked::sum([ordinary_size, 5, manifest.canonical_bytes().len()])
                     .unwrap_or(usize::MAX)
             }
         }

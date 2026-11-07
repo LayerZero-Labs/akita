@@ -4,12 +4,12 @@
 
 mod support;
 
-use akita_algebra::ring::cyclotomic::{decompose_centering_threshold, BalancedDecomposePow2Params};
-use akita_algebra::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_cpu_backend::benchmark_support::decompose_rows_i8_into;
 use akita_metal::decompose::decompose;
 use akita_metal::{AkitaMetal, AkitaMetalError};
-use jolt_field::{Prime128Offset275, Prime128OffsetA7F7, Prime64Offset59, Ring};
+use jolt_algebra::ring::cyclotomic::{decompose_centering_threshold, BalancedDecomposePow2Params};
+use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Field};
+use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime64Offset59, Ring};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};

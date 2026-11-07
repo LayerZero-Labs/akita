@@ -89,8 +89,9 @@ pub use ring_relation::{
 pub use scheme::OpeningPoints;
 pub use setup::{
     derive_public_matrix_prefix, derive_public_matrix_range, sample_akita_setup_seed,
-    validate_public_matrix_matches_seed, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup, PublicMatrixDerivation, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    validate_public_matrix_matches_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
+    AkitaVerifierSetup, PublicMatrixDerivation, PublicMatrixSeed,
+    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 pub use setup_prefix::{
     setup_prefix_coverage_eval_len, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,
@@ -111,6 +112,6 @@ use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::uniform_sumcheck_shape;
 #[cfg(test)]
-use jolt_field::CanonicalEncoding;
-use jolt_field::Field;
+use jolt_algebra::CanonicalEncoding;
+use jolt_algebra::Field;
 use std::io::{Read, Write};

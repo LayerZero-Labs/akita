@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::AdditiveGroup;
+use jolt_algebra::AdditiveGroup;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -64,7 +64,7 @@ where
             )
         },
     );
-    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B>(
+    let prepared = prepare_fold::<Cfg::Field, Cfg::ExtField, B, _>(
         backend,
         root_claims,
         material,
@@ -78,7 +78,7 @@ where
         next_params.inner_ring_dimension(),
         false,
     )?;
-    prove_fold::<Cfg::Field, Cfg::ExtField, B>(
+    prove_fold::<Cfg::Field, Cfg::ExtField, B, _>(
         expanded,
         prefix_slots,
         backend,

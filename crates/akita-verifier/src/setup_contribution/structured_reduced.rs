@@ -46,7 +46,7 @@ fn embedded_terminal_functionals<E: Field>(
                 .get_mut(start..end)
                 .ok_or(AkitaError::InvalidProof)?
                 .copy_from_slice(native_equality);
-            terminal_residue_kernel(&embedded, alpha)
+            terminal_residue_kernel(&embedded, alpha).map_err(AkitaError::from)
         })
         .collect()
 }
@@ -182,8 +182,12 @@ where
         .num_positions_per_block()
         .checked_mul(group.depth_witness())
         .ok_or(AkitaError::InvalidProof)?;
-    if weights.e.len() != expected_e
-        || weights.t.len() != expected_t
+    // The column tables end with any hiding-randomness columns, which
+    // carry only setup terms and no structured term.
+    let e_randomness = group.d_column_len() - group.d_col_range().len();
+    let t_randomness = group.physical_b().column_len()? - group.physical_b().logical_input_width();
+    if weights.e.len() != expected_e + e_randomness
+        || weights.t.len() != expected_t + t_randomness
         || weights.z.len() != expected_z
         || group.a_row_weights().len() != group.n_a()
     {
@@ -278,7 +282,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
+    use jolt_algebra::{One, Prime128Offset275 as F, Ring, Zero};
 
     #[test]
     fn ambient_sparse_multiplier_is_not_scalarized_at_alpha() {

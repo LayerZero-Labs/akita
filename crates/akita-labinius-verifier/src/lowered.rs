@@ -15,7 +15,7 @@ pub use weights::{
 };
 
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Signed integer reduction; even i128::MIN has a representable magnitude.
 pub(crate) fn signed_field<F: Field>(value: i128) -> F {

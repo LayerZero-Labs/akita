@@ -2,7 +2,7 @@
 
 use akita_error::AkitaError;
 use akita_params::layout::digit_range::FlatBooleanDomain;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Checked equality point in physical digit-table binding order.
 ///
@@ -90,8 +90,8 @@ mod tests {
         InnerCommitSecurityRoute, PhysicalL2NormProofShape, SisL2TableDigest, SisL2TableKey,
         SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, SisTableKey,
     };
-    use jolt_field::Prime128Offset275;
-    use jolt_field::{One, Ring};
+    use jolt_algebra::Prime128Offset275;
+    use jolt_algebra::{One, Ring};
 
     type F = Prime128Offset275;
 

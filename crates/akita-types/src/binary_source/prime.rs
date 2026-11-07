@@ -1,7 +1,8 @@
 use super::BinarySourceDescriptor;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 /// Number of balanced base-eight digits for a centered prime coefficient.
 /// The interval contains `[-(P-1)/2, (P-1)/2]` for `P = 2^128-275`.

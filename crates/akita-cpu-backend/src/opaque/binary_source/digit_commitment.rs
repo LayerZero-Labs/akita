@@ -14,13 +14,15 @@
 //! payload adds their combination in the field. That is the reference
 //! payload's integer modulo the selected prime, so the payload is identical.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+
 use akita_params::binary_setup::SetupStreamLabel;
 use akita_types::binary_source::{
     binary_public_digit_commitment, digit_commitment_setup_column, validate_digit_commitment_label,
     BINARY_DIGIT_COMMITMENT_DEGREE,
 };
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 const DEGREE: usize = BINARY_DIGIT_COMMITMENT_DEGREE;
 const LIMBS: usize = 8;
@@ -263,7 +265,7 @@ mod neon {
 mod tests {
     use super::*;
     use akita_params::binary_setup::{SetupStreamModulus, SetupStreamRing, SetupStreamRole};
-    use jolt_field::Prime128Offset275 as F;
+    use jolt_algebra::Prime128Offset275 as F;
     use rand::{Rng, SeedableRng};
 
     fn label() -> SetupStreamLabel {
@@ -282,7 +284,7 @@ mod tests {
 
     #[test]
     fn binary_root_p64_payload_matches_reference_at_every_admitted_rank() {
-        use jolt_field::Prime64Offset59;
+        use jolt_algebra::Prime64Offset59;
         let seed = [23; 32];
         let digits = (0..1000)
             .map(|index| (index % 8) as i8 - 4)

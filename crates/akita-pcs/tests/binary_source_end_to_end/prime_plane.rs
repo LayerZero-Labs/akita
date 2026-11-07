@@ -5,7 +5,7 @@ use akita_types::binary_source::{
     binary_root_challenges, binary_root_statement, PrimeGroupClaim, PrimePlaneClaim,
     PrimePlaneManifest,
 };
-use jolt_field::CanonicalEncoding;
+use jolt_algebra::CanonicalEncoding;
 
 const WORDS: [u128; 8] = [
     0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
@@ -826,7 +826,7 @@ fn prime_plane_p64_base_claims_and_extension_typed_prefix_endpoint() {
     use akita_types::binary_source::{
         binary_word_manifest_fixture, BinaryAProduct, BinaryAReadGuard, BinaryRootWitnessPlan,
     };
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
     for word in [false, true] {

@@ -6,7 +6,7 @@ use crate::kernels::linear::{
 };
 use crate::opaque::{CompressionComputeBackend, CompressionRowsProducts};
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<F, E> CompressionComputeBackend<F> for CpuBackend<F, E>
 where

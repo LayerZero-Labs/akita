@@ -12,7 +12,7 @@ use akita_prover::SelectedProverOpeningData;
 use akita_transcript::{new_prover_channel, new_verifier_channel};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::SetupPolicy;
-use jolt_field::{Ring, Zero};
+use jolt_algebra::{Ring, Zero};
 use jolt_transcript::{BytesMsg, ProverTranscript};
 
 type Cfg = fp128::Dense;

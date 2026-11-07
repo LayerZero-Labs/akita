@@ -14,7 +14,7 @@ use akita_params::{
 };
 use akita_types::binary_source::OrdinaryNativeRootPlan;
 use akita_types::root_repacking::RootCoefficientRepacking;
-use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 use std::sync::Arc;
 
 type F = Prime128Offset275;
@@ -47,6 +47,7 @@ fn profile(slices: CommitmentSliceCount) -> GroupCommitPhaseParams {
         group: PolynomialGroupLayout::singleton(10),
         blocks: BlockGeometry::new(8, 2, 4),
         outer_slice_count: slices,
+        randomness_columns: 0,
         inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
         outer: RoleParams::new(GadgetDigits::new(3, 43), outer),
     };

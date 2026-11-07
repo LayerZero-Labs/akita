@@ -11,7 +11,7 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::GrindingReplay;
-use jolt_field::AdditiveGroup;
+use jolt_algebra::AdditiveGroup;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -172,7 +172,7 @@ where
     )?;
     drop(span);
     if d_payload.len()
-        != akita_error::checked::product([
+        != jolt_algebra::checked::product([
             manifest
                 .d_label(claim.is_some(), prime.planes().len())?
                 .rank as usize,
@@ -230,10 +230,10 @@ where
     grinding.record_fold_challenges(
         0,
         0,
-        akita_error::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
+        jolt_algebra::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
     )?;
     let span = tracing::info_span!("binary_root_outgoing_commit").entered();
-    let committed = fold::commit_next_witness::<Cfg::Field, Cfg::ExtField, B>(
+    let committed = fold::commit_next_witness::<Cfg::Field, Cfg::ExtField, B, _>(
         backend,
         grinding,
         0,
@@ -359,7 +359,7 @@ where
     let span = tracing::info_span!("binary_root_stage1").entered();
     let range = DigitRangePlan::new(8)?;
     let session = backend.begin_root_digit_range(&witness, domain, &tau0, range)?;
-    let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B>(
+    let stage1 = fold::sumcheck::prove_stage1_session::<Cfg::Field, Cfg::ExtField, B, _>(
         backend, session, range, domain, tau0, None, grinding, 0,
     )?;
     drop(span);
@@ -378,7 +378,7 @@ where
         stage1.range_image_evaluation,
         gamma,
     )?;
-    let stage2 = fold::sumcheck::prove_stage2_session::<Cfg::Field, Cfg::ExtField, B>(
+    let stage2 = fold::sumcheck::prove_stage2_session::<Cfg::Field, Cfg::ExtField, B, _>(
         backend,
         session,
         grinding,
@@ -439,7 +439,7 @@ where
     akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
     akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
     let phase = tracing::info_span!("binary_root_stage3_rounds").entered();
-    let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
+    let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B, _>(
         backend,
         session,
         claim,

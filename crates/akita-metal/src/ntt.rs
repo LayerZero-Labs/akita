@@ -2,14 +2,14 @@
 //!
 //! [`DeviceCrtNtt`] holds one [`CrtNttParamSet`]'s primes and transform tables
 //! in device memory. Its transforms run over buffers of ring elements in the
-//! [`CyclotomicCrtNtt`](akita_algebra::CyclotomicCrtNtt) layout (element,
+//! [`CyclotomicCrtNtt`](jolt_algebra::CyclotomicCrtNtt) layout (element,
 //! then prime, then coefficient, as raw Montgomery `i32` words) and match the
 //! CPU's scalar transforms word for word.
 
 use std::time::Duration;
 
-use akita_algebra::{CrtNttParamSet, MontCoeff, NttPrime};
 use bytemuck::{Pod, Zeroable};
+use jolt_algebra::{CrtNttParamSet, MontCoeff, NttPrime};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 
 use crate::error::AkitaMetalError;
@@ -65,7 +65,7 @@ struct NttBatch {
 pub struct DeviceCrtNtt<const K: usize, const D: usize> {
     pub(crate) primes: DeviceBuffer<DevicePrime>,
     /// `[K][7][D]` words: per prime the rows of `akita::NttTables`
-    /// (`NttTwiddles::negacyclic_tables`, `psi^i R^2`, and the canonical
+    /// (`crate::twiddles::negacyclic_tables`, `psi^i R^2`, and the canonical
     /// forward twiddles with their Shoup quotients).
     pub(crate) tables: DeviceBuffer<i32>,
     /// `[K][K]` words: the Garner inverse `p_j^-1 mod p_i` in prime `i`'s
@@ -90,9 +90,8 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
         let tables = params
             .primes
             .iter()
-            .zip(params.twiddles.iter())
-            .flat_map(|(prime, twiddles)| {
-                let [fwd, inv, psi, untwist] = twiddles.negacyclic_tables();
+            .map(|prime| {
+                let [fwd, inv, psi, untwist] = crate::twiddles::negacyclic_tables::<D>(*prime)?;
                 // psi^i R^2: mont_mul(psi^i R, R^2) = psi^i R^2 (akita::NttTables::PSI_R2).
                 let montsq = MontCoeff::from_raw(prime.montsq);
                 let psi_r2 = psi.map(|twist| prime.mul(twist, montsq).raw());
@@ -106,7 +105,7 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
                     // The quotient is below 2^32 because w < p; store its bits.
                     u32::try_from(quotient).unwrap_or_default() as i32
                 });
-                [
+                Ok([
                     fwd.map(MontCoeff::raw),
                     inv.map(MontCoeff::raw),
                     psi.map(MontCoeff::raw),
@@ -114,8 +113,11 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
                     psi_r2,
                     canonical,
                     shoup,
-                ]
+                ])
             })
+            .collect::<Result<Vec<_>, AkitaMetalError>>()?
+            .into_iter()
+            .flatten()
             .flatten()
             .collect::<Vec<_>>();
         let gamma = params
@@ -207,7 +209,7 @@ pub(crate) fn rows<const K: usize, const D: usize>(
 ) -> Result<(usize, usize), AkitaMetalError> {
     let element = K.checked_mul(D).filter(|&words| words > 0);
     element
-        .and_then(|words| akita_error::checked::exact_div(len, words))
+        .and_then(|words| jolt_algebra::checked::exact_div(len, words))
         .and_then(|elements| Some((elements, elements.checked_mul(K)?)))
         .ok_or_else(|| {
             AkitaMetalError::Shape(format!(

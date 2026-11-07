@@ -2,7 +2,7 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 use crate::prepared_cache::{TerminalNttCache, TERMINAL_I16_LOG_BASIS};
 
@@ -44,8 +44,8 @@ mod tests {
         ntt_cache_requires_exactness_tail, prepare_ntt_cache, AkitaExpandedSetup,
         AkitaSetupDescriptor, AkitaVerifierSetup, NttCacheMode, SetupPrefixVerifierRegistry,
     };
-    use jolt_field::Ring;
-    use jolt_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
+    use jolt_algebra::Ring;
+    use jolt_algebra::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
     use std::sync::Arc;
 
     const D: usize = 64;

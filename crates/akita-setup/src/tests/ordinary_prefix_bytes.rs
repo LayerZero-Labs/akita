@@ -1,9 +1,9 @@
 use super::TestF;
-use jolt_field::CanonicalBytes;
+use jolt_algebra::CanonicalBytes;
 
 #[test]
 fn ordinary_setup_prefix_bytes_are_pinned() {
-    let seed = akita_types::AkitaSetupSeed::shake256_paged_v1([0x5b; 32]);
+    let seed = akita_types::PublicMatrixSeed::shake256_paged_v1([0x5b; 32]);
     let prefix = akita_types::derive_public_matrix_prefix::<TestF>(8, &seed);
     // Independently expanded SHAKE256 page zero for the fp128 preset modulus
     // 2^128 - 2^32 + 22537. Each candidate is already canonical.

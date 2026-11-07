@@ -17,8 +17,8 @@ use super::{
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use jolt_field::{Field, Ring};
-use jolt_field::{Fold, Unreduced};
+use jolt_algebra::{Field, Ring};
+use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
 
 struct CompactRangeLeafState<E: Field> {
@@ -523,7 +523,7 @@ mod tests {
     use super::*;
     use crate::sources::packed_digits::PackedSignedDigits;
     use akita_params::{DigitRangePlan, FlatBooleanDomain};
-    use jolt_field::{Ext2, One, Prime64Offset59, Zero};
+    use jolt_algebra::{Ext2, One, Prime64Offset59, Zero};
 
     type F = Ext2<Prime64Offset59>;
 

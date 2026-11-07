@@ -1,13 +1,11 @@
-use akita_algebra::{
-    binary::BinaryField162,
-    ring::{embed_scalar, TrinomialModulus},
-    EqPolynomial,
-};
+use akita_algebra::{binary::BinaryField162, EqPolynomial};
+use akita_algebra::{embed_scalar, TrinomialModulus};
 use akita_challenges::BinaryChallenge;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
 use akita_types::RelationPolynomial;
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

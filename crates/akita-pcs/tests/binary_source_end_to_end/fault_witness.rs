@@ -1,8 +1,8 @@
 //! Reconstruct the honest fixture table solely through public arithmetic APIs.
 
 use super::*;
-use akita_algebra::ring::trinomial::image::Q24Image;
-use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
+use akita_algebra::trinomial::image::Q24Image;
+use akita_algebra::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
 use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_cpu_backend::binary_root::{
@@ -151,7 +151,7 @@ pub(super) fn foreign_partial_payload(
 fn p64_fault_table_changes_k_independently_of_response_and_image() {
     use akita_params::binary_setup::BinaryFieldProfile;
     use akita_types::binary_source::{BinaryIndexMap, BinarySourceDescriptor};
-    use jolt_field::{Ext2, ExtField, Prime64Offset59};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59};
     type E = Ext2<Prime64Offset59>;
     let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
     let descriptor = BinarySourceDescriptor::new(

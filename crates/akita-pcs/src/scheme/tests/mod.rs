@@ -25,7 +25,7 @@ use akita_prover::CommitmentHandleMetadata;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::AkitaSerialize;
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{One, Ring, Zero};
+use jolt_algebra::{One, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::Dense;

@@ -9,14 +9,15 @@ use crate::shipped::{
     ShippedCatalogError, SupportedGeometry, SUPPORTED_GEOMETRIES, WITNESS_CHUNKING,
 };
 use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_labinius_verifier::admitted::field_characteristic;
 use akita_params::{
     sis::labinius::LabiniusRootShape, GroupCommitPhaseParams, PolynomialGroupLayout,
     ScheduleLookupKey,
 };
 use akita_schedules::ValidatedScheduleCatalog;
-use jolt_field::ExtField;
+use jolt_algebra::checked;
+use jolt_algebra::ExtField;
 use std::path::Path;
 
 /// Base-2 logarithms of the padded lengths of the committed tables.

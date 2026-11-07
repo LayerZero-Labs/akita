@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::field_reduction::trace_open_ring_row;
 use crate::{FpExtEncoding, PreparedOpeningPoint};
@@ -271,7 +271,7 @@ mod tests {
     use super::*;
     use crate::{embed_ring_subfield_scalar, embed_ring_subfield_vector};
     use akita_params::{basis_weights, basis_weights_prefix};
-    use jolt_field::{Ext2, Field, Fp32, FpExt4, FpExt8};
+    use jolt_algebra::{Ext2, Field, Fp32, FpExt4, FpExt8};
     use rand::{rngs::StdRng, SeedableRng};
 
     type BaseField = Fp32<251>;

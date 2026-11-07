@@ -14,7 +14,7 @@ use akita_params::SisModulusProfileId;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::ChallengeCodec;
 use akita_types::FpExtEncoding;
-use jolt_field::{
+use jolt_algebra::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Prime128Offset275,
     PseudoMersenne, Ring, Unreduced, WithCommitAccumulator,
 };

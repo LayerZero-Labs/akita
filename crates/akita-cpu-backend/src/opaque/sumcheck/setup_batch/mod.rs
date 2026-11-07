@@ -4,7 +4,7 @@ use super::stage3::product_table::{
     SetupProductWeights,
 };
 use crate::opaque::CpuBackend;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_prover::backend::{SetupBatchBackend, SetupBatchKernel};
 use akita_sumcheck::SumcheckKernel;
 use akita_types::{
@@ -13,9 +13,10 @@ use akita_types::{
     },
     FpExtEncoding,
 };
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::{solinas::parallel::*, Zero};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{solinas::parallel::*, Zero};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::Arc;
 
 /// Native advice preparation, bound to its owner, exact query and rectangular split.
@@ -292,7 +293,7 @@ where
             0..active,
             || (
                 (0..slots)
-                    .map(|_| <E as jolt_field::Unreduced>::Product::zero())
+                    .map(|_| <E as jolt_algebra::Unreduced>::Product::zero())
                     .collect::<Vec<_>>(),
                 vec![E::zero(); count],
             ),

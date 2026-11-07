@@ -1,6 +1,6 @@
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 enum OpaquePreparedGroupOpeningKind<F: Field, E: Field> {
@@ -277,7 +277,7 @@ impl CpuWitnessHandle {
             witness_layout.live_coeff_len(),
         )?;
         let digit_range = akita_params::DigitRangePlan::new(
-            akita_error::checked::pow2(level.open().digits.log_basis as usize).ok_or_else(
+            jolt_algebra::checked::pow2(level.open().digits.log_basis as usize).ok_or_else(
                 || AkitaError::Internal("validated relation digit range basis overflow".into()),
             )?,
         )?;

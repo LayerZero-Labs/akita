@@ -12,7 +12,7 @@ use akita_types::binary_source::{
 };
 use akita_types::native_root_relation::NativeRootWeights;
 use akita_types::{AkitaSetupDescriptor, Commitment};
-use jolt_field::{Field, Ring, Zero};
+use jolt_algebra::{Field, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use std::any::Any;
 use std::sync::{Arc, Mutex};

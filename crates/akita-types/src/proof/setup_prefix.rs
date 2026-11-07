@@ -5,14 +5,14 @@
 //! product sumcheck or change proof semantics.
 
 use crate::proof::{RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
-use crate::AkitaSetupSeed;
+use crate::PublicMatrixSeed;
 use akita_error::AkitaError;
 use akita_params::layout::setup_prefix_slots::{padded_setup_prefix_len, SetupPrefixSlotId};
 use akita_params::CommittedGroupParams;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
@@ -221,13 +221,13 @@ where
 /// In-memory registry of verifier-visible setup-prefix slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixVerifierRegistry<F: Field> {
-    setup_seed: AkitaSetupSeed,
+    setup_seed: PublicMatrixSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixVerifierSlot<F>>,
 }
 
 impl<F: Field> SetupPrefixVerifierRegistry<F> {
     #[must_use]
-    pub fn new(setup_seed: AkitaSetupSeed) -> Self {
+    pub fn new(setup_seed: PublicMatrixSeed) -> Self {
         Self {
             setup_seed,
             slots: BTreeMap::new(),
@@ -236,7 +236,7 @@ impl<F: Field> SetupPrefixVerifierRegistry<F> {
 
     /// Public field stream to which every committed prefix belongs.
     #[must_use]
-    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+    pub fn setup_seed(&self) -> &PublicMatrixSeed {
         &self.setup_seed
     }
 
@@ -336,7 +336,7 @@ where
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let setup_seed =
-            AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            PublicMatrixSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let slot_count =
             read_limited_usize(&mut reader, compress, validate, MAX_SETUP_PREFIX_SLOTS)?;
         let mut out = Self::new(setup_seed);

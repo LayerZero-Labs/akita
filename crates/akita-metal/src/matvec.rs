@@ -10,12 +10,12 @@
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
-use akita_algebra::{CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicRing, NttPrime};
-use akita_error::checked;
 use akita_types::ntt_cache::PreparedNttBaseView;
 use bytemuck::{Pod, Zeroable};
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::checked;
+use jolt_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
+use jolt_algebra::{CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicRing, NttPrime};
+use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 use jolt_metal::MetalField;
 
@@ -38,8 +38,8 @@ pub const LIMB_COUNTS: [usize; 4] = [1, 2, 3, 4];
 const TARGET_GROUPS: usize = 256;
 
 mod sealed {
-    use akita_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
-    use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+    use jolt_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
+    use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
 
     pub trait PreparedMatrixField<const K: usize> {}
     impl PreparedMatrixField<Q64_NUM_PRIMES> for Prime64Offset59 {}
@@ -54,11 +54,11 @@ mod sealed {
 /// supported prefix length.
 ///
 /// ```compile_fail
-/// use akita_algebra::tables::Q128_NUM_PRIMES;
+/// use jolt_algebra::tables::Q128_NUM_PRIMES;
 /// use akita_metal::matvec::DeviceNttMatrix;
 /// use akita_metal::AkitaMetal;
 /// use akita_types::ntt_cache::PreparedNttBaseView;
-/// use jolt_field::Prime64Offset59;
+/// use jolt_algebra::Prime64Offset59;
 ///
 /// fn relabel_q128_as_fp64<const D: usize>(
 ///     metal: &AkitaMetal,
@@ -661,7 +661,7 @@ fn split_limbs<F: MetalField + CanonicalEncoding, const K: usize, const D: usize
 #[cfg(test)]
 mod tests {
     use super::{balanced_limbs, centered_value, field_modulus, limb_bits};
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128OffsetA7F7;
 
     fn recombine_wide(digits: &[i128], base: u128) -> Option<(bool, u128)> {
         digits

@@ -2,7 +2,7 @@ use super::*;
 use akita_challenges::{SparseChallenge, PRODUCTION_FOLD_CHALLENGE_RING_DIMS};
 use akita_params::{basis_weights, BasisMode};
 use akita_types::{PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables};
-use jolt_field::{
+use jolt_algebra::{
     Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Zero,
 };
 
@@ -683,7 +683,7 @@ mod packing_relation {
     use akita_algebra::ring::scalar_powers;
     use akita_params::SisModulusProfileId;
     use akita_types::{coefficient_packing_fixture, RingRelationGroupOpeningView};
-    use jolt_field::canonical_extension_basis;
+    use jolt_algebra::canonical_extension_basis;
 
     #[test]
     fn every_extension_plane_is_bound_by_the_packing_divisibility_identity() {

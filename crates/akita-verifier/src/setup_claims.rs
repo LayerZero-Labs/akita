@@ -1,7 +1,7 @@
 //! Setup claims and the explicit choice to defer or check them.
 use akita_error::AkitaError;
 use akita_types::setup_claims::{SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery};
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 pub trait SetupClaimAdvice<E: Field> {
     fn answer(&mut self, query: &SetupQuery<E>) -> Result<E, AkitaError>;

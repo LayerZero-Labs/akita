@@ -1,5 +1,5 @@
 // Negacyclic NTTs over Z_p[X]/(X^D + 1) on one threadgroup, bit-exact with
-// forward_ntt and inverse_ntt in crates/akita-algebra/src/ntt/butterfly.rs
+// forward_ntt and inverse_ntt in jolt-algebra/src/ntt/butterfly.rs
 // (the portable scalar path).
 //
 // A transform runs on D/2 lanes of one threadgroup over threadgroup arrays
@@ -11,8 +11,8 @@
 // touch only a lane's own elements `lane` and `lane + D/2`: a caller whose
 // lanes load and store exactly those elements needs no other barrier.
 //
-// Tables are the host's NttTwiddles::negacyclic_tables() plus the fused
-// entry twist, five D-entry rows per prime (NttTables).
+// Tables are the host's crate::twiddles::negacyclic_tables() plus the
+// fused entry twist, five D-entry rows per prime (NttTables).
 
 #ifndef AKITA_NTT_H
 #define AKITA_NTT_H

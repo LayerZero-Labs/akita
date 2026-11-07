@@ -19,7 +19,7 @@ use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::{CommittedSourceEncoding, OpeningClaimsLayout};
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 type Cfg = fp64::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -231,7 +231,7 @@ fn run_custom_commit_source_contract() {
     let relation_geometry = akita_params::RelationWitnessGeometry::for_level(
         &params,
         &opening_batch,
-        <<Cfg as CommitmentConfig>::ExtField as jolt_field::ExtField<F>>::DEGREE,
+        <<Cfg as CommitmentConfig>::ExtField as jolt_algebra::ExtField<F>>::DEGREE,
     )
     .expect("relation geometry");
     let compression_plan = relation_geometry

@@ -2,7 +2,7 @@
 //! the verifier's compact-factor tests.
 
 use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
-use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
 
 use crate::{
     relation_rhs_coeff_len, CoefficientPackingChallenges, FpExtEncoding,

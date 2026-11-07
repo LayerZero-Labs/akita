@@ -2,9 +2,9 @@
 
 use crate::GrindingReplay;
 use akita_error::AkitaError;
-use akita_transcript::{exchange_extension_group, ProtocolSiteId, SITE_FAMILY_STAGE1};
+use akita_transcript::{PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_STAGE1};
 use core::slice;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const ROLE_CHILD_CLAIMS: u32 = 1;
 const ROLE_RANGE_IMAGE: u32 = 2;
@@ -32,13 +32,12 @@ pub fn stage1_child_claims<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
-        stage1_site(level, stage, ROLE_CHILD_CLAIMS),
-        claims,
-    )
+    grinding
+        .state_mut()
+        .exchange_private_extension_group(stage1_site(level, stage, ROLE_CHILD_CLAIMS), claims)?;
+    Ok(())
 }
 
 /// Exchange the final range-image evaluation after leaf sumcheck challenges.
@@ -51,10 +50,9 @@ pub fn stage1_range_image<F, E, G>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
-    G: GrindingReplay,
+    G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    exchange_extension_group::<F, E, _>(
-        grinding.state_mut(),
+    grinding.state_mut().exchange_private_extension_group(
         stage1_site(level, stage, ROLE_RANGE_IMAGE),
         slice::from_mut(&mut evaluation),
     )?;
@@ -67,7 +65,7 @@ mod tests {
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingRun, GrindingSite};
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

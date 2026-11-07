@@ -2,7 +2,7 @@ use crate::commitment::{InnerRelationMaterial, OuterCompressionMaterial};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::RingVec;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 #[cfg(test)]
 #[path = "commitment_binding_tests.rs"]
@@ -226,5 +226,10 @@ impl<F: Field> OpaqueInnerRelationState<F> {
 
     pub(crate) fn rows(&self) -> &[RingVec<F>] {
         self.material.rows()
+    }
+
+    /// Slice-major B hiding randomness of the consumed commitment.
+    pub(crate) fn outer_randomness(&self) -> &[i8] {
+        self.material.outer_randomness()
     }
 }

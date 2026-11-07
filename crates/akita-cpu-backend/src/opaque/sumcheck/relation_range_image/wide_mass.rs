@@ -6,7 +6,7 @@
 //! a kernel can keep a tile of the block's accumulators in registers across
 //! all of them.
 
-use jolt_field::{Field, Unreduced, Zero};
+use jolt_algebra::{Field, Unreduced, Zero};
 
 /// Largest digit basis the scan serves.
 const DEFAULT_MAX_DIGIT_BASIS: usize = 16;
@@ -79,7 +79,7 @@ impl<E: Field + Unreduced, const MAX_DIGIT_BASIS: usize> WideMass<E, MAX_DIGIT_B
         #[cfg(target_arch = "aarch64")]
         if use_neon {
             if let Some(wide) = (&mut self.wide as &mut dyn std::any::Any)
-                .downcast_mut::<Vec<jolt_field::Fp128x8i32>>()
+                .downcast_mut::<Vec<jolt_algebra::Fp128x8i32>>()
             {
                 neon::add_rows::<E>(&mut wide[slots], self.half, rows, digits);
                 return;
@@ -167,7 +167,7 @@ fn add_row<E: Field + Unreduced, const MAX_DIGIT_BASIS: usize>(
 /// block is within `max_pending` rows, so the corrected lanes are exact.
 #[cfg(target_arch = "aarch64")]
 mod neon {
-    use jolt_field::{Field, Fp128x8i32, Unreduced};
+    use jolt_algebra::{Field, Fp128x8i32, Unreduced};
     use std::any::Any;
     use std::arch::aarch64::*;
 
@@ -284,7 +284,7 @@ mod neon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
+    use jolt_algebra::{Ext2, Prime128Offset275, Prime64Offset59};
 
     /// Rows added in shuffled groups match the direct field sum, across
     /// overflow flushes and with extreme factor limbs and digits.

@@ -2,7 +2,8 @@
 
 use akita_algebra::binary::field_switch::{SwitchField, SwitchPartials};
 use akita_algebra::binary::BinaryField128;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::BinarySourceDescriptor;
 

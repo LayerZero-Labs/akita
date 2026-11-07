@@ -21,7 +21,7 @@ use akita_error::AkitaError;
 use akita_params::{balanced_signed_digit_abs_bound, field_modulus, SignedDigitKernel};
 use akita_types::RingVec;
 use akita_types::{dense_i8_commit_prefers_exact_ifma52, NttCacheKey, NttTransformDomain};
-use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::ops::Range;
 
 impl<F: Field, E> CpuBackend<F, E> {
@@ -171,11 +171,12 @@ impl<F: Field, E> CpuBackend<F, E> {
                 "dense commitment plan disagrees with ring dispatch".into(),
             ));
         }
-        let logical_len = akita_error::checked::pow2(descriptor.num_vars())
+        let logical_len = jolt_algebra::checked::pow2(descriptor.num_vars())
             .ok_or_else(|| AkitaError::InvalidInput("dense logical extent overflow".into()))?;
-        let ring_count = akita_error::checked::div_ceil(logical_len, D)
+        let ring_count = jolt_algebra::checked::div_ceil(logical_len, D)
             .ok_or_else(|| AkitaError::InvalidInput("dense ring extent is invalid".into()))?;
-        let physical_len = akita_error::checked::product([ring_count, D])
+        let nonzero_rings = source.nonzero_coefficient_len().div_ceil(D).min(ring_count);
+        let physical_len = jolt_algebra::checked::product([nonzero_rings, D])
             .ok_or_else(|| AkitaError::InvalidInput("dense physical extent overflow".into()))?;
         let coefficients =
             source
@@ -190,12 +191,14 @@ impl<F: Field, E> CpuBackend<F, E> {
         let rings = unsafe {
             std::slice::from_raw_parts(
                 coefficients.as_ptr() as *const CyclotomicRing<F, D>,
-                ring_count,
+                nonzero_rings,
             )
         };
         let block_ranges = (0..ring_count)
             .step_by(plan.num_positions_per_block)
-            .map(|start| start..(start + plan.num_positions_per_block).min(ring_count))
+            .map(|start| {
+                start.min(nonzero_rings)..(start + plan.num_positions_per_block).min(nonzero_rings)
+            })
             .collect::<Vec<_>>();
         if block_ranges.len() != plan.num_live_blocks {
             return Err(AkitaError::Internal(format!(
@@ -208,8 +211,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             num_digits: plan.num_digits_inner,
             log_basis: plan.log_basis_inner,
         };
-        let row_width = rings
-            .len()
+        let row_width = ring_count
             .min(plan.num_positions_per_block)
             .checked_mul(shape.num_digits)
             .ok_or_else(|| {
@@ -219,7 +221,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             signed_digit_kernel_for_setup(shape.log_basis, "for dense commitment")?;
         let params = BalancedDecomposePow2Params::new(shape.num_digits, shape.log_basis);
         let source = LiveRings {
-            coeffs: rings,
+            coeffs: &rings[..nonzero_rings],
             params: &params,
             basis: SignedDigitBasis::new(shape.log_basis)?,
         };
@@ -251,8 +253,8 @@ impl<F: Field, E> CpuBackend<F, E> {
                 "signed-block commitment geometry is invalid".into(),
             ));
         }
-        let ring_count = akita_error::checked::pow2(blocks.num_vars())
-            .and_then(|len| akita_error::checked::div_ceil(len, D))
+        let ring_count = jolt_algebra::checked::pow2(blocks.num_vars())
+            .and_then(|len| jolt_algebra::checked::div_ceil(len, D))
             .ok_or_else(|| {
                 AkitaError::InvalidInput("signed-block ring extent is invalid".into())
             })?;
@@ -269,7 +271,7 @@ impl<F: Field, E> CpuBackend<F, E> {
             num_digits: plan.num_digits_inner,
             log_basis: plan.log_basis_inner,
         };
-        let row_width = akita_error::checked::product([
+        let row_width = jolt_algebra::checked::product([
             ring_count.min(plan.num_positions_per_block),
             shape.num_digits,
         ])

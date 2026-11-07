@@ -1,7 +1,7 @@
 use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
+use jolt_algebra::solinas::parallel::*;
 
 pub(super) fn validate_packing_challenge_weights(
     challenges: &Challenges,

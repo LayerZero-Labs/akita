@@ -3,9 +3,10 @@ use crate::sources::poly_helpers::{
     fused_evaluate_and_fold_base, fused_evaluate_and_fold_materialized,
 };
 use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(crate) fn evaluate_and_fold_base<F, S, const D: usize>(
     source: &S,

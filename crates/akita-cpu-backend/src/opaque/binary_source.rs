@@ -3,14 +3,14 @@
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, PrivateSource, SourceHandle};
 use super::owned_kind::SourceGroupKind;
 use super::*;
-use akita_algebra::ring::trinomial::image::Q24Image;
+use akita_algebra::trinomial::image::Q24Image;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_error::checked;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::binary_source::{
     binary_root_matrix, BinaryCommittedGroupManifest, BINARY_SOURCE_Q,
 };
 use akita_types::{Commitment, CommittedGroup, RingVec};
+use jolt_algebra::checked;
 use std::sync::Arc;
 
 mod digit_commitment;

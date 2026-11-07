@@ -2,10 +2,11 @@
 //! The legacy sign-magnitude wire encoding is available only for P128.
 
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing, FoldChallengeDistribution};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::{BinaryFieldProfile, BINARY_SETUP_P64};
 use akita_params::sis::checked_balanced_digit_representable_bounds;
 use akita_transcript::{ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT};
+use jolt_algebra::checked;
 
 use super::{
     BINARY_RESPONSE_INTERVAL, BINARY_SOURCE_Q, CANONICAL_IMAGE_WINDOW, ENFORCED_IMAGE_WINDOW,

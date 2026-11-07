@@ -3,11 +3,12 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use akita_algebra::{
-    Field, MinusTrinomial, PlusTrinomial, Prime64Offset23703, SmoothFftField, TrinomialModulus,
+    MinusTrinomial, PlusTrinomial, Prime64Offset23703, TrinomialField, TrinomialModulus,
     TrinomialNttDomain, TrinomialRing,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_field::Prime128OffsetA7F7;
+use jolt_algebra::Field;
+use jolt_algebra::Prime128OffsetA7F7;
 
 fn input<F: Field, const D: usize, M: TrinomialModulus>(seed: u64) -> TrinomialRing<F, D, M> {
     TrinomialRing::from_coefficients(std::array::from_fn(|index| {
@@ -21,7 +22,7 @@ fn input<F: Field, const D: usize, M: TrinomialModulus>(seed: u64) -> TrinomialR
 
 fn bench_profile<F, const D: usize, M>(criterion: &mut Criterion, field: &str, modulus: &str)
 where
-    F: SmoothFftField + Debug,
+    F: TrinomialField + Debug,
     M: TrinomialModulus,
 {
     let domain = TrinomialNttDomain::<F, D, M>::new().expect("benchmark shape must fully split");

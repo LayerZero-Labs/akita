@@ -14,7 +14,7 @@ use akita_params::{
 };
 use akita_types::binary_source::{OrdinaryNativeRootBatch, OrdinaryNativeRootClaim};
 use akita_types::root_repacking::RootCoefficientRepacking;
-use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -59,6 +59,7 @@ fn profile(bits: u32, slots: usize, slices: CommitmentSliceCount) -> GroupCommit
         group: PolynomialGroupLayout::new(7, slots),
         blocks: BlockGeometry::new(2, 1, 2),
         outer_slice_count: slices,
+        randomness_columns: 0,
         inner: RoleParams::new(GadgetDigits::new(3, inner_digits), a),
         outer: RoleParams::new(GadgetDigits::new(3, outer_digits), b),
     };

@@ -8,11 +8,12 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use akita_algebra::{
-    Field, MinusTrinomial, TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots,
+    MinusTrinomial, TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots,
     TrinomialNttDomain, TrinomialRing,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_field::Prime128OffsetA7F7;
+use jolt_algebra::Field;
+use jolt_algebra::Prime128OffsetA7F7;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 
 const D: usize = 648;

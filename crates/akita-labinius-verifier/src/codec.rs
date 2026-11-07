@@ -1,8 +1,10 @@
 //! Fixed-width canonical proof atoms. No proof-controlled length prefixes.
 use crate::{channel::ClearChannel, profile::BinaryClearSetup};
-use akita_algebra::{binary::BinaryField162, ring::trinomial::TrinomialModulus};
-use akita_error::{checked, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use akita_algebra::binary::BinaryField162;
+use akita_algebra::trinomial::TrinomialModulus;
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Append a variable public identity with a u64 little-endian byte length.
 pub fn length_prefixed(output: &mut Vec<u8>, value: &[u8]) -> Result<(), AkitaError> {

@@ -9,8 +9,8 @@ use akita_serialization::{
     DEFAULT_MAX_SEQUENCE_LEN,
 };
 use akita_types::RingVec;
-use jolt_field::CanonicalEncoding;
-use jolt_field::Field;
+use jolt_algebra::CanonicalEncoding;
+use jolt_algebra::Field;
 use std::borrow::Cow;
 use std::io::{Read, Write};
 
@@ -48,13 +48,13 @@ fn validate_compression_component_counts(
 ///
 /// ```compile_fail,E0624
 /// use akita_prover::PortableCommitmentHandle;
-/// use jolt_field::Prime128Offset275 as F;
+/// use jolt_algebra::Prime128Offset275 as F;
 /// fn inspect(handle: &PortableCommitmentHandle<F>) { let _ = handle.inner_rows(); }
 /// ```
 /// ```compile_fail,E0599
 /// use akita_prover::PortableCommitmentHandle;
 /// use akita_serialization::AkitaSerialize;
-/// use jolt_field::Prime128Offset275 as F;
+/// use jolt_algebra::Prime128Offset275 as F;
 /// fn export(handle: &PortableCommitmentHandle<F>) {
 ///     handle.serialize_uncompressed(Vec::new()).unwrap();
 /// }
@@ -635,7 +635,7 @@ mod tests {
 
     use super::*;
     use akita_params::SisModulusProfileId;
-    use jolt_field::{Fp32, Ring, Zero};
+    use jolt_algebra::{Fp32, Ring, Zero};
     use std::sync::Arc;
 
     use crate::commitment::shared_inner::SHARED_MATERIALIZATIONS;

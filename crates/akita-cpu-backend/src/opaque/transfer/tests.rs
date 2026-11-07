@@ -8,7 +8,7 @@ use akita_prover::{
     BackendRegistry, FixedFoldRoute, SelectedProverOpeningData, SetupPrefixProverRegistry,
 };
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,

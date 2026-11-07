@@ -10,7 +10,7 @@ use akita_params::{
     FoldSchedule, OpeningClaimsLayout,
 };
 use akita_types::AkitaExpandedSetup;
-use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 /// Minimum proof-optimized log-basis.
 ///
@@ -104,7 +104,7 @@ where
 ///
 /// Returns [`AkitaError::InvalidSetup`] when sizing `schedule` overflows.
 pub fn verifier_schedule_fits_setup(
-    setup: &AkitaExpandedSetup<impl jolt_field::Field>,
+    setup: &AkitaExpandedSetup<impl jolt_algebra::Field>,
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<bool, AkitaError> {

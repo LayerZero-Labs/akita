@@ -1,16 +1,16 @@
-//! Bounded batching for jolt-field's shared-powers row kernels.
+//! Bounded batching for jolt-algebra's shared-powers row kernels.
 //!
 //! The row kernels take slices of row references, but callers produce rows
 //! one at a time from setup matrices and relation rows. Staging every row
 //! reference before one kernel call makes verifier memory grow with the input.
 //! These helpers stage at most [`ROW_BATCH`] rows in a fixed stack buffer and
 //! flush them through the canonical kernel, so field arithmetic stays in
-//! jolt-field while staging memory stays constant.
+//! jolt-algebra while staging memory stays constant.
 
 use akita_error::AkitaError;
-use jolt_field::{Field, MulBaseUnreduced};
+use jolt_algebra::{Field, MulBaseUnreduced};
 
-/// Rows staged per call into a jolt-field row kernel; also the term bound
+/// Rows staged per call into a jolt-algebra row kernel; also the term bound
 /// for other batched verifier dot products.
 pub const ROW_BATCH: usize = 32;
 
@@ -112,7 +112,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{ExtField, FpExt4, Prime32Offset99, Ring, Zero};
+    use jolt_algebra::{ExtField, FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;

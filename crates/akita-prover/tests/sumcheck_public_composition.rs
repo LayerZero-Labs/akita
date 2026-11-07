@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_sumcheck::advance_eq_factored_claim;
-use jolt_field::{Prime128Offset275 as F, Ring};
+use jolt_algebra::{Prime128Offset275 as F, Ring};
 use jolt_poly::OmittedConstantPoly;
 
 #[test]

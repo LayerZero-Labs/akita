@@ -5,9 +5,10 @@
 //! prover's witness, column-partial and equality-factor tables.
 
 use akita_algebra::{EqPolynomial, SplitEqEvals};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::tensor_opening_split;
-use jolt_field::{ExtField, Field, MulBaseUnreduced, Unreduced, Zero};
+use jolt_algebra::checked;
+use jolt_algebra::{ExtField, Field, MulBaseUnreduced, Unreduced, Zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 /// Pack a base-field witness table into the extension-valued tail table
@@ -377,7 +378,7 @@ pub(crate) fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Ext2, One, Prime64Offset59};
+    use jolt_algebra::{Ext2, One, Prime64Offset59};
 
     #[cfg(debug_assertions)]
     struct MalformedSource {

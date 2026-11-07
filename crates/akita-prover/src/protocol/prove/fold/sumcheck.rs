@@ -158,15 +158,16 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
     }
 }
 
-pub(super) fn prove_stage1<F, E, B>(
+pub(super) fn prove_stage1<F, E, B, C>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     rs: &mut RingSwitchOutput<E, B::RelationHandle>,
     lp: &CommittedGroupParams,
     plan: &RelationRangeImagePlan,
 ) -> Result<Stage1ProveOutput<E>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Send + Sync + 'static,
     E: ExtField<F>
         + Unreduced
@@ -217,7 +218,7 @@ where
         point: stage1_point,
         range_image_evaluation,
         norm_proof,
-    } = prove_stage1_session::<F, E, B>(
+    } = prove_stage1_session::<F, E, B, C>(
         ctx.backend(),
         session_handle,
         plan.digit_range_plan(),
@@ -280,17 +281,18 @@ pub(in crate::protocol::prove) struct Stage1SessionOutput<E: Field> {
 /// Native root orchestration attaches through
 /// <https://github.com/LayerZero-Labs/akita/issues/285>.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::prove) fn prove_stage1_session<F, E, B>(
+pub(in crate::protocol::prove) fn prove_stage1_session<F, E, B, C>(
     backend: &B,
     mut session_handle: B::Stage1SessionHandle,
     digit_range: akita_params::DigitRangePlan,
     domain: akita_params::FlatBooleanDomain,
     mut equality_coordinates: Vec<E>,
     physical_plan: Option<&PhysicalResponsePlan>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
 ) -> Result<Stage1SessionOutput<E>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Send + Sync + 'static,
     E: ExtField<F>
         + Unreduced
@@ -323,7 +325,7 @@ where
             next_round: 0,
             field: std::marker::PhantomData,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::Stage1,
             level,
@@ -433,7 +435,7 @@ where
             next_round: 0,
             field: std::marker::PhantomData,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::PhysicalL2,
             level,
@@ -484,7 +486,7 @@ where
             next_round: 0,
             field: std::marker::PhantomData,
         };
-        let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+        let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
             grinding,
             akita_params::SumcheckProtocol::Stage1,
             level,
@@ -541,10 +543,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage2<F, E, B>(
+pub(super) fn prove_stage2<F, E, B, C>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     level: usize,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     batching_coeff: E,
     rs: RingSwitchOutput<E, B::RelationHandle>,
     stage1_point: &[E],
@@ -559,6 +561,7 @@ pub(super) fn prove_stage2<F, E, B>(
     direct_setup_batch: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
 ) -> Result<Stage2ProveOutput<E>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + ChallengeCodec,
     B: crate::backend::OpaqueStage2Kernel<F, E>,
@@ -610,7 +613,7 @@ where
     )?;
     let level =
         u32::try_from(level).map_err(|_| AkitaError::Internal("fold level exceeds u32".into()))?;
-    let output = prove_stage2_session::<F, E, B>(
+    let output = prove_stage2_session::<F, E, B, C>(
         ctx.backend(),
         session_handle,
         grinding,
@@ -637,15 +640,16 @@ where
 /// Extension seam: run shared Stage 2 transport for an admitted backend session.
 /// Native relation compilers attach through
 /// <https://github.com/LayerZero-Labs/akita/issues/285>.
-pub(in crate::protocol::prove) fn prove_stage2_session<F, E, B>(
+pub(in crate::protocol::prove) fn prove_stage2_session<F, E, B, C>(
     backend: &B,
     mut session_handle: B::Stage2SessionHandle,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     expected_num_rounds: usize,
     expected_claim: E,
 ) -> Result<Stage2ProveOutput<E>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + ChallengeCodec,
     B: crate::backend::OpaqueStage2Kernel<F, E>,
@@ -665,7 +669,7 @@ where
         rounds: num_rounds,
         field: std::marker::PhantomData,
     };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
         grinding,
         akita_params::SumcheckProtocol::Stage2,
         level,
@@ -691,7 +695,7 @@ where
 
 /// Bind the singleton or accumulated input to an offloaded Stage 3 sumcheck.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn prepare_stage3_session<F, E, B>(
+fn prepare_stage3_session<F, E, B, C>(
     backend: &B,
     session: &B::ProofSessionHandle,
     level: u32,
@@ -704,17 +708,18 @@ fn prepare_stage3_session<F, E, B>(
     alpha: E,
     sumcheck_challenges: &[E],
     relation_address_geometry: akita_params::RelationAddressGeometry,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     inherited: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
 ) -> Result<(E, B::Stage3SessionHandle, usize), AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F>
         + Ring
         + ExtField<F>
         + AkitaSerialize
-        + jolt_field::Unreduced
-        + jolt_field::MulBaseUnreduced<F>
+        + jolt_algebra::Unreduced
+        + jolt_algebra::MulBaseUnreduced<F>
         + ChallengeCodec,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
@@ -797,7 +802,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage3<F, E, B>(
+pub(super) fn prove_stage3<F, E, B, C>(
     backend: &B,
     session: &B::ProofSessionHandle,
     level: usize,
@@ -811,18 +816,19 @@ pub(super) fn prove_stage3<F, E, B>(
     alpha: E,
     sumcheck_challenges: &[E],
     relation_address_geometry: akita_params::RelationAddressGeometry,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     inherited: Option<&akita_types::setup_claims::SetupBatchStatement<E>>,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ChallengeCodec
         + Ring
         + ExtField<F>
         + AkitaSerialize
-        + jolt_field::Unreduced
-        + jolt_field::MulBaseUnreduced<F>,
+        + jolt_algebra::Unreduced
+        + jolt_algebra::MulBaseUnreduced<F>,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
     if setup_contribution_mode == SetupContributionMode::Direct {
@@ -855,7 +861,7 @@ where
         grinding,
         inherited,
     )?;
-    prove_stage3_session::<F, E, B>(backend, stage3, claim, rounds, grinding, level).map(Some)
+    prove_stage3_session::<F, E, B, C>(backend, stage3, claim, rounds, grinding, level).map(Some)
 }
 
 struct Stage2Sumcheck<

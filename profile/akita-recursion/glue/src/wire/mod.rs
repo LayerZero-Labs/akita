@@ -9,7 +9,6 @@
 
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES};
-use akita_error::checked;
 use akita_params::{ChunkedWitnessCfg, FlatMatrix, OpeningScheduleSelection};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -18,7 +17,8 @@ use akita_types::{
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup,
     SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
 #[cfg(any(

@@ -1,9 +1,10 @@
 //! Legacy column-weight formulas retained only as independent test oracles.
 
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_error::{checked, AkitaError};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{ExtField, Field};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{ExtField, Field};
 
 use akita_params::WitnessLayout;
 

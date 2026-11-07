@@ -1,6 +1,6 @@
 //! Admission inputs for explicitly selected binary prime evaluation planes.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::sis::ajtai_key::{
     min_secure_rank, sis_table_key_for_linf_bound, SisMatrixRole, SisModulusProfileId,
     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
@@ -10,6 +10,7 @@ use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryTypedPrefix, OrdinaryNativeRootPlan,
     PrimePlaneManifest,
 };
+use jolt_algebra::checked;
 
 /// Exact witness and D widths, without a production-admission assertion.
 #[derive(Clone, Debug, PartialEq, Eq)]

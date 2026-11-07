@@ -26,6 +26,7 @@ mod library;
 pub mod matvec;
 pub mod ntt;
 pub mod onehot;
+mod twiddles;
 
 pub use digits::{DeviceDigitPlanes, DigitPlane};
 pub use error::AkitaMetalError;

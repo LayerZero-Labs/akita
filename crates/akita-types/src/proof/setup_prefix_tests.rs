@@ -152,7 +152,7 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
 
 #[test]
 fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
-    use jolt_field::Prime32Offset99 as F;
+    use jolt_algebra::Prime32Offset99 as F;
 
     // q32 compression starts at D=128, so the prefix B image must be D=128.
     let mut level_params = prefix_eligible_level_params();
@@ -259,7 +259,7 @@ fn setup_prefix_coverage_eval_len_rejects_unplanned_level_params() {
 
 #[test]
 fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
-    use jolt_field::Prime32Offset99 as F;
+    use jolt_algebra::Prime32Offset99 as F;
 
     let natural_len = 128;
     let mut level_params = sample_level_params();

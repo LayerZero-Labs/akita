@@ -7,7 +7,7 @@ use crate::opaque::NttCacheOwnerId;
 use crate::AkitaProverSetup;
 use akita_challenges::FoldChallengeDistribution;
 use akita_params::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};
-use jolt_field::Prime64Offset59;
+use jolt_algebra::Prime64Offset59;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

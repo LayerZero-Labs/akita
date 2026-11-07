@@ -14,17 +14,20 @@ rayon = { version = "1.10", optional = true }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false, features = [
+  "lattice",
+] }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, optional = true }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 
 [features]
 default = ["transcript-keccak"]
-parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
+parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-algebra/parallel"]
 # Prover-side channel adapters (fold-response previews and transcript grinding)
 # for akita-labinius-prover. Verifier-only builds leave it off, so they do not
 # enable spongefish's raw-state access.

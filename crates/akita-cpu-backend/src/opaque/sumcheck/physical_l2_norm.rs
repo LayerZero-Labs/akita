@@ -8,9 +8,9 @@ use akita_error::AkitaError;
 use akita_params::PhysicalL2NormProofShape;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_types::{reconstruct_l2_sq_from_gram, PhysicalResponsePlan};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Ring};
-use jolt_field::{Fold, Unreduced};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{Field, Ring};
+use jolt_algebra::{Fold, Unreduced};
 
 const RANGE_Q_MAX_DEGREE: usize = 4;
 const FUSED_MAX_DEGREE: usize = RANGE_Q_MAX_DEGREE + 1;

@@ -4,10 +4,11 @@ use akita_algebra::binary::{
     field_switch::{embed_source, SwitchField},
     BinaryField162,
 };
-use akita_algebra::ring::{PlusTrinomial, TrinomialModulus, TrinomialRing};
+use akita_algebra::{PlusTrinomial, TrinomialModulus, TrinomialRing};
 use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
-use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use crate::profile::BinaryClearSetup;
 

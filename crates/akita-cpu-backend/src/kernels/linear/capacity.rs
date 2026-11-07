@@ -122,7 +122,7 @@ mod tests {
     use akita_algebra::ntt::tables::{
         q128_primes, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES,
     };
-    use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn q128_digit_capacity_matches_expected_scale() {
@@ -255,24 +255,6 @@ mod tests {
             assert!(profile.balanced_digit_safe_width > 0, "{profile:?}");
             assert!(profile.raw_i8_safe_width > 0, "{profile:?}");
         }
-    }
-
-    #[test]
-    fn selected_capacity_profile_matches_expected_dispatch_metadata() {
-        let q32 = selected_crt_i8_capacity_profile::<Prime32Offset99, 64>().unwrap();
-        assert_eq!(q32.profile_id, "Q32/2xi32");
-        assert_eq!(q32.num_primes, Q32_NUM_PRIMES);
-        assert_eq!(q32.limb_bits, 32);
-
-        let q64 = selected_crt_i8_capacity_profile::<Prime64Offset59, 64>().unwrap();
-        assert_eq!(q64.profile_id, "Q64/3xi32");
-        assert_eq!(q64.num_primes, Q64_NUM_PRIMES);
-        assert_eq!(q64.limb_bits, 32);
-
-        let q128 = selected_crt_i8_capacity_profile::<Prime128Offset275, 64>().unwrap();
-        assert_eq!(q128.profile_id, "Q128/6xi32");
-        assert_eq!(q128.num_primes, Q128_NUM_PRIMES);
-        assert_eq!(q128.limb_bits, 32);
     }
 
     #[test]

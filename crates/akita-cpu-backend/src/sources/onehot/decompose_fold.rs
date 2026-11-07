@@ -304,7 +304,7 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
                 "one-hot decompose_fold requires at least one polynomial".into(),
             ));
         }
-        let expected = akita_error::checked::product([polys.len(), challenges_per_poly])
+        let expected = jolt_algebra::checked::product([polys.len(), challenges_per_poly])
             .ok_or_else(|| {
                 AkitaError::InvalidInput("one-hot decompose_fold challenge count overflow".into())
             })?;

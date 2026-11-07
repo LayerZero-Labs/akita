@@ -1,0 +1,465 @@
+#![allow(clippy::indexing_slicing, clippy::unwrap_used)]
+
+use core::fmt::Debug;
+
+use jolt_algebra::{Field, One, Prime128Offset275, Prime31Offset19, Ring, Zero};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+use super::{exact_convolution, SetupAdjointWeight, TrinomialAdjoint};
+use crate::trinomial::{
+    signed::{signed_trinomial_product, signed_trinomial_remainder},
+    MinusTrinomial, PlusTrinomial, TrinomialModulus, TrinomialRing,
+};
+
+const DEGREE: usize = 648;
+
+fn random<F: Field>(rng: &mut StdRng) -> F {
+    F::from_u128(u128::from(rng.next_u64()) << 64 | u128::from(rng.next_u64()))
+}
+
+fn signed<F: Field>(value: i128) -> F {
+    let magnitude = F::from_u128(value.unsigned_abs());
+    if value < 0 {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+fn dot<F: Field>(lhs: &[F], rhs: &[F]) -> F {
+    assert_eq!(lhs.len(), rhs.len());
+    lhs.iter()
+        .zip(rhs)
+        .fold(F::zero(), |sum, (&a, &b)| sum + a * b)
+}
+
+fn schoolbook<F: Field>(lhs: &[F], rhs: &[F]) -> Vec<F> {
+    let mut output = vec![F::zero(); lhs.len() + rhs.len() - 1];
+    for (i, &a) in lhs.iter().enumerate() {
+        for (j, &b) in rhs.iter().enumerate() {
+            output[i + j] += a * b;
+        }
+    }
+    output
+}
+
+/// The existing signed reducer supplies each column of the dense tensor K.
+fn dense_g<F: Field, const D: usize, M: TrinomialModulus>(rho: &[F]) -> Vec<F> {
+    let mut monomial = vec![0i128; 2 * D - 1];
+    (0..monomial.len())
+        .map(|exponent| {
+            if exponent > 0 {
+                monomial[exponent - 1] = 0;
+            }
+            monomial[exponent] = 1;
+            let remainder = signed_trinomial_remainder::<D, M>(&monomial).unwrap();
+            rho.iter()
+                .zip(remainder)
+                .fold(F::zero(), |sum, (&coefficient, basis)| {
+                    sum + coefficient * signed::<F>(basis)
+                })
+        })
+        .collect()
+}
+
+fn dense_h<F: Field, const D: usize, M: TrinomialModulus>(rho: &[F], v: &[F]) -> Vec<F> {
+    let g = dense_g::<F, D, M>(rho);
+    (0..D)
+        .map(|s| {
+            v.iter()
+                .enumerate()
+                .fold(F::zero(), |sum, (k, &value)| sum + value * g[s + k])
+        })
+        .collect()
+}
+
+fn full_degree_identity<F: Field + Debug>(seed: u64) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let adjoint = TrinomialAdjoint::<DEGREE, MinusTrinomial>::new().unwrap();
+    for _ in 0..3 {
+        let rho: Vec<F> = (0..DEGREE).map(|_| random(&mut rng)).collect();
+        let a: Vec<i128> = (0..DEGREE)
+            .map(|_| i128::from(rng.next_u32() % 17) - 8)
+            .collect();
+        let v: Vec<i128> = (0..DEGREE)
+            .map(|_| i128::from(rng.next_u32() % 17) - 8)
+            .collect();
+        let product = signed_trinomial_product::<DEGREE, MinusTrinomial>(&a, &v).unwrap();
+        let a: Vec<F> = a.into_iter().map(signed).collect();
+        let v: Vec<F> = v.into_iter().map(signed).collect();
+        let product: Vec<F> = product.into_iter().map(signed).collect();
+        let h = adjoint.apply(&rho, &v).unwrap();
+        assert_eq!(dot(&rho, &product), dot(&a, &h));
+    }
+    // Full-field inputs also exercise wraparound in both field implementations.
+    let rho: Vec<F> = (0..DEGREE).map(|_| random(&mut rng)).collect();
+    let a: Vec<F> = (0..DEGREE).map(|_| random(&mut rng)).collect();
+    let v: Vec<F> = (0..DEGREE).map(|_| random(&mut rng)).collect();
+    let h = adjoint.apply(&rho, &v).unwrap();
+    assert_eq!(h, dense_h::<F, DEGREE, MinusTrinomial>(&rho, &v));
+    let a_ring = TrinomialRing::<F, DEGREE, MinusTrinomial>::try_from_vec(a.clone()).unwrap();
+    let v_ring = TrinomialRing::<F, DEGREE, MinusTrinomial>::try_from_vec(v).unwrap();
+    let product = a_ring.schoolbook_mul(&v_ring).unwrap();
+    assert_eq!(dot(&rho, product.coefficients()), dot(&a, &h));
+}
+
+#[test]
+fn full_degree_adjoint_matches_signed_products_and_dense_field_definition() {
+    full_degree_identity::<Prime128Offset275>(0x648_275);
+    full_degree_identity::<Prime31Offset19>(0x648_019);
+}
+
+fn monomials<F: Field + Debug, const D: usize, M: TrinomialModulus>(seed: u64) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let rho: Vec<F> = (0..D).map(|_| random(&mut rng)).collect();
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
+    let g = adjoint.extend_row(&rho).unwrap();
+    assert_eq!(g.len(), 2 * D - 1);
+    assert_eq!(g, dense_g::<F, D, M>(&rho));
+    // Exhaust all tensor slices at toy sizes, including both reduction signs.
+    if D <= 8 {
+        for t in 0..D {
+            let mut rho = vec![F::zero(); D];
+            rho[t] = F::one();
+            assert_eq!(adjoint.extend_row(&rho).unwrap(), dense_g::<F, D, M>(&rho));
+            for k in 0..D {
+                let mut v = vec![F::zero(); D];
+                v[k] = F::one();
+                assert_eq!(
+                    adjoint.apply(&rho, &v).unwrap(),
+                    dense_h::<F, D, M>(&rho, &v)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn row_extension_and_toy_dense_tensor_exhaust_monomials() {
+    monomials::<Prime128Offset275, DEGREE, MinusTrinomial>(0x1295);
+    monomials::<Prime31Offset19, DEGREE, MinusTrinomial>(0x1296);
+    monomials::<Prime128Offset275, 2, MinusTrinomial>(2);
+    monomials::<Prime31Offset19, 4, MinusTrinomial>(4);
+    monomials::<Prime128Offset275, 6, PlusTrinomial>(6);
+    monomials::<Prime31Offset19, 8, PlusTrinomial>(8);
+}
+
+fn convolution_checks<F: Field + Debug>(seed: u64) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    for length in [1, 2, 3, 7, 17, 33, 81, DEGREE] {
+        let lhs: Vec<F> = (0..length).map(|_| random(&mut rng)).collect();
+        let rhs: Vec<F> = (0..length).map(|_| random(&mut rng)).collect();
+        assert_eq!(
+            exact_convolution(&lhs, &rhs).unwrap(),
+            schoolbook(&lhs, &rhs)
+        );
+    }
+}
+
+#[test]
+fn exact_convolution_matches_schoolbook_for_unit_even_and_odd_lengths() {
+    convolution_checks::<Prime128Offset275>(0x275);
+    convolution_checks::<Prime31Offset19>(0x019);
+}
+
+#[test]
+fn recursive_scratch_is_reusable_bounded_and_matches_schoolbook() {
+    type F = Prime128Offset275;
+    let mut rng = StdRng::seed_from_u64(0x5c4a_7c48);
+    for length in [17, 33, 81, DEGREE] {
+        let fields = super::karatsuba_scratch_len(length).unwrap();
+        if length == DEGREE {
+            assert_eq!(fields, 5_096);
+        }
+        let sentinel = F::from_u64(0x1234);
+        let mut scratch = vec![sentinel; fields + 2];
+        for _ in 0..2 {
+            let lhs: Vec<F> = (0..length).map(|_| random(&mut rng)).collect();
+            let rhs: Vec<F> = (0..length).map(|_| random(&mut rng)).collect();
+            let mut output = vec![sentinel; 2 * length - 1];
+            super::karatsuba(&lhs, &rhs, &mut output, &mut scratch[1..fields + 1]).unwrap();
+            assert_eq!(output, schoolbook(&lhs, &rhs));
+            assert_eq!(scratch[0], sentinel);
+            assert_eq!(scratch[fields + 1], sentinel);
+            assert!(super::karatsuba(&lhs, &rhs, &mut output, &mut scratch[1..fields]).is_err());
+        }
+    }
+    assert!(super::karatsuba_scratch_len(usize::MAX).is_err());
+}
+
+fn block_identity<F: Field + Debug, M: TrinomialModulus>(seed: u64) {
+    const D: usize = 6;
+    const ROWS: usize = 2;
+    const COLUMNS: usize = 3;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let matrix: Vec<Vec<Vec<F>>> = (0..ROWS)
+        .map(|_| {
+            (0..COLUMNS)
+                .map(|_| (0..D).map(|_| random(&mut rng)).collect())
+                .collect()
+        })
+        .collect();
+    let u: Vec<Vec<F>> = (0..ROWS)
+        .map(|_| (0..D).map(|_| random(&mut rng)).collect())
+        .collect();
+    let v: Vec<Vec<F>> = (0..COLUMNS)
+        .map(|_| (0..D).map(|_| random(&mut rng)).collect())
+        .collect();
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
+    let mut forward = vec![vec![F::zero(); D]; ROWS];
+    let mut transpose = vec![vec![F::zero(); D]; COLUMNS];
+    for (i, row) in matrix.iter().enumerate() {
+        for (j, coefficients) in row.iter().enumerate() {
+            let a = TrinomialRing::<F, D, M>::try_from_vec(coefficients.clone()).unwrap();
+            let b = TrinomialRing::<F, D, M>::try_from_vec(v[j].clone()).unwrap();
+            let product = a.schoolbook_mul(&b).unwrap();
+            let contribution = adjoint.apply(&u[i], coefficients).unwrap();
+            for k in 0..D {
+                forward[i][k] += product.coefficients()[k];
+                transpose[j][k] += contribution[k];
+            }
+        }
+    }
+    let lhs = u
+        .iter()
+        .zip(&forward)
+        .fold(F::zero(), |sum, (a, b)| sum + dot(a, b));
+    let rhs = transpose
+        .iter()
+        .zip(&v)
+        .fold(F::zero(), |sum, (a, b)| sum + dot(a, b));
+    assert_eq!(lhs, rhs);
+}
+
+#[test]
+fn block_matrix_has_genuine_coefficient_adjoint() {
+    block_identity::<Prime128Offset275, MinusTrinomial>(0x26275);
+    block_identity::<Prime31Offset19, MinusTrinomial>(0x26019);
+    block_identity::<Prime128Offset275, PlusTrinomial>(0x26276);
+    block_identity::<Prime31Offset19, PlusTrinomial>(0x26020);
+}
+
+fn equality<F: Field>(point: &[F], index: usize) -> F {
+    point
+        .iter()
+        .enumerate()
+        .fold(F::one(), |weight, (bit, &r)| {
+            weight
+                * if (index >> bit) & 1 == 0 {
+                    F::one() - r
+                } else {
+                    r
+                }
+        })
+}
+
+fn rank_one_weights<F: Field + Debug>(seed: u64) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let adjoint = TrinomialAdjoint::<DEGREE, MinusTrinomial>::new().unwrap();
+    let rho: Vec<F> = (0..DEGREE).map(|_| random(&mut rng)).collect();
+    let r_j: Vec<F> = (0..3).map(|_| random(&mut rng)).collect();
+    let r_k: Vec<F> = (0..10).map(|_| random(&mut rng)).collect();
+    let weights = SetupAdjointWeight::new(&adjoint, &rho, &r_j, &r_k, 5).unwrap();
+    let v: Vec<F> = (0..DEGREE).map(|k| equality(&r_k, k)).collect();
+    let h = dense_h::<F, DEGREE, MinusTrinomial>(&rho, &v);
+    assert_eq!(weights.coefficients(), h);
+    for j in 0..5 {
+        for (s, &coefficient) in h.iter().enumerate() {
+            assert_eq!(
+                weights.weight(j, s).unwrap(),
+                equality(&r_j, j) * coefficient
+            );
+        }
+    }
+    assert!(weights.weight(5, 0).is_err());
+    assert!(weights.weight(0, DEGREE).is_err());
+    // A Boolean point outside the unpadded coefficient domain is zero-defined.
+    let outside = vec![F::one(); 10];
+    let zero = SetupAdjointWeight::new(&adjoint, &rho, &r_j, &outside, 5).unwrap();
+    assert!(zero.coefficients().iter().all(|&value| value == F::zero()));
+    // With no row-index bits, the sole column has equality weight one.
+    let one = SetupAdjointWeight::new(&adjoint, &rho, &[], &r_k, 1).unwrap();
+    assert_eq!(one.weight(0, DEGREE - 1).unwrap(), h[DEGREE - 1]);
+}
+
+#[test]
+fn setup_weights_factor_over_columns_and_coefficients_with_zero_padding() {
+    rank_one_weights::<Prime128Offset275>(0x53275);
+    rank_one_weights::<Prime31Offset19>(0x53019);
+}
+
+#[test]
+fn malformed_shapes_and_unrepresentable_degrees_return_errors() {
+    type F = Prime31Offset19;
+    assert!(TrinomialAdjoint::<0, MinusTrinomial>::new().is_err());
+    assert!(TrinomialAdjoint::<3, MinusTrinomial>::new().is_err());
+    assert!(TrinomialAdjoint::<{ usize::MAX - 1 }, MinusTrinomial>::new().is_err());
+    let adjoint = TrinomialAdjoint::<4, MinusTrinomial>::new().unwrap();
+    let row = [F::zero(); 4];
+    assert!(adjoint.extend_row(&row[..3]).is_err());
+    assert!(adjoint.apply(&row[..3], &row).is_err());
+    assert!(adjoint.apply(&row, &row[..3]).is_err());
+    assert!(exact_convolution::<F>(&[], &[]).is_err());
+    assert!(exact_convolution(&row, &row[..3]).is_err());
+    assert!(SetupAdjointWeight::new(&adjoint, &row, &[], &row[..2], 0).is_err());
+    assert!(SetupAdjointWeight::new(&adjoint, &row, &[], &row[..2], 2).is_err());
+    assert!(SetupAdjointWeight::new(&adjoint, &row, &row[..1], &row[..1], 2).is_err());
+    assert!(SetupAdjointWeight::new(&adjoint, &row, &row[..2], &row[..2], 2).is_err());
+    assert!(SetupAdjointWeight::new(&adjoint, &row[..3], &[], &row[..2], 1).is_err());
+}
+
+fn equality_adjoint<F: Field + Debug, const D: usize, M: TrinomialModulus>(seed: u64) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
+    let bits = D.next_power_of_two().trailing_zeros() as usize;
+    for _ in 0..3 {
+        let rho: Vec<F> = (0..D).map(|_| random(&mut rng)).collect();
+        let point: Vec<F> = (0..bits).map(|_| random(&mut rng)).collect();
+        let v: Vec<F> = (0..D).map(|k| equality(&point, k)).collect();
+        assert_eq!(
+            adjoint.apply_equality(&rho, &point).unwrap(),
+            adjoint.apply(&rho, &v).unwrap()
+        );
+    }
+    let rho = vec![F::one(); D];
+    assert!(adjoint
+        .apply_equality(&rho, &vec![F::one(); bits + 1])
+        .is_err());
+    assert!(adjoint
+        .apply_equality(&rho[1..], &vec![F::one(); bits])
+        .is_err());
+}
+
+#[test]
+fn equality_adjoint_matches_the_convolution_adjoint() {
+    equality_adjoint::<Prime128Offset275, DEGREE, MinusTrinomial>(0xe648);
+    equality_adjoint::<Prime31Offset19, DEGREE, PlusTrinomial>(0xe649);
+    equality_adjoint::<Prime128Offset275, 162, PlusTrinomial>(0xe162);
+    equality_adjoint::<Prime31Offset19, 2, MinusTrinomial>(0xe002);
+    equality_adjoint::<Prime31Offset19, 6, PlusTrinomial>(0xe006);
+    equality_adjoint::<Prime128Offset275, 8, MinusTrinomial>(0xe008);
+}
+
+fn integer_rows<M: TrinomialModulus, const D: usize>(seed: u64, bound: i128, columns: usize) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let rho = (0..3)
+        .map(|_| core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)))
+        .collect::<Vec<[Prime128Offset275; D]>>();
+    integer_rows_with::<M, D>(&mut rng, &rho, bound, columns);
+}
+
+fn integer_rows_with<M: TrinomialModulus, const D: usize>(
+    rng: &mut StdRng,
+    rho: &[[Prime128Offset275; D]],
+    bound: i128,
+    columns: usize,
+) {
+    let adjoint = TrinomialAdjoint::<D, M>::new().unwrap();
+    let mut rows = (0..rho.len())
+        .map(|_| {
+            (0..columns)
+                .map(|_| {
+                    core::array::from_fn(|_| {
+                        (rng.next_u64() as i128).rem_euclid(2 * bound + 1) - bound
+                    })
+                })
+                .collect::<Vec<[i128; D]>>()
+        })
+        .collect::<Vec<_>>();
+    // Exercise both extremes of the declared bound.
+    if columns > 0 {
+        rows[0][0] = [bound; D];
+        rows[1][0] = [-bound; D];
+    }
+    let canonical: fn(&Prime128Offset275) -> Option<u128> =
+        |x| jolt_algebra::CanonicalEncoding::to_u128_checked(x);
+    let fast = adjoint
+        .apply_integer_rows(rho, &rows, bound.unsigned_abs(), canonical)
+        .unwrap();
+    assert_eq!(fast.len(), columns);
+    for (j, h) in fast.iter().enumerate() {
+        let mut expected = vec![Prime128Offset275::zero(); D];
+        for (functional, row) in rho.iter().zip(&rows) {
+            let v = row[j].map(signed::<Prime128Offset275>);
+            for (slot, value) in expected
+                .iter_mut()
+                .zip(adjoint.apply(functional, &v).unwrap())
+            {
+                *slot += value;
+            }
+        }
+        assert_eq!(h.as_slice(), expected.as_slice(), "column {j}");
+    }
+}
+
+/// The 648 trinomial takes the trace-form limb path: functionals at the top
+/// of the field fill every limb, and the extreme rows reach the CRT bound.
+#[test]
+fn trace_limb_rows_match_field_adjoint_for_extreme_functionals() {
+    let mut rng = StdRng::seed_from_u64(15);
+    let top = -Prime128Offset275::one();
+    let rho = vec![
+        [top; DEGREE],
+        core::array::from_fn(|t| {
+            if t % 2 == 0 {
+                top
+            } else {
+                Prime128Offset275::one()
+            }
+        }),
+        core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)),
+    ];
+    integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 7_126_704, 9);
+    // Above the limb domains' operand range the auxiliary transforms remain.
+    integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, 1 << 40, 2);
+}
+
+/// At the largest committed coefficient bound the limb path admits ranks up
+/// to nine; rank ten takes the auxiliary transforms. Both sides of that
+/// boundary, and zero columns, agree with the field adjoint.
+#[test]
+fn trace_limb_admission_boundary_and_zero_columns() {
+    const BOUND: u128 = 7_126_704;
+    assert!(super::trace::limb_bound(9, BOUND, DEGREE).is_some());
+    assert!(super::trace::limb_bound(10, BOUND, DEGREE).is_none());
+    let mut rng = StdRng::seed_from_u64(16);
+    for (rank, columns) in [(9, 2), (10, 2), (3, 0)] {
+        let rho = (0..rank)
+            .map(|_| core::array::from_fn(|_| random::<Prime128Offset275>(&mut rng)))
+            .collect::<Vec<[Prime128Offset275; DEGREE]>>();
+        integer_rows_with::<MinusTrinomial, DEGREE>(&mut rng, &rho, BOUND as i128, columns);
+    }
+}
+
+#[test]
+fn integer_rows_match_field_adjoint_sums_and_reject_unliftable_bounds() {
+    integer_rows::<MinusTrinomial, 8>(11, 7, 5);
+    integer_rows::<PlusTrinomial, 8>(12, 1 << 20, 3);
+    integer_rows::<MinusTrinomial, DEGREE>(13, 7_126_704, 2);
+    // Length 24 < 3D - 2: the wrapped tail must miss the middle coefficients.
+    integer_rows::<MinusTrinomial, 10>(14, 7, 3);
+    let adjoint = TrinomialAdjoint::<8, MinusTrinomial>::new().unwrap();
+    let rho = vec![[Prime128Offset275::one(); 8]];
+    let canonical: fn(&Prime128Offset275) -> Option<u128> =
+        |x| jolt_algebra::CanonicalEncoding::to_u128_checked(x);
+    assert!(adjoint
+        .apply_integer_rows(&rho, &[vec![[1; 8]]], 1 << 62, canonical)
+        .is_err());
+    assert!(adjoint
+        .apply_integer_rows(&rho, &[vec![[5; 8]]], 4, canonical)
+        .is_err());
+    assert!(adjoint
+        .apply_integer_rows(&rho, &[vec![[1; 8]], vec![[1; 8]]], 4, canonical)
+        .is_err());
+    // 2D - 1 exceeds the auxiliary smooth subgroup order.
+    const UNREPRESENTABLE: usize = 8_750;
+    assert!(TrinomialAdjoint::<UNREPRESENTABLE, MinusTrinomial>::new()
+        .unwrap()
+        .apply_integer_rows(
+            &[[Prime128Offset275::one(); UNREPRESENTABLE]],
+            &[vec![[1; UNREPRESENTABLE]]],
+            4,
+            canonical
+        )
+        .is_err());
+}

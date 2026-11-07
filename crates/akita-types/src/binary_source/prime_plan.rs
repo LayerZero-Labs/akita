@@ -2,7 +2,8 @@
 
 use super::{binary_scalar_geometry, BinaryRootWitnessPlan};
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 impl BinaryRootWitnessPlan {
     /// Select the word views and append every prime plane before ordinary groups.

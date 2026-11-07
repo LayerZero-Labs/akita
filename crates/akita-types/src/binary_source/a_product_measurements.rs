@@ -9,7 +9,7 @@ use crate::binary_source::{
     BinarySourceDescriptor, CANONICAL_IMAGE_WINDOW,
 };
 use akita_challenges::{Challenges, SparseChallenge};
-use jolt_field::{Prime128Offset275 as F, Ring};
+use jolt_algebra::{Prime128Offset275 as F, Ring};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::hint::black_box;
 use std::time::{Duration, Instant};

@@ -1,7 +1,7 @@
 //! Recursive witness sizing shared by planning and runtime validation.
 
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Number of gadget decomposition levels needed for `r` over field `F`.
 pub fn r_decomp_levels<F: Field + CanonicalEncoding>(log_basis: u32) -> usize {

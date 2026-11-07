@@ -17,11 +17,12 @@ use akita_types::binary_source::{
     BinaryRootPublic,
 };
 use akita_types::opening_claims::GroupClaimKind;
+use akita_types::FoldResponseReplay;
 use akita_types::{
     AkitaVerifierSetup, CommittedGroup, DigitRangeEqualityPoint, FpExtEncoding, GrindingReplay,
     OpeningClaims, RingVec,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 pub(super) fn verify_root<F, E>(
     setup: &AkitaVerifierSetup<F>,
@@ -149,7 +150,7 @@ where
     }
     let num_vars = domain_len.trailing_zeros() as usize;
 
-    let payload_len = akita_error::checked::product([
+    let payload_len = jolt_algebra::checked::product([
         manifest
             .d_label(claim.is_some(), prime.planes().len())?
             .rank as usize,
@@ -175,7 +176,7 @@ where
     grinding.record_fold_challenges(
         0,
         0,
-        akita_error::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
+        jolt_algebra::checked::product([columns, owners]).ok_or(AkitaError::InvalidProof)?,
     )?;
 
     let successor_payload_len = next
@@ -256,9 +257,9 @@ where
     let equality_point =
         DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau0, num_vars, 0)?;
     let stage1 = Stage1Verifier::new(equality_point, DigitRangePlan::new(8)?)
-        .verify::<F>(grinding, None, 0)?;
+        .verify::<F, _>(grinding, None, 0)?;
     let gamma = grinding.grinded_ext_challenge::<E>(GrindingSite::Stage2Batch { level: 0 })?;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E, _>::new(
         grinding,
         SumcheckProtocol::Stage2,
         0,
