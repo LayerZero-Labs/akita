@@ -187,7 +187,7 @@ pub(super) fn eval<
     Ok(out)
 }
 
-pub(super) fn eval_power_two_right<F: Field, const LM: bool, const RM: bool>(
+pub(super) fn eval_scaled_right<F: Field, const LM: bool, const RM: bool, const STATES: usize>(
     left: &[F],
     right: &[F],
     stride: usize,
@@ -199,10 +199,24 @@ pub(super) fn eval_power_two_right<F: Field, const LM: bool, const RM: bool>(
         return Ok(F::zero());
     }
     let bits = stride.trailing_zeros() as usize;
+    if stride == 0 || STATES < 2 || stride >> bits != STATES - 1 {
+        return Err(AkitaError::InvalidInput(
+            "interval stride does not match its carry bound".into(),
+        ));
+    }
+    if bits == 0 {
+        return eval::<F, LM, RM, STATES>(left, right, len, seeds, work);
+    }
     let (low, high) = right
         .split_at_checked(bits)
         .ok_or_else(|| AkitaError::InvalidInput("interval stride exceeds right arity".into()))?;
-    charge_work(work, seeds.len())?;
+    charge_work(
+        work,
+        seeds
+            .len()
+            .checked_mul(bits + 1)
+            .ok_or_else(|| AkitaError::InvalidInput("interval seed factor work overflow".into()))?,
+    )?;
     let mut reduced = Vec::new();
     reduced
         .try_reserve_exact(seeds.len())
@@ -213,8 +227,11 @@ pub(super) fn eval_power_two_right<F: Field, const LM: bool, const RM: bool>(
             left_offset: seed.left_offset,
             right_offset: seed.right_offset >> bits,
             weight: seed.weight
-                * super::basis_eval_at_index::<F, RM>(low, seed.right_offset & (stride - 1)),
+                * super::basis_eval_at_index::<F, RM>(
+                    low,
+                    seed.right_offset & ((1usize << bits) - 1),
+                ),
         });
     }
-    eval::<F, LM, RM, 2>(left, high, len, &reduced, work)
+    eval::<F, LM, RM, STATES>(left, high, len, &reduced, work)
 }
